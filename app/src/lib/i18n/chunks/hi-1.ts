@@ -303,6 +303,9 @@ const hi1: TranslationMap = {
   'accounts.respondQueue': 'रिस्पॉन्ड क्यू',
   'accounts.disconnect': 'डिसकनेक्ट करें',
   'accounts.disconnectConfirm': 'क्या आप वाकई इस अकाउंट को डिसकनेक्ट करना चाहते हैं?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'अकाउंट सर्च करें...',
   'channels.title': 'चैनल',
   'channels.configure': 'चैनल कॉन्फिगर करें',
@@ -360,6 +363,7 @@ const hi1: TranslationMap = {
     'रिकवरी फ्रेज़ कभी किसी से शेयर न करें। इन शब्दों से कोई भी आपका अकाउंट एक्सेस कर सकता है।',
   'mnemonic.copied': 'रिकवरी फ्रेज़ क्लिपबोर्ड पर कॉपी हो गया',
   'mnemonic.reveal': 'फ्रेज़ दिखाएं',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'रिकवरी फ्रेज़ छुपी हुई है',
   'privacy.title': 'प्राइवेसी और सिक्योरिटी',
   'privacy.description': 'बाहरी सर्विसेज़ को भेजे गए डेटा की ट्रांसपेरेंसी रिपोर्ट।',
@@ -1323,6 +1327,19 @@ const hi1: TranslationMap = {
   'subconscious.priority.normal': 'सामान्य',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default hi1;

@@ -1,7 +1,7 @@
 //! Autonomy and security policy configuration.
 
 use super::defaults;
-use crate::openhuman::security::AutonomyLevel;
+use crate::openhuman::security::{AutonomyLevel, TrustedRoot};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,16 @@ pub struct AutonomyConfig {
     pub auto_approve: Vec<String>,
     #[serde(default = "default_always_ask")]
     pub always_ask: Vec<String>,
+    /// Directories outside the workspace the agent may access. Each entry grants
+    /// read (or read+write) to its subtree, taking precedence over `workspace_only`
+    /// and `forbidden_paths` — except credential stores (~/.ssh, ~/.gnupg, ~/.aws),
+    /// which stay blocked regardless.
+    #[serde(default)]
+    pub trusted_roots: Vec<TrustedRoot>,
+    /// Whether the agent may install OS packages via the `install_tool` tool.
+    /// Intended to be enabled only in Full access mode.
+    #[serde(default)]
+    pub allow_tool_install: bool,
 }
 
 fn default_true() -> bool {
@@ -60,6 +70,7 @@ fn default_allowed_commands() -> Vec<String> {
         "wc".into(),
         "head".into(),
         "tail".into(),
+        "date".into(),
         "dir".into(),
         "type".into(),
         "where".into(),
@@ -118,6 +129,8 @@ impl Default for AutonomyConfig {
             block_high_risk_commands: default_true(),
             auto_approve: default_auto_approve(),
             always_ask: default_always_ask(),
+            trusted_roots: Vec::new(),
+            allow_tool_install: false,
         }
     }
 }

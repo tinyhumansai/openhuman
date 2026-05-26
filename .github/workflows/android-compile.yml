@@ -57,8 +57,8 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
       # Hard gate: mobile Tauri host compiles for Android.
       - name: cargo check -- mobile host (aarch64-linux-android)
-        run: cargo check --manifest-path app/src-tauri-mobile/Cargo.toml --target aarch64-linux-android
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path app/src-tauri-mobile/Cargo.toml --target aarch64-linux-android

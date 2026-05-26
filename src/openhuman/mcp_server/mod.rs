@@ -15,6 +15,7 @@ mod protocol;
 mod session;
 mod stdio;
 mod tools;
+mod write_dispatch;
 
 pub use http::{run_http, HttpServerConfig};
 pub use stdio::run_stdio_from_cli;

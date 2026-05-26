@@ -40,12 +40,12 @@ pub use schema::{
     StorageProviderSection, StreamMode, TeamModelConfig, TelegramConfig, UpdateConfig,
     UpdateRestartStrategy, VoiceActivationMode, VoiceServerConfig, WebSearchConfig, WebhookConfig,
     DEFAULT_CLOUD_LLM_MODEL, DEFAULT_MODEL, MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1,
-    MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_MANAGED,
-    SEARCH_ENGINE_PARALLEL,
+    MODEL_REASONING_QUICK_V1, MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1, SEARCH_ENGINE_BRAVE,
+    SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL,
 };
 pub use schema::{
-    clear_active_user, default_root_openhuman_dir, pre_login_user_dir, read_active_user_id,
-    user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
+    clear_active_user, default_projects_dir, default_root_openhuman_dir, pre_login_user_dir,
+    read_active_user_id, user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
 };
 pub use schemas::{
     all_controller_schemas as all_config_controller_schemas,

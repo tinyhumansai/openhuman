@@ -174,7 +174,7 @@ async fn handle_request(id: Value, method: &str, params: Value, session: &mut Mc
                     session.source_type(),
                     object_keys(&arguments)
                 );
-                match tools::call_tool(&name, arguments).await {
+                match tools::call_tool(&name, arguments, session.source_type()).await {
                     Ok(result) => {
                         log::debug!(
                             "[mcp_server] tools/call response id={} tool={} client_source_type={} is_error={}",

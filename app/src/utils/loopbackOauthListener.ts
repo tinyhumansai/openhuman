@@ -19,7 +19,7 @@ import { isTauri } from './tauriCommands/common';
  */
 
 const DEFAULT_PORT = 53824;
-const DEFAULT_TIMEOUT_SECS = 300;
+const DEFAULT_TIMEOUT_SECS = 60;
 const CALLBACK_EVENT = 'loopback-oauth-callback';
 
 export interface LoopbackHandle {

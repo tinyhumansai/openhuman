@@ -281,6 +281,7 @@ const it2: TranslationMap = {
   'chat.deleteThread': 'Elimina thread',
   'chat.deleteThreadConfirm': 'Sei sicuro di voler eliminare "{title}"?',
   'chat.untitledThread': 'Thread senza titolo',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Nascondi barra laterale',
   'chat.showSidebar': 'Mostra barra laterale',
   'chat.newThreadShortcut': 'Nuovo thread (/new)',

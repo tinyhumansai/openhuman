@@ -41,6 +41,18 @@ const en3: TranslationMap = {
     'Use Reveal Folder to open the vault directory directly. Vault path:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Reveal Folder',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Failed to load memory graph',
   'workspace.loadingGraph': 'Loading memory graph...',
   'workspace.graphViewMode': 'Memory graph view mode',
@@ -189,6 +201,13 @@ const en3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Restart / Update Runtime',
   'bootCheck.unexpectedError': 'Unexpected Boot-Check Error',
   'bootCheck.actionFailed': 'Something went wrong. Please try again.',
+  'bootCheck.portConflictTitle': "Couldn't Start the App Engine",
+  'bootCheck.portConflictBody':
+    "Another process is using the network port OpenHuman needs. We'll try to fix this automatically.",
+  'bootCheck.portConflictFixButton': 'Fix Automatically',
+  'bootCheck.portConflictFixing': 'Fixing…',
+  'bootCheck.portConflictFixFailed':
+    "Automatic fix didn't work. Please restart your computer and try again.",
   'notifications.justNow': 'just now',
   'notifications.minAgo': '{n}m ago',
   'notifications.hrAgo': '{n}h ago',
@@ -381,6 +400,13 @@ const en3: TranslationMap = {
   'channels.telegram.reconnect': 'Reconnect',
   'channels.telegram.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.web.alwaysAvailable': 'Always available',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
   'channels.discord.displayName': 'Discord',
   'channels.discord.description': 'Send and receive messages via Discord.',
   'channels.discord.authMode.bot_token.description': 'Provide your own Discord bot token.',
@@ -405,6 +431,12 @@ const en3: TranslationMap = {
   'channels.web.displayName': 'Web',
   'channels.web.description': 'Chat via the built-in web UI.',
   'channels.web.authMode.managed_dm.description': 'Use the embedded web chat — no setup required.',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
 };
 
 export default en3;

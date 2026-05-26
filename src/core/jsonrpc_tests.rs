@@ -1178,3 +1178,60 @@ async fn test_http_health_handler_returns_correct_status() {
 
     assert_eq!(status, expected_status);
 }
+
+#[tokio::test]
+async fn desktop_auth_rejects_deprecated_direct_session_token_marker() {
+    use axum::body::to_bytes;
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::response::IntoResponse;
+
+    let resp = super::desktop_auth_handler(
+        HeaderMap::new(),
+        Query(super::DesktopAuthQuery {
+            token: Some("eyJ.attacker.session.jwt".to_string()),
+            key: Some(" auth ".to_string()),
+        }),
+    )
+    .await
+    .into_response();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let body = String::from_utf8(body.to_vec()).expect("html body should be utf8");
+    assert!(body.contains("no longer supported"));
+    assert!(!body.contains("Sign-in completed"));
+}
+
+#[tokio::test]
+async fn desktop_auth_rejects_embedded_fetch_metadata() {
+    use axum::body::to_bytes;
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, HeaderValue, StatusCode};
+    use axum::response::IntoResponse;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("sec-fetch-mode", HeaderValue::from_static("no-cors"));
+    headers.insert("sec-fetch-dest", HeaderValue::from_static("image"));
+
+    let resp = super::desktop_auth_handler(
+        headers,
+        Query(super::DesktopAuthQuery {
+            token: Some("one-time-login-token".to_string()),
+            key: None,
+        }),
+    )
+    .await
+    .into_response();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let body = String::from_utf8(body.to_vec()).expect("html body should be utf8");
+    assert!(body.contains("must be opened as a browser page"));
+}

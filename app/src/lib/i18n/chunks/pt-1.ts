@@ -313,6 +313,9 @@ const pt1: TranslationMap = {
   'accounts.respondQueue': 'Fila de Respostas',
   'accounts.disconnect': 'Desconectar',
   'accounts.disconnectConfirm': 'Tem certeza de que deseja desconectar esta conta?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Pesquisar contas...',
   'channels.title': 'Canais',
   'channels.configure': 'Configurar Canal',
@@ -371,6 +374,7 @@ const pt1: TranslationMap = {
     'Nunca compartilhe sua frase de recuperação. Qualquer pessoa com essas palavras pode acessar sua conta.',
   'mnemonic.copied': 'Frase de recuperação copiada para a área de transferência',
   'mnemonic.reveal': 'Revelar frase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Frase de recuperação está oculta',
   'privacy.title': 'Privacidade e Segurança',
   'privacy.description': 'Relatório de transparência de dados enviados a serviços externos.',
@@ -1338,6 +1342,19 @@ const pt1: TranslationMap = {
   'subconscious.priority.normal': 'normal',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default pt1;

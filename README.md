@@ -58,21 +58,57 @@
 
 > **Local + managed services, upfront:** OpenHuman stores its Memory Tree, Obsidian-style Markdown vault, workspace config, and local runtime state on your machine. The default managed experience still uses OpenHuman-hosted services for account sign-in, model routing, web search proxying, and managed integration/OAuth flows through the Composio connector layer. Choose custom/local settings if you want to bring your own model, search, or Composio credentials; some real-time triggers and hosted features still require the managed backend.
 
-To install or get started, either download from the website over at [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or run
+# Install
+
+Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) or from the [GitHub Releases](https://github.com/tinyhumansai/openhuman/releases/latest) page. For terminal installs, the native package paths below are preferred — they ride your OS package-manager's signing chain.
+
+## Recommended install (native packages)
+
+These paths verify the artifact through your OS package manager's signing chain (Homebrew bottle hash, signed apt repo, MSI signature).
+
+**macOS (Homebrew tap):**
 
 ```bash
-# Download DMG, EXEs over at https://tinyhumans.ai/openhuman or run in from your terminal
+brew tap tinyhumansai/openhuman
+brew install openhuman
+```
 
-# For macOS or Linux x64
+**Linux (Debian/Ubuntu — signed apt repo):**
+
+```bash
+sudo apt-get install -y --no-install-recommends gnupg2 curl ca-certificates
+curl -fsSL https://tinyhumansai.github.io/openhuman/apt/KEY.gpg \
+  | sudo gpg --dearmor -o /etc/apt/keyrings/openhuman.gpg
+echo "deb [signed-by=/etc/apt/keyrings/openhuman.gpg arch=amd64] \
+  https://tinyhumansai.github.io/openhuman/apt stable main" \
+  | sudo tee /etc/apt/sources.list.d/openhuman.list
+sudo apt-get update
+sudo apt-get install -y openhuman
+```
+
+**Linux (Arch — AUR):** the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/) is in the repo. Once published, Arch users can install it with `yay -S openhuman-bin`.
+
+**Windows:** download the signed `.msi` from the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest) and run it.
+
+**Manual `.dmg` / `.deb` / `.AppImage` / `.msi`:** grab the installer for your platform directly from the [latest release page](https://github.com/tinyhumansai/openhuman/releases/latest).
+
+> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds. The `.deb` package above avoids those failure modes on Debian/Ubuntu.
+
+## Alternative: script install (no integrity check)
+
+> **Warning — unverified install.** These scripts are served live from `raw.githubusercontent.com` and do **not** ship a separate signature, so `curl … | bash` and `irm … | iex` have no way to detect tampering of the script bytes. Prefer the **native package** paths above whenever possible. If you must use the script, see "Verified script install" below.
+
+```bash
+# macOS or Linux x64
 curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.sh | bash
 
-# For Windows
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
-> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
-Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/);
-once published, Arch users can install it with `yay -S openhuman-bin`.
+## Verified script install (coming soon)
+
+PR2 of [#2620](https://github.com/tinyhumansai/openhuman/issues/2620) will publish `install.sh.asc` / `install.ps1.asc` as release assets and document the `gpg --verify` (and Windows equivalent) flow here, so the script path can be made integrity-checked end-to-end.
 
 # What is OpenHuman?
 

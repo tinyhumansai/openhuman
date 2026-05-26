@@ -284,6 +284,7 @@ const pt2: TranslationMap = {
   'chat.deleteThread': 'Excluir conversa',
   'chat.deleteThreadConfirm': 'Tem certeza de que deseja excluir "{title}"?',
   'chat.untitledThread': 'Conversa sem título',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Ocultar barra lateral',
   'chat.showSidebar': 'Mostrar barra lateral',
   'chat.newThreadShortcut': 'Nova conversa (/new)',

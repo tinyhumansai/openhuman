@@ -5060,7 +5060,7 @@ dependencies = [
 
 [[package]]
 name = "openhuman"
-version = "0.54.10"
+version = "0.54.16"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -5141,6 +5141,7 @@ dependencies = [
  "serde-big-array",
  "serde_json",
  "serde_yaml",
+ "sha1",
  "sha2 0.10.9",
  "shellexpand",
  "socketioxide",

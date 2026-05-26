@@ -170,6 +170,8 @@ pub struct ComposioAuthorizeResponse {
 pub struct ComposioDeleteResponse {
     #[serde(default)]
     pub deleted: bool,
+    #[serde(default)]
+    pub memory_chunks_deleted: usize,
 }
 
 // ── Tools ───────────────────────────────────────────────────────────

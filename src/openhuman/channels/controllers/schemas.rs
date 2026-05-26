@@ -36,6 +36,8 @@ struct ConnectParams {
 struct DisconnectParams {
     channel: String,
     auth_mode: String,
+    #[serde(default)]
+    clear_memory: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -265,10 +267,16 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "disconnect" => ControllerSchema {
             namespace: "channels",
             function: "disconnect",
-            description: "Disconnect a channel and remove stored credentials.",
+            description: "Disconnect a channel and optionally remove source-scoped memory.",
             inputs: vec![
                 required_string("channel", "Channel identifier."),
                 required_string("authMode", "Auth mode to disconnect."),
+                FieldSchema {
+                    name: "clearMemory",
+                    ty: TypeSchema::Bool,
+                    comment: "When true, delete memory chunks ingested from this channel.",
+                    required: false,
+                },
             ],
             outputs: vec![json_output("result", "Disconnect result.")],
         },
@@ -480,7 +488,7 @@ fn handle_disconnect(params: Map<String, Value>) -> ControllerFuture {
             .auth_mode
             .parse()
             .map_err(|e: String| format!("invalid authMode: {e}"))?;
-        to_json(ops::disconnect_channel(&config, p.channel.trim(), mode).await?)
+        to_json(ops::disconnect_channel(&config, p.channel.trim(), mode, p.clear_memory).await?)
     })
 }
 

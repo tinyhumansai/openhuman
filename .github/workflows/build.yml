@@ -58,7 +58,7 @@ jobs:
           restore-keys: |
             pnpm-store-${{ runner.os }}-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
       # Core is linked into the Tauri binary as a path dep — no separate
       # sidecar build / stage step needed.
       - name: Build Tauri app (CEF default)
@@ -67,7 +67,7 @@ jobs:
           # Skip tsc in beforeBuildCommand — typechecking runs in the dedicated
           # `typecheck` workflow, so doing it again here is duplicated CI time.
           TAURI_CONFIG_OVERRIDE='{"build":{"beforeBuildCommand":"npx vite build"},"plugins":{"updater":{"active":false}}}'
-          cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
+          bash ../scripts/ci-cancel-aware.sh cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --bundles deb
         env:
           NODE_ENV: production
           # CI builds should point at staging, not production.

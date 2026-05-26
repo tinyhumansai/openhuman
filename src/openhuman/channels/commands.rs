@@ -17,6 +17,7 @@ use super::telegram::TelegramChannel;
 use super::whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 use super::whatsapp_web::WhatsAppWebChannel;
+use super::yuanbao::YuanbaoChannel;
 use super::Channel;
 use crate::openhuman::config::Config;
 use anyhow::Result;
@@ -233,6 +234,13 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
                 qq.allowed_users.clone(),
             )),
         ));
+    }
+
+    if let Some(ref yb) = config.channels_config.yuanbao {
+        match YuanbaoChannel::new(yb.clone()) {
+            Ok(ch) => channels.push(("Yuanbao", Arc::new(ch))),
+            Err(e) => tracing::warn!("Yuanbao config invalid, skipping: {}", e),
+        }
     }
 
     if channels.is_empty() {

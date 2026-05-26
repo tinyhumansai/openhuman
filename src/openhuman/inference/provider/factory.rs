@@ -79,7 +79,7 @@ pub fn auth_key_for_slug(slug: &str) -> String {
 pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-        MODEL_REASONING_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
     };
     matches!(
         model,
@@ -88,20 +88,32 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
             | MODEL_AGENTIC_V1
             | MODEL_CODING_V1
             | MODEL_REASONING_QUICK_V1
+            | MODEL_SUMMARIZATION_V1
             | "hint:reasoning"
             | "hint:chat"
             | "hint:agentic"
             | "hint:coding"
+            | "hint:summarization"
     )
 }
 
 /// Return the configured provider string for a named workload role.
 ///
-/// Empty / `"cloud"` resolves through `primary_cloud`. For backwards
-/// compatibility, a legacy external `inference_url` takes precedence when
-/// `primary_cloud` still points at OpenHuman because migration 1→2 preserved
-/// the URL as a custom provider entry but older configs did not explicitly set
-/// per-workload routes.
+/// Empty / `"cloud"` resolves through BYOK fallback first for the three
+/// chat-tier roles (`chat`, `reasoning`, `coding`), then `primary_cloud`.
+/// When a BYOK cloud provider is detected on any workload, unset chat-tier
+/// routes inherit it rather than silently falling back to the managed backend.
+///
+/// Only `chat`, `reasoning`, and `coding` participate in BYOK inheritance.
+/// Background workloads (`memory`, `embeddings`, `heartbeat`, `learning`,
+/// `subconscious`) and the `agentic` workload always fall through to
+/// `primary_cloud` — they use tier-specific models that BYOK providers don't
+/// understand, and their providers are configured independently.
+///
+/// For backwards compatibility, a legacy external `inference_url` takes
+/// precedence when `primary_cloud` still points at OpenHuman because
+/// migration 1→2 preserved the URL as a custom provider entry but older
+/// configs did not explicitly set per-workload routes.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = match role {
         "chat" => config.chat_provider.as_deref(),
@@ -122,10 +134,63 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     };
     let s = opt.unwrap_or("").trim();
     if s.is_empty() || s == "cloud" {
+        // BYOK inheritance is scoped to the three chat-tier roles only.
+        // Background workloads (memory, embeddings, heartbeat, learning,
+        // subconscious) and the agentic workload must stay on the managed
+        // backend — they use tier-specific models that BYOK providers don't
+        // understand, and their providers are configured separately.
+        if matches!(role, "chat" | "reasoning" | "coding") {
+            if let Some(byok) = resolve_byok_fallback_provider_string(config) {
+                log::debug!(
+                    "[providers][byok-fallback] role={} inheriting BYOK provider string={}",
+                    role,
+                    byok
+                );
+                return byok;
+            }
+        }
         resolve_primary_cloud_provider_string(config)
     } else {
         s.to_string()
     }
+}
+
+/// Find the first BYOK cloud provider string configured across all workload
+/// routes, skipping local providers (ollama, lmstudio) and managed-backend
+/// sentinels ("openhuman", "cloud", empty).
+///
+/// Returns `None` when no BYOK cloud provider is configured, in which case
+/// the caller should fall through to `resolve_primary_cloud_provider_string`.
+///
+/// Priority order: chat → reasoning → agentic → coding (user-facing workloads
+/// first so the most prominent setting wins for unset background workloads).
+pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<String> {
+    let candidates = [
+        config.chat_provider.as_deref(),
+        config.reasoning_provider.as_deref(),
+        config.agentic_provider.as_deref(),
+        config.coding_provider.as_deref(),
+    ];
+    for candidate in candidates.iter().flatten() {
+        let s = candidate.trim();
+        if s.is_empty() || s == "cloud" || s == PROVIDER_OPENHUMAN {
+            continue;
+        }
+        // Skip local providers — they are not suitable fallbacks for agentic
+        // or background workloads that run on the managed backend.
+        if s.starts_with(OLLAMA_PROVIDER_PREFIX) || s.starts_with(LM_STUDIO_PROVIDER_PREFIX) {
+            continue;
+        }
+        // Any remaining non-empty string with a colon is a BYOK cloud slug.
+        if s.contains(':') {
+            log::debug!(
+                "[providers][byok-fallback] resolve_byok_fallback found candidate={}",
+                s
+            );
+            return Some(s.to_string());
+        }
+    }
+    None
 }
 
 /// Build a `(Provider, model)` for the given workload role.
@@ -353,6 +418,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
+        Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),
         Some(_) => {
             // Unrecognised hint — forward verbatim; the backend decides validity.
             model
@@ -364,7 +430,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
                 log::warn!(
                     "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
                      backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
-                     reasoning-quick-v1); falling back to '{}'",
+                     reasoning-quick-v1, summarization-v1); falling back to '{}'",
                     model,
                     crate::openhuman::config::MODEL_REASONING_V1,
                 );

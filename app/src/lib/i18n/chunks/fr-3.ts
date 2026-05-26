@@ -43,6 +43,18 @@ const fr3: TranslationMap = {
     'Utilisez Reveal Folder pour ouvrir directement le répertoire du coffre-fort. Chemin du coffre-fort :',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Révéler le dossier',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Échec du chargement du graphe de mémoire',
   'workspace.loadingGraph': 'Chargement du graphe de mémoire…',
   'workspace.graphViewMode': 'Mode de vue du graphe de mémoire',
@@ -194,6 +206,13 @@ const fr3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Redémarrer / Mettre à jour le runtime',
   'bootCheck.unexpectedError': 'Erreur inattendue lors de la vérification au démarrage',
   'bootCheck.actionFailed': "Une erreur s'est produite. Réessaie.",
+  'bootCheck.portConflictTitle': "Impossible de démarrer le moteur de l'application",
+  'bootCheck.portConflictBody':
+    'Un autre processus utilise le port réseau dont OpenHuman a besoin. Nous allons tenter de corriger cela automatiquement.',
+  'bootCheck.portConflictFixButton': 'Corriger automatiquement',
+  'bootCheck.portConflictFixing': 'Correction en cours…',
+  'bootCheck.portConflictFixFailed':
+    "La correction automatique n'a pas fonctionné. Veuillez redémarrer votre ordinateur et réessayer.",
   'notifications.justNow': "à l'instant",
   'notifications.minAgo': 'il y a {n} min',
   'notifications.hrAgo': 'il y a {n} h',
@@ -415,6 +434,19 @@ const fr3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     'Utilisez le chat Web intégré – aucune configuration requise.',
   'welcome.continueLocallyExperimental': 'Continuer localement (expérimental)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default fr3;

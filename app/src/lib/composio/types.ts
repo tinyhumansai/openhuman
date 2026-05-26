@@ -47,6 +47,7 @@ export interface ComposioAuthorizeResponse {
 
 export interface ComposioDeleteResponse {
   deleted: boolean;
+  memory_chunks_deleted?: number;
 }
 
 export interface ComposioToolFunction {

@@ -280,6 +280,7 @@ const ru2: TranslationMap = {
   'chat.deleteThread': 'Удалить чат',
   'chat.deleteThreadConfirm': 'Удалить «{title}»?',
   'chat.untitledThread': 'Чат без названия',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Скрыть боковую панель',
   'chat.showSidebar': 'Показать боковую панель',
   'chat.newThreadShortcut': 'Новый чат (/new)',

@@ -900,19 +900,254 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
     );
 }
 
-// ── TAURI-RUST-4 regression guard ────────────────────────────────────
-//
-// Some providers (Anthropic, OpenHuman cloud after the uniqueness-
-// enforcement rollout) reject chat requests whose `tools` list contains
-// two specs with the same `name` — HTTP 400 "Tool names must be unique."
-// `run_tool_call_loop` chains the persistent `tools_registry` with the
-// per-turn synthesised `extra_tools`; if any name collides across the
-// two lists, both would have made it to the provider before the fix.
-//
-// This test wires a capturing provider, builds a colliding tool list
-// (one `EchoTool` in the registry + a second `EchoTool` clone in
-// `extra_tools`), and asserts the names the provider sees contain
-// `"echo"` exactly once.
+/// Repeated-failure circuit breaker: when the model re-issues the IDENTICAL
+/// failing call, the loop must halt early with a root-cause summary instead of
+/// grinding to `max_iterations` and returning `MaxIterationsExceeded`.
+#[tokio::test]
+async fn run_tool_call_loop_halts_on_repeated_identical_failure() {
+    // Script the same `error_result` call (identical args) far more times than
+    // the REPEAT_FAILURE_THRESHOLD (3); the loop should stop after the 3rd.
+    let mut responses: Vec<anyhow::Result<ChatResponse>> = Vec::new();
+    for _ in 0..10 {
+        responses.push(Ok(ChatResponse {
+            text: Some(
+                "<tool_call>{\"name\":\"error_result\",\"arguments\":{}}</tool_call>".into(),
+            ),
+            tool_calls: vec![],
+            usage: None,
+        }));
+    }
+    let provider = ScriptedProvider {
+        responses: Mutex::new(responses),
+        native_tools: false,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user("install the thing")];
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(ErrorResultTool)];
+
+    let result = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &tools,
+        "test-provider",
+        "model",
+        0.0,
+        true,
+        None,
+        "channel",
+        &crate::openhuman::config::MultimodalConfig::default(),
+        10, // max_iterations — must NOT be reached; breaker fires at 3
+        None,
+        None,
+        &[],
+        None,
+        None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
+    )
+    .await
+    .expect("repeated-failure halt returns Ok with a root-cause summary, not an error");
+
+    assert!(
+        result.contains("Stopping") && result.contains("retried 3 times"),
+        "expected an early repeated-failure halt summary, got: {result}"
+    );
+    assert!(
+        result.contains("explicit failure"),
+        "halt summary should embed the underlying error, got: {result}"
+    );
+    // Breaker fired at the 3rd identical failure → only 3 of the 10 scripted
+    // responses consumed (7 remain). Proves it did NOT grind to max_iterations.
+    assert_eq!(
+        provider.responses.lock().len(),
+        7,
+        "loop should consume exactly 3 LLM turns before halting"
+    );
+}
+
+/// No-progress circuit breaker: even with VARIED arguments (so no single
+/// signature repeats), a run of back-to-back failures with zero success halts
+/// once it hits NO_PROGRESS_FAILURE_THRESHOLD (6).
+#[tokio::test]
+async fn run_tool_call_loop_halts_when_no_progress() {
+    let mut responses = Vec::new();
+    for i in 0..10 {
+        // Distinct args each turn → per-signature count stays at 1, so only the
+        // consecutive-failure guard can trip.
+        responses.push(Ok(ChatResponse {
+            text: Some(format!(
+                "<tool_call>{{\"name\":\"error_result\",\"arguments\":{{\"i\":{i}}}}}</tool_call>"
+            )),
+            tool_calls: vec![],
+            usage: None,
+        }));
+    }
+    let provider = ScriptedProvider {
+        responses: Mutex::new(responses),
+        native_tools: false,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user("keep trying")];
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(ErrorResultTool)];
+
+    let result = run_tool_call_loop(
+        &provider,
+        &mut history,
+        &tools,
+        "test-provider",
+        "model",
+        0.0,
+        true,
+        None,
+        "channel",
+        &crate::openhuman::config::MultimodalConfig::default(),
+        20,
+        None,
+        None,
+        &[],
+        None,
+        None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
+    )
+    .await
+    .expect("no-progress halt returns Ok with a summary");
+
+    assert!(
+        result.contains("Stopping") && result.contains("in a row failed"),
+        "expected a no-progress halt summary, got: {result}"
+    );
+    // Fires at the 6th consecutive failure → 6 of 10 responses consumed.
+    assert_eq!(
+        provider.responses.lock().len(),
+        4,
+        "loop should consume exactly 6 LLM turns before halting on no-progress"
+    );
+}
+
+// -- RepeatFailureGuard (shared by run_tool_call_loop + run_inner_loop) --------
+
+#[test]
+fn repeat_failure_guard_halts_on_3_identical() {
+    let mut g = RepeatFailureGuard::new();
+    assert!(g
+        .record("shell", "pip install yfinance", false, "err")
+        .is_none());
+    assert!(g
+        .record("shell", "pip install yfinance", false, "err")
+        .is_none());
+    let halt = g.record(
+        "shell",
+        "pip install yfinance",
+        false,
+        "externally-managed-environment",
+    );
+    assert!(halt.is_some(), "same call failing 3x must trip the breaker");
+    assert!(halt.unwrap().contains("externally-managed-environment"));
+}
+
+#[test]
+fn repeat_failure_guard_halts_on_6_consecutive_varied() {
+    let mut g = RepeatFailureGuard::new();
+    // Distinct signatures → repeat guard never trips; only the consecutive run does.
+    for i in 0..5 {
+        assert!(g.record("shell", &format!("cmd{i}"), false, "e").is_none());
+    }
+    assert!(
+        g.record("shell", "cmd5", false, "e").is_some(),
+        "6 consecutive failures must trip the no-progress guard"
+    );
+}
+
+#[test]
+fn repeat_failure_guard_success_resets_consecutive() {
+    let mut g = RepeatFailureGuard::new();
+    for i in 0..5 {
+        g.record("shell", &format!("cmd{i}"), false, "e");
+    }
+    assert!(
+        g.record("shell", "ok", true, "fine").is_none(),
+        "success returns None"
+    );
+    // After a success the consecutive counter is back to 0, so one more failure
+    // is nowhere near the 6-in-a-row threshold.
+    assert!(g.record("shell", "cmd6", false, "e").is_none());
+}
+
+// -- Hard policy rejects (marker-driven, halt on first verbatim repeat) ---------
+
+#[test]
+fn hard_reject_kind_detects_markers() {
+    use crate::openhuman::security::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
+    // Marker survives the `Error: …` wrapping the tool/subagent layers add.
+    assert_eq!(
+        hard_reject_kind(&format!("Error: {POLICY_BLOCKED_MARKER} Path not allowed")),
+        Some(HardReject::Blocked)
+    );
+    assert_eq!(
+        hard_reject_kind(&format!("{POLICY_DENIED_MARKER} User denied 'shell'.")),
+        Some(HardReject::Denied)
+    );
+    assert_eq!(hard_reject_kind("Error: connection reset by peer"), None);
+}
+
+#[test]
+fn hard_reject_blocked_halts_on_first_repeat_not_third() {
+    use crate::openhuman::security::POLICY_BLOCKED_MARKER;
+    let mut g = RepeatFailureGuard::new();
+    let blocked =
+        format!("Error: {POLICY_BLOCKED_MARKER} Path not allowed by security policy: /etc");
+    // First occurrence is allowed through so the model can read the reason and pivot.
+    assert!(
+        g.record("file_read", "/etc/passwd", false, &blocked)
+            .is_none(),
+        "first hard reject should not halt — let the model change approach"
+    );
+    // Second identical attempt = first verbatim repeat → halt (vs the generic 3).
+    let halt = g.record("file_read", "/etc/passwd", false, &blocked);
+    assert!(
+        halt.is_some(),
+        "an identical blocked call must halt on the 2nd attempt"
+    );
+    let msg = halt.unwrap();
+    assert!(msg.contains("blocked by the security policy"), "got: {msg}");
+}
+
+#[test]
+fn hard_reject_denied_halts_on_first_repeat() {
+    use crate::openhuman::security::POLICY_DENIED_MARKER;
+    let mut g = RepeatFailureGuard::new();
+    let denied = format!("Error: {POLICY_DENIED_MARKER} User denied 'shell' execution.");
+    assert!(g.record("shell", "rm -rf build", false, &denied).is_none());
+    let halt = g.record("shell", "rm -rf build", false, &denied);
+    assert!(
+        halt.is_some(),
+        "re-issued denied call must halt on the 2nd attempt"
+    );
+    assert!(halt.unwrap().contains("denied and re-issued"));
+}
+
+#[test]
+fn hard_reject_distinct_args_do_not_trip_repeat() {
+    use crate::openhuman::security::POLICY_BLOCKED_MARKER;
+    let mut g = RepeatFailureGuard::new();
+    let mk = POLICY_BLOCKED_MARKER;
+    // Different forbidden paths each time: the per-signature repeat guard never
+    // trips (every signature is seen once); only the no-progress backstop can.
+    for i in 0..5 {
+        assert!(g
+            .record(
+                "file_read",
+                &format!("/etc/x{i}"),
+                false,
+                &format!("{mk} blocked")
+            )
+            .is_none());
+    }
+    assert!(
+        g.record("file_read", "/etc/x5", false, &format!("{mk} blocked"))
+            .is_some(),
+        "6 distinct hard rejects in a row should still trip the no-progress guard"
+    );
+}
 
 /// Provider that records the tool-spec names of every `chat()` request
 /// it sees, then returns the next scripted response.

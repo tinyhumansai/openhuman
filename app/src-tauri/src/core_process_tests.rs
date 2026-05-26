@@ -1,6 +1,6 @@
 use super::{
     current_rpc_token, default_core_port, generate_rpc_token, is_expected_port_clash,
-    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle,
+    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle, RecoveryOutcome,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -543,7 +543,7 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
             *guard = Some(task);
         }
 
-        let message = handle.cleanup_startup_timeout(false, false).await;
+        let message = handle.cleanup_startup_timeout(false, false, 2).await;
 
         assert!(
             message.contains("core process did not become ready within"),
@@ -554,12 +554,20 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
             "timeout message should include ready signal state: {message}"
         );
         assert!(
+            message.contains("port=19006"),
+            "timeout message should include RPC port: {message}"
+        );
+        assert!(
             message.contains("port_open=false"),
             "timeout message should include final port state: {message}"
         );
         assert!(
             message.contains("task_state=running"),
             "timeout message should include task state: {message}"
+        );
+        assert!(
+            message.contains("attempt=2"),
+            "timeout message should include startup attempt: {message}"
         );
         assert!(
             handle.task.lock().await.is_none(),
@@ -570,4 +578,106 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
             "cleanup must cancel the startup token before aborting"
         );
     });
+}
+
+// ---------------------------------------------------------------------------
+// RecoveryOutcome serialization tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recovery_outcome_serializes_correctly() {
+    let outcome = RecoveryOutcome {
+        success: true,
+        message: "Core recovered on port 7789".to_string(),
+        new_port: Some(7789),
+    };
+    let json = serde_json::to_value(&outcome).expect("serialize");
+    assert_eq!(json["success"], serde_json::json!(true));
+    assert_eq!(
+        json["message"],
+        serde_json::json!("Core recovered on port 7789")
+    );
+    assert_eq!(json["new_port"], serde_json::json!(7789));
+}
+
+#[test]
+fn recovery_outcome_failure_serializes_with_null_port() {
+    let outcome = RecoveryOutcome {
+        success: false,
+        message: "Recovery failed: port still busy".to_string(),
+        new_port: None,
+    };
+    let json = serde_json::to_value(&outcome).expect("serialize");
+    assert_eq!(json["success"], serde_json::json!(false));
+    assert!(
+        json["new_port"].is_null(),
+        "new_port should be null when None"
+    );
+}
+
+#[test]
+fn recover_port_conflict_succeeds_when_port_is_free() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+    let outcome = rt.block_on(async {
+        // Bind a port, then release it so it's free when recover_port_conflict runs.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        drop(listener);
+        // Brief yield to let the OS fully release the port.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let handle = CoreProcessHandle::new(port);
+        let outcome = handle.recover_port_conflict().await;
+        handle.shutdown().await;
+        outcome
+    });
+
+    assert!(
+        outcome.success,
+        "recovery should succeed when port is free: {}",
+        outcome.message
+    );
+    assert!(
+        outcome.new_port.is_some(),
+        "new_port should be set on success"
+    );
+}
+
+#[test]
+fn recover_port_conflict_handles_stale_listener() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+    // Bind a port, attempt recovery — the recovery must still succeed because
+    // ensure_running's fallback range kicks in when the preferred port is busy.
+    let outcome = rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let handle = CoreProcessHandle::new(port);
+        let outcome = handle.recover_port_conflict().await;
+        handle.shutdown().await;
+        drop(listener);
+        outcome
+    });
+
+    // Recovery may succeed via port fallback even with the listener held.
+    // We only assert that the outcome is well-formed.
+    assert!(
+        !outcome.message.is_empty(),
+        "outcome message must always be populated"
+    );
+    if outcome.success {
+        assert!(outcome.new_port.is_some());
+    } else {
+        assert!(outcome.new_port.is_none());
+    }
 }

@@ -41,6 +41,18 @@ const ko3: TranslationMap = {
     '폴더 표시를 사용하여 볼트 디렉터리를 직접 엽니다. 볼트 경로:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': '폴더 공개',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': '메모리 그래프를 불러오지 못했습니다',
   'workspace.loadingGraph': '메모리 그래프를 불러오는 중...',
   'workspace.graphViewMode': '메모리 그래프 보기 모드',
@@ -188,6 +200,13 @@ const ko3: TranslationMap = {
   'bootCheck.restartUpdateCore': '런타임 다시 시작 / 업데이트',
   'bootCheck.unexpectedError': '예상치 못한 부트 체크 오류',
   'bootCheck.actionFailed': '문제가 발생했습니다. 다시 시도해 주세요.',
+  'bootCheck.portConflictTitle': '앱 엔진을 시작할 수 없습니다',
+  'bootCheck.portConflictBody':
+    '다른 프로세스가 OpenHuman에 필요한 네트워크 포트를 사용 중입니다. 자동으로 문제를 해결해 드리겠습니다.',
+  'bootCheck.portConflictFixButton': '자동 수정',
+  'bootCheck.portConflictFixing': '수정 중…',
+  'bootCheck.portConflictFixFailed':
+    '자동 수정에 실패했습니다. 컴퓨터를 재시작한 후 다시 시도해 주세요.',
   'notifications.justNow': '방금 전',
   'notifications.minAgo': '{n}분 전',
   'notifications.hrAgo': '{n}시간 전',
@@ -408,5 +427,18 @@ const ko3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     '내장된 웹 채팅을 사용하세요. 설정이 필요하지 않습니다.',
   'welcome.continueLocallyExperimental': '로컬에서 계속(실험적)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 export default ko3;

@@ -314,6 +314,9 @@ const fr1: TranslationMap = {
   'accounts.respondQueue': 'File de réponses',
   'accounts.disconnect': 'Déconnecter',
   'accounts.disconnectConfirm': 'Es-tu sûr de vouloir déconnecter ce compte ?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Rechercher des comptes…',
   'channels.title': 'Canaux',
   'channels.configure': 'Configurer le canal',
@@ -372,6 +375,7 @@ const fr1: TranslationMap = {
     'Ne partage jamais ta phrase de récupération. Toute personne disposant de ces mots peut accéder à ton compte.',
   'mnemonic.copied': 'Phrase de récupération copiée dans le presse-papiers',
   'mnemonic.reveal': 'Afficher la phrase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'La phrase de récupération est masquée',
   'privacy.title': 'Confidentialité & Sécurité',
   'privacy.description': 'Rapport de transparence sur les données envoyées aux services externes.',
@@ -1345,6 +1349,19 @@ const fr1: TranslationMap = {
   'subconscious.priority.normal': 'normal',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default fr1;

@@ -104,9 +104,12 @@ if [ "${CHANNEL}" != "stable" ]; then
   exit 1
 fi
 
-for cmd in curl mktemp tar; do
+for cmd in curl mktemp tar python3; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     log_err "Missing required command: ${cmd}"
+    if [ "${cmd}" = "python3" ]; then
+      log_err "Install python3 via your system package manager (e.g. 'apt install python3', 'apk add python3', 'dnf install python3')."
+    fi
     exit 1
   fi
 done

@@ -15,6 +15,7 @@ vi.mock('../../../utils/tauriCommands', () => ({
   memoryTreeFlushNow: vi.fn(),
   memoryTreeWipeAll: vi.fn(),
   memoryTreeResetTree: vi.fn(),
+  memoryTreeObsidianVaultStatus: vi.fn(),
 }));
 
 vi.mock('../../../services/memorySyncService', () => ({
@@ -45,13 +46,19 @@ vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
     }),
 }));
 
-const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
-  (await import('../../../utils/tauriCommands')) as unknown as {
-    memoryTreeGraphExport: Mock;
-    memoryTreeFlushNow: Mock;
-    memoryTreeWipeAll: Mock;
-    memoryTreeResetTree: Mock;
-  };
+const {
+  memoryTreeGraphExport,
+  memoryTreeFlushNow,
+  memoryTreeWipeAll,
+  memoryTreeResetTree,
+  memoryTreeObsidianVaultStatus,
+} = (await import('../../../utils/tauriCommands')) as unknown as {
+  memoryTreeGraphExport: Mock;
+  memoryTreeFlushNow: Mock;
+  memoryTreeWipeAll: Mock;
+  memoryTreeResetTree: Mock;
+  memoryTreeObsidianVaultStatus: Mock;
+};
 
 const { listConnections, syncConnection } =
   (await import('../../../lib/composio/composioApi')) as unknown as {
@@ -115,6 +122,14 @@ describe('MemoryWorkspace (graph view)', () => {
     openUrl.mockResolvedValue(undefined);
     openWorkspacePath.mockResolvedValue(undefined);
     revealWorkspacePath.mockResolvedValue(undefined);
+    // Default: the content root is already a registered Obsidian vault, so a
+    // View-Vault click opens it directly (the not-registered guidance branch
+    // is covered in ObsidianVaultSection.test.tsx).
+    memoryTreeObsidianVaultStatus.mockResolvedValue({
+      registered: true,
+      config_found: true,
+      content_root_abs: '/tmp/workspace/memory_tree/content',
+    });
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {

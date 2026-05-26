@@ -291,6 +291,9 @@ const zhCN1: TranslationMap = {
   'accounts.respondQueue': '回复队列',
   'accounts.disconnect': '断开连接',
   'accounts.disconnectConfirm': '确定要断开此账户的连接吗？',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': '搜索账户...',
   'channels.title': '渠道',
   'channels.configure': '配置渠道',
@@ -359,6 +362,7 @@ const zhCN1: TranslationMap = {
   'mnemonic.copyWarning': '永远不要分享你的恢复短语。任何拥有这些单词的人都可以访问你的账户。',
   'mnemonic.copied': '恢复短语已复制到剪贴板',
   'mnemonic.reveal': '显示短语',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': '恢复短语已隐藏',
   'privacy.title': '隐私与安全',
   'privacy.description': '发送到外部服务的数据透明度报告。',
@@ -1308,6 +1312,19 @@ const zhCN1: TranslationMap = {
   'subconscious.priority.normal': '正常',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}毫秒',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default zhCN1;

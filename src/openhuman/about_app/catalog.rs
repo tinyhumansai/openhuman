@@ -1023,6 +1023,16 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "settings.persona_pack",
+        name: "Persona Pack",
+        domain: "settings",
+        category: CapabilityCategory::Settings,
+        description: "Personalize the assistant as one identity: set a display name and description, edit or reset the SOUL.md personality prompt, and reach mascot avatar and voice settings — all from a single Persona surface.",
+        how_to: "Settings > Persona",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "settings.manage_privacy_analytics",
         name: "Manage Privacy and Analytics",
         domain: "settings",
@@ -1309,6 +1319,40 @@ const CAPABILITIES: &[Capability] = &[
         description: "The companion LLM can embed [POINT:x,y:label:screenN] tags to \
                       visually point at UI elements on screen via the overlay.",
         how_to: "Automatic during companion sessions when the LLM identifies a UI target.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "filesystem.access_mode",
+        name: "Agent OS Access Mode",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Choose how much filesystem and shell access the agent has: Read-Only, \
+                      Workspace, Trusted Roots (grant specific folders outside the workspace), \
+                      or Full Access. Credential stores stay blocked in every mode.",
+        how_to: "Settings → Agent OS access",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "tool.detect_tools",
+        name: "Detect Installed Tools",
+        domain: "tools",
+        category: CapabilityCategory::Settings,
+        description: "Probe the host PATH to report which developer tools and language \
+                      runtimes are installed (node, python, cargo, docker, git, …).",
+        how_to: "Used by the agent automatically; gated by the tool toggle list.",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "tool.install_tool",
+        name: "Install OS Packages",
+        domain: "tools",
+        category: CapabilityCategory::Settings,
+        description: "Install OS or language packages (apt/dnf/brew/winget/pipx/npm/cargo). \
+                      High impact: only available when Full access / tool installation is enabled.",
+        how_to: "Enable in Settings → Agent OS access (Full access mode).",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

@@ -1,8 +1,10 @@
-import { screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { FALLBACK_DEFINITIONS } from '../../../lib/channels/definitions';
-import { renderWithProviders } from '../../../test/test-utils';
+import { channelConnectionsApi } from '../../../services/api/channelConnectionsApi';
+import { upsertChannelConnection } from '../../../store/channelConnectionsSlice';
+import { createTestStore, renderWithProviders } from '../../../test/test-utils';
 import DiscordConfig from '../DiscordConfig';
 
 const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 'jwt-abc' } })));
@@ -10,6 +12,27 @@ const coreStateMock = vi.hoisted(() => vi.fn(() => ({ snapshot: { sessionToken: 
 vi.mock('../../../providers/CoreStateProvider', () => ({ useCoreState: () => coreStateMock() }));
 
 const discordDef = FALLBACK_DEFINITIONS.find(d => d.id === 'discord')!;
+
+vi.mock('../../../hooks/useOAuthConnectionListener', () => ({
+  useOAuthConnectionListener: vi.fn(),
+}));
+
+vi.mock('../../../services/api/channelConnectionsApi', () => ({
+  channelConnectionsApi: {
+    connectChannel: vi.fn(),
+    disconnectChannel: vi.fn(),
+    discordLinkStart: vi.fn(),
+    discordLinkCheck: vi.fn(),
+    listDefinitions: vi.fn(),
+    listStatus: vi.fn(),
+  },
+}));
+
+vi.mock('../../../services/coreRpcClient', () => ({ callCoreRpc: vi.fn() }));
+
+vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
+
+vi.mock('../../../utils/tauriCommands/core', () => ({ restartCoreProcess: vi.fn() }));
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -38,6 +61,62 @@ describe('DiscordConfig', () => {
     renderWithProviders(<DiscordConfig definition={discordDef} />);
     const connectButtons = screen.getAllByText('Connect');
     expect(connectButtons.length).toBe(3);
+  });
+
+  it('passes clearMemory when disconnecting a connected bot token account', async () => {
+    const store = createTestStore();
+    store.dispatch(
+      upsertChannelConnection({
+        channel: 'discord',
+        authMode: 'bot_token',
+        patch: { status: 'connected', capabilities: ['read', 'write'] },
+      })
+    );
+    vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
+
+    renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    const disconnectButton = screen
+      .getAllByRole('button', { name: 'Disconnect' })
+      .find(button => !button.hasAttribute('disabled'));
+    expect(disconnectButton).toBeDefined();
+    fireEvent.click(disconnectButton!);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith('discord', 'bot_token', {
+        clearMemory: true,
+      });
+    });
+  });
+
+  it('passes clearMemory when disconnecting a connected managed DM account', async () => {
+    const store = createTestStore();
+    store.dispatch(
+      upsertChannelConnection({
+        channel: 'discord',
+        authMode: 'managed_dm',
+        patch: { status: 'connected', capabilities: ['dm'] },
+      })
+    );
+    vi.mocked(channelConnectionsApi.disconnectChannel).mockResolvedValue(undefined);
+
+    renderWithProviders(<DiscordConfig definition={discordDef} />, { store });
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    const disconnectButton = screen
+      .getAllByRole('button', { name: 'Disconnect' })
+      .find(button => !button.hasAttribute('disabled'));
+    expect(disconnectButton).toBeDefined();
+    fireEvent.click(disconnectButton!);
+
+    await waitFor(() => {
+      expect(channelConnectionsApi.disconnectChannel).toHaveBeenCalledWith(
+        'discord',
+        'managed_dm',
+        { clearMemory: true }
+      );
+    });
   });
 
   it('hides managed channel auth modes for local users', () => {

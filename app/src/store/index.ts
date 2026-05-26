@@ -22,6 +22,7 @@ import coreModeReducer from './coreModeSlice';
 import localeReducer from './localeSlice';
 import mascotReducer from './mascotSlice';
 import notificationReducer from './notificationSlice';
+import personaReducer from './personaSlice';
 import providerSurfacesReducer from './providerSurfaceSlice';
 import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
@@ -142,6 +143,12 @@ const mascotPersistConfig = {
 };
 const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer);
 
+// Persona Pack v1 (issue #2345): persist the cosmetic display name + description
+// per user, mirroring how mascot appearance is stored. SOUL.md lives on disk and
+// is round-tripped over RPC, so it is intentionally not in this slice.
+const personaPersistConfig = { key: 'persona', storage, whitelist: ['displayName', 'description'] };
+const persistedPersonaReducer = persistReducer(personaPersistConfig, personaReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
@@ -157,6 +164,7 @@ export const store = configureStore({
     coreMode: persistedCoreModeReducer,
     locale: persistedLocaleReducer,
     mascot: persistedMascotReducer,
+    persona: persistedPersonaReducer,
     theme: persistedThemeReducer,
   },
   middleware: getDefaultMiddleware => {

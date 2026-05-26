@@ -41,7 +41,7 @@ async fn validate_url_rejects_disallowed_domain() {
         .await
         .unwrap_err()
         .to_string();
-    assert!(err.contains("allowed_domains"));
+    assert!(err.contains("allowed websites"));
 }
 
 #[tokio::test]

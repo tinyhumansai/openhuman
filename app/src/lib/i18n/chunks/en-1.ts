@@ -608,6 +608,9 @@ const en1: TranslationMap = {
   'accounts.respondQueue': 'Respond Queue',
   'accounts.disconnect': 'Disconnect',
   'accounts.disconnectConfirm': 'Are you sure you want to disconnect this account?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Search accounts...',
   'channels.title': 'Channels',
   'channels.configure': 'Configure Channel',
@@ -878,6 +881,7 @@ const en1: TranslationMap = {
     'Never share your recovery phrase. Anyone with these words can access your account.',
   'mnemonic.copied': 'Recovery phrase copied to clipboard',
   'mnemonic.reveal': 'Reveal phrase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Recovery phrase is hidden',
   'privacy.title': 'Privacy & Security',
   'privacy.description': 'Transparency report of data sent to external services.',
@@ -1026,6 +1030,19 @@ const en1: TranslationMap = {
   'settings.search.placeholderStored': '•••••••• (stored)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Hosts the assistant may open and read — via web fetch and the browser tool — one per line, e.g. reuters.com. A host also covers its subdomains. Web search itself is not restricted by this list.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
   'settings.embeddings.title': 'Embeddings',
   'settings.embeddings.description':
     'Choose which embedding provider converts memory into vectors for semantic search. Changing the provider, model, or dimensions invalidates stored vectors and requires a full memory reset.',

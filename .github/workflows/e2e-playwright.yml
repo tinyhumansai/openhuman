@@ -1,0 +1,76 @@
+---
+name: E2E Playwright
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-playwright:
+    name: E2E (Playwright / web lane)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Cache pnpm store
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            app/src-tauri -> target
+          cache-on-failure: true
+          key: e2e-playwright-linux
+
+      - name: Install JS dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+
+      - name: Ensure .env exists for E2E build
+        run: |
+          touch .env
+          touch app/.env
+
+      - name: Build Playwright web E2E bundle + standalone core
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app test:e2e:web:build
+
+      - name: Install Playwright Chromium headless shell
+        run: bash scripts/ci-cancel-aware.sh pnpm --filter openhuman-app exec playwright install chromium-headless-shell
+
+      - name: Run Playwright web E2E suite
+        env:
+          OPENHUMAN_WORKSPACE: ${{ runner.temp }}/openhuman-playwright-workspace
+        run: |
+          mkdir -p "$OPENHUMAN_WORKSPACE"
+          bash scripts/ci-cancel-aware.sh bash app/scripts/e2e-web-session.sh
+
+      - name: Upload Playwright E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: e2e-playwright-failure-logs-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/openhuman-playwright-workspace/**
+          retention-days: 7
+          if-no-files-found: ignore

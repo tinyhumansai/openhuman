@@ -506,6 +506,10 @@ fn normalize_token(raw: &str) -> String {
     out.trim_matches('_').to_string()
 }
 
+pub(crate) fn normalize_connection_identifier(raw: &str) -> String {
+    normalize_token(raw)
+}
+
 fn title_case(raw: &str) -> String {
     let mut chars = raw.chars();
     match chars.next() {

@@ -485,8 +485,10 @@ const id5: TranslationMap = {
   'settings.mascot.colorAria': 'Warna OpenHuman',
   'settings.mascot.colorBlack': 'Hitam',
   'settings.mascot.colorBurgundy': 'Burgundi',
-  'settings.mascot.colorGreen': 'Hijau',
+  'settings.mascot.colorCustom': 'Custom',
   'settings.mascot.colorNavy': 'Biru tua',
+  'settings.mascot.primaryColor': 'Primary color',
+  'settings.mascot.secondaryColor': 'Secondary color',
   'settings.mascot.colorYellow': 'Kuning',
   'settings.mascot.libraryUnavailable': 'Library OpenHuman tidak tersedia',
   'settings.mascot.title': 'OpenHuman',
@@ -514,6 +516,30 @@ const id5: TranslationMap = {
   'settings.mcpServer.clientZed': 'Zed',
   'settings.mcpServer.configFilePath': 'File konfigurasi',
   'settings.mcpServer.clientSelectorAriaLabel': 'Pemilih klien MCP',
+  'settings.persona.title': 'Persona',
+  'settings.persona.menuTitle': 'Persona',
+  'settings.persona.menuDesc':
+    'Name, personality, avatar, and voice — your assistant as one identity',
+  'settings.persona.identityHeading': 'Identity',
+  'settings.persona.identityDesc':
+    'A display name and short description for your assistant. Shown in the app; does not change how the assistant reasons.',
+  'settings.persona.displayNameLabel': 'Display name',
+  'settings.persona.displayNamePlaceholder': 'e.g. Nova',
+  'settings.persona.descriptionLabel': 'Description',
+  'settings.persona.descriptionPlaceholder': 'e.g. A calm, concise assistant for my team.',
+  'settings.persona.soul.heading': 'Personality (SOUL.md)',
+  'settings.persona.soul.desc':
+    'The personality prompt the assistant follows in every conversation. Edits are saved to your workspace and take effect on the next reply.',
+  'settings.persona.soul.editorLabel': 'SOUL.md contents',
+  'settings.persona.soul.reset': 'Reset to default',
+  'settings.persona.soul.usingDefault': 'Using the bundled default',
+  'settings.persona.soul.loadError': 'Could not load SOUL.md',
+  'settings.persona.soul.saveError': 'Could not save SOUL.md',
+  'settings.persona.soul.resetError': 'Could not reset SOUL.md',
+  'settings.persona.appearanceHeading': 'Avatar & Voice',
+  'settings.persona.appearanceDesc':
+    'Mascot color, custom GIF avatar, and reply voice are configured in Mascot settings.',
+  'settings.persona.openMascotSettings': 'Open Mascot settings',
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     'Mode perutean, pemicu integrasi, dan arsip riwayat pemicu.',
@@ -630,6 +656,7 @@ const id5: TranslationMap = {
   'skills.channelIcon.imessage': 'iMessage',
   'skills.channelIcon.telegram': 'Telegram',
   'skills.channelIcon.web': 'Web',
+  'skills.channelIcon.yuanbao': 'Yuanbao',
   'skills.composio.poweredBy': 'Didukung oleh Composio',
   'skills.composio.staleStatusTitle': 'Koneksi menunjukkan status basi',
   'skills.create.allowedToolsHelp': 'Dirender ke frontmatter SKILL.md sebagai',
@@ -691,6 +718,42 @@ const id5: TranslationMap = {
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.soonSuffix': 'segera',
   'skills.setup.screenIntel.permissionPathLabel': 'macOS menerapkan privasi ke:',
+  'settings.agentAccess.title': 'Agent OS access',
+  'settings.agentAccess.menuDesc':
+    'Control where the agent can read/write and whether it can use the shell.',
+  'settings.agentAccess.loadError': 'Failed to load access settings',
+  'settings.agentAccess.saveError': 'Failed to save access settings',
+  'settings.agentAccess.saved': 'Saved — applies on your next message.',
+  'settings.agentAccess.desktopOnly': 'Access settings are only available in the desktop app.',
+  'settings.agentAccess.loading': 'Loading…',
+  'settings.agentAccess.accessMode': 'Access mode',
+  'settings.agentAccess.tier.readonly.title': 'Read-only',
+  'settings.agentAccess.tier.readonly.desc':
+    'Reads files and runs read-only commands to explore — but never writes, edits, or runs anything that changes state.',
+  'settings.agentAccess.tier.supervised.title': 'Ask before edit',
+  'settings.agentAccess.tier.supervised.desc':
+    'Creates new files freely, but asks for your approval before editing an existing file, running a command, reaching the network, or installing anything.',
+  'settings.agentAccess.tier.full.title': 'Full access',
+  'settings.agentAccess.tier.full.desc':
+    'Runs commands with your full user account access — it can read/write anywhere allowed, except credential and system stores. Destructive commands, network access, and installs still ask for approval.',
+  'settings.agentAccess.defaultTag': '(default)',
+  'settings.agentAccess.fullWarning':
+    '⚠ Full access runs commands with your full account access and is not sandboxed. Only enable it when you trust the agent with this machine. Credential and system directories stay blocked, and destructive, network, and install actions still ask for approval.',
+  'settings.agentAccess.confine.label': 'Confine to workspace',
+  'settings.agentAccess.confine.desc':
+    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
+  'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.grantedDesc':
+    'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
+  'settings.agentAccess.noneGranted': 'No folders granted.',
+  'settings.agentAccess.readWrite': 'read + write',
+  'settings.agentAccess.readOnly': 'read-only',
+  'settings.agentAccess.remove': 'Remove',
+  'settings.agentAccess.pathPlaceholder': 'Jalur folder absolut',
+  'settings.agentAccess.accessLevelLabel': 'Access level',
+  'settings.agentAccess.add': 'Add',
+  'settings.agentAccess.saving': 'Saving…',
+  'settings.agentAccess.changesApply': 'Changes apply on your next message.',
 };
 
 export default id5;

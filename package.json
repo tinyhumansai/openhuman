@@ -11,6 +11,7 @@
     "dev": "pnpm --filter openhuman-app dev",
     "dev:app": "pnpm --filter openhuman-app dev:app",
     "dev:app:win": "pnpm --filter openhuman-app dev:app:win",
+    "dev:staging": "bash scripts/dev-staging.sh",
     "dev:cef": "pnpm --filter openhuman-app dev:cef",
     "format": "pnpm --filter openhuman-app format",
     "format:check": "pnpm --filter openhuman-app format:check",
@@ -60,6 +61,7 @@
     "ws": "^8.20.0"
   },
   "dependencies": {
+    "@rive-app/react-canvas": "^4.28.6",
     "@tauri-apps/api": "2.10.1"
   }
 }

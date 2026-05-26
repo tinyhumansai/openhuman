@@ -3,6 +3,27 @@
 //! Events carry full payloads so subscribers have everything they need without
 //! secondary lookups. The broadcast channel clones each event per subscriber,
 //! which is fine — richness beats round-trips.
+//!
+//! ## Workspace-scoped events
+//!
+//! Some events are scoped to a specific workspace directory and must be
+//! validated by subscribers before acting on them.
+//!
+//! **Publisher contract**: when constructing a workspace-scoped event, the
+//! publisher must populate `workspace_dir` with the active workspace path at
+//! event creation time. This is typically available as `ctx.workspace_dir`
+//! on the channel runtime context.
+//!
+//! **Subscriber contract**: subscribers that persist or mutate workspace-
+//! specific data must compare the event's `workspace_dir` against their own
+//! workspace binding and silently drop events that do not match. This prevents
+//! stale in-flight events from a previous workspace from corrupting the newly
+//! active workspace's state when the user switches workspaces (e.g. logs out
+//! and back in) while events are in flight.
+//!
+//! **Current workspace-scoped variants**:
+//! - [`DomainEvent::ChannelMessageReceived`]
+//! - [`DomainEvent::ChannelMessageProcessed`]
 
 /// Top-level domain event. Non-exhaustive so new variants can be added
 /// without breaking existing match arms.
@@ -129,6 +150,10 @@ pub enum DomainEvent {
         reply_target: String,
         content: String,
         thread_ts: Option<String>,
+        /// Workspace directory active when this event was published.
+        /// Subscribers that persist data must reject events whose
+        /// `workspace_dir` does not match their own workspace binding.
+        workspace_dir: std::path::PathBuf,
     },
     /// A channel message was fully processed (LLM response sent or error).
     ChannelMessageProcessed {
@@ -141,6 +166,10 @@ pub enum DomainEvent {
         response: String,
         elapsed_ms: u64,
         success: bool,
+        /// Workspace directory active when this event was published.
+        /// Subscribers that persist data must reject events whose
+        /// `workspace_dir` does not match their own workspace binding.
+        workspace_dir: std::path::PathBuf,
     },
     /// A reaction event was received from a channel transport.
     ChannelReactionReceived {
@@ -243,6 +272,13 @@ pub enum DomainEvent {
         /// Session id binding the request to the current core launch
         /// so stale approvals cannot be replayed after restart.
         session_id: String,
+        /// Chat thread the gated call belongs to, when the turn originated
+        /// from a chat channel — lets the web channel route a `yes`/`no`
+        /// reply back to this request. `None` for non-chat callers.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the approval question to,
+        /// when known. `None` for non-chat callers.
+        client_id: Option<String>,
     },
     /// User decided a pending approval. Published by `approval_decide`
     /// RPC handler after the gate's parked future resolves.
@@ -549,6 +585,10 @@ pub enum DomainEvent {
     /// Distinct from [`Self::SystemShutdown`] (per-component shutdown
     /// notification) — this variant asks the running process to exit.
     SystemShutdownRequested { source: String, reason: String },
+    /// The `[autonomy]` block (agent access mode / filesystem permissions) was
+    /// changed at runtime. Live sessions should rebuild their `SecurityPolicy`
+    /// from the persisted config before the next turn.
+    AutonomyConfigChanged,
     /// A component's health status changed.
     HealthChanged {
         component: String,
@@ -650,6 +690,7 @@ impl DomainEvent {
             | Self::SystemShutdown { .. }
             | Self::SystemRestartRequested { .. }
             | Self::SystemShutdownRequested { .. }
+            | Self::AutonomyConfigChanged
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
 

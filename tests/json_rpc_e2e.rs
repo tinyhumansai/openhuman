@@ -18,6 +18,7 @@ use tempfile::tempdir;
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
+use openhuman_core::openhuman::connectivity::rpc::pick_listen_port;
 use openhuman_core::openhuman::memory_tree::all_memory_tree_registered_controllers;
 
 const TEST_RPC_TOKEN: &str = "json-rpc-e2e-local-token";
@@ -1314,6 +1315,100 @@ async fn json_rpc_thread_labels_create_and_update() {
             .collect::<Vec<_>>(),
         vec!["work", "briefing"],
         "threads_list must reflect the updated labels"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_thread_title_create_and_update() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Create a thread.
+    let create = post_json_rpc(&rpc_base, 9101, "openhuman.threads_create_new", json!({})).await;
+    let create_outer = assert_no_jsonrpc_error(&create, "threads_create_new for title update");
+    let created = create_outer
+        .get("data")
+        .expect("data envelope in create response");
+    let thread_id = created
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("id in created thread");
+
+    // 2. Update the title.
+    let update = post_json_rpc(
+        &rpc_base,
+        9102,
+        "openhuman.threads_update_title",
+        json!({ "thread_id": thread_id, "title": "Invoice follow-up" }),
+    )
+    .await;
+    let update_outer = assert_no_jsonrpc_error(&update, "threads_update_title");
+    let updated = update_outer
+        .get("data")
+        .expect("data envelope in update response");
+    assert_eq!(
+        updated.get("title").and_then(Value::as_str),
+        Some("Invoice follow-up"),
+        "update response must carry the new title"
+    );
+    assert_eq!(
+        updated.get("id").and_then(Value::as_str),
+        Some(thread_id),
+        "update response must carry the thread id"
+    );
+
+    // 3. Verify the new title is reflected in threads_list.
+    let list = post_json_rpc(&rpc_base, 9103, "openhuman.threads_list", json!({})).await;
+    let list_outer = assert_no_jsonrpc_error(&list, "threads_list after title update");
+    let threads = list_outer
+        .get("data")
+        .and_then(|d| d.get("threads"))
+        .and_then(Value::as_array)
+        .expect("threads array in list");
+    let persisted = threads
+        .iter()
+        .find(|t| t.get("id").and_then(Value::as_str) == Some(thread_id))
+        .expect("created thread must appear in list");
+    assert_eq!(
+        persisted.get("title").and_then(Value::as_str),
+        Some("Invoice follow-up"),
+        "threads_list must reflect the updated title"
+    );
+
+    // 4. Empty title is rejected.
+    let bad = post_json_rpc(
+        &rpc_base,
+        9104,
+        "openhuman.threads_update_title",
+        json!({ "thread_id": thread_id, "title": "" }),
+    )
+    .await;
+    let bad_err = assert_jsonrpc_error(&bad, "threads_update_title with empty title");
+    let err_message = bad_err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("error object missing message: {bad_err}"));
+    assert!(
+        err_message.contains("must not be empty"),
+        "expected empty-title error, got: {err_message}"
     );
 
     api_join.abort();
@@ -7610,4 +7705,103 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
 
     mock_join.abort();
     rpc_join.abort();
+}
+
+// ---------------------------------------------------------------------------
+// Port-conflict recovery E2E
+// ---------------------------------------------------------------------------
+//
+// Verifies that when the preferred core port (7788) is already occupied, the
+// RPC stack starts successfully on a fallback port and remains fully
+// reachable.  A second pass confirms that once the blocker is dropped, port
+// 7788 becomes available again — matching the "repro gone" acceptance
+// criterion from issue #2617.
+
+#[tokio::test]
+async fn port_conflict_recovery_core_starts_on_fallback_port_e2e() {
+    let _env_lock = json_rpc_e2e_env_lock();
+
+    // ── 1. occupy port 7788 with a dummy listener ─────────────────────────
+    // Use std::net so the binding is synchronous and stable before we call
+    // pick_listen_port.
+    let blocker =
+        std::net::TcpListener::bind("127.0.0.1:7788").expect("bind blocker on 7788 for e2e test");
+    blocker
+        .set_nonblocking(true)
+        .expect("set blocker non-blocking");
+
+    // ── 2. pick_listen_port should fall back to 7789–7798 ────────────────
+    let pick_result = pick_listen_port(7788)
+        .await
+        .expect("pick_listen_port must succeed when port is occupied by non-OpenHuman process");
+    assert!(
+        pick_result.fallback_from.is_some(),
+        "expected fallback_from to be Some(7788) when preferred port is occupied, got None"
+    );
+    assert_eq!(
+        pick_result.fallback_from,
+        Some(7788),
+        "fallback_from should record the originally preferred port"
+    );
+    let fallback_port = pick_result.port;
+    assert!(
+        (7789..=7798).contains(&fallback_port),
+        "fallback port {fallback_port} should be in the 7789–7798 range"
+    );
+
+    // ── 3. serve the core router on the fallback listener ────────────────
+    ensure_test_rpc_auth();
+    let router = build_core_http_router(false);
+    let listener =
+        tokio::net::TcpListener::from_std(pick_result.listener.into_std().expect("into_std"))
+            .expect("from_std");
+    let addr: SocketAddr = listener.local_addr().expect("local_addr");
+    let rpc_join = tokio::spawn(async move { axum::serve(listener, router).await });
+    let rpc_base = format!("http://{addr}");
+    assert_eq!(
+        addr.port(),
+        fallback_port,
+        "server should be on the fallback port"
+    );
+
+    // ── 4. RPC health-check on the fallback port ─────────────────────────
+    let diag = post_json_rpc(&rpc_base, 26170, "openhuman.connectivity_diag", json!({})).await;
+    // JSON-RPC result envelope → inner cli-compatible wrapper → diag payload.
+    // post_json_rpc returns the raw JSON-RPC response; assert_no_jsonrpc_error
+    // unwraps the outer "result". The inner value is {"logs":[...],"result":{"diag":{...}}},
+    // so we need one more "result" hop before accessing "diag".
+    let outer = assert_no_jsonrpc_error(&diag, "connectivity_diag on fallback port");
+    let inner = outer.get("result").unwrap_or_else(|| {
+        panic!("connectivity_diag outer result missing 'result' key; got: {outer}")
+    });
+    let diag_payload = inner.get("diag").unwrap_or_else(|| {
+        panic!("connectivity_diag inner result missing 'diag' key; got: {inner}")
+    });
+    assert!(
+        diag_payload.get("sidecar_pid").is_some(),
+        "connectivity_diag should return sidecar_pid field; got: {diag_payload}"
+    );
+    assert!(
+        diag_payload.get("listen_port").is_some(),
+        "connectivity_diag should return listen_port field; got: {diag_payload}"
+    );
+
+    rpc_join.abort();
+
+    // ── 5. drop blocker — verify 7788 is now free ────────────────────────
+    drop(blocker);
+
+    let after_drop = pick_listen_port(7788)
+        .await
+        .expect("pick_listen_port should succeed with 7788 free");
+    assert_eq!(
+        after_drop.port, 7788,
+        "after releasing the blocker, pick_listen_port should bind directly on 7788"
+    );
+    assert!(
+        after_drop.fallback_from.is_none(),
+        "fallback_from should be None when 7788 is free"
+    );
+    // Release the listener so the port is not held across tests.
+    drop(after_drop.listener);
 }

@@ -197,16 +197,7 @@ impl ComposioProvider for GitHubProvider {
         };
 
         // Build the base search query.
-        let query = match &state.cursor {
-            Some(cursor) => {
-                // GitHub's `updated:>` qualifier accepts ISO 8601 dates
-                // (YYYY-MM-DD or full datetime). Using the full stored cursor
-                // (e.g. `"2024-05-21T15:30:00Z"`) is accepted by the API and
-                // more precise than truncating to the day.
-                format!("involves:{login} updated:>{cursor}")
-            }
-            None => format!("involves:{login}"),
-        };
+        let query = build_search_query(&login, state.cursor.as_deref());
 
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
@@ -236,12 +227,15 @@ impl ComposioProvider for GitHubProvider {
                 "[composio:github] executing {ACTION_SEARCH_ISSUES}"
             );
 
-            let resp = ctx
-                .execute(ACTION_SEARCH_ISSUES, Some(args))
-                .await
-                .map_err(|e| {
-                    format!("[composio:github] {ACTION_SEARCH_ISSUES} page={page_num}: {e:#}")
-                })?;
+            let resp = match ctx.execute(ACTION_SEARCH_ISSUES, Some(args)).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    let _ = state.save(&memory).await;
+                    return Err(format!(
+                        "[composio:github] {ACTION_SEARCH_ISSUES} page={page_num}: {e:#}"
+                    ));
+                }
+            };
             state.record_requests(1);
 
             if !resp.successful {
@@ -422,5 +416,23 @@ impl GitHubProvider {
         sync::extract_user_login(&resp.data).ok_or_else(|| {
             "[composio:github] GITHUB_GET_AUTHENTICATED_USER returned no login".to_string()
         })
+    }
+}
+
+/// Build the GitHub Search-Issues query for an incremental sync.
+///
+/// `involves:` is GitHub's logical-OR over `author`, `assignee`, `mentions`,
+/// and `commenter`, so the result set covers every item the connected user
+/// has standing in — not only items explicitly assigned to them. When a
+/// cursor from a prior sync is present, an `updated:>{cursor}` clause is
+/// appended so the next page request only returns items changed since.
+///
+/// Kept as a free function (rather than inline in `sync()`) so the query
+/// contract — specifically the `involves:` qualifier — can be asserted by
+/// unit tests without spinning up the full sync pipeline.
+pub(super) fn build_search_query(login: &str, cursor: Option<&str>) -> String {
+    match cursor {
+        Some(cursor) => format!("involves:{login} updated:>{cursor}"),
+        None => format!("involves:{login}"),
     }
 }

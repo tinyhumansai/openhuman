@@ -313,6 +313,9 @@ const es1: TranslationMap = {
   'accounts.respondQueue': 'Cola de respuestas',
   'accounts.disconnect': 'Desconectar',
   'accounts.disconnectConfirm': '¿Seguro que quieres desconectar esta cuenta?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Buscar cuentas...',
   'channels.title': 'Canales',
   'channels.configure': 'Configurar canal',
@@ -371,6 +374,7 @@ const es1: TranslationMap = {
     'Nunca compartas tu frase de recuperación. Cualquiera con estas palabras puede acceder a tu cuenta.',
   'mnemonic.copied': 'Frase de recuperación copiada al portapapeles',
   'mnemonic.reveal': 'Mostrar frase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'La frase de recuperación está oculta',
   'privacy.title': 'Privacidad y seguridad',
   'privacy.description': 'Informe de transparencia de datos enviados a servicios externos.',
@@ -1340,6 +1344,19 @@ const es1: TranslationMap = {
   'subconscious.priority.normal': 'normales',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default es1;

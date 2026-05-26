@@ -42,6 +42,18 @@ const pt3: TranslationMap = {
     'Use Reveal Folder para abrir o diretório do vault diretamente. Caminho do cofre:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Revelar pasta',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Falha ao carregar grafo de memória',
   'workspace.loadingGraph': 'Carregando grafo de memória...',
   'workspace.graphViewMode': 'Modo de visualização do grafo de memória',
@@ -192,6 +204,13 @@ const pt3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Reiniciar / Atualizar Runtime',
   'bootCheck.unexpectedError': 'Erro Inesperado na Verificação de Inicialização',
   'bootCheck.actionFailed': 'Algo deu errado. Por favor, tente novamente.',
+  'bootCheck.portConflictTitle': 'Não foi possível iniciar o motor do aplicativo',
+  'bootCheck.portConflictBody':
+    'Outro processo está usando a porta de rede que o OpenHuman precisa. Tentaremos corrigir isso automaticamente.',
+  'bootCheck.portConflictFixButton': 'Corrigir automaticamente',
+  'bootCheck.portConflictFixing': 'Corrigindo…',
+  'bootCheck.portConflictFixFailed':
+    'A correção automática não funcionou. Reinicie o computador e tente novamente.',
   'notifications.justNow': 'agora mesmo',
   'notifications.minAgo': '{n}min atrás',
   'notifications.hrAgo': '{n}h atrás',
@@ -411,6 +430,19 @@ const pt3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     'Use o chat da web incorporado – não é necessária nenhuma configuração.',
   'welcome.continueLocallyExperimental': 'Continuar localmente (experimental)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default pt3;

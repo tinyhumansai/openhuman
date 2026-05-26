@@ -11,7 +11,10 @@ pub fn toolkit_description(slug: &str) -> &'static str {
             "Send, read, draft, reply, forward, and search emails; manage labels and threads"
         }
         "notion" => "Create, read, update, and search notion pages and notion databases",
-        "github" => "Manage repositories, issues, pull requests on GitHub",
+        "github" => {
+            "Manage repositories, issues, and pull requests on GitHub; sync \
+             assigned issues into Memory Tree"
+        }
         "slack" => "Send messages, read channels, manage threads, and post updates in Slack",
         "discord" => "Send messages, manage channels, and interact with Discord servers",
         "google_calendar" => "Create, update, and query calendar events; check availability",
@@ -20,6 +23,9 @@ pub fn toolkit_description(slug: &str) -> &'static str {
         "google_sheets" => "Read, write, and manage Google Sheets spreadsheets",
         "outlook" => "Send, read, and manage emails in Microsoft Outlook",
         "microsoft_teams" => "Send messages and manage channels in Microsoft Teams",
+        "larksuite" => {
+            "Connect Lark / Feishu workspace chat, docs, wiki, and meetings via Composio"
+        }
         "linear" => {
             "Create, read, and manage issues, projects, and cycles in Linear; sync \
              assigned issues into Memory Tree"

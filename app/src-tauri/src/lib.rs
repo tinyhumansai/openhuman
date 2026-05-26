@@ -262,6 +262,27 @@ async fn restart_core_process(
     state.inner().restart().await
 }
 
+/// Attempt to auto-recover from a port conflict by reaping stale OpenHuman
+/// processes (cross-platform) and restarting the embedded core.
+///
+/// Called by the BootCheckGate "Fix Automatically" button when the core is
+/// unreachable due to a port conflict.
+#[tauri::command]
+async fn recover_port_conflict(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<core_process::RecoveryOutcome, String> {
+    log::info!("[core] recover_port_conflict: command invoked from frontend");
+    let _guard = state.inner().restart_lock().await;
+    log::debug!("[core] recover_port_conflict: acquired restart lock");
+    let outcome = state.inner().recover_port_conflict().await;
+    log::debug!(
+        "[core] recover_port_conflict: result success={} message={}",
+        outcome.success,
+        outcome.message
+    );
+    Ok(outcome)
+}
+
 /// Start the embedded core process on demand.
 ///
 /// Called by the BootCheckGate (Local mode) before the version check.  The
@@ -3182,6 +3203,7 @@ pub fn run() {
             download_app_update,
             install_app_update,
             restart_core_process,
+            recover_port_conflict,
             start_core_process,
             reset_local_data,
             app_quit,

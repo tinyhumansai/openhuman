@@ -1,6 +1,6 @@
 [package]
 name = "openhuman"
-version = "0.54.10"
+version = "0.54.16"
 edition = "2021"
 description = "OpenHuman core business logic and RPC server"
 autobins = false
@@ -60,6 +60,9 @@ argon2 = "0.5"
 rand = "0.10"
 dirs = "5"
 sha2 = "0.10"
+# Legacy SHA-1 only used for Tencent COS HMAC-SHA1 signing (yuanbao
+# channel media upload). Not used for any new security-sensitive work.
+sha1 = "0.10"
 hmac = "0.12"
 # Archive extraction for the Node.js runtime bootstrap. Unix Node
 # distributions ship as .tar.xz, Windows as .zip. `xz2` with `static`

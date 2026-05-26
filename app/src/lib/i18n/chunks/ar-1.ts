@@ -299,6 +299,9 @@ const ar1: TranslationMap = {
   'accounts.respondQueue': 'قائمة الردود',
   'accounts.disconnect': 'قطع الاتصال',
   'accounts.disconnectConfirm': 'هل أنت متأكد من أنك تريد قطع الاتصال بهذا الحساب؟',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'البحث في الحسابات...',
   'channels.title': 'القنوات',
   'channels.configure': 'ضبط القناة',
@@ -356,6 +359,7 @@ const ar1: TranslationMap = {
     'لا تشارك عبارة الاسترداد أبدًا. أي شخص يمتلك هذه الكلمات يمكنه الوصول إلى حسابك.',
   'mnemonic.copied': 'تم نسخ عبارة الاسترداد إلى الحافظة',
   'mnemonic.reveal': 'الكشف عن العبارة',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'عبارة الاسترداد مخفية',
   'privacy.title': 'الخصوصية والأمان',
   'privacy.description': 'تقرير شفافية البيانات المُرسَلة إلى الخدمات الخارجية.',
@@ -1315,6 +1319,19 @@ const ar1: TranslationMap = {
   'subconscious.priority.normal': 'عادي',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default ar1;

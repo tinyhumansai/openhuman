@@ -121,6 +121,12 @@ PRs must meet **≥ 80% coverage on changed lines**. Enforced by [`.github/workf
 
 **Rust config** uses a TOML `Config` struct (`src/openhuman/config/schema/types.rs`) with env overrides (`src/openhuman/config/schema/load.rs`).
 
+**Agent access mode** — the `[autonomy]` block (`src/openhuman/config/schema/autonomy.rs`) drives the agent's filesystem/shell reach via `SecurityPolicy` (`src/openhuman/security/policy.rs`). Tiers: `level` (`readonly` = read-only / `supervised` = "ask before edit" / `full` = full access) × `workspace_only` × `trusted_roots` (per-folder `read`/`readwrite` grants outside the workspace, overriding `forbidden_paths` for their subtree) × `allow_tool_install` (gates `install_tool`). Edit live via the `config.update_autonomy_settings` RPC or **Settings → Agent access** (`AgentAccessPanel.tsx`); changes swap the process-global policy in `security::live_policy` and apply to new sessions. The default projects home is `~/OpenHuman/projects` (`config::default_projects_dir`, env `OPENHUMAN_PROJECTS_DIR`), auto-created at startup and injected as a ReadWrite trusted root — distinct from the hidden internal `~/.openhuman/workspace`.
+
+**Command permission model (deterministic, fail-closed):** `classify_command` buckets a command into `CommandClass` (`Read` / `Write` / `Network` / `Install` / `Destructive`); an unrecognized command is **`Write`**, never `Read`. `gate_decision(class, tier)` → `Allow` / `Prompt` / `Block`: read-only allows only reads; ask-before-edit prompts every act (file *create* is free, *edit-existing* prompts); full runs read+write but **always-asks** Network/Install/Destructive. Acting tools (`shell`/`node_exec`/`npm_exec`/`file_write`/`edit_file`/`apply_patch`/`git_operations`/`curl`) return `external_effect_with_args() == true` for `Prompt` classes so the harness routes them through the `ApprovalGate` *before* `execute()`; read-only `Block` + structural guards (`check_gated_command`) are enforced in-tool. The LLM may pass a `category` (escalate-only: `max(rust_floor, declared)`). System/credential dirs are an **unconditional** cross-platform block (`is_always_forbidden`, trusted-root-proof). Enforcement is in Rust (`classify_command`/`gate_decision`/`check_gated_command`/`is_path_string_allowed`/`validate_path`), never the system prompt.
+
+> ⚠️ **The approval prompt is ON by default** (opt out with `OPENHUMAN_APPROVAL_GATE=0`/`false`, `jsonrpc.rs`). `ApprovalGate::init_global` installs unless disabled, so `try_global()` is `Some` and the prompt is wired end-to-end; with `OPENHUMAN_APPROVAL_GATE=0` the harness skips the intercept and `Prompt`-class calls **run unprompted**. The gate parks only for **interactive chat turns** (a `tokio` task-local chat context is set in `channels/providers/web.rs`; background triage/cron turns carry no context and are allowed through, not gated). It publishes `DomainEvent::ApprovalRequested`, which `ApprovalSurfaceSubscriber` bridges to the `approval_request` web-channel socket event; the frontend (`ChatApprovalRequestEvent` → `chatRuntime.pendingApprovalByThread` → `ApprovalRequestCard` above the composer) surfaces Approve/Deny, routing to the `openhuman.approval_decide` RPC. A typed `yes`/`no` chat reply is also honoured server-side (web.rs ingress router runs before the "newer request aborts the in-flight turn" path); any other text cancels the parked turn and is taken as a fresh message. Unanswered prompts still park to the 10-min TTL → Deny. Read-only blocking, path hardening, structural guards, and classification **are** live regardless of the flag. Full access ships as documented full-trust (not sandboxed).
+
 ---
 
 ## Testing
@@ -270,11 +276,30 @@ Tauri/Rust in the shell is a **delivery vehicle** (windowing, process lifecycle,
 
 ## Git workflow
 
-- **Never write code on `main`.** Before making any code changes, fork a new branch off the latest `main` (`git fetch upstream && git checkout -b <branch> upstream/main`). All work happens on that feature branch; `main` stays clean and only advances via merged PRs.
+This file is loaded into every contributor's Claude Code session, so the instructions below are written generically: `<your-username>` means **your** GitHub username (the owner of your fork), not any specific maintainer. Adapt the literal commands accordingly.
+
+**One-time remote setup.** Contribute via your own fork of `tinyhumansai/openhuman`. Recommended remote layout:
+
+```
+origin    git@github.com:<your-username>/openhuman.git  (your fork — push here)
+upstream  git@github.com:tinyhumansai/openhuman.git     (fetch-only; never push)
+```
+
+If you cloned the upstream directly, fix it once:
+
+```bash
+git remote rename origin upstream
+git remote add origin git@github.com:<your-username>/openhuman.git
+git fetch upstream
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full new-contributor walkthrough.
+
+- **Never write code on `main`.** Before making any code changes, branch off the latest upstream `main` (`git fetch upstream && git checkout -b <branch> upstream/main`). All work happens on that feature branch; `main` stays clean and only advances via merged PRs.
 - Issues and PRs on upstream **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** — not a fork — unless explicitly told otherwise.
 - Issue templates: [`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md), [`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md). PR template: [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). AI-authored text should follow them verbatim.
-- PRs target **`main`**.
-- **Push branches to `origin` (the user's fork — `senamakel/openhuman`), never to `upstream` (`tinyhumansai/openhuman`).** PRs are still opened against `tinyhumansai/openhuman:main`, but with `--head senamakel:<branch>` so the source is the fork. Direct pushes to upstream pollute its branch list and skip code-review boundaries. Treat the `upstream` remote as fetch-only.
+- PRs target **`main`** of `tinyhumansai/openhuman`.
+- **Push branches to `origin` (your fork), never to `upstream` (`tinyhumansai/openhuman`).** PRs are opened against `tinyhumansai/openhuman:main` with `--head <your-username>:<branch>` so the source is the fork. Direct pushes to upstream pollute its branch list and skip code-review boundaries. Treat the `upstream` remote as fetch-only.
 - **When the user asks you to push or open a PR, resolve blockers and push — don't prompt for permission.** If a pre-push hook fails on something unrelated to your changes (e.g. pre-existing breakage on `main` in code you didn't touch), push with `--no-verify` and call it out in the PR body. If the hook fails on your own changes, fix them and push again. Don't ask the user whether to bypass — just do the right thing and tell them what you did.
 
 ---

@@ -492,28 +492,62 @@ pub async fn memory_recall_memories(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::OnceLock;
-
     use serde_json::json;
-    use tempfile::TempDir;
 
     use super::*;
 
-    fn ensure_memory_client() {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        let _ = crate::openhuman::memory::global::init(workspace.clone());
+    /// Pins `OPENHUMAN_WORKSPACE` to the shared memory workspace for a test's
+    /// duration, holding [`crate::openhuman::config::TEST_ENV_LOCK`] so sibling
+    /// tests that mutate the env var (e.g. `config::ops`, `update::ops`,
+    /// autonomy settings) cannot change it mid-run.
+    ///
+    /// `documents` tests are the only `memory::ops` tests that resolve the
+    /// workspace from the env var (`memory_init` → `current_workspace_dir` →
+    /// `Config::load_or_init`), so without this pin they race those tests and
+    /// `memory_init` intermittently fails — surfaced under `cargo-llvm-cov`
+    /// timing. Lock order is `GLOBAL_MEMORY_TEST_LOCK` → `TEST_ENV_LOCK` (the
+    /// test takes the memory lock first, then this guard takes the env lock); no
+    /// code path takes them in the opposite order, so there is no deadlock.
+    struct WorkspaceEnvGuard {
+        _env_lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn pin(workspace: &std::path::Path) -> Self {
+            let env_lock = crate::openhuman::config::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", workspace);
+            Self {
+                _env_lock: env_lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+            }
+        }
+    }
+
+    /// Bind the shared memory client and pin `OPENHUMAN_WORKSPACE` to its
+    /// workspace for the test (see [`WorkspaceEnvGuard`]). Hold the returned
+    /// guard for the whole test: `let _env = ensure_memory_client();`.
+    #[must_use]
+    fn ensure_memory_client() -> WorkspaceEnvGuard {
+        let workspace = crate::openhuman::memory::ops::ensure_shared_memory_client();
+        WorkspaceEnvGuard::pin(&workspace)
     }
 
     fn unique_namespace(prefix: &str) -> String {
-        format!("{prefix}-{}", uuid::Uuid::new_v4())
+        let short = &uuid::Uuid::new_v4().as_simple().to_string()[..12];
+        format!("{prefix}{short}")
     }
 
     fn sample_put(namespace: String, key: String, title: &str, content: &str) -> PutDocParams {
@@ -534,9 +568,15 @@ mod tests {
 
     #[tokio::test]
     async fn direct_document_handlers_roundtrip_through_namespace() {
-        ensure_memory_client();
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let _env = ensure_memory_client();
         let namespace = unique_namespace("memory-docs-direct");
-        let key = format!("note-{}", uuid::Uuid::new_v4());
+        let key = format!(
+            "note{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
 
         let put = doc_put(sample_put(
             namespace.clone(),
@@ -609,9 +649,12 @@ mod tests {
 
     #[tokio::test]
     async fn envelope_memory_handlers_report_counts_and_statuses() {
-        ensure_memory_client();
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let _env = ensure_memory_client();
         let namespace = unique_namespace("memory-docs-envelope");
-        let key = format!("env-{}", uuid::Uuid::new_v4());
+        let key = format!("env{}", &uuid::Uuid::new_v4().as_simple().to_string()[..12]);
 
         let _ = memory_init(MemoryInitRequest { jwt_token: None })
             .await

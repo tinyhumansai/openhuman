@@ -217,33 +217,14 @@ const de5: TranslationMap = {
   'settings.developerMenu.integrationTriggers.title': 'Integrationsauslöser',
   'settings.developerMenu.integrationTriggers.desc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
-  'settings.mcpServer.title': 'MCP-Server',
-  'settings.mcpServer.toolsSectionTitle': 'Verfügbare Werkzeuge',
-  'settings.mcpServer.toolsSectionDesc':
-    'Werkzeuge, die über den MCP-Stdio-Server beim Ausführen von openhuman-core mcp bereitgestellt werden',
-  'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
-  'settings.mcpServer.configSectionDesc':
-    'Wähle deinen MCP-Client aus, um das richtige Konfigurations-Snippet zu generieren',
-  'settings.mcpServer.copySnippet': 'In die Zwischenablage kopieren',
-  'settings.mcpServer.copied': 'Kopiert!',
-  'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',
-  'settings.mcpServer.binaryPathNotFound':
-    'OpenHuman-Binärdatei nicht gefunden. Wenn du aus dem Quellcode arbeitest, baue sie mit: cargo build --bin openhuman-core',
-  'settings.mcpServer.openConfigError': 'Konfigurationsdatei konnte nicht geöffnet werden',
-  'settings.mcpServer.clientClaudeDesktop': 'Claude Desktop',
-  'settings.mcpServer.clientCursor': 'Cursor',
-  'settings.mcpServer.clientCodex': 'Codex',
-  'settings.mcpServer.clientZed': 'Zed',
-  'settings.mcpServer.configFilePath': 'Konfigurationsdatei',
-  'settings.mcpServer.clientSelectorAriaLabel': 'MCP-Client-Auswahl',
   'settings.appearance.menuDesc': 'Wähle hell, dunkel oder passend zu deinem Systemthema',
   'settings.mascot.active': 'Aktiv',
   'settings.mascot.characterDesc': 'Charakterbeschreibung',
   'settings.mascot.characterHeading': 'Zeichenüberschrift',
   'settings.mascot.customGifError':
-    'Gib eine HTTPS-.gif-URL, eine Loopback-HTTP-.gif-URL, eine file://-.gif-URL oder einen lokalen .gif-Pfad ein.',
-  'settings.mascot.customGifHeading': 'Eigener GIF-Avatar',
-  'settings.mascot.customGifLabel': 'URL des eigenen GIF-Avatars',
+    'GIF konnte nicht geladen werden. Bitte überprüfe die URL und versuche es erneut.',
+  'settings.mascot.customGifHeading': 'Benutzerdefinierter GIF-Avatar',
+  'settings.mascot.customGifLabel': 'URL für benutzerdefinierten GIF-Avatar',
   'settings.mascot.colorDesc': 'Farbbeschreibung',
   'settings.mascot.colorHeading': 'Farbüberschrift',
   'settings.mascot.loadingLibrary': 'OpenHuman-Bibliothek wird geladen…',
@@ -528,11 +509,37 @@ const de5: TranslationMap = {
   'settings.mascot.colorAria': 'OpenHuman Farbe',
   'settings.mascot.colorBlack': 'Schwarz',
   'settings.mascot.colorBurgundy': 'Burgund',
-  'settings.mascot.colorGreen': 'Grün',
+  'settings.mascot.colorCustom': 'Custom',
   'settings.mascot.colorNavy': 'Marine',
+  'settings.mascot.primaryColor': 'Primary color',
+  'settings.mascot.secondaryColor': 'Secondary color',
   'settings.mascot.colorYellow': 'Gelb',
   'settings.mascot.libraryUnavailable': 'OpenHuman Bibliothek nicht verfügbar',
   'settings.mascot.title': 'OpenHuman',
+  'settings.persona.title': 'Persona',
+  'settings.persona.menuTitle': 'Persona',
+  'settings.persona.menuDesc':
+    'Name, personality, avatar, and voice — your assistant as one identity',
+  'settings.persona.identityHeading': 'Identity',
+  'settings.persona.identityDesc':
+    'A display name and short description for your assistant. Shown in the app; does not change how the assistant reasons.',
+  'settings.persona.displayNameLabel': 'Display name',
+  'settings.persona.displayNamePlaceholder': 'e.g. Nova',
+  'settings.persona.descriptionLabel': 'Description',
+  'settings.persona.descriptionPlaceholder': 'e.g. A calm, concise assistant for my team.',
+  'settings.persona.soul.heading': 'Personality (SOUL.md)',
+  'settings.persona.soul.desc':
+    'The personality prompt the assistant follows in every conversation. Edits are saved to your workspace and take effect on the next reply.',
+  'settings.persona.soul.editorLabel': 'SOUL.md contents',
+  'settings.persona.soul.reset': 'Reset to default',
+  'settings.persona.soul.usingDefault': 'Using the bundled default',
+  'settings.persona.soul.loadError': 'Could not load SOUL.md',
+  'settings.persona.soul.saveError': 'Could not save SOUL.md',
+  'settings.persona.soul.resetError': 'Could not reset SOUL.md',
+  'settings.persona.appearanceHeading': 'Avatar & Voice',
+  'settings.persona.appearanceDesc':
+    'Mascot color, custom GIF avatar, and reply voice are configured in Mascot settings.',
+  'settings.persona.openMascotSettings': 'Open Mascot settings',
   'settings.developerMenu.composio.title': 'Composio',
   'settings.developerMenu.composio.desc':
     'Routing-Modus, Integrations-Trigger und Trigger-Verlaufsarchiv.',
@@ -540,6 +547,26 @@ const de5: TranslationMap = {
   'settings.appearance.tabBarAlwaysShowLabels': 'Beschriftungen immer anzeigen',
   'settings.appearance.tabBarAlwaysShowLabelsDesc':
     'Wenn diese Option deaktiviert ist, werden Beschriftungen nur beim Hover oder für die aktive Registerkarte angezeigt.',
+  'settings.mcpServer.title': 'MCP Server',
+  'settings.mcpServer.toolsSectionTitle': 'Verfügbare Werkzeuge',
+  'settings.mcpServer.toolsSectionDesc':
+    'Werkzeuge, die über den MCP-stdio-Server bereitgestellt werden, wenn openhuman-core mcp ausgeführt wird',
+  'settings.mcpServer.configSectionTitle': 'Client-Konfiguration',
+  'settings.mcpServer.configSectionDesc':
+    'Wähle deinen MCP-Client aus, um den passenden Konfigurationsausschnitt zu erzeugen',
+  'settings.mcpServer.copySnippet': 'In die Zwischenablage kopieren',
+  'settings.mcpServer.copied': 'Kopiert!',
+  'settings.mcpServer.openConfigFile': 'Konfigurationsdatei öffnen',
+  'settings.mcpServer.binaryPathNotFound':
+    'OpenHuman-Binärdatei nicht gefunden. Wenn du aus dem Quellcode arbeitest, baue sie mit: cargo build --bin openhuman-core',
+  'settings.mcpServer.openConfigError': 'Konfigurationsdatei konnte nicht geöffnet werden',
+  'settings.mcpServer.clientClaudeDesktop': 'Claude Desktop',
+  'settings.mcpServer.clientCursor': 'Cursor',
+  'settings.mcpServer.clientCodex': 'Codex',
+  'settings.mcpServer.clientZed': 'Zed',
+  'settings.mcpServer.configFilePath': 'Konfigurationsdatei',
+  'settings.mcpServer.clientSelectorAriaLabel': 'MCP-Client-Auswahl',
+
   'common.breadcrumb': 'Breadcrumb',
   'settings.betaBuild': 'Beta-Build – v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
@@ -657,6 +684,7 @@ const de5: TranslationMap = {
   'skills.channelIcon.imessage': 'iMessage',
   'skills.channelIcon.telegram': 'Telegram',
   'skills.channelIcon.web': 'Web',
+  'skills.channelIcon.yuanbao': 'Yuanbao',
   'skills.composio.poweredBy': 'Unterstützt von Composio',
   'skills.composio.staleStatusTitle': 'Verbindungen zeigen den veralteten Status an',
   'skills.create.allowedToolsHelp': 'Im SKILL.md-Frontmatter gerendert als',
@@ -717,6 +745,42 @@ const de5: TranslationMap = {
   'skills.meetingBots.platforms.zoom': 'Zoom',
   'skills.meetingBots.soonSuffix': 'bald',
   'skills.setup.screenIntel.permissionPathLabel': 'macOS wendet Datenschutz an:',
+  'settings.agentAccess.title': 'Agent OS access',
+  'settings.agentAccess.menuDesc':
+    'Control where the agent can read/write and whether it can use the shell.',
+  'settings.agentAccess.loadError': 'Failed to load access settings',
+  'settings.agentAccess.saveError': 'Failed to save access settings',
+  'settings.agentAccess.saved': 'Saved — applies on your next message.',
+  'settings.agentAccess.desktopOnly': 'Access settings are only available in the desktop app.',
+  'settings.agentAccess.loading': 'Loading…',
+  'settings.agentAccess.accessMode': 'Access mode',
+  'settings.agentAccess.tier.readonly.title': 'Read-only',
+  'settings.agentAccess.tier.readonly.desc':
+    'Reads files and runs read-only commands to explore — but never writes, edits, or runs anything that changes state.',
+  'settings.agentAccess.tier.supervised.title': 'Ask before edit',
+  'settings.agentAccess.tier.supervised.desc':
+    'Creates new files freely, but asks for your approval before editing an existing file, running a command, reaching the network, or installing anything.',
+  'settings.agentAccess.tier.full.title': 'Full access',
+  'settings.agentAccess.tier.full.desc':
+    'Runs commands with your full user account access — it can read/write anywhere allowed, except credential and system stores. Destructive commands, network access, and installs still ask for approval.',
+  'settings.agentAccess.defaultTag': '(default)',
+  'settings.agentAccess.fullWarning':
+    '⚠ Full access runs commands with your full account access and is not sandboxed. Only enable it when you trust the agent with this machine. Credential and system directories stay blocked, and destructive, network, and install actions still ask for approval.',
+  'settings.agentAccess.confine.label': 'Confine to workspace',
+  'settings.agentAccess.confine.desc':
+    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
+  'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.grantedDesc':
+    'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
+  'settings.agentAccess.noneGranted': 'No folders granted.',
+  'settings.agentAccess.readWrite': 'read + write',
+  'settings.agentAccess.readOnly': 'read-only',
+  'settings.agentAccess.remove': 'Remove',
+  'settings.agentAccess.pathPlaceholder': 'Absoluter Ordnerpfad',
+  'settings.agentAccess.accessLevelLabel': 'Access level',
+  'settings.agentAccess.add': 'Add',
+  'settings.agentAccess.saving': 'Saving…',
+  'settings.agentAccess.changesApply': 'Changes apply on your next message.',
 };
 
 export default de5;

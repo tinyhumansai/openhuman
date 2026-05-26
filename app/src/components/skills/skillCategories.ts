@@ -7,7 +7,8 @@ export type SkillCategory =
   | 'Tools & Automation'
   | 'Social'
   | 'Platform'
-  | 'Other';
+  | 'Other'
+  | 'Preview';
 
 export const SKILL_CATEGORY_ORDER: SkillCategory[] = [
   'All',
@@ -19,4 +20,5 @@ export const SKILL_CATEGORY_ORDER: SkillCategory[] = [
   'Social',
   'Platform',
   'Other',
+  'Preview',
 ];

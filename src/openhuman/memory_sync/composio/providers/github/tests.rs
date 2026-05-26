@@ -1,5 +1,6 @@
 //! Unit tests for the GitHub Composio provider.
 
+use super::provider::build_search_query;
 use super::sync::{
     extract_issue_id, extract_issue_title, extract_issue_updated_at, extract_issues,
     extract_user_login,
@@ -178,4 +179,46 @@ fn default_impl_matches_new() {
         a.curated_tools().map(<[_]>::len),
         b.curated_tools().map(<[_]>::len),
     );
+}
+
+// ── build_search_query ──────────────────────────────────────────────────────
+//
+// Regression coverage for #2418: the GitHub Memory Provider must scope the
+// periodic sync to `involves:{login}` — GitHub's logical-OR over `author`,
+// `assignee`, `mentions`, and `commenter` — rather than the narrower
+// `assignee:{login}`. Without these assertions the qualifier could silently
+// regress to assignee-only and lose author / mention / commenter coverage
+// for OSS contributors who are rarely explicitly assigned.
+
+#[test]
+fn build_search_query_uses_involves_qualifier_without_cursor() {
+    let query = build_search_query("octocat", None);
+    assert_eq!(query, "involves:octocat");
+}
+
+#[test]
+fn build_search_query_does_not_fall_back_to_assignee_qualifier() {
+    let query = build_search_query("octocat", None);
+    assert!(
+        !query.contains("assignee:"),
+        "query must not use the narrower assignee-only qualifier (see #2418): {query}"
+    );
+    assert!(query.starts_with("involves:"));
+}
+
+#[test]
+fn build_search_query_appends_updated_clause_when_cursor_present() {
+    let query = build_search_query("octocat", Some("2026-05-25T00:00:00Z"));
+    assert_eq!(
+        query,
+        "involves:octocat updated:>2026-05-25T00:00:00Z",
+        "cursor must be threaded through as an updated:> clause so incremental syncs only refetch changed items"
+    );
+}
+
+#[test]
+fn build_search_query_interpolates_login_verbatim() {
+    let query = build_search_query("Hyphen-User_99", Some("2026-01-02T03:04:05Z"));
+    assert!(query.contains("involves:Hyphen-User_99"));
+    assert!(query.contains("updated:>2026-01-02T03:04:05Z"));
 }

@@ -327,32 +327,60 @@ async fn embed_connection_refused() {
     );
 }
 
-// OPENHUMAN-TAURI-{GP,MA,KM,GX} wire shapes — currently routed through
-// `report_error_or_expected` (Sentry classifier ladder) by this PR. The ladder
-// matches GP (LocalAiCapabilityUnavailable) today; MA/KM/GX still fall through
-// to capture because `observability::expected_error_kind` has no matcher arm
-// for "ollama model not found" / "ollama daemon unreachable". Those matcher
-// arms are blocked behind PR #2063 + #2188 merging (both touch
-// `src/core/observability.rs`) and will land in the follow-up classifier
-// batch. Tests below lock the CURRENT state so the follow-up flips them.
+// OPENHUMAN-TAURI-{GP,MA,KM,GX} + TAURI-RUST-XS wire shapes — routed through
+// `report_error_or_expected` (Sentry classifier ladder) and demoted to
+// `ProviderUserState` / `LocalAiCapabilityUnavailable` by the
+// `is_ollama_user_config_rejection` matcher in `src/core/observability.rs`.
+// GP catches the RAM-tier disable shape; XS/MA/KM/GX cover the four Ollama
+// user-config rejection shapes (400 invalid-model-name, 404 model-not-found
+// ×2, daemon-unreachable opt-in state).
 
 #[test]
-fn ma_wire_shape_current_state_unclassified() {
-    let msg = r#"ollama embed failed with status 404 Not Found: {"error":"model \"bge-m3\" not found, try pulling it first"}"#;
+fn xs_wire_shape_classifies_as_provider_user_state() {
+    // TAURI-RUST-XS (~376 events on self-hosted Sentry): user pointed
+    // embedder at a chat / vision model with a temperature suffix
+    // (`qwen3-vl:4b@0.7`) Ollama parses as malformed.
+    let msg = r#"ollama embed failed with status 400 Bad Request: {"error":"invalid model name"}"#;
     assert_eq!(
         crate::core::observability::expected_error_kind(msg),
-        None,
-        "MA — matcher arm pending follow-up classifier batch (post #2063 + #2188 merge)"
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "XS — invalid model name 400 is pure user-config, must demote"
     );
 }
 
 #[test]
-fn km_wire_shape_current_state_unclassified() {
+fn xs_temperature_suffix_model_classifies_as_provider_user_state() {
+    // Same XS shape with the temperature-suffix model id embedded in the
+    // body. Real wire shape from the field report.
+    let msg = r#"ollama embed failed with status 400 Bad Request: {"error":"invalid model name: qwen3-vl:4b@0.7"}"#;
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "XS — temperature-suffix model id must also demote"
+    );
+}
+
+#[test]
+fn ma_wire_shape_classifies_as_provider_user_state() {
+    // OPENHUMAN-TAURI-MA: user configured an Ollama model id that the
+    // local daemon hasn't pulled yet.
+    let msg = r#"ollama embed failed with status 404 Not Found: {"error":"model \"bge-m3\" not found, try pulling it first"}"#;
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "MA — model-not-found 404 is pure user-state (pull required), must demote"
+    );
+}
+
+#[test]
+fn km_wire_shape_classifies_as_provider_user_state() {
+    // OPENHUMAN-TAURI-KM: same wire shape as MA with a different model
+    // id + `:latest` tag.
     let msg = r#"ollama embed failed with status 404 Not Found: {"error":"model \"nomic-embed-text:latest\" not found, try pulling it first"}"#;
     assert_eq!(
         crate::core::observability::expected_error_kind(msg),
-        None,
-        "KM — matcher arm pending follow-up classifier batch"
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "KM — pull-required 404 must demote"
     );
 }
 
@@ -363,17 +391,30 @@ fn gp_wire_shape_classifies() {
     assert_eq!(
         crate::core::observability::expected_error_kind(msg),
         Some(crate::core::observability::ExpectedErrorKind::LocalAiCapabilityUnavailable),
-        "GP — LocalAiCapabilityUnavailable matcher must catch this; closed by this PR"
+        "GP — LocalAiCapabilityUnavailable matcher must catch this"
     );
 }
 
 #[test]
-fn gx_wire_shape_current_state_unclassified() {
+fn gx_wire_shape_classifies_as_provider_user_state() {
+    // OPENHUMAN-TAURI-GX: user opted into Ollama embeddings in Settings
+    // but the daemon isn't running on localhost:11434.
     let msg = "ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session";
     assert_eq!(
         crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "GX — daemon-unreachable opt-in state is pure user-config (start daemon)"
+    );
+}
+
+#[test]
+fn ollama_500_wire_shape_stays_unexpected() {
+    // Server-side ollama bug — must still reach Sentry.
+    let msg = "ollama embed failed with status 500 Internal Server Error: model crashed";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
         None,
-        "GX — matcher arm pending follow-up classifier batch"
+        "real ollama server errors must still reach Sentry"
     );
 }
 
@@ -384,6 +425,19 @@ fn ollama_parse_error_wire_shape_stays_unexpected() {
         crate::core::observability::expected_error_kind(msg),
         None,
         "real parse bugs must still reach Sentry"
+    );
+}
+
+#[test]
+fn ollama_dimension_mismatch_stays_unexpected() {
+    // Dimension mismatch — real bug (model dims don't match what we
+    // recorded for the provider in Settings), must still reach Sentry
+    // so we can investigate the desync.
+    let msg = "ollama embed dimension mismatch at index 0: expected 768, got 1024";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "dimension-mismatch shape must still reach Sentry"
     );
 }
 

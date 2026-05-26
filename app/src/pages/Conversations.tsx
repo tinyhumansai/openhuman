@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
+import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -44,6 +45,7 @@ import {
   setActiveThread,
   setSelectedThread,
   THREAD_NOT_FOUND_MESSAGE,
+  updateThreadTitle,
 } from '../store/threadSlice';
 import type { AgentProfile } from '../types/agentProfile';
 import type { ConfirmationModal as ConfirmationModalType } from '../types/intelligence';
@@ -211,6 +213,9 @@ const Conversations = ({
   const inferenceStatusByThread = useAppSelector(
     state => state.chatRuntime.inferenceStatusByThread
   );
+  const pendingApprovalByThread = useAppSelector(
+    state => state.chatRuntime.pendingApprovalByThread
+  );
   const streamingAssistantByThread = useAppSelector(
     state => state.chatRuntime.streamingAssistantByThread
   );
@@ -219,6 +224,9 @@ const Conversations = ({
   );
   const rustChat = useRustChat();
   const [reactionPickerMsgId, setReactionPickerMsgId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editTitleValue, setEditTitleValue] = useState('');
+  const editTitleInputRef = useRef<HTMLInputElement>(null);
 
   const {
     teamUsage,
@@ -293,6 +301,23 @@ const Conversations = ({
     const thread = await dispatch(createNewThread()).unwrap();
     dispatch(setSelectedThread(thread.id));
     void dispatch(loadThreadMessages(thread.id));
+  };
+
+  const handleStartEditTitle = () => {
+    if (!selectedThreadId) return;
+    const thr = threads.find(t => t.id === selectedThreadId);
+    setEditTitleValue(thr?.title ?? '');
+    setEditingTitle(true);
+    window.requestAnimationFrame(() => {
+      editTitleInputRef.current?.select();
+    });
+  };
+
+  const handleCommitTitle = () => {
+    const trimmed = editTitleValue.trim();
+    setEditingTitle(false);
+    if (!selectedThreadId || !trimmed) return;
+    void dispatch(updateThreadTitle({ threadId: selectedThreadId, title: trimmed }));
   };
 
   const handleSelectAgentProfile = async (profileId: string) => {
@@ -1279,9 +1304,52 @@ const Conversations = ({
                   </span>
                 </button>
               ) : null}
-              <h3 className="text-sm font-medium text-stone-700 dark:text-neutral-200 truncate">
-                {resolveThreadDisplayTitle(selectedThreadId)}
-              </h3>
+              {editingTitle ? (
+                <input
+                  ref={editTitleInputRef}
+                  value={editTitleValue}
+                  onChange={e => setEditTitleValue(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleCommitTitle();
+                    } else if (e.key === 'Escape') {
+                      setEditingTitle(false);
+                    }
+                  }}
+                  onBlur={handleCommitTitle}
+                  aria-label={t('chat.editThreadTitle')}
+                  className="h-5 text-sm font-medium text-stone-700 dark:text-neutral-200 bg-transparent border-b border-primary-400 outline-none w-full min-w-0 leading-none py-0"
+                  autoFocus
+                />
+              ) : (
+                <div className="flex items-center gap-1 group/title min-w-0">
+                  <h3 className="text-sm font-medium text-stone-700 dark:text-neutral-200 truncate">
+                    {resolveThreadDisplayTitle(selectedThreadId)}
+                  </h3>
+                  {selectedThreadId && (
+                    <button
+                      type="button"
+                      onClick={handleStartEditTitle}
+                      aria-label={t('chat.editThreadTitle')}
+                      title={t('chat.editThreadTitle')}
+                      className="opacity-0 group-hover/title:opacity-100 flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-stone-100 dark:hover:bg-neutral-800 text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-all">
+                      <svg
+                        className="w-3 h-3"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <>
               <div className="flex items-center gap-1">
@@ -1846,6 +1914,20 @@ const Conversations = ({
               </div>
             </div>
           )}
+
+          {(() => {
+            // Surface a parked ApprovalGate request for the shown thread just
+            // above the composer, so it stays visible regardless of scroll.
+            const approvalThreadId = selectedThreadId ?? activeThreadId;
+            const pendingApproval = approvalThreadId
+              ? pendingApprovalByThread[approvalThreadId]
+              : undefined;
+            return pendingApproval && approvalThreadId ? (
+              <div className="mb-2">
+                <ApprovalRequestCard threadId={approvalThreadId} approval={pendingApproval} />
+              </div>
+            ) : null;
+          })()}
 
           {composer === 'mic-cloud' ? (
             <div className="flex flex-col items-center gap-3 py-1">

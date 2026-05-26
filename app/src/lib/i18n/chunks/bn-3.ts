@@ -41,6 +41,18 @@ const bn3: TranslationMap = {
     'ভল্ট ডিরেক্টরিটি সরাসরি খুলতে রিভিল ফোল্ডার ব্যবহার করুন। ভল্ট পাথ:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'ফোল্ডার প্রকাশ করুন',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'মেমোরি গ্রাফ লোড করতে ব্যর্থ',
   'workspace.loadingGraph': 'মেমোরি গ্রাফ লোড হচ্ছে...',
   'workspace.graphViewMode': 'মেমোরি গ্রাফ ভিউ মোড',
@@ -190,6 +202,13 @@ const bn3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'রানটাইম রিস্টার্ট / আপডেট করুন',
   'bootCheck.unexpectedError': 'অপ্রত্যাশিত বুট-চেক ত্রুটি',
   'bootCheck.actionFailed': 'কিছু একটা ভুল হয়েছে। আবার চেষ্টা করুন।',
+  'bootCheck.portConflictTitle': 'অ্যাপ ইঞ্জিন চালু করা যায়নি',
+  'bootCheck.portConflictBody':
+    'অন্য একটি প্রক্রিয়া OpenHuman-এর প্রয়োজনীয় নেটওয়ার্ক পোর্ট ব্যবহার করছে। আমরা স্বয়ংক্রিয়ভাবে এটি ঠিক করার চেষ্টা করব।',
+  'bootCheck.portConflictFixButton': 'স্বয়ংক্রিয়ভাবে ঠিক করুন',
+  'bootCheck.portConflictFixing': 'ঠিক করা হচ্ছে…',
+  'bootCheck.portConflictFixFailed':
+    'স্বয়ংক্রিয় সংশোধন কাজ করেনি। অনুগ্রহ করে আপনার কম্পিউটার পুনরায় চালু করুন এবং আবার চেষ্টা করুন।',
   'notifications.justNow': 'এইমাত্র',
   'notifications.minAgo': '{n} মিনিট আগে',
   'notifications.hrAgo': '{n} ঘণ্টা আগে',
@@ -406,6 +425,19 @@ const bn3: TranslationMap = {
   'channels.web.authMode.managed_dm.description':
     'এমবেড করা ওয়েব চ্যাট ব্যবহার করুন — কোনো সেটআপের প্রয়োজন নেই।',
   'welcome.continueLocallyExperimental': 'স্থানীয়ভাবে চালিয়ে যান (পরীক্ষামূলক)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default bn3;

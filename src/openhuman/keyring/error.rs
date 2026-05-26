@@ -45,7 +45,30 @@ pub enum KeyringError {
     #[error("Failed to generate random bytes: {0}")]
     RandomGeneration(String),
 
+    /// Encryption or decryption of the secrets file failed.
+    #[error("Keyring crypto error: {0}")]
+    Crypto(String),
+
     /// A backend-internal operation failed (e.g. serialization).
     #[error("Keyring backend error: {0}")]
     Backend(String),
+}
+
+impl KeyringError {
+    /// Diagnostic-rich, log-safe description for `warn!`/`error!` sites.
+    ///
+    /// The plain `Display` of the `Os` variant collapses to the underlying
+    /// `keyring::Error`'s message, which on macOS hides the variant and
+    /// `OSStatus` behind strings like "No matching entry found in secure
+    /// storage" — exactly the gap that left us unable to tell a locked
+    /// keychain from a denied prompt without Console.app. The `Debug` form
+    /// preserves the `keyring::Error` variant (`NoEntry` / `PlatformFailure` /
+    /// `NoStorageAccess` / …) and its boxed source chain, which for
+    /// `PlatformFailure` carries the security-framework `OSStatus`.
+    ///
+    /// Safe to log: keyring errors never carry secret *values* — only the
+    /// namespaced key, which `Display` already logs.
+    pub fn diagnostic(&self) -> String {
+        format!("{self:?}")
+    }
 }

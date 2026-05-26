@@ -228,13 +228,11 @@ pub async fn memory_ingestion_status() -> Result<RpcOutcome<IngestionStatusResul
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::{Arc, OnceLock};
 
     use super::*;
     use async_trait::async_trait;
     use serde_json::json;
-    use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
@@ -246,15 +244,8 @@ mod tests {
     }
 
     fn ensure_memory_client() -> crate::openhuman::memory_store::MemoryClientRef {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        crate::openhuman::memory::global::init(workspace.clone()).expect("init memory client")
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
+        crate::openhuman::memory::global::client().expect("memory client")
     }
 
     struct ChannelCapture {
@@ -313,6 +304,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_sync_channel_publishes_targeted_event() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let _guard = test_mutex()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -338,6 +332,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_sync_all_publishes_broadcast_event() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let _guard = test_mutex()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -361,6 +358,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_ingestion_status_reflects_initialized_client_snapshot() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let _guard = test_mutex()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

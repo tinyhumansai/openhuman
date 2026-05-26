@@ -35,6 +35,18 @@ const LOCK_WAIT_MS: u64 = 50;
 /// threshold is intentionally well above any realistic operation time
 /// so we never reclaim under a slow-but-legitimate holder.
 const STALE_LOCK_AGE_MS: u64 = 30_000;
+/// Staleness threshold for a **malformed** lock — one with no parseable
+/// `pid=` line. A healthy holder writes its pid microseconds after the
+/// `create_new` succeeds, so a pidless lock older than this can only be a
+/// crash/kill that landed between `create_new` and the `pid=` write (or an
+/// abandoned in-flight writer). It is never a live, well-behaved holder, so
+/// we reclaim it after a short grace instead of making every reader wait the
+/// full [`STALE_LOCK_AGE_MS`]. This is what was leaving users stuck on
+/// "Initializing OpenHuman" for ~30s after a kill+reopen: `app_state_snapshot`
+/// → `load_app_session_profile` → `acquire_lock` blocked on a fresh pidless
+/// lock. The grace is generous enough to never reclaim under a live writer
+/// mid-`create_new`/`pid=` window (microseconds in practice).
+const MALFORMED_LOCK_GRACE_MS: u64 = 2_000;
 /// Wait long enough for a fresh leaked lock to cross the stale threshold
 /// and be reclaimed before surfacing a lock timeout to the caller.
 const LOCK_TIMEOUT_MS: u64 = STALE_LOCK_AGE_MS + 5_000;
@@ -197,6 +209,15 @@ impl AuthProfilesStore {
             "[auth] AuthProfilesStore::new state_dir={} user_id={user_id} use_keychain={use_keychain}",
             state_dir.display()
         );
+        if !use_keychain {
+            // Surface the consequence of a failed keychain probe at info: auth
+            // secrets will be read/written via the encrypted JSON fallback, not
+            // the OS keychain. This is the state change that drove the
+            // "logged out / no backend session token" confusion.
+            log::info!(
+                "[auth] keychain unavailable (is_available=false) — using encrypted JSON for auth profiles user_id={user_id}"
+            );
+        }
         Self {
             path: state_dir.join(PROFILES_FILENAME),
             lock_path: state_dir.join(LOCK_FILENAME),
@@ -225,8 +246,13 @@ impl AuthProfilesStore {
         });
         let payload = serde_json::to_string(&secrets)
             .context("Failed to serialize auth secrets for keychain")?;
-        crate::openhuman::keyring::set(&self.user_id, &key, &payload)
-            .map_err(|e| anyhow::anyhow!("Keychain set failed for profile {}: {e}", profile.id))?;
+        crate::openhuman::keyring::set(&self.user_id, &key, &payload).map_err(|e| {
+            anyhow::anyhow!(
+                "Keychain set failed for profile {}: {e} | detail={}",
+                profile.id,
+                e.diagnostic()
+            )
+        })?;
         log::debug!(
             "[auth] keychain_store_secrets stored profile_id={} user_id={}",
             profile.id,
@@ -251,8 +277,9 @@ impl AuthProfilesStore {
             }
             Err(e) => {
                 log::warn!(
-                    "[auth] keychain_load_secrets error profile_id={profile_id} user_id={}: {e}",
-                    self.user_id
+                    "[auth] keychain_load_secrets error profile_id={profile_id} user_id={}: {e} | detail={}",
+                    self.user_id,
+                    e.diagnostic()
                 );
                 return Ok(None);
             }
@@ -272,8 +299,9 @@ impl AuthProfilesStore {
         let key = self.keychain_key_for_profile(profile_id);
         if let Err(e) = crate::openhuman::keyring::delete(&self.user_id, &key) {
             log::warn!(
-                "[auth] keychain_delete_secrets error profile_id={profile_id} user_id={}: {e}",
-                self.user_id
+                "[auth] keychain_delete_secrets error profile_id={profile_id} user_id={}: {e} | detail={}",
+                self.user_id,
+                e.diagnostic()
             );
         } else {
             log::debug!(
@@ -1035,10 +1063,15 @@ impl AuthProfilesStore {
     ///    legitimate auth-profile op holds the lock long enough to be
     ///    affected, so a too-old lock is unambiguously a leak.
     ///
-    /// Malformed locks (no `pid=` line) are reclaimed only when they are
-    /// also too old, since a fresh malformed lock might still indicate an
-    /// in-flight writer that crashed between `create_new` and the `pid=`
-    /// write.
+    /// 3. The lock file has no parseable `pid=` line and is older than
+    ///    [`MALFORMED_LOCK_GRACE_MS`]. A healthy holder writes its pid within
+    ///    microseconds of `create_new`, so a pidless lock past that short
+    ///    grace is an abandoned in-flight writer (crashed/killed between
+    ///    `create_new` and the `pid=` write) — reclaim it rather than make
+    ///    every reader spin the full [`STALE_LOCK_AGE_MS`]/`LOCK_TIMEOUT_MS`
+    ///    window (the ~30s "stuck on Initializing OpenHuman" after a
+    ///    kill+reopen). The grace is short but non-zero so we never reclaim a
+    ///    live writer that is mid-`create_new`/`pid=`.
     fn clear_lock_if_stale(&self) -> bool {
         let metadata = match fs::metadata(&self.lock_path) {
             Ok(m) => m,
@@ -1053,13 +1086,19 @@ impl AuthProfilesStore {
             }
         };
 
-        let too_old = match metadata.modified() {
-            Ok(mtime) => std::time::SystemTime::now()
-                .duration_since(mtime)
-                .map(|age| age >= Duration::from_millis(STALE_LOCK_AGE_MS))
-                .unwrap_or(false),
-            Err(_) => false,
-        };
+        let age = metadata
+            .modified()
+            .ok()
+            .and_then(|mtime| std::time::SystemTime::now().duration_since(mtime).ok());
+        let too_old = age.map_or(false, |a| a >= Duration::from_millis(STALE_LOCK_AGE_MS));
+        // A pidless lock needs only a short grace: no healthy holder leaves the
+        // file without a `pid=` line for more than the microsecond gap between
+        // `create_new` and the write, so anything older is abandoned. If mtime
+        // is unreadable (clock skew, platform limitation) default to stale —
+        // no legitimate in-flight writer would be undetectable for that long.
+        let malformed_too_old = age.map_or(true, |a| {
+            a >= Duration::from_millis(MALFORMED_LOCK_GRACE_MS)
+        });
 
         let content = match fs::read_to_string(&self.lock_path) {
             Ok(s) => s,
@@ -1083,14 +1122,16 @@ impl AuthProfilesStore {
             Some(pid) if too_old => Some(format!(
                 "lock file older than {STALE_LOCK_AGE_MS}ms (recorded pid {pid}, presumed leaked)"
             )),
-            None if too_old => Some(format!(
-                "lock file older than {STALE_LOCK_AGE_MS}ms with no parseable pid"
+            None if malformed_too_old => Some(format!(
+                "no parseable pid and older than {MALFORMED_LOCK_GRACE_MS}ms \
+                 (abandoned in-flight lock, reclaiming)"
             )),
             Some(_) => return false,
             None => {
                 tracing::warn!(
                     target: "auth-profiles",
-                    "[credentials] lock at {} has no parseable pid line; leaving in place",
+                    "[credentials] lock at {} has no parseable pid line and is younger than \
+                     {MALFORMED_LOCK_GRACE_MS}ms; leaving in place briefly",
                     self.lock_path.display()
                 );
                 return false;

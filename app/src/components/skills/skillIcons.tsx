@@ -2,9 +2,12 @@ import type { ReactNode } from 'react';
 import type { IconType } from 'react-icons';
 import { FaDiscord, FaGlobe, FaTelegramPlane } from 'react-icons/fa';
 import { IoChatbubble } from 'react-icons/io5';
+
+import YuanbaoIcon from '../channels/YuanbaoIcon';
 import {
   LuBlocks,
   LuBot,
+  LuEye,
   LuKeyboard,
   LuMessageSquareMore,
   LuMic,
@@ -84,6 +87,14 @@ export function getChannelIcons(
       iconClassName="text-[#34C759]"
     />
   ),
+    yuanbao: (
+      <span
+        role="img"
+        aria-label={t('skills.channelIcon.yuanbao')}
+        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5 bg-white">
+        <YuanbaoIcon className="h-[18px] w-[18px]" />
+      </span>
+    ),
   };
 }
 
@@ -144,6 +155,12 @@ const CATEGORY_META: Record<
     chipClassName: 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200',
     iconClassName: 'text-stone-500 dark:text-neutral-400',
     headingClassName: 'text-stone-500 dark:text-neutral-400',
+  },
+  Preview: {
+    icon: LuEye,
+    chipClassName: 'bg-amber-50 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200',
+    iconClassName: 'text-amber-600 dark:text-amber-300',
+    headingClassName: 'text-amber-600 dark:text-amber-300',
   },
 };
 

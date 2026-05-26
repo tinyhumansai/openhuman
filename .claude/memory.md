@@ -257,3 +257,31 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 ## Pre-existing Flaky Tests
 
 - **`composio::action_tool` and `agent::harness::session::turn` intermittent failures** — These tests fail randomly when run as part of the full suite (likely shared state or timing), but pass individually. Not related to security/policy changes. Do not treat as blockers for security-module PRs.
+
+## Windows OAuth Deep Link (Issue #2562)
+
+- **Three-layer fix**: (1) named-pipe IPC in `deep_link_ipc_windows.rs` — secondary process forwards `openhuman://` URL to primary via `\\.\pipe\com.openhuman.app-deeplink`, 40 retries × 50ms; (2) loopback OAuth server in `loopback_oauth.rs` — RFC 8252 one-shot `127.0.0.1:53824`, preferred path that eliminates deep link dispatch entirely; (3) Linux analog in `deep_link_ipc.rs` — Unix domain socket at `$XDG_RUNTIME_DIR/com.openhuman.app-deeplink.sock`.
+- **`OAuthProviderButton.tsx` loopback flow** — tries loopback first, sets `redirectUri` for backend, awaits callback, rewrites `http://127.0.0.1:PORT/auth?...` → `openhuman://auth?...` → `handleDeepLinkUrls`. Falls back to deep link if bind fails.
+- **Pipe binding location** — primary binds the named pipe in `lib.rs` right after the mutex guard (line 2269); `drain_pending_urls()` wired in `setup()` at line 2578.
+- **Issue was already fixed before we picked it up** — PRs #2469, #2511, #2550 had already merged the fix. Our contribution was extracting `classify_request` as a pure function and adding 11 Rust unit tests.
+- **Pure-function extraction pattern** — when async/AppHandle-gated Tauri code is untestable, extract a `classify_request(head, expected_state, bound_port) -> RequestOutcome` pure function returning an enum. Enables comprehensive unit tests with zero Tauri context. `RequestOutcome` has 4 variants: `AuthCallback`, `StateMismatch`, `NotFound`, `MethodNotAllowed`.
+
+## Port Conflict Recovery (Issue #2617)
+
+- **Port fallback already in `pick_listen_port`** — `src/openhuman/connectivity/rpc.rs` tries ports 7789–7798 when 7788 is busy. Gap was: frontend `getCoreRpcUrl()` cached the URL on first resolution so it never picked up the fallback port, and stale-process reaping was macOS-only.
+- **`process_recovery.rs` is platform-gated** — `reap_stale_openhuman_processes` had only a macOS impl. Linux uses `/proc/<pid>/cmdline`; Windows uses `wmic process get`. Tests for each platform's parsing logic live in the same file, following the existing macOS test pattern.
+- **`recover_port_conflict` is a Tauri IPC command, not JSON-RPC** — Rust E2E test for port fallback lives in `tests/json_rpc_e2e.rs` and calls `pick_listen_port` directly: bind port 7788 with a `std::net::TcpListener` (std, not tokio) to simulate conflict, confirm fallback, then serve via `tokio::net::TcpListener::from_std(pick_result.listener.into_std())`.
+- **`BootCheckTransport` is the right hook for frontend recovery** — `app/src/lib/bootCheck/index.ts` is the injection point for new recovery capabilities; don't add them directly to the BootCheck component.
+- **i18n bootCheck keys live in `-3.ts` chunks** — New keys must be added to all 13 language files simultaneously (the `-3.ts` chunk for each language).
+- **Workflow folder** — `workflow/` at repo root has 5 markdown files (00–05) defining the full PR workflow: pick issue → architectobot plan → user approval → codecrusher → architectobot verify → checks → memory-keeper → commit → push/PR.
+
+## Channel Event Workspace Routing (Issue #2602)
+
+- **Workspace identity is `PathBuf`** — Represented as the workspace directory path on `ChannelRuntimeContext` as `ctx.workspace_dir: Arc<PathBuf>`. Use `ctx.workspace_dir.as_ref().clone()` at publish sites. There is no abstract `WorkspaceId` type.
+- **`DomainEvent` workspace routing contract** — Publisher populates workspace field from context; subscriber compares against `self.workspace_dir` and early-returns with `log::debug!` on mismatch. Follow this pattern for any workspace-scoped `DomainEvent` variant.
+- **`ChannelMessageReceived` and `ChannelMessageProcessed` carry `workspace_dir`** — Added in PR for issue #2602. Guards in `ConversationPersistenceSubscriber` (memory_conversations/bus.rs) and `TelegramRemoteSubscriber` (telegram/bus.rs) prevent cross-workspace persistence during login/workspace-change races.
+
+## Pre-existing Upstream Failures (from issue #2602 session)
+
+- **Upstream `main` has 5 Vitest failures and 4 TypeScript compile errors** — Caused by missing iOS experimental dependencies: `@noble/ciphers/chacha`, `@noble/ciphers/webcrypto`, `qrcode.react`, `@tauri-apps/plugin-barcode-scanner`. Breaks `pnpm compile`, `pnpm build`, `pnpm test:coverage` on a clean checkout. Always verify by stashing changes and running checks on the base branch before blaming your PR.
+- **`cargo fmt` must run after codecrusher** — codecrusher does not reliably produce `cargo fmt`-clean Rust. Always run `cargo fmt --manifest-path Cargo.toml` after codecrusher finishes and before committing.

@@ -8,6 +8,8 @@ use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
 use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
 
+use super::write_dispatch;
+
 const DEFAULT_LIMIT: u64 = 10;
 const MAX_LIMIT: u64 = 50;
 const QUERY_ARGUMENTS: &[&str] = &["query", "k"];
@@ -543,13 +545,31 @@ fn list_tools_result_from_specs(specs: Vec<McpToolSpec>) -> Value {
     json!({ "tools": tools })
 }
 
-pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallError> {
+pub async fn call_tool(
+    name: &str,
+    arguments: Value,
+    client_info: &str,
+) -> Result<Value, ToolCallError> {
     let spec = tool_specs()
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| ToolCallError::InvalidParams(format!("unknown MCP tool `{name}`")))?;
 
-    let params = build_rpc_params(spec.name, arguments)?;
+    let audit_arguments = arguments.clone();
+    let mut params = match build_rpc_params(spec.name, arguments) {
+        Ok(params) => params,
+        Err(err) => {
+            if write_dispatch::is_write_tool(spec.name) {
+                write_dispatch::audit_write_rejection_without_config(
+                    spec.name,
+                    &audit_arguments,
+                    client_info,
+                    err.message(),
+                );
+            }
+            return Err(err);
+        }
+    };
     match spec.name {
         "core.list_tools" => {
             reject_unexpected_arguments(&params, &[])?;
@@ -571,9 +591,41 @@ pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallEr
             return run_subagent_tool(&params).await;
         }
         "memory.store" | "memory.note" | "tree.tag" => {
-            enforce_write_policy(spec.name).await?;
-            validate_controller_params(&spec, &params)?;
-            return dispatch_write_tool(spec.name, &params).await;
+            let config = write_dispatch::load_write_config(spec.name).await?;
+            if let Err(err) = write_dispatch::enforce_write_policy_for_config(spec.name, &config) {
+                write_dispatch::audit_write_rejection(
+                    &config,
+                    spec.name,
+                    &audit_arguments,
+                    Some(&params),
+                    client_info,
+                    &err,
+                );
+                return Err(err);
+            }
+            params.insert(
+                "source_type".to_string(),
+                Value::String(client_info.to_string()),
+            );
+            if let Err(err) = validate_controller_params(&spec, &params) {
+                write_dispatch::audit_write_rejection(
+                    &config,
+                    spec.name,
+                    &audit_arguments,
+                    Some(&params),
+                    client_info,
+                    &err,
+                );
+                return Err(err);
+            }
+            return write_dispatch::dispatch_write_tool(
+                spec.name,
+                &params,
+                &audit_arguments,
+                client_info,
+                &config,
+            )
+            .await;
         }
         _ => {}
     }
@@ -1143,78 +1195,6 @@ async fn enforce_act_policy(tool_name: &str) -> Result<(), ToolCallError> {
         .map_err(ToolCallError::InvalidParams)
 }
 
-/// Write operations use the same gate as Act — they are side-effecting and
-/// must not run in read-only mode. The separate function gives us a distinct
-/// log line so auditors can tell reads from writes at a glance.
-async fn enforce_write_policy(tool_name: &str) -> Result<(), ToolCallError> {
-    let config = match config_rpc::load_config_with_timeout().await {
-        Ok(config) => config,
-        Err(err) => {
-            log::warn!(
-                "[mcp_server] enforce_write_policy config load failed tool={tool_name} error={err}"
-            );
-            return Err(ToolCallError::Internal(format!(
-                "failed to load config: {err}"
-            )));
-        }
-    };
-    let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
-    policy
-        .enforce_tool_operation(ToolOperation::Act, tool_name)
-        .map_err(ToolCallError::InvalidParams)
-}
-
-/// Dispatch a write tool to its underlying RPC method with provenance and
-/// audit logging.
-async fn dispatch_write_tool(
-    tool_name: &str,
-    params: &Map<String, Value>,
-) -> Result<Value, ToolCallError> {
-    let rpc_method = "openhuman.memory_doc_put";
-
-    tracing::info!(
-        tool = tool_name,
-        rpc_method = rpc_method,
-        client = "mcp",
-        "[mcp_server] write dispatch"
-    );
-
-    match all::try_invoke_registered_rpc(rpc_method, params.clone()).await {
-        Some(Ok(value)) => {
-            let document_id = value
-                .get("document_id")
-                .and_then(Value::as_str)
-                .unwrap_or("<unknown>");
-            tracing::info!(
-                tool = tool_name,
-                chunk_id = document_id,
-                client = "mcp",
-                "[mcp_server] write success"
-            );
-            Ok(tool_success(value))
-        }
-        Some(Err(message)) => {
-            log::warn!(
-                "[mcp_server] write handler error tool={} error={}",
-                tool_name,
-                message
-            );
-            Ok(tool_error(format!("{} failed: {message}", tool_name)))
-        }
-        None => {
-            log::error!(
-                "[mcp_server] write mapping missing registered RPC method tool={} rpc_method={}",
-                tool_name,
-                rpc_method
-            );
-            Ok(tool_error(format!(
-                "{} is unavailable: mapped RPC method `{}` is not registered",
-                tool_name, rpc_method
-            )))
-        }
-    }
-}
-
 async fn load_config_and_init_registry() -> Result<crate::openhuman::config::Config, ToolCallError>
 {
     let config = config_rpc::load_config_with_timeout()
@@ -1347,7 +1327,7 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
     }))
 }
 
-fn tool_success(value: Value) -> Value {
+pub(super) fn tool_success(value: Value) -> Value {
     json!({
         "content": [{
             "type": "text",
@@ -1365,7 +1345,7 @@ fn tool_text_success(text: String) -> Value {
     })
 }
 
-fn tool_error(message: String) -> Value {
+pub(super) fn tool_error(message: String) -> Value {
     json!({
         "content": [{
             "type": "text",
@@ -2243,6 +2223,58 @@ mod tests {
             params["tags"].as_array().expect("tags is array").len(),
             TREE_TAG_MAX_TAGS
         );
+    }
+
+    #[tokio::test]
+    async fn call_tool_records_write_argument_rejection() {
+        let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let tmp = tempfile::tempdir().expect("tempdir");
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+        }
+        let config = config_rpc::load_config_with_timeout()
+            .await
+            .expect("config");
+
+        let err = call_tool("memory.store", json!({ "title": "T" }), "mcp:test")
+            .await
+            .expect_err("missing content should reject");
+        assert!(
+            err.message()
+                .contains("missing required argument `content`"),
+            "got: {}",
+            err.message()
+        );
+
+        let mut rows = Vec::new();
+        for _ in 0..50 {
+            rows = crate::openhuman::mcp_audit::list_writes(
+                &config,
+                &crate::openhuman::mcp_audit::McpWriteListQuery::default(),
+            )
+            .expect("list writes");
+            if rows.len() == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].success);
+        assert_eq!(rows[0].tool_name, "memory.store");
+        assert_eq!(rows[0].client_info, "mcp:test");
+        assert!(rows[0]
+            .error_message
+            .as_deref()
+            .unwrap_or_default()
+            .contains("missing required argument `content`"));
+        assert!(rows[0].args_summary.get("content").is_none());
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+        }
     }
 
     // ── slug_from ─────────────────────────────────────────────────────

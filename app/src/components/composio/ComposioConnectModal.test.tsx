@@ -223,6 +223,47 @@ describe('<ComposioConnectModal>', () => {
     expect(screen.queryByText('(oxox)')).not.toBeInTheDocument();
   });
 
+  it('passes clearMemory only when the disconnect memory checkbox is selected', async () => {
+    const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({
+      deleted: true,
+      memory_chunks_deleted: 1,
+    });
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+    );
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Disconnect$/i }));
+
+    await waitFor(() => {
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_xyz', { clearMemory: true });
+    });
+  });
+
+  it('resets the clear-memory checkbox after a failed disconnect is dismissed', async () => {
+    const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
+    vi.mocked(composioApi.deleteConnection).mockRejectedValueOnce(new Error('backend down'));
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+    );
+
+    const checkbox = screen.getByLabelText(/also delete memory/i);
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Disconnect$/i }));
+
+    expect(await screen.findByText(/backend down/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/also delete memory/i)).not.toBeChecked();
+    });
+  });
+
   it('shows an expired-auth recovery state with a reconnect CTA', () => {
     const connection: ComposioConnection = {
       id: 'ca_expired',

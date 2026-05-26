@@ -194,6 +194,7 @@ export default function ComposioConnectModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
+  const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState(false);
 
   // Provider-specific required fields are sourced from the declarative
   // registry rather than per-toolkit booleans (#2127). New providers
@@ -508,16 +509,18 @@ export default function ComposioConnectModal({
     setPhase('disconnecting');
     setError(null);
     try {
-      await deleteConnection(activeConnection.id);
+      await deleteConnection(activeConnection.id, { clearMemory: clearMemoryOnDisconnect });
       setActiveConnection(undefined);
+      setClearMemoryOnDisconnect(false);
       setPhase('idle');
       onChanged?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setPhase('error');
       setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
+      setClearMemoryOnDisconnect(false);
     }
-  }, [activeConnection, onChanged, t]);
+  }, [activeConnection, clearMemoryOnDisconnect, onChanged, t]);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -734,6 +737,22 @@ export default function ComposioConnectModal({
                   connectionId={activeConnection.id}
                 />
               )}
+              <label className="flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={clearMemoryOnDisconnect}
+                  onChange={event => setClearMemoryOnDisconnect(event.currentTarget.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+                    {t('accounts.disconnectClearMemory')}
+                  </span>
+                  <span className="block text-xs text-stone-500 dark:text-neutral-400">
+                    {t('accounts.disconnectClearMemoryHint')}
+                  </span>
+                </span>
+              </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -765,6 +784,7 @@ export default function ComposioConnectModal({
               <button
                 type="button"
                 onClick={() => {
+                  setClearMemoryOnDisconnect(false);
                   setPhase(
                     initiallyConnected ? 'connected' : initiallyExpired ? 'expired' : 'idle'
                   );

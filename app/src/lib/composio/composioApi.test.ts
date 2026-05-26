@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  deleteConnection,
   disableTrigger,
   enableTrigger,
   listAgentReadyToolkits,
@@ -100,6 +101,21 @@ describe('composioApi trigger wrappers', () => {
     });
     expect(out.deleted).toBe(true);
   });
+
+  it('deleteConnection forwards clear_memory only when requested', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: { deleted: true, memory_chunks_deleted: 3 },
+      logs: [],
+    });
+
+    const out = await deleteConnection('conn-1', { clearMemory: true });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.composio_delete_connection',
+      params: { connection_id: 'conn-1', clear_memory: true },
+    });
+    expect(out.memory_chunks_deleted).toBe(3);
+  });
 });
 
 describe('syncConnection', () => {
@@ -173,5 +189,29 @@ describe('listAgentReadyToolkits', () => {
     mockCallCoreRpc.mockResolvedValue({ toolkits: ['gmail'] });
     const out = await listAgentReadyToolkits();
     expect(out.toolkits).toEqual(['gmail']);
+  });
+});
+
+describe('deleteConnection', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('calls composio_delete_connection with connection_id', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { deleted: true }, logs: [] });
+    await deleteConnection('conn-abc');
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.composio_delete_connection',
+      params: { connection_id: 'conn-abc' },
+    });
+  });
+
+  it('forwards clearMemory=true to the RPC', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: { deleted: true }, logs: [] });
+    await deleteConnection('conn-abc', { clearMemory: true });
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.composio_delete_connection',
+      params: { connection_id: 'conn-abc', clear_memory: true },
+    });
   });
 });

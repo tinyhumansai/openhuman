@@ -272,6 +272,7 @@ const ar2: TranslationMap = {
   'chat.deleteThread': 'حذف المحادثة',
   'chat.deleteThreadConfirm': 'هل أنت متأكد من أنك تريد حذف "{title}"؟',
   'chat.untitledThread': 'محادثة بلا عنوان',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'إخفاء الشريط الجانبي',
   'chat.showSidebar': 'إظهار الشريط الجانبي',
   'chat.newThreadShortcut': 'محادثة جديدة (/new)',

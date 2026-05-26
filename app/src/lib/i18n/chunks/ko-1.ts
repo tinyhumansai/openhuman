@@ -306,6 +306,9 @@ const ko1: TranslationMap = {
   'accounts.respondQueue': '응답 대기열',
   'accounts.disconnect': '연결 해제',
   'accounts.disconnectConfirm': '이 계정의 연결을 해제하시겠습니까?',
+  'accounts.disconnectClearMemory': '이 소스의 메모리도 삭제',
+  'accounts.disconnectClearMemoryHint':
+    '이 연결과 연관된 로컬 메모리 조각을 영구적으로 삭제합니다.',
   'accounts.searchAccounts': '계정 검색...',
   'channels.title': '채널',
   'channels.configure': '채널 구성',
@@ -363,6 +366,7 @@ const ko1: TranslationMap = {
     '복구 문구를 절대 공유하지 마세요. 이 단어를 가진 사람은 누구나 계정에 접근할 수 있습니다.',
   'mnemonic.copied': '복구 문구가 클립보드에 복사되었습니다',
   'mnemonic.reveal': '문구 보기',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': '복구 문구가 숨겨져 있습니다',
   'privacy.title': '개인정보 및 보안',
   'privacy.description': '외부 서비스로 전송되는 데이터에 대한 투명성 보고서입니다.',
@@ -1325,5 +1329,18 @@ const ko1: TranslationMap = {
   'subconscious.priority.normal': '정상',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 export default ko1;

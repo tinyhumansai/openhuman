@@ -40,6 +40,18 @@ const zhCN3: TranslationMap = {
   'workspace.openVaultFailedMessage': '使用"显示文件夹"直接打开存储库目录。存储库路径：',
   'workspace.revealVaultFailed': '无法显示存储库文件夹',
   'workspace.revealFolder': '显示文件夹',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': '无法加载记忆图谱',
   'workspace.loadingGraph': '正在加载记忆图谱...',
   'workspace.graphViewMode': '记忆图谱视图模式',
@@ -181,6 +193,12 @@ const zhCN3: TranslationMap = {
   'bootCheck.restartUpdateCore': '重启 / 更新核心',
   'bootCheck.unexpectedError': '意外的启动检查错误',
   'bootCheck.actionFailed': '操作失败 — 请重试。',
+  'bootCheck.portConflictTitle': '无法启动应用引擎',
+  'bootCheck.portConflictBody':
+    '另一个进程正在占用 OpenHuman 所需的网络端口。我们将尝试自动修复此问题。',
+  'bootCheck.portConflictFixButton': '自动修复',
+  'bootCheck.portConflictFixing': '修复中…',
+  'bootCheck.portConflictFixFailed': '自动修复未成功。请重启您的计算机后重试。',
   'notifications.justNow': '刚刚',
   'notifications.minAgo': '{n} 分钟前',
   'notifications.hrAgo': '{n} 小时前',
@@ -400,6 +418,19 @@ const zhCN3: TranslationMap = {
   'channels.web.description': '通过内置的 Web UI 聊天。',
   'channels.web.authMode.managed_dm.description': '使用嵌入式 Web 聊天 — 无需设置。',
   'welcome.continueLocallyExperimental': '在本地继续（实验性）',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': '连接中…',
+  'channels.yuanbao.fieldRequired': '{field} 不能为空',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': '意外的连接状态：{status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default zhCN3;

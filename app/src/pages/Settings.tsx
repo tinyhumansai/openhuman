@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
 import AboutPanel from '../components/settings/panels/AboutPanel';
+import AgentAccessPanel from '../components/settings/panels/AgentAccessPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
@@ -26,6 +27,7 @@ import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MigrationPanel from '../components/settings/panels/MigrationPanel';
 import NotificationsTabbedPanel from '../components/settings/panels/NotificationsTabbedPanel';
+import PersonaPanel from '../components/settings/panels/PersonaPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
 import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePanel';
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
@@ -408,7 +410,9 @@ const Settings = () => {
         <Route path="voice" element={wrapSettingsPage(<VoicePanel />)} />
         <Route path="notifications" element={wrapSettingsPage(<NotificationsTabbedPanel />)} />
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
+        <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
+        <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}

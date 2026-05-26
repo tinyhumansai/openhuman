@@ -514,7 +514,22 @@ fn fp(
         temperature,
         target_agent_id: target.to_string(),
         provider_binding: provider_binding.to_string(),
+        autonomy_signature: "sig-default".to_string(),
     }
+}
+
+#[test]
+fn fingerprint_autonomy_change_is_cache_miss() {
+    // Changing the agent-access policy must invalidate the cached agent so the
+    // next turn rebuilds with the new SecurityPolicy (otherwise the tier change
+    // silently does nothing — the bug this field fixes).
+    let base = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    let mut changed = fp(None, None, "orchestrator", "anthropic:claude-sonnet-4-6");
+    changed.autonomy_signature = "sig-after-tier-change".to_string();
+    assert_ne!(
+        base, changed,
+        "a different autonomy signature must produce a cache miss"
+    );
 }
 
 #[test]

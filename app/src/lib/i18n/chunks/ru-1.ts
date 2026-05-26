@@ -306,6 +306,9 @@ const ru1: TranslationMap = {
   'accounts.respondQueue': 'Очередь ответов',
   'accounts.disconnect': 'Отключить',
   'accounts.disconnectConfirm': 'Ты уверен, что хочешь отключить этот аккаунт?',
+  'accounts.disconnectClearMemory': 'Also delete memory from this source',
+  'accounts.disconnectClearMemoryHint':
+    'Permanently removes local memory chunks linked to this connection.',
   'accounts.searchAccounts': 'Поиск аккаунтов...',
   'channels.title': 'Каналы',
   'channels.configure': 'Настроить канал',
@@ -363,6 +366,7 @@ const ru1: TranslationMap = {
     'Никогда не делись фразой восстановления. Любой, кто её знает, получит доступ к твоему аккаунту.',
   'mnemonic.copied': 'Фраза восстановления скопирована в буфер обмена',
   'mnemonic.reveal': 'Показать фразу',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Фраза восстановления скрыта',
   'privacy.title': 'Конфиденциальность и безопасность',
   'privacy.description': 'Отчёт о данных, отправляемых во внешние сервисы.',
@@ -1328,6 +1332,19 @@ const ru1: TranslationMap = {
   'subconscious.priority.normal': 'нормальный',
   'subconscious.durationSeconds': '{seconds}s',
   'subconscious.durationMilliseconds': '{milliseconds}ms',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Websites the assistant may open and read while researching (one host per line, e.g. reuters.com). A host also covers its subdomains. Leave empty to block all web access.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
 };
 
 export default ru1;

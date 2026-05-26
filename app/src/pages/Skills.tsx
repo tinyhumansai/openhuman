@@ -658,17 +658,56 @@ export default function Skills() {
     return entries;
   }, [composioCatalogToolkits, composioConnectionByToolkit]);
 
+  // Exclude preview toolkits (not in the agent-ready catalog) from the default
+  // grid. Toolkits with an existing connection are always shown so users can
+  // manage or disconnect them. The filter is skipped while the agent-ready list
+  // is loading or errored — both cases degrade to showing everything.
+  // When the user selects the 'Preview' filter pill this memo is bypassed in
+  // composioFilteredEntries, which reads directly from composioGridEntries.
+  const composioAgentReadyEntries = useMemo(() => {
+    const resolved = !agentReadyLoading && !agentReadyError;
+    if (!resolved) return composioGridEntries;
+    return composioGridEntries.filter(
+      ({ meta, connection }) => Boolean(connection) || agentReadyToolkits.has(meta.slug)
+    );
+  }, [composioGridEntries, agentReadyToolkits, agentReadyLoading, agentReadyError]);
+
   const composioFilteredEntries = useMemo(() => {
     const q = searchQuery.toLowerCase();
+    const matchesSearch = (meta: ComposioToolkitMeta) =>
+      !q || meta.name.toLowerCase().includes(q) || meta.description.toLowerCase().includes(q);
+
+    if (selectedCategory === 'Preview') {
+      // Show only toolkits that are not in the agent-ready catalog.
+      // If data is still loading or errored, show all matching entries so the
+      // grid doesn't flash blank — same graceful-degradation contract as the
+      // default view.
+      const resolved = !agentReadyLoading && !agentReadyError;
+      if (!resolved) {
+        return composioGridEntries.filter(({ meta }) => matchesSearch(meta));
+      }
+      return composioGridEntries.filter(
+        ({ meta }) => matchesSearch(meta) && !agentReadyToolkits.has(meta.slug)
+      );
+    }
+
     const matchesCategory =
       selectedCategory === 'All'
         ? () => true
         : (meta: ComposioToolkitMeta) => meta.category === selectedCategory;
-    const matchesSearch = (meta: ComposioToolkitMeta) =>
-      !q || meta.name.toLowerCase().includes(q) || meta.description.toLowerCase().includes(q);
 
-    return composioGridEntries.filter(({ meta }) => matchesCategory(meta) && matchesSearch(meta));
-  }, [composioGridEntries, searchQuery, selectedCategory]);
+    return composioAgentReadyEntries.filter(
+      ({ meta }) => matchesCategory(meta) && matchesSearch(meta)
+    );
+  }, [
+    composioAgentReadyEntries,
+    composioGridEntries,
+    searchQuery,
+    selectedCategory,
+    agentReadyToolkits,
+    agentReadyLoading,
+    agentReadyError,
+  ]);
 
   const composioSortedEntries = useMemo(() => {
     return [...composioFilteredEntries].sort((a, b) => {
@@ -696,11 +735,24 @@ export default function Skills() {
       if (item.category === 'Channels') continue;
       cats.add(item.category);
     }
-    for (const { meta } of composioGridEntries) {
+    for (const { meta } of composioAgentReadyEntries) {
       cats.add(meta.category);
     }
+    // Show the 'Preview' pill when there are toolkits outside the agent-ready
+    // catalog (i.e., there's something to see in that filter).
+    const resolved = !agentReadyLoading && !agentReadyError;
+    if (resolved && composioGridEntries.some(({ meta }) => !agentReadyToolkits.has(meta.slug))) {
+      cats.add('Preview');
+    }
     return SKILL_CATEGORY_ORDER.filter(c => c !== 'Channels' && cats.has(c));
-  }, [allItems, composioGridEntries]);
+  }, [
+    allItems,
+    composioAgentReadyEntries,
+    composioGridEntries,
+    agentReadyToolkits,
+    agentReadyLoading,
+    agentReadyError,
+  ]);
 
   const filteredItems = useMemo(() => {
     const q = searchQuery.toLowerCase();

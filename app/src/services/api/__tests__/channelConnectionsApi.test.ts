@@ -43,6 +43,20 @@ describe('channelConnectionsApi', () => {
     });
   });
 
+  it('forwards clear_memory when disconnecting a channel with memory cleanup enabled', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      result: { disconnected: true, memory_chunks_deleted: 2 },
+      logs: ['removed credentials'],
+    });
+
+    await channelConnectionsApi.disconnectChannel('discord', 'bot_token', { clearMemory: true });
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.channels_disconnect',
+      params: { channel: 'discord', authMode: 'bot_token', clearMemory: true },
+    });
+  });
+
   it('rejects invalid Discord guild list shape', async () => {
     mockCallCoreRpc.mockResolvedValueOnce({
       result: { guilds: [] },

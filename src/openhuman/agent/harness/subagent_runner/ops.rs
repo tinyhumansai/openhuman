@@ -34,6 +34,7 @@ use crate::openhuman::context::prompt::{
 use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider, ToolCall};
 use crate::openhuman::memory_conversations::ConversationMessage;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+use crate::openhuman::util::truncate_with_ellipsis;
 
 /// Prompt suffix injected into every typed sub-agent run.
 ///
@@ -147,11 +148,20 @@ pub(super) fn resolve_subagent_provider(
                         (std::sync::Arc::from(p), m)
                     }
                     Err(e) => {
+                        let suggested_key = match workload.as_str() {
+                            "summarization" | "memory" => "memory_provider".to_string(),
+                            _ => format!("{workload}_provider"),
+                        };
                         log::warn!(
-                        "[subagent_runner] workload '{}' provider build failed ({}) for agent_id={} — \
-                         falling back to parent provider + parent model '{}'",
-                        workload, e, agent_id, parent_model
-                    );
+                            "[subagent_runner] workload='{}' provider build failed for agent_id={} error='{}' \
+                             falling back to parent provider (parent_model='{}'). \
+                             Consider setting {} in config.",
+                            workload,
+                            agent_id,
+                            e,
+                            parent_model,
+                            suggested_key
+                        );
                         (parent_provider, parent_model)
                     }
                 }
@@ -190,7 +200,7 @@ struct LazyToolkitResolver {
 
 impl LazyToolkitResolver {
     fn resolve(&self, name: &str) -> Option<Box<dyn Tool>> {
-        let action = self.actions.iter().find(|a| a.name == name)?;
+        let action = self.find_action(name)?;
         Some(Box::new(
             crate::openhuman::composio::ComposioActionTool::new(
                 self.config.clone(),
@@ -201,11 +211,79 @@ impl LazyToolkitResolver {
         ))
     }
 
+    /// Match a model-supplied tool name to a real toolkit action, tolerant
+    /// of the near-miss slugs models routinely emit — case differences and
+    /// separator/prefix drift (bug-report-2026-05-26 A2). Tries, in order:
+    /// exact, case-insensitive, then a normalized alphanumeric match
+    /// (accepted only when **unique**, so a fabricated slug can't silently
+    /// resolve to the wrong action — those still fall through to the
+    /// "tool not available" error, which lists `known_slugs` for the model
+    /// to self-correct).
+    fn find_action(
+        &self,
+        name: &str,
+    ) -> Option<&crate::openhuman::context::prompt::ConnectedIntegrationTool> {
+        if let Some(action) = self.actions.iter().find(|a| a.name == name) {
+            return Some(action);
+        }
+        if let Some(action) = self
+            .actions
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
+        {
+            tracing::debug!(
+                requested = %name,
+                matched = %action.name,
+                "[subagent_runner] resolved tool by case-insensitive match"
+            );
+            return Some(action);
+        }
+        let norm = normalize_slug(name);
+        if !norm.is_empty() {
+            let mut matches = self
+                .actions
+                .iter()
+                .filter(|a| normalize_slug(&a.name) == norm);
+            if let Some(action) = matches.next() {
+                if matches.next().is_none() {
+                    tracing::info!(
+                        requested = %name,
+                        matched = %action.name,
+                        "[subagent_runner] resolved tool by normalized-slug match"
+                    );
+                    return Some(action);
+                }
+                // Ambiguous: 2+ actions normalize to the same slug (e.g.
+                // `read_file` and `ReadFile` → `readfile`). We deliberately
+                // refuse to guess. Warn (not debug): a slug collision is a
+                // toolkit configuration anomaly that should surface in normal
+                // operator logs, not stay hidden behind debug filtering.
+                tracing::warn!(
+                    requested = %name,
+                    norm = %norm,
+                    "[subagent_runner] ambiguous normalized-slug match — multiple actions resolve to the same slug; not resolving"
+                );
+            }
+        }
+        None
+    }
+
     /// Slugs from the bound toolkit, for inclusion in unknown-tool
     /// errors so the model can self-correct without burning a turn.
     fn known_slugs(&self) -> Vec<&str> {
         self.actions.iter().map(|a| a.name.as_str()).collect()
     }
+}
+
+/// Lowercased, non-alphanumerics stripped — collapses separator/prefix
+/// drift (`GOOGLESLIDES_BATCH_UPDATE` vs `googleslides_batch_update`) so
+/// near-miss tool slugs still resolve, while genuinely different slugs
+/// (e.g. a hallucinated `GMAIL_GET_LAST_3_MESSAGES`) stay distinct.
+fn normalize_slug(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 /// Run a sub-agent based on its definition and a task prompt.
@@ -1152,6 +1230,12 @@ async fn run_inner_loop(
 ) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
     let max_iterations = max_iterations.max(1);
 
+    // Compiled digest of this sub-agent run's tool calls + results, for a
+    // graceful checkpoint if it hits the iteration cap (mirrors the main
+    // agent — bug-report-2026-05-26 A1). Accumulated as the loop runs so it's
+    // robust to history trimming.
+    let mut run_tool_digest = String::new();
+
     // Sub-agent transcript stem — mirrors what
     // `persist_subagent_transcript` used to compute on one-shot
     // post-loop writes. We compute it once up front so **every
@@ -1327,6 +1411,12 @@ async fn run_inner_loop(
     // so the inner loop body doesn't repeatedly re-resolve `parent.on_progress`.
     let progress_sink = parent.on_progress.clone();
 
+    // Repeated-failure circuit breaker (shared guard with run_tool_call_loop):
+    // halt the subagent with a root cause instead of grinding to
+    // MaxIterationsExceeded when it re-issues a doomed action or makes no
+    // progress (e.g. re-running `pip install` that keeps failing PEP 668).
+    let mut failure_guard = crate::openhuman::agent::harness::tool_loop::RepeatFailureGuard::new();
+    let mut halt_reason: Option<String> = None;
     for iteration in 0..max_iterations {
         tracing::debug!(
             task_id = %task_id,
@@ -1679,6 +1769,29 @@ async fn run_inner_loop(
             let call_output_chars = result_text.chars().count();
             let call_elapsed_ms = call_started.elapsed().as_millis() as u64;
 
+            // Record this call in the run digest (output truncated to bound
+            // size) for a possible max-iteration checkpoint.
+            run_tool_digest.push_str(&format!(
+                "- {} [{}]: {}\n",
+                call.name,
+                if call_success { "ok" } else { "failed" },
+                truncate_with_ellipsis(&result_text, 800)
+            ));
+
+            // Repeated-failure circuit breaker (shared guard). `call.arguments`
+            // is the stable signature; on a trip we stash the root-cause summary
+            // and bail after this iteration's tool results are recorded.
+            if let Some(reason) =
+                failure_guard.record(&call.name, &call.arguments, call_success, &result_text)
+            {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    tool = call.name.as_str(),
+                    "[subagent_runner] circuit breaker tripped — halting with root cause"
+                );
+                halt_reason = Some(reason);
+            }
+
             if force_text_mode {
                 let status = if call_success { "ok" } else { "error" };
                 let _ = std::fmt::Write::write_fmt(
@@ -1747,9 +1860,79 @@ async fn run_inner_loop(
         // iteration's provider call would leave the transcript without
         // the tool outputs the next turn will be reasoning from.
         persist_transcript(history, &usage);
+
+        // Circuit breaker tripped this iteration: return the root-cause summary
+        // as the subagent's result (tool results are already in `history`),
+        // instead of looping to MaxIterationsExceeded and being re-delegated.
+        if let Some(reason) = halt_reason.take() {
+            return Ok((reason, iteration + 1, usage));
+        }
     }
 
-    Err(SubagentRunError::MaxIterationsExceeded(max_iterations))
+    // Iteration cap reached. Instead of erroring — which discards all of the
+    // sub-agent's partial work (the parent just sees "delegate failed") —
+    // compile a graceful checkpoint of what it accomplished and return it as
+    // the result, so the calling agent can continue from the partial progress
+    // (mirrors the main-agent checkpoint — bug-report-2026-05-26 A1).
+    let digest = if run_tool_digest.is_empty() {
+        "(no tool calls completed)"
+    } else {
+        run_tool_digest.as_str()
+    };
+    let deterministic = format!(
+        "I reached my tool-call limit ({max_iterations} steps) before finishing this task. \
+         Progress so far (tool calls + results):\n{digest}\n\nThe task is incomplete — the above is \
+         what I accomplished; continue from here."
+    );
+    let summary_input = vec![ChatMessage::user(format!(
+        "You are sub-agent `{agent_id}` and reached your tool-call limit before finishing. Here are \
+         the tool calls you made and their results — compile a brief progress checkpoint (what you \
+         accomplished, what still remains) for the agent that delegated to you. Do not call tools.\n\n{digest}"
+    ))];
+    let checkpoint = match provider
+        .chat(
+            ChatRequest {
+                messages: &summary_input,
+                tools: None,
+                stream: None,
+            },
+            model,
+            temperature,
+        )
+        .await
+    {
+        Ok(resp) => {
+            if let Some(ref u) = resp.usage {
+                usage.input_tokens += u.input_tokens;
+                usage.output_tokens += u.output_tokens;
+                usage.cached_input_tokens += u.cached_input_tokens;
+                usage.charged_amount_usd += u.charged_amount_usd;
+            }
+            // Strip any stray tool-call markup a text-mode model emits; if no
+            // prose survives, fall back to the deterministic digest.
+            let raw = resp.text.unwrap_or_default();
+            let (prose, _) = super::super::parse::parse_tool_calls(&raw);
+            if prose.trim().is_empty() {
+                deterministic
+            } else {
+                prose
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                task_id = %task_id,
+                error = %e,
+                "[subagent_runner] checkpoint summary call failed — using deterministic fallback"
+            );
+            deterministic
+        }
+    };
+    // NB: unlike the main-agent path, this checkpoint is intentionally NOT
+    // written to a sub-agent transcript — the calling agent's transcript
+    // captures the delegated result, so there's no data loss. Don't "fix"
+    // this by adding a `persist_subagent_transcript` call.
+    Ok((checkpoint, max_iterations, usage))
 }
 
 fn parse_tool_arguments(arguments: &str) -> serde_json::Value {

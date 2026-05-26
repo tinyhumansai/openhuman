@@ -34,6 +34,7 @@ pub use providers::web;
 pub use providers::whatsapp;
 #[cfg(feature = "whatsapp-web")]
 pub use providers::whatsapp_web;
+pub use providers::yuanbao;
 
 pub use cli::CliChannel;
 pub use dingtalk::DingTalkChannel;
@@ -54,6 +55,7 @@ pub use traits::{Channel, SendMessage};
 pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use whatsapp_web::WhatsAppWebChannel;
+pub use yuanbao::YuanbaoChannel;
 
 pub use commands::doctor_channels;
 pub use controllers::{ChannelAuthMode, ChannelDefinition};

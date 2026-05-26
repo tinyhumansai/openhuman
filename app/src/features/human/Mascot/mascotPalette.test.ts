@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { getMascotPalette } from './mascotPalette';
 
 describe('getMascotPalette', () => {
-  it.each(['yellow', 'burgundy', 'black', 'navy', 'green'] as const)(
+  it.each(['yellow', 'burgundy', 'black', 'navy', 'custom'] as const)(
     'returns a populated palette for %s',
     color => {
       const palette = getMascotPalette(color);

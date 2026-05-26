@@ -800,19 +800,26 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
     // Deliver to the initiating client's own room AND the per-thread room. The
     // thread room lets a socket that reconnected with a new client_id (after
     // re-subscribing via `thread:subscribe`) keep receiving an in-flight turn's
-    // stream. socket.io de-duplicates a socket present in multiple target rooms,
-    // so a socket in both receives each event exactly once (no double-render).
-    // "system" broadcasts and events without a thread_id keep the legacy
-    // single-room behavior.
-    let mut rooms: Vec<String> = vec![event.client_id.clone()];
-    if event.client_id != "system" && !event.thread_id.is_empty() {
-        rooms.push(format!("thread:{}", event.thread_id));
-    }
+    // stream.
+    //
+    // ⚠️ socketioxide (0.15.2) does NOT de-duplicate a socket present in
+    // multiple target rooms: `LocalAdapter::apply_opts` flattens each room's
+    // sid-set and collects WITHOUT a dedup pass, so `io.to([a, b]).emit()`
+    // delivers TWICE to a socket in both `a` and `b`. The initiating client is
+    // in both its `client_id` room and the `thread:<id>` room it subscribed to
+    // → every streamed frame doubled ("double thinking"). So we emit to the
+    // `client_id` room, then to the thread room EXCEPT the `client_id` room —
+    // each socket is reached exactly once regardless of room overlap.
+    // "system" broadcasts and events without a thread_id keep single-room delivery.
+    let primary = event.client_id.clone();
+    let thread_room = (event.client_id != "system" && !event.thread_id.is_empty())
+        .then(|| format!("thread:{}", event.thread_id));
     if let Ok(payload) = serde_json::to_value(event) {
         log::debug!(
-            "[socketio] send event={} rooms={:?} thread_id={} request_id={}",
+            "[socketio] send event={} primary={} thread_room={:?} thread_id={} request_id={}",
             name,
-            rooms,
+            primary,
+            thread_room,
             payload
                 .get("thread_id")
                 .and_then(|v| v.as_str())
@@ -822,11 +829,46 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
         );
-        emit_rooms_with_aliases(io, &rooms, &name, &payload);
+        // Primary: the client_id room.
+        let _ = io.to(primary.clone()).emit(&name, &payload);
+        if let Some(alias) = event_alias(&name) {
+            let _ = io.to(primary.clone()).emit(alias, &payload);
+        }
+        // Thread room minus the client_id room (dedup — see note above).
+        if let Some(tr) = thread_room {
+            let _ = io
+                .to(tr.clone())
+                .except(primary.clone())
+                .emit(&name, &payload);
+            if let Some(alias) = event_alias(&name) {
+                let _ = io
+                    .to(tr.clone())
+                    .except(primary.clone())
+                    .emit(alias, &payload);
+            }
+        }
     }
 }
 
+/// Events that stream once per token (their payloads concatenate into the final
+/// text / thinking / tool-args). Emitting the legacy `:`-delimited alias for
+/// these doubles every frame on the wire — the "double thinking-token
+/// streaming" bug — and no client subscribes to the colon variant, so the alias
+/// is suppressed for exactly these. Enumerated explicitly rather than matched by
+/// a `*_delta` suffix, so a future *discrete* event whose name happens to end in
+/// `_delta` still gets its compat alias instead of being silently dropped.
+const STREAMING_DELTA_EVENTS: &[&str] = &["text_delta", "thinking_delta", "tool_args_delta"];
+
 fn event_alias(name: &str) -> Option<String> {
+    // Match against the canonical underscore form after stripping a `subagent_`
+    // prefix (subagent streaming mirrors the parent's deltas), so `text_delta`,
+    // `text:delta`, and `subagent_text_delta` all resolve to a listed event.
+    // Lower-frequency discrete events keep the compat alias.
+    let normalized = name.replace(':', "_");
+    let base = normalized.strip_prefix("subagent_").unwrap_or(&normalized);
+    if STREAMING_DELTA_EVENTS.contains(&base) {
+        return None;
+    }
     if name.contains('_') {
         return Some(name.replace('_', ":"));
     }
@@ -843,20 +885,6 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
     }
 }
 
-fn emit_rooms_with_aliases(
-    io: &SocketIo,
-    rooms: &[String],
-    name: &str,
-    payload: &serde_json::Value,
-) {
-    // Emitting to multiple rooms in a single call delivers each event once per
-    // socket, even if a socket belongs to more than one of the target rooms.
-    let _ = io.to(rooms.to_vec()).emit(name, payload);
-    if let Some(alias) = event_alias(name) {
-        let _ = io.to(rooms.to_vec()).emit(alias, payload);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{event_alias, origin_is_allowed};
@@ -866,6 +894,25 @@ mod tests {
         assert_eq!(event_alias("chat_done").as_deref(), Some("chat:done"));
         assert_eq!(event_alias("chat:error").as_deref(), Some("chat_error"));
         assert_eq!(event_alias("ready"), None);
+    }
+
+    #[test]
+    fn event_alias_suppressed_for_streaming_deltas() {
+        // Streaming deltas must NOT be aliased — doubling every token frame is
+        // the "double thinking-token streaming" bug. Discrete events still alias.
+        assert_eq!(event_alias("thinking_delta"), None);
+        assert_eq!(event_alias("text_delta"), None);
+        assert_eq!(event_alias("tool_args_delta"), None);
+        assert_eq!(event_alias("subagent_tool_args_delta"), None);
+        // A *discrete* event that merely ends in `_delta` is NOT a streaming
+        // token event and must keep its compat alias — this is what the explicit
+        // STREAMING_DELTA_EVENTS set guarantees over the old `*_delta` suffix.
+        assert_eq!(
+            event_alias("inventory_delta").as_deref(),
+            Some("inventory:delta")
+        );
+        // Sanity: a non-delta event in the same family still aliases.
+        assert_eq!(event_alias("tool_call").as_deref(), Some("tool:call"));
     }
 
     #[test]

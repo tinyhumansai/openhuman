@@ -3,8 +3,11 @@ use crate::core::event_bus::{global, init_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::XmlToolDispatcher;
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::agent::memory_loader::MemoryLoader;
-use crate::openhuman::agent::tool_policy::{ToolPolicy, ToolPolicyDecision, ToolPolicyRequest};
-use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider};
+use crate::openhuman::agent::tool_policy::{
+    GeneratedToolRuntimeContext, GeneratedToolRuntimeRisk, ToolPolicy, ToolPolicyDecision,
+    ToolPolicyRequest,
+};
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse, Provider, UsageInfo};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::tools::ToolResult;
 use crate::openhuman::tools::{PermissionLevel, Tool};
@@ -197,6 +200,64 @@ impl Tool for CountingWriteTool {
 
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::Write
+    }
+}
+
+struct GeneratedContextTool {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl Tool for GeneratedContextTool {
+    fn name(&self) -> &str {
+        "generated_send"
+    }
+
+    fn description(&self) -> &str {
+        "generated send"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(ToolResult::success("generated-output"))
+    }
+
+    fn generated_runtime_context(
+        &self,
+        _args: &serde_json::Value,
+    ) -> Option<GeneratedToolRuntimeContext> {
+        Some(GeneratedToolRuntimeContext {
+            provider_id: "mail.runtime".to_string(),
+            capability_id: "email.send".to_string(),
+            risk: GeneratedToolRuntimeRisk::ExternalWrite,
+            source_digest: Some("sha256:abc".to_string()),
+            approval_id: Some("approval-1".to_string()),
+        })
+    }
+}
+
+struct RequireGeneratedContextPolicy;
+
+#[async_trait]
+impl ToolPolicy for RequireGeneratedContextPolicy {
+    fn name(&self) -> &str {
+        "require_generated_context"
+    }
+
+    async fn check(&self, request: &ToolPolicyRequest) -> ToolPolicyDecision {
+        let context = request
+            .generated_tool
+            .as_ref()
+            .expect("generated tool context should be threaded");
+        assert_eq!(context.provider_id, "mail.runtime");
+        assert_eq!(context.capability_id, "email.send");
+        assert_eq!(context.risk, GeneratedToolRuntimeRisk::ExternalWrite);
+        assert_eq!(context.approval_id.as_deref(), Some("approval-1"));
+        ToolPolicyDecision::require_approval("generated context requires approval")
     }
 }
 
@@ -595,6 +656,49 @@ async fn execute_tool_call_denies_by_policy_before_tool_runs() {
 }
 
 #[tokio::test]
+async fn execute_tool_call_threads_generated_tool_context_into_policy() {
+    let workspace = tempfile::TempDir::new().expect("temp workspace");
+    let workspace_path = workspace.path().to_path_buf();
+    std::mem::forget(workspace);
+    let memory_cfg = crate::openhuman::config::MemoryConfig {
+        backend: "none".into(),
+        ..crate::openhuman::config::MemoryConfig::default()
+    };
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    let agent = Agent::builder()
+        .provider(Box::new(DummyProvider))
+        .tools(vec![Box::new(GeneratedContextTool {
+            calls: Arc::clone(&calls),
+        })])
+        .memory(mem)
+        .tool_dispatcher(Box::new(XmlToolDispatcher))
+        .workspace_dir(workspace_path)
+        .event_context("turn-test-session", "turn-test-channel")
+        .tool_policy(Arc::new(RequireGeneratedContextPolicy))
+        .build()
+        .unwrap();
+    let call = ParsedToolCall {
+        name: "generated_send".into(),
+        arguments: serde_json::json!({ "value": 1 }),
+        tool_call_id: Some("policy-generated-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(!result.success);
+    assert!(result.output.contains("requires approval by policy"));
+    assert!(result
+        .output
+        .contains("generated context requires approval"));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(record.name, "generated_send");
+    assert!(!record.success);
+}
+
+#[tokio::test]
 async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
     let provider_impl = Arc::new(SequenceProvider {
         responses: AsyncMutex::new(vec![
@@ -725,13 +829,28 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
 }
 
 #[tokio::test]
-async fn turn_errors_when_max_tool_iterations_are_exceeded() {
+async fn turn_emits_checkpoint_when_max_tool_iterations_are_exceeded() {
+    // First response forces a tool call (consuming the single allowed
+    // iteration); the second is the model-written checkpoint the harness
+    // requests (tools disabled) once the cap is hit. The turn must NOT
+    // error anymore — it returns a resumable checkpoint so the thread stays
+    // well-formed and the user can continue on their next message
+    // (bug-report-2026-05-26 A1).
     let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
-        responses: AsyncMutex::new(vec![Ok(ChatResponse {
-            text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
-            tool_calls: vec![],
-            usage: None,
-        })]),
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+            Ok(ChatResponse {
+                text: Some(
+                    "**Done so far:** ran echo.\n**Next steps:** I'll continue from here.".into(),
+                ),
+                tool_calls: vec![],
+                usage: None,
+            }),
+        ]),
         requests: AsyncMutex::new(Vec::new()),
     });
     let mut agent = make_agent_with_builder(
@@ -748,17 +867,179 @@ async fn turn_errors_when_max_tool_iterations_are_exceeded() {
         crate::openhuman::config::ContextConfig::default(),
     );
 
-    let err = agent
+    let reply = agent
         .turn("hello")
         .await
-        .expect_err("turn should stop at configured iteration budget");
-    assert!(err
-        .to_string()
-        .contains("Agent exceeded maximum tool iterations (1)"));
+        .expect("turn should emit a checkpoint at the iteration cap, not error");
+    assert!(
+        reply.contains("Next steps"),
+        "checkpoint should summarize next steps, got: {reply}"
+    );
+    // The tool-call history from the capped iteration is preserved...
     assert!(agent.history.iter().any(|message| matches!(
         message,
         ConversationMessage::AssistantToolCalls { tool_calls, .. } if tool_calls.len() == 1
     )));
+    // ...and the transcript ends on a well-formed assistant message (the
+    // checkpoint), never a dangling tool cycle — this is what stops the
+    // next message from silently wedging the thread.
+    assert!(
+        matches!(
+            agent.history.last(),
+            Some(ConversationMessage::Chat(msg))
+                if msg.role == "assistant" && msg.content.contains("Next steps")
+        ),
+        "history should end on the assistant checkpoint, got: {:?}",
+        agent.history.last()
+    );
+}
+
+#[tokio::test]
+async fn turn_errors_on_empty_provider_response() {
+    // A completion with no text and no tool calls is never a valid final
+    // answer — surface it as an error instead of accepting a blank reply,
+    // which previously rendered as silence and wedged the thread
+    // (bug-report-2026-05-26 A1, defect B).
+    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![Ok(ChatResponse {
+            text: Some(String::new()),
+            tool_calls: vec![],
+            usage: None,
+        })]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let err = agent
+        .turn("hello")
+        .await
+        .expect_err("an empty provider response should surface as an error");
+    assert!(
+        err.to_string().contains("empty response"),
+        "expected an empty-response error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn turn_checkpoint_falls_back_to_deterministic_summary_when_model_summary_empty() {
+    // Tool call consumes the single iteration; the checkpoint request then
+    // comes back empty. The harness must fall back to a deterministic
+    // done/next summary so the turn never returns blank — the safety net
+    // that guarantees the thread can't re-wedge (bug-report-2026-05-26 A1).
+    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+            Ok(ChatResponse {
+                text: Some(String::new()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(EchoTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 1,
+            ..crate::openhuman::config::AgentConfig::default()
+        },
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    let reply = agent
+        .turn("hello")
+        .await
+        .expect("empty model checkpoint should fall back, not error");
+    assert!(
+        reply.contains("tool-call limit"),
+        "deterministic fallback summary expected, got: {reply}"
+    );
+    assert!(
+        reply.contains("echo"),
+        "fallback should list the tool that ran, got: {reply}"
+    );
+}
+
+#[tokio::test]
+async fn turn_checkpoint_usage_is_folded_into_transcript_accounting() {
+    // The extra checkpoint provider call costs tokens; those must land in
+    // the persisted transcript's cumulative accounting rather than being
+    // silently dropped (CodeRabbit review on bug-report-2026-05-26 A1).
+    let provider: Arc<dyn Provider> = Arc::new(SequenceProvider {
+        responses: AsyncMutex::new(vec![
+            // Tool iteration — provider reports no usage.
+            Ok(ChatResponse {
+                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+            // Checkpoint call — reports usage that must be accounted for.
+            Ok(ChatResponse {
+                text: Some("**Done so far:** ran echo.\n**Next steps:** continue.".into()),
+                tool_calls: vec![],
+                usage: Some(UsageInfo {
+                    input_tokens: 11,
+                    output_tokens: 4,
+                    cached_input_tokens: 2,
+                    charged_amount_usd: 0.05,
+                    ..UsageInfo::default()
+                }),
+            }),
+        ]),
+        requests: AsyncMutex::new(Vec::new()),
+    });
+    let mut agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(EchoTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig {
+            max_tool_iterations: 1,
+            ..crate::openhuman::config::AgentConfig::default()
+        },
+        crate::openhuman::config::ContextConfig::default(),
+    );
+
+    agent
+        .turn("hello")
+        .await
+        .expect("turn should emit a checkpoint at the iteration cap");
+
+    let transcript = transcript::read_transcript(
+        agent
+            .session_transcript_path
+            .as_ref()
+            .expect("checkpoint turn should persist a transcript"),
+    )
+    .expect("transcript should be readable");
+    // Only the checkpoint call reported usage, so the turn totals must equal
+    // exactly its numbers — proof the extra call is accounted for, not lost.
+    assert_eq!(
+        transcript.meta.input_tokens, 11,
+        "checkpoint input tokens should be folded into the turn total"
+    );
+    assert_eq!(transcript.meta.output_tokens, 4);
+    assert_eq!(transcript.meta.cached_input_tokens, 2);
 }
 
 #[tokio::test]

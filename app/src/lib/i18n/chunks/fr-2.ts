@@ -286,6 +286,7 @@ const fr2: TranslationMap = {
   'chat.deleteThread': 'Supprimer le fil',
   'chat.deleteThreadConfirm': 'Es-tu sûr de vouloir supprimer « {title} » ?',
   'chat.untitledThread': 'Fil sans titre',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Masquer la barre latérale',
   'chat.showSidebar': 'Afficher la barre latérale',
   'chat.newThreadShortcut': 'Nouveau fil (/new)',

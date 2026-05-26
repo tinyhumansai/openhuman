@@ -113,7 +113,7 @@ async fn composio_authorize_errors_without_session() {
 async fn composio_delete_connection_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_delete_connection(&config, "c-1")
+    let err = composio_delete_connection(&config, "c-1", false)
         .await
         .unwrap_err();
     assert!(err.contains("composio unavailable"));
@@ -231,11 +231,16 @@ fn invalidate_connected_integrations_cache_is_safe_without_prior_insert() {
 
 // ── Mock-backend integration tests for ops ─────────────────────
 
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::{
+    chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+};
 use axum::{
     extract::{Path, Query},
     routing::{get, post},
     Json, Router,
 };
+use chrono::{TimeZone, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -308,6 +313,29 @@ fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
         )
         .expect("store test session token");
     c
+}
+
+fn sample_memory_chunk(source_kind: SourceKind, source_id: &str, seq: u32) -> Chunk {
+    let ts = Utc
+        .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
+        .unwrap();
+    Chunk {
+        id: chunk_id(source_kind, source_id, seq, "composio memory"),
+        content: format!("composio memory {source_id} {seq}"),
+        metadata: Metadata {
+            source_kind,
+            source_id: source_id.to_string(),
+            owner: "alice@example.com".to_string(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec!["composio".to_string()],
+            source_ref: Some(SourceRef::new(format!("composio://{source_id}/{seq}"))),
+        },
+        token_count: 12,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    }
 }
 
 #[tokio::test]
@@ -433,8 +461,133 @@ async fn composio_delete_connection_via_mock() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_delete_connection(&config, "c1").await.unwrap();
+    let outcome = composio_delete_connection(&config, "c1", false)
+        .await
+        .unwrap();
     assert!(outcome.value.deleted);
+}
+
+#[tokio::test]
+async fn composio_delete_connection_clear_memory_deletes_slack_source() {
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c1","toolkit":"slack","status":"ACTIVE"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(|Path(_id): Path<String>| async move {
+                Json(json!({"success": true, "data": {"deleted": true}}))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let target = sample_memory_chunk(SourceKind::Chat, "slack:c1", 0);
+    let unrelated = sample_memory_chunk(SourceKind::Chat, "slack:c2", 0);
+    memory_tree_store::upsert_chunks(&config, &[target, unrelated]).expect("chunks should seed");
+
+    let outcome = composio_delete_connection(&config, "c1", true)
+        .await
+        .unwrap();
+
+    assert!(outcome.value.deleted);
+    assert_eq!(outcome.value.memory_chunks_deleted, 1);
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Chat),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].metadata.source_id, "slack:c2");
+}
+
+#[tokio::test]
+async fn notion_cleanup_targets_include_synced_page_sources() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    let memory = std::sync::Arc::new(
+        MemoryClient::from_workspace_dir(config.workspace_dir.clone())
+            .expect("memory client should initialise"),
+    );
+    let mut state = SyncState::new("notion", "conn-1");
+    state.mark_synced("page-a@2026-01-01T00:00:00Z");
+    state.mark_synced("page-b");
+    state.save(&memory).await.expect("sync state should save");
+
+    let targets = composio_memory_targets_for_connection(&config, Some("notion"), "conn-1")
+        .await
+        .expect("notion cleanup targets should resolve");
+
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "notion:page-a".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "notion:page-b".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "composio-notion-page-page-a".to_string()
+    )));
+}
+
+#[tokio::test]
+async fn notion_cleanup_targets_surface_corrupt_sync_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    let memory = std::sync::Arc::new(
+        MemoryClient::from_workspace_dir(config.workspace_dir.clone())
+            .expect("memory client should initialise"),
+    );
+    memory
+        .kv_set(
+            Some(super::super::providers::sync_state::KV_NAMESPACE),
+            "notion:conn-1",
+            &serde_json::json!({ "toolkit": 42 }),
+        )
+        .await
+        .expect("corrupt sync state should be written");
+
+    let err = composio_memory_targets_for_connection(&config, Some("notion"), "conn-1")
+        .await
+        .expect_err("corrupt sync state should surface");
+
+    assert!(err.to_string().contains("failed to load notion sync state"));
+}
+
+#[tokio::test]
+async fn drive_cleanup_targets_are_connection_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+
+    let targets = composio_memory_targets_for_connection(&config, Some("google_drive"), "conn-1")
+        .await
+        .expect("drive cleanup targets should resolve");
+
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "drive:conn-1".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Prefix(
+        SourceKind::Document,
+        "googledrive:conn-1:".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Prefix(
+        SourceKind::Document,
+        "google_drive:conn-1/".to_string()
+    )));
 }
 
 #[tokio::test]
@@ -575,6 +728,9 @@ async fn composio_execute_via_mock_propagates_backend_error() {
 
 #[tokio::test]
 async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
+    let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
     use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
     use crate::openhuman::memory_tree::tree::rpc::{list_chunks_rpc, ListChunksRequest};

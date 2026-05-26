@@ -46,6 +46,9 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
   const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
   const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
+  const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState<Record<string, boolean>>(
+    {}
+  );
   const [error, setError] = useState<string | null>(null);
   /** Pending link tokens, keyed by compositeKey (discord:managed_dm). Only present while polling. */
   const [linkToken, setLinkToken] = useState<string | null>(null);
@@ -259,15 +262,19 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
   const handleDisconnect = useCallback(
     (authMode: ChannelAuthMode) => {
+      const key = `discord:${authMode}`;
       void runBusy(`discord:${authMode}`, async () => {
         log('disconnecting discord via %s', authMode);
         pollAbort.current?.abort();
         setLinkToken(null);
-        await channelConnectionsApi.disconnectChannel('discord', authMode);
+        await channelConnectionsApi.disconnectChannel('discord', authMode, {
+          clearMemory: Boolean(clearMemoryOnDisconnect[key]),
+        });
+        setClearMemoryOnDisconnect(prev => ({ ...prev, [key]: false }));
         dispatch(disconnectChannelConnection({ channel: 'discord', authMode }));
       });
     },
-    [dispatch, runBusy]
+    [clearMemoryOnDisconnect, dispatch, runBusy]
   );
 
   const copyToken = useCallback(() => {
@@ -366,38 +373,86 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
             {/* Connected state for managed_dm — show only Disconnect */}
             {spec.mode === 'managed_dm' && status === 'connected' ? (
-              <div className="mt-3 flex items-center justify-between">
-                <p className="text-xs text-sage-700 dark:text-sage-300 font-medium">
-                  {t('channels.discord.accountLinked')}
-                </p>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
-                  {t('accounts.disconnect')}
-                </button>
-              </div>
-            ) : /* Connect / Disconnect buttons for all other modes and states */
-            spec.mode !== 'managed_dm' || status !== 'connecting' ? (
-              <div className="mt-3 flex gap-2">
-                {status !== 'connected' && (
+              <>
+                <label className="mt-3 flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
+                    onChange={event =>
+                      setClearMemoryOnDisconnect(prev => ({
+                        ...prev,
+                        [compositeKey]: event.currentTarget.checked,
+                      }))
+                    }
+                    className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-stone-800 dark:text-neutral-100">
+                      {t('accounts.disconnectClearMemory')}
+                    </span>
+                    <span className="block text-[11px] text-stone-500 dark:text-neutral-400">
+                      {t('accounts.disconnectClearMemoryHint')}
+                    </span>
+                  </span>
+                </label>
+                <div className="mt-3 flex items-center justify-between">
+                  <p className="text-xs text-sage-700 dark:text-sage-300 font-medium">
+                    {t('channels.discord.accountLinked')}
+                  </p>
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => handleConnect(spec)}
-                    className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                    {t('channels.discord.connect')}
+                    onClick={() => handleDisconnect(spec.mode)}
+                    className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
+                    {t('accounts.disconnect')}
                   </button>
+                </div>
+              </>
+            ) : /* Connect / Disconnect buttons for all other modes and states */
+            spec.mode !== 'managed_dm' || status !== 'connecting' ? (
+              <>
+                {status === 'connected' && (
+                  <label className="mt-3 flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(clearMemoryOnDisconnect[compositeKey])}
+                      onChange={event =>
+                        setClearMemoryOnDisconnect(prev => ({
+                          ...prev,
+                          [compositeKey]: event.currentTarget.checked,
+                        }))
+                      }
+                      className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-stone-800 dark:text-neutral-100">
+                        {t('accounts.disconnectClearMemory')}
+                      </span>
+                      <span className="block text-[11px] text-stone-500 dark:text-neutral-400">
+                        {t('accounts.disconnectClearMemoryHint')}
+                      </span>
+                    </span>
+                  </label>
                 )}
-                <button
-                  type="button"
-                  disabled={busy || status === 'disconnected'}
-                  onClick={() => handleDisconnect(spec.mode)}
-                  className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
-                  {t('accounts.disconnect')}
-                </button>
-              </div>
+                <div className="mt-3 flex gap-2">
+                  {status !== 'connected' && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => handleConnect(spec)}
+                      className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
+                      {t('channels.discord.connect')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={busy || status === 'disconnected'}
+                    onClick={() => handleDisconnect(spec.mode)}
+                    className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
+                    {t('accounts.disconnect')}
+                  </button>
+                </div>
+              </>
             ) : null}
 
             {/* Server + Channel picker — shown after successful bot_token connection */}

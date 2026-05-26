@@ -28,6 +28,7 @@ use crate::openhuman::channels::traits;
 use crate::openhuman::channels::whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 use crate::openhuman::channels::whatsapp_web::WhatsAppWebChannel;
+use crate::openhuman::channels::yuanbao::YuanbaoChannel;
 use crate::openhuman::channels::Channel;
 use crate::openhuman::config::Config;
 use crate::openhuman::context::channels_prompt::build_system_prompt;
@@ -40,7 +41,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-pub async fn start_channels(config: Config) -> Result<()> {
+pub async fn start_channels(mut config: Config) -> Result<()> {
     // Initialize the global event bus singleton and register the tracing
     // subscriber for debug logging of all domain events.
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
@@ -52,6 +53,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
     );
     crate::openhuman::memory::sync::register_sync_stage_bridge();
     crate::openhuman::composio::register_composio_trigger_subscriber();
+    // Surface parked ApprovalGate requests as chat messages so the user can
+    // answer yes/no in the thread (chat-native approval, issue #1339).
+    crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
@@ -178,10 +182,43 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
         Arc::from(host_runtime::create_runtime(&config.runtime)?);
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-    ));
+    // Ensure the agent's default projects home (~/OpenHuman/projects) exists and
+    // is a read-write trusted root, so the coding agent creates/edits projects
+    // there freely — distinct from the hidden internal workspace dir. A user who
+    // has already granted it (or any other root) is left untouched.
+    {
+        use crate::openhuman::security::{TrustedAccess, TrustedRoot};
+        let projects_dir = crate::openhuman::config::default_projects_dir();
+        if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
+            tracing::warn!(
+                dir = %projects_dir.display(),
+                error = %e,
+                "[startup] could not create default projects dir"
+            );
+        }
+        let projects_path = projects_dir.to_string_lossy().to_string();
+        if !config
+            .autonomy
+            .trusted_roots
+            .iter()
+            .any(|r| r.path == projects_path)
+        {
+            config.autonomy.trusted_roots.push(TrustedRoot {
+                path: projects_path,
+                access: TrustedAccess::ReadWrite,
+            });
+        }
+    }
+    // Install as the process-global live policy so runtime autonomy changes
+    // (config.update_autonomy_settings) are reflected by `live_policy::current()`
+    // and picked up by the next session.
+    let security = crate::openhuman::security::live_policy::install(
+        Arc::new(SecurityPolicy::from_config(
+            &config.autonomy,
+            &config.workspace_dir,
+        )),
+        config.workspace_dir.clone(),
+    );
     // Phase 1 of #1401: audit logger is wired with defaults so emission paths
     // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
     // therefore the `audit` knob) onto the runtime `Config` schema so users
@@ -303,6 +340,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
     let non_skill_refs: Vec<&dyn crate::openhuman::tools::Tool> =
         non_skill_tools.iter().map(|t| t.as_ref()).collect();
     system_prompt.push_str(&build_tool_instructions_filtered(&non_skill_refs));
+    // Tell the model its current filesystem access boundaries so it self-limits
+    // (advisory only — the SecurityPolicy enforces these regardless).
+    system_prompt.push_str(&format_access_context(&security));
 
     if !skills.is_empty() {
         println!(
@@ -500,6 +540,14 @@ pub async fn start_channels(config: Config) -> Result<()> {
         )));
     }
 
+    if let Some(ref yb) = config.channels_config.yuanbao {
+        let yb_cfg = resolve_yuanbao_app_secret(yb.clone(), &config);
+        match YuanbaoChannel::new(yb_cfg) {
+            Ok(ch) => channels.push(Arc::new(ch)),
+            Err(e) => tracing::warn!("[channels] yuanbao config invalid: {e}"),
+        }
+    }
+
     if channels.is_empty() {
         println!("No channels configured. Set up channels in the web UI.");
         return Ok(());
@@ -634,4 +682,197 @@ pub async fn start_channels(config: Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Render the agent's current filesystem-access boundaries as a system-prompt
+/// section. Advisory only: the `SecurityPolicy` enforces these regardless of
+/// what the model believes, but stating them keeps the model from wasting turns
+/// attempting actions the runtime will deny.
+fn format_access_context(security: &SecurityPolicy) -> String {
+    use crate::openhuman::security::{AutonomyLevel, TrustedAccess};
+
+    let mode = match security.autonomy {
+        AutonomyLevel::ReadOnly => "read-only (observe only; no writes or shell commands)",
+        AutonomyLevel::Supervised => "supervised (acts; risky operations require approval)",
+        AutonomyLevel::Full => "full (autonomous within policy bounds)",
+    };
+    let mut s =
+        String::from("\n\n## Host access (enforced by the runtime — you cannot exceed this)\n");
+    s.push_str(&format!("- Access mode: {mode}\n"));
+    s.push_str(&format!(
+        "- Workspace: {} ({})\n",
+        security.workspace_dir.display(),
+        if security.workspace_only {
+            "file access confined to the workspace"
+        } else {
+            "workspace_only is OFF"
+        }
+    ));
+    if security.trusted_roots.is_empty() {
+        s.push_str("- Trusted roots outside the workspace: none granted\n");
+    } else {
+        s.push_str("- Trusted roots outside the workspace:\n");
+        for root in &security.trusted_roots {
+            let access = match root.access {
+                TrustedAccess::Read => "read-only",
+                TrustedAccess::ReadWrite => "read+write",
+            };
+            s.push_str(&format!("    - {} ({access})\n", root.path));
+        }
+    }
+    s.push_str(&format!(
+        "- OS package installation: {}\n",
+        if security.allow_tool_install {
+            "allowed via install_tool"
+        } else {
+            "disabled"
+        }
+    ));
+    s.push_str(
+        "Credential stores (~/.ssh, ~/.gnupg, ~/.aws) are always blocked. \
+         Use detect_tools to check what's installed before assuming a tool exists.\n",
+    );
+    s
+}
+
+/// Best-effort fill of `yb_cfg.app_secret` from the encrypted credentials
+/// store when TOML doesn't already carry one.
+///
+/// `app_secret` is intentionally not persisted in `config.toml` (see the
+/// `yuanbao` branch in `controllers/ops.rs`). Existing TOML values still
+/// win so manually-installed deployments don't break. Returns the
+/// (possibly-modified) config; logging is the only side effect on failure.
+///
+/// The stored secret is **only** copied when the stored profile's
+/// `app_key` matches `yb_cfg.app_key`. Without that guard, editing
+/// `app_key` in `config.toml` would silently pair a fresh key with a
+/// stale secret on next startup, and the channel would fail auth until
+/// the user reconnected or cleared credentials manually.
+fn resolve_yuanbao_app_secret(
+    mut yb_cfg: crate::openhuman::channels::providers::yuanbao::YuanbaoConfig,
+    config: &Config,
+) -> crate::openhuman::channels::providers::yuanbao::YuanbaoConfig {
+    if !yb_cfg.app_secret.is_empty() {
+        return yb_cfg;
+    }
+    let auth = crate::openhuman::credentials::AuthService::from_config(config);
+    match auth.get_profile("channel:yuanbao:api_key", None) {
+        Ok(Some(profile)) => {
+            let stored_app_key = profile.metadata.get("app_key").map(String::as_str);
+            if stored_app_key != Some(yb_cfg.app_key.as_str()) {
+                tracing::warn!(
+                    "[channels] yuanbao stored credentials are for a different app_key (toml={:?}, store={:?}); reconnect the channel to refresh the secret",
+                    yb_cfg.app_key,
+                    stored_app_key,
+                );
+            } else if let Some(secret) = profile.metadata.get("app_secret") {
+                yb_cfg.app_secret = secret.clone();
+            }
+        }
+        Ok(None) => {
+            tracing::warn!(
+                "[channels] yuanbao credentials missing — connect the channel again from the UI"
+            );
+        }
+        Err(e) => {
+            tracing::warn!("[channels] failed to load yuanbao credentials: {e}");
+        }
+    }
+    yb_cfg
+}
+
+#[cfg(test)]
+mod yuanbao_secret_tests {
+    use super::*;
+    use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
+    use crate::openhuman::credentials::AuthService;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    fn isolated_config() -> (tempfile::TempDir, Config) {
+        let tmp = tempdir().expect("tempdir");
+        let mut config = Config::default();
+        config.workspace_dir = tmp.path().join("workspace");
+        config.config_path = tmp.path().join("config.toml");
+        std::fs::create_dir_all(&config.workspace_dir).expect("workspace dir");
+        (tmp, config)
+    }
+
+    #[test]
+    fn loads_app_secret_from_credentials_when_toml_empty() {
+        let (_tmp, config) = isolated_config();
+        // Pre-write the credentials the same way `connect_channel` does:
+        // metadata under the `channel:yuanbao:api_key` provider key.
+        let auth = AuthService::from_config(&config);
+        let mut metadata = HashMap::new();
+        metadata.insert("app_key".to_string(), "ak".to_string());
+        metadata.insert("app_secret".to_string(), "from-credentials".to_string());
+        auth.store_provider_token("channel:yuanbao:api_key", "default", "", metadata, true)
+            .expect("store credentials");
+
+        let yb = YuanbaoConfig {
+            app_key: "ak".into(),
+            app_secret: String::new(),
+            ..Default::default()
+        };
+        let resolved = resolve_yuanbao_app_secret(yb, &config);
+        assert_eq!(resolved.app_secret, "from-credentials");
+    }
+
+    #[test]
+    fn preserves_existing_toml_secret_without_consulting_store() {
+        // No credentials in the store at all — resolver must still leave
+        // the TOML-supplied secret untouched.
+        let (_tmp, config) = isolated_config();
+        let yb = YuanbaoConfig {
+            app_key: "ak".into(),
+            app_secret: "from-toml".into(),
+            ..Default::default()
+        };
+        let resolved = resolve_yuanbao_app_secret(yb, &config);
+        assert_eq!(resolved.app_secret, "from-toml");
+    }
+
+    #[test]
+    fn returns_empty_secret_when_neither_toml_nor_credentials_have_one() {
+        let (_tmp, config) = isolated_config();
+        let yb = YuanbaoConfig {
+            app_key: "ak".into(),
+            app_secret: String::new(),
+            ..Default::default()
+        };
+        let resolved = resolve_yuanbao_app_secret(yb, &config);
+        // Surfaces empty so the downstream `YuanbaoChannel::new` validate()
+        // step can fail clearly, instead of attempting auth with a stale value.
+        assert_eq!(resolved.app_secret, "");
+    }
+
+    #[test]
+    fn skips_hydration_when_stored_profile_has_different_app_key() {
+        // Reproduces the stale-secret hazard: user changed `app_key` in
+        // `config.toml` (e.g. swapped to a different bot) but the
+        // credentials store still has the old key's profile. The resolver
+        // must NOT graft the old secret onto the new key.
+        let (_tmp, config) = isolated_config();
+        let auth = AuthService::from_config(&config);
+        let mut metadata = HashMap::new();
+        metadata.insert("app_key".to_string(), "OLD-KEY".to_string());
+        metadata.insert(
+            "app_secret".to_string(),
+            "old-key-secret-do-not-use".to_string(),
+        );
+        auth.store_provider_token("channel:yuanbao:api_key", "default", "", metadata, true)
+            .expect("store credentials");
+
+        let yb = YuanbaoConfig {
+            app_key: "NEW-KEY".into(),
+            app_secret: String::new(),
+            ..Default::default()
+        };
+        let resolved = resolve_yuanbao_app_secret(yb, &config);
+        assert_eq!(
+            resolved.app_secret, "",
+            "stale profile keyed to OLD-KEY must not hydrate NEW-KEY's secret",
+        );
+    }
 }
