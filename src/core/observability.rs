@@ -636,6 +636,25 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // TAURI-RUST-34H — composio backend endpoint (e.g.
+    // `/agent-integrations/composio/connections`) wraps an upstream
+    // Cloudflare anti-bot challenge as `Backend returned 500 Internal
+    // Server Error … 403 <!DOCTYPE html>…<title>Just a moment...</title>…`.
+    // The CF interstitial is keyed by the user's network reputation /
+    // geo / cookie state — there is nothing in `openhuman_core` that
+    // can act on it. Backend ops or the user's network is the
+    // remediation path; Sentry has no signal.
+    //
+    // Double-anchor on the Cloudflare challenge title + the literal
+    // "cloudflare" token to avoid colliding with unrelated bodies that
+    // merely mention "Just a moment" in a different context.
+    //
+    // Drops ~8.9 k events / 14d (TAURI-RUST-34H, sibling -32G / -34J /
+    // -323 share the same cascade).
+    if lower.contains("just a moment...") && lower.contains("cloudflare") {
+        return true;
+    }
+
     false
 }
 
@@ -2296,6 +2315,80 @@ mod tests {
             expected_error_kind(msg),
             None,
             "composio-direct 500 with no auth body must NOT demote — it is a real bug shape"
+        );
+    }
+
+    // ── TAURI-RUST-34H: backend-wrapped Cloudflare anti-bot interstitial ─
+
+    #[test]
+    fn classifies_backend_cloudflare_antibot_wrap_as_provider_user_state() {
+        // Canonical Sentry TAURI-RUST-34H wire shape — the verbatim title
+        // body from the issue (8,851 events / 14d on self-hosted
+        // `tauri-rust`). The backend wraps an upstream Cloudflare 403
+        // anti-bot challenge as `Backend returned 500 … 403 <!DOCTYPE …
+        // Just a moment... … cloudflare …`. The 500 escapes the 4xx-only
+        // `is_backend_user_error_message` classifier, so this body-shape
+        // arm catches it and demotes to `ProviderUserState`.
+        let msg = r#"Backend returned 500 Internal Server Error for GET https://api.tinyhumans.ai/agent-integrations/composio/connections: 403 <!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><meta name="robots" content="noindex,nofollow"><meta name="viewport" content="width=device-width,initial-scale=1"><link href="/cdn-cgi/styles/challenges.css" rel="stylesheet"></head><body class="no-js"><div class="main-wrapper" role="main"><div class="main-content"><h1 class="zone-name-title h1"><img class="heading-favicon" src="/favicon.ico" onerror="this.onerror=null;this.parentNode.removeChild(this)" alt="Icon for api.tinyhumans.ai">api.tinyhumans.ai</h1>...Powered by Cloudflare..."#;
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "backend-wrapped Cloudflare anti-bot interstitial must demote to ProviderUserState"
+        );
+    }
+
+    #[test]
+    fn classifies_minimal_cloudflare_antibot_body_as_provider_user_state() {
+        // Strip the wire shape down to just the two anchors — the
+        // matcher should still fire so future renderings (different
+        // line breaks, stripped HTML, alternate caller wrappers) still
+        // demote.
+        let msg = "Just a moment...\ncloudflare\n";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "minimal `Just a moment...` + `cloudflare` body must demote"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_half_anchor_cloudflare_messages_as_user_state() {
+        // Discrimination test for the double-anchor: either half on its
+        // own must NOT match. This guards against unrelated bodies that
+        // happen to use either phrase out of context.
+
+        // Half-anchor 1: `just a moment` without `cloudflare` — e.g.
+        // a daemon restart spinner blurb.
+        let half_a = "Just a moment, while we restart the daemon";
+        assert_ne!(
+            expected_error_kind(half_a),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "`Just a moment` without `cloudflare` must NOT match the CF anti-bot arm"
+        );
+
+        // Half-anchor 2: `cloudflare` without `just a moment...` — e.g.
+        // a CF Workers footer mention elsewhere.
+        let half_b = "Powered by Cloudflare";
+        assert_ne!(
+            expected_error_kind(half_b),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "`cloudflare` without `Just a moment...` must NOT match the CF anti-bot arm"
+        );
+    }
+
+    #[test]
+    fn does_not_classify_genuine_backend_500_without_cloudflare_body() {
+        // Real bug shape — a 500 from the same backend endpoint with no
+        // Cloudflare interstitial body — must still fall through so
+        // Sentry sees it. Without this guard the arm could be too
+        // permissive and silence genuine database / handler faults.
+        let msg = "Backend returned 500 Internal Server Error for GET \
+                   https://api.tinyhumans.ai/agent-integrations/composio/connections: \
+                   database connection pool exhausted";
+        assert_eq!(
+            expected_error_kind(msg),
+            None,
+            "genuine backend 500 without Cloudflare body must NOT demote — it is a real bug"
         );
     }
 
