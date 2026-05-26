@@ -548,7 +548,7 @@ const CAPABILITIES: &[Capability] = &[
         domain: "wallet",
         category: CapabilityCategory::Skills,
         description: "Read balances and prepare/confirm/execute transfers, swaps, and contract calls across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local.",
-        how_to: "Use wallet.* RPC methods (balances, prepare_transfer, prepare_swap, prepare_contract_call, execute_prepared) via the agent or core_rpc_relay.",
+        how_to: "Use wallet.* RPC methods (balances, prepare_transfer, prepare_swap, prepare_contract_call, execute_prepared) via the agent or core_rpc_relay, or via Settings > Wallet Balances.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },

@@ -420,6 +420,18 @@ const es4: TranslationMap = {
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
     'Enrutamiento, activadores e historial para integraciones impulsadas por Composio.',
+  'pages.settings.account.walletBalances': 'Wallet Balances',
+  'pages.settings.account.walletBalancesDesc': 'View multi-chain balances for your local wallet',
+  'walletBalances.title': 'Wallet Balances',
+  'walletBalances.refresh': 'Refresh',
+  'walletBalances.loading': 'Loading balances…',
+  'walletBalances.retry': 'Retry',
+  'walletBalances.emptyState':
+    'No wallet accounts yet — set up a wallet in Recovery Phrase.',
+  'walletBalances.copyAddress': 'Copy address',
+  'walletBalances.addressCopied': 'Copied',
+  'walletBalances.providerMissing': 'provider unavailable',
+  'walletBalances.rawBalance': 'Raw: {raw}',
 };
 
 export default es4;

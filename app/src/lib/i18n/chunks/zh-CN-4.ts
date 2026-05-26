@@ -408,6 +408,18 @@ const zhCN4: TranslationMap = {
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
     '由 Composio 提供支持的集成的路由、触发器和历史记录。',
+  'pages.settings.account.walletBalances': 'Wallet Balances',
+  'pages.settings.account.walletBalancesDesc': 'View multi-chain balances for your local wallet',
+  'walletBalances.title': 'Wallet Balances',
+  'walletBalances.refresh': 'Refresh',
+  'walletBalances.loading': 'Loading balances…',
+  'walletBalances.retry': 'Retry',
+  'walletBalances.emptyState':
+    'No wallet accounts yet — set up a wallet in Recovery Phrase.',
+  'walletBalances.copyAddress': 'Copy address',
+  'walletBalances.addressCopied': 'Copied',
+  'walletBalances.providerMissing': 'provider unavailable',
+  'walletBalances.rawBalance': 'Raw: {raw}',
 };
 
 export default zhCN4;

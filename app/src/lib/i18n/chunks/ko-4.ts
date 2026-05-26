@@ -419,6 +419,18 @@ const ko4: TranslationMap = {
   'settings.ai.openAiCompat.rotateKey': '키 회전',
   'settings.ai.openAiCompat.setKey': '키 설정',
   'settings.ai.openAiCompat.title': 'OpenAI 호환 엔드포인트',
+  'pages.settings.account.walletBalances': 'Wallet Balances',
+  'pages.settings.account.walletBalancesDesc': 'View multi-chain balances for your local wallet',
+  'walletBalances.title': 'Wallet Balances',
+  'walletBalances.refresh': 'Refresh',
+  'walletBalances.loading': 'Loading balances…',
+  'walletBalances.retry': 'Retry',
+  'walletBalances.emptyState':
+    'No wallet accounts yet — set up a wallet in Recovery Phrase.',
+  'walletBalances.copyAddress': 'Copy address',
+  'walletBalances.addressCopied': 'Copied',
+  'walletBalances.providerMissing': 'provider unavailable',
+  'walletBalances.rawBalance': 'Raw: {raw}',
 };
 
 export default ko4;
