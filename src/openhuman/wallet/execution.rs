@@ -201,6 +201,46 @@ fn next_quote_id() -> String {
     format!("q_{}_{}", now_ms(), n)
 }
 
+/// Identity of the chat thread that prepared a quote.
+///
+/// The wallet executes prepare/execute as a two-step flow keyed by `quote_id`.
+/// `quote_id`s are visible in the shared chat broadcast (the prepared-tx
+/// summary that gets sent back into the channel), so a co-channel caller can
+/// read another caller's `quote_id` and try to drive its execute from their
+/// own (now per-sender-isolated, post-#2331) agent session. Binding the
+/// quote to the originating chat thread closes that gap: execute is only
+/// allowed when the caller's `current_owner()` equals the prepare-time owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QuoteOwner {
+    pub(crate) thread_id: String,
+    pub(crate) client_id: String,
+}
+
+/// Read the per-turn chat context that scopes the agent tool loop.
+///
+/// Returns `Some(owner)` when called from inside an interactive chat turn
+/// (the web channel installs `APPROVAL_CHAT_CONTEXT` around `run_chat_task`).
+/// Returns `None` for non-chat callers (CLI, direct JSON-RPC, background
+/// triage / cron / sub-agents) — these keep the pre-binding behavior and
+/// remain executable without an owner gate, since they have no shared
+/// channel from which a `quote_id` could leak.
+///
+// SAFETY: relies on the inline `.await` chain in
+// `channels/providers/web.rs::run_chat_task`. `tokio::task_local!` propagates
+// across `.await` but **not** across `tokio::spawn`. If the chat path ever
+// detaches the tool loop onto a freshly-spawned task without wrapping it in
+// `APPROVAL_CHAT_CONTEXT.scope(...)`, this helper will silently start
+// returning `None` and the owner gate will become a no-op. Keep the
+// prepare/execute calls inline within the scope.
+pub(crate) fn current_owner() -> Option<QuoteOwner> {
+    crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+        .try_with(|ctx| QuoteOwner {
+            thread_id: ctx.thread_id.clone(),
+            client_id: ctx.client_id.clone(),
+        })
+        .ok()
+}
+
 async fn require_account(chain: WalletChain) -> Result<WalletAccount, String> {
     let status = wallet_status().await?.value;
     if !status.configured {
