@@ -448,21 +448,29 @@ fn classify_inference_error(err: &str) -> ClassifiedError {
         }
     } else if lower.contains("rate limit") || lower.contains("429") {
         let retry_secs = parse_retry_after_secs_from_str(err);
-        let summary = format!(
-            "Your AI provider is rate-limiting requests. This is a transient upstream \
-             limit, not a thread-level block — you can retry in this thread.{}",
-            retry_after_hint(retry_secs)
-        );
         // Non-retryable business 429s ("plan does not include", balance
         // exhausted, known provider business codes like Z.AI 1311/1113)
         // also surface here — mark them non-retryable so the FE can hide
         // the "Retry" button and route the user to settings/billing.
-        let retryable = !is_non_retryable_rate_limit_text(&lower);
+        let non_retryable = is_non_retryable_rate_limit_text(&lower);
+        let summary = if non_retryable {
+            "Your AI provider is rejecting requests for billing or plan reasons \
+             (out of credits, plan limit, or unavailable model). Retrying won't \
+             help — open Settings to top up, upgrade your plan, or pick a \
+             different model."
+                .to_string()
+        } else {
+            format!(
+                "Your AI provider is rate-limiting requests. This is a transient upstream \
+                 limit, not a thread-level block — you can retry in this thread.{}",
+                retry_after_hint(retry_secs)
+            )
+        };
         ClassifiedError {
             error_type: "rate_limited",
             message: with_provider_detail(summary.as_str(), err),
             source: "provider",
-            retryable,
+            retryable: !non_retryable,
             retry_after_ms: retry_secs.map(|s| s.saturating_mul(1000)),
             provider,
             fallback_available,
@@ -497,10 +505,20 @@ fn classify_inference_error(err: &str) -> ClassifiedError {
         || lower.contains("payment required")
         || lower.contains("insufficient balance")
     {
+        // `openhuman_billing` means OpenHuman's own credit/quota system —
+        // a 402 carrying the "openhuman" envelope (or no envelope at all,
+        // since OpenHuman's backend is the only origin without one in
+        // practice). When the 402 comes from an upstream provider envelope
+        // (`<provider> API error (402)`), the limit belongs to that
+        // provider, not OpenHuman billing, so tag the source as `provider`.
+        let source: &'static str = match provider.as_deref() {
+            Some("openhuman") | None => "openhuman_billing",
+            Some(_) => "provider",
+        };
         ClassifiedError {
             error_type: "budget_exhausted",
             message: with_provider_detail("Insufficient credits. Please top up to continue.", err),
-            source: "openhuman_billing",
+            source,
             retryable: false,
             retry_after_ms: None,
             provider,

@@ -22,18 +22,6 @@ use tokio::time::{timeout, Duration};
 /// `cargo test`'s default parallelism for the rest of the suite.
 static FORCED_ERROR_TEST_LOCK: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
-/// Ensures the test-only forced run_chat_task failure toggle is always reset,
-/// even if the test panics before reaching explicit cleanup code.
-struct TestForcedRunChatTaskErrorGuard;
-
-impl Drop for TestForcedRunChatTaskErrorGuard {
-    fn drop(&mut self) {
-        tokio::spawn(async {
-            set_test_forced_run_chat_task_error(None).await;
-        });
-    }
-}
-
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
     let err = start_chat("", "thread", "hello", None, None, None, None)
@@ -94,7 +82,6 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         "error sending request for url (https://internal-api.example.invalid/openai/v1/chat/completions)",
     ))
     .await;
-    let _forced_error_guard = TestForcedRunChatTaskErrorGuard;
 
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
@@ -131,6 +118,12 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         !message.contains("error sending request for url"),
         "chat error payload must not expose raw transport details"
     );
+
+    // Reset the test-only forced error slot while still holding
+    // FORCED_ERROR_TEST_LOCK so a follow-on test can't observe leftover
+    // state. Inline `.await` (not a Drop-spawned task) — see the
+    // commit that removed TestForcedRunChatTaskErrorGuard.
+    set_test_forced_run_chat_task_error(None).await;
 }
 
 #[test]
@@ -459,7 +452,6 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
         "openrouter API error (429 Too Many Requests): Retry-After: 7",
     ))
     .await;
-    let _forced_error_guard = TestForcedRunChatTaskErrorGuard;
 
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
@@ -535,6 +527,8 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
             "{key} must be omitted when None so older FE clients aren't surprised: {empty_json}"
         );
     }
+
+    set_test_forced_run_chat_task_error(None).await;
 }
 
 #[tokio::test]
@@ -551,7 +545,6 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
         "openrouter API error (429 Too Many Requests): Retry-After: 30",
     ))
     .await;
-    let _forced_error_guard = TestForcedRunChatTaskErrorGuard;
 
     let mut rx = subscribe_web_channel_events();
     let request_id = start_chat(
@@ -608,6 +601,8 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
         "provider name must reach the wire so the FE can show \"openrouter is throttling\": \
          {recv:?}"
     );
+
+    set_test_forced_run_chat_task_error(None).await;
 }
 
 #[test]
@@ -770,6 +765,83 @@ fn classify_inference_error_billing_402_distinguished_from_provider_429() {
         "402 must NOT share source with provider 429"
     );
     assert!(!classified.retryable);
+}
+
+#[test]
+fn classify_inference_error_upstream_provider_402_is_not_openhuman_billing() {
+    // Regression for the inverse of the #2606 acceptance criterion: a
+    // 402 carrying an upstream provider envelope must be attributed to
+    // that provider, NOT to OpenHuman's own billing surface. Tagging it
+    // openhuman_billing misled the FE into pointing the user at OpenHuman
+    // credits when in fact their provider plan / balance is the issue.
+    let cases: &[&str] = &[
+        "openrouter API error (402 Payment Required): insufficient balance",
+        "openai API error (402): payment required",
+    ];
+    for raw in cases {
+        let classified = classify_inference_error(raw);
+        assert_eq!(
+            classified.error_type, "budget_exhausted",
+            "still budget_exhausted by classification: {raw}"
+        );
+        assert_eq!(
+            classified.source, "provider",
+            "upstream provider 402 must be sourced to the provider, not OpenHuman billing: {raw}"
+        );
+        assert!(!classified.retryable);
+    }
+}
+
+#[test]
+fn classify_inference_error_non_retryable_429_message_routes_to_settings() {
+    // Companion to the non-retryable 429 branch: when retry is futile
+    // (plan limit, insufficient balance, business code), the message
+    // MUST NOT tell the user "you can retry in this thread" — that's
+    // the transient-429 copy. The non-retryable copy points to billing
+    // / plan / model settings instead.
+    let cases: &[&str] = &[
+        "openrouter API error (429): plan does not include this model",
+        "openai API error (429): insufficient_balance",
+    ];
+    for raw in cases {
+        let classified = classify_inference_error(raw);
+        assert!(
+            !classified.retryable,
+            "guard against accidental retryability flip: {raw}"
+        );
+        assert!(
+            !classified.message.contains("retry in this thread"),
+            "non-retryable 429 copy MUST NOT promise same-thread retry: {}",
+            classified.message
+        );
+        assert!(
+            classified.message.contains("Settings")
+                || classified.message.contains("plan")
+                || classified.message.contains("credits"),
+            "non-retryable 429 copy must route to billing/plan/settings: {}",
+            classified.message
+        );
+    }
+}
+
+#[test]
+fn classify_inference_error_retryable_429_message_keeps_retry_hint() {
+    // Companion: a vanilla transient 429 must still surface the
+    // "retry in this thread" reassurance — the message branch must
+    // not bleed across.
+    let raw = "openrouter API error (429 Too Many Requests): Retry-After: 5";
+    let classified = classify_inference_error(raw);
+    assert!(classified.retryable);
+    assert!(
+        classified.message.contains("retry in this thread"),
+        "transient 429 must still reassure same-thread retry: {}",
+        classified.message
+    );
+    assert!(
+        classified.message.contains("Try again in 5 seconds"),
+        "transient 429 must surface the retry-after hint: {}",
+        classified.message
+    );
 }
 
 #[test]
