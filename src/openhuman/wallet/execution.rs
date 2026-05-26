@@ -384,13 +384,41 @@ fn get_quote(quote_id: &str) -> Result<PreparedTransaction, String> {
     Ok(quote)
 }
 
-fn take_quote(quote_id: &str) -> Result<PreparedTransaction, String> {
+/// Remove a quote from the store and return it to the caller, if and only if
+/// the caller's chat-thread owner matches the prepare-time owner.
+///
+/// On owner mismatch this returns the **exact same** "quote '…' not found"
+/// error shape that a missing-row lookup would, so cross-thread callers
+/// cannot distinguish "wrong owner" from "no such quote" — i.e. no
+/// enumeration oracle for leaked `quote_id`s.
+///
+/// Callers with no chat context (`caller_owner == None`, e.g. CLI / direct
+/// JSON-RPC / background turns) can only execute quotes that were also
+/// prepared with no chat context. This intentionally prevents privilege-drop
+/// where a background flow could pick up an interactive user's quote.
+fn take_quote_for(
+    quote_id: &str,
+    caller_owner: Option<QuoteOwner>,
+) -> Result<PreparedTransaction, String> {
+    let not_found = || format!("quote '{quote_id}' not found");
     let mut store = QUOTE_STORE.lock();
     let now = now_ms();
     let pos = store
         .iter()
         .position(|q| q.quote_id == quote_id)
-        .ok_or_else(|| format!("quote '{quote_id}' not found"))?;
+        .ok_or_else(not_found)?;
+    // Owner check happens before status / expiry checks so the error shape on
+    // mismatch can be byte-equal to the not-found path. Removing the quote
+    // only happens *after* this check passes — a mismatched caller cannot
+    // poison the store by consuming someone else's quote.
+    if store[pos].owner != caller_owner {
+        debug!(
+            "{LOG_PREFIX} take_quote_for quote_id={} owner_mismatch (caller_has_ctx={})",
+            quote_id,
+            caller_owner.is_some()
+        );
+        return Err(not_found());
+    }
     let quote = store.remove(pos);
     if quote.status == PreparedStatus::Consumed {
         return Err(format!("quote '{quote_id}' already executed"));
@@ -816,10 +844,17 @@ pub async fn execute_prepared(
     if !params.confirmed {
         return Err("execute_prepared requires `confirmed: true`".to_string());
     }
+    // Bind execute to the chat-thread that prepared the quote.
+    // `current_owner()` returns the caller's `APPROVAL_CHAT_CONTEXT` (or `None`
+    // for non-chat callers). `take_quote_for` enforces equality with the
+    // prepare-time owner and returns the same "not found" error on mismatch
+    // — leaked `quote_id`s in a shared channel cannot be hijacked from a
+    // different agent session.
+    let caller = current_owner();
     // Atomically remove the quote *before* broadcasting so two concurrent
     // confirmations can't both pass get_quote() and double-submit. If signing
     // or broadcast fails we restore the quote to keep it retryable.
-    let quote = take_quote(&params.quote_id)?;
+    let quote = take_quote_for(&params.quote_id, caller)?;
     let chain = quote.chain;
     let restorable = quote.clone();
     let result = match chain {
@@ -1053,14 +1088,17 @@ mod tests {
             owner: None,
         };
         store_quote(q.clone());
-        let taken = take_quote("q_test_1").expect("quote round-trips");
+        let taken = take_quote_for("q_test_1", None).expect("quote round-trips");
         assert_eq!(taken.quote_id, "q_test_1");
-        assert!(take_quote("q_test_1").is_err(), "second take must fail");
+        assert!(
+            take_quote_for("q_test_1", None).is_err(),
+            "second take must fail"
+        );
 
         q.quote_id = "q_test_2".to_string();
         q.expires_at_ms = now.saturating_sub(1);
         store_quote(q);
-        let err = take_quote("q_test_2").unwrap_err();
+        let err = take_quote_for("q_test_2", None).unwrap_err();
         assert!(err.contains("expired"), "got: {err}");
     }
 
