@@ -1286,6 +1286,203 @@ mod tests {
         assert_eq!(raw_txs.lock().len(), 1);
     }
 
+    /// Build a Quote-store fixture pinned to a specific owner.
+    /// Bypasses prepare_* (which would need full wallet setup + mock RPC) so
+    /// the owner-gate behavior can be exercised in isolation.
+    fn insert_owned_quote(quote_id: &str, owner: Option<QuoteOwner>) -> PreparedTransaction {
+        let now = now_ms();
+        let q = PreparedTransaction {
+            quote_id: quote_id.to_string(),
+            kind: PreparedKind::NativeTransfer,
+            chain: WalletChain::Evm,
+            evm_network: Some(EvmNetwork::EthereumMainnet),
+            from_address: "0xfrom".to_string(),
+            to_address: "0xto".to_string(),
+            asset_symbol: "ETH".to_string(),
+            amount_raw: "1".to_string(),
+            amount_formatted: "0.000000000000000001".to_string(),
+            receive_symbol: None,
+            min_receive_raw: None,
+            calldata: None,
+            token_address: None,
+            estimated_fee_raw: "0".to_string(),
+            status: PreparedStatus::AwaitingConfirmation,
+            created_at_ms: now,
+            expires_at_ms: now + 60_000,
+            notes: vec![],
+            owner,
+        };
+        insert_quote_for_test(q)
+    }
+
+    fn owner_a() -> QuoteOwner {
+        QuoteOwner {
+            thread_id: "thread-A".into(),
+            client_id: "client-A".into(),
+        }
+    }
+
+    fn owner_b() -> QuoteOwner {
+        QuoteOwner {
+            thread_id: "thread-B".into(),
+            client_id: "client-B".into(),
+        }
+    }
+
+    fn chat_ctx_from(owner: &QuoteOwner) -> crate::openhuman::approval::ApprovalChatContext {
+        crate::openhuman::approval::ApprovalChatContext {
+            thread_id: owner.thread_id.clone(),
+            client_id: owner.client_id.clone(),
+        }
+    }
+
+    /// Cross-thread execute must fail. The quote must remain in the store
+    /// (mismatched caller cannot poison it by consuming on Alice's behalf).
+    #[tokio::test]
+    async fn execute_prepared_rejects_cross_owner_execution() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_xowner_1", Some(owner_a()));
+
+        // Bob (owner_b) tries to execute Alice's quote. The error string is
+        // intentionally identical to a not-found lookup.
+        let err = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_b()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: q.quote_id.clone(),
+                    confirmed: true,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err, format!("quote '{}' not found", q.quote_id));
+
+        // The quote must still be present and executable by Alice — Bob's
+        // failed attempt didn't poison the store.
+        let still_present = prepared_quotes_for_test();
+        assert!(
+            still_present.iter().any(|p| p.quote_id == q.quote_id),
+            "quote must survive owner-mismatch attempts"
+        );
+    }
+
+    /// Same-thread execute must pass the owner gate (it will fail later in
+    /// the chain code because there's no mock RPC set up, but the failure
+    /// must not be the "not found" oracle — that proves we got past the gate).
+    #[tokio::test]
+    async fn execute_prepared_allows_same_owner_execution() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_same_owner_1", Some(owner_a()));
+
+        let result = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_a()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: q.quote_id.clone(),
+                    confirmed: true,
+                }),
+            )
+            .await;
+        // Past the owner gate. Chain code may error (no mock RPC, no wallet
+        // setup) — but it must NOT be the "not found" shape we use for the
+        // owner-mismatch oracle.
+        if let Err(err) = &result {
+            assert_ne!(
+                err,
+                &format!("quote '{}' not found", q.quote_id),
+                "same-owner path must not return the owner-mismatch oracle"
+            );
+        }
+    }
+
+    /// No-context prepare + no-context execute must work. Keeps CLI / direct
+    /// JSON-RPC flows usable.
+    #[tokio::test]
+    async fn execute_prepared_allows_no_context_flows() {
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_no_ctx_1", None);
+
+        // No APPROVAL_CHAT_CONTEXT scope — current_owner() returns None on
+        // both prepare and execute, so the gate passes.
+        let result = execute_prepared(ExecutePreparedParams {
+            quote_id: q.quote_id.clone(),
+            confirmed: true,
+        })
+        .await;
+        if let Err(err) = &result {
+            assert_ne!(
+                err,
+                &format!("quote '{}' not found", q.quote_id),
+                "no-context path must not return the owner-mismatch oracle"
+            );
+        }
+    }
+
+    /// A quote prepared inside a chat context must NOT be executable from a
+    /// caller with no context. Prevents privilege-drop into background /
+    /// triage / cron flows that wouldn't surface UI confirmation.
+    #[tokio::test]
+    async fn execute_prepared_rejects_chat_quote_from_no_context_caller() {
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_chat_to_bg_1", Some(owner_a()));
+
+        // No scope around execute → caller_owner = None ≠ Some(owner_a).
+        let err = execute_prepared(ExecutePreparedParams {
+            quote_id: q.quote_id.clone(),
+            confirmed: true,
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err, format!("quote '{}' not found", q.quote_id));
+    }
+
+    /// Lock the error-shape invariant: cross-owner reject string MUST be
+    /// byte-equal to the not-found string. Regressions here would re-open
+    /// the enumeration-oracle gap.
+    #[tokio::test]
+    async fn execute_prepared_owner_mismatch_error_matches_not_found_shape() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+
+        // Real (owner-mismatched) quote.
+        let real = insert_owned_quote("q_real_1", Some(owner_a()));
+        // Reach the mismatched-owner branch.
+        let mismatch_err = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_b()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: real.quote_id.clone(),
+                    confirmed: true,
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        // Reach the genuine not-found branch (no quote with this id in store).
+        let missing_err = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_b()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: "q_does_not_exist".into(),
+                    confirmed: true,
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        // Both branches surface the exact same template, parameterised only
+        // by quote_id. No enumeration oracle.
+        assert_eq!(mismatch_err, format!("quote '{}' not found", real.quote_id));
+        assert_eq!(missing_err, "quote 'q_does_not_exist' not found");
+    }
+
     #[tokio::test]
     async fn execute_prepared_rejects_evm_chain_id_mismatch() {
         let _guard = TEST_LOCK.lock();
