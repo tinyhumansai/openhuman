@@ -164,7 +164,7 @@ Frontend settings → core RPC (JSON-RPC over HTTP + Basic Auth)
 3. **Config directory permissions** — `~/.config/openhuman/` and `mcp.json` permission model not reviewed
 4. **Credential encryption** — `encryption` domain used for at-rest encryption; key management model unclear
 5. **WebView CSP** — embedded webviews (Telegram, Discord, etc.) loaded under CEF — need to verify CSP headers and iframe restrictions
-6. **`OPENHUMAN_CORE_TOKEN` in process env** — bearer token in env var; visible via `/proc/self/environ` on Linux or process inspection on macOS
+6. ~~**`OPENHUMAN_CORE_TOKEN` in process env** — bearer token in env var; visible via `/proc/self/environ` on Linux or process inspection on macOS~~ — **resolved**: in-process core now receives the bearer via an in-memory handoff (`run_server_embedded_with_ready(rpc_token: Some(_))`); the env-var crossing has been removed from the Tauri shell's spawn path. CLI / docker / cloud env-as-config remains the intended operator surface for those deployments.
 7. **No rate limiting observed** on HTTP JSON-RPC endpoint
 
 ### Positive Signals
@@ -183,7 +183,7 @@ Frontend settings → core RPC (JSON-RPC over HTTP + Basic Auth)
 - [ ] Check file permissions on `~/.config/openhuman/`
 - [ ] Add rate limiting to HTTP JSON-RPC endpoint
 - [ ] Document MCP tool output handling expectations
-- [ ] Review `OPENHUMAN_CORE_TOKEN` lifetime and exposure scope
+- [x] Review `OPENHUMAN_CORE_TOKEN` lifetime and exposure scope — in-process core now uses in-memory handoff (no env crossing); CLI/docker/cloud retain env-as-config
 
 ---
 
