@@ -15,10 +15,14 @@ CORE_PORT="${OPENHUMAN_CORE_PORT:-7788}"
 CORE_RPC_URL="${CORE_RPC_URL:-http://${CORE_HOST}:${CORE_PORT}/rpc}"
 
 # Resolve the core RPC bearer token.  Resolution order:
-#   1. OPENHUMAN_CORE_TOKEN env var (set by caller or Tauri shell)
-#   2. core.token file in workspace dir (written by standalone `openhuman core run`)
-#   3. Live process environment of the running openhuman-core child (Tauri-managed:
-#      token is injected via env var, never written to disk)
+#   1. OPENHUMAN_CORE_TOKEN env var (set by caller or via .env / docker / cloud)
+#   2. config-style core.token file in workspace dir (written by standalone
+#      `openhuman core run`)
+#   3. Debug-only e2e token file written by the Tauri shell at
+#      ${TMPDIR:-/tmp}/openhuman-e2e-rpc-token (mode 0600). Only present in
+#      debug builds — release builds do not write it. The Tauri shell hands
+#      its bearer to the in-process core in-memory; no env-var or ps-readable
+#      surface exists.
 _resolve_rpc_token() {
   if [[ -n "${OPENHUMAN_CORE_TOKEN:-}" ]]; then
     echo "$OPENHUMAN_CORE_TOKEN"
@@ -30,22 +34,19 @@ _resolve_rpc_token() {
     cat "$token_file"
     return
   fi
-  # Tauri-managed core: token is in the child process environment, not on disk.
-  # Read it from the running openhuman-core process via ps.
-  local core_pid
-  core_pid="$(pgrep -f 'openhuman-core.*run' 2>/dev/null | head -1)"
-  if [[ -n "$core_pid" ]]; then
-    local tok
-    tok="$(ps eww -p "$core_pid" 2>/dev/null | tr ' ' '\n' | grep '^OPENHUMAN_CORE_TOKEN=' | cut -d= -f2)"
-    if [[ -n "$tok" ]]; then
-      echo "$tok"
-      return
-    fi
+  # Tauri-managed core (debug build): the shell writes the in-memory bearer
+  # to a 0600 file under TMPDIR so this script can authenticate against the
+  # in-process server. Release builds never write this file.
+  local e2e_token_file="${TMPDIR:-/tmp}/openhuman-e2e-rpc-token"
+  e2e_token_file="${e2e_token_file%/}"
+  if [[ -f "$e2e_token_file" ]]; then
+    cat "$e2e_token_file"
+    return
   fi
   echo "ERROR: core RPC token not found. Options:" >&2
   echo "  1. Set OPENHUMAN_CORE_TOKEN=<token> before running this script" >&2
   echo "  2. Start the core standalone: openhuman core run  (writes $token_file)" >&2
-  echo "  3. Open the OpenHuman app (token auto-detected from process env)" >&2
+  echo "  3. Run the OpenHuman app in debug mode (writes $e2e_token_file)" >&2
   exit 1
 }
 RPC_TOKEN="$(_resolve_rpc_token)"
