@@ -146,6 +146,8 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   const { speakReplies = false, listening = false } = options;
   const speakRef = useRef(speakReplies);
   speakRef.current = speakReplies;
+  const listeningRef = useRef(listening);
+  listeningRef.current = listening;
 
   // Effective mascot voice id: resolves the manual override, the
   // locale-default toggle, and the build-time fallback into a single
@@ -214,6 +216,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       },
       onTextDelta: e => {
         // Pseudo-lipsync only kicks in if no real audio is playing.
+        if (listeningRef.current) return;
         if (playbackRef.current) return;
         clearAckTimer();
         setFace('speaking');
@@ -221,6 +224,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         lastDeltaAtRef.current = window.performance.now();
       },
       onDone: e => {
+        if (listeningRef.current) return;
         const ackFace = pickConversationAckFace(e) ?? 'happy';
         if (!speakRef.current || !e.full_response?.trim()) {
           // Soft acknowledgement beat instead of snapping back to idle.
@@ -259,6 +263,25 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!listening) return;
+    clearAckTimer();
+    // Treat mic-hot as an explicit interruption: stale synthesis/playback
+    // callbacks must not switch the mascot back to speaking after we listen.
+    playbackSeqRef.current++;
+    const orphan = playbackRef.current;
+    playbackRef.current = null;
+    if (orphan) {
+      orphan.stop();
+      orphan.ended.catch(swallowAudioStop);
+    }
+    visemeFramesRef.current = [];
+    visemeCursorRef.current = 0;
+    targetRef.current = VISEMES.REST;
+    lastDeltaAtRef.current = 0;
+    setFace('idle');
+  }, [listening]);
 
   async function startTtsPlayback(
     text: string,
@@ -402,7 +425,8 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
 
   // `listening` is an external override so callers wiring dictation state
   // can reflect mic-on without racing the chat event subscription.
-  const effectiveFace: MascotFace = listening && face !== 'speaking' ? 'listening' : face;
+  const effectiveFace: MascotFace = listening ? 'listening' : face;
+  const effectiveViseme: VisemeShape = listening ? VISEMES.REST : viseme;
 
-  return { face: effectiveFace, viseme };
+  return { face: effectiveFace, viseme: effectiveViseme };
 }
