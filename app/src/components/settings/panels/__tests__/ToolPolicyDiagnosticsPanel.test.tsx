@@ -43,8 +43,7 @@ describe('ToolPolicyDiagnosticsPanel', () => {
     expect(screen.getByText('supervised')).toBeInTheDocument();
     expect(screen.getByText(/Total tools/i)).toBeInTheDocument();
     expect(screen.getAllByText('10').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Recent \\(24h\\):/i)).toBeInTheDocument();
-    expect(screen.getAllByText('5').length).toBeGreaterThan(0);
+    expect(screen.getByText(/Recent \(24h\): 5/i)).toBeInTheDocument();
     expect(hoisted.callCoreRpc).toHaveBeenCalled();
   });
 });

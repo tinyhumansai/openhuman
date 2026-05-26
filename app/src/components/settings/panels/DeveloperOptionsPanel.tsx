@@ -125,7 +125,7 @@ const developerItems = [
   {
     id: 'tool-policy-diagnostics',
     titleKey: 'devOptions.diagnostics',
-    descriptionKey: 'devOptions.diagnosticsDesc',
+    descriptionKey: 'devOptions.toolPolicyDiagnosticsDesc',
     route: 'tool-policy-diagnostics',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

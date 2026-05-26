@@ -17,7 +17,7 @@ pub fn record(tool_name: &str, policy: &str, action: &str, reason: &str) {
 
     let policy = policy.trim();
     let action = action.trim();
-    let reason = truncate_reason(reason.trim());
+    let reason = truncate_reason(&redact_sensitive(reason.trim()));
 
     let timestamp_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -53,6 +53,15 @@ pub fn list(limit: usize) -> Vec<RecentPolicyDenial> {
     buf.iter().take(limit).cloned().collect()
 }
 
+fn redact_sensitive(input: &str) -> String {
+    for marker in ["Bearer ", "sk-", "ghp_", "-----BEGIN"] {
+        if input.contains(marker) {
+            return "[redacted: sensitive content]".to_string();
+        }
+    }
+    input.to_string()
+}
+
 fn truncate_reason(reason: &str) -> String {
     if reason.is_empty() {
         return "<empty>".to_string();
@@ -85,5 +94,17 @@ mod tests {
         record("   ", "policy", "denied", "reason");
         // list() should not panic; we can't reliably assert length because tests may run in parallel.
         let _ = list(10);
+    }
+
+    #[test]
+    fn record_redacts_sensitive_reason_fragments() {
+        record(
+            "tool.secret",
+            "policy",
+            "denied",
+            "blocked: Bearer abcdefghijklmnopqrstuvwxyz",
+        );
+        let listed = list(1);
+        assert_eq!(listed[0].reason, "[redacted: sensitive content]");
     }
 }

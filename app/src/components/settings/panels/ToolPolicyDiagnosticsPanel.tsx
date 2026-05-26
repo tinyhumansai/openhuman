@@ -75,13 +75,17 @@ const ToolPolicyDiagnosticsPanel = () => {
 
   const body = useMemo(() => {
     if (status.kind === 'loading') {
-      return <div className="px-4 py-3 text-sm text-sage-700 dark:text-sage-200">Loading…</div>;
+      return (
+        <div className="px-4 py-3 text-sm text-sage-700 dark:text-sage-200">
+          {t('devOptions.toolPolicyDiagnostics.loading')}
+        </div>
+      );
     }
     if (status.kind === 'error') {
       return (
         <div className="px-4 py-3 rounded-lg border border-coral-300 dark:border-coral-500/40 bg-coral-50 dark:bg-coral-500/10">
           <div className="text-sm font-semibold text-coral-900 dark:text-coral-200">
-            Diagnostics unavailable
+            {t('devOptions.toolPolicyDiagnostics.unavailable')}
           </div>
           <div className="text-xs text-coral-800 dark:text-coral-200 mt-1 font-mono break-words">
             {status.message}
@@ -91,28 +95,41 @@ const ToolPolicyDiagnosticsPanel = () => {
     }
 
     const d = status.diagnostics;
+    const recentRows =
+      d.mcp_write_audit.recent_rows === null ? '—' : String(d.mcp_write_audit.recent_rows);
+
     return (
       <div className="px-4 pt-3 pb-6 flex flex-col gap-3">
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-sage-50 dark:bg-sage-500/10">
           <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
-            Policy posture
+            {t('devOptions.toolPolicyDiagnostics.posture.title')}
           </div>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-            <dt className="text-sage-700 dark:text-sage-300">Autonomy:</dt>
+            <dt className="text-sage-700 dark:text-sage-300">
+              {t('devOptions.toolPolicyDiagnostics.posture.autonomy')}
+            </dt>
             <dd className="font-mono text-sage-900 dark:text-sage-200">
               {d.posture.autonomy_level}
             </dd>
-            <dt className="text-sage-700 dark:text-sage-300">Workspace only:</dt>
+            <dt className="text-sage-700 dark:text-sage-300">
+              {t('devOptions.toolPolicyDiagnostics.posture.workspaceOnly')}
+            </dt>
             <dd className="text-sage-900 dark:text-sage-200">{String(d.posture.workspace_only)}</dd>
-            <dt className="text-sage-700 dark:text-sage-300">Max actions/hr:</dt>
+            <dt className="text-sage-700 dark:text-sage-300">
+              {t('devOptions.toolPolicyDiagnostics.posture.maxActionsPerHour')}
+            </dt>
             <dd className="font-mono text-sage-900 dark:text-sage-200">
               {d.posture.max_actions_per_hour}
             </dd>
-            <dt className="text-sage-700 dark:text-sage-300">Approval (medium risk):</dt>
+            <dt className="text-sage-700 dark:text-sage-300">
+              {t('devOptions.toolPolicyDiagnostics.posture.approvalMediumRisk')}
+            </dt>
             <dd className="text-sage-900 dark:text-sage-200">
               {String(d.posture.require_approval_for_medium_risk)}
             </dd>
-            <dt className="text-sage-700 dark:text-sage-300">Block high risk:</dt>
+            <dt className="text-sage-700 dark:text-sage-300">
+              {t('devOptions.toolPolicyDiagnostics.posture.blockHighRisk')}
+            </dt>
             <dd className="text-sage-900 dark:text-sage-200">
               {String(d.posture.block_high_risk_commands)}
             </dd>
@@ -120,22 +137,32 @@ const ToolPolicyDiagnosticsPanel = () => {
         </div>
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
-          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">Inventory</div>
+          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
+            {t('devOptions.toolPolicyDiagnostics.inventory.title')}
+          </div>
           <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
             <div>
-              <dt className="text-sage-700 dark:text-sage-300">Total tools</dt>
+              <dt className="text-sage-700 dark:text-sage-300">
+                {t('devOptions.toolPolicyDiagnostics.inventory.totalTools')}
+              </dt>
               <dd className="font-mono text-sage-900 dark:text-sage-200">{d.total_tools}</dd>
             </div>
             <div>
-              <dt className="text-sage-700 dark:text-sage-300">Enabled tools</dt>
+              <dt className="text-sage-700 dark:text-sage-300">
+                {t('devOptions.toolPolicyDiagnostics.inventory.enabledTools')}
+              </dt>
               <dd className="font-mono text-sage-900 dark:text-sage-200">{d.enabled_tools}</dd>
             </div>
             <div>
-              <dt className="text-sage-700 dark:text-sage-300">MCP stdio tools</dt>
+              <dt className="text-sage-700 dark:text-sage-300">
+                {t('devOptions.toolPolicyDiagnostics.inventory.mcpStdioTools')}
+              </dt>
               <dd className="font-mono text-sage-900 dark:text-sage-200">{d.mcp_stdio_tools}</dd>
             </div>
             <div>
-              <dt className="text-sage-700 dark:text-sage-300">JSON-RPC tools</dt>
+              <dt className="text-sage-700 dark:text-sage-300">
+                {t('devOptions.toolPolicyDiagnostics.inventory.jsonRpcTools')}
+              </dt>
               <dd className="font-mono text-sage-900 dark:text-sage-200">{d.json_rpc_tools}</dd>
             </div>
           </dl>
@@ -143,12 +170,13 @@ const ToolPolicyDiagnosticsPanel = () => {
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
           <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
-            MCP allowlists
+            {t('devOptions.toolPolicyDiagnostics.mcpAllowlists.title')}
           </div>
           <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-            Enabled: <span className="font-mono">{String(d.mcp_allowlists.enabled)}</span> ·
-            Servers: <span className="font-mono">{d.mcp_allowlists.enabled_server_count}</span>/
-            <span className="font-mono">{d.mcp_allowlists.server_count}</span>
+            {t('devOptions.toolPolicyDiagnostics.mcpAllowlists.summary')
+              .replace('{enabled}', String(d.mcp_allowlists.enabled))
+              .replace('{enabledCount}', String(d.mcp_allowlists.enabled_server_count))
+              .replace('{totalCount}', String(d.mcp_allowlists.server_count))}
           </div>
           {d.mcp_allowlists.servers.length > 0 && (
             <ul className="mt-2 text-xs space-y-1">
@@ -157,10 +185,12 @@ const ToolPolicyDiagnosticsPanel = () => {
                   <span
                     className="font-mono text-sage-900 dark:text-sage-200 truncate"
                     title={s.name}>
-                    {s.name || '<unnamed>'}
+                    {s.name || t('devOptions.toolPolicyDiagnostics.mcpAllowlists.unnamed')}
                   </span>
                   <span className="text-sage-700 dark:text-sage-300 font-mono">
-                    allow={s.allowed_tools_count} deny={s.disallowed_tools_count}
+                    {t('devOptions.toolPolicyDiagnostics.mcpAllowlists.allowDeny')
+                      .replace('{allowCount}', String(s.allowed_tools_count))
+                      .replace('{denyCount}', String(s.disallowed_tools_count))}
                   </span>
                 </li>
               ))}
@@ -170,11 +200,12 @@ const ToolPolicyDiagnosticsPanel = () => {
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
           <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
-            MCP write audit
+            {t('devOptions.toolPolicyDiagnostics.mcpWriteAudit.title')}
           </div>
           <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-            Enabled: <span className="font-mono">{String(d.mcp_write_audit.enabled)}</span> · Recent
-            (24h): <span className="font-mono">{d.mcp_write_audit.recent_rows ?? '—'}</span>
+            {t('devOptions.toolPolicyDiagnostics.mcpWriteAudit.summary')
+              .replace('{enabled}', String(d.mcp_write_audit.enabled))
+              .replace('{recentRows}', recentRows)}
           </div>
           {d.mcp_write_audit.last_error && (
             <div className="mt-2 text-xs text-coral-700 dark:text-coral-200 font-mono break-words">
@@ -185,11 +216,11 @@ const ToolPolicyDiagnosticsPanel = () => {
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
           <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
-            Recent blocked calls
+            {t('devOptions.toolPolicyDiagnostics.recentBlocked.title')}
           </div>
           {d.recent_denials.length === 0 ? (
             <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-              No blocked calls recorded.
+              {t('devOptions.toolPolicyDiagnostics.recentBlocked.empty')}
             </div>
           ) : (
             <ul className="mt-2 text-xs space-y-1">
@@ -216,16 +247,17 @@ const ToolPolicyDiagnosticsPanel = () => {
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
           <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
-            Redacted surfaces
+            {t('devOptions.toolPolicyDiagnostics.redactedSurfaces.title')}
           </div>
           <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-            Write-capable: <span className="font-mono">{d.possible_write_surfaces.length}</span> ·
-            Policy surfaces: <span className="font-mono">{d.policy_surfaces.length}</span>
+            {t('devOptions.toolPolicyDiagnostics.redactedSurfaces.summary')
+              .replace('{writeCount}', String(d.possible_write_surfaces.length))
+              .replace('{policyCount}', String(d.policy_surfaces.length))}
           </div>
         </div>
       </div>
     );
-  }, [status]);
+  }, [status, t]);
 
   return (
     <div className="z-10 relative">

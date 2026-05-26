@@ -10,7 +10,7 @@ use crate::openhuman::memory_store::chunks::store as chunk_store;
 use crate::rpc::RpcOutcome;
 
 use super::types::{
-    McpAllowlistDiagnostics, McpServerAllowlistSummary, McpWriteAuditHealth, RecentPolicyDenial,
+    McpAllowlistDiagnostics, McpServerAllowlistSummary, McpWriteAuditHealth,
     ToolPolicyDiagnostics, ToolPolicyPosture, ToolRegistryEntry, ToolRegistryHealth,
     ToolRegistryList, ToolRegistryTransport,
 };
