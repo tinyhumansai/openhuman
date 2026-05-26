@@ -1449,6 +1449,14 @@ const en: TranslationMap = {
   'chat.turn': 'turn',
   'chat.turns': 'turns',
   'chat.openWorkerThread': 'Open worker thread',
+  'chat.attachment.attach': 'Attach image',
+  'chat.attachment.remove': 'Remove {name}',
+  'chat.attachment.tooMany': 'Maximum {max} images per message',
+  'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
+  'chat.attachment.unsupportedType': 'Unsupported file type. Use PNG, JPEG, WebP, GIF, or BMP.',
+  'chat.attachment.readFailed': 'Could not read file',
+  'chat.attachment.camera': 'Capture from camera',
+  'chat.attachment.cameraUnavailable': 'Camera unavailable',
 
   // Memory (additional)
   'memory.searchAria': 'Search memory',

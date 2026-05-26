@@ -6,6 +6,14 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
+import AttachmentPreview from '../components/chat/AttachmentPreview';
+import {
+  type Attachment,
+  ATTACHMENT_MAX_IMAGES,
+  ATTACHMENT_MAX_SIZE_BYTES,
+  buildMessageWithAttachments,
+  validateAndReadFile,
+} from '../lib/attachments';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -186,6 +194,8 @@ const Conversations = ({
 
   const [showSidebar, setShowSidebar] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [replyMode, setReplyMode] = useState<ReplyMode>('text');
@@ -604,6 +614,31 @@ const Conversations = ({
     return true;
   };
 
+  const handleAttachFiles = async (files: FileList | null) => {
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      const result = await validateAndReadFile(file, attachments.length);
+      if ('error' in result) {
+        const { error } = result;
+        if (error.code === 'too_many') {
+          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))));
+        } else if (error.code === 'too_large') {
+          const maxMb = (ATTACHMENT_MAX_SIZE_BYTES / (1024 * 1024)).toFixed(0);
+          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.tooLarge').replace('{max}', `${maxMb} MB`)));
+        } else if (error.code === 'unsupported_type') {
+          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.unsupportedType')));
+        } else {
+          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.readFailed')));
+        }
+        return;
+      }
+      setAttachments(prev => {
+        if (prev.length >= ATTACHMENT_MAX_IMAGES) return prev;
+        return [...prev, result.attachment];
+      });
+    }
+  };
+
   const handleSendMessage = async (text?: string) => {
     if (pendingSendRef.current) return;
 
@@ -622,7 +657,7 @@ const Conversations = ({
     const trimmed = sendDecision.trimmedText;
 
     if (
-      sendDecision.blockReason === 'empty_input' ||
+      (sendDecision.blockReason === 'empty_input' && attachments.length === 0) ||
       sendDecision.blockReason === 'missing_thread' ||
       sendDecision.blockReason === 'composer_blocked'
     ) {
@@ -648,11 +683,15 @@ const Conversations = ({
     if (!sendingThreadId) return;
     pendingSendRef.current = sendingThreadId;
     setPendingSendingThreadId(sendingThreadId);
+    const pendingAttachments = attachments.slice();
+    const messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
-      content: trimmed,
+      content: trimmed || '📎',
       type: 'text',
-      extraMetadata: {},
+      extraMetadata: pendingAttachments.length > 0
+        ? { attachmentCount: pendingAttachments.length, attachmentNames: pendingAttachments.map(a => a.file.name) }
+        : {},
       sender: 'user',
       createdAt: new Date().toISOString(),
     };
@@ -677,6 +716,7 @@ const Conversations = ({
       return;
     }
     setInputValue('');
+    setAttachments([]);
     setSendError(null);
     // Silence timer: fires only if 600s pass without ANY inference progress
     // (tool call, tool result, iteration start, subagent event, text delta).
@@ -696,7 +736,7 @@ const Conversations = ({
     try {
       await chatSend({
         threadId: sendingThreadId,
-        message: trimmed,
+        message: messageText,
         model: CHAT_MODEL_ID,
         profileId: selectedAgentProfileId,
         locale: uiLocale,
@@ -1944,33 +1984,65 @@ const Conversations = ({
             </div>
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
-              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
-                  <span className="invisible">{inputValue}</span>
-                  <span className="text-stone-500 dark:text-neutral-400/50">
-                    {inlineCompletionSuffix}
-                  </span>
-                </div>
-                <textarea
-                  ref={textInputRef}
-                  value={inputValue}
-                  onChange={e => setInputValue(e.target.value)}
-                  onCompositionStart={() => {
-                    isComposingTextRef.current = true;
-                  }}
-                  onCompositionEnd={() => {
-                    isComposingTextRef.current = false;
-                  }}
-                  onKeyDown={handleInputKeyDown}
-                  placeholder={t('chat.typeMessage')}
-                  rows={1}
+              {/* Hidden file input for image attachment */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+                multiple
+                className="hidden"
+                onChange={e => { void handleAttachFiles(e.target.files); e.target.value = ''; }}
+              />
+              <div className="relative flex flex-1 flex-col rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
+                <AttachmentPreview
+                  attachments={attachments}
+                  onRemove={id => setAttachments(prev => prev.filter(a => a.id !== id))}
                   disabled={composerInteractionBlocked || isSending}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
-                {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
+                <div className="relative flex items-center justify-center">
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
+                    <span className="invisible">{inputValue}</span>
+                    <span className="text-stone-500 dark:text-neutral-400/50">
+                      {inlineCompletionSuffix}
+                    </span>
+                  </div>
+                  <textarea
+                    ref={textInputRef}
+                    value={inputValue}
+                    onChange={e => setInputValue(e.target.value)}
+                    onCompositionStart={() => {
+                      isComposingTextRef.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      isComposingTextRef.current = false;
+                    }}
+                    onKeyDown={handleInputKeyDown}
+                    placeholder={t('chat.typeMessage')}
+                    rows={1}
+                    disabled={composerInteractionBlocked || isSending}
+                    className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
+                </div>
               </div>
+              <button
+                type="button"
+                aria-label={t('chat.attachment.attach')}
+                title={t('chat.attachment.attach')}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={composerInteractionBlocked || isSending || attachments.length >= ATTACHMENT_MAX_IMAGES}
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                  />
+                </svg>
+              </button>
               <button
                 type="button"
                 aria-label={t('mic.startRecording')}
@@ -2000,7 +2072,7 @@ const Conversations = ({
                 onClick={() => {
                   void handleSendMessage();
                 }}
-                disabled={!inputValue.trim() || composerInteractionBlocked || isSending}
+                disabled={(!inputValue.trim() && attachments.length === 0) || composerInteractionBlocked || isSending}
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
