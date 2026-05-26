@@ -27,6 +27,11 @@ const RecoveryPhrasePanel = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  // One-way reveal: phrase is blurred + uncopyable until the user clicks the
+  // eye overlay. Resetting to `false` on mode-switch is intentional — if the
+  // user toggles to import and back, a fresh `mnemonic` is shown (the
+  // useMemo persists, but the trust-surface gesture resets).
+  const [revealed, setRevealed] = useState(false);
 
   const mnemonic = useMemo(() => generateMnemonicPhrase(), []);
   const words = useMemo(() => mnemonic.split(' '), [mnemonic]);
@@ -50,6 +55,7 @@ const RecoveryPhrasePanel = () => {
     setImportValid(null);
     setSelectedWordCount(IMPORT_SLOTS_INITIAL);
     setImportWords(Array(IMPORT_SLOTS_INITIAL).fill(''));
+    setRevealed(false);
   }, []);
 
   const handleWordCountChange = useCallback((count: number) => {
@@ -75,6 +81,10 @@ const RecoveryPhrasePanel = () => {
   }, [success, navigateBack]);
 
   const handleCopy = useCallback(async () => {
+    // Defense in depth: the button is also disabled, but block keyboard /
+    // programmatic activations that bypass the disabled attribute (some AT
+    // tooling routes around it).
+    if (!revealed) return;
     try {
       await navigator.clipboard.writeText(mnemonic);
       setCopied(true);
@@ -89,7 +99,7 @@ const RecoveryPhrasePanel = () => {
       document.body.removeChild(textarea);
       if (ok) setCopied(true);
     }
-  }, [mnemonic]);
+  }, [mnemonic, revealed]);
 
   const handleImportWordChange = useCallback(
     (index: number, value: string) => {
@@ -255,8 +265,13 @@ const RecoveryPhrasePanel = () => {
                     </div>
                   </div>
 
-                  <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-2xl p-4 mb-4 border border-stone-200 dark:border-neutral-800">
-                    <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-2xl p-4 mb-4 border border-stone-200 dark:border-neutral-800 relative">
+                    <div
+                      data-testid="mnemonic-grid"
+                      aria-hidden={!revealed}
+                      className={`grid grid-cols-3 gap-2 transition-[filter] duration-200 ${
+                        revealed ? '' : 'blur-md pointer-events-none select-none'
+                      }`}>
                       {words.map((word, index) => (
                         <div
                           key={index}
@@ -268,11 +283,46 @@ const RecoveryPhrasePanel = () => {
                         </div>
                       ))}
                     </div>
+                    {!revealed && (
+                      <button
+                        type="button"
+                        onClick={() => setRevealed(true)}
+                        aria-label={t('mnemonic.reveal')}
+                        className="absolute inset-0 flex items-center justify-center rounded-2xl bg-stone-50/40 dark:bg-neutral-800/40 backdrop-blur-[1px] cursor-pointer group">
+                        <span className="flex flex-col items-center gap-2 px-4 py-3 rounded-xl bg-white/90 dark:bg-neutral-900/90 border border-stone-200 dark:border-neutral-800 shadow-sm transition-transform group-hover:scale-[1.02]">
+                          <svg
+                            className="w-6 h-6 text-stone-700 dark:text-neutral-200"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={2}>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M3 3l18 18M10.584 10.587a2 2 0 002.828 2.83M9.363 5.365A9.466 9.466 0 0112 5c4.478 0 8.268 2.943 9.542 7a9.97 9.97 0 01-1.563 3.029m-2.193 2.066A9.46 9.46 0 0112 19c-4.478 0-8.268-2.943-9.542-7a9.97 9.97 0 012.293-3.95"
+                            />
+                          </svg>
+                          <span className="text-xs font-medium text-stone-700 dark:text-neutral-200">
+                            {t('mnemonic.reveal')}
+                          </span>
+                          <span className="text-[10px] text-stone-500 dark:text-neutral-400">
+                            {t('mnemonic.hidden')}
+                          </span>
+                        </span>
+                      </button>
+                    )}
                   </div>
 
                   <button
                     onClick={handleCopy}
-                    className="w-full flex items-center justify-center gap-2 border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 font-medium py-2.5 text-sm rounded-xl text-stone-700 dark:text-neutral-200 transition-all duration-200 mb-3">
+                    disabled={!revealed}
+                    aria-disabled={!revealed}
+                    title={!revealed ? t('mnemonic.hidden') : undefined}
+                    className={`w-full flex items-center justify-center gap-2 border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 font-medium py-2.5 text-sm rounded-xl text-stone-700 dark:text-neutral-200 transition-all duration-200 mb-3 ${
+                      revealed
+                        ? ''
+                        : 'opacity-50 cursor-not-allowed hover:border-stone-200 dark:hover:border-neutral-800'
+                    }`}>
                     {copied ? (
                       <>
                         <svg
