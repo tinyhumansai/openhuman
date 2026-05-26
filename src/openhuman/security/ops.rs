@@ -94,4 +94,53 @@ mod tests {
 
         assert_eq!(outcome.value["max_actions_per_hour"], json!(77));
     }
+
+    /// Regression coverage for the chained env-overlay → load-with-timeout →
+    /// policy-info-payload path. The individual links are unit-tested
+    /// elsewhere (env overlay in `config/schema/load_tests.rs`, payload
+    /// construction in the two tests above), but the chain that
+    /// `load_and_get_security_policy_info()` runs end-to-end is only
+    /// exercised today by the full JSON-RPC smoke. This locks the
+    /// `OPENHUMAN_MAX_ACTIONS_PER_HOUR=N` → `outcome.value["max_actions_per_hour"] == N`
+    /// contract so a regression in either link is caught by a fast
+    /// `cargo test` run. See issue #2688.
+    #[tokio::test]
+    async fn load_and_get_security_policy_info_reflects_env_overlay() {
+        // Serialize against every other test that mutates process env —
+        // load_tests.rs uses the same lock so we cannot race with it.
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Point the loader at a throwaway workspace so the test does not read
+        // (or mutate) the developer's real `~/.openhuman/` config.
+        let workspace = tempfile::tempdir().expect("tempdir for OPENHUMAN_WORKSPACE");
+        let workspace_path = workspace.path().to_path_buf();
+
+        let prior_workspace = std::env::var("OPENHUMAN_WORKSPACE").ok();
+        let prior_budget = std::env::var("OPENHUMAN_MAX_ACTIONS_PER_HOUR").ok();
+
+        std::env::set_var("OPENHUMAN_WORKSPACE", &workspace_path);
+        std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "42");
+
+        let outcome = load_and_get_security_policy_info()
+            .await
+            .expect("load_and_get_security_policy_info should succeed");
+
+        assert_eq!(
+            outcome.value["max_actions_per_hour"],
+            json!(42_u32),
+            "env overlay must propagate through load_config_with_timeout into the policy payload"
+        );
+
+        // Restore prior env to whatever the surrounding suite left set.
+        match prior_workspace {
+            Some(v) => std::env::set_var("OPENHUMAN_WORKSPACE", v),
+            None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
+        }
+        match prior_budget {
+            Some(v) => std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", v),
+            None => std::env::remove_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR"),
+        }
+    }
 }
