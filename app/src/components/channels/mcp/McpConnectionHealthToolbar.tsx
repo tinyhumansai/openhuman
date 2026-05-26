@@ -170,9 +170,7 @@ const McpConnectionHealthToolbar = ({
         {counts.errorCount > 0 && (
           <span className="inline-flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-coral-500" aria-hidden="true" />
-            <span>
-              {t('mcp.health.errorCount').replace('{count}', String(counts.errorCount))}
-            </span>
+            <span>{t('mcp.health.errorCount').replace('{count}', String(counts.errorCount))}</span>
           </span>
         )}
         <span className="inline-flex items-center gap-1">

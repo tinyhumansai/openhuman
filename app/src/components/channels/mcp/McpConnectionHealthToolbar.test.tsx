@@ -182,7 +182,9 @@ describe('McpConnectionHealthToolbar', () => {
         onDisconnect={onDisconnect}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onDisconnect).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -201,7 +203,9 @@ describe('McpConnectionHealthToolbar', () => {
         onDisconnect={onDisconnect}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })
+    );
     // Confirm button inside dialog
     const dialogConfirm = screen.getAllByRole('button', { name: 'Disconnect all' })[0];
     await act(async () => {
@@ -230,7 +234,9 @@ describe('McpConnectionHealthToolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Retry all/i }));
     // While the promise is pending, both buttons should be disabled.
     expect(screen.getByRole('button', { name: /Retry all/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })
+    ).toBeDisabled();
     // Resolve and re-render — buttons re-enable.
     await act(async () => {
       resolveOp?.();
@@ -293,7 +299,9 @@ describe('McpConnectionHealthToolbar', () => {
         onDisconnect={async () => {}}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })
+    );
     expect(
       screen.getByText(/This will disconnect 3 currently-connected MCP servers/)
     ).toBeInTheDocument();
