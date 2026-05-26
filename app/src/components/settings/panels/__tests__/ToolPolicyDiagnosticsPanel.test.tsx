@@ -3,19 +3,14 @@ import { describe, expect, test, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 
-const hoisted = vi.hoisted(() => ({
-  callCoreRpc: vi.fn(),
-}));
+const hoisted = vi.hoisted(() => ({ callCoreRpc: vi.fn() }));
 
 vi.mock('../../../../services/coreRpcClient', () => ({
   callCoreRpc: (...args: unknown[]) => hoisted.callCoreRpc(...args),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
-  useSettingsNavigation: () => ({
-    navigateBack: vi.fn(),
-    breadcrumbs: [],
-  }),
+  useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
 }));
 
 describe('ToolPolicyDiagnosticsPanel', () => {
@@ -53,4 +48,3 @@ describe('ToolPolicyDiagnosticsPanel', () => {
     expect(hoisted.callCoreRpc).toHaveBeenCalled();
   });
 });
-

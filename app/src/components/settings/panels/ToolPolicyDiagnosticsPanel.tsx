@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { callCoreRpc } from '../../../services/coreRpcClient';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { callCoreRpc } from '../../../services/coreRpcClient';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -33,7 +33,13 @@ type ToolPolicyDiagnostics = {
     }[];
   };
   mcp_write_audit: { enabled: boolean; recent_rows: number | null; last_error: string | null };
-  recent_denials: { timestamp_ms: number; tool_name: string; policy: string; action: string; reason: string }[];
+  recent_denials: {
+    timestamp_ms: number;
+    tool_name: string;
+    policy: string;
+    action: string;
+    reason: string;
+  }[];
 };
 
 const ToolPolicyDiagnosticsPanel = () => {
@@ -88,20 +94,28 @@ const ToolPolicyDiagnosticsPanel = () => {
     return (
       <div className="px-4 pt-3 pb-6 flex flex-col gap-3">
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-sage-50 dark:bg-sage-500/10">
-          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">Policy posture</div>
+          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
+            Policy posture
+          </div>
           <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             <dt className="text-sage-700 dark:text-sage-300">Autonomy:</dt>
-            <dd className="font-mono text-sage-900 dark:text-sage-200">{d.posture.autonomy_level}</dd>
+            <dd className="font-mono text-sage-900 dark:text-sage-200">
+              {d.posture.autonomy_level}
+            </dd>
             <dt className="text-sage-700 dark:text-sage-300">Workspace only:</dt>
             <dd className="text-sage-900 dark:text-sage-200">{String(d.posture.workspace_only)}</dd>
             <dt className="text-sage-700 dark:text-sage-300">Max actions/hr:</dt>
-            <dd className="font-mono text-sage-900 dark:text-sage-200">{d.posture.max_actions_per_hour}</dd>
+            <dd className="font-mono text-sage-900 dark:text-sage-200">
+              {d.posture.max_actions_per_hour}
+            </dd>
             <dt className="text-sage-700 dark:text-sage-300">Approval (medium risk):</dt>
             <dd className="text-sage-900 dark:text-sage-200">
               {String(d.posture.require_approval_for_medium_risk)}
             </dd>
             <dt className="text-sage-700 dark:text-sage-300">Block high risk:</dt>
-            <dd className="text-sage-900 dark:text-sage-200">{String(d.posture.block_high_risk_commands)}</dd>
+            <dd className="text-sage-900 dark:text-sage-200">
+              {String(d.posture.block_high_risk_commands)}
+            </dd>
           </dl>
         </div>
 
@@ -128,17 +142,21 @@ const ToolPolicyDiagnosticsPanel = () => {
         </div>
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
-          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">MCP allowlists</div>
+          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
+            MCP allowlists
+          </div>
           <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-            Enabled: <span className="font-mono">{String(d.mcp_allowlists.enabled)}</span> · Servers:{' '}
-            <span className="font-mono">{d.mcp_allowlists.enabled_server_count}</span>/
+            Enabled: <span className="font-mono">{String(d.mcp_allowlists.enabled)}</span> ·
+            Servers: <span className="font-mono">{d.mcp_allowlists.enabled_server_count}</span>/
             <span className="font-mono">{d.mcp_allowlists.server_count}</span>
           </div>
           {d.mcp_allowlists.servers.length > 0 && (
             <ul className="mt-2 text-xs space-y-1">
               {d.mcp_allowlists.servers.slice(0, 10).map(s => (
                 <li key={s.name} className="flex items-center justify-between gap-3">
-                  <span className="font-mono text-sage-900 dark:text-sage-200 truncate" title={s.name}>
+                  <span
+                    className="font-mono text-sage-900 dark:text-sage-200 truncate"
+                    title={s.name}>
                     {s.name || '<unnamed>'}
                   </span>
                   <span className="text-sage-700 dark:text-sage-300 font-mono">
@@ -151,10 +169,12 @@ const ToolPolicyDiagnosticsPanel = () => {
         </div>
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
-          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">MCP write audit</div>
+          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
+            MCP write audit
+          </div>
           <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-            Enabled: <span className="font-mono">{String(d.mcp_write_audit.enabled)}</span> · Recent (24h):{' '}
-            <span className="font-mono">{d.mcp_write_audit.recent_rows ?? '—'}</span>
+            Enabled: <span className="font-mono">{String(d.mcp_write_audit.enabled)}</span> · Recent
+            (24h): <span className="font-mono">{d.mcp_write_audit.recent_rows ?? '—'}</span>
           </div>
           {d.mcp_write_audit.last_error && (
             <div className="mt-2 text-xs text-coral-700 dark:text-coral-200 font-mono break-words">
@@ -164,15 +184,23 @@ const ToolPolicyDiagnosticsPanel = () => {
         </div>
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
-          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">Recent blocked calls</div>
+          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
+            Recent blocked calls
+          </div>
           {d.recent_denials.length === 0 ? (
-            <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">No blocked calls recorded.</div>
+            <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
+              No blocked calls recorded.
+            </div>
           ) : (
             <ul className="mt-2 text-xs space-y-1">
               {d.recent_denials.slice(0, 10).map(entry => (
-                <li key={`${entry.timestamp_ms}:${entry.tool_name}`} className="flex flex-col gap-0.5">
+                <li
+                  key={`${entry.timestamp_ms}:${entry.tool_name}`}
+                  className="flex flex-col gap-0.5">
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-mono text-sage-900 dark:text-sage-200 truncate" title={entry.tool_name}>
+                    <span
+                      className="font-mono text-sage-900 dark:text-sage-200 truncate"
+                      title={entry.tool_name}>
                       {entry.tool_name}
                     </span>
                     <span className="text-sage-700 dark:text-sage-300 font-mono">
@@ -187,10 +215,12 @@ const ToolPolicyDiagnosticsPanel = () => {
         </div>
 
         <div className="px-4 py-3 rounded-lg border border-sage-300 dark:border-sage-500/40 bg-white dark:bg-sage-900/20">
-          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">Redacted surfaces</div>
+          <div className="text-sm font-semibold text-sage-900 dark:text-sage-200">
+            Redacted surfaces
+          </div>
           <div className="mt-1 text-xs text-sage-700 dark:text-sage-300">
-            Write-capable: <span className="font-mono">{d.possible_write_surfaces.length}</span> · Policy surfaces:{' '}
-            <span className="font-mono">{d.policy_surfaces.length}</span>
+            Write-capable: <span className="font-mono">{d.possible_write_surfaces.length}</span> ·
+            Policy surfaces: <span className="font-mono">{d.policy_surfaces.length}</span>
           </div>
         </div>
       </div>
@@ -211,4 +241,3 @@ const ToolPolicyDiagnosticsPanel = () => {
 };
 
 export default ToolPolicyDiagnosticsPanel;
-
