@@ -132,6 +132,31 @@ describe('McpInventoryPanel — Export tab', () => {
     ).toBeInTheDocument();
   });
 
+  it('Download button creates a Blob URL, triggers a click on a hidden link, and revokes', async () => {
+    const createObjectURL = vi.fn().mockReturnValue('blob:fake-url-123');
+    const revokeObjectURL = vi.fn();
+    const originalCreate = URL.createObjectURL;
+    const originalRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = createObjectURL;
+    URL.revokeObjectURL = revokeObjectURL;
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    try {
+      renderPanel({ servers: [SERVER_FS] });
+      fireEvent.click(screen.getByRole('button', { name: /Download the manifest/ }));
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      const blobArg = createObjectURL.mock.calls[0][0] as Blob;
+      expect(blobArg.type).toBe('application/json');
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      // handleDownload defers revokeObjectURL via setTimeout(..., 0); flush.
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake-url-123');
+    } finally {
+      URL.createObjectURL = originalCreate;
+      URL.revokeObjectURL = originalRevoke;
+      clickSpy.mockRestore();
+    }
+  });
+
   it('Copy button writes the serialized manifest to the clipboard', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const originalClipboard = (navigator as { clipboard?: unknown }).clipboard;
@@ -331,5 +356,95 @@ describe('McpInventoryPanel — Import tab', () => {
     // The env_keys for SERVER_FS is just ['ROOT_DIR']
     const previewSection = screen.getByRole('heading', { name: 'Preview' }).closest('section')!;
     expect(within(previewSection).getByText(/ROOT_DIR/)).toBeInTheDocument();
+  });
+
+  // The file-upload paths are tested via a controllable FileReader stub so
+  // we can drive onload/onerror deterministically; jsdom's built-in
+  // FileReader works on File but doesn't fire events synchronously in a
+  // way that aligns with the synchronous fireEvent/expect cycle here.
+  it('uploading a valid JSON file populates the textarea and previews it', async () => {
+    const valid = serializeManifest(buildManifest([SERVER_DB]));
+    const OriginalFileReader = window.FileReader;
+    class StubReader {
+      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      result: string | ArrayBuffer | null = null;
+      readAsText(_: Blob) {
+        this.result = valid;
+        if (this.onload)
+          this.onload.call(this as unknown as FileReader, {} as ProgressEvent<FileReader>);
+      }
+    }
+    (window as unknown as { FileReader: unknown }).FileReader = StubReader;
+    try {
+      renderPanel({ servers: [] });
+      switchToImport();
+      const fileInput = screen.getByLabelText('Upload a manifest .json file') as HTMLInputElement;
+      const file = new File([valid], 'manifest.json', { type: 'application/json' });
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+      expect(screen.getByLabelText('Paste manifest JSON')).toHaveValue(valid);
+      // Preview was rendered automatically by the onload's parseManifest call.
+      expect(screen.getByRole('heading', { name: 'Preview' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Install DB Server from this manifest' })
+      ).toBeInTheDocument();
+    } finally {
+      (window as unknown as { FileReader: unknown }).FileReader = OriginalFileReader;
+    }
+  });
+
+  it('uploading a file larger than 1 MB is refused with a file-error alert and clears any prior preview', () => {
+    renderPanel({ servers: [] });
+    switchToImport();
+    // Stage a valid preview first so we can assert that the refused upload
+    // clears it (per the stale-state-clearing contract in handleFileChange).
+    const valid = serializeManifest(buildManifest([SERVER_DB]));
+    fireEvent.change(screen.getByLabelText('Paste manifest JSON'), { target: { value: valid } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+    expect(screen.getByRole('heading', { name: 'Preview' })).toBeInTheDocument();
+
+    const fileInput = screen.getByLabelText('Upload a manifest .json file') as HTMLInputElement;
+    // 1.5 MB sparse File — `size` is what handleFileChange gates on.
+    const big = new File([new Uint8Array(1_500_000)], 'big.json', { type: 'application/json' });
+    fireEvent.change(fileInput, { target: { files: [big] } });
+    const alert = screen.getByRole('alert');
+    expect(alert.textContent).toMatch(/too large/i);
+    // Stale preview is gone.
+    expect(screen.queryByRole('heading', { name: 'Preview' })).not.toBeInTheDocument();
+  });
+
+  it('FileReader onerror surfaces a file-read-failed alert and clears any prior preview', async () => {
+    const OriginalFileReader = window.FileReader;
+    class FailingReader {
+      onload: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      onerror: ((this: FileReader, ev: ProgressEvent<FileReader>) => unknown) | null = null;
+      readAsText(_: Blob) {
+        if (this.onerror)
+          this.onerror.call(this as unknown as FileReader, {} as ProgressEvent<FileReader>);
+      }
+    }
+    (window as unknown as { FileReader: unknown }).FileReader = FailingReader;
+    try {
+      renderPanel({ servers: [] });
+      switchToImport();
+      // Stage a valid preview to confirm it's wiped on read failure.
+      const valid = serializeManifest(buildManifest([SERVER_DB]));
+      fireEvent.change(screen.getByLabelText('Paste manifest JSON'), { target: { value: valid } });
+      fireEvent.click(screen.getByRole('button', { name: 'Preview' }));
+      expect(screen.getByRole('heading', { name: 'Preview' })).toBeInTheDocument();
+
+      const fileInput = screen.getByLabelText('Upload a manifest .json file') as HTMLInputElement;
+      const file = new File(['anything'], 'broken.json', { type: 'application/json' });
+      await act(async () => {
+        fireEvent.change(fileInput, { target: { files: [file] } });
+      });
+      const alert = screen.getByRole('alert');
+      expect(alert.textContent).toMatch(/Could not read file/i);
+      expect(screen.queryByRole('heading', { name: 'Preview' })).not.toBeInTheDocument();
+    } finally {
+      (window as unknown as { FileReader: unknown }).FileReader = OriginalFileReader;
+    }
   });
 });
