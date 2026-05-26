@@ -103,6 +103,8 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.mcp_server",
         "intelligence.searxng_search",
         "intelligence.tool_registry",
+        "intelligence.embedding_provider_config",
+        "intelligence.embedding_provider_test",
         "conversation.subagent_mascots",
     ] {
         assert!(
@@ -110,4 +112,69 @@ fn catalog_includes_additional_user_facing_surfaces() {
             "missing catalog capability `{expected}`"
         );
     }
+}
+
+/// The two embeddings entries surface a Settings-side configuration panel.
+/// They share the same domain (`embeddings`) but are listed under the
+/// Intelligence umbrella so they sit next to memory_tree_retrieval / mcp_server
+/// in the in-app feature catalog. Pinning the relationships here defends
+/// against an inadvertent recategorisation that would split them across the
+/// UI's tab grouping.
+#[test]
+fn embedding_provider_capabilities_share_domain_and_category() {
+    let config = lookup("intelligence.embedding_provider_config")
+        .expect("embedding_provider_config registered");
+    let test =
+        lookup("intelligence.embedding_provider_test").expect("embedding_provider_test registered");
+
+    assert_eq!(config.domain, "embeddings");
+    assert_eq!(test.domain, "embeddings");
+    assert_eq!(
+        config.category, test.category,
+        "both embedding capabilities must land in the same UI category"
+    );
+
+    // The Settings panel they describe is the same one — make sure the
+    // `how_to` strings point at it, not at an out-of-date breadcrumb.
+    assert!(
+        config.how_to.contains("Settings") && config.how_to.contains("Embeddings"),
+        "config how_to must mention Settings > … > Embeddings, got: {}",
+        config.how_to
+    );
+    assert!(
+        test.how_to.contains("Settings") && test.how_to.contains("Embeddings"),
+        "test how_to must mention Settings > … > Embeddings, got: {}",
+        test.how_to
+    );
+}
+
+/// Privacy annotations must split cleanly: the config side touches only the
+/// local keyring (LOCAL_CREDENTIALS — leaves_device=false), the test side
+/// fires a probe at the configured provider (DERIVED_TO_BACKEND —
+/// leaves_device=true). Without this split, a single `None` privacy flag
+/// would force the UI to treat the embeddings panel as "unknown" and the
+/// Privacy surface would under-report where data goes when the test button
+/// gets clicked.
+#[test]
+fn embedding_provider_capabilities_split_privacy_correctly() {
+    let config = lookup("intelligence.embedding_provider_config")
+        .expect("embedding_provider_config registered");
+    let test =
+        lookup("intelligence.embedding_provider_test").expect("embedding_provider_test registered");
+
+    let config_privacy = config
+        .privacy
+        .expect("config capability has privacy annotation");
+    assert!(
+        !config_privacy.leaves_device,
+        "configuration writes only to local keyring; nothing should leave the device"
+    );
+
+    let test_privacy = test
+        .privacy
+        .expect("test capability has privacy annotation");
+    assert!(
+        test_privacy.leaves_device,
+        "test fires a probe at the configured provider — must report as leaves_device"
+    );
 }

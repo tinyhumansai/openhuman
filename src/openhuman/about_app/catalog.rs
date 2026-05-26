@@ -295,6 +295,50 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.embedding_provider_config",
+        name: "Configure Embedding Provider",
+        domain: "embeddings",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Pick which embedding provider drives semantic search across your memory: \
+             managed cloud (default, Voyage-backed via api.tinyhumans.ai), OpenAI, \
+             Cohere, local Ollama, or a custom OpenAI-compatible endpoint. API keys \
+             are stored encrypted via the local keyring under `embeddings:<slug>`; \
+             model name and embedding dimensions are tunable per provider. The \
+             legacy `inference_embed` RPC is aliased to `embeddings_embed` so \
+             existing callers continue to work.",
+        how_to: "Settings > AI > Embeddings",
+        status: CapabilityStatus::Beta,
+        // Privacy depends on the selected provider — see
+        // `intelligence.embedding_provider_test` for the per-provider data
+        // destinations. The configuration surface itself only writes to the
+        // local keyring and config, so leaving this `None` (treat-as-unknown)
+        // would under-report; we annotate the credential side here and the
+        // network side on the test action.
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
+        id: "intelligence.embedding_provider_test",
+        name: "Test Embedding Provider",
+        domain: "embeddings",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Verify a configured embedding provider before committing it to \
+             memory ingestion. Sends a small one-shot embed request and reports \
+             the model, dimensions, and any auth/error surface so a \
+             misconfigured key doesn't get discovered halfway through a 50k \
+             chunk backfill.",
+        how_to: "Settings > AI > Embeddings > Test Connection",
+        // Test payload is a short fixed string ('OpenHuman connectivity \
+        // probe'-style) sent to whichever provider is selected — Voyage via \
+        // the OpenHuman backend, OpenAI, Cohere, or a custom endpoint. \
+        // `DERIVED_TO_BACKEND` is the right label for the default (managed \
+        // cloud) path; the destination list reflects that this is *derived* \
+        // signal (the probe text), not raw user content.
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "intelligence.mcp_server",
         name: "MCP Server",
         domain: "intelligence",
