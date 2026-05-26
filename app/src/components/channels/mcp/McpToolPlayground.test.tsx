@@ -17,25 +17,25 @@ const TOOL: McpTool = {
   description: 'Reads a file from disk and returns its contents.',
   input_schema: {
     type: 'object',
-    properties: {
-      path: { type: 'string', description: 'Absolute path.' },
-    },
+    properties: { path: { type: 'string', description: 'Absolute path.' } },
     required: ['path'],
   },
 };
 
 const mockToolCall = vi.fn();
 vi.mock('../../../services/api/mcpClientsApi', () => ({
-  mcpClientsApi: {
-    toolCall: (...args: unknown[]) => mockToolCall(...args),
-  },
+  mcpClientsApi: { toolCall: (...args: unknown[]) => mockToolCall(...args) },
 }));
 
 beforeEach(() => {
   mockToolCall.mockReset();
 });
 
-const renderPlayground = (overrides?: { tool?: McpTool; serverId?: string; onClose?: () => void }) =>
+const renderPlayground = (overrides?: {
+  tool?: McpTool;
+  serverId?: string;
+  onClose?: () => void;
+}) =>
   render(
     <McpToolPlayground
       serverId={overrides?.serverId ?? 'srv-1'}
@@ -367,14 +367,62 @@ describe('McpToolPlayground', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /History/i }));
     // Empty placeholder must NOT be visible — we have one history entry.
-    expect(
-      screen.queryByText('No invocations yet in this session.')
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText('No invocations yet in this session.')).not.toBeInTheDocument();
   });
 
   it('shows the empty-history placeholder before any run', () => {
     renderPlayground();
     fireEvent.click(screen.getByRole('button', { name: /History/i }));
     expect(screen.getByText('No invocations yet in this session.')).toBeInTheDocument();
+  });
+
+  // ----------------------------------------------------------------------
+  // Copy-feedback state reset (PR review fix)
+  // ----------------------------------------------------------------------
+
+  it('resets the "Copied" copy-feedback label when a new run starts', async () => {
+    // Mock navigator.clipboard.writeText so the copy path actually runs
+    // in jsdom (which doesn't ship a clipboard by default).
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalClipboard = (navigator as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      writable: true,
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      mockToolCall.mockResolvedValue({ result: 'first', is_error: false });
+      renderPlayground();
+      // 1st run — produces a result so the Copy button appears.
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Run tool' }));
+      });
+      // Click Copy — copyStatus flips to 'copied' and the label changes.
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Copy result' }));
+      });
+      expect(screen.getByRole('button', { name: 'Copy result' })).toHaveTextContent('Copied');
+      expect(writeText).toHaveBeenCalledWith('"first"');
+      // 2nd run — handleRun resets copyStatus to 'idle' so the label
+      // returns to 'Copy result' immediately (without waiting for the
+      // 1.5s timeout).
+      mockToolCall.mockResolvedValue({ result: 'second', is_error: false });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Run tool' }));
+      });
+      expect(screen.getByRole('button', { name: 'Copy result' })).toHaveTextContent('Copy result');
+    } finally {
+      // Restore (or remove) the clipboard property so other tests in
+      // the suite don't see this stub.
+      if (originalClipboard === undefined) {
+        delete (navigator as { clipboard?: unknown }).clipboard;
+      } else {
+        Object.defineProperty(navigator, 'clipboard', {
+          writable: true,
+          configurable: true,
+          value: originalClipboard,
+        });
+      }
+    }
   });
 });

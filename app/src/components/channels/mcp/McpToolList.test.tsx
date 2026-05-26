@@ -1,7 +1,7 @@
 /**
  * Tests for McpToolList — collapsible tool list with optional Try button.
  */
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import McpToolList from './McpToolList';
@@ -49,21 +49,21 @@ describe('McpToolList', () => {
   it('does not render description paragraph when description is undefined', () => {
     render(<McpToolList tools={TOOLS} />);
     fireEvent.click(screen.getByRole('button', { name: /tools available/i }));
-    // list_dir has no description — only the two described tools should
-    // render their description text. (Earlier this test relied on a
-    // `p + p` selector against the previous flat list structure; the
-    // current row wraps the name + Try button in a div, so the
-    // description is `div + p` rather than `p + p`. We assert intent
-    // directly: each described tool's text is present, the
-    // non-described tool's row has no description-class paragraph.)
-    expect(screen.getByText('Reads a file from disk')).toBeInTheDocument();
-    expect(screen.getByText('Writes data to a file')).toBeInTheDocument();
-    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
-    // The list_dir item must NOT have a description-styled paragraph —
-    // find its row and verify it has only the name paragraph.
+    // Each described tool's description text is rendered exactly where
+    // expected — inside its own list-item row.
+    const readFileItem = screen.getByText('read_file').closest('li')!;
+    const writeFileItem = screen.getByText('write_file').closest('li')!;
+    expect(within(readFileItem).getByText('Reads a file from disk')).toBeInTheDocument();
+    expect(within(writeFileItem).getByText('Writes data to a file')).toBeInTheDocument();
+    // Behaviour-level assertion for the description-less tool: its row
+    // contains only the tool name (no Try button is rendered because
+    // `onTryTool` isn't passed in this test), so the row's full visible
+    // text is exactly the name with no description content.
     const listDirItem = screen.getByText('list_dir').closest('li')!;
-    const descriptionPara = listDirItem.querySelector('p.text-\\[11px\\]');
-    expect(descriptionPara).toBeNull();
+    expect(listDirItem.textContent?.trim()).toBe('list_dir');
+    // And the literal string 'undefined' must never appear (would
+    // indicate the conditional `{tool.description && …}` was bypassed).
+    expect(screen.queryByText('undefined')).not.toBeInTheDocument();
   });
 
   it('collapses again when toggle button is clicked twice', () => {

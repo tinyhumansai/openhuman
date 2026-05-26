@@ -144,6 +144,11 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
     setIsRunning(true);
     setResultText(null);
     setResultIsError(false);
+    // Reset the copy-feedback chip so a stale "Copied" label doesn't
+    // briefly persist over the next result — the Copy timer has its
+    // own 1.5s reset, but starting a new run is itself a clear signal
+    // the prior result is gone.
+    setCopyStatus('idle');
     const submittedArgs = argsJson;
     const timestamp = formatTimestamp(new Date());
     try {
@@ -157,20 +162,20 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
       setResultText(text);
       setResultIsError(isError);
       setHistory(prev =>
-        [
-          { timestamp, argsJson: submittedArgs, resultText: text, isError },
-          ...prev,
-        ].slice(0, HISTORY_LIMIT)
+        [{ timestamp, argsJson: submittedArgs, resultText: text, isError }, ...prev].slice(
+          0,
+          HISTORY_LIMIT
+        )
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('mcp.playground.unexpectedError');
       setResultText(msg);
       setResultIsError(true);
       setHistory(prev =>
-        [
-          { timestamp, argsJson: submittedArgs, resultText: msg, isError: true },
-          ...prev,
-        ].slice(0, HISTORY_LIMIT)
+        [{ timestamp, argsJson: submittedArgs, resultText: msg, isError: true }, ...prev].slice(
+          0,
+          HISTORY_LIMIT
+        )
       );
     } finally {
       setIsRunning(false);
@@ -342,9 +347,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
           <div className="mb-4">
             <div className="flex items-center justify-between mb-1.5">
               <p className="text-xs font-medium text-stone-600 dark:text-neutral-300">
-                {resultIsError
-                  ? t('mcp.playground.resultError')
-                  : t('mcp.playground.result')}
+                {resultIsError ? t('mcp.playground.resultError') : t('mcp.playground.result')}
               </p>
               <button
                 type="button"

@@ -68,6 +68,11 @@ const InstalledServerDetail = ({
       await mcpClientsApi.disconnect(server.server_id);
       // Clear stale tool list so it doesn't show after disconnection.
       setTools([]);
+      // Drop any open Tool Execution Playground — its tool is no longer
+      // reachable on this server. The render gate below ALSO enforces
+      // this, but clearing the state here releases any in-flight async
+      // work the modal was holding (history, copy timer, etc.).
+      setPlaygroundTool(null);
       log('disconnected');
     });
   }, [server.server_id, runBusy]);
@@ -76,6 +81,10 @@ const InstalledServerDetail = ({
     void runBusy(async () => {
       log('uninstalling server_id=%s', server.server_id);
       await mcpClientsApi.uninstall(server.server_id);
+      // The detail view is about to unmount via onUninstalled, but
+      // clear explicitly so there's no window during which the modal
+      // points at a now-removed server.
+      setPlaygroundTool(null);
       log('uninstalled');
       onUninstalled(server.server_id);
     });
@@ -239,10 +248,15 @@ const InstalledServerDetail = ({
         </div>
       )}
 
-      {/* Tool Execution Playground modal. Rendered conditionally so the
-          modal lifecycle (useEffect listeners, focus management) is
-          bound to a specific tool invocation session. */}
-      {playgroundTool && (
+      {/* Tool Execution Playground modal. Gated on BOTH a selected tool
+          AND a live connection — a disconnected server's tool list is
+          stale by definition, and the upstream RPC will reject calls
+          anyway. The handlers above also clear `playgroundTool` on
+          explicit disconnect / uninstall; this gate is the safety net
+          for any state path that flips `status` without going through
+          those handlers (poll-driven status change, parent forcing a
+          reconnect, etc.). */}
+      {playgroundTool && status === 'connected' && (
         <McpToolPlayground
           serverId={server.server_id}
           tool={playgroundTool}
