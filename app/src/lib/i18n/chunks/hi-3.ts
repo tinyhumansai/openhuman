@@ -41,6 +41,18 @@ const hi3: TranslationMap = {
     'वॉल्ट निर्देशिका को सीधे खोलने के लिए रिवील फोल्डर का उपयोग करें। तिजोरी पथ:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'फ़ोल्डर प्रकट करें',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'मेमोरी ग्राफ लोड नहीं हो पाया',
   'workspace.loadingGraph': 'मेमोरी ग्राफ लोड हो रहा है...',
   'workspace.graphViewMode': 'मेमोरी ग्राफ व्यू मोड',
@@ -189,6 +201,13 @@ const hi3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'रनटाइम रीस्टार्ट / अपडेट करें',
   'bootCheck.unexpectedError': 'अनपेक्षित बूट-चेक एरर',
   'bootCheck.actionFailed': 'कुछ गड़बड़ हो गई। दोबारा कोशिश करें।',
+  'bootCheck.portConflictTitle': 'ऐप इंजन शुरू नहीं हो सका',
+  'bootCheck.portConflictBody':
+    'कोई अन्य प्रक्रिया उस नेटवर्क पोर्ट का उपयोग कर रही है जो OpenHuman को चाहिए। हम इसे स्वचालित रूप से ठीक करने का प्रयास करेंगे।',
+  'bootCheck.portConflictFixButton': 'स्वचालित रूप से ठीक करें',
+  'bootCheck.portConflictFixing': 'ठीक हो रहा है…',
+  'bootCheck.portConflictFixFailed':
+    'स्वचालित सुधार काम नहीं आया। कृपया अपना कंप्यूटर पुनः आरंभ करें और पुनः प्रयास करें।',
   'notifications.justNow': 'अभी-अभी',
   'notifications.minAgo': '{n}मि. पहले',
   'notifications.hrAgo': '{n}घं. पहले',

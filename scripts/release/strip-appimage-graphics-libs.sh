@@ -236,6 +236,69 @@ ensure_sharun_interpreter() {
   return 0
 }
 
+rewrite_sharun_lib_path() {
+  local appdir="$1"
+  if ! uses_sharun_launcher "$appdir"; then
+    return 1
+  fi
+
+  local lib_path="$appdir/shared/lib/lib.path"
+  [ -s "$lib_path" ] || return 1
+
+  if ! grep -E '(^|[+:])/home/runner/|(^|[+:])/__w/' "$lib_path" >/dev/null; then
+    return 1
+  fi
+
+  echo "[strip-libs]   rewriting CI runner paths in shared/lib/lib.path"
+
+  local raw
+  raw="$(cat "$lib_path")"
+
+  local -a entries=()
+  local entry
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    entries+=("$entry")
+  done < <(printf '%s' "$raw" | tr '+:' '\n\n')
+
+  local -a cleaned=()
+  local rel seen_set=""
+  for entry in "${entries[@]}"; do
+    case "$entry" in
+      /home/runner/*|/__w/*)
+        rel="${entry##*/squashfs-root/}"
+        if [ "$rel" = "$entry" ]; then
+          rel="${entry##*/data/}"
+          [ "$rel" != "$entry" ] || continue
+        fi
+        ;;
+      /*)
+        continue
+        ;;
+      *)
+        rel="$entry"
+        ;;
+    esac
+
+    [ -d "$appdir/$rel" ] || continue
+
+    case "+${seen_set}+" in
+      *"+${rel}+"*) continue ;;
+    esac
+    seen_set="${seen_set}+${rel}"
+    cleaned+=("$rel")
+  done
+
+  if [ "${#cleaned[@]}" -eq 0 ]; then
+    cleaned=("shared/lib")
+  fi
+
+  local joined
+  joined="$(IFS='+'; echo "${cleaned[*]}")"
+  printf '%s' "$joined" > "$lib_path"
+  echo "[strip-libs]   lib.path rewritten to: $joined"
+}
+
 validate_sharun_lib_path() {
   local appdir="$1"
   if ! uses_sharun_launcher "$appdir"; then
@@ -276,6 +339,7 @@ strip_one_appimage() {
   local appdir="$workdir/squashfs-root"
   local removed=0
   local added_loader=0
+  local rewrote_libpath=0
   local lib_roots=()
   for candidate in \
     "$appdir/usr/lib" \
@@ -304,9 +368,12 @@ strip_one_appimage() {
   if ensure_sharun_interpreter "$appdir"; then
     added_loader=1
   fi
+  if rewrite_sharun_lib_path "$appdir"; then
+    rewrote_libpath=1
+  fi
   validate_sharun_lib_path "$appdir"
 
-  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ]; then
+  if [ "$removed" -eq 0 ] && [ "$added_loader" -eq 0 ] && [ "$rewrote_libpath" -eq 0 ]; then
     echo "[strip-libs] No graphics libs or missing sharun interpreter found in $original; leaving unchanged."
     rm -rf "$workdir"
     return

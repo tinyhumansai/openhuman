@@ -60,6 +60,7 @@
     "ws": "^8.20.0"
   },
   "dependencies": {
+    "@rive-app/react-canvas": "^4.28.6",
     "@tauri-apps/api": "2.10.1"
   }
 }

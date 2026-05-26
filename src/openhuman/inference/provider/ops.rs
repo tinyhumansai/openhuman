@@ -28,16 +28,23 @@ pub struct ModelInfo {
 pub async fn list_configured_models(
     provider_id: &str,
 ) -> Result<crate::rpc::RpcOutcome<serde_json::Value>, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    list_configured_models_from_config(provider_id, &config).await
+}
+
+async fn list_configured_models_from_config(
+    provider_id: &str,
+    config: &crate::openhuman::config::Config,
+) -> Result<crate::rpc::RpcOutcome<serde_json::Value>, String> {
     let provider_id = provider_id.trim().to_string();
     if provider_id.is_empty() {
         return Err("provider_id must not be empty".to_string());
     }
 
     log::debug!("[providers][list_models] provider_id={}", provider_id);
-
-    let config = crate::openhuman::config::Config::load_or_init()
-        .await
-        .map_err(|e| e.to_string())?;
 
     let entry = config
         .cloud_providers
@@ -56,7 +63,7 @@ pub async fn list_configured_models(
     );
 
     let api_key =
-        crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, &config)
+        crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
             .unwrap_or_default();
     let api_key = api_key.trim().to_string();
 
@@ -952,33 +959,6 @@ mod tests {
         model_authorization: Arc<Mutex<Vec<Option<String>>>>,
     }
 
-    struct WorkspaceEnvGuard {
-        prev: Option<std::ffi::OsString>,
-        _lock: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl Drop for WorkspaceEnvGuard {
-        fn drop(&mut self) {
-            unsafe {
-                match self.prev.take() {
-                    Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
-                    None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
-                }
-            }
-        }
-    }
-
-    fn set_workspace_env(path: &std::path::Path) -> WorkspaceEnvGuard {
-        let lock = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let prev = std::env::var_os("OPENHUMAN_WORKSPACE");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", path);
-        }
-        WorkspaceEnvGuard { prev, _lock: lock }
-    }
-
     async fn openrouter_key_handler(
         State(state): State<ModelProbeState>,
         headers: HeaderMap,
@@ -1162,11 +1142,10 @@ mod tests {
     #[tokio::test]
     async fn openrouter_invalid_key_fails_before_models_catalog_probe() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let _env = set_workspace_env(tmp.path());
         let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::UNAUTHORIZED).await;
-        configure_openrouter_workspace(&tmp, endpoint, "bad-openrouter-key").await;
+        let config = configure_openrouter_workspace(&tmp, endpoint, "bad-openrouter-key").await;
 
-        let err = list_configured_models("openrouter")
+        let err = list_configured_models_from_config("openrouter", &config)
             .await
             .expect_err("invalid OpenRouter key must fail");
 
@@ -1185,11 +1164,10 @@ mod tests {
     #[tokio::test]
     async fn openrouter_valid_key_allows_models_catalog_probe() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let _env = set_workspace_env(tmp.path());
         let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::OK).await;
-        configure_openrouter_workspace(&tmp, endpoint, "valid-openrouter-key").await;
+        let config = configure_openrouter_workspace(&tmp, endpoint, "valid-openrouter-key").await;
 
-        let outcome = list_configured_models("openrouter")
+        let outcome = list_configured_models_from_config("openrouter", &config)
             .await
             .expect("valid OpenRouter key should list models");
 
@@ -1201,11 +1179,11 @@ mod tests {
     #[tokio::test]
     async fn openrouter_key_is_trimmed_for_validation_and_catalog_probe() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let _env = set_workspace_env(tmp.path());
         let (endpoint, state) = spawn_openrouter_probe_server(StatusCode::OK).await;
-        configure_openrouter_workspace(&tmp, endpoint, "  valid-openrouter-key\r\n").await;
+        let config =
+            configure_openrouter_workspace(&tmp, endpoint, "  valid-openrouter-key\r\n").await;
 
-        list_configured_models("openrouter")
+        list_configured_models_from_config("openrouter", &config)
             .await
             .expect("trimmed OpenRouter key should list models");
 

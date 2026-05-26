@@ -279,6 +279,21 @@ pub async fn store_session(
 
     logs.push("session stored".to_string());
 
+    match crate::openhuman::memory::global::init(effective_config.workspace_dir.clone()) {
+        Ok(_) => logs.push(format!(
+            "memory client bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to bind memory client after login");
+            logs.push(format!("memory client bind warning: {e}"));
+        }
+    }
+    crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
+        effective_config.workspace_dir.clone(),
+    );
+    logs.push("conversation persistence bound to active workspace".to_string());
+
     // Now that active_user.toml exists and config.workspace_dir resolves to
     // the per-user path, seed the subconscious defaults and spawn the
     // heartbeat loop. Idempotent — no-op on subsequent logins of the same

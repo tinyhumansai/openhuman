@@ -196,11 +196,15 @@ mod tests {
     }
 
     fn unique_tool_name() -> String {
-        format!("tool-memory-{}", uuid::Uuid::new_v4())
+        let short = &uuid::Uuid::new_v4().as_simple().to_string()[..12];
+        format!("toolmem{short}")
     }
 
     #[tokio::test]
     async fn tool_rule_put_get_list_and_delete_roundtrip() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         ensure_memory_client();
         let tool_name = unique_tool_name();
 
@@ -267,6 +271,9 @@ mod tests {
 
     #[tokio::test]
     async fn tool_rules_for_prompt_sorts_by_priority_and_tool_name() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         ensure_memory_client();
         let primary_tool = unique_tool_name();
         let secondary_tool = unique_tool_name();

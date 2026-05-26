@@ -1586,6 +1586,18 @@ const en: TranslationMap = {
     'Use Reveal Folder to open the vault directory directly. Vault path:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Reveal Folder',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Failed to load memory graph',
   'workspace.loadingGraph': 'Loading memory graph...',
   'workspace.graphViewMode': 'Memory graph view mode',
@@ -1754,6 +1766,13 @@ const en: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Restart / Update Runtime',
   'bootCheck.unexpectedError': 'Unexpected Boot-Check Error',
   'bootCheck.actionFailed': 'Something went wrong. Please try again.',
+  'bootCheck.portConflictTitle': "Couldn't Start the App Engine",
+  'bootCheck.portConflictBody':
+    "Another process is using the network port OpenHuman needs. We'll try to fix this automatically.",
+  'bootCheck.portConflictFixButton': 'Fix Automatically',
+  'bootCheck.portConflictFixing': 'Fixing…',
+  'bootCheck.portConflictFixFailed':
+    "Automatic fix didn't work. Please restart your computer and try again.",
 
   // Notifications: category labels & timestamps
   'notifications.justNow': 'just now',
@@ -3019,8 +3038,10 @@ const en: TranslationMap = {
   'settings.mascot.colorHeading': 'Color',
   'settings.mascot.colorBlack': 'Black',
   'settings.mascot.colorBurgundy': 'Burgundy',
-  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorCustom': 'Custom',
   'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.primaryColor': 'Primary color',
+  'settings.mascot.secondaryColor': 'Secondary color',
   'settings.mascot.colorYellow': 'Yellow',
   'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
   'settings.mascot.title': 'OpenHuman',

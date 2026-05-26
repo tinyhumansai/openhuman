@@ -500,7 +500,43 @@ mod tests {
 
     use super::*;
 
-    fn ensure_memory_client() {
+    /// Held for the whole test: pins `OPENHUMAN_WORKSPACE` at a stable,
+    /// never-torn-down workspace under `TEST_ENV_LOCK`. These tests call
+    /// `memory_init` → `current_workspace_dir` → `Config::load_or_init`, which
+    /// reads that process-global env var; without this, a concurrent
+    /// env-mutating test can swap the var and tear down its tempdir mid-call,
+    /// yielding `SQLITE_IOERR` / config atomic-replace `ENOENT`.
+    struct WorkspaceEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let lock = crate::openhuman::config::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_ref() {
+                std::env::set_var("OPENHUMAN_WORKSPACE", previous);
+            } else {
+                std::env::remove_var("OPENHUMAN_WORKSPACE");
+            }
+        }
+    }
+
+    #[must_use]
+    fn ensure_memory_client() -> WorkspaceEnvGuard {
         static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
         let workspace = WORKSPACE.get_or_init(|| {
             let tmp = TempDir::new().expect("tempdir");
@@ -509,11 +545,15 @@ mod tests {
             std::mem::forget(tmp);
             path
         });
+        // Pin the env BEFORE init so config load/save targets the stable dir.
+        let env_guard = WorkspaceEnvGuard::set(workspace);
         let _ = crate::openhuman::memory::global::init(workspace.clone());
+        env_guard
     }
 
     fn unique_namespace(prefix: &str) -> String {
-        format!("{prefix}-{}", uuid::Uuid::new_v4())
+        let short = &uuid::Uuid::new_v4().as_simple().to_string()[..12];
+        format!("{prefix}{short}")
     }
 
     fn sample_put(namespace: String, key: String, title: &str, content: &str) -> PutDocParams {
@@ -534,9 +574,15 @@ mod tests {
 
     #[tokio::test]
     async fn direct_document_handlers_roundtrip_through_namespace() {
-        ensure_memory_client();
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let _env = ensure_memory_client();
         let namespace = unique_namespace("memory-docs-direct");
-        let key = format!("note-{}", uuid::Uuid::new_v4());
+        let key = format!(
+            "note{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
 
         let put = doc_put(sample_put(
             namespace.clone(),
@@ -609,9 +655,12 @@ mod tests {
 
     #[tokio::test]
     async fn envelope_memory_handlers_report_counts_and_statuses() {
-        ensure_memory_client();
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let _env = ensure_memory_client();
         let namespace = unique_namespace("memory-docs-envelope");
-        let key = format!("env-{}", uuid::Uuid::new_v4());
+        let key = format!("env{}", &uuid::Uuid::new_v4().as_simple().to_string()[..12]);
 
         let _ = memory_init(MemoryInitRequest { jwt_token: None })
             .await

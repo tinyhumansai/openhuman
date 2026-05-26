@@ -32,6 +32,15 @@ vi.mock('../../../lib/bootCheck', () => ({
   runBootCheck: (...args: unknown[]) => mockRunBootCheck(...args),
 }));
 
+const mockRecoverPortConflict = vi.fn();
+vi.mock('../../../services/bootCheckService', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../services/bootCheckService')>();
+  return {
+    ...actual,
+    recoverPortConflict: (...args: unknown[]) => mockRecoverPortConflict(...args),
+  };
+});
+
 const mockTestCoreRpcConnection = vi.fn();
 vi.mock('../../../services/coreRpcClient', () => ({
   callCoreRpc: vi.fn(),
@@ -569,6 +578,125 @@ describe('BootCheckGate — pre-set mode (subsequent launches)', () => {
     });
 
     expect(screen.queryByText('Select a Runtime')).not.toBeInTheDocument();
+  });
+});
+
+describe('BootCheckGate — port conflict recovery', () => {
+  beforeEach(() => {
+    mockRecoverPortConflict.mockReset();
+    mockRunBootCheck.mockReset();
+  });
+
+  it('shows "Fix Automatically" button when portConflict=true', async () => {
+    mockRunBootCheck.mockResolvedValue({
+      kind: 'unreachable',
+      reason: 'port conflict',
+      portConflict: true,
+    });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fix-automatically-btn')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('fix-automatically-btn').textContent).toBe('Fix Automatically');
+  });
+
+  it('does not show "Fix Automatically" button when portConflict is not set', async () => {
+    mockRunBootCheck.mockResolvedValue({ kind: 'unreachable', reason: 'some other error' });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Can't Reach the Runtime")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('fix-automatically-btn')).not.toBeInTheDocument();
+  });
+
+  it('calls recoverPortConflict when "Fix Automatically" is clicked', async () => {
+    mockRunBootCheck
+      .mockResolvedValueOnce({ kind: 'unreachable', reason: 'port conflict', portConflict: true })
+      .mockResolvedValue({ kind: 'match' });
+    mockRecoverPortConflict.mockResolvedValue({ success: true, message: 'ok', new_port: 7789 });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fix-automatically-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('fix-automatically-btn'));
+
+    await waitFor(() => {
+      expect(mockRecoverPortConflict).toHaveBeenCalled();
+    });
+  });
+
+  it('re-runs boot check after successful recovery', async () => {
+    mockRunBootCheck
+      .mockResolvedValueOnce({ kind: 'unreachable', reason: 'port conflict', portConflict: true })
+      .mockResolvedValue({ kind: 'match' });
+    mockRecoverPortConflict.mockResolvedValue({ success: true, message: 'ok', new_port: 7789 });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fix-automatically-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('fix-automatically-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-content')).toBeInTheDocument();
+    });
+    expect(mockRunBootCheck).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows portConflictFixFailed message when recovery fails', async () => {
+    mockRunBootCheck.mockResolvedValue({
+      kind: 'unreachable',
+      reason: 'port conflict',
+      portConflict: true,
+    });
+    mockRecoverPortConflict.mockResolvedValue({
+      success: false,
+      message: 'still busy',
+      new_port: undefined,
+    });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fix-automatically-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('fix-automatically-btn'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Automatic fix didn't work. Please restart your computer and try again.")
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('"Pick a Different Runtime" still renders as secondary for port conflict', async () => {
+    mockRunBootCheck.mockResolvedValue({
+      kind: 'unreachable',
+      reason: 'port conflict',
+      portConflict: true,
+    });
+
+    renderGate();
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Pick a Different Runtime' })).toBeInTheDocument();
+    });
   });
 });
 

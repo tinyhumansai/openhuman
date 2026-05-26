@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { type AISettings, CHAT_WORKLOADS, loadAISettings } from '../services/api/aiSettingsApi';
+import {
+  type AISettings,
+  ALL_WORKLOADS,
+  CHAT_WORKLOADS,
+  loadAISettings,
+} from '../services/api/aiSettingsApi';
 import { billingApi } from '../services/api/billingApi';
 import { creditsApi, type TeamUsage } from '../services/api/creditsApi';
 import { CoreRpcError } from '../services/coreRpcClient';
@@ -38,19 +43,45 @@ let _cache: {
 
 const USAGE_UNAVAILABLE = Symbol('usage-unavailable');
 
+function workloadsRoutedAway(aiSettings: AISettings, workloads: readonly string[]): boolean {
+  return workloads.every(w => {
+    const ref = aiSettings.routing[w as keyof AISettings['routing']];
+    return ref !== undefined && ref.kind !== 'openhuman';
+  });
+}
+
 async function fetchUsageData(): Promise<{
   teamUsage: TeamUsage | null;
   currentPlan: CurrentPlanData | null;
   aiSettings: AISettings | null;
 } | null> {
+  // Read routing first. If every workload is explicitly assigned to a local
+  // or user-supplied cloud provider, this session should not phone home to
+  // OpenHuman's billing/usage APIs at all (#2020). Missing/failed AI settings
+  // stay conservative and fall through to the existing billing path.
+  const aiSettings = await loadAISettings().catch(err => {
+    if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
+      throw err;
+    }
+    return USAGE_UNAVAILABLE;
+  });
+  if (
+    aiSettings !== USAGE_UNAVAILABLE &&
+    workloadsRoutedAway(aiSettings as AISettings, ALL_WORKLOADS)
+  ) {
+    return { teamUsage: null, currentPlan: null, aiSettings: aiSettings as AISettings };
+  }
   if (_cache && Date.now() - _cache.fetchedAt < CACHE_TTL_MS) {
-    return _cache.data;
+    return {
+      ..._cache.data,
+      aiSettings: aiSettings === USAGE_UNAVAILABLE ? null : (aiSettings as AISettings),
+    };
   }
   // Wrap each leg so a single failing call (e.g. /teams returning 401 after
   // session expiry) cannot reject the Promise.all microtask before the
   // sibling resolves — that race let the unhandled rejection leak to the
   // window's unhandledrejection trap and onward to Sentry (#1472).
-  const [teamUsage, currentPlan, aiSettings] = await Promise.all([
+  const [teamUsage, currentPlan] = await Promise.all([
     creditsApi.getTeamUsage().catch(err => {
       if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
         throw err;
@@ -58,19 +89,6 @@ async function fetchUsageData(): Promise<{
       return USAGE_UNAVAILABLE;
     }),
     billingApi.getCurrentPlan().catch(err => {
-      if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
-        throw err;
-      }
-      return USAGE_UNAVAILABLE;
-    }),
-    // AI settings drive the "routed away from openhuman" detection used to
-    // suppress the budget banner when the user supplied their own provider
-    // key (#2040 / #2041). Mirror the sibling fetches: re-throw
-    // CoreRpcError(kind='auth_expired') so the documented session-expired
-    // signal still reaches the global re-auth handler (graycyrus review on
-    // #2053). Other failures are treated as "unknown" — the budget gate
-    // stays in its conservative (banner-on) state.
-    loadAISettings().catch(err => {
       if (err instanceof CoreRpcError && err.kind === 'auth_expired') {
         throw err;
       }
@@ -154,12 +172,7 @@ export function useUsageState(): UsageState {
   // user. Conservative on missing aiSettings (treat as still using
   // openhuman) so we never silently disable the gate after a transient
   // fetch failure (#2040, #2041).
-  const isFullyRoutedAway = aiSettings
-    ? CHAT_WORKLOADS.every(w => {
-        const ref = aiSettings.routing[w];
-        return ref !== undefined && ref.kind !== 'openhuman';
-      })
-    : false;
+  const isFullyRoutedAway = aiSettings ? workloadsRoutedAway(aiSettings, CHAT_WORKLOADS) : false;
 
   const rawBudgetExhausted = teamUsage
     ? teamUsage.cycleBudgetUsd > 0.01 && teamUsage.remainingUsd <= 0.01

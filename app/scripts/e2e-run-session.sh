@@ -74,6 +74,13 @@ else
   echo "[runner] Using OPENHUMAN_WORKSPACE from environment: $OPENHUMAN_WORKSPACE"
 fi
 
+# Headless Linux CI does not always have a usable Secret Service/keychain.
+# Keep E2E credentials under OPENHUMAN_WORKSPACE so auth state is deterministic
+# and gets cleaned up with the rest of the test workspace.
+: "${OPENHUMAN_KEYRING_BACKEND:=file}"
+export OPENHUMAN_KEYRING_BACKEND
+echo "[runner] Using OPENHUMAN_KEYRING_BACKEND: $OPENHUMAN_KEYRING_BACKEND"
+
 # Place the CEF cache directory OUTSIDE the workspace. By default the Tauri
 # shell roots it under `$OPENHUMAN_WORKSPACE/users/<id>/cef`, but our
 # `mega-flow` spec calls `openhuman.config_reset_local_data` between

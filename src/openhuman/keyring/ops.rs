@@ -35,7 +35,10 @@ pub fn get(user_id: &str, key: &str) -> Result<Option<String>, KeyringError> {
     match &result {
         Ok(Some(_)) => log::debug!("[keyring] get hit user_id={user_id} key={key}"),
         Ok(None) => log::debug!("[keyring] get miss user_id={user_id} key={key}"),
-        Err(e) => log::warn!("[keyring] get error user_id={user_id} key={key}: {e}"),
+        Err(e) => log::warn!(
+            "[keyring] get error user_id={user_id} key={key}: {e} | detail={}",
+            e.diagnostic()
+        ),
     }
     result
 }
@@ -49,7 +52,10 @@ pub fn set(user_id: &str, key: &str, value: &str) -> Result<(), KeyringError> {
     let result = backend().set(&namespaced, value);
     match &result {
         Ok(()) => log::debug!("[keyring] set ok user_id={user_id} key={key}"),
-        Err(e) => log::warn!("[keyring] set error user_id={user_id} key={key}: {e}"),
+        Err(e) => log::warn!(
+            "[keyring] set error user_id={user_id} key={key}: {e} | detail={}",
+            e.diagnostic()
+        ),
     }
     result
 }
@@ -63,7 +69,10 @@ pub fn delete(user_id: &str, key: &str) -> Result<(), KeyringError> {
     let result = backend().delete(&namespaced);
     match &result {
         Ok(()) => log::debug!("[keyring] delete ok user_id={user_id} key={key}"),
-        Err(e) => log::warn!("[keyring] delete error user_id={user_id} key={key}: {e}"),
+        Err(e) => log::warn!(
+            "[keyring] delete error user_id={user_id} key={key}: {e} | detail={}",
+            e.diagnostic()
+        ),
     }
     result
 }
@@ -103,7 +112,14 @@ pub fn is_available() -> bool {
             ok
         }
         Err(e) => {
-            log::debug!("[keyring] is_available=false (probe failed): {e}");
+            // Logged at warn (not debug): a failed probe flips `use_keychain`
+            // off, which silently changes where auth secrets are read/written.
+            // The detail captures the real cause (locked keychain / denied
+            // prompt / no Secret Service) instead of just the lossy Display.
+            log::warn!(
+                "[keyring] is_available=false (probe failed): {e} | detail={}",
+                e.diagnostic()
+            );
             false
         }
     }

@@ -40,6 +40,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("chunk_score"),
         schemas("delete_chunk"),
         schemas("graph_export"),
+        schemas("obsidian_vault_status"),
         schemas("flush_now"),
         schemas("wipe_all"),
         schemas("reset_tree"),
@@ -105,6 +106,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("graph_export"),
             handler: handle_graph_export,
+        },
+        RegisteredController {
+            schema: schemas("obsidian_vault_status"),
+            handler: handle_obsidian_vault_status,
         },
         RegisteredController {
             schema: schemas("flush_now"),
@@ -603,6 +608,49 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "obsidian_vault_status" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "obsidian_vault_status",
+            description: "Best-effort check of whether the memory-tree content root is \
+                          already a registered Obsidian vault. `obsidian://open?path=` only \
+                          resolves vaults present in Obsidian's obsidian.json registry — it \
+                          cannot register a new one — so the Memory tab calls this before \
+                          firing the deep link and guides the user to 'Open folder as vault' \
+                          when it isn't registered. Never errors; a probe miss reports \
+                          registered=false.",
+            inputs: vec![FieldSchema {
+                name: "obsidian_config_dir",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Optional override for Obsidian's config directory (where \
+                          obsidian.json lives), for non-standard installs \
+                          (Flatpak / Snap / portable). Omitted ⇒ probe the standard per-OS \
+                          location plus known sandbox paths.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "registered",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the content root (or an ancestor) is a registered \
+                              Obsidian vault, so the deep link will resolve.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "config_found",
+                    ty: TypeSchema::Bool,
+                    comment: "True when an obsidian.json was found and parsed (Obsidian is \
+                              set up). Lets the UI offer add-as-vault vs. install.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "content_root_abs",
+                    ty: TypeSchema::String,
+                    comment: "Absolute path to <workspace>/memory_tree/content/ — the folder \
+                              to add to Obsidian and the deep-link target.",
+                    required: true,
+                },
+            ],
+        },
         "trigger_digest" => ControllerSchema {
             namespace: NAMESPACE,
             function: "trigger_digest",
@@ -839,6 +887,19 @@ fn handle_graph_export(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
         to_json(read_rpc::graph_export_rpc(&config, req.mode.unwrap_or_default()).await?)
+    })
+}
+
+fn handle_obsidian_vault_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            obsidian_config_dir: Option<String>,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::obsidian_vault_status_rpc(&config, req.obsidian_config_dir).await?)
     })
 }
 

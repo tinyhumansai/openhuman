@@ -202,8 +202,9 @@ impl SecretStore {
             | Ok(crate::openhuman::keyring::MigrationOutcome::NoSourceFile) => {}
             Err(error) => {
                 log::warn!(
-                    "[security] failed to migrate legacy secret-store key from {}: {error}",
-                    self.key_path.display()
+                    "[security] failed to migrate legacy secret-store key from {}: {error} | detail={}",
+                    self.key_path.display(),
+                    error.diagnostic()
                 );
             }
         }
@@ -211,7 +212,10 @@ impl SecretStore {
         let hex_key =
             crate::openhuman::keyring::get_or_create_random(&user_id, KEYCHAIN_MASTER_KEY, KEY_LEN)
                 .map_err(|e| {
-                    anyhow::anyhow!("Failed to load secret-store master key from keychain: {e}")
+                    anyhow::anyhow!(
+                        "Failed to load secret-store master key from keychain: {e} | detail={}",
+                        e.diagnostic()
+                    )
                 })?;
         decode_key_hex(hex_key.trim())
     }

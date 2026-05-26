@@ -539,60 +539,74 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     let mut auth = session_state_from_profile(session_profile.as_ref());
     let session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
-    let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
+    let auth_ms = t_auth.elapsed().as_millis();
+
+    // Resolve the live current-user refresh and the runtime snapshot
+    // CONCURRENTLY. Both touch the backend and both already fall back to local
+    // data (stored_user / degraded runtime), so running them in parallel rather
+    // than serially halves the worst-case bootstrap latency when the backend is
+    // unreachable. Together with the fast auth-profile lock reclaim this keeps
+    // the first `app_state_snapshot` from stranding the UI on "Initializing
+    // OpenHuman" (the FE clears `isBootstrapping` on this call). `tokio::join!`
+    // polls both on the current task — no extra threads.
+    let t_enrich = Instant::now();
+    let current_user_future = async {
+        let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) else {
+            return stored_user.clone();
+        };
         if is_local_session_token(&token) {
-            stored_user.clone()
-        } else {
-            match tokio::time::timeout(
-                AUTH_FETCH_TIMEOUT,
-                fetch_current_user_cached(&config, &token),
-            )
-            .await
-            {
-                Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
-                Ok(Err(error)) => {
-                    warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
-                    stored_user.clone()
-                }
-                Err(_) => {
-                    warn!("{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback", AUTH_FETCH_TIMEOUT.as_secs());
-                    stored_user.clone()
-                }
+            return stored_user.clone();
+        }
+        match tokio::time::timeout(
+            AUTH_FETCH_TIMEOUT,
+            fetch_current_user_cached(&config, &token),
+        )
+        .await
+        {
+            Ok(Ok(fresh_user)) => fresh_user.or(stored_user.clone()),
+            Ok(Err(error)) => {
+                warn!("{LOG_PREFIX} current user refresh failed; using stored snapshot fallback: {error}");
+                stored_user.clone()
+            }
+            Err(_) => {
+                warn!(
+                    "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
+                    AUTH_FETCH_TIMEOUT.as_secs()
+                );
+                stored_user.clone()
             }
         }
-    } else {
-        stored_user.clone()
     };
+    let runtime_future = async {
+        match tokio::time::timeout(
+            RUNTIME_SNAPSHOT_TIMEOUT,
+            build_runtime_snapshot(&config, req_id),
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                warn!(
+                    "{LOG_PREFIX} build_runtime_snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
+                    RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
+                    req_id
+                );
+                degraded_runtime_snapshot(&config)
+            }
+        }
+    };
+    let (current_user, runtime) = tokio::join!(current_user_future, runtime_future);
+    let enrich_ms = t_enrich.elapsed().as_millis();
     auth.user = current_user.clone();
-    let auth_ms = t_auth.elapsed().as_millis();
 
     let t_local_state = Instant::now();
     let local_state = load_stored_app_state(&config)?;
     let local_state_ms = t_local_state.elapsed().as_millis();
 
-    let t_runtime = Instant::now();
-    let runtime = match tokio::time::timeout(
-        RUNTIME_SNAPSHOT_TIMEOUT,
-        build_runtime_snapshot(&config, req_id),
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(_) => {
-            warn!(
-                "{LOG_PREFIX} build_runtime_snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
-                RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
-                req_id
-            );
-            degraded_runtime_snapshot(&config)
-        }
-    };
-    let runtime_ms = t_runtime.elapsed().as_millis();
-
     let total_ms = t_total.elapsed().as_millis();
     debug!(
-        "{LOG_PREFIX} snapshot timings req_id={} config_ms={} auth_ms={} local_state_ms={} runtime_ms={} total_ms={}",
-        req_id, config_ms, auth_ms, local_state_ms, runtime_ms, total_ms
+        "{LOG_PREFIX} snapshot timings req_id={} config_ms={} auth_ms={} enrich_ms={} local_state_ms={} total_ms={}",
+        req_id, config_ms, auth_ms, enrich_ms, local_state_ms, total_ms
     );
 
     debug!(

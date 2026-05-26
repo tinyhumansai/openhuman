@@ -31,7 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { waitForApp } from '../helpers/app-helpers';
-import { callOpenhumanRpc } from '../helpers/core-rpc';
+import { callOpenhumanRpc, expectRpcOk } from '../helpers/core-rpc';
 import { triggerDeepLink } from '../helpers/deep-link-helpers';
 import { hasAppChrome } from '../helpers/element-helpers';
 import {
@@ -68,6 +68,27 @@ async function waitForMockRequest(
     await browser.pause(400);
   }
   return undefined;
+}
+
+/**
+ * Poll the core's `auth_get_session_token` RPC until it returns a non-null
+ * token, confirming that `auth_store_session` has fully written the JWT to
+ * disk.  This is more reliable than waiting for the mock's `/auth/me` log
+ * entry: that entry is recorded when the request *arrives* at the mock, but
+ * `store_session` finishes writing only after the response is received and
+ * the auth-profile file is flushed.
+ */
+async function waitForCoreSessionToken(timeoutMs = 12_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const snap = await callOpenhumanRpc<any>('openhuman.auth_get_session_token', {});
+    // RpcOutcome wraps the payload: json.result = { result: { token }, logs }
+    const token = snap.result?.result?.token ?? snap.result?.token;
+    if (snap.ok && token) return;
+    await browser.pause(300);
+  }
+  console.warn(`${LOG} waitForCoreSessionToken: session token not written within ${timeoutMs}ms`);
 }
 
 async function resetEverything(label: string): Promise<void> {
@@ -237,6 +258,11 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     // Re-login since reset wipes the session.
     await triggerDeepLink('openhuman://auth?token=mega-composio-token');
     await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    // Poll until the core has written the session JWT to disk.  The mock's
+    // /auth/me log entry fires when the request *arrives* (during
+    // store_session's token validation), which is before the profile file
+    // is flushed — so we need a deeper signal here.
+    await waitForCoreSessionToken(12_000);
 
     // Seed connections + available triggers; start with an empty active list.
     setMockBehaviors({
@@ -247,8 +273,10 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
       composioActiveTriggers: JSON.stringify([]),
     });
 
-    const before = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
-    expect(before.ok).toBe(true);
+    const listTriggersMethod = 'openhuman.composio_list_triggers';
+    const enableTriggerMethod = 'openhuman.composio_enable_trigger';
+    const before = await callOpenhumanRpc(listTriggersMethod, {});
+    expectRpcOk(listTriggersMethod, before);
     // list_triggers always emits a log line → RpcOutcome wraps in {result, logs}.
     // JSON-RPC result shape: { result: { triggers: [...] }, logs: [...] }
     // callResult.result = { result: { triggers: [...] }, logs: [...] }
@@ -258,14 +286,14 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     expect(Array.isArray(beforeList)).toBe(true);
     expect(beforeList).toHaveLength(0);
 
-    const enable = await callOpenhumanRpc('openhuman.composio_enable_trigger', {
+    const enable = await callOpenhumanRpc(enableTriggerMethod, {
       connection_id: 'c1',
       slug: 'GMAIL_NEW_GMAIL_MESSAGE',
     });
-    expect(enable.ok).toBe(true);
+    expectRpcOk(enableTriggerMethod, enable);
 
-    const after = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
-    expect(after.ok).toBe(true);
+    const after = await callOpenhumanRpc(listTriggersMethod, {});
+    expectRpcOk(listTriggersMethod, after);
     const afterList = (after.result?.result?.triggers ?? after.result?.triggers ?? []) as unknown[];
     expect(afterList.length).toBeGreaterThan(0);
     console.log(`${LOG} composio: enable mutated active list to`, afterList);
@@ -561,6 +589,9 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     await triggerDeepLink('openhuman://auth?token=mega-composio-webhook-token');
     await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
+    // Poll until the core has written the session JWT to disk — same fix as
+    // Scenario 4; see waitForCoreSessionToken for the full explanation.
+    await waitForCoreSessionToken(12_000);
     clearRequestLog();
 
     // Seed composio state.
@@ -573,11 +604,13 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     });
 
     // Step 1 — enable trigger.
-    const enable = await callOpenhumanRpc('openhuman.composio_enable_trigger', {
+    const enableTriggerMethod = 'openhuman.composio_enable_trigger';
+    const listTriggersMethod = 'openhuman.composio_list_triggers';
+    const enable = await callOpenhumanRpc(enableTriggerMethod, {
       connection_id: 'c2',
       slug: 'GITHUB_PULL_REQUEST_EVENT',
     });
-    expect(enable.ok).toBe(true);
+    expectRpcOk(enableTriggerMethod, enable);
     console.log(`${LOG} composio+webhook: trigger enabled`);
 
     // Step 2 — register an echo tunnel so the core has a tunnel ID to work with.
@@ -617,8 +650,8 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
 
     // Step 4 — verify the enabled trigger is still listed.
     // list_triggers always emits a log line → {result: {triggers:[...]}, logs:[...]}
-    const list = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
-    expect(list.ok).toBe(true);
+    const list = await callOpenhumanRpc(listTriggersMethod, {});
+    expectRpcOk(listTriggersMethod, list);
     const triggers: unknown[] = list.result?.result?.triggers ?? list.result?.triggers ?? [];
     expect(triggers.length).toBeGreaterThan(0);
     console.log(

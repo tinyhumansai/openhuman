@@ -399,8 +399,18 @@ struct TelegramAuthQuery {
     token: Option<String>,
 }
 
+/// Query parameters for the generic desktop auth callback.
+#[derive(Debug, serde::Deserialize)]
+struct DesktopAuthQuery {
+    /// One-time login token consumed through the backend.
+    token: Option<String>,
+    /// Deprecated backend marker for direct session JWT callbacks.
+    key: Option<String>,
+}
+
 /// Returns the HTML for a successful connection page.
-fn success_html() -> String {
+fn success_html(message: &str) -> String {
+    let escaped_message = escape_html(message);
     r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -420,11 +430,11 @@ fn success_html() -> String {
     <div class="card">
         <div class="icon">&#10004;</div>
         <h1>Connected!</h1>
-        <p>Your Telegram account has been connected to OpenHuman. You can close this tab.</p>
+        <p>__MESSAGE__</p>
     </div>
 </body>
 </html>"#
-        .to_string()
+    .replace("__MESSAGE__", &escaped_message)
 }
 
 /// Simple HTML escaping for error messages.
@@ -464,6 +474,36 @@ fn error_html(message: &str) -> String {
 </body>
 </html>"#
     )
+}
+
+/// Require desktop `/auth` callbacks to be top-level document navigations when
+/// browser fetch-metadata headers are present.
+///
+/// The preferred Tauri loopback listener has a per-login state nonce. This
+/// legacy core fallback cannot rely on that state, so it must reject embedded
+/// resource loads (`<img>`, iframe, fetch, script) before token exchange.
+fn desktop_callback_navigation_ok(headers: &axum::http::HeaderMap) -> Result<(), &'static str> {
+    let get_str = |name: &str| -> Option<&str> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+    };
+
+    if let Some(mode) = get_str("sec-fetch-mode") {
+        if mode != "navigate" {
+            return Err("Sec-Fetch-Mode must be 'navigate'");
+        }
+    }
+
+    if let Some(dest) = get_str("sec-fetch-dest") {
+        if dest != "document" {
+            return Err("Sec-Fetch-Dest must be 'document'");
+        }
+    }
+
+    Ok(())
 }
 
 /// Inspect the browser fetch-metadata + Referer/Origin headers and decide
@@ -666,7 +706,129 @@ async fn telegram_auth_handler(
         }
     }
 
-    html_response(StatusCode::OK, success_html())
+    html_response(
+        StatusCode::OK,
+        success_html(
+            "Your Telegram account has been connected to OpenHuman. You can close this tab.",
+        ),
+    )
+}
+
+/// Handles the generic desktop login callback fallback.
+///
+/// The preferred path is the `openhuman://auth?...` deep link handled in the
+/// renderer. On hosts where URL-scheme registration is broken, some login
+/// flows can fall back to the local core callback (`/auth`). This route is
+/// public because the callback carries its own one-time login token; raw
+/// session JWT callbacks are intentionally rejected on this public surface.
+async fn desktop_auth_handler(
+    headers: axum::http::HeaderMap,
+    Query(query): Query<DesktopAuthQuery>,
+) -> impl IntoResponse {
+    let html_response = |status: StatusCode, body: String| -> Response {
+        (
+            status,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            body,
+        )
+            .into_response()
+    };
+
+    if let Err(reason) = desktop_callback_navigation_ok(&headers) {
+        log::warn!("[auth:desktop] Rejected non-navigation callback: {reason}");
+        return html_response(
+            StatusCode::BAD_REQUEST,
+            error_html("Sign-in callback must be opened as a browser page. Please try again."),
+        );
+    }
+
+    let token = match query
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(t) => t.to_string(),
+        None => {
+            return html_response(
+                StatusCode::BAD_REQUEST,
+                error_html("Sign-in callback was missing a token. Please try again."),
+            )
+        }
+    };
+
+    if query
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .is_some()
+    {
+        log::warn!("[auth:desktop] Rejected deprecated direct session token callback");
+        return html_response(
+            StatusCode::BAD_REQUEST,
+            error_html("This sign-in callback is no longer supported. Please start sign-in again."),
+        );
+    }
+
+    log::info!("[auth:desktop] Received desktop auth callback");
+
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[auth:desktop] Failed to load config: {e}");
+            return html_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html("Internal error. Please try again."),
+            );
+        }
+    };
+
+    let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
+    let client = match crate::api::rest::BackendOAuthClient::new(&api_url) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[auth:desktop] Failed to create API client: {e}");
+            return html_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html("Internal error. Please try again."),
+            );
+        }
+    };
+
+    let jwt_token = match client.consume_login_token(&token).await {
+        Ok(jwt) => jwt,
+        Err(e) => {
+            log::warn!("[auth:desktop] Login token consumption failed: {e}");
+            return html_response(
+                StatusCode::BAD_REQUEST,
+                error_html("This sign-in link has expired or was already used. Please try again."),
+            );
+        }
+    };
+
+    match crate::openhuman::credentials::ops::store_session(&config, &jwt_token, None, None).await {
+        Ok(outcome) => {
+            for msg in &outcome.logs {
+                log::info!("[auth:desktop] {msg}");
+            }
+            log::info!("[auth:desktop] Session stored successfully");
+        }
+        Err(e) => {
+            log::error!("[auth:desktop] Failed to store session: {e}");
+            return html_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html(
+                    "Sign-in succeeded but OpenHuman could not save the session. Please try again.",
+                ),
+            );
+        }
+    }
+
+    html_response(
+        StatusCode::OK,
+        success_html("Sign-in completed. You can close this tab and return to OpenHuman."),
+    )
 }
 
 /// WebSocket upgrade handler for streaming voice dictation.
@@ -702,6 +864,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/events/webhooks", get(webhook_events_handler))
         .route("/rpc", post(rpc_handler))
         .route("/ws/dictation", get(dictation_ws_handler))
+        .route("/auth", get(desktop_auth_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
         // OpenAI-compatible inference endpoint (/v1/chat/completions, /v1/models)
         .nest("/v1", crate::openhuman::inference::http::router())

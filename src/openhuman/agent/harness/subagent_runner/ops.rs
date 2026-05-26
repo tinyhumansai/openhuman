@@ -147,11 +147,20 @@ pub(super) fn resolve_subagent_provider(
                         (std::sync::Arc::from(p), m)
                     }
                     Err(e) => {
+                        let suggested_key = match workload.as_str() {
+                            "summarization" | "memory" => "memory_provider".to_string(),
+                            _ => format!("{workload}_provider"),
+                        };
                         log::warn!(
-                        "[subagent_runner] workload '{}' provider build failed ({}) for agent_id={} — \
-                         falling back to parent provider + parent model '{}'",
-                        workload, e, agent_id, parent_model
-                    );
+                            "[subagent_runner] workload='{}' provider build failed for agent_id={} error='{}' \
+                             falling back to parent provider (parent_model='{}'). \
+                             Consider setting {} in config.",
+                            workload,
+                            agent_id,
+                            e,
+                            parent_model,
+                            suggested_key
+                        );
                         (parent_provider, parent_model)
                     }
                 }

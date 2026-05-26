@@ -257,3 +257,12 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 ## Pre-existing Flaky Tests
 
 - **`composio::action_tool` and `agent::harness::session::turn` intermittent failures** — These tests fail randomly when run as part of the full suite (likely shared state or timing), but pass individually. Not related to security/policy changes. Do not treat as blockers for security-module PRs.
+
+## Port Conflict Recovery (Issue #2617)
+
+- **Port fallback already in `pick_listen_port`** — `src/openhuman/connectivity/rpc.rs` tries ports 7789–7798 when 7788 is busy. Gap was: frontend `getCoreRpcUrl()` cached the URL on first resolution so it never picked up the fallback port, and stale-process reaping was macOS-only.
+- **`process_recovery.rs` is platform-gated** — `reap_stale_openhuman_processes` had only a macOS impl. Linux uses `/proc/<pid>/cmdline`; Windows uses `wmic process get`. Tests for each platform's parsing logic live in the same file, following the existing macOS test pattern.
+- **`recover_port_conflict` is a Tauri IPC command, not JSON-RPC** — Rust E2E test for port fallback lives in `tests/json_rpc_e2e.rs` and calls `pick_listen_port` directly: bind port 7788 with a `std::net::TcpListener` (std, not tokio) to simulate conflict, confirm fallback, then serve via `tokio::net::TcpListener::from_std(pick_result.listener.into_std())`.
+- **`BootCheckTransport` is the right hook for frontend recovery** — `app/src/lib/bootCheck/index.ts` is the injection point for new recovery capabilities; don't add them directly to the BootCheck component.
+- **i18n bootCheck keys live in `-3.ts` chunks** — New keys must be added to all 13 language files simultaneously (the `-3.ts` chunk for each language).
+- **Workflow folder** — `workflow/` at repo root has 5 markdown files (00–05) defining the full PR workflow: pick issue → architectobot plan → user approval → codecrusher → architectobot verify → checks → memory-keeper → commit → push/PR.

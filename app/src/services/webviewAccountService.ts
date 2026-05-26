@@ -1,5 +1,4 @@
 import * as Sentry from '@sentry/react';
-import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import debug from 'debug';
 import { z } from 'zod';
@@ -15,7 +14,11 @@ import {
 import { addIntegrationNotification } from '../store/notificationSlice';
 import { fetchRespondQueue } from '../store/providerSurfaceSlice';
 import type { AccountProvider, IngestedMessage } from '../types/accounts';
-import { isTauri } from '../utils/tauriCommands/common';
+// `safeInvoke` replaces bare `@tauri-apps/api/core::invoke` so the CEF
+// `window.ipc.postMessage` synchronous throw (Sentry TAURI-REACT-7 /
+// TAURI-REACT-6) is converted into a rejected Promise rather than an
+// unhandled rejection. Existing `.catch(...)` chains keep working unchanged.
+import { safeInvoke as invoke, isTauri } from '../utils/tauriCommands/common';
 import { openhumanGetMeetSettings } from '../utils/tauriCommands/config';
 import { trackEvent } from './analytics';
 import { threadApi } from './api/threadApi';

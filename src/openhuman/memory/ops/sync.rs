@@ -313,6 +313,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_sync_channel_publishes_targeted_event() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let _guard = test_mutex()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -338,6 +341,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_sync_all_publishes_broadcast_event() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let _guard = test_mutex()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -361,6 +367,9 @@ mod tests {
 
     #[tokio::test]
     async fn memory_ingestion_status_reflects_initialized_client_snapshot() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let _guard = test_mutex()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

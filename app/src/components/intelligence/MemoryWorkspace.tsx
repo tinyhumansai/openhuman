@@ -29,7 +29,6 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
-import { openUrl } from '../../utils/openUrl';
 import {
   type GraphExportResponse,
   type GraphMode,
@@ -38,10 +37,9 @@ import {
   memoryTreeResetTree,
   memoryTreeWipeAll,
 } from '../../utils/tauriCommands';
-import { revealWorkspacePath } from '../../utils/tauriCommands/workspacePaths';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
-import { MEMORY_CONTENT_WORKSPACE_PATH } from './memoryWorkspacePaths';
+import { ObsidianVaultSection } from './ObsidianVaultSection';
 import { VaultPanel } from './VaultPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
@@ -61,34 +59,6 @@ interface MemoryWorkspaceProps {
  * when a new provider lands a memory-tree ingest path.
  */
 const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set(['gmail']);
-
-/**
- * Trigger the `obsidian://open?path=<abs>` deep link via the OS shell.
- *
- * We deliberately route through `openUrl` (which delegates to
- * `tauri-plugin-opener`) rather than setting `window.location.href`.
- * The webview-host intent handler intercepts in-app navigations and
- * does NOT punt custom schemes to the OS, so a direct
- * `window.location.href = "obsidian://…"` either no-ops or navigates
- * the React app away from the Memory tab. The opener plugin hands the
- * URL straight to the system handler so Obsidian launches as a
- * separate process.
- *
- * Returns `null` on success, or the underlying error otherwise. The
- * caller decides how to surface the outcome (toast, fallback, …); an
- * unsurfaced no-op is the bug #2281 originally reported.
- */
-async function openVaultInObsidian(contentRootAbs: string): Promise<unknown | null> {
-  const url = `obsidian://open?path=${encodeURIComponent(contentRootAbs)}`;
-  console.debug('[ui-flow][memory-workspace] open vault in Obsidian url=%s', url);
-  try {
-    await openUrl(url);
-    return null;
-  } catch (err) {
-    console.error('[ui-flow][memory-workspace] openUrl failed', err);
-    return err;
-  }
-}
 
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const { t } = useT();
@@ -242,48 +212,6 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     }
   }, [onToast, mode]);
 
-  // #2281: clicking "View Vault" must never silently no-op. Some
-  // users don't have Obsidian installed, in which case the OS shell
-  // accepts the `obsidian://` URL and does nothing visible. We always
-  // emit a toast that names the vault path AND offers a "Reveal
-  // Folder" action so the user has an OS-native way to inspect the
-  // vault even without Obsidian.
-  const handleViewVault = useCallback(
-    async (contentRootAbs: string) => {
-      const revealHandler = () => {
-        void (async () => {
-          try {
-            await revealWorkspacePath(MEMORY_CONTENT_WORKSPACE_PATH);
-          } catch (err) {
-            console.error('[ui-flow][memory-workspace] revealWorkspacePath failed', err);
-            onToast?.({
-              type: 'error',
-              title: t('workspace.revealVaultFailed'),
-              message: err instanceof Error ? err.message : String(err),
-            });
-          }
-        })();
-      };
-      const err = await openVaultInObsidian(contentRootAbs);
-      if (err === null) {
-        onToast?.({
-          type: 'info',
-          title: t('workspace.openingVaultTitle'),
-          message: `${t('workspace.openingVaultMessage')} ${contentRootAbs}`,
-          action: { label: t('workspace.revealFolder'), handler: revealHandler },
-        });
-      } else {
-        onToast?.({
-          type: 'error',
-          title: t('workspace.openVaultFailedTitle'),
-          message: `${t('workspace.openVaultFailedMessage')} ${contentRootAbs}`,
-          action: { label: t('workspace.revealFolder'), handler: revealHandler },
-        });
-      }
-    },
-    [onToast, t]
-  );
-
   return (
     <div className="space-y-4" data-testid="memory-workspace">
       <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
@@ -358,18 +286,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
             )}
           </button>
           {graph && (
-            <button
-              type="button"
-              onClick={() => void handleViewVault(graph.content_root_abs)}
-              data-testid="memory-open-in-obsidian"
-              className="inline-flex items-center gap-2 rounded-lg
-                         bg-violet-500 px-4 py-2 text-sm font-semibold text-white
-                         shadow-sm transition-colors hover:bg-violet-600
-                         focus:outline-none focus:ring-2 focus:ring-violet-300"
-              title={`obsidian://open?path=${graph.content_root_abs}`}>
-              <ExternalLinkIcon />
-              {t('workspace.viewVault')}
-            </button>
+            <ObsidianVaultSection contentRootAbs={graph.content_root_abs} onToast={onToast} />
           )}
         </div>
       </div>
@@ -487,25 +404,6 @@ function BrainIcon() {
       <path d="M9 4.5a2.5 2.5 0 015 0v15a2.5 2.5 0 01-5 0" />
       <path d="M9 4.5A2.5 2.5 0 116.5 7M9 19.5A2.5 2.5 0 116.5 17" />
       <path d="M14 4.5A2.5 2.5 0 1117.5 7M14 19.5A2.5 2.5 0 1017.5 17" />
-    </svg>
-  );
-}
-
-function ExternalLinkIcon() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true">
-      <path d="M14 3h7v7" />
-      <path d="M10 14L21 3" />
-      <path d="M21 14v7H3V3h7" />
     </svg>
   );
 }

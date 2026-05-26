@@ -3,7 +3,7 @@
 //! etc.) persist alongside UI-driven threads.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -18,6 +18,7 @@ use super::{
 };
 
 static CONVERSATION_PERSISTENCE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+static CONVERSATION_PERSISTENCE_WORKSPACE: OnceLock<Arc<RwLock<PathBuf>>> = OnceLock::new();
 
 const LOG_PREFIX: &str = "[memory:conversations:bus]";
 
@@ -26,12 +27,23 @@ const LOG_PREFIX: &str = "[memory:conversations:bus]";
 /// This bridges typed channel events onto the workspace-backed JSONL
 /// conversation store so non-web channels persist alongside UI threads.
 pub fn register_conversation_persistence_subscriber(workspace_dir: PathBuf) {
+    let workspace = CONVERSATION_PERSISTENCE_WORKSPACE
+        .get_or_init(|| Arc::new(RwLock::new(workspace_dir.clone())));
+    match workspace.write() {
+        Ok(mut guard) => {
+            *guard = workspace_dir;
+        }
+        Err(error) => {
+            log::warn!("{LOG_PREFIX} failed to update workspace binding: {error}");
+        }
+    }
+
     if CONVERSATION_PERSISTENCE_HANDLE.get().is_some() {
         return;
     }
 
     match crate::core::event_bus::subscribe_global(Arc::new(
-        ConversationPersistenceSubscriber::new(workspace_dir),
+        ConversationPersistenceSubscriber::new_shared(Arc::clone(workspace)),
     )) {
         Some(handle) => {
             let _ = CONVERSATION_PERSISTENCE_HANDLE.set(handle);
@@ -45,12 +57,25 @@ pub fn register_conversation_persistence_subscriber(workspace_dir: PathBuf) {
 }
 
 pub struct ConversationPersistenceSubscriber {
-    workspace_dir: PathBuf,
+    workspace_dir: Arc<RwLock<PathBuf>>,
 }
 
 impl ConversationPersistenceSubscriber {
     pub fn new(workspace_dir: PathBuf) -> Self {
+        Self {
+            workspace_dir: Arc::new(RwLock::new(workspace_dir)),
+        }
+    }
+
+    fn new_shared(workspace_dir: Arc<RwLock<PathBuf>>) -> Self {
         Self { workspace_dir }
+    }
+
+    fn workspace_dir_snapshot(&self) -> Result<PathBuf, String> {
+        self.workspace_dir
+            .read()
+            .map(|guard| guard.clone())
+            .map_err(|error| format!("workspace binding poisoned: {error}"))
     }
 }
 
@@ -74,8 +99,15 @@ impl EventHandler for ConversationPersistenceSubscriber {
                 content,
                 thread_ts,
             } => {
+                let workspace_dir = match self.workspace_dir_snapshot() {
+                    Ok(workspace_dir) => workspace_dir,
+                    Err(error) => {
+                        log::warn!("{LOG_PREFIX} failed to resolve workspace: {error}");
+                        return;
+                    }
+                };
                 if let Err(error) = persist_channel_turn(
-                    &self.workspace_dir,
+                    &workspace_dir,
                     ChannelTurnDescriptor {
                         channel,
                         message_id,
@@ -108,8 +140,15 @@ impl EventHandler for ConversationPersistenceSubscriber {
                 success,
                 ..
             } => {
+                let workspace_dir = match self.workspace_dir_snapshot() {
+                    Ok(workspace_dir) => workspace_dir,
+                    Err(error) => {
+                        log::warn!("{LOG_PREFIX} failed to resolve workspace: {error}");
+                        return;
+                    }
+                };
                 if let Err(error) = persist_channel_turn(
-                    &self.workspace_dir,
+                    &workspace_dir,
                     ChannelTurnDescriptor {
                         channel,
                         message_id,
@@ -269,6 +308,19 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    fn subscriber_reads_rebound_workspace_from_shared_handle() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        let shared = Arc::new(RwLock::new(first.clone()));
+        let subscriber = ConversationPersistenceSubscriber::new_shared(Arc::clone(&shared));
+
+        assert_eq!(subscriber.workspace_dir_snapshot().unwrap(), first);
+        *shared.write().unwrap() = second.clone();
+        assert_eq!(subscriber.workspace_dir_snapshot().unwrap(), second);
+    }
 
     #[tokio::test]
     async fn persists_inbound_and_processed_turns_into_workspace_thread() {

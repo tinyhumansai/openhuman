@@ -159,6 +159,7 @@ jobs:
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/openhuman-e2e-app-*.log
             /tmp/openhuman-e2e-app-*.log
             app/test/e2e/artifacts/
           retention-days: 7
@@ -351,6 +352,7 @@ jobs:
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/openhuman-e2e-app-*.log
             /tmp/openhuman-e2e-app-*.log
             app/test/e2e/artifacts/
           retention-days: 7
@@ -734,6 +736,7 @@ jobs:
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
           path: |
+            ${{ runner.temp }}/openhuman-e2e-app-*.log
             /tmp/openhuman-e2e-app-*.log
             app/test/e2e/artifacts/
           retention-days: 7
@@ -877,9 +880,7 @@ jobs:
         with:
           name: e2e-failure-logs-${{ runner.os }}-${{ matrix.shard.name }}-${{ github.run_id }}
           # e2e-run-session.sh writes its app log to `${RUNNER_TEMP:-${TMPDIR:-/tmp}}`.
-          # On Windows runners RUNNER_TEMP resolves to D:\a\_temp, not /tmp, so
-          # include the runner-temp pattern as well (Linux/macOS shards above
-          # use /tmp and don't need this).
+          # On Windows runners RUNNER_TEMP resolves to D:\a\_temp, not /tmp.
           path: |
             ${{ runner.temp }}/openhuman-e2e-app-*.log
             app/test/e2e/artifacts/

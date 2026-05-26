@@ -604,6 +604,53 @@ export async function memoryTreeGraphExport(
   return out;
 }
 
+/** Response shape for `memory_tree_obsidian_vault_status`. */
+export interface ObsidianVaultStatus {
+  /**
+   * True when the content root (or an ancestor) is already a registered
+   * Obsidian vault, so `obsidian://open?path=` will actually resolve.
+   */
+  registered: boolean;
+  /**
+   * True when an `obsidian.json` was found and parsed (Obsidian is set up).
+   * Lets the UI offer "Open folder as vault" vs. "Install Obsidian".
+   */
+  config_found: boolean;
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+}
+
+/**
+ * Best-effort check of whether the memory-tree content root is a registered
+ * Obsidian vault. Called before firing the `obsidian://open?path=` deep link,
+ * which only resolves vaults already in Obsidian's `obsidian.json` registry —
+ * it cannot register a new vault on its own.
+ *
+ * `obsidianConfigDir` optionally overrides where the core looks for
+ * `obsidian.json` (non-standard installs: Flatpak / Snap / portable). Backed
+ * by `openhuman.memory_tree_obsidian_vault_status`.
+ */
+export async function memoryTreeObsidianVaultStatus(
+  obsidianConfigDir?: string
+): Promise<ObsidianVaultStatus> {
+  console.debug(
+    '[memory-tree-rpc] memoryTreeObsidianVaultStatus: entry override=%s',
+    obsidianConfigDir ? 'set' : 'none'
+  );
+  const resp = await callCoreRpc<ObsidianVaultStatus | ResultEnvelope<ObsidianVaultStatus>>({
+    method: 'openhuman.memory_tree_obsidian_vault_status',
+    // Only send the override when present so the core uses its default probe.
+    params: obsidianConfigDir ? { obsidian_config_dir: obsidianConfigDir } : {},
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeObsidianVaultStatus: exit registered=%s config_found=%s',
+    out.registered,
+    out.config_found
+  );
+  return out;
+}
+
 /**
  * #1574 §4b: per-model embedding re-embed backfill status. The AI settings
  * panel polls this after an embedder change to warn that semantic recall

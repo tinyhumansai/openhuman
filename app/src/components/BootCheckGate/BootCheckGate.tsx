@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { type BootCheckResult, runBootCheck } from '../../lib/bootCheck';
 import { useT } from '../../lib/i18n/I18nContext';
-import { bootCheckTransport } from '../../services/bootCheckService';
+import { bootCheckTransport, recoverPortConflict } from '../../services/bootCheckService';
 import {
   clearCoreRpcTokenCache,
   clearCoreRpcUrlCache,
@@ -407,16 +407,31 @@ function ResultScreen({
   if (result.kind === 'match') return null;
 
   if (result.kind === 'unreachable') {
+    const isPortConflict = result.portConflict === true;
     return (
       <Panel>
         <h2 className="text-xl font-semibold text-stone-900 dark:text-neutral-100">
-          {t('bootCheck.cannotReach')}
+          {isPortConflict ? t('bootCheck.portConflictTitle') : t('bootCheck.cannotReach')}
         </h2>
         <p className="mt-2 text-sm text-stone-600 dark:text-neutral-300">
-          {result.reason || t('bootCheck.cannotReachDesc')}
+          {isPortConflict
+            ? t('bootCheck.portConflictBody')
+            : result.reason || t('bootCheck.cannotReachDesc')}
         </p>
         {actionError && <p className="mt-3 text-xs text-red-600 font-medium">{actionError}</p>}
-        <div className="mt-5 flex gap-3">
+        <div className="mt-5 flex gap-3 flex-wrap">
+          {isPortConflict && (
+            <button
+              type="button"
+              onClick={onAction}
+              disabled={actionBusy}
+              data-testid="fix-automatically-btn"
+              className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-medium text-white hover:bg-primary-600 disabled:opacity-60">
+              {actionBusy
+                ? t('bootCheck.portConflictFixing')
+                : t('bootCheck.portConflictFixButton')}
+            </button>
+          )}
           <button
             type="button"
             onClick={onRetry}
@@ -427,13 +442,15 @@ function ResultScreen({
           <button
             type="button"
             onClick={onSwitchMode}
-            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60">
+            disabled={actionBusy}
+            className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-4 py-2 text-sm text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 disabled:opacity-60">
             {t('bootCheck.switchMode')}
           </button>
           <button
             type="button"
             onClick={onQuit}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+            disabled={actionBusy}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60">
             {t('bootCheck.quit')}
           </button>
         </div>
@@ -728,6 +745,18 @@ export default function BootCheckGate({ children }: BootCheckGateProps) {
         log('[boot-check] gate — triggering cloud core update');
         await transport.callRpc('openhuman.update_run', {});
         log('[boot-check] gate — cloud core update triggered');
+      } else if (result.kind === 'unreachable' && result.portConflict) {
+        log('[boot-check-gate] port conflict — invoking recover_port_conflict');
+        const recovery = await recoverPortConflict();
+        log(
+          '[boot-check-gate] recovery result: success=%s message=%s',
+          recovery.success,
+          recovery.message
+        );
+        if (!recovery.success) {
+          setActionError(t('bootCheck.portConflictFixFailed'));
+          return;
+        }
       }
 
       // Re-run the full check after the action.

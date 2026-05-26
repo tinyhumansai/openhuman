@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.54.11",
+  "version": "0.54.13",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -75,13 +75,13 @@
     "@reduxjs/toolkit": "^2.11.2",
     "@remotion/player": "4.0.454",
     "@remotion/zod-types": "4.0.454",
+    "@rive-app/react-webgl2": "^4.28.6",
     "@scure/base": "^2.2.0",
     "@scure/bip32": "^2.0.1",
     "@scure/bip39": "^2.0.1",
     "@sentry/react": "^10.38.0",
     "@tauri-apps/api": "^2.10.0",
     "@tauri-apps/plugin-barcode-scanner": "^2.4.4",
-    "tauri-plugin-ptt-api": "workspace:*",
     "@tauri-apps/plugin-deep-link": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-os": "^2.3.2",
@@ -101,10 +101,10 @@
     "react-markdown": "^10.1.0",
     "react-redux": "^9.2.0",
     "react-router-dom": "^7.13.0",
-    "redux-logger": "^3.0.6",
     "redux-persist": "^6.0.0",
     "remotion": "4.0.454",
     "socket.io-client": "^4.8.3",
+    "tauri-plugin-ptt-api": "workspace:*",
     "three": "^0.183.2",
     "util": "^0.12.5",
     "zod": "4.3.6"
@@ -146,6 +146,7 @@
     "knip": "^6.3.1",
     "postcss": "^8.5.6",
     "prettier": "^3.8.1",
+    "redux-logger": "^3.0.6",
     "tailwindcss": "^3.4.19",
     "typescript": "~5.8.3",
     "vite": "^8.0.0",

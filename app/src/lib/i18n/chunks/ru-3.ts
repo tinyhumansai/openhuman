@@ -41,6 +41,18 @@ const ru3: TranslationMap = {
     'Используйте Reveal Folder, чтобы напрямую открыть каталог хранилища. Путь к хранилищу:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Показать папку',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Не удалось загрузить граф памяти',
   'workspace.loadingGraph': 'Загрузка графа памяти...',
   'workspace.graphViewMode': 'Режим просмотра графа памяти',
@@ -190,6 +202,13 @@ const ru3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Перезапустить / обновить среду',
   'bootCheck.unexpectedError': 'Неожиданная ошибка при загрузке',
   'bootCheck.actionFailed': 'Что-то пошло не так. Попробуй ещё раз.',
+  'bootCheck.portConflictTitle': 'Не удалось запустить движок приложения',
+  'bootCheck.portConflictBody':
+    'Другой процесс использует сетевой порт, необходимый OpenHuman. Попробуем устранить это автоматически.',
+  'bootCheck.portConflictFixButton': 'Исправить автоматически',
+  'bootCheck.portConflictFixing': 'Исправление…',
+  'bootCheck.portConflictFixFailed':
+    'Автоматическое исправление не сработало. Перезагрузите компьютер и попробуйте снова.',
   'notifications.justNow': 'только что',
   'notifications.minAgo': '{n} мин назад',
   'notifications.hrAgo': '{n} ч назад',
