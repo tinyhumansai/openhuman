@@ -630,6 +630,7 @@ async fn apply_autonomy_settings_updates_action_budget() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(64),
+            ..Default::default()
         },
     )
     .await
