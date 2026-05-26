@@ -14,8 +14,11 @@
 //! Things this backend deliberately does not do:
 //!
 //! - Network capability requests. By default an AppContainer has *no*
-//!   network capabilities — we honor `jail.allow_net` by adding
-//!   `internetClient` and `privateNetworkClientServer` capabilities.
+//!   network capabilities — we honor `jail.allow_net` by adding the
+//!   `internetClient` capability (outbound client only, matching the
+//!   `jail.allow_net` docstring of "Allow outbound network"). LAN /
+//!   inbound capabilities are intentionally not granted; see
+//!   `NET_CAPABILITY_NAMES` for the rationale.
 //! - Persistent profile cleanup. We use a deterministic profile name
 //!   derived from `jail.label` so reruns reuse the same SID. The host
 //!   should call `DeleteAppContainerProfile` on uninstall — out of scope.
@@ -63,13 +66,27 @@ const NO_INHERITANCE: u32 = 0;
 const SE_GROUP_ENABLED: u32 = 0x0000_0004;
 
 /// AppContainer capability names granted when `jail.allow_net == true`.
-/// These match the Windows manifest capability identifiers:
+///
+/// Per `jail.rs`, `allow_net` is documented as **"Allow outbound network"**
+/// — so the capability set here is strictly outbound-client only:
+///
 /// - `internetClient` — outbound TCP/UDP to the public internet (client only).
-/// - `privateNetworkClientServer` — LAN access incl. inbound `bind()`.
-/// Other capabilities (`internetClientServer`, named DNS / mDNS caps) are
-/// intentionally NOT granted — `allow_net` is a coarse switch and we keep
-/// the surface narrow. Callers needing more should add a richer policy.
-const NET_CAPABILITY_NAMES: &[&str] = &["internetClient", "privateNetworkClientServer"];
+///
+/// Intentionally NOT granted (each would over-grant relative to the
+/// documented `allow_net` contract):
+///
+/// - `internetClientServer` — would let the child `bind()` and accept
+///   inbound public-internet connections.
+/// - `privateNetworkClientServer` — would let the child `bind()` on the
+///   LAN, granting inbound LAN reachability beyond the documented
+///   outbound-only semantics. The Linux Seatbelt/Landlock backends do
+///   not grant this either; keeping Windows in line preserves
+///   cross-platform parity.
+///
+/// If a future caller needs LAN inbound or public server roles, add a
+/// dedicated `Jail` flag (e.g. `allow_private_lan_server`) and extend
+/// this list conditionally — do NOT silently expand `allow_net`.
+const NET_CAPABILITY_NAMES: &[&str] = &["internetClient"];
 use windows_sys::Win32::System::Memory::{LocalAlloc, LPTR};
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
@@ -497,9 +514,7 @@ unsafe fn derive_capability(name: &str) -> io::Result<CapabilityDerivation> {
     if ok == 0 {
         return Err(io::Error::last_os_error());
     }
-    let capability_sids: Vec<PSID> = (0..cap_count as usize)
-        .map(|i| *cap_sids.add(i))
-        .collect();
+    let capability_sids: Vec<PSID> = (0..cap_count as usize).map(|i| *cap_sids.add(i)).collect();
     let group_sids_vec: Vec<PSID> = (0..group_count as usize)
         .map(|i| *group_sids.add(i))
         .collect();
@@ -516,11 +531,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn net_capability_names_covers_basic_internet_and_lan() {
+    fn net_capability_names_is_outbound_client_only() {
+        // `Jail.allow_net` is documented as "Allow outbound network" in
+        // `jail.rs`, so the granted capability set must be strictly
+        // outbound-client.
         assert!(NET_CAPABILITY_NAMES.contains(&"internetClient"));
-        assert!(NET_CAPABILITY_NAMES.contains(&"privateNetworkClientServer"));
-        // Server-side public internet is intentionally NOT exposed via
-        // the coarse `allow_net` switch.
+        // The following would over-grant inbound bind() rights and are
+        // intentionally NOT exposed via the coarse `allow_net` switch.
+        // A future caller that needs them should add a separate `Jail`
+        // flag (e.g. `allow_private_lan_server`) and gate them on it.
+        assert!(!NET_CAPABILITY_NAMES.contains(&"privateNetworkClientServer"));
         assert!(!NET_CAPABILITY_NAMES.contains(&"internetClientServer"));
     }
 
