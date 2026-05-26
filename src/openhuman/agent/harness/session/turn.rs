@@ -1328,6 +1328,12 @@ impl Agent {
                         ToolPolicyDecision::Deny { .. } => "denied",
                         ToolPolicyDecision::Allow => "allowed",
                     };
+                    crate::openhuman::tool_registry::denials::record(
+                        call.name.as_str(),
+                        self.tool_policy.name(),
+                        blocked_action,
+                        reason,
+                    );
                     tracing::debug!(
                         tool = call.name.as_str(),
                         policy = self.tool_policy.name(),

@@ -123,6 +123,22 @@ const developerItems = [
     ),
   },
   {
+    id: 'tool-policy-diagnostics',
+    titleKey: 'devOptions.diagnostics',
+    descriptionKey: 'devOptions.diagnosticsDesc',
+    route: 'tool-policy-diagnostics',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 17v-5a2 2 0 012-2h2a2 2 0 012 2v5m-8 0h8m-8 0H7a2 2 0 01-2-2V7a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'intelligence',
     titleKey: 'settings.developerMenu.intelligence.title',
     descriptionKey: 'settings.developerMenu.intelligence.desc',

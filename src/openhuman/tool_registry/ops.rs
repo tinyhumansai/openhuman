@@ -4,12 +4,15 @@ use serde_json::{json, Map, Value};
 
 use crate::core::all;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::config::Config;
 use crate::openhuman::mcp_server::McpToolSpec;
+use crate::openhuman::memory_store::chunks::store as chunk_store;
 use crate::rpc::RpcOutcome;
 
 use super::types::{
-    ToolPolicyDiagnostics, ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList,
-    ToolRegistryTransport,
+    McpAllowlistDiagnostics, McpServerAllowlistSummary, McpWriteAuditHealth, RecentPolicyDenial,
+    ToolPolicyDiagnostics, ToolPolicyPosture, ToolRegistryEntry, ToolRegistryHealth,
+    ToolRegistryList, ToolRegistryTransport,
 };
 
 const REGISTRY_ENTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -34,7 +37,7 @@ pub fn list_tools() -> RpcOutcome<ToolRegistryList> {
 }
 
 /// Return redacted diagnostics for policy/tool visibility reviews.
-pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
+pub fn diagnostics(config: &Config) -> RpcOutcome<ToolPolicyDiagnostics> {
     let tools = registry_entries();
     let total_tools = tools.len();
     let enabled_tools = tools.iter().filter(|entry| entry.enabled).count();
@@ -52,6 +55,10 @@ pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
         .map(|entry| entry.tool_id.clone())
         .collect::<Vec<_>>();
     let policy_surfaces = policy_surface_ids();
+    let posture = posture_from_config(config);
+    let mcp_allowlists = mcp_allowlists_from_config(config);
+    let mcp_write_audit = mcp_write_audit_health(config);
+    let recent_denials = super::denials::list(25);
 
     let diagnostics = ToolPolicyDiagnostics {
         total_tools,
@@ -60,8 +67,75 @@ pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
         json_rpc_tools,
         possible_write_surfaces,
         policy_surfaces,
+        posture,
+        mcp_allowlists,
+        mcp_write_audit,
+        recent_denials,
     };
     RpcOutcome::new(diagnostics, vec![])
+}
+
+fn posture_from_config(config: &Config) -> ToolPolicyPosture {
+    ToolPolicyPosture {
+        autonomy_level: format!("{:?}", config.autonomy.level).to_lowercase(),
+        workspace_only: config.autonomy.workspace_only,
+        max_actions_per_hour: config.autonomy.max_actions_per_hour,
+        require_approval_for_medium_risk: config.autonomy.require_approval_for_medium_risk,
+        block_high_risk_commands: config.autonomy.block_high_risk_commands,
+    }
+}
+
+fn mcp_allowlists_from_config(config: &Config) -> McpAllowlistDiagnostics {
+    let enabled = config.mcp_client.enabled;
+    let server_count = config.mcp_client.servers.len();
+    let mut enabled_server_count = 0;
+    let mut servers = Vec::new();
+    for server in &config.mcp_client.servers {
+        if server.enabled {
+            enabled_server_count += 1;
+        }
+        servers.push(McpServerAllowlistSummary {
+            name: server.name.clone(),
+            enabled: server.enabled,
+            allowed_tools_count: server.allowed_tools.len(),
+            disallowed_tools_count: server.disallowed_tools.len(),
+            has_allowlist: !server.allowed_tools.is_empty(),
+            has_denylist: !server.disallowed_tools.is_empty(),
+        });
+    }
+    McpAllowlistDiagnostics {
+        enabled,
+        server_count,
+        enabled_server_count,
+        servers,
+    }
+}
+
+fn mcp_write_audit_health(config: &Config) -> McpWriteAuditHealth {
+    let result = chunk_store::with_connection(config, |conn| {
+        let since_ms = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_sub(24 * 60 * 60 * 1000);
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mcp_writes WHERE timestamp_ms >= ?1",
+            rusqlite::params![since_ms],
+            |row| row.get::<_, i64>(0),
+        )?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    });
+
+    match result {
+        Ok(count) => McpWriteAuditHealth {
+            enabled: true,
+            recent_rows: Some(count),
+            last_error: None,
+        },
+        Err(err) => McpWriteAuditHealth {
+            enabled: true,
+            recent_rows: None,
+            last_error: Some(err.to_string()),
+        },
+    }
 }
 
 /// Look up one registry entry by stable `tool_id`.
@@ -426,7 +500,8 @@ mod tests {
 
     #[test]
     fn diagnostics_reports_inventory_and_policy_surfaces() {
-        let outcome = diagnostics();
+        let config = crate::openhuman::config::Config::default();
+        let outcome = diagnostics(&config);
 
         assert!(outcome.value.total_tools > 0);
         assert_eq!(outcome.value.total_tools, outcome.value.enabled_tools);
@@ -442,6 +517,11 @@ mod tests {
             .possible_write_surfaces
             .iter()
             .any(|tool_id| tool_id == "tools.composio_execute"));
+
+        assert!(!outcome.value.posture.autonomy_level.is_empty());
+        // `mcp_allowlists` should always be present even when no servers are configured.
+        assert!(outcome.value.mcp_allowlists.server_count >= 0);
+        assert!(outcome.value.mcp_write_audit.enabled);
     }
 
     #[test]

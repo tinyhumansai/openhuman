@@ -38,6 +38,7 @@ import TeamManagementPanel from '../components/settings/panels/TeamManagementPan
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
+import ToolPolicyDiagnosticsPanel from '../components/settings/panels/ToolPolicyDiagnosticsPanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
@@ -417,6 +418,10 @@ const Settings = () => {
         <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
+        <Route
+          path="tool-policy-diagnostics"
+          element={wrapSettingsPage(<ToolPolicyDiagnosticsPanel />)}
+        />
         <Route path="autonomy" element={wrapSettingsPage(<AutonomyPanel />)} />
         <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
         {/* Legacy direct path for the routing tab — kept so existing links
