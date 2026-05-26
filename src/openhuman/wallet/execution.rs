@@ -125,6 +125,14 @@ pub struct PreparedTransaction {
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
     pub notes: Vec<String>,
+    /// Chat-thread owner stamped at prepare time. Present when the quote
+    /// was prepared from inside an interactive chat turn (web channel sets
+    /// `APPROVAL_CHAT_CONTEXT`); `None` for CLI / direct-RPC / background
+    /// callers. Serialised only when set so the wire shape stays stable
+    /// for the no-context case. Used by `execute_prepared` to gate against
+    /// cross-thread execution of leaked `quote_id`s.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) owner: Option<QuoteOwner>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -210,7 +218,8 @@ fn next_quote_id() -> String {
 /// own (now per-sender-isolated, post-#2331) agent session. Binding the
 /// quote to the originating chat thread closes that gap: execute is only
 /// allowed when the caller's `current_owner()` equals the prepare-time owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct QuoteOwner {
     pub(crate) thread_id: String,
     pub(crate) client_id: String,
@@ -657,6 +666,7 @@ pub async fn prepare_transfer(
             "Prepared {} transfer on {} using default network settings.",
             asset.symbol, label
         )],
+        owner: current_owner(),
     };
     debug!(
         "{LOG_PREFIX} prepare_transfer chain={} kind={:?} quote_id={} amount={} asset={}",
@@ -732,6 +742,7 @@ pub async fn prepare_swap(
             "Swap {} -> {}, slippage {} bps. Real router quote required before signing.",
             params.from_symbol, params.to_symbol, params.slippage_bps
         )],
+        owner: current_owner(),
     };
     debug!(
         "{LOG_PREFIX} prepare_swap chain={} quote_id={} from={} to={} slippage_bps={}",
@@ -785,6 +796,7 @@ pub async fn prepare_contract_call(
         created_at_ms: now,
         expires_at_ms: now + QUOTE_TTL_MS,
         notes: vec!["Contract call prepared from caller-supplied ABI/calldata.".to_string()],
+        owner: current_owner(),
     };
     debug!(
         "{LOG_PREFIX} prepare_contract_call chain={} quote_id={} value={}",
@@ -1038,6 +1050,7 @@ mod tests {
             created_at_ms: now,
             expires_at_ms: now + 60_000,
             notes: vec![],
+            owner: None,
         };
         store_quote(q.clone());
         let taken = take_quote("q_test_1").expect("quote round-trips");
