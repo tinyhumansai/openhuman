@@ -7,13 +7,6 @@ import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
 import AttachmentPreview from '../components/chat/AttachmentPreview';
-import {
-  type Attachment,
-  ATTACHMENT_MAX_IMAGES,
-  ATTACHMENT_MAX_SIZE_BYTES,
-  buildMessageWithAttachments,
-  validateAndReadFile,
-} from '../lib/attachments';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -22,6 +15,13 @@ import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDism
 import MicComposer from '../features/human/MicComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import {
+  type Attachment,
+  ATTACHMENT_MAX_IMAGES,
+  ATTACHMENT_MAX_SIZE_BYTES,
+  buildMessageWithAttachments,
+  validateAndReadFile,
+} from '../lib/attachments';
 import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 import { threadApi } from '../services/api/threadApi';
@@ -621,10 +621,20 @@ const Conversations = ({
       if ('error' in result) {
         const { error } = result;
         if (error.code === 'too_many') {
-          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))));
+          setSendError(
+            chatSendError(
+              'cloud_send_failed',
+              t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))
+            )
+          );
         } else if (error.code === 'too_large') {
           const maxMb = (ATTACHMENT_MAX_SIZE_BYTES / (1024 * 1024)).toFixed(0);
-          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.tooLarge').replace('{max}', `${maxMb} MB`)));
+          setSendError(
+            chatSendError(
+              'cloud_send_failed',
+              t('chat.attachment.tooLarge').replace('{max}', `${maxMb} MB`)
+            )
+          );
         } else if (error.code === 'unsupported_type') {
           setSendError(chatSendError('cloud_send_failed', t('chat.attachment.unsupportedType')));
         } else {
@@ -689,9 +699,13 @@ const Conversations = ({
       id: `msg_${globalThis.crypto.randomUUID()}`,
       content: trimmed || '📎',
       type: 'text',
-      extraMetadata: pendingAttachments.length > 0
-        ? { attachmentCount: pendingAttachments.length, attachmentNames: pendingAttachments.map(a => a.file.name) }
-        : {},
+      extraMetadata:
+        pendingAttachments.length > 0
+          ? {
+              attachmentCount: pendingAttachments.length,
+              attachmentNames: pendingAttachments.map(a => a.file.name),
+            }
+          : {},
       sender: 'user',
       createdAt: new Date().toISOString(),
     };
@@ -1991,7 +2005,10 @@ const Conversations = ({
                 accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
                 multiple
                 className="hidden"
-                onChange={e => { void handleAttachFiles(e.target.files); e.target.value = ''; }}
+                onChange={e => {
+                  void handleAttachFiles(e.target.files);
+                  e.target.value = '';
+                }}
               />
               <div className="relative flex flex-1 flex-col rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
                 <AttachmentPreview
@@ -2032,7 +2049,11 @@ const Conversations = ({
                 aria-label={t('chat.attachment.attach')}
                 title={t('chat.attachment.attach')}
                 onClick={() => fileInputRef.current?.click()}
-                disabled={composerInteractionBlocked || isSending || attachments.length >= ATTACHMENT_MAX_IMAGES}
+                disabled={
+                  composerInteractionBlocked ||
+                  isSending ||
+                  attachments.length >= ATTACHMENT_MAX_IMAGES
+                }
                 className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -2072,7 +2093,11 @@ const Conversations = ({
                 onClick={() => {
                   void handleSendMessage();
                 }}
-                disabled={(!inputValue.trim() && attachments.length === 0) || composerInteractionBlocked || isSending}
+                disabled={
+                  (!inputValue.trim() && attachments.length === 0) ||
+                  composerInteractionBlocked ||
+                  isSending
+                }
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
