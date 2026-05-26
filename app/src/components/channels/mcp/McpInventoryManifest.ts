@@ -163,7 +163,10 @@ export function parseManifest(raw: string): ParseResult {
   if (typeof parsed.exported_at !== 'string' || parsed.exported_at.length === 0) {
     return { ok: false, errorCode: 'missingExportedAt' };
   }
-  if (typeof parsed.exported_by !== 'string') {
+  if (typeof parsed.exported_by !== 'string' || parsed.exported_by.trim().length === 0) {
+    // Blank/whitespace-only `exported_by` is treated as missing: the field
+    // is observability metadata (which host/user produced the manifest)
+    // and an empty value would render as "Exported from " in the preview.
     return { ok: false, errorCode: 'missingExportedBy' };
   }
   if (!Array.isArray(parsed.servers)) {

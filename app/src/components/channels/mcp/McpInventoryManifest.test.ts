@@ -208,6 +208,21 @@ describe('McpInventoryManifest: parseManifest', () => {
     if (!r2.ok) expect(r2.errorCode).toBe('missingExportedBy');
   });
 
+  it('treats a blank or whitespace-only exported_by as missing', () => {
+    for (const blank of ['', '   ', '\t\n']) {
+      const result = parseManifest(
+        JSON.stringify({
+          $schema: CURRENT_MANIFEST_SCHEMA,
+          exported_at: '2026-05-25T00:00:00Z',
+          exported_by: blank,
+          servers: [],
+        })
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.errorCode).toBe('missingExportedBy');
+    }
+  });
+
   it('rejects a non-array servers field with the "invalidServers" code', () => {
     const result = parseManifest(
       JSON.stringify({
