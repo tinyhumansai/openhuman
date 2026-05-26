@@ -183,8 +183,9 @@ describe('InstalledServerList', () => {
         onBrowseCatalog={() => {}}
       />
     );
-    // The status dot has title="error"
-    expect(screen.getByTitle('error')).toBeInTheDocument();
+    // The status dot title is the i18n'd label ('Error' in English) —
+    // sourced from `channels.status.error` per `STATUS_I18N_KEYS`.
+    expect(screen.getByTitle('Error')).toBeInTheDocument();
   });
 
   it('falls back to disconnected status when no matching status entry', () => {
@@ -197,7 +198,7 @@ describe('InstalledServerList', () => {
         onBrowseCatalog={() => {}}
       />
     );
-    expect(screen.getByTitle('disconnected')).toBeInTheDocument();
+    expect(screen.getByTitle('Disconnected')).toBeInTheDocument();
   });
 
   // -----------------------------------------------------------------------

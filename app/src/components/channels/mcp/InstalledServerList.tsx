@@ -9,8 +9,7 @@
  * server buttons (clamped at the edges); Enter/Space activate via
  * the underlying `<button>` semantics.
  */
-import { useMemo, useRef } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { type KeyboardEvent as ReactKeyboardEvent, useMemo, useRef } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { ConnStatus, InstalledServer, ServerStatus } from './types';
@@ -32,6 +31,17 @@ const STATUS_DOT: Record<ServerStatus, string> = {
   error: 'bg-coral-500',
 };
 
+// i18n keys for the per-status tooltip on the status dot. Reuses the
+// existing `channels.status.*` namespace (already shipped as the canonical
+// status vocabulary by McpStatusBadge) so we don't fork translations for
+// the same four words.
+const STATUS_I18N_KEYS: Record<ServerStatus, string> = {
+  connected: 'channels.status.connected',
+  connecting: 'channels.status.connecting',
+  disconnected: 'channels.status.disconnected',
+  error: 'channels.status.error',
+};
+
 const InstalledServerList = ({
   servers,
   statuses,
@@ -42,10 +52,7 @@ const InstalledServerList = ({
 }: InstalledServerListProps) => {
   const { t } = useT();
   const listRef = useRef<HTMLUListElement>(null);
-  const statusMap = useMemo(
-    () => new Map((statuses ?? []).map(s => [s.server_id, s])),
-    [statuses]
-  );
+  const statusMap = useMemo(() => new Map((statuses ?? []).map(s => [s.server_id, s])), [statuses]);
 
   const trimmedFilter = filter.trim().toLowerCase();
   const isFiltering = trimmedFilter.length > 0;
@@ -63,9 +70,7 @@ const InstalledServerList = ({
     if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
     const root = listRef.current;
     if (!root) return;
-    const buttons = Array.from(
-      root.querySelectorAll<HTMLButtonElement>('button[data-server-id]')
-    );
+    const buttons = Array.from(root.querySelectorAll<HTMLButtonElement>('button[data-server-id]'));
     const currentIdx = buttons.indexOf(event.currentTarget);
     if (currentIdx < 0) return;
     event.preventDefault();
@@ -142,7 +147,7 @@ const InstalledServerList = ({
                       }`}>
                       <span
                         className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[status]}`}
-                        title={status}
+                        title={t(STATUS_I18N_KEYS[status])}
                       />
                       <span className="flex-1 min-w-0">
                         <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100 truncate">

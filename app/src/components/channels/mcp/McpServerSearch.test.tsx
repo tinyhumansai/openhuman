@@ -15,9 +15,7 @@ describe('McpServerSearch', () => {
 
   it('renders a search-type input with placeholder and aria-label', () => {
     render(<McpServerSearch value="" onChange={() => {}} />);
-    const input = screen.getByRole('searchbox', {
-      name: 'Filter installed MCP servers by name',
-    });
+    const input = screen.getByRole('searchbox', { name: 'Filter installed MCP servers by name' });
     expect(input).toHaveAttribute('type', 'search');
     expect(input).toHaveAttribute('placeholder', 'Filter servers…');
   });
@@ -42,9 +40,7 @@ describe('McpServerSearch', () => {
   it('fires onChange with the new value on typing', () => {
     const onChange = vi.fn();
     render(<McpServerSearch value="" onChange={onChange} />);
-    const input = screen.getByRole('searchbox', {
-      name: 'Filter installed MCP servers by name',
-    });
+    const input = screen.getByRole('searchbox', { name: 'Filter installed MCP servers by name' });
     fireEvent.change(input, { target: { value: 'gh' } });
     expect(onChange).toHaveBeenCalledWith('gh');
   });

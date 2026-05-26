@@ -21,10 +21,7 @@ const McpServerSearch = ({ value, onChange }: McpServerSearchProps) => {
   const { t } = useT();
   const hasValue = value.length > 0;
   return (
-    <div
-      role="search"
-      aria-label={t('mcp.installed.search.landmarkAria')}
-      className="relative">
+    <div role="search" aria-label={t('mcp.installed.search.landmarkAria')} className="relative">
       <input
         type="search"
         value={value}
