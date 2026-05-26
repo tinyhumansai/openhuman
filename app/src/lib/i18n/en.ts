@@ -549,6 +549,7 @@ const en: TranslationMap = {
     'Never share your recovery phrase. Anyone with these words can access your account.',
   'mnemonic.copied': 'Recovery phrase copied to clipboard',
   'mnemonic.reveal': 'Reveal phrase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Recovery phrase is hidden',
 
   // What Leaves My Computer

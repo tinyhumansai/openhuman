@@ -279,7 +279,7 @@ const RecoveryPhrasePanel = () => {
                       <button
                         type="button"
                         onClick={() => setRevealed(true)}
-                        aria-label="Reveal recovery phrase"
+                        aria-label={t('mnemonic.revealPhrase')}
                         className="absolute inset-0 flex items-center justify-center cursor-pointer bg-transparent">
                         <svg
                           className="w-7 h-7 text-stone-900 dark:text-white transition-opacity duration-200 hover:opacity-70"
