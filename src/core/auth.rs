@@ -459,6 +459,43 @@ mod tests {
     }
 
     #[test]
+    fn init_rpc_token_with_value_rejects_empty() {
+        // Trimmed-empty values must error rather than seed an empty bearer.
+        assert!(init_rpc_token_with_value("").is_err());
+        assert!(init_rpc_token_with_value("   ").is_err());
+    }
+
+    /// `init_rpc_token_with_value` populates the same `RPC_TOKEN` OnceLock
+    /// that `get_rpc_token` reads — i.e. the in-memory handoff path produces
+    /// the bearer everyone else (HTTP middleware, Socket.IO verifier,
+    /// approval-gate session_id) reads from. We can't deterministically
+    /// assert the *value* set here (the OnceLock may already be seeded by a
+    /// sibling test that ran first in the same binary), but we can assert
+    /// the OnceLock is initialised after this call returns Ok, and that the
+    /// helper is idempotent.
+    #[test]
+    fn init_rpc_token_with_value_seeds_and_is_idempotent() {
+        // First call: either we seed, or a sibling test already did. Either
+        // way the helper must return Ok and leave `get_rpc_token` populated.
+        let token = "cafebabe1234567890abcdef0123456789abcdef0123456789abcdef01234567";
+        init_rpc_token_with_value(token).expect("seed succeeds");
+        assert!(
+            get_rpc_token().is_some(),
+            "after init_rpc_token_with_value, get_rpc_token must return Some"
+        );
+        // Second call is a no-op (matching init_rpc_token semantics) — must
+        // not error, must not flip the in-memory value.
+        let before = get_rpc_token().map(str::to_string);
+        init_rpc_token_with_value("a-different-value-that-must-be-ignored")
+            .expect("idempotent re-init succeeds");
+        let after = get_rpc_token().map(str::to_string);
+        assert_eq!(
+            before, after,
+            "second init_rpc_token_with_value must not flip the in-memory bearer"
+        );
+    }
+
+    #[test]
     fn extract_query_token_returns_none_on_missing_query() {
         assert_eq!(extract_query_token(None), None);
     }
