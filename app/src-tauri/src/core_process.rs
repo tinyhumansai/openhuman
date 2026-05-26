@@ -273,6 +273,9 @@ impl CoreProcessHandle {
                             true,
                             shutdown_token,
                             ready_tx,
+                            // In-memory token handoff lands here in the next commit;
+                            // for now keep the env-var transport so behaviour matches HEAD.
+                            None,
                         )
                         .await
                     });

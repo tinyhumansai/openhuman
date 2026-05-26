@@ -1261,7 +1261,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false, None, None).await
+    run_server_inner(host, port, socketio_enabled, false, None, None, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -1278,17 +1278,26 @@ pub async fn run_server_embedded(
         true,
         Some(shutdown_token),
         None,
+        None,
     )
     .await
 }
 
 /// Embedded entrypoint with an explicit readiness callback.
+///
+/// When the caller already holds the per-launch RPC bearer in memory (the
+/// Tauri shell now that the core runs in-process — PR #1061), it should
+/// pass `Some(token)` so the embedded server can seed its auth subsystem
+/// via [`crate::core::auth::init_rpc_token_with_value`] without ever
+/// reading `OPENHUMAN_CORE_TOKEN` from the process environment.  Passing
+/// `None` preserves the env-as-config fallback (CLI / docker / cloud).
 pub async fn run_server_embedded_with_ready(
     host: Option<&str>,
     port: Option<u16>,
     socketio_enabled: bool,
     shutdown_token: CancellationToken,
     ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
+    rpc_token: Option<std::sync::Arc<String>>,
 ) -> anyhow::Result<()> {
     run_server_inner(
         host,
@@ -1297,6 +1306,7 @@ pub async fn run_server_embedded_with_ready(
         true,
         Some(shutdown_token),
         Some(ready_tx),
+        rpc_token,
     )
     .await
 }
@@ -1309,6 +1319,7 @@ async fn run_server_inner(
     embedded_core: bool,
     shutdown_token: Option<CancellationToken>,
     ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
+    rpc_token: Option<std::sync::Arc<String>>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -1319,13 +1330,30 @@ async fn run_server_inner(
     crate::openhuman::keyring::init_master_key();
 
     // Initialize the per-process RPC bearer token.
-    // Written to {workspace_dir}/core.token so the Tauri shell can read it.
-    let token_dir = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".openhuman")
-    });
-    crate::core::auth::init_rpc_token(&token_dir)?;
+    //
+    // Preferred path (in-process core spawned by the Tauri shell): the caller
+    // passes the bearer it already holds in `CoreProcessHandle.rpc_token` as
+    // `rpc_token: Some(_)`. The token is seeded directly into the auth
+    // subsystem without ever crossing `OPENHUMAN_CORE_TOKEN` on the process
+    // environment — closing the same-UID readback channel (sysctl
+    // KERN_PROCARGS2 / ps eww on macOS, /proc/<pid>/environ on Linux).
+    //
+    // Fallback (standalone CLI / docker / cloud `openhuman core run`):
+    // `rpc_token: None` lets `init_rpc_token` read `OPENHUMAN_CORE_TOKEN`
+    // from the environment when present (env-as-config — legit operator
+    // surface), or generate a fresh token and write `{workspace_dir}/core.token`
+    // (0o600 on Unix) so CLI callers can authenticate.
+    if let Some(token) = rpc_token.as_deref() {
+        crate::core::auth::init_rpc_token_with_value(token)?;
+    } else {
+        let token_dir =
+            crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".openhuman")
+            });
+        crate::core::auth::init_rpc_token(&token_dir)?;
+    }
 
     // Initialize the global MemoryClient so composio providers
     // (gmail/slack/notion) can persist their sync_state via kv_get/kv_set,
