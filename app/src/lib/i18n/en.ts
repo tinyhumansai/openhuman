@@ -532,8 +532,7 @@ const en: TranslationMap = {
   'devOptions.toolPolicyDiagnostics.mcpAllowlists.summary':
     'Enabled: {enabled} · Servers: {enabledCount}/{totalCount}',
   'devOptions.toolPolicyDiagnostics.mcpAllowlists.unnamed': '<unnamed>',
-  'devOptions.toolPolicyDiagnostics.mcpAllowlists.allowDeny':
-    'allow={allowCount} deny={denyCount}',
+  'devOptions.toolPolicyDiagnostics.mcpAllowlists.allowDeny': 'allow={allowCount} deny={denyCount}',
   'devOptions.toolPolicyDiagnostics.mcpWriteAudit.title': 'MCP write audit',
   'devOptions.toolPolicyDiagnostics.mcpWriteAudit.summary':
     'Enabled: {enabled} · Recent (24h): {recentRows}',

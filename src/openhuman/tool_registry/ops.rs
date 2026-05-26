@@ -10,9 +10,9 @@ use crate::openhuman::memory_store::chunks::store as chunk_store;
 use crate::rpc::RpcOutcome;
 
 use super::types::{
-    McpAllowlistDiagnostics, McpServerAllowlistSummary, McpWriteAuditHealth,
-    ToolPolicyDiagnostics, ToolPolicyPosture, ToolRegistryEntry, ToolRegistryHealth,
-    ToolRegistryList, ToolRegistryTransport,
+    McpAllowlistDiagnostics, McpServerAllowlistSummary, McpWriteAuditHealth, ToolPolicyDiagnostics,
+    ToolPolicyPosture, ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList,
+    ToolRegistryTransport,
 };
 
 const REGISTRY_ENTRY_VERSION: &str = env!("CARGO_PKG_VERSION");
