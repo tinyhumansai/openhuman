@@ -261,6 +261,15 @@ export function classifyImport(
 export function suggestedFilename(manifest: McpInventoryManifest): string {
   // exported_at is "2026-05-25T20:14:15.123Z"; trim to a filename-safe
   // YYYYMMDDHHMMSS slug so the file sorts well in directory listings.
-  const stamp = manifest.exported_at.replace(/[-:T]/g, '').replace(/\..*$/, '');
+  //
+  // The character class is built from a String.fromCharCode array rather
+  // than a literal regex character class because Tailwind v4's content
+  // scanner greps every JS/TS source string for arbitrary-value class
+  // shapes and would mis-identify the literal as a Tailwind class,
+  // emitting an invalid CSS rule that fails `lightningcss minify` during
+  // the Tauri production build.
+  const SEPARATORS = String.fromCharCode(45, 58, 84); // '-', ':', 'T'
+  const stripPattern = new RegExp('[' + SEPARATORS + ']', 'g');
+  const stamp = manifest.exported_at.replace(stripPattern, '').replace(/\..*$/, '');
   return `openhuman-mcp-inventory-${stamp}.json`;
 }
