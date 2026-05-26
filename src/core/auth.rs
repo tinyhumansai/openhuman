@@ -1,20 +1,31 @@
 //! Per-process RPC bearer-token authentication.
 //!
-//! At server startup, [`init_rpc_token`] either reads the token from the
-//! `OPENHUMAN_CORE_TOKEN` environment variable (Tauri-spawned path) or
-//! generates a 256-bit cryptographically-random token and writes it to
-//! `{workspace_dir}/core.token` (owner-read-only on Unix, standalone CLI path),
-//! then stores it in a process-global [`OnceLock`].
+//! Three initialization paths feed the process-global [`OnceLock`] that holds
+//! the active bearer token:
 //!
-//! **Tauri path**: the Tauri shell generates the token in
-//! `CoreProcessHandle::new()`, injects it as `OPENHUMAN_CORE_TOKEN` before
-//! spawning the core process, and holds it in memory via
-//! `CoreProcessHandle.rpc_token`.  The shell includes the token in every
-//! request as `Authorization: Bearer <token>`.  The `core.token` file is
-//! never written in this path.
+//! 1. **In-memory handoff (preferred for the in-process core)** —
+//!    [`init_rpc_token_with_value`] sets the token directly from a value the
+//!    Tauri shell already holds in `CoreProcessHandle.rpc_token`. No env var
+//!    is read or set; the token never crosses a process-global env surface.
+//!    This is the path the Tauri host uses now that the core runs in-process
+//!    (PR #1061) — same-process handoff makes the env crossing unnecessary,
+//!    and avoiding it keeps the token off `/proc/<pid>/environ` (Linux) and
+//!    out of `sysctl KERN_PROCARGS2` / `ps eww -p <pid>` (macOS) where any
+//!    same-UID process could read it without entitlement.
+//! 2. **Env-as-config fallback** — when no in-memory token is supplied,
+//!    [`init_rpc_token`] reads `OPENHUMAN_CORE_TOKEN` from the environment.
+//!    This is the legitimate operator-supplied transport for Docker / cloud /
+//!    VPS deployments where the bearer must come from `fly secrets set …`,
+//!    `docker run -e …`, or a systemd unit file — there is no live shell
+//!    handing it to the binary in-memory.
+//! 3. **Standalone CLI fallback** — when neither path supplies a token, the
+//!    core generates a fresh 256-bit token and writes it to
+//!    `{workspace_dir}/core.token` (owner-read-only on Unix) so external CLI
+//!    clients can authenticate.
 //!
-//! **Standalone CLI path**: the core generates a fresh token and writes it to
-//! `{workspace_dir}/core.token` so that CLI clients can read and use it.
+//! Once set, the in-memory `OnceLock` is the single source of truth — all
+//! transports ([`rpc_auth_middleware`], Socket.IO, SSE query-token fallback,
+//! the approval-gate session id) read via [`get_rpc_token`].
 //!
 //! Endpoints exempt from auth (checked by [`rpc_auth_middleware`]):
 //! - `GET /`              — public info page
@@ -141,6 +152,38 @@ pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
         "[auth] core RPC token generated and written to {}",
         token_path.display()
     );
+    Ok(())
+}
+
+/// Seed the per-process RPC token directly from a caller-supplied value.
+///
+/// **In-memory handoff path** — used by the Tauri shell to inject the bearer
+/// the host generated in `CoreProcessHandle::new()` into the in-process core
+/// without round-tripping through `OPENHUMAN_CORE_TOKEN` in the process
+/// environment. The token never lands on a process-global env surface, which
+/// keeps it off `/proc/<pid>/environ` (Linux) and out of `sysctl
+/// KERN_PROCARGS2` / `ps eww -p <pid>` (macOS) where any same-UID process
+/// could otherwise read it without entitlement.
+///
+/// Idempotent: a second call is a no-op (matches [`init_rpc_token`] — flipping
+/// the in-memory bearer mid-life would 401 every in-flight client).
+///
+/// # Errors
+///
+/// Returns an error only if `token` is empty after trimming. A non-empty
+/// token is accepted as-is — callers are expected to have generated a
+/// CSPRNG hex string (see `CoreProcessHandle::generate_rpc_token`).
+pub fn init_rpc_token_with_value(token: &str) -> anyhow::Result<()> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("init_rpc_token_with_value: supplied token is empty");
+    }
+    if RPC_TOKEN.get().is_some() {
+        log::debug!("[auth] init_rpc_token_with_value: already initialized, skipping");
+        return Ok(());
+    }
+    let _ = RPC_TOKEN.set(trimmed.to_string());
+    log::info!("[auth] core RPC token loaded via in-memory handoff (no env crossing)");
     Ok(())
 }
 
