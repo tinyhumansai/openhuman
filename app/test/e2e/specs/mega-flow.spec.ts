@@ -77,20 +77,6 @@ async function waitForMockRequest(
   return undefined;
 }
 
-async function waitForBackendSession(label: string, timeoutMs = 15_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastProbe: unknown = undefined;
-
-  while (Date.now() < deadline) {
-    const probe = await callOpenhumanRpc('openhuman.composio_list_triggers', {});
-    if (probe.ok) return;
-    lastProbe = probe;
-    await browser.pause(500);
-  }
-
-  throw new Error(`${LOG} ${label}: backend session not ready: ${JSON.stringify(lastProbe)}`);
-}
-
 async function resetEverything(label: string): Promise<void> {
   console.log(`${LOG} reset (${label}) — admin reset only (skip destructive core reset)`);
   // Mock-side reset is enough to give each scenario a clean slate for the
