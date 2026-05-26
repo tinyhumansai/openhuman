@@ -40,6 +40,7 @@ import TeamPanel from '../components/settings/panels/TeamPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
+import WalletBalancesPanel from '../components/settings/panels/WalletBalancesPanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
 import SettingsHome from '../components/settings/SettingsHome';
 import SettingsSectionPage from '../components/settings/SettingsSectionPage';
@@ -166,6 +167,17 @@ const VoiceIcon = (
   </svg>
 );
 
+const WalletIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+    />
+  </svg>
+);
+
 const WrappedSettingsPage = ({
   children,
   maxWidthClass = 'max-w-lg',
@@ -223,6 +235,13 @@ const Settings = () => {
       description: t('pages.settings.account.migrationDesc'),
       route: 'migration',
       icon: MigrationIcon,
+    },
+    {
+      id: 'wallet-balances',
+      title: t('pages.settings.account.walletBalances'),
+      description: t('pages.settings.account.walletBalancesDesc'),
+      route: 'wallet-balances',
+      icon: WalletIcon,
     },
   ];
 
@@ -404,6 +423,7 @@ const Settings = () => {
         <Route path="billing" element={<BillingPanel />} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
         <Route path="migration" element={wrapSettingsPage(<MigrationPanel />)} />
+        <Route path="wallet-balances" element={wrapSettingsPage(<WalletBalancesPanel />)} />
         {/* Features leaf panels */}
         <Route path="screen-intelligence" element={wrapSettingsPage(<ScreenIntelligencePanel />)} />
         <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
