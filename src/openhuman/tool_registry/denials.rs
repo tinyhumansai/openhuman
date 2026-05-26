@@ -77,8 +77,14 @@ fn truncate_reason(reason: &str) -> String {
 mod tests {
     use super::*;
 
+    fn clear_denials_for_test() {
+        let mut buf = RECENT_DENIALS.lock().unwrap_or_else(|p| p.into_inner());
+        buf.clear();
+    }
+
     #[test]
     fn record_truncates_and_bounds() {
+        clear_denials_for_test();
         let long = "a".repeat(10_000);
         for _ in 0..(MAX_DENIALS + 5) {
             record("tool.x", "policy", "denied", &long);
@@ -91,6 +97,7 @@ mod tests {
 
     #[test]
     fn record_ignores_empty_tool() {
+        clear_denials_for_test();
         record("   ", "policy", "denied", "reason");
         // list() should not panic; we can't reliably assert length because tests may run in parallel.
         let _ = list(10);
@@ -98,6 +105,7 @@ mod tests {
 
     #[test]
     fn record_redacts_sensitive_reason_fragments() {
+        clear_denials_for_test();
         record(
             "tool.secret",
             "policy",
