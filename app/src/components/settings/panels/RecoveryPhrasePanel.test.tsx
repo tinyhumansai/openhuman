@@ -6,15 +6,10 @@ import RecoveryPhrasePanel from './RecoveryPhrasePanel';
 const navigateBackMock = vi.fn();
 
 vi.mock('../hooks/useSettingsNavigation', () => ({
-  useSettingsNavigation: () => ({
-    navigateBack: navigateBackMock,
-    breadcrumbs: [],
-  }),
+  useSettingsNavigation: () => ({ navigateBack: navigateBackMock, breadcrumbs: [] }),
 }));
 
-vi.mock('../../../lib/i18n/I18nContext', () => ({
-  useT: () => ({ t: (key: string) => key }),
-}));
+vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (key: string) => key }) }));
 
 vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({
@@ -48,7 +43,7 @@ describe('<RecoveryPhrasePanel />', () => {
 
     const revealButton = screen.getByLabelText('mnemonic.revealPhrase');
     expect(revealButton).toBeInTheDocument();
-    
+
     fireEvent.click(revealButton);
 
     expect(screen.queryByLabelText('mnemonic.revealPhrase')).not.toBeInTheDocument();
