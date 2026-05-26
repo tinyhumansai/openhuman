@@ -1,8 +1,9 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderWithProviders } from '../../../../test/test-utils';
 import type { BalanceInfo } from '../../../../services/walletApi';
+import { renderWithProviders } from '../../../../test/test-utils';
+import WalletBalancesPanel from '../WalletBalancesPanel';
 
 // ---------------------------------------------------------------------------
 // Module-level mock: replace fetchWalletBalances before the panel loads.
@@ -57,10 +58,8 @@ const MISSING_PROVIDER_BALANCE: BalanceInfo = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function renderPanel() {
-  const { container } = renderWithProviders(
-    (await import('../WalletBalancesPanel')).default as React.ComponentType
-  );
+function renderPanel() {
+  const { container } = renderWithProviders(<WalletBalancesPanel />);
   return container;
 }
 
@@ -77,7 +76,7 @@ describe('WalletBalancesPanel — loading state', () => {
       })
     );
 
-    await renderPanel();
+    renderPanel();
 
     expect(screen.getByText(/loading balances/i)).toBeInTheDocument();
 
@@ -97,7 +96,7 @@ describe('WalletBalancesPanel — error state', () => {
       new Error('wallet is not configured; run wallet setup first')
     );
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => {
       expect(
@@ -111,7 +110,7 @@ describe('WalletBalancesPanel — error state', () => {
       .mockRejectedValueOnce(new Error('network error'))
       .mockResolvedValueOnce([]);
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument());
 
@@ -119,7 +118,9 @@ describe('WalletBalancesPanel — error state', () => {
 
     await waitFor(() => expect(mockFetchWalletBalances).toHaveBeenCalledTimes(2));
     // After the second call (empty) the error clears and empty state appears.
-    await waitFor(() => expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /retry/i })).not.toBeInTheDocument()
+    );
   });
 });
 
@@ -131,7 +132,7 @@ describe('WalletBalancesPanel — empty state', () => {
   it('renders the Recovery Phrase hint when no balances are returned', async () => {
     mockFetchWalletBalances.mockResolvedValueOnce([]);
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText(/No wallet accounts yet/i)).toBeInTheDocument();
@@ -148,37 +149,37 @@ describe('WalletBalancesPanel — loaded state', () => {
   it('renders chain badge, formatted amount, and symbol for each row', async () => {
     mockFetchWalletBalances.mockResolvedValueOnce([EVM_BALANCE, BTC_BALANCE]);
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => {
-      // Chain badges
+      // Chain badge — appears once (EVM has no asset symbol collision with chain label)
       expect(screen.getByText('EVM')).toBeInTheDocument();
-      expect(screen.getByText('BTC')).toBeInTheDocument();
-      // Formatted balances
+      // Formatted balances (unique per row)
       expect(screen.getByText('1.000000000000000000')).toBeInTheDocument();
       expect(screen.getByText('1.00000000')).toBeInTheDocument();
-      // Symbols
+      // Symbols — ETH appears only as the asset symbol; BTC appears twice
+      // (chain badge + asset symbol) so we assert via getAllByText length.
       expect(screen.getByText('ETH')).toBeInTheDocument();
-      expect(screen.getByText('BTC')).toBeInTheDocument();
+      expect(screen.getAllByText('BTC').length).toBeGreaterThanOrEqual(2);
     });
   });
 
   it('truncates addresses to first 6 + last 4 chars', async () => {
     mockFetchWalletBalances.mockResolvedValueOnce([EVM_BALANCE]);
 
-    await renderPanel();
+    renderPanel();
 
     // address: 0x9858EfFD232B4033E47d90003D41EC34EcaEda94
-    // truncated: 0x9858E…Da94
+    // truncated: 0x9858…da94 (first 6 + last 4 chars, original case preserved)
     await waitFor(() => {
-      expect(screen.getByText('0x9858E…Da94')).toBeInTheDocument();
+      expect(screen.getByText('0x9858…da94')).toBeInTheDocument();
     });
   });
 
   it('shows the "provider unavailable" chip for balances with missing provider status', async () => {
     mockFetchWalletBalances.mockResolvedValueOnce([MISSING_PROVIDER_BALANCE]);
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.getByText(/provider unavailable/i)).toBeInTheDocument();
@@ -188,7 +189,7 @@ describe('WalletBalancesPanel — loaded state', () => {
   it('does NOT show the provider chip for balances with ready status', async () => {
     mockFetchWalletBalances.mockResolvedValueOnce([EVM_BALANCE]);
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => {
       expect(screen.queryByText(/provider unavailable/i)).not.toBeInTheDocument();
@@ -206,7 +207,7 @@ describe('WalletBalancesPanel — refresh', () => {
       .mockResolvedValueOnce([EVM_BALANCE])
       .mockResolvedValueOnce([EVM_BALANCE, BTC_BALANCE]);
 
-    await renderPanel();
+    renderPanel();
 
     await waitFor(() => expect(screen.getByText('EVM')).toBeInTheDocument());
 
@@ -214,9 +215,7 @@ describe('WalletBalancesPanel — refresh', () => {
     fireEvent.click(refreshButton);
 
     await waitFor(() => expect(mockFetchWalletBalances).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByText('BTC')).toBeInTheDocument());
+    // After refresh, the BTC row is added — BTC appears twice (chain badge + symbol).
+    await waitFor(() => expect(screen.getAllByText('BTC').length).toBeGreaterThanOrEqual(2));
   });
 });
-
-// React import needed by JSX
-import React from 'react';
