@@ -25,6 +25,7 @@ import {
   type ClassifiedImportEntry,
   classifyImport,
   type McpInventoryManifest,
+  type ParseErrorCode,
   parseManifest,
 } from './McpInventoryManifest';
 import type { InstalledServer } from './types';
@@ -49,6 +50,18 @@ const McpInventoryImportTab = ({
     [manifest, installedServers]
   );
 
+  // Map a stable manifest-layer error code to the user-visible string.
+  // Detail (machine context — JSON parse text, offending index, etc.)
+  // is appended after a separator when present so the alert text reads
+  // as one sentence.
+  const renderParseError = useCallback(
+    (errorCode: ParseErrorCode, detail?: string): string => {
+      const base = t(`mcp.inventory.parseError.${errorCode}`);
+      return detail ? `${base} (${detail})` : base;
+    },
+    [t]
+  );
+
   const handleParse = useCallback(() => {
     setFileError(null);
     const result = parseManifest(rawInput);
@@ -57,9 +70,9 @@ const McpInventoryImportTab = ({
       setParseError(null);
     } else {
       setManifest(null);
-      setParseError(result.error);
+      setParseError(renderParseError(result.errorCode, result.detail));
     }
-  }, [rawInput]);
+  }, [rawInput, renderParseError]);
 
   const handleFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -70,7 +83,11 @@ const McpInventoryImportTab = ({
       if (file.size > 1_000_000) {
         // 1 MB is generous for a manifest (~10k servers at 100 bytes each).
         // Reject anything larger as a defence against accidental upload
-        // of an unrelated big JSON blob.
+        // of an unrelated big JSON blob. Clear any stale preview /
+        // parse-error state so the rejected upload doesn't leave a
+        // previous (and now misleading) preview actionable below.
+        setManifest(null);
+        setParseError(null);
         setFileError(t('mcp.inventory.import.fileTooLarge'));
         return;
       }
@@ -85,15 +102,20 @@ const McpInventoryImportTab = ({
           setParseError(null);
         } else {
           setManifest(null);
-          setParseError(result.error);
+          setParseError(renderParseError(result.errorCode, result.detail));
         }
       };
       reader.onerror = () => {
+        // Same reasoning as the size-reject branch — drop any stale
+        // preview so a failed re-upload doesn't leave the previous
+        // manifest's preview rows still rendering / actionable.
+        setManifest(null);
+        setParseError(null);
         setFileError(t('mcp.inventory.import.fileReadFailed'));
       };
       reader.readAsText(file);
     },
-    [t]
+    [t, renderParseError]
   );
 
   const handleClear = useCallback(() => {

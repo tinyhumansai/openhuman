@@ -89,13 +89,39 @@ export function serializeManifest(manifest: McpInventoryManifest): string {
 }
 
 /**
- * Discriminated-union result of parsing a manifest. Errors carry a
- * single user-facing message and (when applicable) the path to the
- * first offending field — surfaced as-is in the import UI's alert.
+ * Stable, locale-independent identifiers for every parse-failure mode.
+ *
+ * Mapped to translated text by the consumer (UI) via
+ * `mcp.inventory.parseError.<code>` i18n keys — so the manifest layer
+ * stays decoupled from any presentation locale, and the failure modes
+ * are a fixed contract that external tooling (CLIs, test fixtures,
+ * other clients) can match on without depending on the rendered text.
+ */
+export type ParseErrorCode =
+  | 'empty'
+  | 'invalidJson'
+  | 'rootNotObject'
+  | 'unsupportedSchema'
+  | 'missingExportedAt'
+  | 'missingExportedBy'
+  | 'invalidServers'
+  | 'serverNotObject'
+  | 'serverMissingQualifiedName'
+  | 'serverMissingDisplayName'
+  | 'serverEnvKeysNotArray'
+  | 'serverContainsEnv'
+  | 'duplicateQualifiedName';
+
+/**
+ * Discriminated-union result of parsing a manifest. On failure carries
+ * a stable `errorCode` for i18n + an optional `detail` string with
+ * machine context (JSON parse exception text, offending index, the
+ * actual schema string we got, etc.). Consumers render via
+ * `t(\`mcp.inventory.parseError.\${errorCode}\`)` + optional detail.
  */
 export type ParseResult =
   | { ok: true; manifest: McpInventoryManifest }
-  | { ok: false; error: string };
+  | { ok: false; errorCode: ParseErrorCode; detail?: string };
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -105,64 +131,78 @@ const isStringArray = (value: unknown): value is string[] =>
 
 /**
  * Parse + validate a raw manifest string. Returns a discriminated union
- * with a single message on failure — never throws. Tolerant of trailing
- * whitespace; strict on the rest.
+ * with a stable `errorCode` on failure — never throws. Tolerant of
+ * trailing whitespace; strict on the rest. Includes a duplicate-
+ * `qualified_name` check so a malformed/malicious manifest can't
+ * quietly install the same server twice with diverging env_keys.
  */
 export function parseManifest(raw: string): ParseResult {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
-    return { ok: false, error: 'Manifest is empty.' };
+    return { ok: false, errorCode: 'empty' };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    const detail = err instanceof Error ? err.message : 'JSON parse failed.';
-    return { ok: false, error: `Invalid JSON: ${detail}` };
+    return {
+      ok: false,
+      errorCode: 'invalidJson',
+      detail: err instanceof Error ? err.message : undefined,
+    };
   }
   if (!isObject(parsed)) {
-    return { ok: false, error: 'Manifest must be a JSON object at the root.' };
+    return { ok: false, errorCode: 'rootNotObject' };
   }
   if (parsed.$schema !== CURRENT_MANIFEST_SCHEMA) {
     return {
       ok: false,
-      error: `Unsupported manifest schema: expected "${CURRENT_MANIFEST_SCHEMA}", got "${String(
-        parsed.$schema
-      )}".`,
+      errorCode: 'unsupportedSchema',
+      detail: `expected "${CURRENT_MANIFEST_SCHEMA}", got "${String(parsed.$schema)}"`,
     };
   }
   if (typeof parsed.exported_at !== 'string' || parsed.exported_at.length === 0) {
-    return { ok: false, error: 'Missing or invalid `exported_at`.' };
+    return { ok: false, errorCode: 'missingExportedAt' };
   }
   if (typeof parsed.exported_by !== 'string') {
-    return { ok: false, error: 'Missing or invalid `exported_by`.' };
+    return { ok: false, errorCode: 'missingExportedBy' };
   }
   if (!Array.isArray(parsed.servers)) {
-    return { ok: false, error: 'Missing or invalid `servers` array.' };
+    return { ok: false, errorCode: 'invalidServers' };
   }
   const servers: McpInventoryEntry[] = [];
+  // Track qualified_names we've already accepted, so a manifest that
+  // lists the same server twice (with possibly diverging env_keys or
+  // config) is rejected up-front rather than silently producing two
+  // import rows that would both call install on the same upstream id.
+  const seenQualifiedNames = new Set<string>();
   for (let i = 0; i < parsed.servers.length; i += 1) {
     const raw = parsed.servers[i];
     if (!isObject(raw)) {
-      return { ok: false, error: `servers[${i}] is not an object.` };
+      return { ok: false, errorCode: 'serverNotObject', detail: `servers[${i}]` };
     }
     if (typeof raw.qualified_name !== 'string' || raw.qualified_name.length === 0) {
-      return { ok: false, error: `servers[${i}].qualified_name is missing or empty.` };
+      return { ok: false, errorCode: 'serverMissingQualifiedName', detail: `servers[${i}]` };
     }
+    if (seenQualifiedNames.has(raw.qualified_name)) {
+      return {
+        ok: false,
+        errorCode: 'duplicateQualifiedName',
+        detail: `servers[${i}]: "${raw.qualified_name}"`,
+      };
+    }
+    seenQualifiedNames.add(raw.qualified_name);
     if (typeof raw.display_name !== 'string' || raw.display_name.length === 0) {
-      return { ok: false, error: `servers[${i}].display_name is missing or empty.` };
+      return { ok: false, errorCode: 'serverMissingDisplayName', detail: `servers[${i}]` };
     }
     if (!isStringArray(raw.env_keys)) {
-      return { ok: false, error: `servers[${i}].env_keys must be an array of strings.` };
+      return { ok: false, errorCode: 'serverEnvKeysNotArray', detail: `servers[${i}]` };
     }
     // Pre-import safety net — refuse manifests that smuggle in an `env`
     // map. (The exporter never writes one, but an attacker / leaked
     // file might. We want NO path where parseManifest hands the
     // importer concrete secret values.)
     if ('env' in raw) {
-      return {
-        ok: false,
-        error: `servers[${i}] contains an "env" field with secret values. Refusing to import; manifests must only carry env_keys (names).`,
-      };
+      return { ok: false, errorCode: 'serverContainsEnv', detail: `servers[${i}]` };
     }
     const entry: McpInventoryEntry = {
       qualified_name: raw.qualified_name,

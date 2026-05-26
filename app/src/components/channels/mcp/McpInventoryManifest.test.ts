@@ -157,7 +157,7 @@ describe('McpInventoryManifest: parseManifest', () => {
 
   it('round-trips: build → serialize → parse yields equivalent servers', () => {
     const result = parseManifest(validRaw);
-    if (!result.ok) throw new Error(`expected ok, got: ${result.error}`);
+    if (!result.ok) throw new Error(`expected ok, got: ${result.errorCode}`);
     expect(result.manifest.$schema).toBe(CURRENT_MANIFEST_SCHEMA);
     expect(result.manifest.servers.map(s => s.qualified_name)).toEqual([
       'acme/db-server',
@@ -165,39 +165,50 @@ describe('McpInventoryManifest: parseManifest', () => {
     ]);
   });
 
-  it('rejects empty input with a friendly message', () => {
-    expect(parseManifest('')).toEqual({ ok: false, error: 'Manifest is empty.' });
-    expect(parseManifest('   ')).toEqual({ ok: false, error: 'Manifest is empty.' });
+  it('rejects empty input with the "empty" code', () => {
+    expect(parseManifest('')).toEqual({ ok: false, errorCode: 'empty' });
+    expect(parseManifest('   ')).toEqual({ ok: false, errorCode: 'empty' });
   });
 
-  it('rejects non-JSON input', () => {
+  it('rejects non-JSON input with the "invalidJson" code and a detail string', () => {
     const result = parseManifest('{not json');
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/Invalid JSON/);
+    if (!result.ok) {
+      expect(result.errorCode).toBe('invalidJson');
+      // Detail carries the underlying JSON parse exception message.
+      expect(typeof result.detail).toBe('string');
+    }
   });
 
-  it('rejects non-object root', () => {
-    expect(parseManifest('[]').ok).toBe(false);
-    expect(parseManifest('"a string"').ok).toBe(false);
-    expect(parseManifest('null').ok).toBe(false);
+  it('rejects non-object root with the "rootNotObject" code', () => {
+    for (const raw of ['[]', '"a string"', 'null']) {
+      const r = parseManifest(raw);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errorCode).toBe('rootNotObject');
+    }
   });
 
-  it('rejects an unknown / mismatched $schema', () => {
+  it('rejects an unknown / mismatched $schema with the "unsupportedSchema" code', () => {
     const result = parseManifest(JSON.stringify({ $schema: 'something-else', servers: [] }));
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/Unsupported manifest schema/);
+    if (!result.ok) {
+      expect(result.errorCode).toBe('unsupportedSchema');
+      expect(result.detail).toContain('something-else');
+    }
   });
 
-  it('rejects missing exported_at / exported_by', () => {
+  it('rejects missing exported_at / exported_by with the correct codes', () => {
     const r1 = parseManifest(JSON.stringify({ $schema: CURRENT_MANIFEST_SCHEMA, servers: [] }));
     expect(r1.ok).toBe(false);
+    if (!r1.ok) expect(r1.errorCode).toBe('missingExportedAt');
     const r2 = parseManifest(
       JSON.stringify({ $schema: CURRENT_MANIFEST_SCHEMA, exported_at: '2026-05-25', servers: [] })
     );
     expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.errorCode).toBe('missingExportedBy');
   });
 
-  it('rejects a non-array servers field', () => {
+  it('rejects a non-array servers field with the "invalidServers" code', () => {
     const result = parseManifest(
       JSON.stringify({
         $schema: CURRENT_MANIFEST_SCHEMA,
@@ -207,10 +218,10 @@ describe('McpInventoryManifest: parseManifest', () => {
       })
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/servers/);
+    if (!result.ok) expect(result.errorCode).toBe('invalidServers');
   });
 
-  it('rejects entries missing qualified_name', () => {
+  it('rejects entries missing qualified_name with the matching code', () => {
     const result = parseManifest(
       JSON.stringify({
         $schema: CURRENT_MANIFEST_SCHEMA,
@@ -220,7 +231,7 @@ describe('McpInventoryManifest: parseManifest', () => {
       })
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/qualified_name/);
+    if (!result.ok) expect(result.errorCode).toBe('serverMissingQualifiedName');
   });
 
   it('rejects entries whose env_keys is not an array of strings', () => {
@@ -233,7 +244,7 @@ describe('McpInventoryManifest: parseManifest', () => {
       })
     );
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/env_keys/);
+    if (!result.ok) expect(result.errorCode).toBe('serverEnvKeysNotArray');
   });
 
   // The single most important security test in the file:
@@ -253,7 +264,26 @@ describe('McpInventoryManifest: parseManifest', () => {
     });
     const result = parseManifest(malicious);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/secret values/i);
+    if (!result.ok) expect(result.errorCode).toBe('serverContainsEnv');
+  });
+
+  it('rejects manifests containing a duplicate qualified_name with the matching code', () => {
+    const dup = JSON.stringify({
+      $schema: CURRENT_MANIFEST_SCHEMA,
+      exported_at: '2026-05-25T00:00:00Z',
+      exported_by: 'x',
+      servers: [
+        { qualified_name: 'a/b', display_name: 'First', env_keys: [] },
+        { qualified_name: 'a/b', display_name: 'Second', env_keys: [] },
+      ],
+    });
+    const result = parseManifest(dup);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errorCode).toBe('duplicateQualifiedName');
+      // Detail includes the offending qualified_name for diagnosability.
+      expect(result.detail).toContain('a/b');
+    }
   });
 
   it('omits optional fields cleanly on parse (no undefined leaks)', () => {
@@ -264,7 +294,7 @@ describe('McpInventoryManifest: parseManifest', () => {
       servers: [{ qualified_name: 'a/b', display_name: 'AB', env_keys: [] }],
     });
     const result = parseManifest(minimal);
-    if (!result.ok) throw new Error(result.error);
+    if (!result.ok) throw new Error(result.errorCode);
     const e = result.manifest.servers[0];
     expect('description' in e).toBe(false);
     expect('config' in e).toBe(false);

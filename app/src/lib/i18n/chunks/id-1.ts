@@ -1228,7 +1228,8 @@ const id1: TranslationMap = {
   'mcp.inventory.import.fileReadFailed': 'Could not read file.',
   'mcp.inventory.import.parseErrorPrefix': 'Could not parse manifest:',
   'mcp.inventory.import.previewHeading': 'Preview',
-  'mcp.inventory.import.previewCounts': '{total} servers — {newly} new, {already} already installed',
+  'mcp.inventory.import.previewCounts':
+    '{total} servers — {newly} new, {already} already installed',
   'mcp.inventory.import.previewEmpty': 'Manifest contains no servers.',
   'mcp.inventory.import.exportedFrom': 'Exported from {exporter}',
   'mcp.inventory.import.exportedAt': 'at {when}',
@@ -1238,6 +1239,25 @@ const id1: TranslationMap = {
   'mcp.inventory.import.install': 'Install',
   'mcp.inventory.import.installAria': 'Install {name} from this manifest',
   'mcp.inventory.import.skipped': 'skipped',
+  'mcp.inventory.parseError.empty': 'Manifest is empty.',
+  'mcp.inventory.parseError.invalidJson': 'Invalid JSON.',
+  'mcp.inventory.parseError.rootNotObject': 'Manifest must be a JSON object at the root.',
+  'mcp.inventory.parseError.unsupportedSchema':
+    'Unsupported manifest schema — this file was not produced by a compatible exporter.',
+  'mcp.inventory.parseError.missingExportedAt': 'Missing or invalid `exported_at` field.',
+  'mcp.inventory.parseError.missingExportedBy': 'Missing or invalid `exported_by` field.',
+  'mcp.inventory.parseError.invalidServers': 'Missing or invalid `servers` array.',
+  'mcp.inventory.parseError.serverNotObject': 'A server entry is not an object.',
+  'mcp.inventory.parseError.serverMissingQualifiedName':
+    'A server entry is missing its qualified_name.',
+  'mcp.inventory.parseError.serverMissingDisplayName':
+    'A server entry is missing its display_name.',
+  'mcp.inventory.parseError.serverEnvKeysNotArray':
+    'A server entry has an env_keys field that is not an array of strings.',
+  'mcp.inventory.parseError.serverContainsEnv':
+    'A server entry contains an `env` value map. Refusing to import — manifests must only carry env_keys (names), never secret values.',
+  'mcp.inventory.parseError.duplicateQualifiedName':
+    'Duplicate qualified_name found in manifest. Each server must appear at most once.',
   'mcp.tab.loading': 'Memuat MCP server...',
   'mcp.tab.emptyDetail': 'Pilih server atau telusuri katalog.',
   'mcp.install.loadingDetail': 'Memuat detail server...',
