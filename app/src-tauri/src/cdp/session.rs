@@ -536,11 +536,7 @@ async fn run_session_cycle<R: Runtime>(
         // Chrome's native screen-picker on click — same UX, but the gesture
         // gate stays in place.
         if origin_host_is(&origin, "meet.google.com") {
-            perms.extend_from_slice(&[
-                "audioCapture",
-                "videoCapture",
-                "clipboardReadWrite",
-            ]);
+            perms.extend_from_slice(&["audioCapture", "videoCapture", "clipboardReadWrite"]);
         }
 
         // Slack Huddles need the same media-capture set as Meet:
@@ -561,11 +557,7 @@ async fn run_session_cycle<R: Runtime>(
         // `getDisplayMedia`; screen-share inside a huddle still works via
         // the native screen-picker on user click.
         if origin_host_is(&origin, "app.slack.com") {
-            perms.extend_from_slice(&[
-                "audioCapture",
-                "videoCapture",
-                "clipboardReadWrite",
-            ]);
+            perms.extend_from_slice(&["audioCapture", "videoCapture", "clipboardReadWrite"]);
         }
 
         if let Err(e) = cdp

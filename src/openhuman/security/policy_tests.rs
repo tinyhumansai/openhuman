@@ -761,9 +761,7 @@ fn command_argument_injection_blocked() {
     assert!(!p.is_command_allowed("find / -ok cat {} \\;"));
     // -execdir / -okdir have identical command-execution semantics — same cwd
     // bypass class, different option spelling.
-    assert!(!p.is_command_allowed(
-        "find /tmp -maxdepth 1 -name poc_proof.txt -execdir whoami \\;"
-    ));
+    assert!(!p.is_command_allowed("find /tmp -maxdepth 1 -name poc_proof.txt -execdir whoami \\;"));
     assert!(!p.is_command_allowed("find /etc -name passwd -okdir head -3 {} \\;"));
     // git config/alias can execute commands
     assert!(!p.is_command_allowed("git config core.editor \"rm -rf /\""));

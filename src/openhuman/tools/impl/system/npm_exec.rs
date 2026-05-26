@@ -181,9 +181,7 @@ impl Tool for NpmExecTool {
             .min(NPM_TIMEOUT_MAX_SECS);
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error(
-                "Action blocked: autonomy is read-only",
-            ));
+            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
         }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
