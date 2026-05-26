@@ -94,4 +94,32 @@ mod tests {
 
         assert_eq!(outcome.value["max_actions_per_hour"], json!(77));
     }
+
+    #[tokio::test]
+    async fn load_and_get_security_policy_info_reflects_env_override() {
+        // Serializes env-mutation with sibling tests that touch
+        // OPENHUMAN_WORKSPACE or OPENHUMAN_MAX_ACTIONS_PER_HOUR.
+        let _lock = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().to_str().unwrap().to_string();
+
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", &workspace);
+            std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "42");
+        }
+
+        let outcome = load_and_get_security_policy_info()
+            .await
+            .expect("load_and_get_security_policy_info should succeed");
+
+        assert_eq!(outcome.value["max_actions_per_hour"], serde_json::json!(42));
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+            std::env::remove_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR");
+        }
+    }
 }
