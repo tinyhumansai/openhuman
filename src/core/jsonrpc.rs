@@ -1868,16 +1868,19 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         })
         .unwrap_or(true)
     {
-        let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
-            .ok()
-            .filter(|s| !s.is_empty())
-        {
-            Some(token) => (token, false),
+        // Read the active bearer from the in-memory auth subsystem instead of
+        // OPENHUMAN_CORE_TOKEN — same value (init_rpc_token / init_rpc_token_with_value
+        // both populate the OnceLock that get_rpc_token reads), no env crossing.
+        // Init ordering: run_server_inner seeds the auth subsystem above
+        // (line ~1340) before bootstrap_core_runtime runs, so the bearer is
+        // always present here when supplied.
+        let (session_id, ephemeral) = match crate::core::auth::get_rpc_token() {
+            Some(token) => (token.to_string(), false),
             None => (format!("session-{}", uuid::Uuid::new_v4()), true),
         };
         if ephemeral {
             log::debug!(
-                "[runtime] OPENHUMAN_CORE_TOKEN unset; generated ephemeral session_id={session_id} \
+                "[runtime] auth bearer uninitialized; generated ephemeral session_id={session_id} \
                  for approval gate — `approval_list_pending` is session-agnostic so pending rows \
                  from prior launches will still be visible, but per-session audit grouping will not \
                  correlate across restarts"
