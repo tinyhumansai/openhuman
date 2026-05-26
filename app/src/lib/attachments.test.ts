@@ -8,6 +8,7 @@ import {
   fileToDataUri,
   formatFileSize,
   isAllowedMimeType,
+  parseMessageImages,
   validateAndReadFile,
 } from './attachments';
 
@@ -119,6 +120,32 @@ describe('buildMessageWithAttachments', () => {
     const a = makeAttachment({ dataUri: 'data:image/png;base64,x' });
     const result = buildMessageWithAttachments('  hi  ', [a]);
     expect(result).toBe('hi [IMAGE:data:image/png;base64,x]');
+  });
+});
+
+describe('parseMessageImages', () => {
+  it('returns empty dataUris and original text when no markers', () => {
+    const result = parseMessageImages('hello world');
+    expect(result.text).toBe('hello world');
+    expect(result.dataUris).toEqual([]);
+  });
+
+  it('extracts a single image marker and strips it from text', () => {
+    const result = parseMessageImages('describe this [IMAGE:data:image/png;base64,abc]');
+    expect(result.text).toBe('describe this');
+    expect(result.dataUris).toEqual(['data:image/png;base64,abc']);
+  });
+
+  it('extracts multiple image markers', () => {
+    const result = parseMessageImages('[IMAGE:data:image/png;base64,a] [IMAGE:data:image/jpeg;base64,b]');
+    expect(result.text).toBe('');
+    expect(result.dataUris).toEqual(['data:image/png;base64,a', 'data:image/jpeg;base64,b']);
+  });
+
+  it('returns empty text when message is marker-only', () => {
+    const result = parseMessageImages('[IMAGE:data:image/png;base64,xyz]');
+    expect(result.text).toBe('');
+    expect(result.dataUris).toHaveLength(1);
   });
 });
 

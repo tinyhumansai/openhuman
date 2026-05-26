@@ -206,6 +206,7 @@ const Conversations = ({
   const [selectedLabel, setSelectedLabel] = useState<string>('all');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
+  const [attachError, setAttachError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
   const [pendingSendingThreadId, setPendingSendingThreadId] = useState<string | null>(null);
   const [profileDraftOpen, setProfileDraftOpen] = useState(false);
@@ -616,12 +617,13 @@ const Conversations = ({
 
   const handleAttachFiles = async (files: FileList | null) => {
     if (!files) return;
+    let acceptedCount = attachments.length;
     for (const file of Array.from(files)) {
-      const result = await validateAndReadFile(file, attachments.length);
+      const result = await validateAndReadFile(file, acceptedCount);
       if ('error' in result) {
         const { error } = result;
         if (error.code === 'too_many') {
-          setSendError(
+          setAttachError(
             chatSendError(
               'cloud_send_failed',
               t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))
@@ -629,23 +631,21 @@ const Conversations = ({
           );
         } else if (error.code === 'too_large') {
           const maxMb = (ATTACHMENT_MAX_SIZE_BYTES / (1024 * 1024)).toFixed(0);
-          setSendError(
+          setAttachError(
             chatSendError(
               'cloud_send_failed',
               t('chat.attachment.tooLarge').replace('{max}', `${maxMb} MB`)
             )
           );
         } else if (error.code === 'unsupported_type') {
-          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.unsupportedType')));
+          setAttachError(chatSendError('cloud_send_failed', t('chat.attachment.unsupportedType')));
         } else {
-          setSendError(chatSendError('cloud_send_failed', t('chat.attachment.readFailed')));
+          setAttachError(chatSendError('cloud_send_failed', t('chat.attachment.readFailed')));
         }
         return;
       }
-      setAttachments(prev => {
-        if (prev.length >= ATTACHMENT_MAX_IMAGES) return prev;
-        return [...prev, result.attachment];
-      });
+      acceptedCount++;
+      setAttachments(prev => [...prev, result.attachment]);
     }
   };
 
@@ -681,7 +681,7 @@ const Conversations = ({
       setSendAdvisory(null);
     }
 
-    if (!sendDecision.shouldSend) {
+    if (!sendDecision.shouldSend && !(sendDecision.blockReason === 'empty_input' && attachments.length > 0)) {
       const blockedFeedback = getComposerBlockedSendFeedback(sendDecision.blockReason);
       if (blockedFeedback) {
         setSendError(chatSendError(blockedFeedback.error.code, blockedFeedback.error.message));
@@ -697,13 +697,14 @@ const Conversations = ({
     const messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
-      content: trimmed || '📎',
+      content: trimmed || '',
       type: 'text',
       extraMetadata:
         pendingAttachments.length > 0
           ? {
               attachmentCount: pendingAttachments.length,
               attachmentNames: pendingAttachments.map(a => a.file.name),
+              attachmentDataUris: pendingAttachments.map(a => a.dataUri),
             }
           : {},
       sender: 'user',
@@ -732,6 +733,7 @@ const Conversations = ({
     setInputValue('');
     setAttachments([]);
     setSendError(null);
+    setAttachError(null);
     // Silence timer: fires only if 600s pass without ANY inference progress
     // (tool call, tool result, iteration start, subagent event, text delta).
     // The effect below rearms this timer whenever `inferenceStatusByThread`
@@ -1602,13 +1604,40 @@ const Conversations = ({
                           )}
                         </div>
                       ) : (
-                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
-                          <BubbleMarkdown content={msg.content} tone="user" />
-                          {latestVisibleMessage?.id === msg.id && (
-                            <p className="mt-1 text-[10px] text-white/60">
-                              {formatRelativeTime(msg.createdAt)}
-                            </p>
-                          )}
+                        <div className="flex flex-col items-end gap-1">
+                          {(() => {
+                            const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
+                              ? (msg.extraMetadata.attachmentDataUris as string[])
+                              : [];
+                            const hasImages = dataUris.length > 0;
+                            const showTime = latestVisibleMessage?.id === msg.id;
+                            return (
+                              <>
+                                {hasImages && (
+                                  <div className="flex flex-wrap gap-1.5 justify-end">
+                                    {dataUris.map((uri, i) => (
+                                      <img
+                                        key={i}
+                                        src={uri}
+                                        alt=""
+                                        className="max-w-[200px] max-h-[200px] rounded-2xl object-cover"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                                {(msg.content || showTime) && (
+                                  <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
+                                    {msg.content && <BubbleMarkdown content={msg.content} tone="user" />}
+                                    {showTime && (
+                                      <p className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
+                                        {formatRelativeTime(msg.createdAt)}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                       <button
@@ -1933,6 +1962,19 @@ const Conversations = ({
               <button
                 onClick={() => setSendAdvisory(null)}
                 className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 dark:text-neutral-200 dark:hover:text-neutral-200 transition-colors ml-2">
+                {t('common.dismiss')}
+              </button>
+            </div>
+          )}
+
+          {attachError && (
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-coral-500" data-chat-send-error-code={attachError.code}>
+                {attachError.message}
+              </p>
+              <button
+                onClick={() => setAttachError(null)}
+                className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 transition-colors ml-2">
                 {t('common.dismiss')}
               </button>
             </div>

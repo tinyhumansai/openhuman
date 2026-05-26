@@ -93,6 +93,19 @@ export function buildMessageWithAttachments(text: string, attachments: Attachmen
   return text.trim() ? `${text.trim()} ${markers}` : markers;
 }
 
+/**
+ * Parse `[IMAGE:<data-uri>]` markers out of a stored message string.
+ * Returns the clean text (markers removed) and the list of data URIs found.
+ */
+export function parseMessageImages(content: string): { text: string; dataUris: string[] } {
+  const dataUris: string[] = [];
+  const text = content.replace(/\[IMAGE:(data:[^\]]+)\]/g, (_match, uri: string) => {
+    dataUris.push(uri);
+    return '';
+  }).trim();
+  return { text, dataUris };
+}
+
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
