@@ -366,6 +366,7 @@ const id1: TranslationMap = {
     'Jangan pernah membagikan frasa pemulihan. Siapa pun yang memiliki kata-kata ini dapat mengakses akun Anda.',
   'mnemonic.copied': 'Frasa pemulihan disalin ke clipboard',
   'mnemonic.reveal': 'Tampilkan frasa',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Frasa pemulihan disembunyikan',
   'privacy.title': 'Privasi & Keamanan',
   'privacy.description': 'Laporan transparansi data yang dikirim ke layanan eksternal.',

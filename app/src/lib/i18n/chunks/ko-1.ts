@@ -366,6 +366,7 @@ const ko1: TranslationMap = {
     '복구 문구를 절대 공유하지 마세요. 이 단어를 가진 사람은 누구나 계정에 접근할 수 있습니다.',
   'mnemonic.copied': '복구 문구가 클립보드에 복사되었습니다',
   'mnemonic.reveal': '문구 보기',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': '복구 문구가 숨겨져 있습니다',
   'privacy.title': '개인정보 및 보안',
   'privacy.description': '외부 서비스로 전송되는 데이터에 대한 투명성 보고서입니다.',

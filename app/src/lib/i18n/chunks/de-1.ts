@@ -412,6 +412,7 @@ const de1: TranslationMap = {
     'Gib niemals deine Wiederherstellungsphrase weiter. Jeder mit diesen Wörtern kann auf dein Konto zugreifen.',
   'mnemonic.copied': 'Wiederherstellungsphrase in die Zwischenablage kopiert',
   'mnemonic.reveal': 'Satz enthüllen',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Die Wiederherstellungsphrase ist ausgeblendet',
   'privacy.title': 'Datenschutz und Sicherheit',
   'privacy.description': 'Transparenzbericht der an externe Dienste gesendeten Daten.',

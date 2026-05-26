@@ -366,6 +366,7 @@ const ru1: TranslationMap = {
     'Никогда не делись фразой восстановления. Любой, кто её знает, получит доступ к твоему аккаунту.',
   'mnemonic.copied': 'Фраза восстановления скопирована в буфер обмена',
   'mnemonic.reveal': 'Показать фразу',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Фраза восстановления скрыта',
   'privacy.title': 'Конфиденциальность и безопасность',
   'privacy.description': 'Отчёт о данных, отправляемых во внешние сервисы.',

@@ -366,6 +366,7 @@ const bn1: TranslationMap = {
     'আপনার রিকভারি ফ্রেজ কখনো শেয়ার করবেন না। এই শব্দগুলো দিয়ে যে কেউ আপনার অ্যাকাউন্টে প্রবেশ করতে পারবে।',
   'mnemonic.copied': 'রিকভারি ফ্রেজ ক্লিপবোর্ডে কপি হয়েছে',
   'mnemonic.reveal': 'ফ্রেজ দেখুন',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'রিকভারি ফ্রেজ লুকানো আছে',
   'privacy.title': 'গোপনীয়তা ও নিরাপত্তা',
   'privacy.description': 'বাহ্যিক সার্ভিসে পাঠানো ডেটার স্বচ্ছতা রিপোর্ট।',

@@ -363,6 +363,7 @@ const hi1: TranslationMap = {
     'रिकवरी फ्रेज़ कभी किसी से शेयर न करें। इन शब्दों से कोई भी आपका अकाउंट एक्सेस कर सकता है।',
   'mnemonic.copied': 'रिकवरी फ्रेज़ क्लिपबोर्ड पर कॉपी हो गया',
   'mnemonic.reveal': 'फ्रेज़ दिखाएं',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'रिकवरी फ्रेज़ छुपी हुई है',
   'privacy.title': 'प्राइवेसी और सिक्योरिटी',
   'privacy.description': 'बाहरी सर्विसेज़ को भेजे गए डेटा की ट्रांसपेरेंसी रिपोर्ट।',

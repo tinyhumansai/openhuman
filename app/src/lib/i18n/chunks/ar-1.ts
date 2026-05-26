@@ -359,6 +359,7 @@ const ar1: TranslationMap = {
     'لا تشارك عبارة الاسترداد أبدًا. أي شخص يمتلك هذه الكلمات يمكنه الوصول إلى حسابك.',
   'mnemonic.copied': 'تم نسخ عبارة الاسترداد إلى الحافظة',
   'mnemonic.reveal': 'الكشف عن العبارة',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'عبارة الاسترداد مخفية',
   'privacy.title': 'الخصوصية والأمان',
   'privacy.description': 'تقرير شفافية البيانات المُرسَلة إلى الخدمات الخارجية.',

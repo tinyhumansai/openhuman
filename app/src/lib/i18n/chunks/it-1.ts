@@ -370,6 +370,7 @@ const it1: TranslationMap = {
     'Non condividere mai la tua frase di recupero. Chiunque abbia queste parole può accedere al tuo account.',
   'mnemonic.copied': 'Frase di recupero copiata negli appunti',
   'mnemonic.reveal': 'Mostra frase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'La frase di recupero è nascosta',
   'privacy.title': 'Privacy e sicurezza',
   'privacy.description': 'Report di trasparenza sui dati inviati a servizi esterni.',
