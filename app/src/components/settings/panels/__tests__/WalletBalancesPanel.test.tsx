@@ -91,17 +91,20 @@ describe('WalletBalancesPanel — error state', () => {
     mockFetchWalletBalances.mockReset();
   });
 
-  it('renders the error message when the fetch rejects', async () => {
+  it('renders a translated, user-facing error message when the fetch rejects', async () => {
     mockFetchWalletBalances.mockRejectedValueOnce(
       new Error('wallet is not configured; run wallet setup first')
     );
 
     renderPanel();
 
+    // UI must not leak raw backend phrasing — it should render the
+    // translated `walletBalances.errorGeneric` copy instead.
     await waitFor(() => {
+      expect(screen.getByText(/Unable to load wallet balances/i)).toBeInTheDocument();
       expect(
-        screen.getByText(/wallet is not configured; run wallet setup first/i)
-      ).toBeInTheDocument();
+        screen.queryByText(/wallet is not configured; run wallet setup first/i)
+      ).not.toBeInTheDocument();
     });
   });
 

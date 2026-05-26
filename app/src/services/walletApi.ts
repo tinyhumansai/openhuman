@@ -65,9 +65,13 @@ export const setupLocalWallet = async (params: SetupWalletParams): Promise<Walle
 
 /**
  * Fetch native-asset balances for every derived wallet account.
- * Calls wallet.balances via the core RPC relay; returns an empty array when
- * the wallet is not yet configured (core returns an error that callers should
- * surface rather than swallow).
+ *
+ * Calls `wallet.balances` via the core RPC relay. The contract:
+ * - When the wallet IS configured, the core returns one row per derived
+ *   account (EVM/BTC/Solana/Tron) and this resolves to that array.
+ * - When the wallet IS NOT configured (no recovery phrase set up yet), the
+ *   core returns an RPC error; this promise rejects so callers can surface
+ *   the empty / setup-required state rather than silently rendering nothing.
  */
 export const fetchWalletBalances = async (): Promise<BalanceInfo[]> => {
   const response = await callCoreRpc<{ result: BalanceInfo[] }>({

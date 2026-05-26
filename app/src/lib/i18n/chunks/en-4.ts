@@ -207,6 +207,8 @@ const en4: TranslationMap = {
   'walletBalances.addressCopied': 'Copied',
   'walletBalances.providerMissing': 'provider unavailable',
   'walletBalances.rawBalance': 'Raw: {raw}',
+  'walletBalances.errorGeneric':
+    'Unable to load wallet balances. Set up your wallet in Recovery Phrase and try again.',
   'pages.settings.ai.llm': 'Llm',
   'pages.settings.ai.llmDesc': 'Llm desc',
   'pages.settings.ai.voice': 'Voice',

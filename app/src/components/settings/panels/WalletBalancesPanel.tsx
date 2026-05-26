@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { type BalanceInfo, fetchWalletBalances } from '../../../services/walletApi';
@@ -136,17 +136,31 @@ const WalletBalancesPanel = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Request-sequencing guard: a slower earlier request must not overwrite a
+  // newer one. `loadBalances` can fire concurrently (mount + Refresh + Retry),
+  // so we tag each call with a monotonic id and drop any response whose id no
+  // longer matches the latest dispatched call.
+  const latestRequestIdRef = useRef(0);
+
   const loadBalances = useCallback(async () => {
+    const requestId = ++latestRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
       const rows = await fetchWalletBalances();
+      if (requestId !== latestRequestIdRef.current) return;
       setBalances(rows);
     } catch (err) {
+      if (requestId !== latestRequestIdRef.current) return;
       const message = err instanceof Error ? err.message : String(err);
+      // Log the raw backend phrasing for diagnostics; the UI surfaces a
+      // translated, user-facing copy via `walletBalances.errorGeneric`.
+      console.debug('[walletBalances] fetch failed:', message);
       setError(message);
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -196,7 +210,9 @@ const WalletBalancesPanel = () => {
                 d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
               />
             </svg>
-            <p className="text-xs text-coral-700 dark:text-coral-300 leading-relaxed">{error}</p>
+            <p className="text-xs text-coral-700 dark:text-coral-300 leading-relaxed">
+              {t('walletBalances.errorGeneric')}
+            </p>
           </div>
           <button
             type="button"

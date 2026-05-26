@@ -419,6 +419,8 @@ const zhCN4: TranslationMap = {
   'walletBalances.addressCopied': 'Copied',
   'walletBalances.providerMissing': 'provider unavailable',
   'walletBalances.rawBalance': 'Raw: {raw}',
+  'walletBalances.errorGeneric':
+    'Unable to load wallet balances. Set up your wallet in Recovery Phrase and try again.',
 };
 
 export default zhCN4;
