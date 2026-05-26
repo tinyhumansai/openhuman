@@ -216,8 +216,8 @@ mod tests {
         let cfg = Config::default();
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
         // build_chat_runtime resolves the "summarization" workload role,
-        // which routes to `summarization-v1` since the summarization tier
-        // shipped (PR #2690).
+        // which routes to the dedicated `summarization-v1` tier (PR #2690)
+        // rather than the generic `reasoning-v1` fallback.
         assert_eq!(model, "summarization-v1");
     }
 

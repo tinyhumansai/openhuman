@@ -418,6 +418,15 @@ pub struct SearchSettingsPatch {
     pub parallel_api_key: Option<String>,
     /// Brave Search API key. An empty string clears the stored key.
     pub brave_api_key: Option<String>,
+    /// Websites the assistant may open/read (`web_fetch` / `curl`), as a
+    /// host allowlist. Entries are exact hosts (`reuters.com`), which also
+    /// match their subdomains, or `"*"` for all public sites. Empty list
+    /// blocks all web access. Mirrors `[http_request].allowed_domains`.
+    pub allowed_domains: Option<Vec<String>>,
+    /// Convenience toggle for the "Allow all sites" switch. `Some(true)`
+    /// sets the allowlist to `["*"]`; `Some(false)` drops the wildcard while
+    /// keeping any explicit hosts. Applied after `allowed_domains`.
+    pub allow_all: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -997,6 +1006,44 @@ pub async fn apply_search_settings(
             Some(trimmed.to_string())
         };
     }
+    // Allowed websites (web_fetch / curl host allowlist). Trim + drop blanks
+    // + dedupe so the saved TOML stays clean; `"*"` is preserved as the
+    // allow-all wildcard.
+    let allowlist_touched = update.allowed_domains.is_some() || update.allow_all.is_some();
+    let before_count = config.http_request.allowed_domains.len();
+    let before_allow_all = config.http_request.allowed_domains.iter().any(|d| d == "*");
+    if let Some(domains) = update.allowed_domains {
+        let mut cleaned: Vec<String> = domains
+            .into_iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
+        cleaned.sort();
+        cleaned.dedup();
+        config.http_request.allowed_domains = cleaned;
+    }
+    if let Some(allow_all) = update.allow_all {
+        if allow_all {
+            config.http_request.allowed_domains = vec!["*".to_string()];
+        } else {
+            config.http_request.allowed_domains.retain(|d| d != "*");
+        }
+    }
+    if allowlist_touched {
+        // Grep-friendly state-transition log for a security-sensitive surface.
+        // Record only host counts + the allow-all wildcard flag — never the raw
+        // hosts (redaction rule). Lets us trace "who widened/narrowed web reach"
+        // without leaking the allowlist contents.
+        let after_count = config.http_request.allowed_domains.len();
+        let after_allow_all = config.http_request.allowed_domains.iter().any(|d| d == "*");
+        tracing::info!(
+            before_count,
+            after_count,
+            before_allow_all,
+            after_allow_all,
+            "[config] http_request.allowed_domains updated"
+        );
+    }
     config.save().await.map_err(|e| e.to_string())?;
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
@@ -1031,6 +1078,8 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
         "timeout_secs": config.search.timeout_secs,
         "parallel_configured": config.search.parallel.has_key(),
         "brave_configured": config.search.brave.has_key(),
+        "allowed_domains": config.http_request.allowed_domains,
+        "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
     });
     Ok(RpcOutcome::new(
         result,

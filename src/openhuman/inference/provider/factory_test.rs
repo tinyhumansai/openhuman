@@ -761,8 +761,8 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // must be forwarded to the backend unchanged. The backend is authoritative
     // over which hint values it accepts; the factory only translates the
     // canonical hints (reasoning/chat/agentic/coding/summarization).
-    // `hint:summarization` became canonical when `summarization-v1` shipped,
-    // so it is no longer a passthrough case.
+    // `hint:summarization` became canonical when `summarization-v1` shipped
+    // (PR #2690), so it is no longer a passthrough case.
     for hint in ["hint:reaction", "hint:garbage"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());

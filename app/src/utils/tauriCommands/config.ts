@@ -418,6 +418,19 @@ export interface SearchSettingsUpdate {
   parallel_api_key?: string;
   /** Empty string clears the stored key. */
   brave_api_key?: string;
+  /**
+   * Websites the assistant may open/read (web_fetch / curl). Exact hosts
+   * match their subdomains; `"*"` allows all public sites; an empty list
+   * blocks all web access.
+   */
+  allowed_domains?: string[];
+  /**
+   * "Allow all sites" toggle. true → allowlist becomes `["*"]`.
+   * NOTE: `allow_all` is applied AFTER `allowed_domains` server-side, so when
+   * both are sent in one patch `allow_all` wins (true → `["*"]`, false → the
+   * `"*"` wildcard is dropped). Don't send both with conflicting intent.
+   */
+  allow_all?: boolean;
 }
 
 export interface SearchSettings {
@@ -427,6 +440,10 @@ export interface SearchSettings {
   timeout_secs: number;
   parallel_configured: boolean;
   brave_configured: boolean;
+  /** Current allowed-websites host list (may contain `"*"`). */
+  allowed_domains: string[];
+  /** True when the allowlist contains the `"*"` wildcard. */
+  allow_all: boolean;
 }
 
 export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {

@@ -355,6 +355,44 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
 }
 
 #[tokio::test]
+async fn apply_search_settings_sets_and_clears_allowed_domains() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    // Explicit host list is trimmed, blanks dropped, sorted + de-duped.
+    let patch = SearchSettingsPatch {
+        allowed_domains: Some(vec![
+            " reuters.com ".into(),
+            "reuters.com".into(),
+            String::new(),
+            "github.com".into(),
+        ]),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(
+        cfg.http_request.allowed_domains,
+        vec!["github.com".to_string(), "reuters.com".to_string()]
+    );
+
+    // allow_all = true collapses the list to the wildcard.
+    let patch = SearchSettingsPatch {
+        allow_all: Some(true),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(cfg.http_request.allowed_domains, vec!["*".to_string()]);
+
+    // allow_all = false drops the wildcard (explicit hosts only / blocked).
+    let patch = SearchSettingsPatch {
+        allow_all: Some(false),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert!(cfg.http_request.allowed_domains.is_empty());
+}
+
+#[tokio::test]
 async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
     // #1342: custom OpenAI-compatible providers — api_key must round-trip
     // through `apply_model_settings` and clear when an empty string is sent.
