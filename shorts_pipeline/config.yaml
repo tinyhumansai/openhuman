@@ -1,0 +1,59 @@
+app:
+  timezone: "UTC"
+  log_file: "pipeline.log"
+  db_path: "shorts_pipeline.db"
+  gpu_device_id: 0
+
+ai:
+  provider: "openai" # openai or anthropic
+  openai_api_key: ""
+  anthropic_api_key: ""
+  model: "gpt-4o"
+  ideas_per_batch: 20
+
+niches:
+  active: ["curiosidades", "psicologia", "did_you_know", "ciencia_simples", "fatos_chocantes"]
+  prompt_templates:
+    curiosidades: "Generate viral curiosities facts with surprising twists for Brazilian audience."
+    psicologia: "Generate practical psychology micro-insights with emotional hooks."
+    did_you_know: "Generate did-you-know style surprising facts with high curiosity loops."
+    ciencia_simples: "Generate simple science explanations with clear metaphors and wow moments."
+    fatos_chocantes: "Generate shocking but safe facts that are true and verifiable."
+
+voice:
+  elevenlabs_api_key: ""
+  elevenlabs_voice_id: "EXAVITQu4vr4xnSDxMaL"
+  elevenlabs_model_id: "eleven_multilingual_v2"
+  concurrency: 10
+  fallback_engine: "coqui" # coqui or piper
+  piper_model_path: ""
+
+video:
+  pexels_api_key: ""
+  pixabay_api_key: ""
+  width: 1080
+  height: 1920
+  min_cut_seconds: 2
+  max_cut_seconds: 4
+  fps: 30
+  subtitle_font: "assets/fonts/Inter-Bold.ttf"
+  subtitle_size: 68
+  subtitle_color: "#FFFFFF"
+  branding_intro: "assets/branding/intro.mp4"
+  branding_outro: "assets/branding/outro.mp4"
+  logo_path: "assets/branding/logo.png"
+  primary_color: "#4A83DD"
+  nvenc_preset: "p4"
+
+upload:
+  youtube_client_secrets_file: "client_secret.json"
+  youtube_token_file: "youtube_token.json"
+  channel_default_privacy: "private"
+  publish_hours_utc: [10, 14, 18, 21]
+  max_videos_per_day: 4
+  default_language: "pt"
+
+analytics:
+  min_age_hours: 48
+  report_output_json: "output/weekly_report.json"
+  report_output_txt: "output/weekly_report.txt"
