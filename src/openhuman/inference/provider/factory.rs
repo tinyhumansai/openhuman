@@ -638,6 +638,19 @@ pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String
         }
     }
 
+    // Fallback: read from top-level config.api_key (direct config.toml api_key).
+    // This handles the case where a key was set in config.toml but not saved
+    // through the UI into auth-profiles.json.
+    if let Some(config_key) = config.api_key.as_ref() {
+        if !config_key.trim().is_empty() {
+            log::debug!(
+                "[providers][chat-factory] auth lookup slug={} key_present=true (config.toml fallback)",
+                slug
+            );
+            return Ok(config_key.trim().to_string());
+        }
+    }
+
     log::debug!(
         "[providers][chat-factory] auth lookup slug={} key_present=false",
         slug
