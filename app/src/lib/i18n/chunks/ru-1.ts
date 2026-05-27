@@ -486,6 +486,9 @@ const ru1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave Поиск',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'Настроено',
   'settings.search.statusNeedsKey': 'Требуется ключ API',
   'settings.search.fallbackToManaged':
@@ -500,9 +503,11 @@ const ru1: TranslationMap = {
   'settings.search.statusError': 'Ошибка',
   'settings.search.parallelKeyLabel': 'Parallel API ключ',
   'settings.search.braveKeyLabel': 'Brave Поиск API ключ',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (сохранено)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'Эмбеддинги',
   'settings.embeddings.description':
     'Выберите провайдера эмбеддингов, который преобразует память в векторы для семантического поиска. Изменение провайдера, модели или размерности делает сохранённые векторы недействительными и требует полного сброса памяти.',
@@ -584,7 +589,7 @@ const ru1: TranslationMap = {
   'rewards.localUnavailableCta': 'Откройте настройки учетной записи.',
   'channels.localManagedUnavailable': 'Управляемые каналы недоступны для локальных пользователей.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'Навигационная цепочка',

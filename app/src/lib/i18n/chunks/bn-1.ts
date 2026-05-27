@@ -484,6 +484,9 @@ const bn1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave অনুসন্ধান',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'কনফিগার করা',
   'settings.search.statusNeedsKey': 'API কী প্রয়োজন',
   'settings.search.fallbackToManaged':
@@ -498,9 +501,11 @@ const bn1: TranslationMap = {
   'settings.search.statusError': 'ব্যর্থ হয়েছে',
   'settings.search.parallelKeyLabel': 'Parallel API কী',
   'settings.search.braveKeyLabel': 'Brave অনুসন্ধান API কী',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '(•••stor)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'এমবেডিংস',
   'settings.embeddings.description':
     'কোন এমবেডিং প্রদানকারী মেমরিকে সিমান্টিক সার্চের জন্য ভেক্টরে রূপান্তর করে তা চয়ন করুন। প্রদানকারী, মডেল বা মাত্রা পরিবর্তন করলে সংরক্ষিত ভেক্টর অবৈধ হয়ে যায় এবং সম্পূর্ণ মেমরি রিসেট প্রয়োজন।',
@@ -581,7 +586,7 @@ const bn1: TranslationMap = {
   'rewards.localUnavailableCta': 'অ্যাকাউন্ট সেটিংস খুলুন',
   'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'ব্রেডক্রাম্ব নেভিগেশন',

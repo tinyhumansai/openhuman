@@ -491,6 +491,9 @@ const it1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave Cerca',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'Configurato',
   'settings.search.statusNeedsKey': 'Richiede la chiave API',
   'settings.search.fallbackToManaged':
@@ -505,9 +508,11 @@ const it1: TranslationMap = {
   'settings.search.statusError': 'Non riuscito',
   'settings.search.parallelKeyLabel': 'Parallel API chiave',
   'settings.search.braveKeyLabel': 'Brave Cerca chiave API',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (memorizzato)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'Incorporamenti',
   'settings.embeddings.description':
     'Scegli il fornitore di embeddings che converte la memoria in vettori per la ricerca semantica. Cambiare fornitore, modello o dimensioni invalida i vettori memorizzati e richiede un reset completo della memoria.',
@@ -589,7 +594,7 @@ const it1: TranslationMap = {
   'rewards.localUnavailableCta': 'Apri impostazioni account',
   'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'Percorso di navigazione',

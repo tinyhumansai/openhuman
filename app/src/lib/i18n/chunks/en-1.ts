@@ -1001,18 +1001,21 @@ const en1: TranslationMap = {
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    'Pick the search engine the agent uses. Managed uses OpenHuman’s backend (no setup). Parallel and Brave run direct from your machine using your API key.',
+    'Pick the search engine the agent uses. Managed uses OpenHuman’s backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.',
   'settings.search.engineAria': 'Search engine',
   'settings.search.engineManagedLabel': 'OpenHuman Managed',
   'settings.search.engineManagedDesc':
     'Default. Routed through the OpenHuman backend — no API key required.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'settings.search.engineParallelLabel': 'Parallel',
   'settings.search.engineParallelDesc':
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave Search',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'Configured',
   'settings.search.statusNeedsKey': 'Needs API key',
   'settings.search.fallbackToManaged':
@@ -1027,9 +1030,11 @@ const en1: TranslationMap = {
   'settings.search.statusError': 'Failed',
   'settings.search.parallelKeyLabel': 'Parallel API key',
   'settings.search.braveKeyLabel': 'Brave Search API key',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (stored)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'Embeddings',
   'settings.embeddings.description':
     'Choose which embedding provider converts memory into vectors for semantic search. Changing the provider, model, or dimensions invalidates stored vectors and requires a full memory reset.',

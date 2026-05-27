@@ -496,6 +496,9 @@ const pt1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Pesquisa Brave',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'Configurado',
   'settings.search.statusNeedsKey': 'Precisa da chave API',
   'settings.search.fallbackToManaged':
@@ -510,9 +513,11 @@ const pt1: TranslationMap = {
   'settings.search.statusError': 'Falha',
   'settings.search.parallelKeyLabel': 'Parallel API chave',
   'settings.search.braveKeyLabel': 'Brave Pesquisar chave API',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (armazenado)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'Embeddings',
   'settings.embeddings.description':
     'Escolha qual provedor de embeddings converte memória em vetores para busca semântica. Alterar o provedor, modelo ou dimensões invalida vetores armazenados e requer uma redefinição completa da memória.',
@@ -594,7 +599,7 @@ const pt1: TranslationMap = {
   'rewards.localUnavailableCta': 'Abrir configurações de conta',
   'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'Trilha de navegação',

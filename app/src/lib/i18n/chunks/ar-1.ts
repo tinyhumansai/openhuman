@@ -475,6 +475,9 @@ const ar1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave بحث',
   'settings.search.engineBraveDesc': 'مباشر Brave بحث API: أدوات الويب والأخبار والصور والفيديو.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'تم تكوينه',
   'settings.search.statusNeedsKey': 'يحتاج إلى مفتاح API',
   'settings.search.fallbackToManaged':
@@ -489,9 +492,11 @@ const ar1: TranslationMap = {
   'settings.search.statusError': 'فشل',
   'settings.search.parallelKeyLabel': 'Parallel API مفتاح',
   'settings.search.braveKeyLabel': 'Brave بحث API مفتاح',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (مخزن)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'التضمينات',
   'settings.embeddings.description':
     'اختر مزود التضمينات الذي يحول الذاكرة إلى متجهات للبحث الدلالي. تغيير المزود أو النموذج أو الأبعاد يبطل المتجهات المخزنة ويتطلب إعادة تعيين كاملة للذاكرة.',
@@ -572,7 +577,7 @@ const ar1: TranslationMap = {
   'rewards.localUnavailableCta': 'افتح إعدادات الحساب',
   'channels.localManagedUnavailable': 'القنوات المُدارة غير متاحة للمستخدمين المحليين.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'مسار التنقل',

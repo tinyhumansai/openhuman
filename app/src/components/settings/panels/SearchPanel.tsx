@@ -36,8 +36,10 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
   const [parallelKey, setParallelKey] = useState<string>('');
   const [braveKey, setBraveKey] = useState<string>('');
+  const [queritKey, setQueritKey] = useState<string>('');
   const [showParallel, setShowParallel] = useState(false);
   const [showBrave, setShowBrave] = useState(false);
+  const [showQuerit, setShowQuerit] = useState(false);
 
   const ENGINES: EngineOption[] = [
     {
@@ -56,6 +58,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
       id: 'brave',
       label: t('settings.search.engineBraveLabel'),
       description: t('settings.search.engineBraveDesc'),
+      requiresKey: true,
+    },
+    {
+      id: 'querit',
+      label: t('settings.search.engineQueritLabel'),
+      description: t('settings.search.engineQueritDesc'),
       requiresKey: true,
     },
   ];
@@ -98,17 +106,22 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     }
   };
 
-  const persistKey = async (engine: 'parallel' | 'brave', rawKey: string) => {
+  const persistKey = async (engine: 'parallel' | 'brave' | 'querit', rawKey: string) => {
     if (!settings) return;
     setStatus({ kind: 'saving' });
     try {
-      await openhumanUpdateSearchSettings(
-        engine === 'parallel' ? { parallel_api_key: rawKey } : { brave_api_key: rawKey }
-      );
+      const update =
+        engine === 'parallel'
+          ? { parallel_api_key: rawKey }
+          : engine === 'brave'
+            ? { brave_api_key: rawKey }
+            : { querit_api_key: rawKey };
+      await openhumanUpdateSearchSettings(update);
       const refreshed = await openhumanGetSearchSettings();
       setSettings(refreshed.result);
       if (engine === 'parallel') setParallelKey('');
-      else setBraveKey('');
+      else if (engine === 'brave') setBraveKey('');
+      else setQueritKey('');
       setStatus({ kind: 'saved' });
     } catch (err) {
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -120,6 +133,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     if (engine === 'managed') return true;
     if (engine === 'parallel') return settings.parallel_configured;
     if (engine === 'brave') return settings.brave_configured;
+    if (engine === 'querit') return settings.querit_configured;
     return false;
   };
 
@@ -256,6 +270,23 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
                 onClear={() => void persistKey('brave', '')}
                 configured={settings.brave_configured}
                 docUrl="https://brave.com/search/api/"
+                t={t}
+              />
+              <KeyEditor
+                label={t('settings.search.queritKeyLabel')}
+                placeholder={
+                  settings.querit_configured
+                    ? t('settings.search.placeholderStored')
+                    : t('settings.search.placeholderQuerit')
+                }
+                show={showQuerit}
+                onToggleShow={() => setShowQuerit(s => !s)}
+                value={queritKey}
+                onChange={setQueritKey}
+                onSave={() => void persistKey('querit', queritKey)}
+                onClear={() => void persistKey('querit', '')}
+                configured={settings.querit_configured}
+                docUrl="https://www.querit.ai/en/docs/reference/post"
                 t={t}
               />
             </div>

@@ -498,6 +498,9 @@ const fr1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave Recherche',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'Configuré',
   'settings.search.statusNeedsKey': 'Nécessite la clé API',
   'settings.search.fallbackToManaged':
@@ -512,9 +515,11 @@ const fr1: TranslationMap = {
   'settings.search.statusError': 'Échec',
   'settings.search.parallelKeyLabel': 'Parallel API clé',
   'settings.search.braveKeyLabel': 'Brave Recherche API clé',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (stocké)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'Encastrements',
   'settings.embeddings.description':
     "Choisissez le fournisseur d'embeddings qui convertit la mémoire en vecteurs pour la recherche sémantique. Changer le fournisseur, le modèle ou les dimensions invalide les vecteurs stockés et nécessite une réinitialisation complète de la mémoire.",
@@ -596,7 +601,7 @@ const fr1: TranslationMap = {
   'rewards.localUnavailableCta': 'Ouvrir les paramètres du compte',
   'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'Fil d’Ariane',

@@ -481,6 +481,9 @@ const hi1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave खोजें',
   'settings.search.engineBraveDesc': 'प्रत्यक्ष Brave खोजें API: वेब, समाचार, छवि और वीडियो उपकरण।',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'विन्यस्त',
   'settings.search.statusNeedsKey': 'API कुंजी की आवश्यकता है',
   'settings.search.fallbackToManaged':
@@ -495,9 +498,11 @@ const hi1: TranslationMap = {
   'settings.search.statusError': 'असफल',
   'settings.search.parallelKeyLabel': 'Parallel API कुंजी',
   'settings.search.braveKeyLabel': 'Brave API कुंजी खोजें',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (संग्रहीत)',
   'settings.search.placeholderParallel': 'पीके_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'एम्बेडिंग्स',
   'settings.embeddings.description':
     'चुनें कि कौन सा एम्बेडिंग प्रदाता मेमोरी को सिमेंटिक सर्च के लिए वेक्टर में बदलता है। प्रदाता, मॉडल या आयाम बदलने से संग्रहीत वेक्टर अमान्य हो जाते हैं और पूर्ण मेमरी रीसेट की आवश्यकता होती है।',
@@ -579,7 +584,7 @@ const hi1: TranslationMap = {
   'rewards.localUnavailableCta': 'खाता सेटिंग खोलें',
   'channels.localManagedUnavailable': 'प्रबंधित चैनल स्थानीय उपयोगकर्ताओं के लिए उपलब्ध नहीं हैं.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'ब्रेडक्रंब नेविगेशन',

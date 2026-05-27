@@ -128,6 +128,7 @@ struct SearchSettingsUpdate {
     timeout_secs: Option<u64>,
     parallel_api_key: Option<String>,
     brave_api_key: Option<String>,
+    querit_api_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -788,7 +789,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![
                 optional_string(
                     "engine",
-                    "Active engine: managed | parallel | brave.",
+                    "Active engine: managed | parallel | brave | querit.",
                 ),
                 FieldSchema {
                     name: "max_results",
@@ -809,6 +810,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_string(
                     "brave_api_key",
                     "Brave Search API key (empty string clears the stored key).",
+                ),
+                optional_string(
+                    "querit_api_key",
+                    "Querit API key (empty string clears the stored key).",
                 ),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
@@ -1482,6 +1487,7 @@ fn handle_update_search_settings(params: Map<String, Value>) -> ControllerFuture
             timeout_secs: update.timeout_secs,
             parallel_api_key: update.parallel_api_key,
             brave_api_key: update.brave_api_key,
+            querit_api_key: update.querit_api_key,
         };
         match config_rpc::load_and_apply_search_settings(patch).await {
             Ok(outcome) => {

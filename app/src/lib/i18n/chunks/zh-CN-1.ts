@@ -458,7 +458,7 @@ const zhCN1: TranslationMap = {
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    'Pick the search engine the agent uses. Managed uses OpenHuman’s backend (no setup). Parallel and Brave run direct from your machine using your API key.',
+    'Pick the search engine the agent uses. Managed uses OpenHuman’s backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.',
   'settings.search.engineAria': '搜索引擎',
   'settings.search.engineManagedLabel': 'OpenHuman 托管',
   'settings.search.engineManagedDesc':
@@ -468,6 +468,9 @@ const zhCN1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave 搜索',
   'settings.search.engineBraveDesc': '直接Brave 搜索API：网络、新闻、图像和视频工具。',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': '已配置',
   'settings.search.statusNeedsKey': '需要 API 密钥',
   'settings.search.fallbackToManaged':
@@ -482,9 +485,11 @@ const zhCN1: TranslationMap = {
   'settings.search.statusError': '失败',
   'settings.search.parallelKeyLabel': 'Parallel API 键',
   'settings.search.braveKeyLabel': 'Brave 搜索 API 键',
+  'settings.search.queritKeyLabel': 'Querit API 键',
   'settings.search.placeholderStored': '••••••••（已存储）',
   'settings.search.placeholderParallel': 'PK_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': '向量嵌入',
   'settings.embeddings.description':
     '选择将记忆转换为语义搜索向量的嵌入提供商。更改提供商、模型或维度会使已存储的向量无效，需要完全重置记忆。',
@@ -565,7 +570,7 @@ const zhCN1: TranslationMap = {
   'rewards.localUnavailableCta': '开设账户设置',
   'channels.localManagedUnavailable': '本地用户无法使用托管频道。',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': '面包屑导航',

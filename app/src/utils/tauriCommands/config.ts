@@ -408,7 +408,7 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
-export type SearchEngineId = 'managed' | 'parallel' | 'brave';
+export type SearchEngineId = 'managed' | 'parallel' | 'brave' | 'querit';
 
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;
@@ -418,6 +418,8 @@ export interface SearchSettingsUpdate {
   parallel_api_key?: string;
   /** Empty string clears the stored key. */
   brave_api_key?: string;
+  /** Empty string clears the stored key. */
+  querit_api_key?: string;
 }
 
 export interface SearchSettings {
@@ -427,6 +429,7 @@ export interface SearchSettings {
   timeout_secs: number;
   parallel_configured: boolean;
   brave_configured: boolean;
+  querit_configured: boolean;
 }
 
 export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {

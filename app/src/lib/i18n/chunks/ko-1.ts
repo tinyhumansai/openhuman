@@ -472,6 +472,9 @@ const ko1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave 검색',
   'settings.search.engineBraveDesc': '직접 Brave 검색 API: 웹, 뉴스, 이미지 및 비디오 도구.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': '구성됨',
   'settings.search.statusNeedsKey': 'API 키 필요',
   'settings.search.fallbackToManaged':
@@ -498,9 +501,11 @@ const ko1: TranslationMap = {
     'Browse and manage Model Context Protocol servers that extend the AI with new tools.',
   'settings.search.parallelKeyLabel': 'Parallel API 키',
   'settings.search.braveKeyLabel': 'Brave 검색 API 키',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••(저장됨)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': '임베딩',
   'settings.embeddings.description':
     '시맨틱 검색을 위해 메모리를 벡터로 변환할 임베딩 제공자를 선택하세요. 제공자, 모델 또는 차원을 변경하면 저장된 벡터가 무효화되며 전체 메모리 초기화가 필요합니다.',
@@ -581,7 +586,7 @@ const ko1: TranslationMap = {
   'rewards.localUnavailableCta': '계정 설정 열기',
   'channels.localManagedUnavailable': '로컬 사용자는 관리 채널을 사용할 수 없습니다.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': '이동 경로',
