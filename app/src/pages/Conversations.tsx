@@ -1612,7 +1612,7 @@ const Conversations = ({
                           {(() => {
                             const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
                               ? (msg.extraMetadata.attachmentDataUris as string[])
-                              : parseMessageImages(msg.content).dataUris;
+                              : parseMessageImages(msg.content ?? '').dataUris;
                             const hasImages = dataUris.length > 0;
                             const showTime = latestVisibleMessage?.id === msg.id;
                             return (
