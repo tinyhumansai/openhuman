@@ -172,6 +172,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_Pipes",
+    # RegOpenKeyExW / RegQueryValueExW / RegCloseKey — used by
+    # deep_link_registration_check::verify_protocol_registration to read
+    # back HKCU\Software\Classes\openhuman\shell\open\command after
+    # `tauri-plugin-deep-link::register_all` so a silently-failed write
+    # surfaces in the Sentry / user logs (issue #2699).
+    "Win32_System_Registry",
 ] }
 
 [features]
