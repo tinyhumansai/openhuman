@@ -267,6 +267,7 @@ impl ResourceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
 
     #[test]
     fn list_resources_advertises_core_identity_triple() {
@@ -286,12 +287,12 @@ mod tests {
 
     #[test]
     fn list_resources_advertises_every_subagent_prompt() {
-        // Locks the catalog against silent drift: if a new subagent is
-        // added to `agent::agents::loader::BUILTINS` but its prompt is
-        // not registered here, the MCP list/read surface would silently
-        // miss it. The list below mirrors `BUILTINS` (sorted) so review
-        // catches the gap.
-        let expected = [
+        // Locks the catalog against silent drift in both directions:
+        // a new subagent added to `agent::agents::loader::BUILTINS` without a
+        // matching catalog entry, OR a catalog entry that has fallen out of
+        // `BUILTINS`, both fail this exact-set assertion. The list below
+        // mirrors `BUILTINS` (sorted).
+        let expected: BTreeSet<&str> = [
             "openhuman://agents/archivist/prompt",
             "openhuman://agents/code_executor/prompt",
             "openhuman://agents/critic/prompt",
@@ -310,23 +311,23 @@ mod tests {
             "openhuman://agents/tools_agent/prompt",
             "openhuman://agents/trigger_reactor/prompt",
             "openhuman://agents/trigger_triage/prompt",
-        ];
+        ]
+        .into_iter()
+        .collect();
         let out = list_resources_result(None);
         let resources = out
             .get("resources")
             .and_then(Value::as_array)
             .expect("resources array");
-        let uris: Vec<&str> = resources
+        let actual: BTreeSet<&str> = resources
             .iter()
             .filter_map(|r| r.get("uri").and_then(Value::as_str))
+            .filter(|uri| uri.starts_with("openhuman://agents/"))
             .collect();
-        for uri in expected {
-            assert!(
-                uris.contains(&uri),
-                "missing subagent resource `{uri}` from resources/list — \
-                 catalog drift vs `agent::agents::loader::BUILTINS`"
-            );
-        }
+        assert_eq!(
+            actual, expected,
+            "subagent resource catalog drift vs `agent::agents::loader::BUILTINS`"
+        );
     }
 
     #[test]
