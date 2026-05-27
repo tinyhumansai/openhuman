@@ -90,6 +90,25 @@ describe('validateAndReadFile', () => {
       expect(result.attachment.file).toBe(file);
     }
   });
+
+  it('returns read_failed when FileReader errors', async () => {
+    const file = makeFile('bad.png', 'image/png', 1);
+    const origFileReader = globalThis.FileReader;
+    class FailingReader {
+      onload: (() => void) | null = null;
+      onerror: ((e: unknown) => void) | null = null;
+      readAsDataURL() {
+        setTimeout(() => this.onerror?.(new Error('read error')), 0);
+      }
+    }
+    globalThis.FileReader = FailingReader as unknown as typeof FileReader;
+    const result = await validateAndReadFile(file, 0);
+    globalThis.FileReader = origFileReader;
+    expect('error' in result).toBe(true);
+    if ('error' in result) {
+      expect(result.error.code).toBe('read_failed');
+    }
+  });
 });
 
 describe('buildMessageWithAttachments', () => {
