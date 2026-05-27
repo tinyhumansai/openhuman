@@ -132,10 +132,6 @@ struct FileToProcess {
     ext: String,
     /// Content hash from the previous successful sync, for secondary dedup.
     prev_hash: Option<String>,
-    /// Document ID to update on re-ingest (keeps embedding lineage stable).
-    existing_doc_id: Option<String>,
-    /// Memory namespace (`vault:<id>`).
-    namespace: String,
     /// Vault id for tags and state updates.
     vault_id: String,
 }
@@ -449,8 +445,6 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
             bytes: metadata.len(),
             ext,
             prev_hash: prev.map(|p| p.content_hash.clone()),
-            existing_doc_id: prev.map(|p| p.document_id.clone()),
-            namespace: vault.namespace.clone(),
             vault_id: vault.id.clone(),
         });
     }
