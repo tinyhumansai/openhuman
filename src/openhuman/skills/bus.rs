@@ -62,13 +62,21 @@ impl TriggerPattern {
     }
 
     /// Returns true when this pattern matches the given event.
+    ///
+    /// Slug-qualified patterns (e.g. `"agent/task_complete"`) are rejected
+    /// until [`DomainEvent`] exposes a stable `slug()` method — returning
+    /// `true` here would silently match the entire domain, firing for every
+    /// event regardless of the declared slug.
     pub fn matches(&self, event: &DomainEvent) -> bool {
         if event.domain() != self.domain {
             return false;
         }
-        // When no slug is specified, any event in the domain matches.
-        // TODO(#skills-triggers): add per-variant slug matching once the
-        // DomainEvent enum exposes a stable `slug()` method.
+        // Slug-qualified patterns cannot be matched precisely yet.
+        // TODO(#skills-triggers): replace with `event.slug() == slug` once
+        // DomainEvent exposes slug().
+        if self.event_slug.is_some() {
+            return false;
+        }
         true
     }
 }
@@ -97,7 +105,17 @@ impl TriggeredSkillIndex {
                     .frontmatter
                     .triggers
                     .iter()
-                    .filter_map(|t| TriggerPattern::parse(t))
+                    .filter_map(|t| {
+                        let p = TriggerPattern::parse(t);
+                        if p.is_none() {
+                            log::warn!(
+                                "[skills::triggered] skill '{}': malformed trigger {:?} — skipping",
+                                skill.name,
+                                t
+                            );
+                        }
+                        p
+                    })
                     .collect();
                 if patterns.is_empty() {
                     None
@@ -150,7 +168,7 @@ struct TriggeredSkillSubscriber {
 #[async_trait]
 impl EventHandler for TriggeredSkillSubscriber {
     fn name(&self) -> &str {
-        "skills::triggered_skill_subscriber"
+        "skills::triggered_skill"
     }
 
     // No `domains()` filter — the domain list is dynamic (built from skill
@@ -285,6 +303,24 @@ mod tests {
             component: "core".into(),
         };
         assert!(!p.matches(&event));
+    }
+
+    #[test]
+    fn slugged_pattern_rejected_until_slug_api_exists() {
+        // A slug-qualified pattern like "cron/job_triggered" must NOT match
+        // the entire cron domain — returning true here would over-fire for
+        // every cron event regardless of the declared slug.
+        let p = TriggerPattern::parse("cron/job_triggered").unwrap();
+        assert_eq!(p.event_slug.as_deref(), Some("job_triggered"));
+        let event = DomainEvent::CronJobTriggered {
+            job_id: "j1".into(),
+            job_name: "test".into(),
+            job_type: "shell".into(),
+        };
+        assert!(
+            !p.matches(&event),
+            "slugged pattern must not match until DomainEvent::slug() exists"
+        );
     }
 
     // ── TriggeredSkillIndex ──────────────────────────────────────────────────

@@ -821,16 +821,22 @@ mod tests {
 
     #[test]
     fn cron_add_tool_schema_requires_name_and_schedule() {
-        let schema = json!({
-            "type": "object",
-            "properties": {
-                "name": { "type": "string" },
-                "schedule": { "type": "object" }
-            },
-            "required": ["name", "schedule"]
-        });
-        let required = schema["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v.as_str() == Some("name")));
-        assert!(required.iter().any(|v| v.as_str() == Some("schedule")));
+        // Use the real schema from CronAddTool::parameters_schema() so a
+        // future change that removes or renames a required field breaks this
+        // test rather than silently passing against a hardcoded fixture.
+        let cfg = Arc::new(Config::default());
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let schema = tool.parameters_schema();
+        let required = schema["required"]
+            .as_array()
+            .expect("CronAddTool schema must have a 'required' array");
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("name")),
+            "'name' must appear in CronAddTool schema required list"
+        );
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("schedule")),
+            "'schedule' must appear in CronAddTool schema required list"
+        );
     }
 }
