@@ -407,6 +407,22 @@ fn is_network_unreachable_message(lower: &str) -> bool {
         || lower.contains("nodename nor servname")
         || lower.contains("connection refused")
         || lower.contains("connection reset")
+        // OPENHUMAN-TAURI-EM (128 events): the channel supervisor wraps
+        // `discord_listen()`'s anyhow chain as `format!("Channel {} error:
+        // {e:#}; restarting", ...)`, which lands as
+        // `"Channel discord error: IO error: Operation timed out (os error
+        // 60); restarting"`. The discord gateway TCP/WebSocket connection
+        // timing out is transient network state, not a code bug — the
+        // supervisor already retries with exponential backoff. Same shape
+        // surfaces on every channel (slack/telegram/...) once the
+        // underlying socket hits ETIMEDOUT, so we match on the platform-
+        // agnostic phrase, symmetric with `"connection reset"` /
+        // `"connection refused"` above. Errno renderings are not pinned
+        // because `(os error 60)` (BSD/macOS), `(os error 110)` (Linux),
+        // `(os error 10060)` (Windows `WSAETIMEDOUT`), and bare prose
+        // `"operation timed out"` (hyper / tungstenite / std::io) all
+        // share the same lowercase substring.
+        || lower.contains("operation timed out")
         || lower.contains("network is unreachable")
         || lower.contains("no route to host")
         || lower.contains("tls handshake")
@@ -1669,6 +1685,61 @@ mod tests {
             "TAURI-18 chain must also satisfy upstream message classifier \
              (defense-in-depth for sites that lose the URL anchor)"
         );
+    }
+
+    #[test]
+    fn channel_supervisor_operation_timed_out_classifies_as_expected() {
+        // OPENHUMAN-TAURI-EM (128 events): `channels::runtime::supervision`
+        // wraps a channel listener failure as
+        // `format!("Channel {} error: {e:#}; restarting", ch.name())` and
+        // routes the message through `report_error_or_expected`. When the
+        // discord gateway TCP/WebSocket connection hits ETIMEDOUT, the
+        // anyhow chain renders without a URL anchor (this is `std::io`-level,
+        // not reqwest) and previously fell straight through every classifier
+        // arm into `report_error` — one Sentry event per restart cycle.
+        //
+        // Pin the exact macOS wire shape from the issue, plus the Linux and
+        // Windows errno renderings so a future platform-specific change does
+        // not silently re-open the leak. The bare `"operation timed out"`
+        // anchor matches all three since the errno digits live downstream
+        // of the canonical phrase.
+        for raw in [
+            // macOS (os error 60 = ETIMEDOUT on BSD)
+            "Channel discord error: IO error: Operation timed out (os error 60); restarting",
+            // Linux (os error 110 = ETIMEDOUT)
+            "Channel discord error: IO error: Operation timed out (os error 110); restarting",
+            // Windows (os error 10060 = WSAETIMEDOUT)
+            "Channel discord error: IO error: Operation timed out (os error 10060); restarting",
+            // Same shape on other channels — supervisor wrapper is provider-agnostic.
+            "Channel slack error: IO error: Operation timed out (os error 60); restarting",
+            "Channel telegram error: IO error: Operation timed out (os error 110); restarting",
+            // Bare prose form (no errno suffix) from hyper / tungstenite layers
+            // that render `std::io::Error` without `raw_os_error()`.
+            "Channel discord error: WebSocket connect: IO error: Operation timed out; restarting",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::NetworkUnreachable),
+                "channel supervisor timeout shape must classify as expected (got {:?} for {raw:?})",
+                expected_error_kind(raw)
+            );
+        }
+    }
+
+    #[test]
+    fn operation_timed_out_negative_cases_still_report() {
+        // Counter-case: a configuration/validation message that mentions
+        // "timeout" as a knob name (not transport state) and has no other
+        // classifier anchor must still reach Sentry. The substring chosen
+        // for the new matcher is `"operation timed out"`, not `"timeout"`,
+        // precisely so unrelated mentions of the word do not collide.
+        assert_eq!(
+            expected_error_kind("config rejected: timeout must be a positive integer"),
+            None,
+            "config validation noise (no 'operation timed out' anchor) must still reach Sentry"
+        );
+        // Bare empty string — no anchors at all.
+        assert_eq!(expected_error_kind(""), None);
     }
 
     #[test]
