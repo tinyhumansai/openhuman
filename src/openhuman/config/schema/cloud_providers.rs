@@ -106,7 +106,12 @@ impl Default for CloudProviderCreds {
 /// routing is unaffected — the `ollama:<model>` prefix branch in
 /// `factory::create_chat_provider_from_string` fires before the
 /// `<slug>:<model>` cloud-provider lookup, so a synthetic `ollama` entry
-/// never reaches `make_cloud_provider_by_slug`.
+/// never reaches `make_cloud_provider_by_slug`. When no `cloud_providers`
+/// row exists (config drift, upgrade from a build that only persisted
+/// `config.local_ai.base_url`, flush-vs-probe race),
+/// [`crate::openhuman::inference::provider::ops::list_configured_models`]
+/// falls back to a synthetic entry via `synthesize_local_runtime_entry`
+/// (Sentry TAURI-RUST-28Z fix). The same fallback applies to `lmstudio`.
 pub fn is_slug_reserved(s: &str) -> bool {
     matches!(s.trim(), "" | "cloud" | "openhuman" | "pid")
 }
