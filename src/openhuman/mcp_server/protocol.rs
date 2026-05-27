@@ -164,20 +164,63 @@ async fn handle_request(id: Value, method: &str, params: Value, session: &mut Mc
             success_response(id, initialize_result(params))
         }
         "ping" => success_response(id, json!({})),
-        "tools/list" => success_response(id, tools::list_tools_result().await),
         "resources/list" => {
-            log::debug!("[mcp_server] resources/list request id={request_id}");
-            success_response(id, resources::list_resources_result())
+            let cursor = params
+                .as_object()
+                .and_then(|obj| obj.get("cursor"))
+                .and_then(Value::as_str);
+            log::debug!(
+                "[mcp_server] resources/list request id={} cursor={:?} client_source_type={}",
+                request_id,
+                cursor,
+                session.source_type()
+            );
+            success_response(id, resources::list_resources_result(cursor))
         }
         "resources/read" => {
-            log::debug!("[mcp_server] resources/read request id={request_id}");
-            match resources::read_resource_result(&params) {
+            let uri = match params
+                .as_object()
+                .and_then(|obj| obj.get("uri"))
+                .and_then(Value::as_str)
+            {
+                Some(uri) => uri.to_string(),
+                None => {
+                    log::debug!(
+                        "[mcp_server] resources/read params rejected id={} client_source_type={} reason=missing-uri",
+                        request_id,
+                        session.source_type()
+                    );
+                    return error_response(
+                        id,
+                        -32602,
+                        "Invalid params",
+                        Some(json!("resources/read requires a `uri` string field")),
+                    );
+                }
+            };
+            log::debug!(
+                "[mcp_server] resources/read request id={} uri={} client_source_type={}",
+                request_id,
+                uri,
+                session.source_type()
+            );
+            match resources::read_resource_result(&uri) {
                 Ok(result) => success_response(id, result),
-                Err((code, message, detail)) => {
-                    error_response(id, code, message, Some(json!(detail)))
+                Err(err) => {
+                    log::debug!(
+                        "[mcp_server] resources/read not found id={} uri={} client_source_type={}",
+                        request_id,
+                        uri,
+                        session.source_type()
+                    );
+                    // MCP convention: resource-not-found surfaces as
+                    // `-32002` so clients can distinguish a typo'd URI
+                    // from a generic invalid-params problem.
+                    error_response(id, -32002, "Resource not found", Some(json!(err.message())))
                 }
             }
         }
+        "tools/list" => success_response(id, tools::list_tools_result().await),
         "tools/call" => match parse_tool_call_params(params) {
             Ok((name, arguments)) => {
                 log::debug!(
@@ -270,6 +313,12 @@ fn initialize_result(params: Value) -> Value {
         "protocolVersion": protocol_version,
         "capabilities": {
             "tools": {},
+            // Resources surface ships the bundled prompt assets
+            // (core identity files plus per-subagent `prompt.md`)
+            // as static, read-only MCP resources. Subscriptions and
+            // change notifications are intentionally not advertised
+            // because the catalog is `include_str!`-bundled at
+            // compile time and therefore cannot change at runtime.
             "resources": {
                 "subscribe": false,
                 "listChanged": false
@@ -279,7 +328,7 @@ fn initialize_result(params: Value) -> Value {
             "name": "openhuman-core",
             "version": env!("CARGO_PKG_VERSION")
         },
-        "instructions": "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use searxng_search when self-hosted search is enabled, and use memory.search or memory.recall plus tree.read_chunk for local memory reads."
+        "instructions": "OpenHuman MCP exposes first-level core integration: inspect the live tool catalog with core.list_tools or core.tool_instructions, inspect subagents with agent.list_subagents, run a standalone subagent with agent.run_subagent, use searxng_search when self-hosted search is enabled, and use memory.search or memory.recall plus tree.read_chunk for local memory reads. Use resources/list and resources/read to pull OpenHuman's bundled core identity and per-subagent prompts as conversation context."
     })
 }
 
@@ -362,7 +411,12 @@ mod tests {
 
         assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
         assert!(response["result"]["capabilities"].get("tools").is_some());
-        let resources_cap = &response["result"]["capabilities"]["resources"];
+        // Resources surface must be advertised so MCP clients
+        // probe `resources/list` instead of treating the server as
+        // tools-only.
+        let resources_cap = response["result"]["capabilities"]
+            .get("resources")
+            .expect("resources capability must be advertised");
         assert_eq!(resources_cap["subscribe"], false);
         assert_eq!(resources_cap["listChanged"], false);
         assert_eq!(response["result"]["serverInfo"]["name"], "openhuman-core");
@@ -659,78 +713,87 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resources_list_returns_catalog_with_mime_type() {
+    async fn resources_list_returns_catalog_entries() {
         let response = request(json!({
             "jsonrpc": "2.0",
-            "id": 10,
+            "id": 1,
             "method": "resources/list"
         }))
         .await;
 
-        assert!(
-            response.get("error").is_none(),
-            "unexpected error: {response}"
-        );
         let resources = response["result"]["resources"]
             .as_array()
             .expect("resources array");
         assert!(!resources.is_empty(), "catalog must not be empty");
-        for r in resources {
-            assert_eq!(r["mimeType"], "text/markdown");
-            assert!(r["uri"]
-                .as_str()
-                .unwrap()
-                .starts_with("openhuman://prompts/"));
-        }
+        let uris: Vec<&str> = resources
+            .iter()
+            .filter_map(|r| r.get("uri").and_then(Value::as_str))
+            .collect();
+        assert!(uris.contains(&"openhuman://core/identity"));
+        assert!(uris.contains(&"openhuman://agents/orchestrator/prompt"));
     }
 
     #[tokio::test]
-    async fn resources_read_identity_returns_non_empty_text() {
+    async fn resources_read_returns_markdown_for_known_uri() {
         let response = request(json!({
             "jsonrpc": "2.0",
-            "id": 11,
+            "id": 1,
             "method": "resources/read",
-            "params": { "uri": "openhuman://prompts/identity" }
+            "params": { "uri": "openhuman://core/identity" }
         }))
         .await;
 
-        assert!(
-            response.get("error").is_none(),
-            "unexpected error: {response}"
-        );
-        let text = response["result"]["contents"][0]["text"]
-            .as_str()
-            .expect("text");
-        assert!(!text.is_empty());
+        let contents = response["result"]["contents"]
+            .as_array()
+            .expect("contents array");
+        assert_eq!(contents.len(), 1);
         assert_eq!(
-            response["result"]["contents"][0]["mimeType"],
-            "text/markdown"
+            contents[0]["uri"].as_str(),
+            Some("openhuman://core/identity")
+        );
+        assert_eq!(contents[0]["mimeType"].as_str(), Some("text/markdown"));
+        assert!(
+            contents[0]["text"]
+                .as_str()
+                .map(|s| !s.is_empty())
+                .unwrap_or(false),
+            "text body must be present and non-empty"
         );
     }
 
     #[tokio::test]
-    async fn resources_read_unknown_uri_returns_minus_32002() {
+    async fn resources_read_returns_not_found_error_for_unknown_uri() {
         let response = request(json!({
             "jsonrpc": "2.0",
-            "id": 12,
+            "id": 1,
             "method": "resources/read",
-            "params": { "uri": "openhuman://prompts/agents/does_not_exist" }
+            "params": { "uri": "openhuman://does-not-exist" }
         }))
         .await;
 
+        // -32002 is the MCP convention for resource-not-found, distinct
+        // from the generic -32602 invalid-params.
         assert_eq!(response["error"]["code"], -32002);
+        assert!(response["error"]["data"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unknown MCP resource"));
     }
 
     #[tokio::test]
-    async fn resources_read_missing_uri_param_returns_minus_32602() {
+    async fn resources_read_rejects_missing_uri_param() {
         let response = request(json!({
             "jsonrpc": "2.0",
-            "id": 13,
+            "id": 1,
             "method": "resources/read",
             "params": {}
         }))
         .await;
 
         assert_eq!(response["error"]["code"], -32602);
+        assert!(response["error"]["data"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("requires a `uri`"));
     }
 }
