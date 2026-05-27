@@ -137,7 +137,9 @@ describe('parseMessageImages', () => {
   });
 
   it('extracts multiple image markers', () => {
-    const result = parseMessageImages('[IMAGE:data:image/png;base64,a] [IMAGE:data:image/jpeg;base64,b]');
+    const result = parseMessageImages(
+      '[IMAGE:data:image/png;base64,a] [IMAGE:data:image/jpeg;base64,b]'
+    );
     expect(result.text).toBe('');
     expect(result.dataUris).toEqual(['data:image/png;base64,a', 'data:image/jpeg;base64,b']);
   });

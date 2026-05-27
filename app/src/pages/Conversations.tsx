@@ -682,7 +682,10 @@ const Conversations = ({
       setSendAdvisory(null);
     }
 
-    if (!sendDecision.shouldSend && !(sendDecision.blockReason === 'empty_input' && attachments.length > 0)) {
+    if (
+      !sendDecision.shouldSend &&
+      !(sendDecision.blockReason === 'empty_input' && attachments.length > 0)
+    ) {
       const blockedFeedback = getComposerBlockedSendFeedback(sendDecision.blockReason);
       if (blockedFeedback) {
         setSendError(chatSendError(blockedFeedback.error.code, blockedFeedback.error.message));
@@ -1628,9 +1631,12 @@ const Conversations = ({
                                 )}
                                 {(msg.content || showTime) && (
                                   <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
-                                    {msg.content && <BubbleMarkdown content={msg.content} tone="user" />}
+                                    {msg.content && (
+                                      <BubbleMarkdown content={msg.content} tone="user" />
+                                    )}
                                     {showTime && (
-                                      <p className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
+                                      <p
+                                        className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
                                         {formatRelativeTime(msg.createdAt)}
                                       </p>
                                     )}
