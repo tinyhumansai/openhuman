@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import AttachmentPreview from '../AttachmentPreview';
 import type { Attachment } from '../../../lib/attachments';
+import AttachmentPreview from '../AttachmentPreview';
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   const blob = new Blob([new Uint8Array(512)], { type: 'image/png' });
@@ -51,7 +51,11 @@ describe('AttachmentPreview', () => {
 
   it('renders multiple chips', () => {
     const a1 = makeAttachment({ id: '1', file: new File([], 'a.png', { type: 'image/png' }) });
-    const a2 = makeAttachment({ id: '2', file: new File([], 'b.jpg', { type: 'image/jpeg' }), mimeType: 'image/jpeg' });
+    const a2 = makeAttachment({
+      id: '2',
+      file: new File([], 'b.jpg', { type: 'image/jpeg' }),
+      mimeType: 'image/jpeg',
+    });
     render(<AttachmentPreview attachments={[a1, a2]} onRemove={vi.fn()} />);
     expect(screen.getByText('a.png')).toBeInTheDocument();
     expect(screen.getByText('b.jpg')).toBeInTheDocument();

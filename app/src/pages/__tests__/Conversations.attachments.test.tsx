@@ -69,22 +69,21 @@ vi.mock('../../services/api/threadApi', () => ({
 
 vi.mock('../../services/api/agentProfilesApi', () => ({
   agentProfilesApi: {
-    list: vi.fn().mockResolvedValue({
-      activeProfileId: 'default',
-      profiles: [
-        {
-          id: 'default',
-          name: 'Default',
-          description: 'Default',
-          agentId: 'orchestrator',
-          builtIn: true,
-        },
-      ],
-    }),
-    select: vi.fn().mockResolvedValue({
-      activeProfileId: 'default',
-      profiles: [],
-    }),
+    list: vi
+      .fn()
+      .mockResolvedValue({
+        activeProfileId: 'default',
+        profiles: [
+          {
+            id: 'default',
+            name: 'Default',
+            description: 'Default',
+            agentId: 'orchestrator',
+            builtIn: true,
+          },
+        ],
+      }),
+    select: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
     upsert: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
     delete: vi.fn().mockResolvedValue({ activeProfileId: 'default', profiles: [] }),
   },
@@ -246,9 +245,7 @@ describe('Conversations — attachment feature', () => {
     await renderWithSelectedThread();
 
     const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
-    const files = Array.from({ length: 5 }, (_, i) =>
-      makeFile(`img${i}.png`, 'image/png', 512)
-    );
+    const files = Array.from({ length: 5 }, (_, i) => makeFile(`img${i}.png`, 'image/png', 512));
 
     await act(async () => {
       fireEvent.change(fileInput, { target: { files } });
