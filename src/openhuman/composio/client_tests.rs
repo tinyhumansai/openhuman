@@ -306,16 +306,21 @@ async fn list_tools_filters_pass_through_as_csv_query_param() {
     let app = Router::new().route(
         "/agent-integrations/composio/tools",
         get(|Query(q): Query<HashMap<String, String>>| async move {
-            let filter = q.get("toolkits").cloned().unwrap_or_default();
-            // Echo the requested filter back in the payload so the
-            // test can assert it reached the server correctly.
+            let toolkits = q.get("toolkits").cloned().unwrap_or_default();
+            let tags = q.get("tags").cloned().unwrap_or_default();
+            // Echo both filters back so the test can assert they reached the server.
+            let echo = if tags.is_empty() {
+                format!("ECHO_{toolkits}")
+            } else {
+                format!("ECHO_{toolkits}_TAGS_{tags}")
+            };
             Json(json!({
                 "success": true,
                 "data": {
                     "tools": [{
                         "type": "function",
                         "function": {
-                            "name": format!("ECHO_{filter}"),
+                            "name": echo,
                             "description": "echo",
                             "parameters": {}
                         }
@@ -327,24 +332,51 @@ async fn list_tools_filters_pass_through_as_csv_query_param() {
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
 
-    // No filter: URL should lack `toolkits` query
-    let resp_all = client.list_tools(None).await.unwrap();
+    // No filter: URL should lack both query params
+    let resp_all = client.list_tools(None, None).await.unwrap();
     assert_eq!(resp_all.tools.len(), 1);
     assert_eq!(resp_all.tools[0].function.name, "ECHO_");
 
-    // With filter: CSV-joined
+    // toolkits only: CSV-joined
     let resp_filtered = client
-        .list_tools(Some(&["gmail".to_string(), "notion".to_string()]))
+        .list_tools(Some(&["gmail".to_string(), "notion".to_string()]), None)
         .await
         .unwrap();
     assert_eq!(resp_filtered.tools[0].function.name, "ECHO_gmail,notion");
 
     // Whitespace entries should be dropped before joining
     let resp_trimmed = client
-        .list_tools(Some(&["gmail".to_string(), "  ".to_string()]))
+        .list_tools(Some(&["gmail".to_string(), "  ".to_string()]), None)
         .await
         .unwrap();
     assert_eq!(resp_trimmed.tools[0].function.name, "ECHO_gmail");
+
+    // tags only
+    let resp_tags = client
+        .list_tools(None, Some(&["readOnlyHint".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(resp_tags.tools[0].function.name, "ECHO__TAGS_readOnlyHint");
+
+    // toolkits + tags both forwarded
+    let resp_both = client
+        .list_tools(
+            Some(&["github".to_string()]),
+            Some(&["stars".to_string(), "repos".to_string()]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_both.tools[0].function.name,
+        "ECHO_github_TAGS_stars,repos"
+    );
+
+    // Empty tags slice treated as no filter
+    let resp_empty_tags = client
+        .list_tools(Some(&["gmail".to_string()]), Some(&[]))
+        .await
+        .unwrap();
+    assert_eq!(resp_empty_tags.tools[0].function.name, "ECHO_gmail");
 }
 
 #[tokio::test]

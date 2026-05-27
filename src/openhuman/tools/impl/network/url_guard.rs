@@ -45,7 +45,9 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
 
     if allowed_domains.is_empty() {
         anyhow::bail!(
-            "Network tool is enabled but no allowed_domains are configured. Add [http_request].allowed_domains in config.toml"
+            "I'm not allowed to open any website yet — the allowed websites list is empty. \
+             Add the site you need (or turn on \"Allow all sites\") under \
+             Settings → Advanced → Search engine → Allowed websites, then ask me again."
         );
     }
 
@@ -56,7 +58,11 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
     }
 
     if !host_matches_allowlist(&host, allowed_domains) {
-        anyhow::bail!("Host '{host}' is not in http_request.allowed_domains");
+        anyhow::bail!(
+            "I'm not allowed to open '{host}' — it isn't in your allowed websites. \
+             Add it (or turn on \"Allow all sites\") under \
+             Settings → Advanced → Search engine → Allowed websites, then ask me again."
+        );
     }
 
     Ok(url.to_string())
@@ -244,7 +250,12 @@ fn extract_port(url: &str) -> anyhow::Result<u16> {
 
 pub(super) fn host_matches_allowlist(host: &str, allowed_domains: &[String]) -> bool {
     allowed_domains.iter().any(|domain| {
-        host == domain
+        // `"*"` is the explicit allow-all wildcard (the "Allow all sites"
+        // toggle), mirroring the browser tool. Local/private hosts are still
+        // rejected upstream by `is_private_or_local_host`, so a wildcard only
+        // opens *public* hosts, never the loopback/RFC1918 SSRF surface.
+        domain == "*"
+            || host == domain
             || host
                 .strip_suffix(domain)
                 .is_some_and(|prefix| prefix.ends_with('.'))
@@ -348,7 +359,29 @@ mod tests {
         let err = validate_url("https://google.com", &allow)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("allowed_domains"));
+        assert!(err.contains("allowed websites"));
+    }
+
+    #[test]
+    fn validate_wildcard_allows_any_public_host() {
+        let allow = vec!["*".to_string()];
+        assert!(validate_url("https://example.com/docs", &allow).is_ok());
+        assert!(validate_url("https://www.cnbc.com/markets", &allow).is_ok());
+        assert!(validate_url("https://sub.deep.example.org", &allow).is_ok());
+    }
+
+    #[test]
+    fn validate_wildcard_still_blocks_local_and_private() {
+        // "Allow all sites" must NOT defeat the SSRF guard.
+        let allow = vec!["*".to_string()];
+        assert!(validate_url("https://localhost:8080", &allow)
+            .unwrap_err()
+            .to_string()
+            .contains("local/private"));
+        assert!(validate_url("https://192.168.1.5", &allow)
+            .unwrap_err()
+            .to_string()
+            .contains("local/private"));
     }
 
     #[test]
@@ -392,7 +425,7 @@ mod tests {
         let err = validate_url("https://example.com", &[])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("allowed_domains"));
+        assert!(err.contains("allowed websites"));
     }
 
     #[test]
@@ -581,7 +614,7 @@ mod tests {
         ] {
             let err = validate_url(notation, &allow).unwrap_err().to_string();
             assert!(
-                err.contains("allowed_domains"),
+                err.contains("allowed websites"),
                 "Expected allowlist rejection for {notation}, got: {err}"
             );
         }

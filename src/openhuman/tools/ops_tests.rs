@@ -498,6 +498,32 @@ fn all_tools_excludes_browser_when_disabled() {
 }
 
 #[test]
+fn browser_allowed_domains_shares_fetch_list_minus_wildcard() {
+    // Unified web-access firewall: the browser tool derives its host allowlist
+    // from `http_request.allowed_domains`, but the `"*"` allow-all wildcard is
+    // stripped so a fetch-side "Allow all" never silently opens the browser.
+
+    // Explicit hosts pass straight through (shared with fetch).
+    assert_eq!(
+        browser_allowed_domains(&["reuters.com".into(), "github.com".into()]),
+        vec!["reuters.com".to_string(), "github.com".to_string()],
+    );
+
+    // `"*"` (fetch allow-all, and the http_request default) yields an EMPTY
+    // browser list — browser stays closed unless OPENHUMAN_BROWSER_ALLOW_ALL.
+    assert!(browser_allowed_domains(&["*".into()]).is_empty());
+
+    // Mixed: wildcard dropped, explicit hosts kept.
+    assert_eq!(
+        browser_allowed_domains(&["*".into(), "intranet.corp".into()]),
+        vec!["intranet.corp".to_string()],
+    );
+
+    // Block-all (empty fetch list) -> empty browser list.
+    assert!(browser_allowed_domains(&[]).is_empty());
+}
+
+#[test]
 fn all_tools_includes_browser_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());

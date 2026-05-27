@@ -79,7 +79,81 @@ fn enforce_tool_operation_act_uses_rate_budget() {
     assert!(err.contains("Rate limit exceeded"));
 }
 
+#[test]
+fn action_budget_error_mentions_limit_and_settings() {
+    let p = SecurityPolicy {
+        max_actions_per_hour: 0,
+        ..default_policy()
+    };
+
+    let err = p
+        .enforce_tool_operation(ToolOperation::Act, "write_file")
+        .unwrap_err();
+
+    assert!(err.contains("Rate limit exceeded: action budget exhausted"));
+    assert!(err.contains("0 actions/hour"));
+    assert!(err.contains("Settings -> Advanced -> Agent autonomy"));
+}
+
 // -- is_command_allowed -------------------------------------------
+
+#[test]
+fn default_policy_allowed_commands_expanded() {
+    // Issue #2486: verify all newly added safe commands are present in the
+    // default allowlist so agents can use them without manual configuration.
+    let p = default_policy();
+
+    // Build tools
+    for cmd in ["make", "cmake", "pnpm", "yarn"] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow build tool: {cmd}"
+        );
+    }
+
+    // Read-only inspection tools (low-risk)
+    for cmd in [
+        "sort file.txt",
+        "uniq file.txt",
+        "diff a.txt b.txt",
+        "which git",
+        "uname -a",
+        "basename /foo/bar.rs",
+        "dirname /foo/bar.rs",
+        "tr 'a' 'b'",
+        "cut -d: -f1 /dev/stdin",
+        "realpath .",
+        "readlink file",
+        "stat file.txt",
+        "file README.md",
+    ] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow read-only tool: {cmd}"
+        );
+    }
+
+    // Filesystem mutation tools (medium-risk — allowed on allowlist,
+    // but require approval in Supervised mode)
+    for cmd in [
+        "mkdir src/new",
+        "touch Makefile",
+        "cp src/a.rs src/b.rs",
+        "mv old.txt new.txt",
+        "ln -s src/a.rs link.rs",
+    ] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow medium-risk tool: {cmd}"
+        );
+        // Confirm they are actually medium-risk so the approval gate applies
+        assert_eq!(
+            p.command_risk_level(cmd),
+            CommandRiskLevel::Medium,
+            "{cmd} should be classified as medium-risk"
+        );
+    }
+}
 
 #[test]
 fn allowed_commands_basic() {
@@ -427,6 +501,8 @@ fn classify_installs_are_install_bucket() {
         "apt-get install -y curl",
         "brew install ripgrep",
         "pacman -S vim",
+        "pacman -Sy",
+        "pacman -Syu",
         "apk add bash",
         "dnf install nginx",
         "pip install requests",
@@ -454,6 +530,23 @@ fn classify_local_installs_are_write_not_install() {
         CommandClass::Write
     );
     assert_eq!(p.classify_command("cargo add serde"), CommandClass::Write);
+}
+
+#[test]
+fn classify_pacman_readonly_queries_are_not_install() {
+    let p = default_policy();
+    // pacman's `-S` family includes read-only queries (search/info/list/groups/
+    // print). A blanket `starts_with("-s")` mis-bucketed these as always-ask
+    // Install; they must fall through to the fail-closed Write default instead.
+    for c in [
+        "pacman -Ss firefox", // search
+        "pacman -Si vim",     // info
+        "pacman -Sl core",    // list a repo
+        "pacman -Sg",         // list groups
+        "pacman -Sp vim",     // print download URLs
+    ] {
+        assert_eq!(p.classify_command(c), CommandClass::Write, "{c}");
+    }
 }
 
 #[test]
@@ -850,6 +943,45 @@ fn write_to_not_yet_existing_path_in_workspace_still_allowed() {
     assert!(p.is_path_string_allowed("not-yet-existing/subdir/file.txt"));
 }
 
+// -- auto_approve defaults ----------------------------------------
+
+#[test]
+fn config_default_auto_approve_includes_expanded_tools() {
+    // Issue #2486: verify read-only tools are auto-approved by default,
+    // and write tools are NOT (Supervised mode must prompt for edits).
+    let cfg = crate::openhuman::config::AutonomyConfig::default();
+
+    // Pre-existing auto-approved tools must still be present
+    for tool in [
+        "file_read",
+        "memory_search",
+        "memory_list",
+        "get_time",
+        "list_dir",
+    ] {
+        assert!(
+            cfg.auto_approve.iter().any(|t| t == tool),
+            "default auto_approve must still include pre-existing tool: {tool}"
+        );
+    }
+
+    // Newly added read-only workspace-scoped tools
+    for tool in ["glob", "grep"] {
+        assert!(
+            cfg.auto_approve.iter().any(|t| t == tool),
+            "default auto_approve must include newly added tool: {tool}"
+        );
+    }
+
+    // Write tools must NOT be auto-approved (v4→v5 migration strips these)
+    for tool in ["file_write", "edit_file"] {
+        assert!(
+            !cfg.auto_approve.iter().any(|t| t == tool),
+            "write tool {tool} must NOT be auto-approved by default"
+        );
+    }
+}
+
 // -- from_config --------------------------------------------------
 
 #[test]
@@ -863,6 +995,7 @@ fn from_config_maps_all_fields() {
         max_cost_per_day_cents: 1000,
         require_approval_for_medium_risk: false,
         block_high_risk_commands: false,
+        auto_approve: vec!["shell".into(), "file_write".into()],
         ..crate::openhuman::config::AutonomyConfig::default()
     };
     let workspace = PathBuf::from("/tmp/test-workspace");
@@ -877,6 +1010,9 @@ fn from_config_maps_all_fields() {
     assert!(!policy.require_approval_for_medium_risk);
     assert!(!policy.block_high_risk_commands);
     assert_eq!(policy.workspace_dir, PathBuf::from("/tmp/test-workspace"));
+    // The "Always allow" allowlist is carried onto the policy so the gate can
+    // skip prompting for these tools.
+    assert_eq!(policy.auto_approve, vec!["shell", "file_write"]);
 }
 
 // -- Default policy -----------------------------------------------
@@ -1076,6 +1212,10 @@ fn command_argument_injection_blocked() {
     // find -exec is a common bypass
     assert!(!p.is_command_allowed("find . -exec rm -rf {} +"));
     assert!(!p.is_command_allowed("find / -ok cat {} \\;"));
+    // -execdir / -okdir have identical command-execution semantics — same cwd
+    // bypass class, different option spelling.
+    assert!(!p.is_command_allowed("find /tmp -maxdepth 1 -name poc_proof.txt -execdir whoami \\;"));
+    assert!(!p.is_command_allowed("find /etc -name passwd -okdir head -3 {} \\;"));
     // git config/alias can execute commands
     assert!(!p.is_command_allowed("git config core.editor \"rm -rf /\""));
     assert!(!p.is_command_allowed("git alias.st status"));
@@ -1084,6 +1224,61 @@ fn command_argument_injection_blocked() {
     assert!(p.is_command_allowed("find . -name '*.txt'"));
     assert!(p.is_command_allowed("git status"));
     assert!(p.is_command_allowed("git add ."));
+}
+
+#[test]
+fn dangerous_env_var_prefix_blocked() {
+    let p = default_policy();
+    // GIT_PAGER / PAGER / GIT_SSH_COMMAND / GIT_EXTERNAL_DIFF / EDITOR all
+    // cause git or other allowed binaries to spawn the assigned value as a
+    // subprocess. The bare command (`git log`, `git status`, `git diff`)
+    // is allowlisted, but the env prefix shifts execution to an arbitrary
+    // command.
+    assert!(!p.is_command_allowed("GIT_PAGER=/tmp/payload.sh git log"));
+    assert!(!p.is_command_allowed("PAGER=calc.exe git log"));
+    assert!(!p.is_command_allowed("GIT_SSH_COMMAND=/tmp/x git fetch"));
+    assert!(!p.is_command_allowed("GIT_EXTERNAL_DIFF=/tmp/x git diff"));
+    assert!(!p.is_command_allowed("EDITOR=/tmp/x git commit"));
+    assert!(!p.is_command_allowed("VISUAL=/tmp/x git commit"));
+    assert!(!p.is_command_allowed("LESS=/tmp/x cat /etc/passwd"));
+    assert!(!p.is_command_allowed("LESSOPEN=/tmp/x cat /etc/passwd"));
+    assert!(!p.is_command_allowed("MANPAGER=/tmp/x man bash"));
+    assert!(!p.is_command_allowed("BAT_PAGER=/tmp/x bat file"));
+    assert!(!p.is_command_allowed("BROWSER=/tmp/x git status"));
+    // Loader-override variables let an attacker inject a library into the
+    // next process.
+    assert!(!p.is_command_allowed("LD_PRELOAD=/tmp/x.so git status"));
+    assert!(!p.is_command_allowed("LD_LIBRARY_PATH=/tmp git status"));
+    assert!(!p.is_command_allowed("LD_AUDIT=/tmp/x.so git status"));
+    assert!(!p.is_command_allowed("DYLD_INSERT_LIBRARIES=/tmp/x.dylib git status"));
+    assert!(!p.is_command_allowed("DYLD_LIBRARY_PATH=/tmp git status"));
+    assert!(!p.is_command_allowed("DYLD_FORCE_FLAT_NAMESPACE=1 git status"));
+    // Shell-evaluation variables.
+    assert!(!p.is_command_allowed("BASH_ENV=/tmp/x git status"));
+    assert!(!p.is_command_allowed("ENV=/tmp/x git status"));
+    assert!(!p.is_command_allowed("PROMPT_COMMAND=/tmp/x git status"));
+    assert!(!p.is_command_allowed("IFS=$'\\n' git status"));
+    // Python startup hook + path override.
+    assert!(!p.is_command_allowed("PYTHONSTARTUP=/tmp/x python3 -V"));
+    assert!(!p.is_command_allowed("PYTHONPATH=/tmp python3 -V"));
+    // PATH / SHELL overrides redirect resolution of the next binary.
+    assert!(!p.is_command_allowed("PATH=/tmp git status"));
+    assert!(!p.is_command_allowed("SHELL=/tmp/x git status"));
+    // Lower-case spellings still match (env names are case-insensitive
+    // by convention here — most shells uppercase them, but the matcher
+    // should not be fooled by case folding).
+    assert!(!p.is_command_allowed("git_pager=/tmp/x git log"));
+    // Case-insensitive: should also catch mixed-case names.
+    assert!(!p.is_command_allowed("Ld_PrElOaD=/tmp/x.so git status"));
+
+    // Benign env prefixes still pass: TZ, LANG, LC_ALL, custom names that
+    // don't trigger downstream subprocess execution.
+    assert!(p.is_command_allowed("TZ=UTC git log"));
+    assert!(p.is_command_allowed("LANG=en_US.UTF-8 git log"));
+    assert!(p.is_command_allowed("LC_ALL=C git status"));
+    assert!(p.is_command_allowed("FOO=bar git status"));
+    // No env prefix at all — unchanged.
+    assert!(p.is_command_allowed("git status"));
 }
 
 #[test]
@@ -2039,7 +2234,7 @@ fn full_access_bypasses_command_allowlist() {
 #[test]
 fn supervised_still_enforces_command_allowlist() {
     let p = default_policy(); // Supervised
-    assert!(!p.is_command_allowed("mkdir -p foo/bar")); // not allow-listed
+    assert!(p.is_command_allowed("mkdir -p foo/bar")); // allow-listed (expanded in #2486)
     assert!(!p.is_command_allowed("ls 2>/dev/null")); // redirect blocked
     assert!(p.is_command_allowed("ls -la")); // allow-listed, no redirect
 }

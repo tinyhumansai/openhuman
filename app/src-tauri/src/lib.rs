@@ -2230,8 +2230,34 @@ pub fn run() {
 
         // SAFETY: mutex_name is null-terminated UTF-16; handle is checked below.
         let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+        // Capture GetLastError immediately after CreateMutexW so no intervening
+        // syscall (e.g. logging) can clobber the thread-local error code.
+        let last_error = unsafe { GetLastError() };
 
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // Primary: hold the handle until run() returns.
+        struct OwnedMutex(isize);
+        impl Drop for OwnedMutex {
+            fn drop(&mut self) {
+                if self.0 != 0 {
+                    unsafe { CloseHandle(self.0 as _) };
+                }
+            }
+        }
+
+        if handle.is_null() {
+            // CreateMutexW failed for a reason other than "already exists"
+            // (which returns a valid handle plus ERROR_ALREADY_EXISTS). Likely
+            // causes: out-of-memory, security-descriptor fault, or other
+            // Win32-level anomaly. Without the guard, a concurrent second
+            // launch can re-trigger the cef::initialize panic this block was
+            // added to prevent — but refusing to start at all is strictly
+            // worse for the user. Log loudly so the failure is observable in
+            // Sentry / log files and continue best-effort.
+            log::error!(
+                "[single-instance] CreateMutexW returned NULL handle (GetLastError={last_error}); continuing without pre-CEF single-instance guard — concurrent launches may hit OPENHUMAN-TAURI-A"
+            );
+            OwnedMutex(0)
+        } else if last_error == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
             // touch CEF at all. Forward deep links first so OAuth callbacks
             // are not dropped by this early pre-plugin exit.
@@ -2244,25 +2270,14 @@ pub fn run() {
                     );
                 }
             }
-            if !handle.is_null() {
-                unsafe { CloseHandle(handle) };
-            }
+            unsafe { CloseHandle(handle) };
             log::info!(
                 "[single-instance] pre-CEF mutex held by primary; secondary exiting (OPENHUMAN-TAURI-A fix)"
             );
             std::process::exit(0);
+        } else {
+            OwnedMutex(handle as isize)
         }
-
-        // Primary: hold the handle until run() returns.
-        struct OwnedMutex(isize);
-        impl Drop for OwnedMutex {
-            fn drop(&mut self) {
-                if self.0 != 0 {
-                    unsafe { CloseHandle(self.0 as _) };
-                }
-            }
-        }
-        OwnedMutex(handle as isize)
     };
 
     #[cfg(windows)]

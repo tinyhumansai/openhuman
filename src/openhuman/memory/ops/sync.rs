@@ -228,13 +228,11 @@ pub async fn memory_ingestion_status() -> Result<RpcOutcome<IngestionStatusResul
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::sync::{Arc, OnceLock};
 
     use super::*;
     use async_trait::async_trait;
     use serde_json::json;
-    use tempfile::TempDir;
     use tokio::sync::mpsc;
     use tokio::time::{timeout, Duration};
 
@@ -246,15 +244,8 @@ mod tests {
     }
 
     fn ensure_memory_client() -> crate::openhuman::memory_store::MemoryClientRef {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        crate::openhuman::memory::global::init(workspace.clone()).expect("init memory client")
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
+        crate::openhuman::memory::global::client().expect("memory client")
     }
 
     struct ChannelCapture {
@@ -375,6 +366,9 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let client = ensure_memory_client();
         let state = client.ingestion_state();
+
+        // Reset any residue from background ingestion left by prior tests.
+        state.reset_for_test();
 
         state.enqueue();
         state.mark_running("doc-sync", "Sync Title", "sync-test");

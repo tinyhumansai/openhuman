@@ -659,15 +659,242 @@ fn parse_native_response_preserves_tool_call_id() {
 
 #[test]
 fn convert_messages_for_native_maps_tool_result_payload() {
-    let input = vec![ChatMessage::tool(
-        r#"{"tool_call_id":"call_abc","content":"done"}"#,
-    )];
+    // A `tool` result must be opened by a preceding `assistant(tool_calls)`,
+    // else the invariant sanitizer drops it as an orphan (see `tool_invariants_*`).
+    // Pair it with its opener so this test exercises payload mapping only.
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_abc","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_abc","content":"done"}"#),
+    ];
 
     let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
-    assert_eq!(converted.len(), 1);
-    assert_eq!(converted[0].role, "tool");
-    assert_eq!(converted[0].tool_call_id.as_deref(), Some("call_abc"));
-    assert_eq!(converted[0].content.as_deref(), Some("done"));
+    assert_eq!(converted.len(), 2);
+    assert_eq!(converted[1].role, "tool");
+    assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_abc"));
+    assert_eq!(converted[1].content.as_deref(), Some("done"));
+}
+
+/// Helper: roles in serialized order.
+fn roles(messages: &[NativeMessage]) -> Vec<&str> {
+    messages.iter().map(|m| m.role.as_str()).collect()
+}
+
+/// Mechanism (A): history tail-trimming dropped an `assistant(tool_calls)` but
+/// kept its `tool` result, orphaning the result at the head of the window. The
+/// sanitizer must drop the orphan so the wire array never starts a tool block
+/// without a preceding `tool_calls`.
+#[test]
+fn tool_invariants_drop_orphaned_tool_result_from_trim(/* A */) {
+    let input = vec![
+        ChatMessage::system("system prompt"),
+        // assistant(tool_calls=call_orphan) was sliced off by trim_history;
+        // only its result survived as the first non-system message.
+        ChatMessage::tool(r#"{"tool_call_id":"call_orphan","content":"stale result"}"#),
+        ChatMessage::user("and then?"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["system", "user"]);
+    assert!(
+        converted.iter().all(|m| m.role != "tool"),
+        "orphaned tool result must be dropped"
+    );
+}
+
+/// Mechanism (B): a persisted assistant tool-call message whose `content` no
+/// longer parses as `{tool_calls: [...]}` is emitted as plain assistant text
+/// with its `tool_calls` stripped, orphaning the following `tool` result. The
+/// assistant message stays; the now-orphaned tool result is dropped.
+#[test]
+fn tool_invariants_drop_tool_after_unparseable_assistant_call(/* B */) {
+    let input = vec![
+        // Plain text, not the JSON tool-call shape -> tool_calls stripped on convert.
+        ChatMessage::assistant("let me check that for you"),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"tool ran"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant"]);
+    assert!(converted[0].tool_calls.is_none());
+    assert!(
+        converted.iter().all(|m| m.role != "tool"),
+        "tool result with no opening tool_calls must be dropped"
+    );
+}
+
+/// Mechanism (C): an `assistant(tool_calls=[answered, missing])` whose second
+/// call never received a `tool` response (aborted / max-iteration turn, or a
+/// partially-answered multi-call cycle). The sanitizer prunes the dangling
+/// tool-call entry while keeping the answered one and its result.
+#[test]
+fn tool_invariants_prune_unanswered_tool_call(/* C */) {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_done","name":"shell","arguments":"{}"},{"id":"call_missing","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_done","content":"finished"}"#),
+        // call_missing never gets a tool response.
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    let assistant = converted
+        .iter()
+        .find(|m| m.role == "assistant")
+        .expect("assistant message present");
+    let calls = assistant
+        .tool_calls
+        .as_ref()
+        .expect("answered tool_call retained");
+    assert_eq!(calls.len(), 1, "dangling tool_call must be pruned");
+    assert_eq!(calls[0].id.as_deref(), Some("call_done"));
+    assert!(
+        converted
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_done")),
+        "answered tool result must survive"
+    );
+}
+
+/// (C) extreme: an `assistant(tool_calls)` with NO response at all collapses to
+/// a plain assistant message (tool_calls dropped) rather than a dangling block.
+#[test]
+fn tool_invariants_collapse_fully_unanswered_assistant_call() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::assistant("never mind, here's the answer"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant", "assistant"]);
+    assert!(
+        converted[0].tool_calls.is_none(),
+        "fully-unanswered tool_calls must be dropped"
+    );
+    assert_eq!(converted[0].content.as_deref(), Some("on it"));
+}
+
+/// Regression guard: a well-formed tool cycle is passed through untouched —
+/// the sanitizer must not strip or reorder valid messages.
+#[test]
+fn tool_invariants_preserve_well_formed_cycle() {
+    let input = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::user("run it"),
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_ok","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_ok","content":"done"}"#),
+        ChatMessage::assistant("all set"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(
+        roles(&converted),
+        vec!["system", "user", "assistant", "tool", "assistant"]
+    );
+    assert_eq!(converted[2].tool_calls.as_ref().unwrap().len(), 1);
+    assert_eq!(
+        converted[2].tool_calls.as_ref().unwrap()[0].id.as_deref(),
+        Some("call_ok")
+    );
+    assert_eq!(converted[3].tool_call_id.as_deref(), Some("call_ok"));
+}
+
+/// Sequential tool cycles — successive agent iterations, each its own
+/// `assistant(tool_calls)` → `tool` block. Distinct ids, opened then immediately
+/// consumed. All survive untouched.
+#[test]
+fn tool_invariants_preserve_sequential_cycles() {
+    let input = vec![
+        ChatMessage::user("go"),
+        ChatMessage::assistant(
+            r#"{"content":"step 1","tool_calls":[{"id":"call_a","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"a done"}"#),
+        ChatMessage::assistant(
+            r#"{"content":"step 2","tool_calls":[{"id":"call_b","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"b done"}"#),
+        ChatMessage::assistant(
+            r#"{"content":"step 3","tool_calls":[{"id":"call_c","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_c","content":"c done"}"#),
+        ChatMessage::assistant("all done"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(
+        roles(&converted),
+        vec![
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant"
+        ]
+    );
+    for idx in [1usize, 3, 5] {
+        assert_eq!(
+            converted[idx].tool_calls.as_ref().unwrap().len(),
+            1,
+            "cycle at index {idx} must keep its call"
+        );
+    }
+}
+
+/// Parallel tool calls — one `assistant` issuing N calls, answered by N `tool`
+/// messages arriving out of order. All survive; pairing is by membership, not
+/// position, so order does not matter.
+#[test]
+fn tool_invariants_preserve_parallel_calls() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"fanning out","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"},{"id":"call_y","name":"shell","arguments":"{}"},{"id":"call_z","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_y","content":"y"}"#),
+        ChatMessage::tool(r#"{"tool_call_id":"call_z","content":"z"}"#),
+        ChatMessage::tool(r#"{"tool_call_id":"call_x","content":"x"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant", "tool", "tool", "tool"]);
+    assert_eq!(converted[0].tool_calls.as_ref().unwrap().len(), 3);
+}
+
+/// Trim bisecting a sequence: the window opens inside cycle A (its assistant was
+/// sliced off), followed by an intact cycle B. The orphaned A result is dropped;
+/// cycle B survives — proving adjacency-pairing localizes the damage.
+#[test]
+fn tool_invariants_drop_orphan_but_keep_following_cycle() {
+    let input = vec![
+        // assistant(call_a) was sliced off by trim; only its result remains.
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"orphaned"}"#),
+        ChatMessage::assistant(
+            r#"{"content":"step 2","tool_calls":[{"id":"call_b","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"b done"}"#),
+        ChatMessage::assistant("done"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant", "tool", "assistant"]);
+    assert_eq!(converted[0].tool_calls.as_ref().unwrap().len(), 1);
+    assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_b"));
 }
 
 #[test]

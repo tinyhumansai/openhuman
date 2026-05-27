@@ -175,24 +175,11 @@ pub async fn tool_rules_json(params: ToolRuleListParams) -> Result<RpcOutcome<Va
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::OnceLock;
-
-    use tempfile::TempDir;
-
     use super::*;
     use crate::openhuman::memory_tools::ToolMemoryPriority;
 
     fn ensure_memory_client() {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        let _ = crate::openhuman::memory::global::init(workspace.clone());
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
     }
 
     fn unique_tool_name() -> String {

@@ -21,7 +21,7 @@
  * "Connected sources" panel with one section, one Sync button, one
  * stats block per identity. Sync only appears when:
  *   1. the connection is currently ACTIVE/CONNECTED, AND
- *   2. the toolkit is in the syncable allow-list (today: gmail).
+ *   2. the toolkit is in the syncable allow-list passed by the parent.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 

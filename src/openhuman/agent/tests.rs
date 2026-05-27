@@ -437,12 +437,18 @@ async fn turn_handles_multi_step_tool_chain() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4. Max-iteration bailout
+// 4. Max-iteration checkpoint (resumable, not a hard bailout)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn turn_bails_out_at_max_iterations() {
-    // Create more tool calls than max_tool_iterations allows.
+async fn turn_emits_checkpoint_at_max_iterations() {
+    // Create more tool calls than max_tool_iterations allows. Hitting the
+    // cap must NOT error anymore: the harness emits a resumable checkpoint
+    // and returns it Ok, so the transcript ends on a well-formed assistant
+    // message instead of a dangling tool cycle that wedges the next turn
+    // (bug-report-2026-05-26 A1). Every scripted response here is a tool
+    // call, so the checkpoint summary call also yields no prose and the
+    // deterministic fallback summary is used.
     let max_iters = 3;
     let mut responses = Vec::new();
     for i in 0..max_iters + 5 {
@@ -462,12 +468,24 @@ async fn turn_bails_out_at_max_iterations() {
 
     let (mut agent, _tmp) = build_agent_with_config(provider, vec![Box::new(EchoTool)], config);
 
-    let result = agent.turn("infinite loop").await;
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
+    let reply = agent
+        .turn("infinite loop")
+        .await
+        .expect("hitting the iteration cap should return a checkpoint, not error");
     assert!(
-        err.contains("maximum tool iterations"),
-        "Expected max iterations error, got: {err}"
+        reply.contains("tool-call limit") && reply.contains("Next steps"),
+        "Expected a resumable checkpoint summary, got: {reply}"
+    );
+    // The transcript ends on the assistant checkpoint (well-formed), which
+    // is what lets the user's next message resume the task cleanly.
+    assert!(
+        matches!(
+            agent.history().last(),
+            Some(ConversationMessage::Chat(msg))
+                if msg.role == "assistant" && msg.content.contains("Next steps")
+        ),
+        "history should end on the assistant checkpoint, got: {:?}",
+        agent.history().last()
     );
 }
 
@@ -714,7 +732,11 @@ async fn xml_dispatcher_does_not_send_tool_specs() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn turn_handles_empty_text_response() {
+async fn turn_errors_on_empty_text_response() {
+    // A completion with no text *and* no tool calls is never a valid final
+    // answer. The old behaviour returned `Ok("")`, which rendered as a blank
+    // reply and silently wedged the thread; now it surfaces as a visible
+    // error the user can retry on (bug-report-2026-05-26 A1).
     let provider = Box::new(ScriptedProvider::new(vec![ChatResponse {
         text: Some(String::new()),
         tool_calls: vec![],
@@ -723,12 +745,18 @@ async fn turn_handles_empty_text_response() {
 
     let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
-    let response = agent.turn("hi").await.unwrap();
-    assert!(response.is_empty());
+    let err = agent
+        .turn("hi")
+        .await
+        .expect_err("an empty provider response should surface as an error");
+    assert!(
+        err.to_string().contains("empty response"),
+        "expected an empty-response error, got: {err}"
+    );
 }
 
 #[tokio::test]
-async fn turn_handles_none_text_response() {
+async fn turn_errors_on_none_text_response() {
     let provider = Box::new(ScriptedProvider::new(vec![ChatResponse {
         text: None,
         tool_calls: vec![],
@@ -737,9 +765,14 @@ async fn turn_handles_none_text_response() {
 
     let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
-    // Should not panic — falls back to empty string
-    let response = agent.turn("hi").await.unwrap();
-    assert!(response.is_empty());
+    let err = agent
+        .turn("hi")
+        .await
+        .expect_err("a null-text provider response should surface as an error");
+    assert!(
+        err.to_string().contains("empty response"),
+        "expected an empty-response error, got: {err}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

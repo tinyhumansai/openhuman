@@ -100,11 +100,17 @@ async function resetEverything(label: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   }).catch(() => {});
-  clearRequestLog();
   resetMockBehavior();
-  // Settle a beat so any in-flight reactive HTTP calls don't bleed into the
-  // next scenario's request log.
+  // Settle a beat so any in-flight reactive HTTP calls from the previous
+  // scenario arrive and can be discarded — then clear AFTER the pause so
+  // stale requests don't appear in the next scenario's waitForMockRequest
+  // polls. (Clearing before the pause caused a race: in-flight /auth/me or
+  // /telegram/login-tokens/ requests from scenario N arrived during the
+  // 800 ms window, landed in the fresh log, and were matched by scenario
+  // N+1's waitForMockRequest — causing composio RPCs to fire before the
+  // new deep-link's auth flow completed.)
   await browser.pause(800);
+  clearRequestLog();
 }
 
 describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
@@ -206,7 +212,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     // Login first — `oauth:success` is only meaningful for an authenticated user.
     await triggerDeepLink('openhuman://auth?token=mega-gmail-token');
     await waitForMockRequest('POST', '/telegram/login-tokens/', 15_000);
-    await waitForMockRequest('GET', '/auth/me', 10_000);
+    expect(await waitForMockRequest('GET', '/auth/me', 10_000)).toBeDefined();
     clearRequestLog();
 
     await triggerDeepLink('openhuman://oauth/success?integrationId=mock-gmail-int&provider=google');
@@ -591,6 +597,7 @@ describe('Mega flow — login + Gmail OAuth + Composio in one session', () => {
     });
     expect(auth.ok).toBe(true);
     clearRequestLog();
+    await browser.pause(500);
 
     // Seed composio state.
     setMockBehaviors({

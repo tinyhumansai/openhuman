@@ -215,7 +215,10 @@ mod tests {
     fn build_chat_runtime_defaults_to_openhuman_resolved_model() {
         let cfg = Config::default();
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
-        assert_eq!(model, "reasoning-v1");
+        // build_chat_runtime resolves the "summarization" role, which gained a
+        // dedicated tier (summarization-v1) — the role no longer falls back to
+        // the generic reasoning-v1 default.
+        assert_eq!(model, "summarization-v1");
     }
 
     #[test]

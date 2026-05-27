@@ -211,6 +211,9 @@ mod tests {
 
     #[tokio::test]
     async fn execute_success_path_persists_rule_in_isolated_workspace() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let tmp = TempDir::new().expect("tempdir");
         let (_workspace, _cfg) = isolated_config(&tmp).await;
         let tool = MemoryToolsPutTool;
@@ -250,6 +253,9 @@ mod tests {
 
     #[tokio::test]
     async fn execute_defaults_unknown_priority_to_normal() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let tmp = TempDir::new().expect("tempdir");
         let (_workspace, _cfg) = isolated_config(&tmp).await;
         let tool = MemoryToolsPutTool;

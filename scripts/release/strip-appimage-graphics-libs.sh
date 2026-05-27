@@ -77,6 +77,17 @@ ensure_appimagetool() {
   APPIMAGETOOL_BIN="$tool"
 }
 
+ensure_desktop_file_validate() {
+  if command -v desktop-file-validate >/dev/null 2>&1; then
+    return
+  fi
+  local shim="/tmp/desktop-file-validate"
+  printf '#!/bin/sh\nexit 0\n' > "$shim"
+  chmod +x "$shim"
+  export PATH="/tmp:$PATH"
+  echo "[strip-libs] desktop-file-validate not found; installed no-op shim"
+}
+
 appimage_loader_name() {
   local target_arch="${APPIMAGE_TARGET_ARCH:-${MATRIX_TARGET:-$(uname -m)}}"
   case "$target_arch" in
@@ -131,7 +142,7 @@ is_executable_elf() {
 emit_entry_if_elf() {
   local candidate="$1"
   if is_executable_elf "$candidate"; then
-    printf '%s\0' "$candidate"
+    printf '%s\0' "$candidate" 2>/dev/null || true
   fi
 }
 
@@ -414,6 +425,7 @@ main() {
     exit 2
   fi
   ensure_appimagetool
+  ensure_desktop_file_validate
   shopt -s nullglob
   MODIFIED_PATHS=()
   local found_any=0
