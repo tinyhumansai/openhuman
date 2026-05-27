@@ -614,9 +614,6 @@ const ko1: TranslationMap = {
   'settings.ai.or': '또는',
   'settings.ai.openRouterOauthDescription':
     'Sign in with OpenRouter and import a user-controlled API key using PKCE.',
-  'settings.ai.codexOauthMissingAuthUrl':
-    'Codex OAuth가 인증 URL을 반환하지 않았습니다. 다시 로그인해 보세요.',
-  'settings.ai.codexOauthMissingCallbackUrl': '로그인한 뒤 브라우저의 리디렉션 URL을 붙여넣으세요.',
   'settings.ai.connecting': '연결 중...',
   'settings.ai.backgroundLoops': '백그라운드 루프',
   'settings.ai.backgroundLoopsDesc':
