@@ -400,6 +400,15 @@ fn is_ollama_user_config_rejection(lower: &str) -> bool {
 ///   ~66 events). Tungstenite-only — reqwest renders HTTP 200 as
 ///   `"HTTP status server error (200)"`, so this can't collide with the
 ///   regular HTTP call path.
+/// - `"http version must be 1.1 or higher"` — tungstenite's
+///   `ProtocolError::WrongHttpVersion` render. Fires when a server (or
+///   intermediary proxy / HTTP/2-only edge) responds to the WebSocket
+///   upgrade with HTTP/2+, which the WS spec forbids — the handshake
+///   requires HTTP/1.1 (`CORE-RUST-DP`, ~2 events / 24h, first seen on
+///   `openhuman@0.56.0`). Same shape as the existing handshake-stage
+///   entries: a user-environment / infra misconfiguration that the
+///   client cannot fix; Sentry has no actionable signal beyond what the
+///   socket supervisor's exponential backoff already provides.
 fn is_network_unreachable_message(lower: &str) -> bool {
     lower.contains("error sending request for url")
         || lower.contains("dns error")
@@ -412,6 +421,7 @@ fn is_network_unreachable_message(lower: &str) -> bool {
         || lower.contains("tls handshake")
         || lower.contains("certificate verify failed")
         || lower.contains("http error: 200 ok")
+        || lower.contains("http version must be 1.1 or higher")
 }
 
 /// Detect transient upstream HTTP failures that have bubbled up out of the
@@ -1595,6 +1605,67 @@ mod tests {
             expected_error_kind("upstream returned status: 200 OK after retry"),
             None
         );
+    }
+
+    #[test]
+    fn classifies_ws_protocol_wrong_http_version_as_network_unreachable() {
+        // CORE-RUST-DP (~2 events / 24h on `openhuman@0.56.0+e8968077aeb5`,
+        // self-hosted `core-rust`): tungstenite renders
+        // `ProtocolError::WrongHttpVersion` as
+        // `"WebSocket protocol error: HTTP version must be 1.1 or higher"`,
+        // wrapped by `socket::ws_loop::run_connection` as
+        // `"WebSocket connect: <inner>"` and then by the supervisor's
+        // sustained-outage escalation as
+        // `"[socket] Connection failed (sustained outage after N attempts):
+        // WebSocket connect: WebSocket protocol error: HTTP version must be
+        // 1.1 or higher"`.
+        //
+        // The handshake requires HTTP/1.1; a server or intermediary proxy
+        // that responds with HTTP/2+ to the upgrade is misconfigured
+        // upstream — same shape as the existing `"tls handshake"` /
+        // `"certificate verify failed"` user-environment entries. The
+        // supervisor already retries with exponential backoff; Sentry has
+        // no actionable signal to add.
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: WebSocket protocol error: HTTP version must be 1.1 or higher"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+
+        // Bare tungstenite render (no socket-supervisor wrap) — fires when
+        // the same protocol error escapes through a non-supervisor call
+        // site. The classifier runs on the full anyhow chain, so the
+        // shorter form must also match.
+        assert_eq!(
+            expected_error_kind("WebSocket protocol error: HTTP version must be 1.1 or higher"),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+    }
+
+    #[test]
+    fn wrong_http_version_anchor_does_not_silence_unrelated_log_lines() {
+        // The anchor is the literal tungstenite Display string. Adjacent
+        // log lines that mention HTTP version in any other context
+        // (`"upgrading from HTTP/1.0 to HTTP/2"`, `"HTTP/1.1 only"`,
+        // `"server requires HTTP version 2.0"`) MUST NOT classify — those
+        // are unrelated transport / negotiation traces and may carry
+        // actionable signal. Pin the rejection contract so a future
+        // refactor doesn't loosen the substring into a generic
+        // `"http version"` matcher.
+        for raw in [
+            "[transport] upgrading from HTTP/1.0 to HTTP/2",
+            "server advertises HTTP version 2.0 (h2 alpn)",
+            "client supports HTTP/1.1 only",
+            "version mismatch: requires HTTP/1.2 or higher",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "unrelated HTTP-version log line must NOT classify: {raw}"
+            );
+        }
     }
 
     #[test]
