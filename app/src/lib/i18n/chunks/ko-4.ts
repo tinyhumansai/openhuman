@@ -276,6 +276,9 @@ const ko4: TranslationMap = {
   'settings.ai.llmProviders': 'LLM 제공업체',
   'settings.ai.llmProvidersDesc': 'LLM 제공업체 설명',
   'settings.ai.localOllama': '로컬(Ollama)',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth가 인증 URL을 반환하지 않았습니다. 다시 로그인해 보세요.',
+  'settings.ai.codexOauthMissingCallbackUrl': '로그인한 뒤 브라우저의 리디렉션 URL을 붙여넣으세요.',
   'settings.ai.modelLabel': '모델',
   'settings.ai.noCustomProviders': '사용자 지정 제공업체 없음',
   'settings.ai.providerLabel': '제공업체',
