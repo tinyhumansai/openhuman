@@ -266,6 +266,7 @@ const id3: TranslationMap = {
   'memory.ingestingTitle': 'Mengingesti {title}',
   'mic.noAudioCaptured': 'Tidak ada audio tertangkap',
   'mic.noSpeechDetected': 'Tidak ada suara terdeteksi',
+  'mic.lowConfidenceResult': 'Tidak dapat memahami audio dengan jelas — silakan coba lagi',
   'mic.failedToStopRecording': 'Gagal menghentikan perekaman: {message}',
   'mic.transcriptionFailed': 'Transkripsi gagal: {message}',
   'reflections.kind.retrospective': 'Retrospektif',

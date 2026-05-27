@@ -269,6 +269,7 @@ const it3: TranslationMap = {
   'memory.ingestingTitle': 'Ingestione di {title}',
   'mic.noAudioCaptured': 'Nessun audio catturato',
   'mic.noSpeechDetected': 'Nessun parlato rilevato',
+  'mic.lowConfidenceResult': "Impossibile comprendere l'audio chiaramente — riprova",
   'mic.failedToStopRecording': 'Impossibile fermare la registrazione: {message}',
   'mic.transcriptionFailed': 'Trascrizione fallita: {message}',
   'reflections.kind.retrospective': 'Retrospettiva',

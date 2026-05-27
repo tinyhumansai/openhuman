@@ -266,6 +266,7 @@ const hi3: TranslationMap = {
   'memory.ingestingTitle': '{title} इन्जेस्ट हो रहा है',
   'mic.noAudioCaptured': 'कोई ऑडियो कैप्चर नहीं हुआ',
   'mic.noSpeechDetected': 'कोई बोलना नहीं मिला',
+  'mic.lowConfidenceResult': 'ऑडियो स्पष्ट रूप से समझ नहीं आया — कृपया पुनः प्रयास करें',
   'mic.failedToStopRecording': 'रिकॉर्डिंग रोकने में दिक्कत: {message}',
   'mic.transcriptionFailed': 'ट्रांसक्रिप्शन विफल: {message}',
   'reflections.kind.retrospective': 'रेट्रोस्पेक्टिव',

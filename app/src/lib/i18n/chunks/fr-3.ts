@@ -270,6 +270,7 @@ const fr3: TranslationMap = {
   'memory.ingestingTitle': 'Ingestion de {title}',
   'mic.noAudioCaptured': 'Aucun audio capturé',
   'mic.noSpeechDetected': 'Aucune parole détectée',
+  'mic.lowConfidenceResult': "Impossible de comprendre l'audio clairement — réessaie",
   'mic.failedToStopRecording': "Échec de l'arrêt de l'enregistrement : {message}",
   'mic.transcriptionFailed': 'Échec de la transcription : {message}',
   'reflections.kind.retrospective': 'Rétrospective',

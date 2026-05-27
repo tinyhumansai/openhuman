@@ -22,6 +22,51 @@ const composerLog = debug('human:mic-composer');
  */
 export const MAX_RECORDING_MS = 60_000;
 
+/** Maximum number of retries for transient STT failures per encoding path. */
+const STT_MAX_RETRIES = 2;
+
+/** Base delay for exponential backoff (ms). Delay = base * 2^attempt. */
+const STT_RETRY_BASE_MS = 500;
+
+/**
+ * Errors that indicate a permanent failure — retrying won't help.
+ * Matched case-insensitively against the error message.
+ */
+const PERMANENT_ERROR_PATTERNS = [
+  'unknown method', // stale sidecar
+  'audio blob is empty',
+  'unavailable in this build',
+];
+
+function isTransientError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return !PERMANENT_ERROR_PATTERNS.some(p => msg.includes(p));
+}
+
+/**
+ * Heuristic check for low-confidence transcripts. The backend doesn't expose
+ * a confidence score, so we detect likely bad results from text patterns:
+ * - Single character (often a stray noise → "I" or "A")
+ * - Repeated single character ("aaa", "mmm")
+ * - Only punctuation / whitespace
+ * Exported for testing.
+ */
+export function isLowConfidenceTranscript(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return true;
+  if (trimmed.length === 1) return true;
+  // All same character repeated: "aaa", "mmm", "..."
+  if (/^(.)\1+$/i.test(trimmed)) return true;
+  // Only punctuation, whitespace, or symbols — no actual words
+  if (
+    !/[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u3000-\u9FFF\uAC00-\uD7AF]/.test(
+      trimmed
+    )
+  )
+    return true;
+  return false;
+}
+
 /** MIME types MediaRecorder will be asked to use, in priority order.
  *
  *  AAC-in-MP4 is preferred because the hosted STT upstream (GMI Whisper)
@@ -419,6 +464,12 @@ export function MicComposer({
         setState('idle');
         return;
       }
+      if (isLowConfidenceTranscript(transcript)) {
+        composerLog('low-confidence transcript detected: %s', JSON.stringify(transcript));
+        onError?.(t('mic.lowConfidenceResult'));
+        setState('idle');
+        return;
+      }
       await onSubmit(transcript);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -430,28 +481,68 @@ export function MicComposer({
   }
 
   /**
+   * Retry a transcription call up to `STT_MAX_RETRIES` times with
+   * exponential backoff for transient errors. Permanent errors (stale
+   * sidecar, empty blob) are rethrown immediately.
+   */
+  async function transcribeWithRetry(blob: Blob, label: string): Promise<string> {
+    const opts = language ? { language } : undefined;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt <= STT_MAX_RETRIES; attempt++) {
+      try {
+        composerLog(
+          'transcribe attempt=%s/%d bytes=%d mime=%s lang=%s',
+          label,
+          attempt,
+          blob.size,
+          blob.type,
+          language || 'auto'
+        );
+        return await transcribeWithFactory(blob, opts);
+      } catch (err) {
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!isTransientError(err)) {
+          composerLog('transcribe permanent failure attempt=%s/%d: %s', label, attempt, msg);
+          throw err;
+        }
+        if (attempt < STT_MAX_RETRIES) {
+          const delay = STT_RETRY_BASE_MS * Math.pow(2, attempt);
+          composerLog(
+            'transcribe transient failure attempt=%s/%d, retrying in %dms: %s',
+            label,
+            attempt,
+            delay,
+            msg
+          );
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          composerLog('transcribe exhausted retries attempt=%s/%d: %s', label, attempt, msg);
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
    * Send the recorder's native blob first (Opus-in-WebM ~3KB/sec) — Scribe
    * accepts it natively and it uploads ~30x faster than the 16kHz mono WAV
    * we used to transcode (~32KB/sec). If that ever fails (older STT
-   * provider behind a feature flag, codec mismatch, …), retry once with a
-   * re-encoded WAV so we don't regress correctness for the speed win.
+   * provider behind a feature flag, codec mismatch, …), re-encode to WAV
+   * and retry so we don't regress correctness for the speed win. Each path
+   * retries transient errors with exponential backoff.
    */
   async function transcribeWithFallback(blob: Blob): Promise<string> {
     const startedAt = Date.now();
-    const opts = language ? { language } : undefined;
     try {
-      composerLog(
-        'transcribe attempt=native bytes=%d mime=%s lang=%s',
-        blob.size,
-        blob.type,
-        language || 'auto'
-      );
-      const text = await transcribeWithFactory(blob, opts);
-      composerLog('transcribe ok attempt=native ms=%d', Math.round(Date.now() - startedAt));
+      const text = await transcribeWithRetry(blob, 'native');
+      composerLog('transcribe ok path=native ms=%d', Math.round(Date.now() - startedAt));
       return text;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      composerLog('transcribe failed attempt=native — falling back to wav: %s', msg);
+      // Permanent errors don't benefit from a WAV re-encode — bail early.
+      if (!isTransientError(err)) throw err;
+      composerLog('transcribe native path exhausted — falling back to wav: %s', msg);
       const reEncodeStart = Date.now();
       const wav = await encodeBlobToWav(blob);
       composerLog(
@@ -459,9 +550,9 @@ export function MicComposer({
         wav.size,
         Math.round(Date.now() - reEncodeStart)
       );
-      const text = await transcribeWithFactory(wav, opts);
+      const text = await transcribeWithRetry(wav, 'wav');
       composerLog(
-        'transcribe ok attempt=wav-fallback total_ms=%d',
+        'transcribe ok path=wav-fallback total_ms=%d',
         Math.round(Date.now() - startedAt)
       );
       return text;

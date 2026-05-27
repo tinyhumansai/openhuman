@@ -255,6 +255,7 @@ const zhCN3: TranslationMap = {
   'memory.ingestingTitle': '正在摄取 {title}',
   'mic.noAudioCaptured': '未捕获到音频',
   'mic.noSpeechDetected': '未检测到语音',
+  'mic.lowConfidenceResult': '无法清楚地理解音频 — 请重试',
   'mic.failedToStopRecording': '停止录音失败: {message}',
   'mic.transcriptionFailed': '转录失败: {message}',
   'reflections.kind.retrospective': '回顾',
