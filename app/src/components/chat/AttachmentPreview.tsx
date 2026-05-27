@@ -1,5 +1,4 @@
-import type { Attachment } from '../../lib/attachments';
-import { formatFileSize } from '../../lib/attachments';
+import { type Attachment, formatFileSize } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
 
 interface AttachmentPreviewProps {
