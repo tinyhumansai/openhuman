@@ -38,13 +38,33 @@ interface BalanceRowProps {
 const BalanceRow = ({ balance }: BalanceRowProps) => {
   const { t } = useT();
   const [copied, setCopied] = useState(false);
+  // Tracks the most recent "Copied" timer so rapid re-clicks reset the 2s
+  // window rather than stacking independent setTimeouts (the older one would
+  // otherwise flip `copied` back to false while the newest click still wants
+  // to show the checkmark).
+  const copyResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copyResetTimerRef.current !== null) {
+        clearTimeout(copyResetTimerRef.current);
+        copyResetTimerRef.current = null;
+      }
+    },
+    []
+  );
 
   const handleCopyAddress = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(balance.address);
       setCopied(true);
-      const timer = setTimeout(() => setCopied(false), 2000);
-      return () => clearTimeout(timer);
+      if (copyResetTimerRef.current !== null) {
+        clearTimeout(copyResetTimerRef.current);
+      }
+      copyResetTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copyResetTimerRef.current = null;
+      }, 2000);
     } catch {
       // Clipboard unavailable (no permissions); silently skip.
     }
