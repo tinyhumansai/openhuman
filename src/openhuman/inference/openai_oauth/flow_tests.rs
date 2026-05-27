@@ -338,6 +338,43 @@ fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
 }
 
 #[test]
+fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let access_token = unsigned_jwt(serde_json::json!({
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_nested"
+        },
+        "sub": "acct_subject",
+        "exp": (Utc::now() + Duration::hours(1)).timestamp(),
+    }));
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": "codex-refresh"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_nested")
+    );
+    let credentials = lookup_openai_oauth_credentials(&config)
+        .unwrap()
+        .expect("imported oauth credentials");
+    assert_eq!(credentials.account_id.as_deref(), Some("acct_nested"));
+}
+
+#[test]
 fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);

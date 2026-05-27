@@ -28,7 +28,8 @@ use crate::openhuman::inference::provider::compatible::{
     AuthStyle as CompatAuthStyle, OpenAiCompatibleProvider,
 };
 use crate::openhuman::inference::provider::openai_codex::{
-    openai_codex_client_version, resolve_openai_codex_routing, OPENAI_CODEX_ACCOUNT_HEADER,
+    openai_codex_client_version, openai_codex_user_agent, resolve_openai_codex_routing,
+    OPENAI_CODEX_ACCOUNT_HEADER, OPENAI_CODEX_ORIGINATOR, OPENAI_CODEX_ORIGINATOR_HEADER,
 };
 use crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider;
 use crate::openhuman::inference::provider::traits::Provider;
@@ -845,7 +846,10 @@ fn make_cloud_provider_by_slug(
             }
             if openai_codex_routing.using_oauth {
                 provider = provider
-                    .with_extra_query_param("client_version", openai_codex_client_version());
+                    .with_extra_header(OPENAI_CODEX_ORIGINATOR_HEADER, OPENAI_CODEX_ORIGINATOR)
+                    .with_user_agent(openai_codex_user_agent())
+                    .with_extra_query_param("client_version", openai_codex_client_version())
+                    .with_responses_api_primary();
             }
             let p: Box<dyn Provider> = Box::new(provider);
             Ok((p, effective_model))

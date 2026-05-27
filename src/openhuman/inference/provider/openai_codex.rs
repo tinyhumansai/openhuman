@@ -2,6 +2,17 @@ use crate::openhuman::config::Config;
 
 pub(crate) const OPENAI_CODEX_ACCOUNT_HEADER: &str = "ChatGPT-Account-ID";
 pub(crate) const OPENAI_CODEX_BACKEND_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+pub(crate) const OPENAI_CODEX_ORIGINATOR_HEADER: &str = "originator";
+pub(crate) const OPENAI_CODEX_ORIGINATOR: &str = "codex_cli_rs";
+pub(crate) const OPENAI_CODEX_MODEL_HINTS: &[&str] =
+    &["gpt-5.5", "gpt-5.4", "gpt-5.3-codex-spark", "gpt-5.3-codex"];
+
+pub(crate) fn openai_codex_user_agent() -> String {
+    format!(
+        "codex_cli_rs/0.0.0 (OpenHuman {})",
+        env!("CARGO_PKG_VERSION")
+    )
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct OpenAiCodexRouting {

@@ -4,8 +4,9 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 use super::openai_codex::{
-    openai_codex_client_version, resolve_openai_codex_routing, OpenAiCodexRouting,
-    OPENAI_CODEX_ACCOUNT_HEADER,
+    openai_codex_client_version, openai_codex_user_agent, resolve_openai_codex_routing,
+    OpenAiCodexRouting, OPENAI_CODEX_ACCOUNT_HEADER, OPENAI_CODEX_MODEL_HINTS,
+    OPENAI_CODEX_ORIGINATOR, OPENAI_CODEX_ORIGINATOR_HEADER,
 };
 
 const MAX_API_ERROR_CHARS: usize = 200;
@@ -97,6 +98,11 @@ async fn list_configured_models_from_config(
     }
 
     let mut request = client.get(&models_url);
+    if routing.using_oauth {
+        request = request
+            .header(reqwest::header::USER_AGENT, openai_codex_user_agent())
+            .header(OPENAI_CODEX_ORIGINATOR_HEADER, OPENAI_CODEX_ORIGINATOR);
+    }
 
     request = match entry.auth_style {
         AuthStyle::Bearer => {
@@ -182,10 +188,13 @@ async fn list_configured_models_from_config(
         ));
     };
 
-    let models: Vec<ModelInfo> = data
+    let mut models: Vec<ModelInfo> = data
         .iter()
         .filter_map(model_info_from_catalog_item)
         .collect();
+    if routing.using_oauth {
+        merge_openai_codex_model_hints(&mut models);
+    }
 
     log::info!(
         "[providers][list_models] slug={} fetched {} models",
@@ -197,6 +206,23 @@ async fn list_configured_models_from_config(
         serde_json::json!({ "models": models }),
         vec![format!("fetched {} models", models.len())],
     ))
+}
+
+fn merge_openai_codex_model_hints(models: &mut Vec<ModelInfo>) {
+    let mut seen = models
+        .iter()
+        .map(|model| model.id.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+
+    for id in OPENAI_CODEX_MODEL_HINTS {
+        if seen.insert(id.to_ascii_lowercase()) {
+            models.push(ModelInfo {
+                id: (*id).to_string(),
+                owned_by: Some("openai-codex".to_string()),
+                context_window: None,
+            });
+        }
+    }
 }
 
 fn is_openrouter_provider(
@@ -1255,6 +1281,26 @@ mod tests {
         assert_eq!(model.id, "gpt-5.5");
         assert_eq!(model.owned_by, None);
         assert_eq!(model.context_window, None);
+    }
+
+    #[test]
+    fn openai_codex_model_hints_are_merged_without_duplicates() {
+        let mut models = vec![ModelInfo {
+            id: "gpt-5.4".to_string(),
+            owned_by: Some("openai-codex".to_string()),
+            context_window: Some(128000),
+        }];
+
+        merge_openai_codex_model_hints(&mut models);
+
+        let ids = models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec!["gpt-5.4", "gpt-5.5", "gpt-5.3-codex-spark", "gpt-5.3-codex"]
+        );
     }
 
     #[tokio::test]

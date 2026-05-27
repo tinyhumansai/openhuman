@@ -279,7 +279,9 @@ fn extra_headers_are_applied_with_auth_header() {
         Some("oauth-access-token"),
         AuthStyle::Bearer,
     )
-    .with_extra_header("ChatGPT-Account-ID", "acct_123");
+    .with_extra_header("ChatGPT-Account-ID", "acct_123")
+    .with_extra_header("originator", "codex_cli_rs")
+    .with_user_agent("codex_cli_rs/0.0.0 (OpenHuman test)");
 
     let req = p
         .apply_auth_header(
@@ -301,6 +303,18 @@ fn extra_headers_are_applied_with_auth_header() {
             .get("ChatGPT-Account-ID")
             .and_then(|value| value.to_str().ok()),
         Some("acct_123")
+    );
+    assert_eq!(
+        req.headers()
+            .get("originator")
+            .and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs")
+    );
+    assert_eq!(
+        req.headers()
+            .get(reqwest::header::USER_AGENT)
+            .and_then(|value| value.to_str().ok()),
+        Some("codex_cli_rs/0.0.0 (OpenHuman test)")
     );
 }
 
@@ -333,6 +347,34 @@ fn extra_query_params_are_applied_to_codex_urls() {
             .map(|(_, value)| value.into_owned()),
         Some("0.54.17".to_string())
     );
+}
+
+#[tokio::test]
+async fn responses_api_primary_posts_directly_to_responses() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/codex/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "output_text": "hello from responses",
+            "output": []
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openai",
+        &format!("{}/backend-api/codex", server.uri()),
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_responses_api_primary();
+
+    let text = provider
+        .chat_with_history(&[ChatMessage::user("hello")], "gpt-5.5", 0.0)
+        .await
+        .unwrap();
+
+    assert_eq!(text, "hello from responses");
 }
 
 #[test]
@@ -416,13 +458,17 @@ fn build_responses_prompt_preserves_multi_turn_history() {
     assert_eq!(instructions.as_deref(), Some("policy"));
     assert_eq!(input.len(), 4);
     assert_eq!(input[0].role, "user");
-    assert_eq!(input[0].content, "step 1");
+    assert_eq!(input[0].content[0].kind, "input_text");
+    assert_eq!(input[0].content[0].text, "step 1");
     assert_eq!(input[1].role, "assistant");
-    assert_eq!(input[1].content, "ack 1");
+    assert_eq!(input[1].content[0].kind, "output_text");
+    assert_eq!(input[1].content[0].text, "ack 1");
     assert_eq!(input[2].role, "assistant");
-    assert_eq!(input[2].content, "{\"result\":\"ok\"}");
+    assert_eq!(input[2].content[0].kind, "input_text");
+    assert_eq!(input[2].content[0].text, "{\"result\":\"ok\"}");
     assert_eq!(input[3].role, "user");
-    assert_eq!(input[3].content, "step 2");
+    assert_eq!(input[3].content[0].kind, "input_text");
+    assert_eq!(input[3].content[0].text, "step 2");
 }
 
 #[tokio::test]

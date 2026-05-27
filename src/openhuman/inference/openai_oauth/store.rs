@@ -232,7 +232,10 @@ fn try_refresh_oauth_token(refresh: &str) -> Result<Token, String> {
 
 fn extract_account_id_from_access_token(access_token: &str) -> Option<String> {
     let json = decode_access_token_payload(access_token)?;
-    json.get("sub")
+    json.get("https://api.openai.com/auth")
+        .and_then(|v| v.get("chatgpt_account_id"))
+        .or_else(|| json.get("chatgpt_account_id"))
+        .or_else(|| json.get("sub"))
         .or_else(|| json.get("account_id"))
         .and_then(|v| v.as_str())
         .map(str::to_string)
