@@ -27,6 +27,9 @@ use crate::openhuman::credentials::AuthService;
 use crate::openhuman::inference::provider::compatible::{
     AuthStyle as CompatAuthStyle, OpenAiCompatibleProvider,
 };
+use crate::openhuman::inference::provider::openai_codex::{
+    openai_codex_client_version, resolve_openai_codex_routing, OPENAI_CODEX_ACCOUNT_HEADER,
+};
 use crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider;
 use crate::openhuman::inference::provider::traits::Provider;
 use crate::openhuman::inference::provider::ProviderRuntimeOptions;
@@ -37,7 +40,6 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 /// Prefix for LM Studio-local providers: `"lmstudio:<model>"`.
 pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
-const OPENAI_CODEX_BACKEND_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 /// Sentinel returned when a user has expressed custom/BYOK inference intent
 /// (via a non-openhuman `inference_url`) but no matching `cloud_providers`
 /// entry was found. Passed through `provider_for_role` and caught early in
@@ -785,27 +787,8 @@ fn make_cloud_provider_by_slug(
     );
 
     let key = lookup_key_for_slug(slug, config)?;
-    let openai_oauth_credentials = if slug == "openai" {
-        match crate::openhuman::inference::openai_oauth::lookup_openai_oauth_credentials(config) {
-            Ok(credentials) => credentials,
-            Err(err) if !key.trim().is_empty() => {
-                log::warn!(
-                    "[providers][chat-factory] openai oauth lookup failed; falling back to configured API key: {err}"
-                );
-                None
-            }
-            Err(err) => {
-                return Err(anyhow::anyhow!(
-                    "[chat-factory] openai oauth lookup failed: {err}"
-                ));
-            }
-        }
-    } else {
-        None
-    };
-    let using_openai_oauth = openai_oauth_credentials
-        .as_ref()
-        .is_some_and(|credentials| credentials.access_token == key);
+    let openai_codex_routing = resolve_openai_codex_routing(config, slug, &entry.endpoint, &key)
+        .map_err(anyhow::Error::msg)?;
 
     let unsupported = &config.temperature_unsupported_models;
     match entry.auth_style {
@@ -841,29 +824,28 @@ fn make_cloud_provider_by_slug(
             Ok((p, effective_model))
         }
         AuthStyle::Bearer => {
-            let endpoint = if using_openai_oauth {
-                OPENAI_CODEX_BACKEND_BASE_URL
-            } else {
-                &entry.endpoint
-            };
+            log::info!(
+                "[providers][chat-factory] role={} slug={} codex_oauth={} endpoint_host={} account_id_header={}",
+                role,
+                slug,
+                openai_codex_routing.using_oauth,
+                redact_endpoint(&openai_codex_routing.endpoint),
+                openai_codex_routing.account_id.is_some()
+            );
             let mut provider = OpenAiCompatibleProvider::new(
                 slug,
-                endpoint,
+                &openai_codex_routing.endpoint,
                 (!key.trim().is_empty()).then_some(key.as_str()),
                 CompatAuthStyle::Bearer,
             )
             .with_temperature_unsupported_models(unsupported.to_vec())
             .with_temperature_override(temperature_override);
-            if let Some(account_id) = openai_oauth_credentials
-                .as_ref()
-                .filter(|_| using_openai_oauth)
-                .and_then(|credentials| credentials.account_id.as_deref())
-            {
-                provider = provider.with_extra_header("ChatGPT-Account-ID", account_id);
+            if let Some(account_id) = openai_codex_routing.account_id.as_deref() {
+                provider = provider.with_extra_header(OPENAI_CODEX_ACCOUNT_HEADER, account_id);
             }
-            if using_openai_oauth {
-                provider =
-                    provider.with_extra_query_param("client_version", env!("CARGO_PKG_VERSION"));
+            if openai_codex_routing.using_oauth {
+                provider = provider
+                    .with_extra_query_param("client_version", openai_codex_client_version());
             }
             let p: Box<dyn Provider> = Box::new(provider);
             Ok((p, effective_model))

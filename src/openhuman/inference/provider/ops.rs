@@ -3,8 +3,12 @@ use super::*;
 use serde::Serialize;
 use std::path::PathBuf;
 
+use super::openai_codex::{
+    openai_codex_client_version, resolve_openai_codex_routing, OpenAiCodexRouting,
+    OPENAI_CODEX_ACCOUNT_HEADER,
+};
+
 const MAX_API_ERROR_CHARS: usize = 200;
-const OPENAI_CODEX_BACKEND_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 
 /// Fixed id for the single inference backend (OpenHuman API).
 pub const INFERENCE_BACKEND_ID: &str = "openhuman";
@@ -59,31 +63,26 @@ async fn list_configured_models_from_config(
             .unwrap_or_default();
     let api_key = api_key.trim().to_string();
 
-    let openai_oauth_credentials = if entry.slug == "openai" {
-        crate::openhuman::inference::openai_oauth::lookup_openai_oauth_credentials(config)
-            .unwrap_or_default()
-    } else {
-        None
-    };
-    let using_openai_oauth = openai_oauth_credentials
-        .as_ref()
-        .is_some_and(|credentials| credentials.access_token == api_key);
+    let routing = resolve_openai_codex_routing(config, &entry.slug, &entry.endpoint, &api_key)
+        .unwrap_or_else(|err| {
+            log::warn!(
+                "[providers][list_models] openai codex routing unavailable; continuing with configured endpoint: {err}"
+            );
+            OpenAiCodexRouting::standard(&entry.endpoint)
+        });
 
-    let base = if using_openai_oauth {
-        OPENAI_CODEX_BACKEND_BASE_URL
-    } else {
-        entry.endpoint.trim_end_matches('/')
-    };
-    let mut models_url = format!("{}/models", base);
-    if using_openai_oauth {
+    let mut models_url = format!("{}/models", routing.endpoint);
+    if routing.using_oauth {
         models_url =
             append_query_param(&models_url, "client_version", openai_codex_client_version());
     }
 
     log::debug!(
-        "[providers][list_models] fetching url={} slug={}",
+        "[providers][list_models] fetching url={} slug={} codex_oauth={} account_id_header={}",
         models_url,
-        entry.slug
+        entry.slug,
+        routing.using_oauth,
+        routing.account_id.is_some()
     );
 
     let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
@@ -94,7 +93,7 @@ async fn list_configured_models_from_config(
 
     use crate::openhuman::config::schema::cloud_providers::AuthStyle;
     if is_openrouter_provider(&entry) {
-        validate_openrouter_api_key(&client, base, &api_key).await?;
+        validate_openrouter_api_key(&client, &routing.endpoint, &api_key).await?;
     }
 
     let mut request = client.get(&models_url);
@@ -103,12 +102,8 @@ async fn list_configured_models_from_config(
         AuthStyle::Bearer => {
             if !api_key.is_empty() {
                 let mut r = request.header("Authorization", format!("Bearer {}", api_key));
-                if let Some(account_id) = openai_oauth_credentials
-                    .as_ref()
-                    .filter(|_| using_openai_oauth)
-                    .and_then(|credentials| credentials.account_id.as_deref())
-                {
-                    r = r.header("ChatGPT-Account-ID", account_id);
+                if let Some(account_id) = routing.account_id.as_deref() {
+                    r = r.header(OPENAI_CODEX_ACCOUNT_HEADER, account_id);
                 }
                 r
             } else {
@@ -215,10 +210,6 @@ fn is_openrouter_provider(
         .ok()
         .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
         .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
-}
-
-fn openai_codex_client_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
 }
 
 fn append_query_param(url: &str, key: &str, value: &str) -> String {
