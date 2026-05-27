@@ -73,7 +73,8 @@ concurrency:
 #        │             │
 #        │      publish-release
 #        │             │
-#        │      record-sentry-deploy
+#        │      ├─── publish-homebrew-cask
+#        │      └─── record-sentry-deploy
 #        │
 #        └─── cleanup-failed-release (on failure)
 #
@@ -700,7 +701,41 @@ jobs:
             core.info(`Published release ${releaseId}`);
 
   # =========================================================================
-  # Phase 4b: Promote :latest to the just-published image.
+  # Phase 4b: Publish the macOS Homebrew Cask to the tap repository.
+  # Requires secret: HOMEBREW_TAP_TOKEN (PAT or App token with contents:write
+  # on tinyhumansai/homebrew-openhuman).
+  # =========================================================================
+  publish-homebrew-cask:
+    name: Publish Homebrew Cask
+    runs-on: ubuntu-latest
+    environment: Production
+    needs: [prepare-build, publish-release]
+    if: ${{ inputs.create_release && always() && needs.publish-release.result == 'success' }}
+    steps:
+      - name: Checkout build ref
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare-build.outputs.build_ref }}
+          path: src
+          fetch-depth: 1
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v5
+        with:
+          repository: tinyhumansai/homebrew-openhuman
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Update Homebrew Cask
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash src/scripts/release/update-homebrew-cask.sh \
+            "${{ needs.prepare-build.outputs.tag }}" \
+            src/packages/homebrew-cask/openhuman.rb \
+            tap
+
+  # =========================================================================
+  # Phase 4c: Promote :latest to the just-published image.
   #
   # `build-docker` only pushed the immutable :v<version> / :<version> tags.
   # We delay :latest until publish-release has actually flipped the GitHub

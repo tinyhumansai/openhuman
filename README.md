@@ -66,11 +66,13 @@ Download installers from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhum
 
 These paths verify the artifact through native package signing or your OS package manager's signing chain (signed DMG, signed apt repo, MSI signature).
 
-**macOS:**
+**macOS (Homebrew Cask):**
 
-Download the signed `.dmg` from the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest) or from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme).
+```bash
+brew install --cask tinyhumansai/openhuman/openhuman
+```
 
-> Homebrew support is not currently published. Until a tap is available, use the signed `.dmg` installer instead.
+If the tap has not been published for your release yet, download the signed `.dmg` from the [latest release](https://github.com/tinyhumansai/openhuman/releases/latest) or from [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme).
 
 **Linux (Debian/Ubuntu — signed apt repo):**
 
