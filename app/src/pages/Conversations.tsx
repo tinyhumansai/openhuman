@@ -20,6 +20,7 @@ import {
   ATTACHMENT_MAX_IMAGES,
   ATTACHMENT_MAX_SIZE_BYTES,
   buildMessageWithAttachments,
+  parseMessageImages,
   validateAndReadFile,
 } from '../lib/attachments';
 import { useT } from '../lib/i18n/I18nContext';
@@ -1608,7 +1609,7 @@ const Conversations = ({
                           {(() => {
                             const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
                               ? (msg.extraMetadata.attachmentDataUris as string[])
-                              : [];
+                              : parseMessageImages(msg.content).dataUris;
                             const hasImages = dataUris.length > 0;
                             const showTime = latestVisibleMessage?.id === msg.id;
                             return (
