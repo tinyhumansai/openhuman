@@ -55,6 +55,7 @@ pub struct OpenAiCompatibleProvider {
     supports_responses_fallback: bool,
     user_agent: Option<String>,
     extra_headers: Vec<(String, String)>,
+    extra_query_params: Vec<(String, String)>,
     /// When true, collect all `system` messages and prepend their content
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
@@ -187,6 +188,7 @@ impl OpenAiCompatibleProvider {
             supports_responses_fallback,
             user_agent: user_agent.map(ToString::to_string),
             extra_headers: Vec::new(),
+            extra_query_params: Vec::new(),
             merge_system_into_user,
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
@@ -214,6 +216,20 @@ impl OpenAiCompatibleProvider {
         let value = value.into();
         if !name.trim().is_empty() && !value.trim().is_empty() {
             self.extra_headers
+                .push((name.trim().to_string(), value.trim().to_string()));
+        }
+        self
+    }
+
+    pub fn with_extra_query_param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        let value = value.into();
+        if !name.trim().is_empty() && !value.trim().is_empty() {
+            self.extra_query_params
                 .push((name.trim().to_string(), value.trim().to_string()));
         }
         self
@@ -345,6 +361,7 @@ impl OpenAiCompatibleProvider {
         } else {
             format!("{}/chat/completions", self.base_url)
         };
+        let url = self.apply_extra_query_params(url);
         log::info!(
             "[provider:{}] outbound chat/completions -> {}",
             self.name,
@@ -372,24 +389,54 @@ impl OpenAiCompatibleProvider {
 
     /// Build the full URL for responses API, detecting if base_url already includes the path.
     fn responses_url(&self) -> String {
-        if self.path_ends_with("/responses") {
-            return self.base_url.clone();
-        }
-
-        let normalized_base = self.base_url.trim_end_matches('/');
-
-        // If chat endpoint is explicitly configured, derive sibling responses endpoint.
-        if let Some(prefix) = normalized_base.strip_suffix("/chat/completions") {
-            return format!("{prefix}/responses");
-        }
-
-        // If an explicit API path already exists (e.g. /v1, /openai, /api/coding/v3),
-        // append responses directly to avoid duplicate /v1 segments.
-        if self.has_explicit_api_path() {
-            format!("{normalized_base}/responses")
+        let url = if self.path_ends_with("/responses") {
+            self.base_url.clone()
         } else {
-            format!("{normalized_base}/v1/responses")
+            let normalized_base = self.base_url.trim_end_matches('/');
+
+            // If chat endpoint is explicitly configured, derive sibling responses endpoint.
+            if let Some(prefix) = normalized_base.strip_suffix("/chat/completions") {
+                format!("{prefix}/responses")
+            } else if self.has_explicit_api_path() {
+                // If an explicit API path already exists (e.g. /v1, /openai, /api/coding/v3),
+                // append responses directly to avoid duplicate /v1 segments.
+                format!("{normalized_base}/responses")
+            } else {
+                format!("{normalized_base}/v1/responses")
+            }
+        };
+
+        self.apply_extra_query_params(url)
+    }
+
+    fn apply_extra_query_params(&self, url: String) -> String {
+        if self.extra_query_params.is_empty() {
+            return url;
         }
+
+        if let Ok(mut parsed) = reqwest::Url::parse(&url) {
+            {
+                let mut pairs = parsed.query_pairs_mut();
+                for (name, value) in &self.extra_query_params {
+                    pairs.append_pair(name, value);
+                }
+            }
+            return parsed.to_string();
+        }
+
+        let mut output = url;
+        for (index, (name, value)) in self.extra_query_params.iter().enumerate() {
+            let separator = if output.contains('?') || index > 0 {
+                '&'
+            } else {
+                '?'
+            };
+            output.push(separator);
+            output.push_str(name);
+            output.push('=');
+            output.push_str(value);
+        }
+        output
     }
 
     fn tool_specs_to_openai_format(

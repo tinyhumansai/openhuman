@@ -849,6 +849,10 @@ fn make_cloud_provider_by_slug(
             {
                 provider = provider.with_extra_header("ChatGPT-Account-ID", account_id);
             }
+            if using_openai_oauth {
+                provider =
+                    provider.with_extra_query_param("client_version", env!("CARGO_PKG_VERSION"));
+            }
             let p: Box<dyn Provider> = Box::new(provider);
             Ok((p, effective_model))
         }

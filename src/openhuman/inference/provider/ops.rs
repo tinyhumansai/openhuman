@@ -4,6 +4,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 
 const MAX_API_ERROR_CHARS: usize = 200;
+const OPENAI_CODEX_BACKEND_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 
 /// Fixed id for the single inference backend (OpenHuman API).
 pub const INFERENCE_BACKEND_ID: &str = "openhuman";
@@ -69,11 +70,15 @@ async fn list_configured_models_from_config(
         .is_some_and(|credentials| credentials.access_token == api_key);
 
     let base = if using_openai_oauth {
-        "https://chatgpt.com/backend-api/codex"
+        OPENAI_CODEX_BACKEND_BASE_URL
     } else {
         entry.endpoint.trim_end_matches('/')
     };
-    let models_url = format!("{}/models", base);
+    let mut models_url = format!("{}/models", base);
+    if using_openai_oauth {
+        models_url =
+            append_query_param(&models_url, "client_version", openai_codex_client_version());
+    }
 
     log::debug!(
         "[providers][list_models] fetching url={} slug={}",
@@ -169,39 +174,22 @@ async fn list_configured_models_from_config(
         return Err(format!("provider returned error payload: {}", sanitized));
     }
 
-    // A valid `/models` response has a top-level `data` array (per the
-    // OpenAI API contract). Missing it means the endpoint isn't
-    // `/models`-compatible — the user almost certainly typed the wrong
-    // path. Fail loudly so the AI-panel probe surfaces the mistake.
-    let Some(data) = body.get("data").and_then(|d| d.as_array()).cloned() else {
+    // OpenAI-compatible servers use a top-level `data` array. The ChatGPT
+    // Codex backend uses `models`, with each item keyed by `slug`.
+    let Some(data) = model_items_from_body(&body) else {
         let keys = body
             .as_object()
             .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
             .unwrap_or_else(|| "<non-object>".to_string());
         return Err(format!(
-            "provider response missing `data` array — endpoint is not OpenAI-compatible (got keys: {})",
+            "provider response missing `data` or `models` array — endpoint is not OpenAI-compatible (got keys: {})",
             keys
         ));
     };
 
     let models: Vec<ModelInfo> = data
         .iter()
-        .filter_map(|item| {
-            let id = item.get("id")?.as_str()?.to_string();
-            let owned_by = item
-                .get("owned_by")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let context_window = item
-                .get("context_length")
-                .or_else(|| item.get("context_window"))
-                .and_then(|v| v.as_u64());
-            Some(ModelInfo {
-                id,
-                owned_by,
-                context_window,
-            })
-        })
+        .filter_map(model_info_from_catalog_item)
         .collect();
 
     log::info!(
@@ -227,6 +215,61 @@ fn is_openrouter_provider(
         .ok()
         .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
         .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+}
+
+fn openai_codex_client_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+fn append_query_param(url: &str, key: &str, value: &str) -> String {
+    if let Ok(mut parsed) = reqwest::Url::parse(url) {
+        parsed.query_pairs_mut().append_pair(key, value);
+        return parsed.to_string();
+    }
+
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}{key}={value}")
+}
+
+fn model_items_from_body(body: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    body.get("data")
+        .and_then(|d| d.as_array())
+        .or_else(|| body.get("models").and_then(|d| d.as_array()))
+        .cloned()
+}
+
+fn model_info_from_catalog_item(item: &serde_json::Value) -> Option<ModelInfo> {
+    if let Some(id) = item.as_str().map(str::trim).filter(|id| !id.is_empty()) {
+        return Some(ModelInfo {
+            id: id.to_string(),
+            owned_by: None,
+            context_window: None,
+        });
+    }
+
+    let id = item
+        .get("id")
+        .or_else(|| item.get("slug"))
+        .or_else(|| item.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?
+        .to_string();
+    let owned_by = item
+        .get("owned_by")
+        .or_else(|| item.get("owned_by_organization"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let context_window = item
+        .get("context_length")
+        .or_else(|| item.get("context_window"))
+        .or_else(|| item.get("max_context_window"))
+        .and_then(|v| v.as_u64());
+    Some(ModelInfo {
+        id,
+        owned_by,
+        context_window,
+    })
 }
 
 async fn validate_openrouter_api_key(
@@ -1159,6 +1202,68 @@ mod tests {
             "custom-openai",
             "https://api.openai.com/v1"
         )));
+    }
+
+    #[test]
+    fn openai_codex_models_url_includes_client_version_query() {
+        let url = append_query_param(
+            "https://chatgpt.com/backend-api/codex/models",
+            "client_version",
+            openai_codex_client_version(),
+        );
+        let parsed = reqwest::Url::parse(&url).expect("url");
+
+        assert_eq!(parsed.path(), "/backend-api/codex/models");
+        assert_eq!(
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "client_version")
+                .map(|(_, value)| value.into_owned()),
+            Some(openai_codex_client_version().to_string())
+        );
+    }
+
+    #[test]
+    fn model_catalog_accepts_openai_data_array() {
+        let body = serde_json::json!({
+            "data": [{
+                "id": "gpt-4o",
+                "owned_by": "openai",
+                "context_length": 128000
+            }]
+        });
+        let items = model_items_from_body(&body).expect("data array");
+        let model = model_info_from_catalog_item(&items[0]).expect("model info");
+
+        assert_eq!(model.id, "gpt-4o");
+        assert_eq!(model.owned_by.as_deref(), Some("openai"));
+        assert_eq!(model.context_window, Some(128000));
+    }
+
+    #[test]
+    fn model_catalog_accepts_codex_models_array_with_slug() {
+        let body = serde_json::json!({
+            "models": [{
+                "slug": "gpt-5.5",
+                "display_name": "GPT-5.5",
+                "max_context_window": 272000
+            }]
+        });
+        let items = model_items_from_body(&body).expect("models array");
+        let model = model_info_from_catalog_item(&items[0]).expect("model info");
+
+        assert_eq!(model.id, "gpt-5.5");
+        assert_eq!(model.context_window, Some(272000));
+    }
+
+    #[test]
+    fn model_catalog_accepts_string_models() {
+        let model =
+            model_info_from_catalog_item(&serde_json::json!("gpt-5.5")).expect("string model");
+
+        assert_eq!(model.id, "gpt-5.5");
+        assert_eq!(model.owned_by, None);
+        assert_eq!(model.context_window, None);
     }
 
     #[tokio::test]

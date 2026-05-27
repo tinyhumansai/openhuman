@@ -305,6 +305,37 @@ fn extra_headers_are_applied_with_auth_header() {
 }
 
 #[test]
+fn extra_query_params_are_applied_to_codex_urls() {
+    let p = OpenAiCompatibleProvider::new(
+        "openai",
+        "https://chatgpt.com/backend-api/codex",
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_extra_query_param("client_version", "0.54.17");
+
+    let chat_url = reqwest::Url::parse(&p.chat_completions_url()).unwrap();
+    assert_eq!(chat_url.path(), "/backend-api/codex/chat/completions");
+    assert_eq!(
+        chat_url
+            .query_pairs()
+            .find(|(key, _)| key == "client_version")
+            .map(|(_, value)| value.into_owned()),
+        Some("0.54.17".to_string())
+    );
+
+    let responses_url = reqwest::Url::parse(&p.responses_url()).unwrap();
+    assert_eq!(responses_url.path(), "/backend-api/codex/responses");
+    assert_eq!(
+        responses_url
+            .query_pairs()
+            .find(|(key, _)| key == "client_version")
+            .map(|(_, value)| value.into_owned()),
+        Some("0.54.17".to_string())
+    );
+}
+
+#[test]
 fn blank_required_key_counts_as_missing() {
     let p = OpenAiCompatibleProvider::new(
         "custom",
