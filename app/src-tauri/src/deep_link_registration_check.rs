@@ -56,6 +56,54 @@ impl RegistrationStatus {
     pub(crate) fn is_healthy(&self) -> bool {
         matches!(self, Self::Valid { .. })
     }
+
+    /// Render the status as a single-line string with full filesystem paths
+    /// reduced to just their final component. The `Stale` and `Valid`
+    /// variants carry registry / current-exe paths that on Windows include
+    /// `C:\Users\<username>\AppData\Local\...` for per-user installs — that
+    /// username lands in Sentry / user log lines unless we strip it. We keep
+    /// the basename so the diagnostic still tells the reader *what* exe is
+    /// registered, just not *where*. Used in place of `Debug` at the log
+    /// call site.
+    pub(crate) fn redacted(&self) -> String {
+        match self {
+            Self::Valid { command } => {
+                format!("Valid {{ exe: {} }}", basename_of_first_token(command))
+            }
+            Self::Stale {
+                registered_command,
+                expected_exe,
+            } => format!(
+                "Stale {{ registered_exe: {}, expected_exe: {} }}",
+                basename_of_first_token(registered_command),
+                basename_of_first_token(expected_exe),
+            ),
+            Self::MissingCommand => "MissingCommand".into(),
+            Self::NotRegistered => "NotRegistered".into(),
+            // `ReadError` carries a win32-error string like
+            // "RegOpenKeyExW failed: win32 error 5" — no user paths.
+            Self::ReadError(msg) => format!("ReadError({msg})"),
+        }
+    }
+}
+
+/// Take the first whitespace-delimited token out of `s` (handling quoted
+/// command strings via [`extract_first_token`]) and return only its file
+/// name. Drops the directory component so the log line doesn't leak the
+/// running user's install path.
+///
+/// We scan for `\\` and `/` manually rather than using [`Path::file_name`]
+/// because `std::path::Path` uses **host-OS** separator semantics, so on a
+/// macOS / Linux dev host a Windows-style `"C:\\foo\\bar.exe"` would come
+/// back as a single component and defeat the redaction.
+fn basename_of_first_token(s: &str) -> String {
+    let token = extract_first_token(s);
+    token
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|seg| !seg.is_empty())
+        .unwrap_or("<redacted>")
+        .to_string()
 }
 
 /// Pull the first whitespace-delimited token out of a Windows-style command
@@ -342,6 +390,55 @@ mod tests {
             "\"C:\\OldLocation\\OpenHuman.exe\" \"%1\"",
             &exe
         ));
+    }
+
+    #[test]
+    fn redacted_drops_directory_components_for_stale_paths() {
+        // Reproduce the Sentry-leak case: a Stale status carrying the running
+        // user's home directory must produce a log line that contains the
+        // exe basenames but neither the username nor the parent dirs.
+        let status = RegistrationStatus::Stale {
+            registered_command:
+                "\"C:\\Users\\joe\\AppData\\Local\\OpenHuman\\OpenHuman.exe\" \"%1\"".into(),
+            expected_exe: "C:\\Users\\joe\\AppData\\Local\\OpenHuman_new\\OpenHuman.exe".into(),
+        };
+        let rendered = status.redacted();
+        assert!(
+            rendered.contains("OpenHuman.exe"),
+            "basename should survive redaction: {rendered}"
+        );
+        assert!(
+            !rendered.contains("joe"),
+            "username must not leak: {rendered}"
+        );
+        assert!(
+            !rendered.contains("AppData"),
+            "directory path must not leak: {rendered}"
+        );
+    }
+
+    #[test]
+    fn redacted_preserves_valid_variant_label_and_basename() {
+        let status = RegistrationStatus::Valid {
+            command: "\"C:\\Program Files\\OpenHuman\\OpenHuman.exe\" \"%1\"".into(),
+        };
+        assert_eq!(status.redacted(), "Valid { exe: OpenHuman.exe }");
+    }
+
+    #[test]
+    fn redacted_passes_through_pathless_variants() {
+        assert_eq!(
+            RegistrationStatus::MissingCommand.redacted(),
+            "MissingCommand"
+        );
+        assert_eq!(
+            RegistrationStatus::NotRegistered.redacted(),
+            "NotRegistered"
+        );
+        assert_eq!(
+            RegistrationStatus::ReadError("win32 error 5".into()).redacted(),
+            "ReadError(win32 error 5)"
+        );
     }
 
     #[test]

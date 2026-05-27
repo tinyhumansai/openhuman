@@ -2604,13 +2604,18 @@ pub fn run() {
                 // writing the wrong exe path can brick a working install.
                 let register_err = app.deep_link().register_all().err();
                 let status = deep_link_registration_check::verify_protocol_registration();
+                let status_log = status.redacted();
                 if register_err.is_none() && status.is_healthy() {
-                    log::info!("[deep-link] openhuman:// scheme registered ({status:?})");
+                    log::info!("[deep-link] openhuman:// scheme registered ({status_log})");
                 } else {
+                    // Use the redacted form so per-user install paths
+                    // (`C:\Users\<username>\...`) do not land in Sentry / user
+                    // logs — basenames are kept so the diagnostic still
+                    // identifies the registered exe.
                     log::error!(
                         "[deep-link] openhuman:// scheme registration unhealthy — \
                          OAuth callbacks may never reach the app. \
-                         register_all_error={register_err:?}, hkcu_status={status:?}. \
+                         register_all_error={register_err:?}, hkcu_status={status_log}. \
                          See gitbooks/overview/troubleshooting-sign-in.md \
                          (\"Windows: openhuman:// handler not registered\") for the manual repair."
                     );
