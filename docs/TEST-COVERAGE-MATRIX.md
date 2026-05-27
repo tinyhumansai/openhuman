@@ -419,7 +419,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.4 | MCP server (stdio + HTTP)  | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Stdio framing plus Streamable HTTP/SSE session lifecycle; `McpHttpClient` round-trip tests |
 | 11.1.5 | Global tool registry       | RI    | `src/openhuman/tool_registry/`, `tests/json_rpc_e2e.rs`                                                             | ✅     | Read-only MCP/controller discovery with routes, schemas, version, allowed agents, and health |
 | 11.1.6 | SearXNG MCP search         | RU    | `src/openhuman/integrations/searxng.rs`, `src/openhuman/mcp_server/tools.rs`, `src/openhuman/tools/schemas.rs`      | ✅     | Self-hosted search config, normalized results, MCP argument validation, and mocked HTTP execution |
-| 11.1.7 | Bundled prompt resources   | RU    | `src/openhuman/mcp_server/resources.rs`, `src/openhuman/mcp_server/protocol.rs`                                     | ✅     | `resources/list` catalog + `resources/read` happy path, -32002 unknown URI, -32602 missing param, catalog-mirrors-BUILTINS parity test |
+| 11.1.7 | MCP resources (`resources/list` + `resources/read`) | RU    | `src/openhuman/mcp_server/resources.rs`, `src/openhuman/mcp_server/protocol.rs`                                     | ✅     | Static catalog exposing core identity files + per-subagent `prompt.md` as `text/markdown` resources; protocol tests cover list/read happy paths and unknown-URI / missing-`uri`-field rejections |
 
 ### 11.2 Insights Dashboard
 
@@ -504,11 +504,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 69                                               |
+| ✅ Covered       | 70                                               |
 | 🟡 Partial       | 27                                               |
 | ❌ Missing       | 26                                               |
 | 🚫 Manual smoke  | 11                                               |
-| **Total leaves** | **134 explicit + nested = 205 product features** |
+| **Total leaves** | **135 explicit + nested = 206 product features** |
 
 PR-A delta: 13 leaves moved from ❌ → ✅ via 5 WDIO specs + 2 Vitest + 1 Rust integration test.
 Remaining gaps tracked under sub-issues #965 (process), #966 (docs), #967 (tools), #968 (auth/perm), #969 (settings), #970 (rewards), #971 (manual smoke).

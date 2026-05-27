@@ -78,39 +78,25 @@ OPENHUMAN_SEARXNG_TIMEOUT_SECONDS=10
 
 ## Resources
 
-The MCP server exposes the bundled prompt assets as static resources. Clients
-that support `resources/list` and `resources/read` can inspect the full agent
-personality and subagent prompt templates without executing any tool calls.
+The MCP server also exposes a small, static **resources** surface so MCP
+clients can attach OpenHuman's bundled prompt assets as conversation
+context. The catalog is `include_str!`-bundled at compile time — there is
+no async I/O at request time, no permission gating beyond the existing
+read-only session, and no `subscribe` / `listChanged` notifications (the
+catalog cannot change without rebuilding the binary).
 
-### Capability advertisement
-
-The `initialize` response includes:
-
-```json
-{
-  "capabilities": {
-    "tools": {},
-    "resources": { "subscribe": false, "listChanged": false }
-  }
-}
-```
-
-### URI scheme
-
-| URI | Content |
+| URI | Purpose |
 | --- | --- |
-| `openhuman://prompts/identity` | `IDENTITY.md` — core agent identity |
-| `openhuman://prompts/soul` | `SOUL.md` — core agent personality and values |
-| `openhuman://prompts/user` | `USER.md` — user-profile context |
-| `openhuman://prompts/agents/<id>` | `<id>/prompt.md` for each of the 18 built-in subagents |
+| `openhuman://core/identity` | Top-level identity scaffold shared by every OpenHuman subagent (`src/openhuman/agent/prompts/IDENTITY.md`). |
+| `openhuman://core/soul` | Voice, tone, and behavioural posture shared by every OpenHuman subagent (`src/openhuman/agent/prompts/SOUL.md`). |
+| `openhuman://core/user` | Default user-message envelope shared by every OpenHuman subagent (`src/openhuman/agent/prompts/USER.md`). |
+| `openhuman://agents/<id>/prompt` | Static prompt body for the named built-in subagent (`src/openhuman/agent/agents/<id>/prompt.md`). One entry per `BUILTINS` row in `src/openhuman/agent/agents/loader.rs`. |
 
-All resources have `mimeType: "text/markdown"`.
-
-### Catalog parity
-
-A unit test (`catalog_mirrors_builtins`) cross-references the resource catalog
-against the `BUILTINS` slice in `loader.rs`. Adding a new built-in subagent
-without a matching catalog entry fails CI.
+`resources/list` returns one entry per URI with `name`, `title`,
+`description`, and `mimeType` (`text/markdown` for every bundled asset).
+`resources/read` takes `{ "uri": "openhuman://…" }` and returns the
+markdown body under `contents[0].text`. Requests for unknown URIs are
+rejected with JSON-RPC error code `-32002` (resource not found).
 
 ### Smoke test
 
@@ -119,7 +105,7 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"openhuman://core/identity"}}' \
   | openhuman-core mcp
 ```
 
@@ -145,15 +131,22 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  '{"jsonrpc":"2.0","id":3,"method":"resources/list"}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"openhuman://core/identity"}}' \
   | openhuman-core mcp
 ```
 
-The response should include `capabilities.tools` from `initialize` and the
-curated tool names from `tools/list`. A successful run writes exactly two compact
-JSON response lines to stdout; the `notifications/initialized` message is a
-notification and has no response.
+The response should include `capabilities.tools` **and**
+`capabilities.resources` from `initialize`, the curated tool names from
+`tools/list`, the bundled prompt URIs from `resources/list`, and the
+markdown body of `IDENTITY.md` under `resources/read`. A successful run
+writes exactly four compact JSON response lines to stdout; the
+`notifications/initialized` message is a notification and has no
+response.
 
 ```text
 {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
 {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.search",...},{"name":"memory.recall",...},{"name":"tree.read_chunk",...},{"name":"tree.browse",...},{"name":"tree.top_entities",...},{"name":"tree.list_sources",...}]}}
+{"jsonrpc":"2.0","id":3,"result":{"resources":[{"uri":"openhuman://core/identity",...},{"uri":"openhuman://core/soul",...},...]}}
+{"jsonrpc":"2.0","id":4,"result":{"contents":[{"uri":"openhuman://core/identity","mimeType":"text/markdown","text":"..."}]}}
 ```
