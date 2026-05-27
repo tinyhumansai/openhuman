@@ -78,6 +78,20 @@ function App() {
 
 /** Inner shell — lives inside the Router so it can use useLocation. */
 function AppShell() {
+  const { storeSessionToken } = useCoreState();
+
+  // Listen for core-state:session-token-updated event from deep-link login, and update context
+  useEffect(() => {
+    const handler = (event) => {
+      const sessionToken = event.detail?.sessionToken;
+      if (sessionToken) {
+        storeSessionToken(sessionToken);
+      }
+    };
+    window.addEventListener('core-state:session-token-updated', handler);
+    return () => window.removeEventListener('core-state:session-token-updated', handler);
+  }, [storeSessionToken]);
+
   const location = useLocation();
   const navigate = useNavigate();
   const { snapshot, isBootstrapping } = useCoreState();
