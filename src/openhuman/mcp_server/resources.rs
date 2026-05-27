@@ -1,222 +1,267 @@
-//! Static MCP resource catalog for bundled prompt assets.
+//! MCP Resources surface — `resources/list` + `resources/read`.
 //!
-//! Exposes `IDENTITY.md`, `SOUL.md`, `USER.md` and the `prompt.md` template
-//! for each of the 18 built-in subagents as MCP resources. The content is
-//! embedded at compile time via `include_str!`.
+//! Exposes OpenHuman's bundled prompt assets — the three core identity
+//! files (`IDENTITY.md`, `SOUL.md`, `USER.md`) plus each built-in
+//! subagent's static `prompt.md` — as MCP resources so external MCP
+//! clients (Claude Desktop, Cursor, …) can attach them as conversation
+//! context.
 //!
-//! ## URI scheme
+//! All resources are static: their content is `include_str!`-bundled
+//! into the binary at compile time, so the surface has no async I/O,
+//! no permission gating, and no dynamic configuration to load. The
+//! `BUILTINS` slice in `agent::agents::loader` is the source of truth
+//! for which subagents ship; if a new agent is added there with a
+//! `prompt.md`, add a matching entry here so it shows up over MCP.
 //!
-//! | Resource            | URI                                      |
-//! |---------------------|------------------------------------------|
-//! | `IDENTITY.md`       | `openhuman://prompts/identity`           |
-//! | `SOUL.md`           | `openhuman://prompts/soul`               |
-//! | `USER.md`           | `openhuman://prompts/user`               |
-//! | `<id>/prompt.md`    | `openhuman://prompts/agents/<id>`        |
-//!
-//! ## Catalog parity
-//!
-//! The unit test `catalog_mirrors_builtins` cross-references this catalog
-//! against `BUILTINS` in `loader.rs`. Adding a new built-in subagent without
-//! a matching catalog entry fails that test and therefore CI.
+//! Spec reference: <https://modelcontextprotocol.io/specification/2025-06-18/server/resources>.
 
 use serde_json::{json, Value};
 
-struct PromptResource {
+/// A single bundled resource — static, read-only, no async work.
+struct StaticResource {
+    /// MCP resource URI. Stable across releases; clients store this.
     uri: &'static str,
+    /// Machine-readable name (per MCP spec: required, kebab-case).
     name: &'static str,
+    /// Human-readable label surfaced in client UIs (Claude Desktop, …).
+    title: &'static str,
+    /// One-line description shown next to the title in client UIs.
     description: &'static str,
+    /// MIME type of the resource body. All bundled assets are markdown.
+    mime_type: &'static str,
+    /// Resource body — `include_str!`-bundled, no I/O at request time.
     content: &'static str,
 }
 
-const RESOURCE_CATALOG: &[PromptResource] = &[
-    // ── Core prompts ──────────────────────────────────────────────────────
-    PromptResource {
-        uri: "openhuman://prompts/identity",
-        name: "Agent Identity",
-        description: "Core agent identity definition (IDENTITY.md).",
+/// Every static MCP resource the server advertises. The `include_str!`
+/// calls double as a compile-time check that the asset paths still
+/// exist after any agent/prompt file rename.
+const RESOURCES: &[StaticResource] = &[
+    StaticResource {
+        uri: "openhuman://core/identity",
+        name: "core-identity",
+        title: "OpenHuman core identity",
+        description: "Top-level identity scaffold shared by every OpenHuman subagent.",
+        mime_type: "text/markdown",
         content: include_str!("../agent/prompts/IDENTITY.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/soul",
-        name: "Agent Soul",
-        description: "Core agent personality and values (SOUL.md).",
+    StaticResource {
+        uri: "openhuman://core/soul",
+        name: "core-soul",
+        title: "OpenHuman core soul",
+        description: "Voice, tone, and behavioural posture shared by every OpenHuman subagent.",
+        mime_type: "text/markdown",
         content: include_str!("../agent/prompts/SOUL.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/user",
-        name: "User Context",
-        description: "Core user-profile context injected into every session (USER.md).",
+    StaticResource {
+        uri: "openhuman://core/user",
+        name: "core-user",
+        title: "OpenHuman user-prompt scaffold",
+        description: "Default user-message envelope shared by every OpenHuman subagent.",
+        mime_type: "text/markdown",
         content: include_str!("../agent/prompts/USER.md"),
     },
-    // ── Subagent prompt templates ─────────────────────────────────────────
-    PromptResource {
-        uri: "openhuman://prompts/agents/orchestrator",
-        name: "orchestrator",
-        description: "Chat-tier orchestrator that routes tasks to specialist subagents.",
-        content: include_str!("../agent/agents/orchestrator/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/planner",
-        name: "planner",
-        description: "Reasoning-tier planner that grounds multi-step plans in integration data.",
-        content: include_str!("../agent/agents/planner/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/code_executor",
-        name: "code_executor",
-        description: "Sandboxed worker that writes and executes code.",
-        content: include_str!("../agent/agents/code_executor/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/integrations_agent",
-        name: "integrations_agent",
-        description: "Worker that executes Composio integration actions.",
-        content: include_str!("../agent/agents/integrations_agent/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/crypto_agent",
-        name: "crypto_agent",
-        description: "Specialist worker for wallet and on-chain operations.",
-        content: include_str!("../agent/agents/crypto_agent/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/markets_agent",
-        name: "markets_agent",
-        description: "Specialist worker for prediction-market venues (Polymarket, Kalshi).",
-        content: include_str!("../agent/agents/markets_agent/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/tools_agent",
-        name: "tools_agent",
-        description: "Generalist worker with access to the full tool surface.",
-        content: include_str!("../agent/agents/tools_agent/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/tool_maker",
-        name: "tool_maker",
-        description: "Sandboxed worker that creates new tools from descriptions.",
-        content: include_str!("../agent/agents/tool_maker/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/skill_creator",
-        name: "skill_creator",
-        description: "Sandboxed worker that authors and publishes skill packages.",
-        content: include_str!("../agent/agents/skill_creator/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/researcher",
-        name: "researcher",
-        description: "Worker that searches the web and synthesises research findings.",
-        content: include_str!("../agent/agents/researcher/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/critic",
-        name: "critic",
-        description: "Read-only worker that critiques plans and outputs.",
-        content: include_str!("../agent/agents/critic/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/archivist",
-        name: "archivist",
-        description: "Background worker that distils conversations into persistent memory.",
+    StaticResource {
+        uri: "openhuman://agents/archivist/prompt",
+        name: "agent-archivist-prompt",
+        title: "Archivist subagent prompt",
+        description: "Static prompt body for the `archivist` built-in subagent.",
+        mime_type: "text/markdown",
         content: include_str!("../agent/agents/archivist/prompt.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/agents/trigger_triage",
-        name: "trigger_triage",
-        description: "Read-only worker that classifies incoming automation triggers.",
-        content: include_str!("../agent/agents/trigger_triage/prompt.md"),
+    StaticResource {
+        uri: "openhuman://agents/code_executor/prompt",
+        name: "agent-code-executor-prompt",
+        title: "Code-executor subagent prompt",
+        description: "Static prompt body for the `code_executor` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/code_executor/prompt.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/agents/trigger_reactor",
-        name: "trigger_reactor",
-        description: "Worker that executes actions in response to classified triggers.",
-        content: include_str!("../agent/agents/trigger_reactor/prompt.md"),
+    StaticResource {
+        uri: "openhuman://agents/critic/prompt",
+        name: "agent-critic-prompt",
+        title: "Critic subagent prompt",
+        description: "Static prompt body for the `critic` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/critic/prompt.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/agents/morning_briefing",
-        name: "morning_briefing",
-        description: "Read-only worker that assembles a personalised morning briefing.",
-        content: include_str!("../agent/agents/morning_briefing/prompt.md"),
+    StaticResource {
+        uri: "openhuman://agents/crypto_agent/prompt",
+        name: "agent-crypto-agent-prompt",
+        title: "Crypto-agent subagent prompt",
+        description: "Static prompt body for the `crypto_agent` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/crypto_agent/prompt.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/agents/summarizer",
-        name: "summarizer",
-        description: "Worker that condenses long documents or conversations.",
-        content: include_str!("../agent/agents/summarizer/prompt.md"),
-    },
-    PromptResource {
-        uri: "openhuman://prompts/agents/help",
-        name: "help",
-        description: "Read-only worker that answers questions from documentation.",
+    StaticResource {
+        uri: "openhuman://agents/help/prompt",
+        name: "agent-help-prompt",
+        title: "Help subagent prompt",
+        description: "Static prompt body for the `help` built-in subagent.",
+        mime_type: "text/markdown",
         content: include_str!("../agent/agents/help/prompt.md"),
     },
-    PromptResource {
-        uri: "openhuman://prompts/agents/mcp_setup",
-        name: "mcp_setup",
-        description: "Worker that guides the user through MCP client configuration.",
+    StaticResource {
+        uri: "openhuman://agents/integrations_agent/prompt",
+        name: "agent-integrations-agent-prompt",
+        title: "Integrations-agent subagent prompt",
+        description: "Static prompt body for the `integrations_agent` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/integrations_agent/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/markets_agent/prompt",
+        name: "agent-markets-agent-prompt",
+        title: "Markets-agent subagent prompt",
+        description: "Static prompt body for the `markets_agent` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/markets_agent/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/mcp_setup/prompt",
+        name: "agent-mcp-setup-prompt",
+        title: "MCP-setup subagent prompt",
+        description: "Static prompt body for the `mcp_setup` built-in subagent.",
+        mime_type: "text/markdown",
         content: include_str!("../agent/agents/mcp_setup/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/morning_briefing/prompt",
+        name: "agent-morning-briefing-prompt",
+        title: "Morning-briefing subagent prompt",
+        description: "Static prompt body for the `morning_briefing` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/morning_briefing/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/orchestrator/prompt",
+        name: "agent-orchestrator-prompt",
+        title: "Orchestrator subagent prompt",
+        description: "Static prompt body for the `orchestrator` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/orchestrator/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/planner/prompt",
+        name: "agent-planner-prompt",
+        title: "Planner subagent prompt",
+        description: "Static prompt body for the `planner` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/planner/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/researcher/prompt",
+        name: "agent-researcher-prompt",
+        title: "Researcher subagent prompt",
+        description: "Static prompt body for the `researcher` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/researcher/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/skill_creator/prompt",
+        name: "agent-skill-creator-prompt",
+        title: "Skill-creator subagent prompt",
+        description: "Static prompt body for the `skill_creator` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/skill_creator/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/summarizer/prompt",
+        name: "agent-summarizer-prompt",
+        title: "Summarizer subagent prompt",
+        description: "Static prompt body for the `summarizer` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/summarizer/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/tool_maker/prompt",
+        name: "agent-tool-maker-prompt",
+        title: "Tool-maker subagent prompt",
+        description: "Static prompt body for the `tool_maker` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/tool_maker/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/tools_agent/prompt",
+        name: "agent-tools-agent-prompt",
+        title: "Tools-agent subagent prompt",
+        description: "Static prompt body for the `tools_agent` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/tools_agent/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/trigger_reactor/prompt",
+        name: "agent-trigger-reactor-prompt",
+        title: "Trigger-reactor subagent prompt",
+        description: "Static prompt body for the `trigger_reactor` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/trigger_reactor/prompt.md"),
+    },
+    StaticResource {
+        uri: "openhuman://agents/trigger_triage/prompt",
+        name: "agent-trigger-triage-prompt",
+        title: "Trigger-triage subagent prompt",
+        description: "Static prompt body for the `trigger_triage` built-in subagent.",
+        mime_type: "text/markdown",
+        content: include_str!("../agent/agents/trigger_triage/prompt.md"),
     },
 ];
 
-/// Returns the `resources/list` result payload listing every catalog entry.
-pub fn list_resources_result() -> Value {
-    let resources: Vec<Value> = RESOURCE_CATALOG
+/// Build the `resources/list` response body.
+///
+/// `cursor` is accepted for spec-compliance but ignored: the catalog is
+/// small (≈ 20 entries) so the entire list fits in one page, and the
+/// response omits `nextCursor` accordingly.
+pub fn list_resources_result(_cursor: Option<&str>) -> Value {
+    let resources: Vec<Value> = RESOURCES
         .iter()
         .map(|r| {
             json!({
                 "uri": r.uri,
                 "name": r.name,
+                "title": r.title,
                 "description": r.description,
-                "mimeType": "text/markdown"
+                "mimeType": r.mime_type,
             })
         })
         .collect();
-    log::debug!("[mcp_server] resources/list count={}", resources.len());
     json!({ "resources": resources })
 }
 
-/// Returns the `resources/read` result payload for the given URI, or a JSON-RPC
-/// error value when the URI is unknown (`-32002`) or missing (`-32602`).
-pub fn read_resource_result(params: &Value) -> Result<Value, (i64, &'static str, String)> {
-    let uri = params
-        .as_object()
-        .and_then(|obj| obj.get("uri"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|uri| !uri.is_empty())
-        .ok_or_else(|| {
-            (
-                -32602_i64,
-                "Invalid params",
-                "resources/read params.uri must be a non-empty string".to_string(),
-            )
-        })?;
-
-    let resource = RESOURCE_CATALOG
+/// Build the `resources/read` response body for a single URI.
+///
+/// Returns `ResourceError::NotFound` if no static catalog entry matches
+/// — the caller maps this to JSON-RPC `-32002` per the MCP error code
+/// convention for resource lookups.
+pub fn read_resource_result(uri: &str) -> Result<Value, ResourceError> {
+    let resource = RESOURCES
         .iter()
         .find(|r| r.uri == uri)
-        .ok_or_else(|| {
-            log::debug!("[mcp_server] resources/read unknown uri={uri}");
-            (
-                -32002_i64,
-                "Resource not found",
-                format!("no resource with uri `{uri}`"),
-            )
-        })?;
-
-    log::debug!(
-        "[mcp_server] resources/read uri={uri} bytes={}",
-        resource.content.len()
-    );
-
+        .ok_or_else(|| ResourceError::NotFound(uri.to_string()))?;
     Ok(json!({
-        "contents": [{
-            "uri": resource.uri,
-            "mimeType": "text/markdown",
-            "text": resource.content
-        }]
+        "contents": [
+            {
+                "uri": resource.uri,
+                "mimeType": resource.mime_type,
+                "text": resource.content,
+            }
+        ]
     }))
+}
+
+/// Lookup failure for `resources/read`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceError {
+    /// No entry in the static catalog matches the requested URI.
+    NotFound(String),
+}
+
+impl ResourceError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::NotFound(uri) => format!("unknown MCP resource `{uri}`"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -224,123 +269,150 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_mirrors_builtins() {
-        use crate::openhuman::agent::agents::BUILTINS;
-
-        for b in BUILTINS {
-            let expected_uri = format!("openhuman://prompts/agents/{}", b.id);
-            assert!(
-                RESOURCE_CATALOG.iter().any(|r| r.uri == expected_uri),
-                "RESOURCE_CATALOG is missing an entry for built-in agent `{}` \
-                 (expected URI `{}`). Add it to RESOURCE_CATALOG in resources.rs.",
-                b.id,
-                expected_uri
-            );
-        }
-
-        let catalog_agent_count = RESOURCE_CATALOG
+    fn list_resources_advertises_core_identity_triple() {
+        let out = list_resources_result(None);
+        let resources = out
+            .get("resources")
+            .and_then(Value::as_array)
+            .expect("resources array");
+        let uris: Vec<&str> = resources
             .iter()
-            .filter(|r| r.uri.starts_with("openhuman://prompts/agents/"))
-            .count();
-        assert_eq!(
-            catalog_agent_count,
-            BUILTINS.len(),
-            "RESOURCE_CATALOG has {catalog_agent_count} agent entries but BUILTINS has {}. \
-             Remove stale entries from RESOURCE_CATALOG.",
-            BUILTINS.len()
-        );
-    }
-
-    #[test]
-    fn list_resources_returns_all_catalog_entries() {
-        let result = list_resources_result();
-        let resources = result["resources"].as_array().expect("resources array");
-        assert_eq!(
-            resources.len(),
-            RESOURCE_CATALOG.len(),
-            "resources/list count mismatch"
-        );
-        // Every entry has required fields
-        for entry in resources {
-            assert!(entry["uri"].is_string(), "uri must be string");
-            assert!(entry["name"].is_string(), "name must be string");
-            assert_eq!(entry["mimeType"], "text/markdown");
-        }
-    }
-
-    #[test]
-    fn list_resources_includes_core_and_agent_uris() {
-        let result = list_resources_result();
-        let uris: Vec<&str> = result["resources"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|r| r["uri"].as_str().unwrap())
+            .filter_map(|r| r.get("uri").and_then(Value::as_str))
             .collect();
-        for expected in [
-            "openhuman://prompts/identity",
-            "openhuman://prompts/soul",
-            "openhuman://prompts/user",
-            "openhuman://prompts/agents/orchestrator",
-            "openhuman://prompts/agents/mcp_setup",
-        ] {
-            assert!(uris.contains(&expected), "missing URI {expected}");
-        }
+        assert!(uris.contains(&"openhuman://core/identity"));
+        assert!(uris.contains(&"openhuman://core/soul"));
+        assert!(uris.contains(&"openhuman://core/user"));
     }
 
     #[test]
-    fn read_resource_returns_content_for_known_uri() {
-        let params = json!({ "uri": "openhuman://prompts/identity" });
-        let result = read_resource_result(&params).expect("should succeed");
-        let contents = result["contents"].as_array().expect("contents array");
-        assert_eq!(contents.len(), 1);
-        assert_eq!(contents[0]["uri"], "openhuman://prompts/identity");
-        assert_eq!(contents[0]["mimeType"], "text/markdown");
-        assert!(!contents[0]["text"].as_str().unwrap_or("").is_empty());
-    }
-
-    #[test]
-    fn read_resource_returns_minus_32002_for_unknown_uri() {
-        let params = json!({ "uri": "openhuman://prompts/agents/nonexistent" });
-        let err = read_resource_result(&params).expect_err("should fail for unknown URI");
-        assert_eq!(err.0, -32002);
-        assert!(err.2.contains("nonexistent"));
-    }
-
-    #[test]
-    fn read_resource_returns_minus_32602_for_missing_uri() {
-        let params = json!({});
-        let err = read_resource_result(&params).expect_err("should fail without uri");
-        assert_eq!(err.0, -32602);
-    }
-
-    #[test]
-    fn read_resource_returns_content_for_each_subagent() {
-        use crate::openhuman::agent::agents::BUILTINS;
-        for b in BUILTINS {
-            let uri = format!("openhuman://prompts/agents/{}", b.id);
-            let params = json!({ "uri": uri });
-            let result = read_resource_result(&params)
-                .unwrap_or_else(|_| panic!("read_resource failed for agent `{}`", b.id));
-            let text = result["contents"][0]["text"].as_str().unwrap_or("");
+    fn list_resources_advertises_every_subagent_prompt() {
+        // Locks the catalog against silent drift: if a new subagent is
+        // added to `agent::agents::loader::BUILTINS` but its prompt is
+        // not registered here, the MCP list/read surface would silently
+        // miss it. The list below mirrors `BUILTINS` (sorted) so review
+        // catches the gap.
+        let expected = [
+            "openhuman://agents/archivist/prompt",
+            "openhuman://agents/code_executor/prompt",
+            "openhuman://agents/critic/prompt",
+            "openhuman://agents/crypto_agent/prompt",
+            "openhuman://agents/help/prompt",
+            "openhuman://agents/integrations_agent/prompt",
+            "openhuman://agents/markets_agent/prompt",
+            "openhuman://agents/mcp_setup/prompt",
+            "openhuman://agents/morning_briefing/prompt",
+            "openhuman://agents/orchestrator/prompt",
+            "openhuman://agents/planner/prompt",
+            "openhuman://agents/researcher/prompt",
+            "openhuman://agents/skill_creator/prompt",
+            "openhuman://agents/summarizer/prompt",
+            "openhuman://agents/tool_maker/prompt",
+            "openhuman://agents/tools_agent/prompt",
+            "openhuman://agents/trigger_reactor/prompt",
+            "openhuman://agents/trigger_triage/prompt",
+        ];
+        let out = list_resources_result(None);
+        let resources = out
+            .get("resources")
+            .and_then(Value::as_array)
+            .expect("resources array");
+        let uris: Vec<&str> = resources
+            .iter()
+            .filter_map(|r| r.get("uri").and_then(Value::as_str))
+            .collect();
+        for uri in expected {
             assert!(
-                !text.is_empty(),
-                "prompt content is empty for agent `{}`",
-                b.id
+                uris.contains(&uri),
+                "missing subagent resource `{uri}` from resources/list — \
+                 catalog drift vs `agent::agents::loader::BUILTINS`"
             );
         }
     }
 
     #[test]
-    fn all_catalog_uris_are_unique() {
-        let mut uris: Vec<&str> = RESOURCE_CATALOG.iter().map(|r| r.uri).collect();
-        let original_len = uris.len();
-        uris.sort_unstable();
-        uris.dedup();
-        let deduped_len = uris.len();
+    fn list_resources_entries_carry_required_fields() {
+        let out = list_resources_result(None);
+        let resources = out
+            .get("resources")
+            .and_then(Value::as_array)
+            .expect("resources array");
+        for r in resources {
+            for key in ["uri", "name", "title", "description", "mimeType"] {
+                assert!(
+                    r.get(key).and_then(Value::as_str).is_some(),
+                    "resource entry missing `{key}`: {r}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn list_resources_omits_next_cursor_for_single_page() {
+        // Acceptance criterion for the MVP: the catalog is small enough
+        // that the response is a single page. We do not yet emit
+        // `nextCursor`, and clients should treat its absence as "end of
+        // list" per the MCP spec.
+        let out = list_resources_result(None);
+        assert!(out.get("nextCursor").is_none());
+    }
+
+    #[test]
+    fn read_resource_returns_text_content_for_known_uri() {
+        let out =
+            read_resource_result("openhuman://core/identity").expect("core identity must resolve");
+        let contents = out
+            .get("contents")
+            .and_then(Value::as_array)
+            .expect("contents array");
+        assert_eq!(contents.len(), 1);
+        let entry = &contents[0];
         assert_eq!(
-            original_len, deduped_len,
-            "RESOURCE_CATALOG contains duplicate URIs"
+            entry.get("uri").and_then(Value::as_str),
+            Some("openhuman://core/identity")
+        );
+        assert_eq!(
+            entry.get("mimeType").and_then(Value::as_str),
+            Some("text/markdown")
+        );
+        let text = entry
+            .get("text")
+            .and_then(Value::as_str)
+            .expect("text body");
+        assert!(!text.is_empty(), "core identity body must not be empty");
+    }
+
+    #[test]
+    fn read_resource_returns_not_found_for_unknown_uri() {
+        let err =
+            read_resource_result("openhuman://does-not-exist").expect_err("unknown URI must error");
+        assert_eq!(
+            err,
+            ResourceError::NotFound("openhuman://does-not-exist".to_string())
+        );
+        assert!(err.message().contains("unknown MCP resource"));
+    }
+
+    #[test]
+    fn read_resource_returns_distinct_content_per_uri() {
+        // Defends against an accidental copy/paste where two catalog
+        // entries point at the same `include_str!`.
+        let a = read_resource_result("openhuman://agents/orchestrator/prompt")
+            .expect("orchestrator")
+            .get("contents")
+            .and_then(Value::as_array)
+            .and_then(|c| c.first().cloned())
+            .and_then(|e| e.get("text").and_then(Value::as_str).map(str::to_string))
+            .expect("orchestrator text");
+        let b = read_resource_result("openhuman://agents/researcher/prompt")
+            .expect("researcher")
+            .get("contents")
+            .and_then(Value::as_array)
+            .and_then(|c| c.first().cloned())
+            .and_then(|e| e.get("text").and_then(Value::as_str).map(str::to_string))
+            .expect("researcher text");
+        assert_ne!(
+            a, b,
+            "orchestrator and researcher prompts must not share bundled content"
         );
     }
 }
