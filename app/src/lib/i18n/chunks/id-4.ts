@@ -326,6 +326,10 @@ const id4: TranslationMap = {
   'settings.ai.unsavedChanges': 'perubahan belum disimpan',
   'settings.ai.workloadGroupBackground': 'Grup beban kerja latar',
   'settings.ai.workloadGroupChat': 'Grup beban kerja chat',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'Terima saran',
   'settings.autocomplete.appFilter.contextOverride': 'Penggantian Konteks (opsional)',
   'settings.autocomplete.appFilter.debugFocus': 'Debug fokus',

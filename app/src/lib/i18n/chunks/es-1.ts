@@ -660,6 +660,10 @@ const es1: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'El punto final debe comenzar con http:// o https://.',
   'settings.ai.connectProviderDialog': 'Conectar {label}',
   'settings.ai.or': 'O',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.ai.openRouterOauthDescription':
     'Sign in with OpenRouter and import a user-controlled API key using PKCE.',
   'settings.ai.connecting': 'Conectando...',

@@ -602,6 +602,10 @@ const ar1: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'يجب أن تبدأ نقطة النهاية بـ http:// أو https://.',
   'settings.ai.connectProviderDialog': 'الاتصال {label}',
   'settings.ai.or': 'أو',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.ai.openRouterOauthDescription':
     'Sign in with OpenRouter and import a user-controlled API key using PKCE.',
   'settings.ai.connecting': 'جارٍ الاتصال...',

@@ -11,17 +11,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AISettings,
   clearCloudProviderKey,
+  completeOpenAiCodexOAuth,
   flushCloudProviders,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   localProvider,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   parseProviderString,
   type ProviderRef,
   saveAISettings,
   serializeProviderRef,
   setCloudProviderKey,
   setLocalRuntimeEnabled,
+  startOpenAiCodexOAuth,
   testProviderModel,
 } from '../aiSettingsApi';
 
@@ -696,6 +700,28 @@ describe('clearCloudProviderKey', () => {
   it('is a no-op for "openhuman" (session-managed, no key to clear)', async () => {
     await clearCloudProviderKey('openhuman');
     expect(mockAuthRemoveProviderCredentials).not.toHaveBeenCalled();
+  });
+});
+
+// ─── OpenAI Codex OAuth helpers ──────────────────────────────────────────────
+
+describe('OpenAI Codex OAuth helpers', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('throws a stable code when OAuth start returns no authorization URL', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await expect(startOpenAiCodexOAuth()).rejects.toThrow(OPENAI_CODEX_OAUTH_MISSING_AUTH_URL);
+  });
+
+  it('throws a stable code when OAuth completion is missing the callback URL', async () => {
+    await expect(completeOpenAiCodexOAuth('  ')).rejects.toThrow(
+      OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL
+    );
+
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
   });
 });
 

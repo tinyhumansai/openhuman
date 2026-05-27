@@ -332,6 +332,10 @@ const de4: TranslationMap = {
   'settings.ai.unsavedChanges': 'nicht gespeicherte Änderungen',
   'settings.ai.workloadGroupBackground': 'Hintergrund der Arbeitslastgruppe',
   'settings.ai.workloadGroupChat': 'Workload-Gruppenchat',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'Vorschlag annehmen',
   'settings.autocomplete.appFilter.contextOverride': 'Kontextüberschreibung (optional)',
   'settings.autocomplete.appFilter.debugFocus': 'Debug-Fokus',

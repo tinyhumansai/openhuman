@@ -325,6 +325,10 @@ const hi4: TranslationMap = {
   'settings.ai.unsavedChanges': 'असहेजे परिवर्तन',
   'settings.ai.workloadGroupBackground': 'बैकग्राउंड वर्कलोड ग्रुप',
   'settings.ai.workloadGroupChat': 'चैट वर्कलोड ग्रुप',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'सुझाव एक्सेप्ट करें',
   'settings.autocomplete.appFilter.contextOverride': 'कॉन्टेक्स्ट ओवरराइड (वैकल्पिक)',
   'settings.autocomplete.appFilter.debugFocus': 'डिबग फोकस',

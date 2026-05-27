@@ -62,6 +62,8 @@ export const BACKGROUND_WORKLOADS: WorkloadId[] = [
   'subconscious',
 ];
 export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WORKLOADS];
+export const OPENAI_CODEX_OAUTH_MISSING_AUTH_URL = 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL';
+export const OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL = 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL';
 
 /** Provider reference parsed from a stored provider-string.
  *
@@ -341,7 +343,7 @@ export async function startOpenAiCodexOAuth(): Promise<OpenAiCodexOAuthStartResu
   });
   const authUrl = res?.result?.authUrl?.trim();
   if (!authUrl) {
-    throw new Error('OpenAI Codex OAuth did not return an authorization URL.');
+    throw new Error(OPENAI_CODEX_OAUTH_MISSING_AUTH_URL);
   }
   return res.result;
 }
@@ -349,7 +351,7 @@ export async function startOpenAiCodexOAuth(): Promise<OpenAiCodexOAuthStartResu
 export async function completeOpenAiCodexOAuth(callbackUrl: string): Promise<void> {
   const callback = callbackUrl.trim();
   if (!callback) {
-    throw new Error('Paste the redirect URL from your browser after signing in.');
+    throw new Error(OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL);
   }
   await callCoreRpc({
     method: 'openhuman.inference_openai_oauth_complete',

@@ -328,6 +328,10 @@ const es4: TranslationMap = {
   'settings.ai.unsavedChanges': 'cambios sin guardar',
   'settings.ai.workloadGroupBackground': 'Grupo de carga de trabajo en segundo plano',
   'settings.ai.workloadGroupChat': 'Grupo de carga de trabajo de chat',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'Aceptar sugerencia',
   'settings.autocomplete.appFilter.contextOverride': 'Anulación de contexto (opcional)',
   'settings.autocomplete.appFilter.debugFocus': 'Foco de depuración',

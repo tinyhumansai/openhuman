@@ -324,6 +324,10 @@ const ru4: TranslationMap = {
   'settings.ai.unsavedChanges': 'несохранённые изменения',
   'settings.ai.workloadGroupBackground': 'Фоновые задачи',
   'settings.ai.workloadGroupChat': 'Чат',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'Принять предложение',
   'settings.autocomplete.appFilter.contextOverride': 'Переопределение контекста (необязательно)',
   'settings.autocomplete.appFilter.debugFocus': 'Отладка фокуса',

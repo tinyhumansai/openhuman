@@ -26,6 +26,8 @@ import {
   loadLocalProviderSnapshot,
   type LocalProviderSnapshot,
   type ModelInfo,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
   setCloudProviderKey,
   testProviderModel,
@@ -2628,8 +2630,6 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
         if (!isLocalRuntime && !isCodexOAuth && slug !== 'openhuman') {
           await setCloudProviderKey(slug, trimmed);
-        } else if (isCodexOAuth && slug === 'openai') {
-          await clearCloudProviderKey(slug);
         } else if (isLocalRuntime && slug === 'ollama') {
           const baseUrl = endpoint.replace(/\/v1\/?$/, '');
           await openhumanUpdateLocalAiSettings({
@@ -2678,6 +2678,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           cloudProviders: [...draft.cloudProviders.filter(p => p.slug !== slug), upserted],
         };
         await persist(nextDraft);
+        if (isCodexOAuth && slug === 'openai') {
+          await clearCloudProviderKey(slug);
+        }
+        if (slug === 'openai') {
+          setCodexAuthError(null);
+        }
         setKeyDialogFor(null);
         setPendingLocalLabel(null);
       } finally {
@@ -2695,10 +2701,16 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const localizedMessage =
+        message === OPENAI_CODEX_OAUTH_MISSING_AUTH_URL
+          ? t('settings.ai.codexOauthMissingAuthUrl')
+          : message === OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL
+            ? t('settings.ai.codexOauthMissingCallbackUrl')
+            : message;
       console.warn('[ai-settings] codex auth import failed', {
-        summary: presentProviderSetupError(message, t).summary,
+        summary: presentProviderSetupError(localizedMessage, t).summary,
       });
-      setCodexAuthError(message);
+      setCodexAuthError(localizedMessage);
     } finally {
       setBusyAction(null);
     }

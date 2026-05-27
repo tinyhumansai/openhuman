@@ -322,6 +322,10 @@ const ar4: TranslationMap = {
   'settings.ai.unsavedChanges': 'تغييرات غير محفوظة',
   'settings.ai.workloadGroupBackground': 'مجموعة عبء العمل الخلفي',
   'settings.ai.workloadGroupChat': 'مجموعة عبء عمل المحادثة',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'قبول الاقتراح',
   'settings.autocomplete.appFilter.contextOverride': 'تجاوز السياق (اختياري)',
   'settings.autocomplete.appFilter.debugFocus': 'تصحيح التركيز',

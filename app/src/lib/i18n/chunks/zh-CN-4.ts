@@ -317,6 +317,10 @@ const zhCN4: TranslationMap = {
   'settings.ai.unsavedChanges': '未保存的更改',
   'settings.ai.workloadGroupBackground': '后台工作负载',
   'settings.ai.workloadGroupChat': '对话工作负载',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': '接受建议',
   'settings.autocomplete.appFilter.contextOverride': '上下文覆盖（可选）',
   'settings.autocomplete.appFilter.debugFocus': '调试焦点',

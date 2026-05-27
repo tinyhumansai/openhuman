@@ -324,6 +324,10 @@ const bn4: TranslationMap = {
   'settings.ai.unsavedChanges': 'অসংরক্ষিত পরিবর্তন',
   'settings.ai.workloadGroupBackground': 'ওয়ার্কলোড গ্রুপ ব্যাকগ্রাউন্ড',
   'settings.ai.workloadGroupChat': 'ওয়ার্কলোড গ্রুপ চ্যাট',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'পরামর্শ গ্রহণ করুন',
   'settings.autocomplete.appFilter.contextOverride': 'কন্টেক্সট ওভাররাইড (ঐচ্ছিক)',
   'settings.autocomplete.appFilter.debugFocus': 'ডিবাগ ফোকাস',

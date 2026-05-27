@@ -595,6 +595,10 @@ const zhCN1: TranslationMap = {
   'settings.ai.endpointProtocolRequired': '端点必须以 http:// 或 https://. 开头',
   'settings.ai.connectProviderDialog': '连接 {label}',
   'settings.ai.or': '或者',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.ai.openRouterOauthDescription':
     'Sign in with OpenRouter and import a user-controlled API key using PKCE.',
   'settings.ai.connecting': '正在连接...',

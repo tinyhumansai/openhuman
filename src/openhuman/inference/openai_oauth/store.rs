@@ -91,29 +91,64 @@ fn codex_cli_auth_path() -> Result<PathBuf, String> {
         }
     }
 
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| "HOME is not set; cannot find ~/.codex/auth.json".to_string())?;
+    let home = home_dir_from_env()
+        .ok_or_else(|| "home directory is not set; cannot find ~/.codex/auth.json".to_string())?;
     Ok(home.join(".codex").join("auth.json"))
+}
+
+fn home_dir_from_env() -> Option<PathBuf> {
+    for key in ["HOME", "USERPROFILE"] {
+        if let Some(value) = std::env::var_os(key) {
+            let path = PathBuf::from(value);
+            if !path.as_os_str().is_empty() {
+                return Some(path);
+            }
+        }
+    }
+
+    match (std::env::var_os("HOMEDRIVE"), std::env::var_os("HOMEPATH")) {
+        (Some(drive), Some(path))
+            if !drive.as_os_str().is_empty() && !path.as_os_str().is_empty() =>
+        {
+            Some(PathBuf::from(drive).join(path))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn import_codex_cli_auth_from_path(
     config: &Config,
     path: &Path,
 ) -> Result<AuthProfile, String> {
+    log::info!(
+        "{LOG_PREFIX} codex_cli_import:start path={}",
+        path.display()
+    );
     let bytes = std::fs::read(path).map_err(|e| {
+        log::warn!(
+            "{LOG_PREFIX} codex_cli_import:read_failed path={} error={e}",
+            path.display()
+        );
         format!(
             "Could not read Codex CLI auth at {}: {e}. Run `codex login` first, then try Codex auth again.",
             path.display()
         )
     })?;
     let parsed: CodexCliAuthFile = serde_json::from_slice(&bytes).map_err(|e| {
+        log::warn!(
+            "{LOG_PREFIX} codex_cli_import:parse_failed path={} error={e}",
+            path.display()
+        );
         format!(
             "Could not parse Codex CLI auth at {}: {e}. Run `codex login` again, then try Codex auth again.",
             path.display()
         )
     })?;
     let tokens = parsed.tokens.ok_or_else(|| {
+        log::warn!(
+            "{LOG_PREFIX} codex_cli_import:missing_tokens path={}",
+            path.display()
+        );
         format!(
             "Codex CLI auth at {} has no tokens. Run `codex login` first, then try Codex auth again.",
             path.display()
@@ -122,6 +157,10 @@ pub(super) fn import_codex_cli_auth_from_path(
 
     let access_token = tokens.access_token.unwrap_or_default().trim().to_string();
     if access_token.is_empty() {
+        log::warn!(
+            "{LOG_PREFIX} codex_cli_import:missing_access_token path={}",
+            path.display()
+        );
         return Err(format!(
             "Codex CLI auth at {} has no access token. Run `codex login` first, then try Codex auth again.",
             path.display()
@@ -142,7 +181,12 @@ pub(super) fn import_codex_cli_auth_from_path(
         .filter(|value| !value.is_empty())
         .or_else(|| extract_account_id_from_access_token(&access_token));
 
-    persist_openai_oauth_token_set(
+    log::info!(
+        "{LOG_PREFIX} codex_cli_import:persist_start path={} account_id_present={}",
+        path.display(),
+        account_id.is_some()
+    );
+    let profile = persist_openai_oauth_token_set(
         config,
         TokenSet {
             access_token: access_token.clone(),
@@ -153,7 +197,13 @@ pub(super) fn import_codex_cli_auth_from_path(
             scope: None,
         },
         account_id,
-    )
+    )?;
+    log::info!(
+        "{LOG_PREFIX} codex_cli_import:ok path={} profile_id={}",
+        path.display(),
+        profile.id
+    );
+    Ok(profile)
 }
 
 pub fn import_codex_cli_auth(config: &Config) -> Result<AuthProfile, String> {

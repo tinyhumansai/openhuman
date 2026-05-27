@@ -56,6 +56,8 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   flushCloudProviders: vi.fn().mockResolvedValue(undefined),
   importOpenAiCodexCliAuth: vi.fn().mockResolvedValue(undefined),
   listProviderModels: vi.fn().mockResolvedValue([]),
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL: 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL',
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL: 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL',
   startOpenAiCodexOAuth: vi.fn(),
   completeOpenAiCodexOAuth: vi.fn(),
 }));
@@ -569,6 +571,9 @@ describe('AIPanel', () => {
     expect(vi.mocked(listProviderModels)).not.toHaveBeenCalledWith('openai');
 
     await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+    expect(vi.mocked(saveAISettings).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(clearCloudProviderKey).mock.invocationCallOrder[0]
+    );
     const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
     expect(nextSettings.cloudProviders).toEqual(
       expect.arrayContaining([

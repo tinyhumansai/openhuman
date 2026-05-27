@@ -341,6 +341,10 @@ const en4: TranslationMap = {
   'settings.ai.unsavedChanges': 'unsaved changes',
   'settings.ai.workloadGroupBackground': 'Workload group background',
   'settings.ai.workloadGroupChat': 'Workload group chat',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.autocomplete.appFilter.acceptSuggestion': 'Accept suggestion',
   'settings.autocomplete.appFilter.contextOverride': 'Context Override (optional)',
   'settings.autocomplete.appFilter.debugFocus': 'Debug focus',

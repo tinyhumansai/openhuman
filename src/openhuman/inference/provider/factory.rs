@@ -786,8 +786,20 @@ fn make_cloud_provider_by_slug(
 
     let key = lookup_key_for_slug(slug, config)?;
     let openai_oauth_credentials = if slug == "openai" {
-        crate::openhuman::inference::openai_oauth::lookup_openai_oauth_credentials(config)
-            .map_err(|e| anyhow::anyhow!("[chat-factory] openai oauth lookup failed: {e}"))?
+        match crate::openhuman::inference::openai_oauth::lookup_openai_oauth_credentials(config) {
+            Ok(credentials) => credentials,
+            Err(err) if !key.trim().is_empty() => {
+                log::warn!(
+                    "[providers][chat-factory] openai oauth lookup failed; falling back to configured API key: {err}"
+                );
+                None
+            }
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "[chat-factory] openai oauth lookup failed: {err}"
+                ));
+            }
+        }
     } else {
         None
     };
