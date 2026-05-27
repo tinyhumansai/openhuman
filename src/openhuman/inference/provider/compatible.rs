@@ -54,6 +54,7 @@ pub struct OpenAiCompatibleProvider {
     /// GLM/Zhipu does not support the responses API.
     supports_responses_fallback: bool,
     user_agent: Option<String>,
+    extra_headers: Vec<(String, String)>,
     /// When true, collect all `system` messages and prepend their content
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
@@ -185,6 +186,7 @@ impl OpenAiCompatibleProvider {
             auth_header: auth_style,
             supports_responses_fallback,
             user_agent: user_agent.map(ToString::to_string),
+            extra_headers: Vec::new(),
             merge_system_into_user,
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
@@ -204,6 +206,16 @@ impl OpenAiCompatibleProvider {
     /// Set by the factory when the provider string carries an `@<temp>` suffix.
     pub fn with_temperature_override(mut self, temperature: Option<f64>) -> Self {
         self.temperature_override = temperature;
+        self
+    }
+
+    pub fn with_extra_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        let name = name.into();
+        let value = value.into();
+        if !name.trim().is_empty() && !value.trim().is_empty() {
+            self.extra_headers
+                .push((name.trim().to_string(), value.trim().to_string()));
+        }
         self
     }
 
@@ -421,7 +433,7 @@ impl OpenAiCompatibleProvider {
         req: reqwest::RequestBuilder,
         credential: Option<&str>,
     ) -> reqwest::RequestBuilder {
-        match (&self.auth_header, credential) {
+        let req = match (&self.auth_header, credential) {
             (AuthStyle::None, _) => req,
             (_, None) => req,
             (AuthStyle::Bearer, Some(credential)) => {
@@ -432,7 +444,15 @@ impl OpenAiCompatibleProvider {
                 .header("x-api-key", credential)
                 .header("anthropic-version", "2023-06-01"),
             (AuthStyle::Custom(header), Some(credential)) => req.header(header, credential),
+        };
+        self.apply_extra_headers(req)
+    }
+
+    fn apply_extra_headers(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (name, value) in &self.extra_headers {
+            req = req.header(name.as_str(), value.as_str());
         }
+        req
     }
 
     async fn chat_via_responses(
@@ -2007,6 +2027,7 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
+        let extra_headers = self.extra_headers.clone();
         let provider_name = self.name.clone();
         let model_owned = model.to_string();
 
@@ -2033,6 +2054,10 @@ impl Provider for OpenAiCompatibleProvider {
                     req_builder.header(header, credential)
                 }
             };
+
+            for (name, value) in &extra_headers {
+                req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
 
             // Set accept header for streaming
             req_builder = req_builder.header("Accept", "text/event-stream");

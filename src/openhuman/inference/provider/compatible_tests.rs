@@ -272,6 +272,39 @@ fn no_auth_style_allows_missing_key() {
 }
 
 #[test]
+fn extra_headers_are_applied_with_auth_header() {
+    let p = OpenAiCompatibleProvider::new(
+        "openai",
+        "https://chatgpt.com/backend-api/codex",
+        Some("oauth-access-token"),
+        AuthStyle::Bearer,
+    )
+    .with_extra_header("ChatGPT-Account-ID", "acct_123");
+
+    let req = p
+        .apply_auth_header(
+            p.http_client()
+                .post("https://chatgpt.com/backend-api/codex/responses"),
+            Some("oauth-access-token"),
+        )
+        .build()
+        .unwrap();
+
+    assert_eq!(
+        req.headers()
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer oauth-access-token")
+    );
+    assert_eq!(
+        req.headers()
+            .get("ChatGPT-Account-ID")
+            .and_then(|value| value.to_str().ok()),
+        Some("acct_123")
+    );
+}
+
+#[test]
 fn blank_required_key_counts_as_missing() {
     let p = OpenAiCompatibleProvider::new(
         "custom",

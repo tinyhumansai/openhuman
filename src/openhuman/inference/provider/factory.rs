@@ -37,6 +37,7 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 /// Prefix for LM Studio-local providers: `"lmstudio:<model>"`.
 pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
+const OPENAI_CODEX_BACKEND_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 /// Sentinel returned when a user has expressed custom/BYOK inference intent
 /// (via a non-openhuman `inference_url`) but no matching `cloud_providers`
 /// entry was found. Passed through `provider_for_role` and caught early in
@@ -784,6 +785,15 @@ fn make_cloud_provider_by_slug(
     );
 
     let key = lookup_key_for_slug(slug, config)?;
+    let openai_oauth_credentials = if slug == "openai" {
+        crate::openhuman::inference::openai_oauth::lookup_openai_oauth_credentials(config)
+            .map_err(|e| anyhow::anyhow!("[chat-factory] openai oauth lookup failed: {e}"))?
+    } else {
+        None
+    };
+    let using_openai_oauth = openai_oauth_credentials
+        .as_ref()
+        .is_some_and(|credentials| credentials.access_token == key);
 
     let unsupported = &config.temperature_unsupported_models;
     match entry.auth_style {
@@ -819,14 +829,27 @@ fn make_cloud_provider_by_slug(
             Ok((p, effective_model))
         }
         AuthStyle::Bearer => {
-            let p = make_openai_compatible_provider_with_config(
+            let endpoint = if using_openai_oauth {
+                OPENAI_CODEX_BACKEND_BASE_URL
+            } else {
+                &entry.endpoint
+            };
+            let mut provider = OpenAiCompatibleProvider::new(
                 slug,
-                &entry.endpoint,
-                &key,
+                endpoint,
+                (!key.trim().is_empty()).then_some(key.as_str()),
                 CompatAuthStyle::Bearer,
-                unsupported,
-                temperature_override,
-            )?;
+            )
+            .with_temperature_unsupported_models(unsupported.to_vec())
+            .with_temperature_override(temperature_override);
+            if let Some(account_id) = openai_oauth_credentials
+                .as_ref()
+                .filter(|_| using_openai_oauth)
+                .and_then(|credentials| credentials.account_id.as_deref())
+            {
+                provider = provider.with_extra_header("ChatGPT-Account-ID", account_id);
+            }
+            let p: Box<dyn Provider> = Box::new(provider);
             Ok((p, effective_model))
         }
     }

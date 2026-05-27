@@ -53,7 +53,26 @@ async fn list_configured_models_from_config(
         .cloned()
         .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
-    let base = entry.endpoint.trim_end_matches('/');
+    let api_key =
+        crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
+            .unwrap_or_default();
+    let api_key = api_key.trim().to_string();
+
+    let openai_oauth_credentials = if entry.slug == "openai" {
+        crate::openhuman::inference::openai_oauth::lookup_openai_oauth_credentials(config)
+            .unwrap_or_default()
+    } else {
+        None
+    };
+    let using_openai_oauth = openai_oauth_credentials
+        .as_ref()
+        .is_some_and(|credentials| credentials.access_token == api_key);
+
+    let base = if using_openai_oauth {
+        "https://chatgpt.com/backend-api/codex"
+    } else {
+        entry.endpoint.trim_end_matches('/')
+    };
     let models_url = format!("{}/models", base);
 
     log::debug!(
@@ -61,11 +80,6 @@ async fn list_configured_models_from_config(
         models_url,
         entry.slug
     );
-
-    let api_key =
-        crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
-            .unwrap_or_default();
-    let api_key = api_key.trim().to_string();
 
     let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
         "providers.list_models",
@@ -83,7 +97,15 @@ async fn list_configured_models_from_config(
     request = match entry.auth_style {
         AuthStyle::Bearer => {
             if !api_key.is_empty() {
-                request.header("Authorization", format!("Bearer {}", api_key))
+                let mut r = request.header("Authorization", format!("Bearer {}", api_key));
+                if let Some(account_id) = openai_oauth_credentials
+                    .as_ref()
+                    .filter(|_| using_openai_oauth)
+                    .and_then(|credentials| credentials.account_id.as_deref())
+                {
+                    r = r.header("ChatGPT-Account-ID", account_id);
+                }
+                r
             } else {
                 request
             }

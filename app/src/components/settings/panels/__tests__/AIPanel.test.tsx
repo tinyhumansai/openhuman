@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
+  clearCloudProviderKey,
   completeOpenAiCodexOAuth,
+  importOpenAiCodexCliAuth,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
@@ -52,6 +54,7 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ),
   localProvider: { download: vi.fn(), applyPreset: vi.fn() },
   flushCloudProviders: vi.fn().mockResolvedValue(undefined),
+  importOpenAiCodexCliAuth: vi.fn().mockResolvedValue(undefined),
   listProviderModels: vi.fn().mockResolvedValue([]),
   startOpenAiCodexOAuth: vi.fn(),
   completeOpenAiCodexOAuth: vi.fn(),
@@ -202,6 +205,8 @@ describe('AIPanel', () => {
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
+    vi.mocked(clearCloudProviderKey).mockResolvedValue(undefined);
+    vi.mocked(importOpenAiCodexCliAuth).mockResolvedValue(undefined);
     vi.mocked(testProviderModel).mockResolvedValue({ reply: 'Hello from the selected model.' });
     vi.mocked(listProviderModels).mockResolvedValue([]);
     vi.mocked(startOpenAiCodexOAuth).mockResolvedValue({
@@ -364,7 +369,11 @@ describe('AIPanel', () => {
       expect(screen.getByRole('dialog', { name: /Connect OpenAI/i })).toBeInTheDocument()
     );
     // The input for the API key should be visible.
-    expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: /Connect OpenAI/i });
+    expect(within(dialog).getByLabelText(/API key/i)).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
+    ).not.toBeInTheDocument();
   });
 
   it('surfaces provider setup errors in an alert with technical details collapsed', async () => {
@@ -540,52 +549,38 @@ describe('AIPanel', () => {
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
   });
 
-  it('connects OpenAI through Codex OAuth without storing an API key', async () => {
+  it('connects OpenAI through Codex CLI auth without storing an API key', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
-    const promptSpy = vi
-      .spyOn(window, 'prompt')
-      .mockReturnValue('http://127.0.0.1:1455/auth/callback?code=abc&state=xyz');
 
-    try {
-      renderWithProviders(<AIPanel />);
+    renderWithProviders(<AIPanel />);
 
-      await waitFor(() =>
-        expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
-      );
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+    );
 
-      fireEvent.click(screen.getByRole('switch', { name: /Connect OpenAI/i }));
-      const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
-      fireEvent.click(
-        within(dialog).getByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
-      );
+    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
 
-      await waitFor(() => expect(vi.mocked(startOpenAiCodexOAuth)).toHaveBeenCalled());
-      expect(vi.mocked(openUrl)).toHaveBeenCalledWith(
-        'https://auth.openai.com/oauth/authorize?client_id=test'
-      );
-      await waitFor(() =>
-        expect(vi.mocked(completeOpenAiCodexOAuth)).toHaveBeenCalledWith(
-          'http://127.0.0.1:1455/auth/callback?code=abc&state=xyz'
-        )
-      );
-      expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();
+    await waitFor(() => expect(vi.mocked(importOpenAiCodexCliAuth)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(startOpenAiCodexOAuth)).not.toHaveBeenCalled();
+    expect(vi.mocked(openUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(completeOpenAiCodexOAuth)).not.toHaveBeenCalled();
+    expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();
+    expect(vi.mocked(clearCloudProviderKey)).toHaveBeenCalledWith('openai');
+    expect(vi.mocked(listProviderModels)).not.toHaveBeenCalledWith('openai');
 
-      await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
-      const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
-      expect(nextSettings.cloudProviders).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            slug: 'openai',
-            label: 'OpenAI',
-            endpoint: 'https://api.openai.com/v1',
-            auth_style: 'bearer',
-            has_api_key: true,
-          }),
-        ])
-      );
-    } finally {
-      promptSpy.mockRestore();
-    }
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer',
+          has_api_key: true,
+        }),
+      ])
+    );
   });
 
   it('wraps long provider setup errors and hides raw JSON behind technical details', async () => {

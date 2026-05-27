@@ -357,6 +357,10 @@ export async function completeOpenAiCodexOAuth(callbackUrl: string): Promise<voi
   });
 }
 
+export async function importOpenAiCodexCliAuth(): Promise<void> {
+  await callCoreRpc({ method: 'openhuman.inference_openai_oauth_import_codex_cli', params: {} });
+}
+
 /**
  * Eagerly write the cloud_providers list to the core config.
  *
