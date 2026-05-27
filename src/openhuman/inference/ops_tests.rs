@@ -258,3 +258,61 @@ async fn inference_openai_oauth_disconnect_returns_removed_flag() {
     assert_eq!(outcome.value["disconnected"], true);
     assert_eq!(outcome.logs, vec!["openai oauth disconnected"]);
 }
+
+// ── is_unknown_provider_user_config (TAURI-RUST-X) ───────────────────────
+//
+// `inference_list_models` calls `providers::ops::list_configured_models`,
+// which surfaces a `String` error when the user-selected provider id isn't
+// registered in the cloud-provider list (e.g. picking "ollama" — a local
+// runtime — as a cloud provider). The error string is emitted at
+// `src/openhuman/inference/provider/ops.rs:54`. Before this fix the emit
+// site at `inference/ops.rs:248` escalated every such error to `error!`,
+// which sentry-tracing ships to Sentry as `"[inference::ops]
+// list_models:error"` — 5740+ events with the underlying error hidden in
+// a tracing field where no Sentry classifier can reach it. The helper
+// gate keeps the demote anchored so unrelated failures (HTTP / JSON / IO)
+// still escalate.
+
+#[test]
+fn is_unknown_provider_user_config_matches_canonical_emit_site_string() {
+    // Verbatim shape from `provider/ops.rs:54`:
+    //   format!("no cloud provider with id or slug '{}' found", provider_id)
+    // Latest TAURI-RUST-X event (Sentry id 95) carried provider_id="ollama";
+    // every well-formed provider id slug must trigger the demote.
+    assert!(is_unknown_provider_user_config(
+        "no cloud provider with id or slug 'ollama' found"
+    ));
+    assert!(is_unknown_provider_user_config(
+        "no cloud provider with id or slug 'made-up-custom-id' found"
+    ));
+    assert!(is_unknown_provider_user_config(
+        "no cloud provider with id or slug '' found"
+    ));
+}
+
+#[test]
+fn is_unknown_provider_user_config_rejects_other_list_models_failures() {
+    // Defense in depth: the sibling list_models Sentry issues
+    // (TAURI-RUST-12 JSON parse, TAURI-RUST-2W HTTP builder, etc.) are
+    // real bugs that MUST still escalate to Sentry. The matcher must stay
+    // strictly anchored on the "no cloud provider with id or slug" phrase
+    // so it can't accidentally silence them.
+    for raw in [
+        // TAURI-RUST-12 (362 events) — provider/ops.rs JSON decode failure
+        "[providers][list_models] failed to parse JSON: error decoding response",
+        // TAURI-RUST-2W (100 events) — provider/ops.rs reqwest builder failure
+        "[providers][list_models] HTTP request failed: builder error",
+        // TAURI-RUST-JP (8 events) — local_ai ollama_admin transport failure
+        "[local_ai:ollama_admin] list_models: request send failed",
+        // Generic shapes from elsewhere in the call chain
+        "request timed out after 30s",
+        "permission denied accessing config",
+        "no cloud provider configured for slug 'openai' (role 'chat')",
+        "",
+    ] {
+        assert!(
+            !is_unknown_provider_user_config(raw),
+            "must NOT demote real error: {raw:?}"
+        );
+    }
+}
