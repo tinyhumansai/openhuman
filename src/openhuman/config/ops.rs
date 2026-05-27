@@ -407,8 +407,10 @@ pub struct MeetSettingsPatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
-    /// One of `managed` | `parallel` | `brave` | `querit`. Empty string /
-    /// unknown values fall back to `managed` at registration time.
+    /// One of `managed` | `parallel` | `brave` | `querit`.
+    /// Empty/unknown values are rejected by `apply_search_settings`.
+    /// Runtime fallback to `managed` applies only to persisted/legacy config
+    /// values resolved by `SearchConfig::effective_engine()`.
     pub engine: Option<String>,
     /// 1..=20. Clamped silently at apply time.
     pub max_results: Option<usize>,

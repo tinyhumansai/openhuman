@@ -438,7 +438,7 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
 
-    // Search engines: BYO API keys for Parallel and Brave.
+    // Search engines: BYO API keys for direct providers.
     decrypt_optional_secret(
         &store,
         &mut config.search.parallel.api_key,
@@ -448,6 +448,11 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
         &store,
         &mut config.search.brave.api_key,
         "search.brave.api_key",
+    )?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.querit.api_key,
+        "search.querit.api_key",
     )?;
 
     // Channels: decrypt every optional secret field.
@@ -556,6 +561,11 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         &store,
         &mut config.search.brave.api_key,
         "search.brave.api_key",
+    )?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.querit.api_key,
+        "search.querit.api_key",
     )?;
 
     let ch = &mut config.channels_config;

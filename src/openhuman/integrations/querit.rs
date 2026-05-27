@@ -11,7 +11,6 @@
 //! Querit API directly using the user's configured API key.
 
 use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
-use crate::openhuman::util::utf8_safe_prefix_at_byte_boundary;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -479,10 +478,11 @@ impl Tool for QueritSearchTool {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            let detail = utf8_safe_prefix_at_byte_boundary(&body_text, 500);
+            let detail = crate::openhuman::util::utf8_safe_prefix_at_byte_boundary(&body_text, 500);
             tracing::warn!(
                 status = %status,
-                "[querit] non-2xx response: {detail}"
+                body_len = body_text.len(),
+                "[querit] non-2xx response from Querit"
             );
             anyhow::bail!("Querit returned {status}: {detail}");
         }
