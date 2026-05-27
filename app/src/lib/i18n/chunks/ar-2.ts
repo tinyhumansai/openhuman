@@ -413,6 +413,7 @@ const ar2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'تكوين إعدادات فرز الذكاء الاصطناعي لمشغلات التكامل Composio',
   'mic.deviceSelector': 'جهاز الميكروفون',
+  'mic.tapToSendCountdown': 'انقر للإرسال ({seconds} ث)',
 };
 
 export default ar2;

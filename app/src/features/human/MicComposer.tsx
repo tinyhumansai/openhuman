@@ -14,6 +14,14 @@ interface AudioInputDevice {
 
 const composerLog = debug('human:mic-composer');
 
+/**
+ * Maximum recording duration in milliseconds. Auto-stops the recorder when
+ * reached so accidental or forgotten recordings don't run indefinitely.
+ * 60 seconds matches the practical ceiling for single-utterance STT accuracy.
+ * Exported for test assertions.
+ */
+export const MAX_RECORDING_MS = 60_000;
+
 /** MIME types MediaRecorder will be asked to use, in priority order.
  *
  *  AAC-in-MP4 is preferred because the hosted STT upstream (GMI Whisper)
@@ -90,6 +98,10 @@ export function MicComposer({
   // Without this, two awaited `getUserMedia` calls can resolve back-to-back
   // and leave one of the granted streams orphaned (mic indicator stuck on).
   const startInFlightRef = useRef(false);
+  // Recording timeout — auto-stops after MAX_RECORDING_MS.
+  const recordingTimerRef = useRef<number | null>(null);
+  const countdownRef = useRef<number | null>(null);
+  const [remainingSecs, setRemainingSecs] = useState<number | null>(null);
 
   // If the component unmounts mid-record, release the mic so the OS indicator
   // doesn't get stuck on.
@@ -97,6 +109,7 @@ export function MicComposer({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
+      clearRecordingTimer();
       // Detach onstop first — `recorder.stop()` below is what would fire it,
       // and we don't want finalizeRecording running post-unmount.
       if (recorderRef.current) recorderRef.current.onstop = null;
@@ -217,6 +230,33 @@ export function MicComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, disabled]);
 
+  function clearRecordingTimer() {
+    if (recordingTimerRef.current != null) {
+      window.clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (countdownRef.current != null) {
+      window.clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setRemainingSecs(null);
+  }
+
+  function startRecordingTimer() {
+    clearRecordingTimer();
+    const totalSecs = Math.ceil(MAX_RECORDING_MS / 1000);
+    let tick = totalSecs;
+    setRemainingSecs(tick);
+    countdownRef.current = window.setInterval(() => {
+      tick = Math.max(0, tick - 1);
+      setRemainingSecs(tick);
+    }, 1000);
+    recordingTimerRef.current = window.setTimeout(() => {
+      composerLog('recording auto-stopped after %dms', MAX_RECORDING_MS);
+      stopRecording();
+    }, MAX_RECORDING_MS);
+  }
+
   function stopStream() {
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
@@ -323,12 +363,14 @@ export function MicComposer({
     recorder.start();
     setState('recording');
     startInFlightRef.current = false;
+    startRecordingTimer();
     composerLog('recording started mime=%s', recorder.mimeType || '(default)');
   }
 
   function stopRecording() {
     const recorder = recorderRef.current;
     if (!recorder || recorder.state === 'inactive') return;
+    clearRecordingTimer();
     setState('transcribing');
     try {
       recorder.stop();
@@ -433,7 +475,9 @@ export function MicComposer({
   const label = isBusy
     ? t('mic.transcribing')
     : isRecording
-      ? t('mic.tapToSend')
+      ? remainingSecs != null && remainingSecs <= 10
+        ? t('mic.tapToSendCountdown').replace('{seconds}', String(remainingSecs))
+        : t('mic.tapToSend')
       : disabled
         ? t('mic.waitingForAgent')
         : t('mic.tapAndSpeak');

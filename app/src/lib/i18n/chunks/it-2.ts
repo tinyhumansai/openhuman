@@ -431,6 +431,7 @@ const it2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Configura le impostazioni di triage AI per i trigger di integrazione Composio',
   'mic.deviceSelector': 'Dispositivo microfono',
+  'mic.tapToSendCountdown': 'Tocca per inviare ({seconds}s)',
 };
 
 export default it2;

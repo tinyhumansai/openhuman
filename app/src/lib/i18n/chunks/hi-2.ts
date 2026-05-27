@@ -423,6 +423,7 @@ const hi2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Composio एकीकरण ट्रिगर के लिए AI ट्राइएज सेटिंग्स कॉन्फ़िगर करें',
   'mic.deviceSelector': 'माइक्रोफोन डिवाइस',
+  'mic.tapToSendCountdown': 'भेजने के लिए टैप करें ({seconds}स)',
 };
 
 export default hi2;

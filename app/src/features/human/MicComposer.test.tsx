@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MicComposer } from './MicComposer';
+import { MAX_RECORDING_MS, MicComposer } from './MicComposer';
 
 // transcribeWithFactory + encodeBlobToWav are the network/heavy boundaries —
 // mock them here so we can drive the state machine without touching real APIs.
@@ -483,6 +483,51 @@ describe('MicComposer', () => {
       expect(screen.getByRole('menuitemradio', { name: /Built-in Mic/i })).toBeInTheDocument()
     );
     expect(screen.getByRole('menuitemradio', { name: /USB Headset/i })).toBeInTheDocument();
+  });
+
+  // ── Recording timeout (#1206) ──────────────────────────────────────────────
+
+  it('auto-stops recording after MAX_RECORDING_MS', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    transcribeWithFactoryMock.mockResolvedValueOnce('timeout transcript');
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+
+    // Advance past MAX_RECORDING_MS — the timeout should auto-stop.
+    vi.advanceTimersByTime(MAX_RECORDING_MS + 100);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('timeout transcript'));
+
+    vi.useRealTimers();
+  });
+
+  it('shows countdown label when remaining time <= 10s', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    transcribeWithFactoryMock.mockResolvedValueOnce('ok');
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+
+    // Initially shows "Tap to send" (not the countdown — remainingSecs=60 > 10).
+    expect(screen.getByText('Tap to send')).toBeInTheDocument();
+
+    // Advance 51 interval ticks (51s). The decrementing counter goes
+    // from 60 → 9, which is <= 10 so the countdown label appears.
+    vi.advanceTimersByTime(51_000);
+
+    // The label pattern: "Tap to send (9s)" — match the parenthesized digit+s.
+    await waitFor(() => expect(screen.getByText(/\d+s\)/)).toBeInTheDocument());
+
+    vi.useRealTimers();
   });
 
   it('handles enumerateDevices throwing gracefully (no crash, selector hidden)', async () => {

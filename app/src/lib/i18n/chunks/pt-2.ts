@@ -435,6 +435,7 @@ const pt2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Definir configurações de triagem de IA para gatilhos de integração Composio',
   'mic.deviceSelector': 'Dispositivo de microfone',
+  'mic.tapToSendCountdown': 'Toque para enviar ({seconds}s)',
 };
 
 export default pt2;

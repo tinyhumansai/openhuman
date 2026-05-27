@@ -423,6 +423,7 @@ const id2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Konfigurasikan pengaturan triase AI untuk pemicu integrasi Composio',
   'mic.deviceSelector': 'Perangkat mikrofon',
+  'mic.tapToSendCountdown': 'Ketuk untuk mengirim ({seconds}d)',
 };
 
 export default id2;
