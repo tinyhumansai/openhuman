@@ -31,6 +31,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 use futures::StreamExt;
@@ -39,6 +40,7 @@ use walkdir::WalkDir;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::ingest_pipeline::{self, IngestResult};
+use crate::openhuman::memory::ops::{doc_delete, DeleteDocParams};
 use crate::openhuman::memory_store::chunks::store::delete_chunks_by_source;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_sync::canonicalize::document::DocumentInput;
@@ -160,7 +162,7 @@ enum IngestFileResult {
 /// previous successful sync.
 ///
 /// Runs inside `buffer_unordered` so multiple files are in flight at once.
-async fn process_file(config: Config, file: FileToProcess) -> IngestFileResult {
+async fn process_file(config: Arc<Config>, file: FileToProcess) -> IngestFileResult {
     let content = match tokio::fs::read_to_string(&file.path).await {
         Ok(c) => c,
         Err(err) => {
@@ -191,7 +193,7 @@ async fn process_file(config: Config, file: FileToProcess) -> IngestFileResult {
     // the new content because the source_id is stable per file path. Drop
     // the old chunks first so the re-ingest actually runs.
     if file.prev_hash.is_some() {
-        let cfg_for_blocking = config.clone();
+        let cfg_for_blocking = Arc::clone(&config);
         let source_for_blocking = source_id.clone();
         let delete_result = tokio::task::spawn_blocking(move || {
             delete_chunks_by_source(
@@ -247,19 +249,40 @@ async fn process_file(config: Config, file: FileToProcess) -> IngestFileResult {
         format!("ext:{}", file.ext),
     ];
 
+    // `&config` deref-coerces the `Arc<Config>` to `&Config`; the pipeline
+    // owns no Config references beyond this call, so the ref-count survives
+    // the await without an explicit clone.
     match ingest_pipeline::ingest_document(&config, &source_id, "vault", tags, doc).await {
         Ok(IngestResult {
             chunks_written,
             already_ingested,
             ..
         }) => {
-            log::debug!(
-                "[vault] sync: ingested path={} source_id={} chunks_written={} already_ingested={}",
-                file.rel_path,
-                source_id,
-                chunks_written,
-                already_ingested,
-            );
+            // The delete-first guard above prevents `already_ingested` on the
+            // normal content-update path. If we still see it here it means
+            // the vault ledger and `mem_tree_ingested_sources` are out of
+            // sync (ledger wiped while the memory_tree row survived, or vice
+            // versa) — the ledger gets a fresh row, but nothing new reaches
+            // retrieval. That's the exact false-success mode this PR set out
+            // to kill, so surface it loudly instead of swallowing it.
+            if already_ingested && chunks_written == 0 {
+                log::warn!(
+                    "[vault] sync: ledger↔memory_tree desync detected — \
+                     `already_ingested=true` for source_id={source_id} \
+                     (path={}) but ledger had no matching row; no new chunks \
+                     reached retrieval. Manual `delete_chunks_by_source` + \
+                     resync may be required.",
+                    file.rel_path,
+                );
+            } else {
+                log::debug!(
+                    "[vault] sync: ingested path={} source_id={} chunks_written={} already_ingested={}",
+                    file.rel_path,
+                    source_id,
+                    chunks_written,
+                    already_ingested,
+                );
+            }
             IngestFileResult::Ingested {
                 rel_path: file.rel_path,
                 document_id: source_id,
@@ -466,14 +489,13 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
 
     // ── Phase 2: Concurrent ingestion ────────────────────────────────────────
     //
-    // Each task needs a `Config` clone because the memory-tree pipeline uses
-    // it for the `with_connection` path and for `delete_chunks_by_source`'s
-    // pre-ingest cleanup on content updates. Cloning per-task keeps the
-    // borrow life-cycle simple inside `buffer_unordered` (no `&'a Config`
-    // bouncing through closures).
-    let config_for_workers = config.clone();
+    // Each task takes an `Arc<Config>` so we share one allocation across all
+    // candidates instead of deep-cloning the config per file. A 5k-file vault
+    // therefore pays one `Config::clone()` + N atomic ref-count bumps, vs the
+    // previous N full clones — measurably cheaper on cold backfills.
+    let config_for_workers = Arc::new(config.clone());
     let results: Vec<IngestFileResult> = futures::stream::iter(candidates)
-        .map(move |file| process_file(config_for_workers.clone(), file))
+        .map(move |file| process_file(Arc::clone(&config_for_workers), file))
         .buffer_unordered(SYNC_CONCURRENCY)
         .collect()
         .await;
@@ -536,22 +558,49 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
             continue;
         }
 
-        // Prefer the ledger's stored id (already in `vault:{id}:{rel_path}`
-        // form for post-#2705 entries); fall back to recomputing it for
-        // ledger rows that pre-date the migration and still carry a legacy
-        // UnifiedMemory document_id.
+        // Two ledger generations to handle here:
+        //
+        // * Post-#2705 rows: `document_id` is already `vault:{id}:{rel_path}`,
+        //   so the memory_tree `delete_chunks_by_source` call below cleans it
+        //   up exactly.
+        // * Pre-#2705 rows: `document_id` is a legacy UnifiedMemory id
+        //   (`{ts}_{hex}`-shaped) whose chunks live in `memory_docs`, *not*
+        //   in `mem_tree_*`. Recomputing the memory_tree source_id and
+        //   running `delete_chunks_by_source` deletes nothing on those rows;
+        //   without a parallel `doc_delete` the legacy data leaks until
+        //   UnifiedMemory removal lands (#2585 follow-up). We do both during
+        //   the migration window so vanished files actually go away.
         let stored_id = prev.document_id.clone();
-        let source_id = if stored_id.starts_with("vault:") {
-            stored_id
-        } else {
+        let is_legacy_ledger_row = !stored_id.starts_with("vault:");
+        let source_id = if is_legacy_ledger_row {
             log::debug!(
                 "[vault] sync: legacy ledger doc_id detected during delete \
-                 path={path} stored_id={stored_id} — falling back to recomputed source_id"
+                 path={path} stored_id={stored_id} — falling back to recomputed \
+                 source_id + parallel UnifiedMemory doc_delete"
             );
             vault_source_id(&vault.id, path)
+        } else {
+            stored_id.clone()
         };
 
-        let cfg_for_blocking = config.clone();
+        // Legacy UnifiedMemory cleanup. Best-effort: a 404 / missing-doc
+        // error on the legacy path shouldn't block the memory_tree delete
+        // below, which is the canonical store going forward.
+        if is_legacy_ledger_row {
+            if let Err(err) = doc_delete(DeleteDocParams {
+                namespace: vault.namespace.clone(),
+                document_id: stored_id.clone(),
+            })
+            .await
+            {
+                log::debug!(
+                    "[vault] sync: legacy doc_delete failed (likely already absent) \
+                     path={path} document_id={stored_id} err={err} — continuing with memory_tree cleanup"
+                );
+            }
+        }
+
+        let cfg_for_blocking = Arc::new(config.clone());
         let source_for_blocking = source_id.clone();
         let path_label = path.clone();
         let delete_result = tokio::task::spawn_blocking(move || {
