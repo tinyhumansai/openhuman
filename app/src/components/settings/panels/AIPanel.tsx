@@ -19,6 +19,7 @@ import {
   type ProviderRef as ApiProviderRef,
   clearCloudProviderKey,
   type CloudProviderView,
+  completeOpenAiCodexOAuth,
   flushCloudProviders,
   listProviderModels,
   loadAISettings,
@@ -27,6 +28,7 @@ import {
   type ModelInfo,
   saveAISettings,
   setCloudProviderKey,
+  startOpenAiCodexOAuth,
   testProviderModel,
 } from '../../../services/api/aiSettingsApi';
 import {
@@ -35,6 +37,7 @@ import {
   type TeamUsage,
 } from '../../../services/api/creditsApi';
 import { connectOpenRouterViaOAuth } from '../../../utils/openrouterOAuth';
+import { openUrl } from '../../../utils/openUrl';
 import {
   type AuthStyle,
   openhumanUpdateLocalAiSettings,
@@ -598,7 +601,7 @@ const ProviderKeyDialog = ({
   label: string;
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
-  oauthAction?: { label: string; onClick: () => Promise<void> | void } | null;
+  oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
   onCancel: () => void;
   /** Returns the entered value. For local runtimes this is the endpoint URL;
    *  for cloud providers it's the API key. */
@@ -727,7 +730,7 @@ const ProviderKeyDialog = ({
               {t('settings.ai.or')}
             </div>
             <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-              {t('settings.ai.openRouterOauthDescription')}
+              {oauthAction.description ?? t('settings.ai.openRouterOauthDescription')}
             </p>
             <button
               type="button"
@@ -2586,9 +2589,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       slug: string;
       localLabel?: string | null;
       value: string;
-      credentialMode: 'api_key' | 'oauth' | 'endpoint';
+      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint';
     }) => {
       const isLocalRuntime = credentialMode === 'endpoint';
+      const isCodexOAuth = credentialMode === 'codex_oauth';
       setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
 
       try {
@@ -2623,7 +2627,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           auth_style: p.authStyle,
         }));
 
-        if (!isLocalRuntime && slug !== 'openhuman') {
+        if (!isLocalRuntime && !isCodexOAuth && slug !== 'openhuman') {
           await setCloudProviderKey(slug, trimmed);
         } else if (isLocalRuntime && slug === 'ollama') {
           const baseUrl = endpoint.replace(/\/v1\/?$/, '');
@@ -2658,7 +2662,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             await listProviderModels(slug);
           } catch (probeErr) {
             await flushCloudProviders(priorWireProviders).catch(() => {});
-            if (!isLocalRuntime && slug !== 'openhuman') {
+            if (!isLocalRuntime && !isCodexOAuth && slug !== 'openhuman') {
               await clearCloudProviderKey(slug).catch(() => {});
             }
             const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
@@ -2679,6 +2683,27 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
     },
     [draft, persist, saved.cloudProviders]
   );
+
+  const connectOpenAiViaCodexOAuth = useCallback(async () => {
+    const start = await startOpenAiCodexOAuth();
+    await openUrl(start.authUrl);
+    const callbackUrl = window.prompt(
+      t(
+        'settings.ai.openAiCodexOauthCallbackPrompt',
+        'After signing in, paste the full redirect URL from your browser.'
+      )
+    );
+    if (!callbackUrl?.trim()) {
+      throw new Error(
+        t(
+          'settings.ai.openAiCodexOauthCallbackRequired',
+          'Paste the redirect URL from your browser after signing in.'
+        )
+      );
+    }
+    await completeOpenAiCodexOAuth(callbackUrl);
+    await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
+  }, [connectProvider, t]);
 
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
@@ -3208,27 +3233,38 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           isLocalRuntime={Boolean(pendingLocalLabel)}
           oauthAction={
-            keyDialogFor === 'openrouter' && !pendingLocalLabel
+            keyDialogFor === 'openai' && !pendingLocalLabel
               ? {
-                  label: t('settings.ai.signInWithOpenRouter'),
-                  onClick: async () => {
-                    const controller = new AbortController();
-                    openRouterOauthAbortRef.current = controller;
-                    try {
-                      const apiKey = await connectOpenRouterViaOAuth({ signal: controller.signal });
-                      await connectProvider({
-                        slug: 'openrouter',
-                        value: apiKey,
-                        credentialMode: 'oauth',
-                      });
-                    } finally {
-                      if (openRouterOauthAbortRef.current === controller) {
-                        openRouterOauthAbortRef.current = null;
-                      }
-                    }
-                  },
+                  label: t('settings.ai.signInWithOpenAiCodex', 'Sign in with ChatGPT / Codex'),
+                  description: t(
+                    'settings.ai.openAiCodexOauthDescription',
+                    'Use your ChatGPT/Codex subscription instead of pasting an OpenAI API key.'
+                  ),
+                  onClick: connectOpenAiViaCodexOAuth,
                 }
-              : null
+              : keyDialogFor === 'openrouter' && !pendingLocalLabel
+                ? {
+                    label: t('settings.ai.signInWithOpenRouter'),
+                    onClick: async () => {
+                      const controller = new AbortController();
+                      openRouterOauthAbortRef.current = controller;
+                      try {
+                        const apiKey = await connectOpenRouterViaOAuth({
+                          signal: controller.signal,
+                        });
+                        await connectProvider({
+                          slug: 'openrouter',
+                          value: apiKey,
+                          credentialMode: 'oauth',
+                        });
+                      } finally {
+                        if (openRouterOauthAbortRef.current === controller) {
+                          openRouterOauthAbortRef.current = null;
+                        }
+                      }
+                    },
+                  }
+                : null
           }
           onCancel={() => {
             openRouterOauthAbortRef.current?.abort();

@@ -3,16 +3,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
+  completeOpenAiCodexOAuth,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   saveAISettings,
   setCloudProviderKey,
+  startOpenAiCodexOAuth,
   testProviderModel,
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
 import { connectOpenRouterViaOAuth } from '../../../../utils/openrouterOAuth';
+import { openUrl } from '../../../../utils/openUrl';
 // Lazy import so the typed mock is available to individual tests.
 import { openhumanUpdateLocalAiSettings as openhumanUpdateLocalAiSettingsMock } from '../../../../utils/tauriCommands/config';
 import {
@@ -50,6 +53,8 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   localProvider: { download: vi.fn(), applyPreset: vi.fn() },
   flushCloudProviders: vi.fn().mockResolvedValue(undefined),
   listProviderModels: vi.fn().mockResolvedValue([]),
+  startOpenAiCodexOAuth: vi.fn(),
+  completeOpenAiCodexOAuth: vi.fn(),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -87,6 +92,7 @@ vi.mock('../../../../utils/tauriCommands/config', async () => {
 });
 
 vi.mock('../../../../utils/openrouterOAuth', () => ({ connectOpenRouterViaOAuth: vi.fn() }));
+vi.mock('../../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 const baseSettings = {
   cloudProviders: [
@@ -198,6 +204,11 @@ describe('AIPanel', () => {
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
     vi.mocked(testProviderModel).mockResolvedValue({ reply: 'Hello from the selected model.' });
     vi.mocked(listProviderModels).mockResolvedValue([]);
+    vi.mocked(startOpenAiCodexOAuth).mockResolvedValue({
+      authUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+    });
+    vi.mocked(completeOpenAiCodexOAuth).mockResolvedValue(undefined);
+    vi.mocked(openUrl).mockResolvedValue(undefined);
     vi.mocked(connectOpenRouterViaOAuth).mockResolvedValue('sk-or-oauth');
     vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
       result: { settings: baseHeartbeatSettings },
@@ -527,6 +538,54 @@ describe('AIPanel', () => {
 
     // Specifically: no "Disconnect OpenAI" switch (chip is still in off state).
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
+  });
+
+  it('connects OpenAI through Codex OAuth without storing an API key', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    const promptSpy = vi
+      .spyOn(window, 'prompt')
+      .mockReturnValue('http://127.0.0.1:1455/auth/callback?code=abc&state=xyz');
+
+    try {
+      renderWithProviders(<AIPanel />);
+
+      await waitFor(() =>
+        expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+      );
+
+      fireEvent.click(screen.getByRole('switch', { name: /Connect OpenAI/i }));
+      const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
+      );
+
+      await waitFor(() => expect(vi.mocked(startOpenAiCodexOAuth)).toHaveBeenCalled());
+      expect(vi.mocked(openUrl)).toHaveBeenCalledWith(
+        'https://auth.openai.com/oauth/authorize?client_id=test'
+      );
+      await waitFor(() =>
+        expect(vi.mocked(completeOpenAiCodexOAuth)).toHaveBeenCalledWith(
+          'http://127.0.0.1:1455/auth/callback?code=abc&state=xyz'
+        )
+      );
+      expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();
+
+      await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+      const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+      expect(nextSettings.cloudProviders).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            slug: 'openai',
+            label: 'OpenAI',
+            endpoint: 'https://api.openai.com/v1',
+            auth_style: 'bearer',
+            has_api_key: true,
+          }),
+        ])
+      );
+    } finally {
+      promptSpy.mockRestore();
+    }
   });
 
   it('wraps long provider setup errors and hides raw JSON behind technical details', async () => {

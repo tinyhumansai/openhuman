@@ -116,6 +116,12 @@ export interface ProviderModelTestResult {
   reply: string;
 }
 
+export interface OpenAiCodexOAuthStartResult {
+  authUrl: string;
+  state?: string;
+  redirectUri?: string;
+}
+
 const PROVIDER_MODEL_TEST_TIMEOUT_MS = 120_000;
 
 /** Single in-memory snapshot the AI panel renders against. */
@@ -326,6 +332,29 @@ export async function clearCloudProviderKey(slug: string): Promise<void> {
   // Clear the new-style key. Legacy bare-slug entries are left as-is
   // since we can't be sure they aren't used by other things.
   await authRemoveProviderCredentials({ provider: authKeyForSlug(slug), profile: 'default' });
+}
+
+export async function startOpenAiCodexOAuth(): Promise<OpenAiCodexOAuthStartResult> {
+  const res = await callCoreRpc<{ result: OpenAiCodexOAuthStartResult }>({
+    method: 'openhuman.inference_openai_oauth_start',
+    params: {},
+  });
+  const authUrl = res?.result?.authUrl?.trim();
+  if (!authUrl) {
+    throw new Error('OpenAI Codex OAuth did not return an authorization URL.');
+  }
+  return res.result;
+}
+
+export async function completeOpenAiCodexOAuth(callbackUrl: string): Promise<void> {
+  const callback = callbackUrl.trim();
+  if (!callback) {
+    throw new Error('Paste the redirect URL from your browser after signing in.');
+  }
+  await callCoreRpc({
+    method: 'openhuman.inference_openai_oauth_complete',
+    params: { callback_url: callback },
+  });
 }
 
 /**
