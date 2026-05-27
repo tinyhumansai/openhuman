@@ -34,6 +34,7 @@ const CURRENT_USER_REFRESH_TTL: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
 const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
+const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
@@ -439,24 +440,47 @@ async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot
     let (screen_intelligence, local_ai, autocomplete, service) = tokio::join!(
         async {
             let t = Instant::now();
-            let _ = crate::openhuman::screen_intelligence::global_engine()
-                .apply_config(si_config)
-                .await;
-            let status = crate::openhuman::screen_intelligence::global_engine()
-                .status()
-                .await;
+            let status = match tokio::time::timeout(SNAPSHOT_SUB_OP_TIMEOUT, async {
+                let _ = crate::openhuman::screen_intelligence::global_engine()
+                    .apply_config(si_config)
+                    .await;
+                crate::openhuman::screen_intelligence::global_engine()
+                    .status()
+                    .await
+            })
+            .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    warn!(
+                        "{LOG_PREFIX} screen_intelligence timed out after {}s; using degraded sub-snapshot req_id={}",
+                        SNAPSHOT_SUB_OP_TIMEOUT.as_secs(),
+                        req_id,
+                    );
+                    degraded_runtime_snapshot(config).screen_intelligence
+                }
+            };
             (status, t.elapsed().as_millis())
         },
         async {
             let t = Instant::now();
-            let status = match crate::openhuman::inference::rpc::inference_status(
-                &config_for_local_ai,
+            let status = match tokio::time::timeout(
+                SNAPSHOT_SUB_OP_TIMEOUT,
+                crate::openhuman::inference::rpc::inference_status(&config_for_local_ai),
             )
             .await
             {
-                Ok(outcome) => outcome.value,
-                Err(error) => {
+                Ok(Ok(outcome)) => outcome.value,
+                Ok(Err(error)) => {
                     warn!("{LOG_PREFIX} local_ai status failed during snapshot: {error}");
+                    crate::openhuman::inference::LocalAiStatus::disabled(&config_for_local_ai)
+                }
+                Err(_) => {
+                    warn!(
+                        "{LOG_PREFIX} local_ai timed out after {}s; using degraded sub-snapshot req_id={}",
+                        SNAPSHOT_SUB_OP_TIMEOUT.as_secs(),
+                        req_id,
+                    );
                     crate::openhuman::inference::LocalAiStatus::disabled(&config_for_local_ai)
                 }
             };
@@ -464,9 +488,23 @@ async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot
         },
         async {
             let t = Instant::now();
-            let status = crate::openhuman::autocomplete::global_engine()
-                .status_with_config(&config_for_autocomplete)
-                .await;
+            let status = match tokio::time::timeout(
+                SNAPSHOT_SUB_OP_TIMEOUT,
+                crate::openhuman::autocomplete::global_engine()
+                    .status_with_config(&config_for_autocomplete),
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    warn!(
+                        "{LOG_PREFIX} autocomplete timed out after {}s; using degraded sub-snapshot req_id={}",
+                        SNAPSHOT_SUB_OP_TIMEOUT.as_secs(),
+                        req_id,
+                    );
+                    degraded_runtime_snapshot(config).autocomplete
+                }
+            };
             (status, t.elapsed().as_millis())
         },
         async {

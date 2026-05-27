@@ -297,6 +297,7 @@ async fn render_integrations_agent(config: &Config, toolkit: &str) -> Result<Dum
             match crate::openhuman::composio::fetch_toolkit_actions(
                 composio_client,
                 &integration.toolkit,
+                None,
             )
             .await
             {

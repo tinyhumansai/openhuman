@@ -135,21 +135,44 @@ impl ComposioClient {
 
     // ── Tools ───────────────────────────────────────────────────────
 
-    /// `GET /agent-integrations/composio/tools?toolkits=<csv>` — fetch
-    /// OpenAI function-calling schemas. Omit `toolkits` to get every
-    /// enabled toolkit's tools.
-    pub async fn list_tools(&self, toolkits: Option<&[String]>) -> Result<ComposioToolsResponse> {
-        let path = match toolkits {
-            Some(list) if !list.is_empty() => {
-                let joined = list
-                    .iter()
-                    .map(|t| t.trim())
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                format!("/agent-integrations/composio/tools?toolkits={joined}")
+    /// `GET /agent-integrations/composio/tools?toolkits=<csv>&tags=<csv>` — fetch
+    /// OpenAI function-calling schemas. Omit `toolkits` to get every enabled
+    /// toolkit's tools. `tags` narrows by Composio action tag (OR semantics —
+    /// multiple tags broaden the result).
+    pub async fn list_tools(
+        &self,
+        toolkits: Option<&[String]>,
+        tags: Option<&[String]>,
+    ) -> Result<ComposioToolsResponse> {
+        let mut params: Vec<String> = Vec::new();
+        if let Some(list) = toolkits {
+            let joined = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| urlencoding::encode(t).into_owned())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !joined.is_empty() {
+                params.push(format!("toolkits={joined}"));
             }
-            _ => "/agent-integrations/composio/tools".to_string(),
+        }
+        if let Some(list) = tags {
+            let joined = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| urlencoding::encode(t).into_owned())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !joined.is_empty() {
+                params.push(format!("tags={joined}"));
+            }
+        }
+        let path = if params.is_empty() {
+            "/agent-integrations/composio/tools".to_string()
+        } else {
+            format!("/agent-integrations/composio/tools?{}", params.join("&"))
         };
         tracing::debug!(path = %path, "[composio] list_tools");
         self.inner.get::<ComposioToolsResponse>(&path).await

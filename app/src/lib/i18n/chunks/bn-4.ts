@@ -146,6 +146,8 @@ const bn4: TranslationMap = {
   'notifications.center.filterAll': 'সব ফিল্টার',
   'notifications.center.markAllRead': 'সব পঠিত চিহ্নিত করুন',
   'notifications.center.title': 'বিজ্ঞপ্তি',
+  'oauth.button.loopbackTimeout':
+    'সাইন-ইন টাইম আউট হয়েছে — ব্রাউজার OAuth পুনর্নির্দেশনা সম্পন্ন করেনি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'oauth.button.connecting': 'সংযোগ হচ্ছে...',
   'oauth.login.continueWith': 'দিয়ে চালিয়ে যান',
   'onboarding.contextGathering.buildingDesc': 'বিল্ডিং বিবরণ',

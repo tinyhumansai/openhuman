@@ -1824,6 +1824,24 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         );
     }
 
+    // --- Live SecurityPolicy ---
+    // Install the process-global live policy on the always-run serve boot, not
+    // only inside `start_channels` (which is skipped for web-chat-only cores
+    // with no messaging integrations). Without this, `live_policy::current()`
+    // would be empty on those cores, so the ApprovalGate's `auto_approve`
+    // allowlist and `config.update_autonomy_settings` reloads (`reload_from`)
+    // would be inert until a session with integrations starts. `from_config`
+    // injects the default projects root, so this matches what `start_channels`
+    // installs; idempotent — a later `start_channels` re-installs an equivalent
+    // policy.
+    crate::openhuman::security::live_policy::install(
+        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
+            &cfg.autonomy,
+            &workspace_dir,
+        )),
+        workspace_dir.clone(),
+    );
+
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).
     // Prompt-class `external_effect()` tool calls route through

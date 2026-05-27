@@ -80,6 +80,21 @@ describe('ApprovalRequestCard', () => {
     });
   });
 
+  it('Always allow routes approve_always_for_tool to approval_decide and clears the pending state', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({});
+    const { store } = renderCard();
+
+    fireEvent.click(screen.getByText('Always allow'));
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.approval_decide',
+      params: { request_id: 'req-approval-1', decision: 'approve_always_for_tool' },
+    });
+    await waitFor(() => {
+      expect(store.getState().chatRuntime.pendingApprovalByThread[THREAD]).toBeUndefined();
+    });
+  });
+
   it('keeps the prompt and shows an error when the decide RPC fails', async () => {
     vi.mocked(callCoreRpc).mockRejectedValueOnce(new Error('gate not installed'));
     const { store } = renderCard();

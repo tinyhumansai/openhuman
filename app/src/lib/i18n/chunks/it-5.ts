@@ -754,13 +754,17 @@ const it5: TranslationMap = {
   'settings.agentAccess.confine.desc':
     'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
   'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.alwaysAllow': 'Always-allowed tools',
+  'settings.agentAccess.alwaysAllowDesc':
+    'Tools you marked "Always allow" in chat run without asking. Remove one to be prompted again.',
+  'settings.agentAccess.alwaysAllowNone': 'No always-allowed tools yet.',
   'settings.agentAccess.grantedDesc':
     'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
   'settings.agentAccess.noneGranted': 'No folders granted.',
   'settings.agentAccess.readWrite': 'read + write',
   'settings.agentAccess.readOnly': 'read-only',
   'settings.agentAccess.remove': 'Remove',
-  'settings.agentAccess.pathPlaceholder': '/absolute/path/to/folder',
+  'settings.agentAccess.pathPlaceholder': 'Percorso assoluto della cartella',
   'settings.agentAccess.accessLevelLabel': 'Access level',
   'settings.agentAccess.add': 'Add',
   'settings.agentAccess.saving': 'Saving…',

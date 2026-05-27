@@ -24,6 +24,7 @@ pub const MODEL_CHAT_V1: &str = "chat-v1";
 /// reasoning is needed.
 pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
+pub const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
 /// Default model used when no explicit model is configured.
 ///
 /// Set to `reasoning-quick-v1` (Kimi K2.6 Turbo on Fireworks — low-latency,

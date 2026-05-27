@@ -8,13 +8,16 @@ import { useAppDispatch } from '../../store/hooks';
 import Button from '../ui/Button';
 
 /**
- * Binary v1 decision surface. The backend `approval.decide` RPC also accepts
- * `approve_always_for_tool`, but the locked v1 contract is yes / no — a typed
- * `yes`/`no` chat reply is the equivalent server-side path.
+ * Decision surface for a parked tool call. `approve_once` / `deny` decide the
+ * current call only; `approve_always_for_tool` additionally persists the tool
+ * onto the user's `autonomy.auto_approve` ("Always allow") list so the gate
+ * skips prompting for it on future turns (managed/removable in Settings → Agent
+ * access). A typed `yes`/`no` chat reply is the equivalent server-side path for
+ * the once/deny decisions.
  */
 const log = debug('openhuman:chat:approval-card');
 
-type BinaryDecision = 'approve_once' | 'deny';
+type Decision = 'approve_once' | 'approve_always_for_tool' | 'deny';
 
 interface Props {
   threadId: string;
@@ -31,10 +34,10 @@ interface Props {
 export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => {
   const { t } = useT();
   const dispatch = useAppDispatch();
-  const [deciding, setDeciding] = useState<BinaryDecision | null>(null);
+  const [deciding, setDeciding] = useState<Decision | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const decide = async (decision: BinaryDecision) => {
+  const decide = async (decision: Decision) => {
     if (deciding) return;
     setDeciding(decision);
     setErrorMsg(null);
@@ -80,7 +83,7 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
 
           {errorMsg && <p className="mt-2 text-xs text-coral">⚠ {errorMsg}</p>}
 
-          <div className="mt-3 flex items-center gap-2">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button
               variant="primary"
               size="sm"
@@ -89,6 +92,16 @@ export const ApprovalRequestCard: React.FC<Props> = ({ threadId, approval }) => 
               {deciding === 'approve_once'
                 ? t('chat.approval.deciding')
                 : t('chat.approval.approve')}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void decide('approve_always_for_tool')}
+              disabled={deciding !== null}
+              title={t('chat.approval.alwaysAllowHint')}>
+              {deciding === 'approve_always_for_tool'
+                ? t('chat.approval.deciding')
+                : t('chat.approval.alwaysAllow')}
             </Button>
             <Button
               variant="secondary"

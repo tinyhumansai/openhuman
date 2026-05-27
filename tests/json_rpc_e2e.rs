@@ -7703,6 +7703,42 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         "expected validation error in: {err_message}"
     );
 
+    // auto_approve ("Always allow" allowlist) round-trips through the same
+    // update/get path the Agent Access settings panel uses.
+    let update_allow = post_json_rpc(
+        &rpc_base,
+        7005,
+        "openhuman.config_update_autonomy_settings",
+        json!({ "auto_approve": ["shell", "curl"] }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&update_allow, "update_autonomy_settings auto_approve");
+
+    let after_allow = post_json_rpc(
+        &rpc_base,
+        7006,
+        "openhuman.config_get_autonomy_settings",
+        json!({}),
+    )
+    .await;
+    let after_allow_outer =
+        assert_no_jsonrpc_error(&after_allow, "get_autonomy_settings auto_approve");
+    let allow_list: Vec<String> = after_allow_outer
+        .get("result")
+        .and_then(|r| r.get("auto_approve"))
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(
+        allow_list,
+        vec!["shell".to_string(), "curl".to_string()],
+        "auto_approve allowlist should round-trip, got envelope: {after_allow_outer}"
+    );
+
     mock_join.abort();
     rpc_join.abort();
 }

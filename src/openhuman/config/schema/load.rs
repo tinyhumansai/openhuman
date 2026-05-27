@@ -1120,20 +1120,42 @@ impl Config {
         if config_path.exists() {
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::{fs::Permissions, os::unix::fs::PermissionsExt};
                 if let Ok(meta) = fs::metadata(&config_path).await {
                     if meta.permissions().mode() & 0o004 != 0 {
                         let warned = WARNED_WORLD_READABLE_CONFIGS
                             .get_or_init(|| Mutex::new(HashSet::new()));
-                        let mut warned_guard = warned.lock().unwrap_or_else(|e| e.into_inner());
-                        if warned_guard.insert(config_path.clone()) {
+                        // Only attempt to fix paths not yet successfully chmod'd.
+                        // Cache is advanced only on success so a persistent
+                        // failure re-warns and re-attempts on every load.
+                        let already_fixed = warned
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .contains(&config_path);
+                        if !already_fixed {
                             tracing::warn!(
-                                "Config file {:?} is world-readable (mode {:o}). \
-                                 Consider restricting with: chmod 600 {:?}",
+                                "[config] Config file {:?} is world-readable (mode {:o}); \
+                                 auto-fixing to 600",
                                 config_path,
                                 meta.permissions().mode() & 0o777,
-                                config_path,
                             );
+                            match fs::set_permissions(&config_path, Permissions::from_mode(0o600))
+                                .await
+                            {
+                                Ok(()) => {
+                                    warned
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .insert(config_path.clone());
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        path = %config_path.display(),
+                                        error = %e,
+                                        "[config] failed to auto-fix config file permissions to 600",
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -1386,6 +1408,19 @@ impl Config {
             if let Ok(temp) = temp_str.parse::<f64>() {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
+                }
+            }
+        }
+
+        if let Some(raw) = env.get("OPENHUMAN_MAX_ACTIONS_PER_HOUR") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u32>() {
+                    Ok(limit) => self.autonomy.max_actions_per_hour = limit,
+                    Err(_) => tracing::warn!(
+                        value = %raw,
+                        "invalid OPENHUMAN_MAX_ACTIONS_PER_HOUR ignored; expected an unsigned integer"
+                    ),
                 }
             }
         }

@@ -1,6 +1,44 @@
 use super::*;
 use crate::openhuman::agent::harness::definition::{ModelSpec, ToolScope};
 
+#[test]
+fn lazy_resolver_tolerates_near_miss_slugs() {
+    use crate::openhuman::context::prompt::ConnectedIntegrationTool;
+    let mk = |name: &str| ConnectedIntegrationTool {
+        name: name.into(),
+        description: "d".into(),
+        parameters: None,
+    };
+    let resolver = LazyToolkitResolver {
+        config: std::sync::Arc::new(crate::openhuman::config::Config::default()),
+        actions: vec![mk("GOOGLESLIDES_BATCH_UPDATE"), mk("GMAIL_LIST_MESSAGES")],
+    };
+    // Exact, case-insensitive, and separator/prefix drift all resolve
+    // (bug-report-2026-05-26 A2).
+    assert!(resolver.resolve("GMAIL_LIST_MESSAGES").is_some());
+    assert!(resolver.resolve("gmail_list_messages").is_some());
+    assert!(resolver.resolve("googleslides_batch_update").is_some());
+    // A fabricated slug stays unresolved → routed to the "available tools"
+    // error so the model self-corrects, not silently mis-dispatched.
+    assert!(resolver.resolve("GMAIL_GET_LAST_3_MESSAGES").is_none());
+}
+
+#[test]
+fn normalize_slug_collapses_separators_and_case() {
+    assert_eq!(
+        normalize_slug("GOOGLESLIDES_BATCH_UPDATE"),
+        "googleslidesbatchupdate"
+    );
+    assert_eq!(
+        normalize_slug("googleslides_batch_update"),
+        "googleslidesbatchupdate"
+    );
+    assert_ne!(
+        normalize_slug("GMAIL_GET_LAST_3_MESSAGES"),
+        normalize_slug("GMAIL_LIST_MESSAGES")
+    );
+}
+
 fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
     AgentDefinition {
         id: "test".into(),
@@ -595,6 +633,68 @@ async fn runner_errors_outside_parent_context() {
     let def = make_def_named_tools(&[]);
     let result = run_subagent(&def, "x", SubagentRunOptions::default()).await;
     assert!(matches!(result, Err(SubagentRunError::NoParentContext)));
+}
+
+#[tokio::test]
+async fn subagent_emits_checkpoint_at_iteration_cap_instead_of_erroring() {
+    // A sub-agent that keeps calling tools and never finishes must hit its
+    // cap and return a graceful partial-progress checkpoint (Ok), not a bare
+    // MaxIterationsExceeded that discards its work — so the delegating agent
+    // can continue from what it got (bug-report-2026-05-26 A1, mirrors the
+    // main agent). Two tool rounds (max_iterations=2), then the summarize
+    // call returns prose which becomes the checkpoint.
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{}"),
+        tool_response("file_read", "{}"),
+        text_response("Progress so far: read the file. Remaining: keep going."),
+    ]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let mut def = make_def_named_tools(&["file_read"]);
+    def.max_iterations = 2;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "keep reading forever", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("hitting the iteration cap should return a checkpoint, not error");
+
+    assert!(
+        outcome.output.contains("Progress so far"),
+        "expected the model-written checkpoint, got: {}",
+        outcome.output
+    );
+}
+
+#[tokio::test]
+async fn subagent_checkpoint_falls_back_to_deterministic_when_summary_empty() {
+    // Same cap, but the summarize call yields nothing (response queue
+    // exhausted → empty). The runner must fall back to a deterministic
+    // partial-progress digest so the parent still gets a usable result
+    // (bug-report-2026-05-26 A1).
+    let provider = ScriptedProvider::new(vec![
+        tool_response("file_read", "{}"),
+        tool_response("file_read", "{}"),
+    ]);
+    let parent = make_parent(provider.clone(), vec![stub("file_read")]);
+    let mut def = make_def_named_tools(&["file_read"]);
+    def.max_iterations = 2;
+
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "keep reading forever", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("empty summary should fall back, not error");
+
+    assert!(
+        outcome.output.contains("tool-call limit"),
+        "expected the deterministic fallback checkpoint, got: {}",
+        outcome.output
+    );
+    assert!(
+        outcome.output.contains("file_read"),
+        "deterministic checkpoint should list the tool work done, got: {}",
+        outcome.output
+    );
 }
 
 #[tokio::test]

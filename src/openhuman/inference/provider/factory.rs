@@ -79,7 +79,7 @@ pub fn auth_key_for_slug(slug: &str) -> String {
 pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-        MODEL_REASONING_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
     };
     matches!(
         model,
@@ -88,10 +88,12 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
             | MODEL_AGENTIC_V1
             | MODEL_CODING_V1
             | MODEL_REASONING_QUICK_V1
+            | MODEL_SUMMARIZATION_V1
             | "hint:reasoning"
             | "hint:chat"
             | "hint:agentic"
             | "hint:coding"
+            | "hint:summarization"
     )
 }
 
@@ -416,6 +418,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
+        Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),
         Some(_) => {
             // Unrecognised hint — forward verbatim; the backend decides validity.
             model
@@ -427,7 +430,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
                 log::warn!(
                     "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
                      backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
-                     reasoning-quick-v1); falling back to '{}'",
+                     reasoning-quick-v1, summarization-v1); falling back to '{}'",
                     model,
                     crate::openhuman::config::MODEL_REASONING_V1,
                 );

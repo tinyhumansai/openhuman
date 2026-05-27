@@ -612,6 +612,7 @@ pub(crate) async fn process_channel_message(
         reply_target: msg.reply_target.clone(),
         content: msg.content.clone(),
         thread_ts: msg.thread_ts.clone(),
+        workspace_dir: ctx.workspace_dir.as_ref().clone(),
     });
 
     let target_channel = ctx.channels_by_name.get(&msg.channel).cloned();
@@ -1024,6 +1025,7 @@ pub(crate) async fn process_channel_message(
                     response: error_text.to_string(),
                     elapsed_ms: started_at.elapsed().as_millis() as u64,
                     success: false,
+                    workspace_dir: ctx.workspace_dir.as_ref().clone(),
                 });
                 return;
             }
@@ -1152,6 +1154,7 @@ pub(crate) async fn process_channel_message(
         response: response_text,
         elapsed_ms: started_at.elapsed().as_millis() as u64,
         success,
+        workspace_dir: ctx.workspace_dir.as_ref().clone(),
     });
 }
 

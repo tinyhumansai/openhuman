@@ -401,6 +401,8 @@ const en3: TranslationMap = {
   'channels.telegram.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.web.alwaysAvailable': 'Always available',
   'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
   'chat.approval.deciding': 'Working…',
   'chat.approval.deny': 'Deny',
   'chat.approval.error': 'Could not record your decision — try again.',

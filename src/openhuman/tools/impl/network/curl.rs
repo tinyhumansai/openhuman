@@ -484,7 +484,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(err.contains("allowed_domains"));
+        assert!(err.contains("allowed websites"));
     }
 
     #[test]
@@ -569,6 +569,6 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_error);
-        assert!(result.output().contains("allowed_domains"));
+        assert!(result.output().contains("allowed websites"));
     }
 }

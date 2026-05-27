@@ -54,11 +54,17 @@ interface MemoryWorkspaceProps {
  * adding chunks to the memory tree.
  *
  * Source of truth: providers under
- * `src/openhuman/composio/providers/<toolkit>/` that call
- * `ingest_page_into_memory_tree`. Today that's gmail. Add a slug here
- * when a new provider lands a memory-tree ingest path.
+ * `src/openhuman/memory_sync/composio/providers/<toolkit>/` that
+ * persist items via `store_skill_sync` into the memory tree.
  */
-const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set(['gmail']);
+const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set([
+  'clickup',
+  'github',
+  'gmail',
+  'linear',
+  'notion',
+  'slack',
+]);
 
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const { t } = useT();
