@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
@@ -481,49 +481,62 @@ const KeyEditor = ({
   configured,
   docUrl,
   t,
-}: KeyEditorProps) => (
-  <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
-    <div className="flex items-center justify-between mb-2">
-      <label className="text-xs font-semibold text-stone-700 dark:text-neutral-200">{label}</label>
-      <a
-        href={docUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-[10px] text-primary-500 hover:underline">
-        {t('settings.search.getApiKey')} ↗
-      </a>
-    </div>
-    <div className="flex items-center gap-2">
-      <input
-        type={show ? 'text' : 'password'}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-      />
-      <button
-        type="button"
-        onClick={onToggleShow}
-        className="px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800">
-        {show ? t('settings.search.hide') : t('settings.search.show')}
-      </button>
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={value.trim().length === 0}
-        className="px-3 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium disabled:opacity-50">
-        {t('settings.search.save')}
-      </button>
-      {configured && (
+}: KeyEditorProps) => {
+  const inputId = useId();
+
+  return (
+    <div
+      role="group"
+      aria-labelledby={inputId}
+      className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <label
+          id={inputId}
+          htmlFor={`${inputId}-input`}
+          className="text-xs font-semibold text-stone-700 dark:text-neutral-200">
+          {label}
+        </label>
+        <a
+          href={docUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] text-primary-500 hover:underline">
+          {t('settings.search.getApiKey')} ↗
+        </a>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={`${inputId}-input`}
+          type={show ? 'text' : 'password'}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+        />
         <button
           type="button"
-          onClick={onClear}
-          className="px-2 py-1.5 rounded-md border border-coral-200 dark:border-coral-500/30 text-xs text-coral-600 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/10">
-          {t('settings.search.clear')}
+          onClick={onToggleShow}
+          className="px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800">
+          {show ? t('settings.search.hide') : t('settings.search.show')}
         </button>
-      )}
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={value.trim().length === 0}
+          className="px-3 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium disabled:opacity-50">
+          {t('settings.search.save')}
+        </button>
+        {configured && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="px-2 py-1.5 rounded-md border border-coral-200 dark:border-coral-500/30 text-xs text-coral-600 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/10">
+            {t('settings.search.clear')}
+          </button>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default SearchPanel;

@@ -55,11 +55,7 @@ const CUSTOM = 'settings.search.accessCustom';
 const BLOCK_ALL = 'settings.search.accessBlockAll';
 
 const radio = (name: string) => screen.getByRole('radio', { name });
-const keyEditor = (label: string) => {
-  const root = screen.getByText(label).closest('.rounded-xl');
-  expect(root).not.toBeNull();
-  return within(root as HTMLElement);
-};
+const keyEditor = (label: string) => within(screen.getByRole('group', { name: label }));
 
 describe('SearchPanel — unified web-access modes', () => {
   beforeEach(() => {
