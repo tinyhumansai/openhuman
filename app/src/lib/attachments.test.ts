@@ -102,11 +102,14 @@ describe('validateAndReadFile', () => {
       }
     }
     globalThis.FileReader = FailingReader as unknown as typeof FileReader;
-    const result = await validateAndReadFile(file, 0);
-    globalThis.FileReader = origFileReader;
-    expect('error' in result).toBe(true);
-    if ('error' in result) {
-      expect(result.error.code).toBe('read_failed');
+    try {
+      const result = await validateAndReadFile(file, 0);
+      expect('error' in result).toBe(true);
+      if ('error' in result) {
+        expect(result.error.code).toBe('read_failed');
+      }
+    } finally {
+      globalThis.FileReader = origFileReader;
     }
   });
 });

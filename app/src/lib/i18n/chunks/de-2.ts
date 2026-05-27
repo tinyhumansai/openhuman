@@ -325,8 +325,6 @@ const de2: TranslationMap = {
   'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
   'chat.attachment.unsupportedType': 'Unsupported file type. Use PNG, JPEG, WebP, GIF, or BMP.',
   'chat.attachment.readFailed': 'Could not read file',
-  'chat.attachment.camera': 'Capture from camera',
-  'chat.attachment.cameraUnavailable': 'Camera unavailable',
   'memory.searchAria': 'Speicher durchsuchen',
   'memory.searchPlaceholder': 'Speichereinträge durchsuchen...',
   'memory.sourceFilter.all': 'Alle Quellen',
