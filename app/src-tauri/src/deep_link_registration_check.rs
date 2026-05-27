@@ -104,6 +104,21 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
         RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
     };
 
+    // RAII wrapper for the open HKEY. Mirrors the `OwnedMutex` pattern used
+    // in `lib.rs::run()` for the pre-CEF mutex handle: any early return after
+    // the first successful `RegOpenKeyExW` falls through Drop instead of
+    // having to remember to call `RegCloseKey` on every branch.
+    struct OwnedHkey(HKEY);
+    impl Drop for OwnedHkey {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: self.0 is only set via a successful `RegOpenKeyExW`
+                // and is not aliased elsewhere — this Drop is the sole closer.
+                unsafe { RegCloseKey(self.0) };
+            }
+        }
+    }
+
     let exe = match std::env::current_exe() {
         Ok(p) => p,
         Err(err) => {
@@ -115,15 +130,16 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-    let mut hkey: HKEY = std::ptr::null_mut();
-    // SAFETY: subkey_wide is NUL-terminated UTF-16; hkey is written iff result == 0.
+    // Start null so Drop is a no-op if `RegOpenKeyExW` never succeeds.
+    let mut hkey = OwnedHkey(std::ptr::null_mut());
+    // SAFETY: subkey_wide is NUL-terminated UTF-16; hkey.0 is written iff result == 0.
     let open_result = unsafe {
         RegOpenKeyExW(
             HKEY_CURRENT_USER,
             subkey_wide.as_ptr(),
             0,
             KEY_READ,
-            &mut hkey,
+            &mut hkey.0,
         )
     };
 
@@ -140,10 +156,10 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
     let value_name: [u16; 1] = [0];
     let mut value_type: u32 = 0;
     let mut needed: u32 = 0;
-    // SAFETY: hkey is a valid open HKEY; we pass null for data to get the size only.
+    // SAFETY: hkey.0 is a valid open HKEY; we pass null for data to get the size only.
     let size_probe = unsafe {
         RegQueryValueExW(
-            hkey,
+            hkey.0,
             value_name.as_ptr(),
             std::ptr::null_mut(),
             &mut value_type,
@@ -153,10 +169,6 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
     };
 
     if size_probe as u32 != ERROR_SUCCESS {
-        // SAFETY: hkey is a valid open HKEY from the matching RegOpenKeyExW call.
-        unsafe {
-            RegCloseKey(hkey);
-        }
         if size_probe as u32 == ERROR_FILE_NOT_FOUND {
             return RegistrationStatus::MissingCommand;
         }
@@ -166,10 +178,6 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
     }
 
     if value_type != REG_SZ || needed == 0 {
-        // SAFETY: hkey is a valid open HKEY from the matching RegOpenKeyExW call.
-        unsafe {
-            RegCloseKey(hkey);
-        }
         return RegistrationStatus::MissingCommand;
     }
 
@@ -181,7 +189,7 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
     // SAFETY: buf is sized for `needed` bytes; buf_bytes is updated by the call.
     let query_result = unsafe {
         RegQueryValueExW(
-            hkey,
+            hkey.0,
             value_name.as_ptr(),
             std::ptr::null_mut(),
             &mut value_type,
@@ -189,10 +197,8 @@ pub(crate) fn verify_protocol_registration() -> RegistrationStatus {
             &mut buf_bytes,
         )
     };
-    // SAFETY: hkey is a valid open HKEY from the matching RegOpenKeyExW call.
-    unsafe {
-        RegCloseKey(hkey);
-    }
+
+    // From here on we no longer need the handle; Drop closes it at function exit.
 
     if query_result as u32 != ERROR_SUCCESS {
         return RegistrationStatus::ReadError(format!(
@@ -263,6 +269,24 @@ mod tests {
     }
 
     #[test]
+    fn extract_first_token_empty_string() {
+        // Defensive guard: an empty REG_SZ value must not panic. The caller
+        // (`verify_protocol_registration`) classifies this as `MissingCommand`
+        // before reaching the parser, but the parser itself stays total.
+        assert_eq!(extract_first_token(""), "");
+    }
+
+    #[test]
+    fn extract_first_token_quoted_exe_with_no_trailing_args() {
+        // Some installers register the command without the `"%1"` argv
+        // placeholder. The first token is still the quoted exe path.
+        assert_eq!(
+            extract_first_token("\"C:\\OpenHuman\\OpenHuman.exe\""),
+            "C:\\OpenHuman\\OpenHuman.exe"
+        );
+    }
+
+    #[test]
     fn extract_first_token_unterminated_quote_falls_through() {
         // Defensive: malformed REG_SZ should not panic. We return the rest of
         // the string instead of slicing past a missing terminator.
@@ -293,6 +317,18 @@ mod tests {
         let exe = PathBuf::from("C:\\Program Files\\OpenHuman\\OpenHuman.exe");
         assert!(command_references_exe(
             "\"C:\\Program Files\\OpenHuman\\OpenHuman.exe\" \"%1\"",
+            &exe
+        ));
+    }
+
+    #[test]
+    fn command_references_exe_matches_unquoted_command() {
+        // Some HKCU writers omit the quotes when the path has no spaces. The
+        // matcher must still resolve to the exe via the unquoted code path in
+        // `extract_first_token` rather than relying only on the quoted path.
+        let exe = PathBuf::from("C:\\OpenHuman\\OpenHuman.exe");
+        assert!(command_references_exe(
+            "C:\\OpenHuman\\OpenHuman.exe %1",
             &exe
         ));
     }
