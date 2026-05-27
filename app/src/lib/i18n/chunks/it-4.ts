@@ -429,7 +429,6 @@ const it4: TranslationMap = {
   'walletBalances.retry': 'Retry',
   'walletBalances.emptyState': 'No wallet accounts yet — set up a wallet in Recovery Phrase.',
   'walletBalances.copyAddress': 'Copy address',
-  'walletBalances.addressCopied': 'Copied',
   'walletBalances.providerMissing': 'provider unavailable',
   'walletBalances.rawBalance': 'Raw: {raw}',
   'walletBalances.errorGeneric':
