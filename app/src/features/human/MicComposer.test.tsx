@@ -84,6 +84,7 @@ describe('MicComposer', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (originalMediaDevicesDescriptor) {
       Object.defineProperty(globalThis.navigator, 'mediaDevices', originalMediaDevicesDescriptor);
     } else {
@@ -187,6 +188,7 @@ describe('MicComposer', () => {
   });
 
   it('falls back to wav re-encode when the native attempt fails', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     // Native path: all 3 attempts (initial + 2 retries) fail, then WAV succeeds.
     transcribeWithFactoryMock
       .mockRejectedValueOnce(new Error('codec not accepted'))
@@ -203,10 +205,11 @@ describe('MicComposer', () => {
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
     );
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
-    // Retry backoff adds delay — extend timeout.
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('after fallback'), {
-      timeout: 10000,
-    });
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('after fallback'));
     expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
     // 3 native attempts + 1 WAV attempt
     expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(4);
@@ -509,8 +512,6 @@ describe('MicComposer', () => {
     // Advance past MAX_RECORDING_MS — the timeout should auto-stop.
     vi.advanceTimersByTime(MAX_RECORDING_MS + 100);
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('timeout transcript'));
-
-    vi.useRealTimers();
   });
 
   it('shows countdown label when remaining time <= 10s', async () => {
@@ -533,8 +534,6 @@ describe('MicComposer', () => {
 
     // The label pattern: "Tap to send (9s)" — match the parenthesized digit+s.
     await waitFor(() => expect(screen.getByText(/\d+s\)/)).toBeInTheDocument());
-
-    vi.useRealTimers();
   });
 
   it('handles enumerateDevices throwing gracefully (no crash, selector hidden)', async () => {
@@ -557,6 +556,7 @@ describe('MicComposer', () => {
   // ── STT retry (#1206) ──────────────────────────────────────────────────────
 
   it('retries transient STT failures before falling back to WAV', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     // Native path: fail twice (transient), then succeed
     transcribeWithFactoryMock
       .mockRejectedValueOnce(new Error('network timeout'))
@@ -571,14 +571,18 @@ describe('MicComposer', () => {
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
     );
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
-    // Retry backoff adds up to ~1.5s total delay, so extend the waitFor timeout.
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('retry success'), { timeout: 5000 });
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('retry success'));
     // Should have called transcribe 3 times (initial + 2 retries), no WAV fallback
     expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(3);
     expect(encodeBlobToWavMock).not.toHaveBeenCalled();
   });
 
   it('falls back to WAV after exhausting native retries', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     // Native path: all 3 attempts fail, then WAV path succeeds
     transcribeWithFactoryMock
       .mockRejectedValueOnce(new Error('server error'))
@@ -597,11 +601,39 @@ describe('MicComposer', () => {
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
     );
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
-    // Native retries (500+1000ms) + WAV encode + WAV attempt — needs generous timeout.
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('wav retry ok'), { timeout: 10000 });
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('wav retry ok'));
     // 3 native attempts + 1 WAV attempt
     expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(4);
     expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not continue retrying after unmount during STT backoff', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    transcribeWithFactoryMock
+      .mockRejectedValueOnce(new Error('network timeout'))
+      .mockResolvedValueOnce('late transcript');
+    const onSubmit = vi.fn();
+    const onError = vi.fn();
+    const view = render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+
+    view.unmount();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
   });
 
   it('does not retry permanent errors (stale sidecar)', async () => {
@@ -717,5 +749,6 @@ describe('isLowConfidenceTranscript', () => {
     expect(isLowConfidenceTranscript('안녕하세요')).toBe(false);
     expect(isLowConfidenceTranscript('مرحبا')).toBe(false);
     expect(isLowConfidenceTranscript('नमस्ते')).toBe(false);
+    expect(isLowConfidenceTranscript('বাংলা')).toBe(false);
   });
 });

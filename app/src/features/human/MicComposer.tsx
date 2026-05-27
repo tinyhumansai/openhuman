@@ -38,6 +38,17 @@ const PERMANENT_ERROR_PATTERNS = [
   'unavailable in this build',
 ];
 
+class TranscriptionCancelledError extends Error {
+  constructor() {
+    super('transcription cancelled');
+    this.name = 'TranscriptionCancelledError';
+  }
+}
+
+function isTranscriptionCancelledError(err: unknown): err is TranscriptionCancelledError {
+  return err instanceof TranscriptionCancelledError;
+}
+
 function isTransientError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
   return !PERMANENT_ERROR_PATTERNS.some(p => msg.includes(p));
@@ -58,12 +69,7 @@ export function isLowConfidenceTranscript(text: string): boolean {
   // All same character repeated: "aaa", "mmm", "..."
   if (/^(.)\1+$/i.test(trimmed)) return true;
   // Only punctuation, whitespace, or symbols — no actual words
-  if (
-    !/[a-zA-Z\u00C0-\u024F\u0400-\u04FF\u0600-\u06FF\u0900-\u097F\u3000-\u9FFF\uAC00-\uD7AF]/.test(
-      trimmed
-    )
-  )
-    return true;
+  if (!/\p{L}/u.test(trimmed)) return true;
   return false;
 }
 
@@ -459,24 +465,29 @@ export function MicComposer({
 
     try {
       const transcript = await transcribeWithFallback(blob);
+      if (disposedRef.current) return;
       if (!transcript) {
         onError?.(t('mic.noSpeechDetected'));
         setState('idle');
         return;
       }
       if (isLowConfidenceTranscript(transcript)) {
-        composerLog('low-confidence transcript detected: %s', JSON.stringify(transcript));
+        composerLog('low-confidence transcript detected length=%d', transcript.length);
         onError?.(t('mic.lowConfidenceResult'));
         setState('idle');
         return;
       }
       await onSubmit(transcript);
     } catch (err) {
+      if (disposedRef.current || isTranscriptionCancelledError(err)) {
+        composerLog('transcribe cancelled after composer disposal');
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed: %s', msg);
       onError?.(t('mic.transcriptionFailed').replace('{message}', msg));
     } finally {
-      setState('idle');
+      if (!disposedRef.current) setState('idle');
     }
   }
 
@@ -488,7 +499,11 @@ export function MicComposer({
   async function transcribeWithRetry(blob: Blob, label: string): Promise<string> {
     const opts = language ? { language } : undefined;
     let lastErr: unknown;
+    const throwIfDisposed = () => {
+      if (disposedRef.current) throw new TranscriptionCancelledError();
+    };
     for (let attempt = 0; attempt <= STT_MAX_RETRIES; attempt++) {
+      throwIfDisposed();
       try {
         composerLog(
           'transcribe attempt=%s/%d bytes=%d mime=%s lang=%s',
@@ -498,8 +513,11 @@ export function MicComposer({
           blob.type,
           language || 'auto'
         );
-        return await transcribeWithFactory(blob, opts);
+        const transcript = await transcribeWithFactory(blob, opts);
+        throwIfDisposed();
+        return transcript;
       } catch (err) {
+        if (isTranscriptionCancelledError(err)) throw err;
         lastErr = err;
         const msg = err instanceof Error ? err.message : String(err);
         if (!isTransientError(err)) {
@@ -516,6 +534,7 @@ export function MicComposer({
             msg
           );
           await new Promise(r => setTimeout(r, delay));
+          throwIfDisposed();
         } else {
           composerLog('transcribe exhausted retries attempt=%s/%d: %s', label, attempt, msg);
         }
@@ -539,6 +558,7 @@ export function MicComposer({
       composerLog('transcribe ok path=native ms=%d', Math.round(Date.now() - startedAt));
       return text;
     } catch (err) {
+      if (isTranscriptionCancelledError(err)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       // Permanent errors don't benefit from a WAV re-encode — bail early.
       if (!isTransientError(err)) throw err;
