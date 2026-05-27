@@ -963,6 +963,33 @@ fn is_provider_user_state_message(lower: &str) -> bool {
         return true;
     }
 
+    // OPENHUMAN-TAURI-YJ: `inference/provider/ops.rs::list_models` probed a
+    // user-configured custom-provider's `/models` endpoint and the upstream
+    // server returned 404. Wire shape emitted at `ops.rs:118-122`:
+    //
+    //   "provider returned 404: {\"error\":\"path \\\"/api/v1/models\\\" not found\"}"
+    //
+    // (the trailing body is whatever the upstream server wrote — `{"error":...}`,
+    // `{"detail":...}`, bare HTML, etc.; we only anchor on the `provider returned
+    // 404` prefix). The semantic is unambiguous: the user pointed a custom
+    // OpenAI-compatible provider at a base URL that does not host a `/models`
+    // listing endpoint (wrong base, model-only proxy, typo'd path). The model
+    // dropdown already surfaces the failure inline — Sentry has no remediation.
+    //
+    // **404 only**. Other 4xx from the same emit site stay actionable:
+    //   - 401 / 403: BYO-key auth wall — actionable misconfiguration; the
+    //     `does_not_classify_byo_key_provider_401_as_session_expired` contract
+    //     (#2286) intentionally keeps these in Sentry.
+    //   - 400: typically request-shape bugs in OUR client; must escalate.
+    //   - 429 / 5xx: transient — handled by other matchers / retry policy.
+    //
+    // No `inference/provider/ops.rs::list_models` other than this site emits
+    // the `provider returned NNN` prefix (verified via grep), so the prefix
+    // alone is a sufficient anchor.
+    if lower.starts_with("provider returned 404") {
+        return true;
+    }
+
     false
 }
 
@@ -3420,6 +3447,65 @@ mod tests {
             None,
             "genuine backend 500 without Cloudflare body must NOT demote — it is a real bug"
         );
+    }
+
+    #[test]
+    fn classifies_list_models_404_as_provider_user_state() {
+        // OPENHUMAN-TAURI-YJ: `inference/provider/ops.rs::list_models` probed
+        // a custom-provider's `/models` endpoint and the upstream server
+        // returned 404 because the base URL is wrong / doesn't host a models
+        // listing. User-config state — the model-dropdown probe already
+        // surfaces it inline. Pin the verbatim Sentry payload plus a few
+        // body-shape variants (different upstreams emit different 404 bodies)
+        // so the path-agnostic prefix anchor stays the source of truth.
+        for raw in [
+            // Verbatim shape from the Sentry event.
+            r#"provider returned 404: {"error":"path \"/api/v1/models\" not found"}"#,
+            // FastAPI-style: `{"detail":"Not Found"}`.
+            r#"provider returned 404: {"detail":"Not Found"}"#,
+            // Bare HTML — happens when the user pointed at a non-API origin
+            // (e.g. the provider's docs site).
+            "provider returned 404: <html><body>Not Found</body></html>",
+            // After `truncate_with_ellipsis(.., 300)` clips a longer body —
+            // prefix anchor must still match.
+            r#"provider returned 404: {"error":{"message":"The requested URL /api/v1/models was not found on this server. Please check the URL or co…"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "OPENHUMAN-TAURI-YJ list_models 404 must classify as ProviderUserState: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_non_404_list_models_failures_as_user_state() {
+        // Discrimination guard: only the 404 prefix demotes. Sibling 4xx /
+        // 5xx codes from the same `provider returned NNN:` emit site must
+        // stay actionable in Sentry — they map to BYO-key auth walls (401 /
+        // 403), client-shape bugs (400), and transient / server faults
+        // (429 / 5xx) respectively. Pinning each shape here protects the
+        // #2286 BYO-key 401 contract and prevents the arm from silently
+        // widening to all 4xx.
+        for raw in [
+            // BYO-key auth wall — must still escalate (`does_not_classify_byo_key_provider_401_as_session_expired` sibling guard).
+            r#"provider returned 401: {"error":"Invalid API key"}"#,
+            r#"provider returned 403: {"error":"Forbidden: API key revoked"}"#,
+            // Request-shape mismatch — likely a bug in our client.
+            r#"provider returned 400: {"error":"Bad Request"}"#,
+            // Transient — caught by retry/backoff at the provider layer,
+            // does NOT belong in the user-state bucket.
+            r#"provider returned 429: {"error":"rate_limited"}"#,
+            r#"provider returned 503: upstream temporarily unavailable"#,
+            // 500 — a real upstream bug; must reach Sentry.
+            r#"provider returned 500: {"error":"internal_server_error"}"#,
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "non-404 list_models failure must NOT demote to ProviderUserState: {raw}"
+            );
+        }
     }
 
     #[test]
