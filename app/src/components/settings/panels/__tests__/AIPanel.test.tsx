@@ -9,6 +9,8 @@ import {
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
   setCloudProviderKey,
   startOpenAiCodexOAuth,
@@ -586,6 +588,31 @@ describe('AIPanel', () => {
         }),
       ])
     );
+  });
+
+  it.each([
+    [OPENAI_CODEX_OAUTH_MISSING_AUTH_URL, /Codex OAuth did not return an authorization URL/i],
+    [
+      OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
+      /Paste the redirect URL from your browser after signing in/i,
+    ],
+  ])('localizes Codex CLI auth error code %s', async (errorCode, expectedMessage) => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(importOpenAiCodexCliAuth).mockRejectedValueOnce(new Error(errorCode));
+
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(expectedMessage));
+    expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();
+    expect(vi.mocked(clearCloudProviderKey)).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('wraps long provider setup errors and hides raw JSON behind technical details', async () => {
