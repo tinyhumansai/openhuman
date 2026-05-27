@@ -100,7 +100,7 @@ export function buildMessageWithAttachments(text: string, attachments: Attachmen
 export function parseMessageImages(content: string): { text: string; dataUris: string[] } {
   const dataUris: string[] = [];
   const text = content
-    .replace(/\[IMAGE:(data:[^\]]+)\]/g, (_match, uri: string) => {
+    .replace(/\[IMAGE:([^\]]+)\]/g, (_match, uri: string) => {
       dataUris.push(uri);
       return '';
     })

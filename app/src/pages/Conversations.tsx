@@ -626,7 +626,7 @@ const Conversations = ({
         if (error.code === 'too_many') {
           setAttachError(
             chatSendError(
-              'cloud_send_failed',
+              'attachment_invalid',
               t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))
             )
           );
@@ -634,14 +634,14 @@ const Conversations = ({
           const maxMb = (ATTACHMENT_MAX_SIZE_BYTES / (1024 * 1024)).toFixed(0);
           setAttachError(
             chatSendError(
-              'cloud_send_failed',
+              'attachment_invalid',
               t('chat.attachment.tooLarge').replace('{max}', `${maxMb} MB`)
             )
           );
         } else if (error.code === 'unsupported_type') {
-          setAttachError(chatSendError('cloud_send_failed', t('chat.attachment.unsupportedType')));
+          setAttachError(chatSendError('attachment_invalid', t('chat.attachment.unsupportedType')));
         } else {
-          setAttachError(chatSendError('cloud_send_failed', t('chat.attachment.readFailed')));
+          setAttachError(chatSendError('attachment_invalid', t('chat.attachment.readFailed')));
         }
         return;
       }
