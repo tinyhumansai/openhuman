@@ -478,13 +478,12 @@ impl Tool for QueritSearchTool {
         let status = resp.status();
         if !status.is_success() {
             let body_text = resp.text().await.unwrap_or_default();
-            let detail = crate::openhuman::util::utf8_safe_prefix_at_byte_boundary(&body_text, 500);
             tracing::warn!(
                 status = %status,
                 body_len = body_text.len(),
                 "[querit] non-2xx response from Querit"
             );
-            anyhow::bail!("Querit returned {status}: {detail}");
+            anyhow::bail!("Querit returned non-2xx status {status}");
         }
 
         let search_resp = Self::decode_response(resp.json().await.map_err(|e| {
@@ -739,5 +738,40 @@ mod tests {
         assert!(result.output().contains("Querit Result"));
         assert!(result.output().contains("https://example.com/result"));
         assert!(result.output().contains("Content from Querit search."));
+    }
+
+    #[tokio::test]
+    async fn test_execute_non_success_status_does_not_expose_response_body() {
+        use axum::{http::StatusCode, routing::post, Router};
+
+        let app = Router::new().route(
+            "/search",
+            post(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "sensitive query context should stay private",
+                )
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+        let tool = QueritSearchTool::new(Some("test-key".into()), Some(base_url), 5, 15);
+        let err = tool
+            .execute(json!({
+                "query": "private search",
+                "max_results": 3
+            }))
+            .await
+            .expect_err("non-2xx responses should fail");
+        let message = err.to_string();
+
+        assert!(message.contains("Querit returned non-2xx status 400 Bad Request"));
+        assert!(!message.contains("sensitive query context"));
     }
 }
