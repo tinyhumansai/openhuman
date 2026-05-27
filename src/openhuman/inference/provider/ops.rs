@@ -147,22 +147,80 @@ async fn list_configured_models_from_config(
         return Err(format!("provider returned error payload: {}", sanitized));
     }
 
-    // A valid `/models` response has a top-level `data` array (per the
-    // OpenAI API contract). Missing it means the endpoint isn't
-    // `/models`-compatible — the user almost certainly typed the wrong
-    // path. Fail loudly so the AI-panel probe surfaces the mistake.
-    let Some(data) = body.get("data").and_then(|d| d.as_array()).cloned() else {
-        let keys = body
-            .as_object()
-            .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
-            .unwrap_or_else(|| "<non-object>".to_string());
-        return Err(format!(
-            "provider response missing `data` array — endpoint is not OpenAI-compatible (got keys: {})",
-            keys
-        ));
-    };
+    // Parse the OpenAI-compatible `/models` envelope into typed model
+    // entries. See `parse_models_response` for the distinct error shapes
+    // returned for "missing field" vs "field present but wrong type"
+    // (TAURI-RUST-4Y).
+    let models = parse_models_response(&body)?;
 
-    let models: Vec<ModelInfo> = data
+    log::info!(
+        "[providers][list_models] slug={} fetched {} models",
+        entry.slug,
+        models.len()
+    );
+
+    Ok(crate::rpc::RpcOutcome::new(
+        serde_json::json!({ "models": models }),
+        vec![format!("fetched {} models", models.len())],
+    ))
+}
+
+/// Parse the OpenAI-compatible `/models` response envelope into typed
+/// [`ModelInfo`] entries.
+///
+/// Returns distinct errors for the three failure modes the wild has
+/// produced in `inference_list_models` Sentry events:
+///
+/// 1. **Missing `data` field** — endpoint isn't `/models`-compatible
+///    (user typo'd the base URL, pointed at a vector-DB host, etc.).
+///    Original TAURI-RUST-4Y wire shape, preserved verbatim so the
+///    Sentry fingerprint stays stable for that population.
+/// 2. **`data` field present but wrong type** — provider returned
+///    `{"object":"error","data":{…}}` or `{"data":null}` or similar
+///    non-array. The pre-fix code conflated this with case (1), emitting
+///    a misleading `"missing 'data' array (got keys: data, object)"`
+///    message; the new shape names the actual JSON type so triage knows
+///    what the provider sent.
+/// 3. **Non-object top-level body** — provider returned a bare array,
+///    string, etc. Caught explicitly so the parser doesn't silently
+///    drop into the missing-data arm with a `<non-object>` keys list.
+///
+/// Per-entry parsing ignores entries that don't have a string `id` (lax
+/// on purpose — many OpenAI-compatible servers include malformed rows
+/// for capabilities they don't fully implement).
+fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>, String> {
+    let obj = body.as_object().ok_or_else(|| {
+        format!(
+            "provider response is not a JSON object — endpoint is not OpenAI-compatible (got {} at top level)",
+            json_value_kind(body)
+        )
+    })?;
+
+    let data_value = obj.get("data").ok_or_else(|| {
+        let keys = obj.keys().cloned().collect::<Vec<_>>().join(", ");
+        format!(
+            "provider response missing `data` field — endpoint is not OpenAI-compatible (got keys: {})",
+            keys
+        )
+    })?;
+
+    let data = data_value.as_array().ok_or_else(|| {
+        // Include the sibling `object` field if present — OpenAI-shaped
+        // servers set it to `"list"` on success and `"error"` (or omit)
+        // on failure, so its value is the fastest triage signal for
+        // future Sentry events on the wrong-type arm.
+        let object_field = obj
+            .get("object")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "<absent>".to_string());
+        format!(
+            "provider response has `data` field but it is {}, expected array — endpoint may be returning an error envelope (\"object\" = {})",
+            json_value_kind(data_value),
+            object_field,
+        )
+    })?;
+
+    Ok(data
         .iter()
         .filter_map(|item| {
             let id = item.get("id")?.as_str()?.to_string();
@@ -180,18 +238,22 @@ async fn list_configured_models_from_config(
                 context_window,
             })
         })
-        .collect();
+        .collect())
+}
 
-    log::info!(
-        "[providers][list_models] slug={} fetched {} models",
-        entry.slug,
-        models.len()
-    );
-
-    Ok(crate::rpc::RpcOutcome::new(
-        serde_json::json!({ "models": models }),
-        vec![format!("fetched {} models", models.len())],
-    ))
+/// Name the JSON value kind for use in `parse_models_response` error
+/// messages. Mirrors `serde_json::Value::*` variants exactly so test
+/// assertions on the rendered token (`object`/`string`/`null`/…) stay
+/// in lock-step with the matcher.
+fn json_value_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 fn is_openrouter_provider(
@@ -1474,5 +1536,100 @@ mod tests {
         // Should truncate at MAX_API_ERROR_CHARS crabs
         let crabs_count = sanitized.chars().filter(|c| *c == '🦀').count();
         assert_eq!(crabs_count, MAX_API_ERROR_CHARS);
+    }
+
+    // ── parse_models_response (TAURI-RUST-4Y) ──────────────────────────────
+    //
+    // Before this fix the `/models` parser collapsed "no `data` field" and
+    // "`data` field present but not an array" into a single misleading
+    // error string: `"provider response missing `data` array — endpoint is
+    // not OpenAI-compatible (got keys: data, object)"` — the keys list
+    // included `data`, contradicting the "missing" claim. The split
+    // surfaces the actual JSON-type mismatch so future Sentry events on
+    // this code path are triageable instead of looking like the parser
+    // is hallucinating.
+
+    #[test]
+    fn parse_models_response_returns_models_for_well_formed_data_array() {
+        // Happy path — exact OpenAI `/models` shape, must yield model ids
+        // and `owned_by` / `context_length` projections from each entry.
+        let body = serde_json::json!({
+            "object": "list",
+            "data": [
+                { "id": "m1", "owned_by": "openai", "context_length": 8192 },
+                { "id": "m2", "owned_by": "openai" },
+                { "id": "m3", "context_window": 4096 },
+            ],
+        });
+        let models = parse_models_response(&body).expect("well-formed body must parse");
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0].id, "m1");
+        assert_eq!(models[0].owned_by.as_deref(), Some("openai"));
+        assert_eq!(models[0].context_window, Some(8192));
+        assert_eq!(models[2].id, "m3");
+        assert_eq!(models[2].owned_by, None);
+        assert_eq!(models[2].context_window, Some(4096));
+    }
+
+    #[test]
+    fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
+        // (1) `data` field completely absent — original Sentry message
+        // shape, kept for backward fingerprint with the well-known
+        // "wrong endpoint" misconfiguration.
+        let body = serde_json::json!({ "object": "list", "models": [] });
+        let err = parse_models_response(&body).expect_err("no data field must fail");
+        assert!(
+            err.contains("missing `data` field"),
+            "no-data error should say `missing`: {err}"
+        );
+        assert!(
+            err.contains("object, models") || err.contains("models, object"),
+            "no-data error should list actual keys: {err}"
+        );
+
+        // (2) `data` field present but wrong type — TAURI-RUST-4Y verbatim
+        // shape (`object` + `data` keys both present, but `data` isn't an
+        // array). The error MUST NOT say "missing" — it must surface the
+        // actual JSON type so triage knows what shape the provider sent.
+        for (label, value) in [
+            (
+                "object",
+                serde_json::json!({"object":"error","message":"boom"}),
+            ),
+            ("string", serde_json::json!("models go here")),
+            ("null", serde_json::Value::Null),
+            ("bool", serde_json::json!(true)),
+            ("number", serde_json::json!(42)),
+        ] {
+            let body = serde_json::json!({ "object": "list", "data": value });
+            let err = parse_models_response(&body).expect_err("wrong-type data must fail");
+            assert!(
+                !err.contains("missing"),
+                "wrong-type error must not say `missing` ({label}): {err}"
+            );
+            assert!(
+                err.contains(label),
+                "wrong-type error must name the actual JSON kind ({label}): {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_models_response_handles_non_object_body() {
+        // Provider returned a bare array / string / number at the
+        // top level — not an object at all. Surface as a parse failure
+        // (not a panic).
+        for body in [
+            serde_json::json!([{"id": "m1"}]),
+            serde_json::json!("hello"),
+            serde_json::Value::Null,
+        ] {
+            let err = parse_models_response(&body)
+                .expect_err("non-object body must fail with a clear message");
+            assert!(
+                !err.is_empty(),
+                "non-object body error must be non-empty: {err}"
+            );
+        }
     }
 }
