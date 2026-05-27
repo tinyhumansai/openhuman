@@ -74,6 +74,25 @@ const POLYMARKET_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivac
     destinations: &["Polymarket CLOB API"],
 });
 
+// "Test Connection" on the Embeddings settings panel routes a small probe
+// payload to *whichever provider the user has selected* — not just the
+// managed cloud default. `DERIVED_TO_BACKEND` only enumerates the managed
+// path (OpenHuman backend / Neocortex), which under-reports the actual
+// privacy surface when the user has switched to OpenAI / Cohere / a
+// self-hosted endpoint. The catalog needs to list every reachable
+// destination so the Privacy surface can render the full set instead of
+// implying probes always stay on the managed path.
+const EMBEDDING_PROBE_TO_CONFIGURED_PROVIDER: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Derived,
+    destinations: &[
+        "OpenHuman backend / TinyHumans Neocortex (managed cloud default)",
+        "OpenAI API (api.openai.com)",
+        "Cohere API (api.cohere.com)",
+        "User-configured OpenAI-compatible endpoint (custom:<url>)",
+    ],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -329,14 +348,14 @@ const CAPABILITIES: &[Capability] = &[
              misconfigured key doesn't get discovered halfway through a 50k \
              chunk backfill.",
         how_to: "Settings > AI > Embeddings > Test Connection",
-        // Test payload is a short fixed string ('OpenHuman connectivity \
-        // probe'-style) sent to whichever provider is selected — Voyage via \
-        // the OpenHuman backend, OpenAI, Cohere, or a custom endpoint. \
-        // `DERIVED_TO_BACKEND` is the right label for the default (managed \
-        // cloud) path; the destination list reflects that this is *derived* \
-        // signal (the probe text), not raw user content.
+        // The probe payload routes to whichever provider the user has
+        // selected — managed cloud (default), OpenAI, Cohere, or a custom
+        // OpenAI-compatible endpoint. Using `DERIVED_TO_BACKEND` here would
+        // under-report by only listing the managed path; the dedicated
+        // constant enumerates every reachable destination so the Privacy
+        // surface renders the full set.
         status: CapabilityStatus::Beta,
-        privacy: DERIVED_TO_BACKEND,
+        privacy: EMBEDDING_PROBE_TO_CONFIGURED_PROVIDER,
     },
     Capability {
         id: "intelligence.mcp_server",

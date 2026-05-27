@@ -150,11 +150,10 @@ fn embedding_provider_capabilities_share_domain_and_category() {
 
 /// Privacy annotations must split cleanly: the config side touches only the
 /// local keyring (LOCAL_CREDENTIALS — leaves_device=false), the test side
-/// fires a probe at the configured provider (DERIVED_TO_BACKEND —
-/// leaves_device=true). Without this split, a single `None` privacy flag
-/// would force the UI to treat the embeddings panel as "unknown" and the
-/// Privacy surface would under-report where data goes when the test button
-/// gets clicked.
+/// fires a probe at the configured provider (leaves_device=true). Without
+/// this split, a single `None` privacy flag would force the UI to treat the
+/// embeddings panel as "unknown" and the Privacy surface would under-report
+/// where data goes when the test button gets clicked.
 #[test]
 fn embedding_provider_capabilities_split_privacy_correctly() {
     let config = lookup("intelligence.embedding_provider_config")
@@ -176,5 +175,51 @@ fn embedding_provider_capabilities_split_privacy_correctly() {
     assert!(
         test_privacy.leaves_device,
         "test fires a probe at the configured provider — must report as leaves_device"
+    );
+}
+
+/// The Test Connection probe can hit any of the configured providers, not
+/// just the managed cloud default. Pinning the destinations list defends
+/// the Privacy surface against silently shrinking back to a single
+/// destination — that's the exact under-reporting failure flagged in #2656
+/// review (CodeRabbit + @graycyrus both pointed at the same line).
+#[test]
+fn embedding_provider_test_destinations_cover_all_providers() {
+    let cap =
+        lookup("intelligence.embedding_provider_test").expect("embedding_provider_test registered");
+    let privacy = cap.privacy.expect("test capability has privacy annotation");
+
+    // Joining the destinations into a single haystack so the assertions
+    // tolerate cosmetic punctuation changes (parens, suffixes) but still
+    // catch a destination genuinely going missing.
+    let haystack = privacy.destinations.join(" | ").to_lowercase();
+
+    for needle in ["openhuman", "openai", "cohere"] {
+        assert!(
+            haystack.contains(needle),
+            "test probe destinations must list `{needle}` — without it the \
+             Privacy surface under-reports when that provider is selected. \
+             Current destinations: {:?}",
+            privacy.destinations
+        );
+    }
+    // The "custom OpenAI-compatible" path is a real provider option in
+    // #2583 — listed as `custom:<url>` in `create_embedding_provider`.
+    assert!(
+        haystack.contains("custom") || haystack.contains("user-configured"),
+        "test probe destinations must acknowledge user-configured custom \
+         endpoints. Current destinations: {:?}",
+        privacy.destinations
+    );
+
+    // Belt-and-braces: at least 4 distinct destinations (managed +
+    // openai + cohere + custom). A drop below this means someone
+    // collapsed entries.
+    assert!(
+        privacy.destinations.len() >= 4,
+        "expected ≥4 destinations covering managed + openai + cohere + custom, \
+         got {}: {:?}",
+        privacy.destinations.len(),
+        privacy.destinations
     );
 }
