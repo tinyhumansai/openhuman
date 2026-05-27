@@ -1355,18 +1355,28 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
             // boundary — e.g. `openhuman.vault_create` called with a
             // `root_path` that doesn't exist. The typed error is
             // already shown to the user; Sentry has no remediation
-            // path. Demote to `warn!` (same tier as `BackendUserError`)
-            // so the local trace still pins which RPC + which method
-            // tripped the gate, but no Sentry event fires. The
-            // `error = %message` field intentionally retains the
-            // user-supplied path so the local log can correlate with a
-            // user bug report — Sentry doesn't see it.
+            // path. Demote to `warn!` so the local trace still pins
+            // which RPC + which method tripped the gate.
+            //
+            // **Do not include the raw `message` here.** The message
+            // body embeds the user's local filesystem layout (username,
+            // project name, document directory, …) and
+            // `sentry_tracing_layer` in `core::logging` maps
+            // `Level::WARN` to `EventFilter::Breadcrumb` — so any
+            // formatted body would be attached as a breadcrumb to
+            // every subsequent Sentry event from this hub, leaking
+            // user paths into unrelated reports. Log only `domain` /
+            // `operation` / `kind` (no PII), matching the
+            // `LoopbackUnavailable` arm above ("metadata over raw text
+            // for noise demotions", per the #1719 review feedback).
+            // Full-path diagnostics for local debugging stay available
+            // via `RUST_LOG=…=debug` since `Level::DEBUG` / `TRACE`
+            // are mapped to `EventFilter::Ignore`.
             tracing::warn!(
                 domain = domain,
                 operation = operation,
                 kind = "filesystem_user_path_invalid",
-                error = %message,
-                "[observability] {domain}.{operation} skipped expected filesystem path validation error: {message}"
+                "[observability] {domain}.{operation} skipped expected filesystem path validation error"
             );
         }
         ExpectedErrorKind::MemoryStorePiiRejection => {
