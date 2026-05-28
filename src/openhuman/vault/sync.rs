@@ -553,6 +553,11 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
     // `delete_chunks_by_source` helper handles `mem_tree_chunks`,
     // `mem_tree_ingested_sources`, and the on-disk content sidecars in one
     // transaction.
+    //
+    // Hoist the `Arc<Config>` for the blocking deletes once instead of
+    // re-cloning the full `Config` per vanished file (mirrors the Phase 2
+    // worker-pool optimisation).
+    let config_for_deletes = Arc::new(config.clone());
     for (path, prev) in by_path.iter() {
         if seen.contains(path) {
             continue;
@@ -600,7 +605,7 @@ pub async fn sync_vault(config: &Config, vault: &Vault) -> VaultSyncReport {
             }
         }
 
-        let cfg_for_blocking = Arc::new(config.clone());
+        let cfg_for_blocking = Arc::clone(&config_for_deletes);
         let source_for_blocking = source_id.clone();
         let path_label = path.clone();
         let delete_result = tokio::task::spawn_blocking(move || {
@@ -696,6 +701,7 @@ fn sha256_hex(content: &str) -> String {
 mod sync_tests {
     use super::*;
     use crate::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
+    use crate::openhuman::vault::ops;
     use tempfile::TempDir;
 
     /// Test-config pattern mirrors `memory::sync_pipeline_e2e_test::test_config`:
@@ -866,6 +872,153 @@ mod sync_tests {
         assert_eq!(
             chunks_after_first, chunks_after_second,
             "idempotent re-sync must not duplicate chunks"
+        );
+    }
+
+    /// **Regression: `vault_remove(purge_memory=true)` must clear memory_tree.**
+    ///
+    /// Post-#2705, vault content lives in `mem_tree_chunks` /
+    /// `mem_tree_ingested_sources` keyed by `vault:{id}:{rel_path}`. The
+    /// pre-fix purge path only called `clear_namespace`, which targets the
+    /// legacy `memory_docs` table that vault sync no longer writes to —
+    /// removing a vault with purge would silently orphan every memory-tree
+    /// row and retrieval would keep surfacing content from a deleted vault.
+    /// This test pins the prefix-delete contract so the silent-failure mode
+    /// can't reappear on the removal side.
+    #[tokio::test]
+    async fn vault_remove_with_purge_clears_memory_tree() {
+        let (_tmp, cfg) = test_config();
+
+        let vault_root = TempDir::new().expect("vault root");
+        let vault = sample_vault("vault-remove-2720", vault_root.path());
+
+        // Use the real `vault_create` op so the row goes through the same
+        // path production callers exercise (and so namespace/host_os are
+        // realistic). `vault_create` canonicalises root_path, so the
+        // returned vault id is the one to operate on below.
+        let created =
+            ops::vault_create(&cfg, &vault.name, vault.root_path.as_str(), vec![], vec![])
+                .await
+                .expect("vault_create")
+                .value;
+        let vault_id = created.id.clone();
+
+        std::fs::write(
+            vault_root.path().join("doomed.md"),
+            "# Doomed\n\nThis note exists only long enough to be purged \
+             with its parent vault. Phoenix Q4.",
+        )
+        .expect("write doomed.md");
+
+        let report = sync_vault(&cfg, &created).await;
+        assert_eq!(
+            report.failed, 0,
+            "clean ingest; errors: {:?}",
+            report.errors
+        );
+        assert_eq!(report.ingested, 1);
+
+        let source_id = vault_source_id(&vault_id, "doomed.md");
+        let chunks_before = count_chunks(&cfg).expect("count_chunks before remove");
+        assert!(
+            chunks_before > 0,
+            "sanity: memory_tree should contain the vault chunks before remove"
+        );
+        let registered_before = {
+            let cfg_clone = cfg.clone();
+            let src = source_id.clone();
+            tokio::task::spawn_blocking(move || {
+                is_source_ingested(&cfg_clone, SourceKind::Document, &src).unwrap_or(false)
+            })
+            .await
+            .expect("source-check join")
+        };
+        assert!(
+            registered_before,
+            "sanity: source must be registered pre-remove"
+        );
+
+        let outcome = ops::vault_remove(&cfg, &vault_id, true)
+            .await
+            .expect("vault_remove");
+        let payload = outcome.value;
+        assert_eq!(payload["removed"], serde_json::json!(true));
+        assert_eq!(payload["purged"], serde_json::json!(true));
+        let purged_chunks = payload["memory_tree_chunks_deleted"]
+            .as_u64()
+            .expect("memory_tree_chunks_deleted field");
+        assert!(
+            purged_chunks > 0,
+            "purge must report removed chunks; payload={payload}"
+        );
+
+        // Core regression assertion: no memory_tree rows survive the purge.
+        let registered_after = {
+            let cfg_clone = cfg.clone();
+            let src = source_id.clone();
+            tokio::task::spawn_blocking(move || {
+                is_source_ingested(&cfg_clone, SourceKind::Document, &src).unwrap_or(true)
+            })
+            .await
+            .expect("source-check join")
+        };
+        assert!(
+            !registered_after,
+            "vault_remove(purge=true) must clear mem_tree_ingested_sources for source_id={source_id}"
+        );
+        let chunks_after = count_chunks(&cfg).expect("count_chunks after remove");
+        assert!(
+            chunks_after < chunks_before,
+            "memory_tree chunks must shrink after purge: {chunks_before} → {chunks_after}"
+        );
+    }
+
+    /// `vault_remove(purge_memory=false)` must leave memory_tree rows in
+    /// place. Guards the boolean from silently flipping to always-purge.
+    #[tokio::test]
+    async fn vault_remove_without_purge_leaves_memory_tree_intact() {
+        let (_tmp, cfg) = test_config();
+        let vault_root = TempDir::new().expect("vault root");
+        let vault = sample_vault("vault-keep-2720", vault_root.path());
+
+        let created =
+            ops::vault_create(&cfg, &vault.name, vault.root_path.as_str(), vec![], vec![])
+                .await
+                .expect("vault_create")
+                .value;
+        let vault_id = created.id.clone();
+
+        std::fs::write(
+            vault_root.path().join("kept.md"),
+            "# Kept\n\nThis content should survive a no-purge vault removal. \
+             Atlas Q1 plan.",
+        )
+        .expect("write kept.md");
+
+        let report = sync_vault(&cfg, &created).await;
+        assert_eq!(
+            report.failed, 0,
+            "clean ingest; errors: {:?}",
+            report.errors
+        );
+        let chunks_before = count_chunks(&cfg).expect("count_chunks before");
+
+        let outcome = ops::vault_remove(&cfg, &vault_id, false)
+            .await
+            .expect("vault_remove");
+        let payload = outcome.value;
+        assert_eq!(payload["removed"], serde_json::json!(true));
+        assert_eq!(payload["purged"], serde_json::json!(false));
+        assert_eq!(
+            payload["memory_tree_chunks_deleted"],
+            serde_json::json!(0),
+            "no-purge removal must not touch memory_tree"
+        );
+
+        let chunks_after = count_chunks(&cfg).expect("count_chunks after");
+        assert_eq!(
+            chunks_before, chunks_after,
+            "no-purge removal must leave chunk count unchanged"
         );
     }
 
