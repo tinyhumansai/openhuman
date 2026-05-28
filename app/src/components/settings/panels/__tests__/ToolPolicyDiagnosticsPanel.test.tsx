@@ -115,7 +115,11 @@ describe('ToolPolicyDiagnosticsPanel', () => {
         block_high_risk_commands: true,
       },
       mcp_allowlists: { enabled: false, server_count: 0, enabled_server_count: 0, servers: [] },
-      mcp_write_audit: { enabled: true, recent_rows: 0, last_error: 'SQLITE_BUSY: database is locked' },
+      mcp_write_audit: {
+        enabled: true,
+        recent_rows: 0,
+        last_error: 'SQLITE_BUSY: database is locked',
+      },
       recent_denials: [],
     });
 
