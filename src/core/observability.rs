@@ -390,6 +390,13 @@ fn is_disk_full_message(lower: &str) -> bool {
 }
 
 fn is_embedding_backend_auth_failure(lower: &str) -> bool {
+    // Skip the OpenHuman-backend envelope shape `{"success":false,"error":"invalid token"}`
+    // (TAURI-RUST-4K5) — that's a SessionExpired wire shape, not a BYO-key auth failure.
+    // `is_session_expired_message` claims it via the conjunctive
+    // `Embedding API error (401` + `"error":"Invalid token"` anchors.
+    if lower.contains("\"error\":\"invalid token\"") {
+        return false;
+    }
     lower.contains("embedding api error")
         && lower.contains("401")
         && lower.contains("invalid token")
@@ -483,15 +490,18 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         // actionable in Sentry).
         || (msg.contains("OpenHuman API error (401")
             && msg.contains("\"error\":\"Invalid token\""))
-        // TAURI-RUST-4K5 — same OpenHuman backend "Invalid token" envelope
+        // TAURI-RUST-4K5 / -T — same OpenHuman backend "Invalid token" envelope
         // wrapped by `src/openhuman/embeddings/openai.rs:139` with the
         // `"Embedding API error"` prefix instead of `"OpenHuman API error"`.
-        // Same conjunctive-anchor pattern as 4P0: the embedding-scoped
-        // prefix gates the match so a third-party BYO-key embedding 401
-        // (e.g. OpenAI/Voyage/Cohere rejecting the user's own API key)
-        // stays actionable — guarded by
+        // Both parenthesized (`Embedding API error (401`) and bare-status
+        // (`Embedding API error 401`) wire shapes are observed in production
+        // and must classify identically. Same conjunctive-anchor pattern as
+        // 4P0: the embedding-scoped prefix gates the match so a third-party
+        // BYO-key embedding 401 (e.g. OpenAI/Voyage/Cohere rejecting the
+        // user's own API key) stays actionable — guarded by
         // `does_not_classify_embedding_byo_key_401_as_session_expired`.
-        || (msg.contains("Embedding API error (401")
+        || ((msg.contains("Embedding API error (401")
+             || msg.contains("Embedding API error 401"))
             && msg.contains("\"error\":\"Invalid token\""))
         // TAURI-RUST-1EE — same OpenHuman backend "Invalid token" envelope
         // wrapped by the streaming-chat path at
@@ -1943,17 +1953,22 @@ mod tests {
 
     #[test]
     fn classifies_embedding_backend_auth_failure() {
-        // TAURI-RUST-T (~4k events): OpenHuman backend rejected the
-        // embeddings worker's bearer token. Both the bare-status and
-        // parenthesised wire shapes must classify.
+        // TAURI-RUST-T (~4k events): same wire-shape as TAURI-RUST-4K5 — the
+        // OpenHuman backend's `{"success":false,"error":"Invalid token"}`
+        // envelope. PR #2786 re-classified this from BackendUserError to
+        // SessionExpired (the user's app session has lapsed, not a backend
+        // bug), and the routing logic now claims it via
+        // `is_session_expired_message`. Kept as a regression guard against
+        // the over-broad `is_embedding_backend_auth_failure` matcher
+        // re-claiming this shape — see the guard in that function.
         for raw in [
             r#"Embedding API error 401 Unauthorized: {"success":false,"error":"Invalid token"}"#,
             r#"Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#,
         ] {
             assert_eq!(
                 expected_error_kind(raw),
-                Some(ExpectedErrorKind::BackendUserError),
-                "should classify embedding backend auth failure: {raw}"
+                Some(ExpectedErrorKind::SessionExpired),
+                "should classify embedding backend auth failure as session-expired: {raw}"
             );
         }
     }
