@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
+import AttachmentPreview from '../components/chat/AttachmentPreview';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -14,6 +15,15 @@ import { dismissBanner, shouldShowBanner } from '../components/upsell/upsellDism
 import MicComposer from '../features/human/MicComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
+import {
+  ALLOWED_IMAGE_MIME_TYPES,
+  type Attachment,
+  ATTACHMENT_MAX_IMAGES,
+  ATTACHMENT_MAX_SIZE_BYTES,
+  buildMessageWithAttachments,
+  parseMessageImages,
+  validateAndReadFile,
+} from '../lib/attachments';
 import { useT } from '../lib/i18n/I18nContext';
 import { trackEvent } from '../services/analytics';
 import { threadApi } from '../services/api/threadApi';
@@ -186,6 +196,8 @@ const Conversations = ({
 
   const [showSidebar, setShowSidebar] = useState(false);
   const [inputValue, setInputValue] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [replyMode, setReplyMode] = useState<ReplyMode>('text');
@@ -196,6 +208,7 @@ const Conversations = ({
   const [selectedLabel, setSelectedLabel] = useState<string>('all');
   const [inlineSuggestionValue, setInlineSuggestionValue] = useState('');
   const [sendError, setSendError] = useState<ChatSendError | null>(null);
+  const [attachError, setAttachError] = useState<ChatSendError | null>(null);
   const [sendAdvisory, setSendAdvisory] = useState<string | null>(null);
   const [pendingSendingThreadId, setPendingSendingThreadId] = useState<string | null>(null);
   const [profileDraftOpen, setProfileDraftOpen] = useState(false);
@@ -604,6 +617,40 @@ const Conversations = ({
     return true;
   };
 
+  const handleAttachFiles = async (files: FileList | null) => {
+    if (!files) return;
+    let acceptedCount = attachments.length;
+    for (const file of Array.from(files)) {
+      const result = await validateAndReadFile(file, acceptedCount);
+      if ('error' in result) {
+        const { error } = result;
+        if (error.code === 'too_many') {
+          setAttachError(
+            chatSendError(
+              'attachment_invalid',
+              t('chat.attachment.tooMany').replace('{max}', String(ATTACHMENT_MAX_IMAGES))
+            )
+          );
+        } else if (error.code === 'too_large') {
+          const maxMb = (ATTACHMENT_MAX_SIZE_BYTES / (1024 * 1024)).toFixed(0);
+          setAttachError(
+            chatSendError(
+              'attachment_invalid',
+              t('chat.attachment.tooLarge').replace('{max}', `${maxMb} MB`)
+            )
+          );
+        } else if (error.code === 'unsupported_type') {
+          setAttachError(chatSendError('attachment_invalid', t('chat.attachment.unsupportedType')));
+        } else {
+          setAttachError(chatSendError('attachment_invalid', t('chat.attachment.readFailed')));
+        }
+        return;
+      }
+      acceptedCount++;
+      setAttachments(prev => [...prev, result.attachment]);
+    }
+  };
+
   const handleSendMessage = async (text?: string) => {
     if (pendingSendRef.current) return;
 
@@ -622,7 +669,7 @@ const Conversations = ({
     const trimmed = sendDecision.trimmedText;
 
     if (
-      sendDecision.blockReason === 'empty_input' ||
+      (sendDecision.blockReason === 'empty_input' && attachments.length === 0) ||
       sendDecision.blockReason === 'missing_thread' ||
       sendDecision.blockReason === 'composer_blocked'
     ) {
@@ -636,7 +683,10 @@ const Conversations = ({
       setSendAdvisory(null);
     }
 
-    if (!sendDecision.shouldSend) {
+    if (
+      !sendDecision.shouldSend &&
+      !(sendDecision.blockReason === 'empty_input' && attachments.length > 0)
+    ) {
       const blockedFeedback = getComposerBlockedSendFeedback(sendDecision.blockReason);
       if (blockedFeedback) {
         setSendError(chatSendError(blockedFeedback.error.code, blockedFeedback.error.message));
@@ -648,11 +698,20 @@ const Conversations = ({
     if (!sendingThreadId) return;
     pendingSendRef.current = sendingThreadId;
     setPendingSendingThreadId(sendingThreadId);
+    const pendingAttachments = attachments.slice();
+    const messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
       content: trimmed,
       type: 'text',
-      extraMetadata: {},
+      extraMetadata:
+        pendingAttachments.length > 0
+          ? {
+              attachmentCount: pendingAttachments.length,
+              attachmentNames: pendingAttachments.map(a => a.file.name),
+              attachmentDataUris: pendingAttachments.map(a => a.dataUri),
+            }
+          : {},
       sender: 'user',
       createdAt: new Date().toISOString(),
     };
@@ -677,7 +736,9 @@ const Conversations = ({
       return;
     }
     setInputValue('');
+    setAttachments([]);
     setSendError(null);
+    setAttachError(null);
     // Silence timer: fires only if 600s pass without ANY inference progress
     // (tool call, tool result, iteration start, subagent event, text delta).
     // The effect below rearms this timer whenever `inferenceStatusByThread`
@@ -696,7 +757,7 @@ const Conversations = ({
     try {
       await chatSend({
         threadId: sendingThreadId,
-        message: trimmed,
+        message: messageText,
         model: CHAT_MODEL_ID,
         profileId: selectedAgentProfileId,
         locale: uiLocale,
@@ -1548,13 +1609,43 @@ const Conversations = ({
                           )}
                         </div>
                       ) : (
-                        <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
-                          <BubbleMarkdown content={msg.content} tone="user" />
-                          {latestVisibleMessage?.id === msg.id && (
-                            <p className="mt-1 text-[10px] text-white/60">
-                              {formatRelativeTime(msg.createdAt)}
-                            </p>
-                          )}
+                        <div className="flex flex-col items-end gap-1">
+                          {(() => {
+                            const dataUris = Array.isArray(msg.extraMetadata?.attachmentDataUris)
+                              ? (msg.extraMetadata.attachmentDataUris as string[])
+                              : parseMessageImages(msg.content ?? '').dataUris;
+                            const hasImages = dataUris.length > 0;
+                            const showTime = latestVisibleMessage?.id === msg.id;
+                            return (
+                              <>
+                                {hasImages && (
+                                  <div className="flex flex-wrap gap-1.5 justify-end">
+                                    {dataUris.map((uri, i) => (
+                                      <img
+                                        key={i}
+                                        src={uri}
+                                        alt=""
+                                        className="max-w-[200px] max-h-[200px] rounded-2xl object-cover"
+                                      />
+                                    ))}
+                                  </div>
+                                )}
+                                {(msg.content || showTime) && (
+                                  <div className="rounded-2xl px-4 py-2.5 bg-primary-500 text-white rounded-br-md break-words overflow-hidden">
+                                    {msg.content && (
+                                      <BubbleMarkdown content={msg.content} tone="user" />
+                                    )}
+                                    {showTime && (
+                                      <p
+                                        className={`${msg.content ? 'mt-1' : ''} text-[10px] text-white/60`}>
+                                        {formatRelativeTime(msg.createdAt)}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                       <button
@@ -1884,6 +1975,19 @@ const Conversations = ({
             </div>
           )}
 
+          {attachError && (
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-coral-500" data-chat-send-error-code={attachError.code}>
+                {attachError.message}
+              </p>
+              <button
+                onClick={() => setAttachError(null)}
+                className="text-xs text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 transition-colors ml-2">
+                {t('common.dismiss')}
+              </button>
+            </div>
+          )}
+
           {sendError && (
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs text-coral-500" data-chat-send-error-code={sendError.code}>
@@ -1944,33 +2048,72 @@ const Conversations = ({
             </div>
           ) : inputMode === 'text' ? (
             <div className="flex items-end gap-3">
-              <div className="relative flex flex-1 items-center justify-center rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
-                <div
-                  aria-hidden
-                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
-                  <span className="invisible">{inputValue}</span>
-                  <span className="text-stone-500 dark:text-neutral-400/50">
-                    {inlineCompletionSuffix}
-                  </span>
-                </div>
-                <textarea
-                  ref={textInputRef}
-                  value={inputValue}
-                  onChange={e => setInputValue(e.target.value)}
-                  onCompositionStart={() => {
-                    isComposingTextRef.current = true;
-                  }}
-                  onCompositionEnd={() => {
-                    isComposingTextRef.current = false;
-                  }}
-                  onKeyDown={handleInputKeyDown}
-                  placeholder={t('chat.typeMessage')}
-                  rows={1}
+              {/* Hidden file input for image attachment */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ALLOWED_IMAGE_MIME_TYPES.join(',')}
+                multiple
+                className="hidden"
+                onChange={e => {
+                  void handleAttachFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
+              <div className="relative flex flex-1 flex-col rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
+                <AttachmentPreview
+                  attachments={attachments}
+                  onRemove={id => setAttachments(prev => prev.filter(a => a.id !== id))}
                   disabled={composerInteractionBlocked || isSending}
-                  className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
-                {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
+                <div className="relative flex items-center justify-center">
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
+                    <span className="invisible">{inputValue}</span>
+                    <span className="text-stone-500 dark:text-neutral-400/50">
+                      {inlineCompletionSuffix}
+                    </span>
+                  </div>
+                  <textarea
+                    ref={textInputRef}
+                    value={inputValue}
+                    onChange={e => setInputValue(e.target.value)}
+                    onCompositionStart={() => {
+                      isComposingTextRef.current = true;
+                    }}
+                    onCompositionEnd={() => {
+                      isComposingTextRef.current = false;
+                    }}
+                    onKeyDown={handleInputKeyDown}
+                    placeholder={t('chat.typeMessage')}
+                    rows={1}
+                    disabled={composerInteractionBlocked || isSending}
+                    className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
+                </div>
               </div>
+              <button
+                type="button"
+                aria-label={t('chat.attachment.attach')}
+                title={t('chat.attachment.attach')}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={
+                  composerInteractionBlocked ||
+                  isSending ||
+                  attachments.length >= ATTACHMENT_MAX_IMAGES
+                }
+                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
+                  />
+                </svg>
+              </button>
               <button
                 type="button"
                 aria-label={t('mic.startRecording')}
@@ -2000,7 +2143,11 @@ const Conversations = ({
                 onClick={() => {
                   void handleSendMessage();
                 }}
-                disabled={!inputValue.trim() || composerInteractionBlocked || isSending}
+                disabled={
+                  (!inputValue.trim() && attachments.length === 0) ||
+                  composerInteractionBlocked ||
+                  isSending
+                }
                 className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
                 {isSending ? (
                   <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

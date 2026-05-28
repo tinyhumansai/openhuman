@@ -266,6 +266,7 @@ const bn3: TranslationMap = {
   'memory.ingestingTitle': '{title} ইনজেস্ট হচ্ছে',
   'mic.noAudioCaptured': 'কোনো অডিও ক্যাপচার হয়নি',
   'mic.noSpeechDetected': 'কোনো কথা শনাক্ত হয়নি',
+  'mic.lowConfidenceResult': 'অডিও স্পষ্টভাবে বোঝা যায়নি — আবার চেষ্টা করুন',
   'mic.failedToStopRecording': 'রেকর্ডিং বন্ধ করতে ব্যর্থ: {message}',
   'mic.transcriptionFailed': 'ট্রান্সক্রিপশন ব্যর্থ: {message}',
   'reflections.kind.retrospective': 'পূর্বদর্শন',

@@ -316,16 +316,26 @@ fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
 }
 
 fn sample_memory_chunk(source_kind: SourceKind, source_id: &str, seq: u32) -> Chunk {
+    sample_memory_chunk_with_owner(source_kind, source_id, "alice@example.com", seq)
+}
+
+fn sample_memory_chunk_with_owner(
+    source_kind: SourceKind,
+    source_id: &str,
+    owner: &str,
+    seq: u32,
+) -> Chunk {
     let ts = Utc
         .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
         .unwrap();
+    let content = format!("composio memory {source_id} {owner} {seq}");
     Chunk {
-        id: chunk_id(source_kind, source_id, seq, "composio memory"),
-        content: format!("composio memory {source_id} {seq}"),
+        id: chunk_id(source_kind, source_id, seq, &content),
+        content,
         metadata: Metadata {
             source_kind,
             source_id: source_id.to_string(),
-            owner: "alice@example.com".to_string(),
+            owner: owner.to_string(),
             timestamp: ts,
             time_range: (ts, ts),
             tags: vec!["composio".to_string()],
@@ -510,6 +520,78 @@ async fn composio_delete_connection_clear_memory_deletes_slack_source() {
     .expect("chunks should list");
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].metadata.source_id, "slack:c2");
+}
+
+#[tokio::test]
+async fn composio_delete_connection_clear_memory_keeps_other_gmail_connections() {
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c1","toolkit":"gmail","status":"ACTIVE"},
+                        {"id":"c2","toolkit":"gmail","status":"ACTIVE"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(|Path(_id): Path<String>| async move {
+                Json(json!({"success": true, "data": {"deleted": true}}))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let c1_account = sample_memory_chunk_with_owner(
+        SourceKind::Email,
+        "gmail:pilot-at-example-dot-com",
+        "gmail-sync:c1",
+        0,
+    );
+    let c2_account = sample_memory_chunk_with_owner(
+        SourceKind::Email,
+        "gmail:pilot-at-example-dot-com",
+        "gmail-sync:c2",
+        1,
+    );
+    let c1_connection_scoped =
+        sample_memory_chunk_with_owner(SourceKind::Email, "gmail:c1:thread-a", "gmail-sync:c1", 2);
+    let c2_connection_scoped =
+        sample_memory_chunk_with_owner(SourceKind::Email, "gmail:c2:thread-b", "gmail-sync:c2", 3);
+    memory_tree_store::upsert_chunks(
+        &config,
+        &[
+            c1_account,
+            c2_account.clone(),
+            c1_connection_scoped,
+            c2_connection_scoped.clone(),
+        ],
+    )
+    .expect("chunks should seed");
+
+    let outcome = composio_delete_connection(&config, "c1", true)
+        .await
+        .unwrap();
+
+    assert!(outcome.value.deleted);
+    assert_eq!(outcome.value.memory_chunks_deleted, 2);
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Email),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.iter().any(|chunk| chunk.id == c2_account.id));
+    assert!(remaining
+        .iter()
+        .any(|chunk| chunk.id == c2_connection_scoped.id));
 }
 
 #[tokio::test]

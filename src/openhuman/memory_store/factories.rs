@@ -51,10 +51,15 @@ fn report_ollama_health_gate_once(base_url: &str, model: &str) -> bool {
     let sentry_message = format!(
         "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
     );
-    // Call report_error_message directly to avoid a redundant format!("{:#}") round-trip
-    // that report_error would perform on an already-formatted &str.
-    crate::core::observability::report_error_message(
-        &sentry_message,
+    // Route through `report_error_or_expected` so the GX arm of
+    // `is_ollama_user_config_rejection` in `expected_error_kind` demotes
+    // the message to an info breadcrumb (user-state: ollama daemon not
+    // running). Direct `report_error_message` here bypassed the classifier
+    // and produced TAURI-RUST-B (~409 events). The `&str` input avoids
+    // the `format!("{:#}")` round-trip that `report_error` would do on an
+    // anyhow chain — the wire shape stays bit-identical.
+    crate::core::observability::report_error_or_expected(
+        sentry_message.as_str(),
         "memory",
         "ollama_health_gate",
         &[("ollama_host", host_tag), ("fallback", "cloud")],

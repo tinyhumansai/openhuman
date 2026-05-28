@@ -978,6 +978,7 @@ const pl1: TranslationMap = {
   'migration.sourceLabel': 'Ścieżka źródłowej przestrzeni roboczej (opcjonalne)',
   'migration.sourcePlaceholder':
     'Zostaw puste, aby wykryć automatycznie (np. ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'Domyślnie używa standardowej lokalizacji dostawcy, gdy puste. Wpisz konkretną ścieżkę, jeśli przeniosłeś przestrzeń roboczą.',
   'migration.previewAction': 'Podgląd',
@@ -1000,10 +1001,6 @@ const pl1: TranslationMap = {
     'Jeszcze nic nie zostało zaimportowane. Kliknij Zastosuj import, aby skopiować.',
   'migration.report.appliedHint':
     'Zaimportowane wpisy są teraz w pamięci. Uruchom Podgląd ponownie, aby porównać.',
-  'migration.hermesComingSoonPrefix': 'Importer Hermes jest w planach — zobacz ',
-  'migration.hermesComingSoonSuffix':
-    ' po kontekst. Wybierz OpenClaw, aby migrować teraz; Hermes pojawi się później.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Zaimportować {count} wpis do obecnej przestrzeni roboczej?\n\nŹródło: {source}\nCel: {target}\n\nIstniejąca pamięć zostanie zarchiwizowana przed uruchomieniem importu.',
   'migration.confirmImport.plural':

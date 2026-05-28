@@ -36,6 +36,16 @@ pub const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
 /// upgrades any persisted `config.toml` that still holds `chat-v1`.
 pub const DEFAULT_MODEL: &str = MODEL_REASONING_QUICK_V1;
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ModelRegistryEntry {
+    pub id: String,
+    pub provider: String,
+    #[serde(default)]
+    pub cost_per_1m_output: f64,
+    #[serde(default)]
+    pub vision: bool,
+}
+
 /// Top-level configuration (config.toml root).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
@@ -175,6 +185,11 @@ pub struct Config {
 
     #[serde(default)]
     pub mcp_client: McpClientConfig,
+
+    /// Trust metadata for external capability providers. Empty by default so
+    /// existing installations keep the same tool-discovery behavior.
+    #[serde(default)]
+    pub capability_providers: Vec<CapabilityProviderConfig>,
 
     #[serde(default)]
     pub multimodal: MultimodalConfig,
@@ -350,6 +365,12 @@ pub struct Config {
     /// to the orchestrator regardless of this flag's value.
     #[serde(default)]
     pub chat_onboarding_completed: bool,
+
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
+
+    #[serde(default)]
+    pub model_registry: Vec<ModelRegistryEntry>,
 }
 
 /// Shared default so `#[serde(default)]` and `Config::default()` stay in sync.
@@ -623,6 +644,7 @@ impl Default for Config {
             curl: CurlConfig::default(),
             gitbooks: GitbooksConfig::default(),
             mcp_client: McpClientConfig::default(),
+            capability_providers: Vec::new(),
             multimodal: MultimodalConfig::default(),
             seltz: SeltzConfig::default(),
             searxng: SearxngConfig::default(),
@@ -658,6 +680,8 @@ impl Default for Config {
             meet: MeetConfig::default(),
             onboarding_completed: false,
             chat_onboarding_completed: false,
+            dashboard: DashboardConfig::default(),
+            model_registry: Vec::new(),
         }
     }
 }
@@ -729,6 +753,30 @@ mod model_pin_tests {
             config.configured_agent_model("code_executor", false),
             Some("qwen/qwen3")
         );
+    }
+
+    #[test]
+    fn config_parses_capability_provider_entries() {
+        let config: Config = toml::from_str(
+            r#"
+                [[capability_providers]]
+                id = "Acme Tools"
+                display_name = "Acme Tools"
+                source_uri = "https://example.com/openhuman/acme-tools"
+                source_digest = "sha256:abc123"
+                trust_state = "trusted"
+                enabled = true
+            "#,
+        )
+        .expect("config should parse capability providers");
+
+        assert_eq!(config.capability_providers.len(), 1);
+        assert_eq!(config.capability_providers[0].id, "Acme Tools");
+        assert_eq!(
+            config.capability_providers[0].trust_state,
+            CapabilityProviderTrustState::Trusted
+        );
+        assert!(config.capability_providers[0].enabled);
     }
 
     #[test]

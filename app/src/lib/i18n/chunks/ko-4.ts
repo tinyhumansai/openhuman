@@ -270,7 +270,7 @@ const ko4: TranslationMap = {
   'settings.ai.clearStoredKey': '저장된 키 지우기',
   'settings.ai.connectProvider': '제공업체 연결',
   'settings.ai.customRouting': '사용자 지정 라우팅',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': '기본값은 다음으로 확인됨',
   'settings.ai.discard': '취소',
   'settings.ai.editProvider': '제공업체 편집',
   'settings.ai.llmProviders': 'LLM 제공업체',

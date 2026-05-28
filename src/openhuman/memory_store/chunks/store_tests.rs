@@ -297,6 +297,55 @@ fn delete_chunks_by_source_removes_chunks_side_rows_and_ingest_gate() {
 }
 
 #[test]
+fn delete_chunks_by_owner_preserves_other_owners_for_same_source() {
+    let (_tmp, cfg) = test_config();
+    let mut target = sample_chunk("slack:shared", 0, 1_700_000_000_000);
+    target.metadata.owner = "slack-sync:c-1".to_string();
+    let mut same_source_other_owner = sample_chunk("slack:shared", 1, 1_700_000_001_000);
+    same_source_other_owner.metadata.owner = "slack-sync:c-2".to_string();
+    let mut target_other_source = sample_chunk("slack:c-1-only", 0, 1_700_000_002_000);
+    target_other_source.metadata.owner = "slack-sync:c-1".to_string();
+    upsert_chunks(
+        &cfg,
+        &[
+            target.clone(),
+            same_source_other_owner.clone(),
+            target_other_source.clone(),
+        ],
+    )
+    .unwrap();
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        assert!(claim_source_ingest_tx(
+            &tx,
+            SourceKind::Chat,
+            "slack:shared",
+            1_700_000_000_000
+        )?);
+        assert!(claim_source_ingest_tx(
+            &tx,
+            SourceKind::Chat,
+            "slack:c-1-only",
+            1_700_000_000_000
+        )?);
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let deleted = delete_chunks_by_owner(&cfg, SourceKind::Chat, "slack-sync:c-1").unwrap();
+
+    assert_eq!(deleted, 2);
+    assert!(get_chunk(&cfg, &target.id).unwrap().is_none());
+    assert!(get_chunk(&cfg, &target_other_source.id).unwrap().is_none());
+    assert!(get_chunk(&cfg, &same_source_other_owner.id)
+        .unwrap()
+        .is_some());
+    assert!(is_source_ingested(&cfg, SourceKind::Chat, "slack:shared").unwrap());
+    assert!(!is_source_ingested(&cfg, SourceKind::Chat, "slack:c-1-only").unwrap());
+}
+
+#[test]
 fn delete_chunks_by_source_removes_safe_content_files_but_rejects_escape_paths() {
     let (_tmp, cfg) = test_config();
     let safe = sample_chunk("slack:c-1", 0, 1_700_000_000_000);

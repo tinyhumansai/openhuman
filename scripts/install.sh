@@ -143,22 +143,14 @@ case "${ARCH_RAW}" in
     ;;
 esac
 
-if [ "${OS}" = "linux" ] && [ "${ARCH}" != "x86_64" ]; then
-  if [ "${DRY_RUN}" = true ]; then
-    log_warn "Linux installer currently supports x86_64 only; no install asset resolved for ${ARCH}."
-    echo "DRY RUN: skipping install for ${OS}/${ARCH} - no compatible asset is published."
-    exit 0
-  fi
-  log_err "Linux installer currently supports x86_64 only."
-  exit 1
-fi
-
 if [ "${OS}" = "darwin" ] && [ "${ARCH}" = "aarch64" ]; then
   PLATFORM_KEY="darwin-aarch64"
 elif [ "${OS}" = "darwin" ] && [ "${ARCH}" = "x86_64" ]; then
   PLATFORM_KEY="darwin-x86_64"
 elif [ "${OS}" = "linux" ] && [ "${ARCH}" = "x86_64" ]; then
   PLATFORM_KEY="linux-x86_64"
+elif [ "${OS}" = "linux" ] && [ "${ARCH}" = "aarch64" ]; then
+  PLATFORM_KEY="linux-aarch64"
 fi
 
 log_ok "Detected platform: ${OS}/${ARCH}"
@@ -344,7 +336,12 @@ def choose_asset():
                     break
     elif os_name == "linux" and arch == "x86_64":
         for n in names:
-            if n.endswith(".AppImage"):
+            if re.search(r"amd64\.AppImage$", n):
+                chosen = n
+                break
+    elif os_name == "linux" and arch == "aarch64":
+        for n in names:
+            if re.search(r"(arm64|aarch64)\.AppImage$", n):
                 chosen = n
                 break
     if not chosen:

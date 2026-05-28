@@ -43,6 +43,7 @@ impl Provider for MockProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -99,6 +100,7 @@ impl Provider for RecordingProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -264,6 +266,7 @@ async fn turn_without_tools_returns_text() {
             text: Some("hello".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         }]),
     });
 
@@ -303,11 +306,13 @@ async fn turn_with_native_dispatcher_handles_tool_results_variant() {
                     arguments: "{}".into(),
                 }],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -351,11 +356,13 @@ async fn turn_with_native_dispatcher_persists_fallback_tool_calls() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -442,16 +449,19 @@ async fn turn_dispatches_spawn_subagent_through_full_path() {
                     .to_string(),
                 }],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("X is Y".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("Based on the research, X is Y.".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
     });
@@ -530,16 +540,19 @@ async fn system_prompt_and_model_are_byte_stable_across_turns() {
                 text: Some("first".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("second".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
             crate::openhuman::inference::provider::ChatResponse {
                 text: Some("third".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             },
         ]),
         captures: Mutex::new(Vec::new()),

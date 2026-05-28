@@ -42,12 +42,15 @@
 //!     the process lifetime.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::time::interval;
 
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::scheduler_gate::gate::current_policy;
+use crate::openhuman::scheduler_gate::policy::PauseReason;
 
 use super::providers::{get_provider, ProviderContext, SyncReason};
 use crate::openhuman::composio::client::{
@@ -148,9 +151,85 @@ async fn run_loop() {
     }
 }
 
+/// Inspect the scheduler-gate policy and decide whether this tick should
+/// fire at all. Returns `Some(reason)` for paused states so the caller can
+/// log a single, attributable line instead of doing the work and discovering
+/// per-LLM-call later that everything's gated.
+///
+/// Covers two reasons the memory subsystem treats as "do no background
+/// work":
+/// - [`PauseReason::UserDisabled`] — user flipped the Memory Tree toggle off
+///   in Settings (#1856 Part 1). The 20-min Composio fetch loop honouring
+///   this flag is the explicit follow-up listed in the #2719 PR body.
+/// - [`PauseReason::SignedOut`] — no live session; periodic work would just
+///   401-loop against the backend.
+///
+/// Other [`PauseReason`] variants:
+/// - `OnBattery` / `CpuPressure` (future, per #1073) — intentionally **not**
+///   gated here; periodic Composio fetch is network-light, so battery / CPU
+///   pressure shouldn't stop the user's data flowing in. Those signals
+///   already throttle LLM-bound work through the regular gate.
+/// - `Unknown` — documented in `scheduler_gate::policy` as a safe fallback;
+///   `Policy::pause_reason()` returns it only when the gate state is in a
+///   transitional / not-yet-resolved condition. Letting the tick proceed
+///   here keeps periodic sync running through brief transitions instead of
+///   pausing on stale unresolved state.
+fn periodic_pause_reason() -> Option<PauseReason> {
+    // Delegate the `Policy::Paused { .. }` → `PauseReason` extraction to
+    // the existing `Policy::pause_reason()` helper (avoids re-implementing
+    // the same destructure twice). The allow-list below is the only thing
+    // this site has to own — future `PauseReason` variants stay opt-in.
+    let reason = current_policy().pause_reason()?;
+    matches!(reason, PauseReason::UserDisabled | PauseReason::SignedOut).then_some(reason)
+}
+
+/// Process-level "was the last tick paused?" tracker for transition logging.
+///
+/// We want `info!` *once* when the periodic loop crosses the pause boundary
+/// (so fleet operators investigating "why is Composio not syncing?" see a
+/// breadcrumb at default log level), without spamming `info` every 20 min
+/// while the user has the toggle off. `Relaxed` ordering is fine because
+/// the only consumer is the inside of `run_one_tick`, which is serialised
+/// by the singleton scheduler loop.
+static LAST_TICK_WAS_PAUSED: AtomicBool = AtomicBool::new(false);
+
 /// Run a single scheduler tick. Public-ish (`pub(crate)`) so the test
 /// module can drive ticks without spinning up the real `interval`.
 pub(crate) async fn run_one_tick() -> Result<(), String> {
+    // Step 0: scheduler-gate check. When the user has paused Memory Tree
+    // via the Settings toggle, every subsequent tick should be a cheap
+    // no-op — no `list_connections` call, no provider walk, no API budget
+    // burn. The check runs **before** config load + auth-client build so
+    // a paused session never even resolves the API token.
+    //
+    // Transition logging: emit `info!` once when the loop crosses the
+    // pause boundary in either direction; stay at `debug!` for the
+    // already-paused / already-running steady state. Without this, fleet
+    // operators investigating "why is Composio not syncing?" see nothing
+    // at default log level.
+    if let Some(reason) = periodic_pause_reason() {
+        let was_paused = LAST_TICK_WAS_PAUSED.swap(true, Ordering::Relaxed);
+        if was_paused {
+            tracing::debug!(
+                reason = reason.as_str(),
+                "[composio:periodic] scheduler-gate paused — skipping tick"
+            );
+        } else {
+            tracing::info!(
+                reason = reason.as_str(),
+                "[composio:periodic] scheduler-gate paused — pausing periodic Composio sync"
+            );
+        }
+        return Ok(());
+    } else {
+        let was_paused = LAST_TICK_WAS_PAUSED.swap(false, Ordering::Relaxed);
+        if was_paused {
+            tracing::info!(
+                "[composio:periodic] scheduler-gate resumed — periodic Composio sync re-enabled"
+            );
+        }
+    }
+
     // Step 1: load config (also gives us the auth token via the
     // shared integrations client builder).
     let config = config_rpc::load_config_with_timeout()
@@ -388,5 +467,33 @@ mod tests {
         assert!(guard
             .get(&(toolkit.to_string(), "conn-3".to_string()))
             .is_none());
+    }
+
+    /// In unit tests `scheduler_gate::STATE` is never initialised, so
+    /// `current_policy()` returns `Policy::Normal` and the helper must
+    /// return `None` — i.e. the tick is allowed to proceed. This pins the
+    /// happy-path wiring; an accidental "always pause" regression in the
+    /// helper would break every `run_one_tick`-driven test that follows it.
+    ///
+    /// (The redundant "does-not-short-circuit" tick-level test that was
+    /// here in the first review pass was dropped per @oxoxDev's
+    /// [#2825 review](https://github.com/tinyhumansai/openhuman/pull/2825):
+    /// it duplicated `run_one_tick_returns_ok_when_no_client` because
+    /// both exited at the same `create_composio_client` no-client branch,
+    /// so neither actually proved the new gate-check arm fired in the
+    /// right direction. Asserting log-line absence via `tracing-test`
+    /// would prove it but adds a new dev-dependency for one assertion —
+    /// the helper-level test below already pins the wiring.)
+    #[test]
+    fn periodic_pause_reason_returns_none_when_gate_not_initialised() {
+        // Calling without `scheduler_gate::init_global(...)` exercises the
+        // OnceLock-uninitialised branch in `current_policy`, which is the
+        // realistic test-environment state.
+        assert!(
+            periodic_pause_reason().is_none(),
+            "expected None (i.e. tick proceeds) when scheduler_gate is in default Normal state, \
+             got {:?}",
+            periodic_pause_reason()
+        );
     }
 }
