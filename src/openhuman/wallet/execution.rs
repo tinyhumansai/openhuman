@@ -128,10 +128,8 @@ pub struct PreparedTransaction {
     /// Chat-thread owner stamped at prepare time. Present when the quote
     /// was prepared from inside an interactive chat turn (web channel sets
     /// `APPROVAL_CHAT_CONTEXT`); `None` for CLI / direct-RPC / background
-    /// callers. Serialised only when set so the wire shape stays stable
-    /// for the no-context case. Used by `execute_prepared` to gate against
-    /// cross-thread execution of leaked `quote_id`s.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// callers. Internal gate data — never serialized over the wire.
+    #[serde(skip_serializing)]
     pub(crate) owner: Option<QuoteOwner>,
 }
 
@@ -218,8 +216,7 @@ fn next_quote_id() -> String {
 /// own (now per-sender-isolated, post-#2331) agent session. Binding the
 /// quote to the originating chat thread closes that gap: execute is only
 /// allowed when the caller's `current_owner()` equals the prepare-time owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct QuoteOwner {
     pub(crate) thread_id: String,
     pub(crate) client_id: String,
@@ -1481,6 +1478,44 @@ mod tests {
         // by quote_id. No enumeration oracle.
         assert_eq!(mismatch_err, format!("quote '{}' not found", real.quote_id));
         assert_eq!(missing_err, "quote 'q_does_not_exist' not found");
+    }
+
+    /// Verify that `prepare_transfer` inside an `APPROVAL_CHAT_CONTEXT` scope
+    /// actually stamps `owner` via the task-local — not just via test helpers.
+    #[tokio::test]
+    async fn prepare_stamps_owner_via_task_local() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_quote_store_for_tests();
+        let temp = TempDir::new().unwrap();
+        setup_wallet_in(&temp).await.unwrap();
+
+        let expected = owner_a();
+        let ctx = chat_ctx_from(&expected);
+
+        let prepared = APPROVAL_CHAT_CONTEXT
+            .scope(
+                ctx,
+                prepare_transfer(PrepareTransferParams {
+                    chain: WalletChain::Evm,
+                    to_address: "0x1111111111111111111111111111111111111111".into(),
+                    amount_raw: "1000".into(),
+                    asset_symbol: None,
+                    evm_network: Some(EvmNetwork::EthereumMainnet),
+                }),
+            )
+            .await
+            .unwrap()
+            .value;
+
+        assert_eq!(
+            prepared.owner,
+            Some(expected),
+            "prepare_transfer must stamp owner from APPROVAL_CHAT_CONTEXT"
+        );
     }
 
     #[tokio::test]
