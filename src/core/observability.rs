@@ -192,6 +192,27 @@ pub enum ExpectedErrorKind {
     /// state snapshots) — every one of them emits the same canonical errno
     /// rendering.
     DiskFull,
+    /// A user-supplied filesystem path failed an RPC-level validation
+    /// check — e.g. `openhuman.vault_create` was called with a
+    /// `root_path` that doesn't exist or points at a file rather than a
+    /// directory. The UI already shows the typed error to the user, and
+    /// Sentry has no remediation path (we can't `mkdir -p` a folder the
+    /// user hasn't actually picked yet). User-supplied paths can also
+    /// embed PII fragments (the home-directory segment leaks the OS
+    /// username), so demoting these out of the Sentry event stream is a
+    /// small privacy win on top of the noise reduction.
+    ///
+    /// Drops Sentry TAURI-RUST-4QH (`root_path is not a directory:
+    /// /Users/<user>/Documents/<vault>`, observed on
+    /// `openhuman@0.56.0`) and preempts the symmetric
+    /// `hosted path is not a directory:` shape from
+    /// `openhuman::http_host::path_utils` once it starts surfacing.
+    /// See [`is_filesystem_user_path_invalid_message`] for the polarity
+    /// contract — the safety-guard variant in `skills::ops_install`
+    /// (`{path} is not a directory — refusing to remove`) is
+    /// deliberately not matched because that's an `rm -rf` invariant
+    /// violation, not user input.
+    FilesystemUserPathInvalid,
     /// A memory-store write (document upsert or KV set) was rejected because
     /// the namespace or key contained what the PII guard classified as a
     /// personal identifier (national ID, phone number, formatted credential,
@@ -343,6 +364,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_empty_provider_response_message(&lower) {
         return Some(ExpectedErrorKind::EmptyProviderResponse);
     }
+    // RPC-level filesystem path validation — explicit wire-shape anchors
+    // (root_path / hosted path) prevent accidental demotion of unrelated
+    // errors. See the variant doc-comment and
+    // [`is_filesystem_user_path_invalid_message`] polarity contract.
+    if is_filesystem_user_path_invalid_message(&lower) {
+        return Some(ExpectedErrorKind::FilesystemUserPathInvalid);
+    }
     None
 }
 
@@ -403,6 +431,31 @@ fn is_memory_store_breaker_open(lower: &str) -> bool {
 ///   `channels::providers::web::run_chat_task` (OPENHUMAN-TAURI-26). The
 ///   `"session expired"` substring anchors the match to the OpenHuman
 ///   backend's session-renewal body, not the bare numeric status.
+/// - `"OpenHuman API error (401 Unauthorized): {…\"error\":\"Invalid token\"…}"`
+///   — same emit site, same wire shape as the `Session expired` body, but the
+///   OpenHuman backend swaps in `"Invalid token"` for the JWT-validity
+///   rejection branch (vs. the explicit session-renewal branch).
+///   OPENHUMAN-TAURI-4P0. The conjunctive anchor — `"OpenHuman API error
+///   (401"` **and** the envelope-shaped `"\"error\":\"Invalid token\""` —
+///   keeps the #2286 contract intact: bare `"Invalid token"`, OpenAI /
+///   Anthropic BYO-key 401s, Discord upstream-bot-token rejections, and
+///   provider scope errors still route to Sentry as actionable.
+/// - `"Embedding API error (401 Unauthorized): {…\"error\":\"Invalid token\"…}"`
+///   — TAURI-RUST-4K5 (~118 events, escalating on 0.56.0). Same OpenHuman
+///   backend session-expired envelope as 4P0, but the embedding client at
+///   `src/openhuman/embeddings/openai.rs:139` wraps it with the
+///   `"Embedding API error"` prefix instead of `"OpenHuman API error"`.
+///   Uses the same conjunctive-anchor pattern so BYO-key embedding 401s
+///   from third-party providers (OpenAI / Voyage / Cohere) still escalate
+///   — guarded by `does_not_classify_embedding_byo_key_401_as_session_expired`.
+/// - `"OpenHuman streaming API error (401 Unauthorized): {…\"error\":\"Invalid token\"…}"`
+///   — TAURI-RUST-1EE (~110 events, ongoing on 0.56.0). Same envelope as
+///   4P0, wrapped by the streaming-chat path at
+///   `inference/provider/compatible.rs:949` with the
+///   `"OpenHuman streaming API error"` prefix. The `streaming` token means
+///   the 4P0 anchor doesn't match, so it needs its own prefix arm; BYO-key
+///   streaming 401s still escalate — guarded by
+///   `does_not_classify_streaming_byo_key_401_as_session_expired`.
 /// - `"SESSION_EXPIRED: backend session not active — sign in to resume LLM work"`
 ///   — the `scheduler_gate::is_signed_out` sentinel from
 ///   `providers::openhuman_backend::resolve_bearer`.
@@ -420,6 +473,39 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         || lower.contains("no backend session token")
         || lower.contains("session jwt required")
         || msg.contains("SESSION_EXPIRED")
+        // OPENHUMAN-TAURI-4P0 — OpenHuman backend's "Invalid token" 401
+        // envelope. Both anchors must be present: the OpenHuman-scoped
+        // `"OpenHuman API error (401"` prefix (so a third-party provider's
+        // `"OpenAI API error (401 Unauthorized): invalid_api_key"` cannot
+        // match), AND the envelope-shaped `"\"error\":\"Invalid token\""`
+        // (so bare prose mentions of "invalid token" — Discord OAuth
+        // failures, generic upstream errors covered by #2286 — stay
+        // actionable in Sentry).
+        || (msg.contains("OpenHuman API error (401")
+            && msg.contains("\"error\":\"Invalid token\""))
+        // TAURI-RUST-4K5 — same OpenHuman backend "Invalid token" envelope
+        // wrapped by `src/openhuman/embeddings/openai.rs:139` with the
+        // `"Embedding API error"` prefix instead of `"OpenHuman API error"`.
+        // Same conjunctive-anchor pattern as 4P0: the embedding-scoped
+        // prefix gates the match so a third-party BYO-key embedding 401
+        // (e.g. OpenAI/Voyage/Cohere rejecting the user's own API key)
+        // stays actionable — guarded by
+        // `does_not_classify_embedding_byo_key_401_as_session_expired`.
+        || (msg.contains("Embedding API error (401")
+            && msg.contains("\"error\":\"Invalid token\""))
+        // TAURI-RUST-1EE — same OpenHuman backend "Invalid token" envelope
+        // wrapped by the streaming-chat path at
+        // `inference/provider/compatible.rs:949` with the
+        // `"OpenHuman streaming API error"` prefix. The `streaming` token
+        // between `OpenHuman` and `API error` means the 4P0 anchor
+        // (`"OpenHuman API error (401"`) does not match it, so the
+        // streaming path needs its own prefix arm. Same conjunctive-anchor
+        // pattern keeps third-party BYO-key streaming 401s
+        // (`"OpenAI streaming API error (401): invalid_api_key"`)
+        // escalating — guarded by
+        // `does_not_classify_streaming_byo_key_401_as_session_expired`.
+        || (msg.contains("OpenHuman streaming API error (401")
+            && msg.contains("\"error\":\"Invalid token\""))
 }
 
 /// Detect the in-process-core boot-window shape: a sibling component
@@ -913,6 +999,44 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
         || lower.contains("prompt blocked by security policy")
 }
 
+/// Detect an RPC-level filesystem path validation failure from user input.
+///
+/// Anchored on the two known wire shapes — both emitted at the RPC entry
+/// boundary when a user typed/picked a path that doesn't resolve to an
+/// existing directory:
+///
+/// - `"root_path is not a directory: <path>"` —
+///   [`crate::openhuman::vault::ops::vault_create`] when the chosen vault
+///   folder doesn't exist or points at a file (Sentry TAURI-RUST-4QH).
+/// - `"hosted path is not a directory: <path>"` —
+///   [`crate::openhuman::http_host::path_utils`] when an HTTP host config
+///   references a missing directory. Not yet observed in Sentry but
+///   shares the same user-input failure mode; preempts a future ID.
+///
+/// Both are deterministic Err returns at the validation gate of an RPC
+/// handler, BEFORE any side-effect happens. The UI already surfaces the
+/// typed error and Sentry has no remediation path.
+///
+/// **Polarity contract** — explicit wire-shape anchors prevent accidental
+/// demotion of future errors whose bodies happen to contain "path is not
+/// a directory:" in a different context:
+///
+/// - `skills::ops_install` emits `"{path} is not a directory — refusing
+///   to remove"` (em-dash separator, no "root_path" or "hosted path"
+///   prefix). That is an `rm -rf` safety guard catching an UNEXPECTED
+///   state, not user input — it must STAY actionable.
+/// - A generic `"input config path is not a directory: /etc/foo"` from a
+///   future provider/wallet/storage error would NOT match (no known
+///   prefix) and would reach Sentry as intended.
+///
+/// All matches are substring-based against the lower-cased message so
+/// the classifier survives caller wrapping (`rpc.invoke_method`,
+/// anyhow context chains, …).
+fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
+    lower.contains("root_path is not a directory:")
+        || lower.contains("hosted path is not a directory:")
+}
+
 /// Detect memory-store writes rejected because the namespace or key contained
 /// a personal identifier detected by the PII guard.
 ///
@@ -1226,6 +1350,37 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "memory_store_breaker_open",
                 "[observability] {domain}.{operation} skipped expected memory-store circuit-breaker-open error"
+            );
+        }
+        ExpectedErrorKind::FilesystemUserPathInvalid => {
+            // User-input validation failure surfaced at the RPC
+            // boundary — e.g. `openhuman.vault_create` called with a
+            // `root_path` that doesn't exist. The typed error is
+            // already shown to the user; Sentry has no remediation
+            // path. Demote to `info!` — same tier as
+            // `PromptInjectionBlocked`, which is the closest severity
+            // class ("user input we already surfaced a typed error for";
+            // not operator-actionable like `DiskFull` / `NetworkUnreachable`).
+            //
+            // **Do not include the raw `message` here.** The message
+            // body embeds the user's local filesystem layout (username,
+            // project name, document directory, …) and
+            // `sentry_tracing_layer` in `core::logging` maps
+            // `Level::INFO` to `EventFilter::Breadcrumb` — so any
+            // formatted body would be attached as a breadcrumb to
+            // every subsequent Sentry event from this hub, leaking
+            // user paths into unrelated reports. Log only `domain` /
+            // `operation` / `kind` (no PII), matching the
+            // `LoopbackUnavailable` arm above ("metadata over raw text
+            // for noise demotions", per the #1719 review feedback).
+            // Full-path diagnostics for local debugging stay available
+            // via `RUST_LOG=…=debug` since `Level::DEBUG` / `TRACE`
+            // are mapped to `EventFilter::Ignore`.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "filesystem_user_path_invalid",
+                "[observability] {domain}.{operation} skipped expected filesystem path validation error"
             );
         }
         ExpectedErrorKind::MemoryStorePiiRejection => {
@@ -1972,6 +2127,89 @@ mod tests {
                 expected_error_kind(raw),
                 None,
                 "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    // ── FilesystemUserPathInvalid (TAURI-RUST-4QH) ─────────────────────────
+
+    #[test]
+    fn classifies_vault_create_root_path_not_a_directory_as_filesystem_user_path_invalid() {
+        // TAURI-RUST-4QH: verbatim wire shape from
+        // `openhuman::vault::ops::vault_create` line 37 when the
+        // user-picked vault folder doesn't resolve to an existing
+        // directory. Bubbles up as the RPC dispatcher's
+        // `display_message` and reaches `report_error_or_expected` —
+        // must classify so no Sentry event fires.
+        assert_eq!(
+            expected_error_kind(
+                "root_path is not a directory: /Users/zadam/Documents/SndBrainOpenHuman"
+            ),
+            Some(ExpectedErrorKind::FilesystemUserPathInvalid)
+        );
+
+        // The same body wrapped by the JSON-RPC dispatcher's `display_message`
+        // prefix (`rpc.invoke_method` re-emit shape from `src/core/jsonrpc.rs`).
+        // Must still classify so the dispatch-site re-report doesn't escape
+        // the matcher even if a future caller layers more context.
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: root_path is not a directory: /Users/alice/openhuman-data"
+            ),
+            Some(ExpectedErrorKind::FilesystemUserPathInvalid)
+        );
+    }
+
+    #[test]
+    fn classifies_http_host_hosted_path_not_a_directory_as_filesystem_user_path_invalid() {
+        // Preempt the symmetric shape from
+        // `openhuman::http_host::path_utils:23` —
+        // `"hosted path is not a directory: <path>"`. Not yet observed
+        // in Sentry but shares the same RPC validation polarity as
+        // vault_create's `root_path` check. Anchoring on
+        // `"path is not a directory:"` (with trailing colon) covers
+        // both without two separate matchers.
+        assert_eq!(
+            expected_error_kind("hosted path is not a directory: /var/www/static-site"),
+            Some(ExpectedErrorKind::FilesystemUserPathInvalid)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_path_messages_as_filesystem_user_path_invalid() {
+        // Polarity contract — the anchor requires a trailing colon
+        // after `"is not a directory"`, which discriminates user input
+        // (path follows the colon) from other shapes:
+        //
+        // 1. The `skills::ops_install:475` SAFETY GUARD —
+        //    `"<path> is not a directory — refusing to remove"` — must
+        //    stay actionable. It catches an `rm -rf` invariant violation
+        //    (the target should have been a directory but wasn't),
+        //    which is a code bug, not user input.
+        // 2. A narrative log line that happens to mention the phrase
+        //    without the user-path colon suffix is not a validation
+        //    failure and must not be silenced.
+        // 3. The dot-prefix variant from POSIX `EISDIR`/`ENOTDIR`
+        //    renderings (`"Is a directory (os error 21)"`) is the
+        //    inverse condition — different code path entirely.
+        for raw in [
+            // Safety guard — must NOT classify.
+            "/tmp/openhuman-cache is not a directory — refusing to remove",
+            // Narrative log line — must NOT classify.
+            "checked that path is not a directory before mkdir",
+            // Inverse condition (os error 21: EISDIR) — must NOT classify.
+            "open /etc/passwd failed: Is a directory (os error 21)",
+            // Bare path with no `directory` mention — must NOT classify.
+            "root_path must be absolute: ./relative/path",
+            // Generic body with the trailing colon but no known vault/http_host
+            // prefix — must NOT classify (future provider/storage errors that
+            // happen to embed "path is not a directory: ..." should reach Sentry).
+            "input config path is not a directory: /etc/foo",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "polarity contract: must NOT classify as FilesystemUserPathInvalid: {raw}"
             );
         }
     }
@@ -3332,6 +3570,157 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::SessionExpired),
                 "factory.rs sibling sentinel must classify as SessionExpired: {raw}"
+            );
+        }
+    }
+
+    /// OPENHUMAN-TAURI-4P0: the OpenHuman backend rejects an expired/
+    /// revoked JWT with the envelope `{"success":false,"error":"Invalid
+    /// token"}` (vs. the explicit `"Session expired. Please log in again."`
+    /// body covered by `classifies_session_expired_messages`). Same emit
+    /// site, same wrapping by `web_channel.run_chat_task`, but the body
+    /// substring is different.
+    ///
+    /// The matcher uses a conjunctive `"OpenHuman API error (401"` +
+    /// envelope-shaped `"\"error\":\"Invalid token\""` anchor pair so the
+    /// #2286 contract for bare `"Invalid token"` / BYO-key 401s is
+    /// preserved — `does_not_classify_byo_key_provider_401_as_session_expired`
+    /// pins that and must stay green.
+    #[test]
+    fn classifies_openhuman_invalid_token_401_as_session_expired() {
+        // Verbatim wire shape from the OPENHUMAN-TAURI-4P0 event payload.
+        let msg = r#"run_chat_task failed client_id=lssXhQidBfzGXG9k thread_id=thread-743193ba-f0c1-4008-b665-64d3030d1453 request_id=00696b71-fa05-4574-bcdb-5744a5dac6ea error=OpenHuman API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::SessionExpired),
+            "OPENHUMAN-TAURI-4P0 verbatim wire shape must classify as SessionExpired"
+        );
+
+        // Unwrapped emit shape (without the run_chat_task prefix) — also
+        // appears at provider/agent layers; the substring matcher must
+        // catch it regardless of caller wrapping.
+        assert_eq!(
+            expected_error_kind(
+                r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#
+            ),
+            Some(ExpectedErrorKind::SessionExpired),
+            "unwrapped OpenHuman invalid-token envelope must classify as SessionExpired"
+        );
+    }
+
+    /// TAURI-RUST-4K5 (118 events, escalating on 0.56.0): the embedding
+    /// client at `src/openhuman/embeddings/openai.rs:139` wraps the same
+    /// OpenHuman backend `{"success":false,"error":"Invalid token"}` 401
+    /// envelope as 4P0, but with the `"Embedding API error"` prefix
+    /// instead of `"OpenHuman API error"` (different emit-site format
+    /// string, same underlying session-expired cause — see breadcrumb
+    /// `[scheduler_gate] signed_out false -> true` immediately preceding
+    /// the 401 in the event payload).
+    ///
+    /// Uses the same conjunctive `"<prefix> (401"` + envelope-shaped
+    /// `"\"error\":\"Invalid token\""` anchor pattern as 4P0 so the
+    /// #2286 / BYO-key contract is preserved — covered by
+    /// `does_not_classify_byo_key_provider_401_as_session_expired` and
+    /// `does_not_classify_embedding_byo_key_401_as_session_expired`
+    /// (below).
+    #[test]
+    fn classifies_embedding_api_invalid_token_401_as_session_expired() {
+        // Verbatim wire shape from the TAURI-RUST-4K5 event payload (Sentry
+        // issue 5230, latest event 2026-05-27 20:49 on openhuman@0.56.0,
+        // domain=embeddings operation=openai_embed status=401).
+        let msg =
+            r#"Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::SessionExpired),
+            "TAURI-RUST-4K5 verbatim wire shape must classify as SessionExpired"
+        );
+
+        // The substring matcher must survive caller wrapping the same way
+        // the 4P0 web-channel `run_chat_task` test wraps the body — callers
+        // that re-emit through a tracing field or another layer prepend
+        // arbitrary context.
+        let wrapped = r#"openai_embed failed error=Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+        assert_eq!(
+            expected_error_kind(wrapped),
+            Some(ExpectedErrorKind::SessionExpired),
+            "wrapped 4K5 envelope must still classify as SessionExpired"
+        );
+    }
+
+    /// TAURI-RUST-1EE (Sentry issue 1807, 110 events, 109 on
+    /// openhuman@0.56.0): the streaming-chat path wraps the same OpenHuman
+    /// backend `{"success":false,"error":"Invalid token"}` 401 envelope
+    /// with the `"OpenHuman streaming API error"` prefix (emitted at
+    /// `inference/provider/compatible.rs:949`) — distinct from the
+    /// non-streaming `"OpenHuman API error"` prefix (4P0) and the
+    /// `"Embedding API error"` prefix (4K5). The `streaming` token between
+    /// `OpenHuman` and `API error` means the 4P0 anchor
+    /// (`"OpenHuman API error (401"`) does not match it, so it needs its
+    /// own prefix arm.
+    #[test]
+    fn classifies_openhuman_streaming_invalid_token_401_as_session_expired() {
+        // Verbatim wire shape from the TAURI-RUST-1EE event payload
+        // (domain=llm_provider operation=streaming_chat status=401
+        // provider=OpenHuman model=reasoning-v1).
+        let msg = r#"OpenHuman streaming API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::SessionExpired),
+            "TAURI-RUST-1EE verbatim streaming wire shape must classify as SessionExpired"
+        );
+
+        // Caller-wrapped (agent.run_single / web_channel.run_chat_task
+        // re-emit prepends context) must still classify.
+        let wrapped = r#"run_chat_task failed error=OpenHuman streaming API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#;
+        assert_eq!(
+            expected_error_kind(wrapped),
+            Some(ExpectedErrorKind::SessionExpired),
+            "wrapped 1EE streaming envelope must still classify as SessionExpired"
+        );
+    }
+
+    /// Polarity guard for the 1EE streaming arm — a third-party BYO-key
+    /// provider's streaming 401 (`"OpenAI streaming API error (401 …):
+    /// invalid_api_key"`) must STILL reach Sentry as actionable
+    /// misconfiguration. The `"OpenHuman streaming API error (401"` prefix
+    /// gate keeps the match OpenHuman-scoped.
+    #[test]
+    fn does_not_classify_streaming_byo_key_401_as_session_expired() {
+        for raw in [
+            "OpenAI streaming API error (401 Unauthorized): invalid_api_key",
+            r#"OpenAI streaming API error (401 Unauthorized): {"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#,
+            "Anthropic streaming API error (401): authentication_error",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "BYO-key streaming 401 must reach Sentry as actionable error: {raw}"
+            );
+        }
+    }
+
+    /// Polarity guard for the 4K5 arm. The classifier must NOT swallow
+    /// `"Embedding API error (401 …)"` shapes from third-party BYO-key
+    /// embedding providers (OpenAI / Voyage / Cohere upstream rejecting
+    /// the user's own API key). Those are actionable user-config errors
+    /// that need to reach Sentry — same contract as
+    /// `does_not_classify_byo_key_provider_401_as_session_expired` for
+    /// the OpenAI chat API.
+    #[test]
+    fn does_not_classify_embedding_byo_key_401_as_session_expired() {
+        for raw in [
+            "Embedding API error (401 Unauthorized): invalid_api_key",
+            r#"Embedding API error (401 Unauthorized): {"error":{"code":"invalid_api_key","message":"Incorrect API key provided"}}"#,
+            // Wire shape without the OpenHuman envelope — bare provider
+            // rejection prose. Must reach Sentry as actionable BYO-key
+            // misconfiguration.
+            "Embedding API error (401): authentication_error",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "BYO-key embedding 401 must reach Sentry as actionable error: {raw}"
             );
         }
     }
