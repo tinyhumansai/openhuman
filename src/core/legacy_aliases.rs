@@ -180,6 +180,18 @@ mod tests {
         rest[..value_end].to_string()
     }
 
+    /// Extract an object key that may be quoted (`'foo'` / `"foo"`) or a bare
+    /// identifier (`foo`). Prettier omits quotes on valid identifiers, so the
+    /// parser must accept both forms.
+    fn object_key(text: &str) -> String {
+        let trimmed = text.trim();
+        if trimmed.starts_with('\'') || trimmed.starts_with('"') {
+            quoted_value(trimmed)
+        } else {
+            trimmed.to_string()
+        }
+    }
+
     fn parse_core_rpc_methods(source: &str) -> BTreeMap<String, String> {
         let body = object_body_after_marker(source, "export const CORE_RPC_METHODS", "} as const;");
         let mut methods = BTreeMap::new();
@@ -215,7 +227,7 @@ mod tests {
             let (legacy, target_expr) = entry
                 .split_once(':')
                 .unwrap_or_else(|| panic!("expected legacy alias entry, got `{entry}`"));
-            let legacy = quoted_value(legacy);
+            let legacy = object_key(legacy);
             let target_expr = target_expr.trim();
             let canonical = if let Some(key) = target_expr.strip_prefix("CORE_RPC_METHODS.") {
                 core_methods
