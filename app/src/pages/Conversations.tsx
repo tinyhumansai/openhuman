@@ -16,6 +16,7 @@ import MicComposer from '../features/human/MicComposer';
 import { useStickToBottom } from '../hooks/useStickToBottom';
 import { useUsageState } from '../hooks/useUsageState';
 import {
+  ALLOWED_IMAGE_MIME_TYPES,
   type Attachment,
   ATTACHMENT_MAX_IMAGES,
   ATTACHMENT_MAX_SIZE_BYTES,
@@ -701,7 +702,7 @@ const Conversations = ({
     const messageText = buildMessageWithAttachments(trimmed, pendingAttachments);
     const userMessage: ThreadMessage = {
       id: `msg_${globalThis.crypto.randomUUID()}`,
-      content: trimmed || '',
+      content: trimmed,
       type: 'text',
       extraMetadata:
         pendingAttachments.length > 0
@@ -2051,7 +2052,7 @@ const Conversations = ({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+                accept={ALLOWED_IMAGE_MIME_TYPES.join(',')}
                 multiple
                 className="hidden"
                 onChange={e => {
