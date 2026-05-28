@@ -90,6 +90,10 @@ MCP 服务器将内置提示词资产作为静态资源暴露出来。支持 `re
 
 单元测试 `catalog_mirrors_builtins` 会将资源目录与 `loader.rs` 中的 `BUILTINS` 切片进行交叉验证。若新增内置子智能体而未在目录中添加对应条目，该测试将失败，从而阻断 CI。
 
+### 资源模板
+
+由于目录完全静态——所有 URI 均为具体地址，不存在模板化——`resources/templates/list` 始终返回空的 `resourceTemplates` 数组。该处理器是为了 MCP 规范合规性：当客户端在看到 `resources` 能力后探测 `resources/templates/list` 时，会获得格式良好的结果而非 `-32601 Method not found`。
+
 ### 冒烟测试
 
 ```bash
@@ -97,7 +101,8 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
   | openhuman-core mcp
 ```
 
