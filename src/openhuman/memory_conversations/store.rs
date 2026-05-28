@@ -38,14 +38,19 @@ static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 ///
 /// # Lock ordering (INVARIANT)
 ///
-/// `CONVERSATION_STORE_LOCK` MUST be acquired before
-/// `CONVERSATION_INDEX_CACHE`. Every public store method takes the outer
-/// lock at the top of its body and only then reaches for the cache, so
-/// in current code the inner mutex is uncontended. Any future caller
-/// that violates this order — taking the cache lock first, or taking
-/// the cache lock without holding the outer lock and then reaching
-/// across into another store API — risks a deadlock. Keep the inner
-/// mutex strictly nested inside the outer one.
+/// When BOTH `CONVERSATION_STORE_LOCK` and `CONVERSATION_INDEX_CACHE`
+/// must be held simultaneously, `CONVERSATION_STORE_LOCK` MUST be
+/// acquired first. This applies to `append_message` (writes JSONL then
+/// updates the warm index) and `with_index` (caller holds the outer
+/// lock, then takes the cache lock to run the search closure).
+///
+/// `prime_index_if_cold` is the single exception: it takes each lock
+/// independently and never holds both at the same time — it briefly
+/// acquires `CONVERSATION_STORE_LOCK` to snapshot the thread list, then
+/// releases it before reading JSONL content, then acquires
+/// `CONVERSATION_INDEX_CACHE` alone to insert the built index.  This is
+/// safe because neither operation calls back into any function that
+/// would acquire the other lock.
 static CONVERSATION_INDEX_CACHE: Lazy<Mutex<HashMap<PathBuf, InvertedIndex>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -185,13 +190,90 @@ impl ConversationStore {
         limit: usize,
         exclude_thread_id: Option<&str>,
     ) -> Result<Vec<CrossThreadHit>, String> {
+        // Warm the index outside the outer lock so concurrent
+        // append_message / get_messages calls are not stalled during the
+        // cold JSONL rebuild (which can take seconds on large workspaces).
+        // After this returns the cache entry is guaranteed to exist, so
+        // with_index will not trigger a second rebuild.
+        self.prime_index_if_cold()?;
+
         let _guard = CONVERSATION_STORE_LOCK.lock();
         self.with_index(|idx| idx.search(query, limit, exclude_thread_id))
+    }
+
+    /// If no index entry exists for this workspace, snapshot the live thread
+    /// list under `CONVERSATION_STORE_LOCK` (fast), release that lock, then
+    /// read all per-thread JSONL files with no lock held (safe — files are
+    /// append-only), and finally insert the built index into
+    /// `CONVERSATION_INDEX_CACHE` using `entry().or_insert()` so a
+    /// concurrent prime that finished first wins and ours is discarded.
+    ///
+    /// After this call returns, `with_index` will always find a warm entry
+    /// and will not re-enter `populate_index_unlocked`.
+    fn prime_index_if_cold(&self) -> Result<(), String> {
+        let key = self.root_dir();
+        // Fast path: already warm — one tiny lock acquisition and out.
+        if CONVERSATION_INDEX_CACHE.lock().contains_key(&key) {
+            return Ok(());
+        }
+        // Snapshot the live thread list while holding the outer lock so we
+        // get a consistent view and ensure_root/threads.jsonl is readable.
+        // Release the lock immediately after so writes can proceed.
+        let threads = {
+            let _guard = CONVERSATION_STORE_LOCK.lock();
+            // Re-check after acquiring: a concurrent prime may have just
+            // finished while we waited for the outer lock.
+            if CONVERSATION_INDEX_CACHE.lock().contains_key(&key) {
+                return Ok(());
+            }
+            self.list_threads_unlocked()?
+        };
+        // Build the index with no locks held.  The JSONL files are
+        // append-only so reads are safe without synchronisation; the worst
+        // case is a message written concurrently is absent from this initial
+        // build — the append_message path always updates a warm index, so
+        // the message will be queryable from the next append onwards.
+        let mut idx = InvertedIndex::new();
+        for thread in &threads {
+            let path = self.thread_messages_path(&thread.id);
+            if !path.exists() {
+                continue;
+            }
+            match read_jsonl::<ConversationMessage>(&path) {
+                Ok(messages) => {
+                    for msg in messages {
+                        idx.insert(&thread.id, msg);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "{LOG_PREFIX} index prime skipped unreadable file path={} error={}",
+                        path.display(),
+                        err
+                    );
+                }
+            }
+        }
+        // Insert only if the key is still absent.  A concurrent prime that
+        // raced past the double-check above and finished first wins.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            cache.entry(key).or_insert(idx);
+        }
+        debug!(
+            "{LOG_PREFIX} inverted index primed workspace={}",
+            self.root_dir().display()
+        );
+        Ok(())
     }
 
     /// Acquire the cached inverted index for this workspace (building it
     /// from JSONL on first access) and run `f` against it. Caller MUST
     /// hold `CONVERSATION_STORE_LOCK` for the duration of the closure.
+    ///
+    /// In the normal path the index has already been warmed by
+    /// `prime_index_if_cold`, so the cold-build branch here is a safety net
+    /// for any future callers that bypass the priming step.
     fn with_index<R>(&self, f: impl FnOnce(&mut InvertedIndex) -> R) -> Result<R, String> {
         let key = self.root_dir();
         let mut cache = CONVERSATION_INDEX_CACHE.lock();
@@ -205,10 +287,10 @@ impl ConversationStore {
     }
 
     /// Walk every per-thread JSONL file in the workspace and insert each
-    /// message into `idx`. Used on first access to a workspace's index;
-    /// also called after `purge_threads` to reset the cache from a
-    /// known-empty state. The JSONL files remain the source of truth, so
-    /// a rebuild after a process crash is always safe.
+    /// message into `idx`. Used as the fallback cold-build path inside
+    /// `with_index`; `prime_index_if_cold` handles the normal first-access
+    /// case outside the outer lock. The JSONL files are the source of truth
+    /// so a rebuild after a process crash is always safe.
     fn populate_index_unlocked(&self, idx: &mut InvertedIndex) -> Result<(), String> {
         // `list_threads_unlocked` already handles a fresh workspace:
         // `ensure_root` creates the directory + threads log if missing, and

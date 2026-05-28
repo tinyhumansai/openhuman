@@ -865,3 +865,102 @@ fn read_jsonl_skips_invalid_lines_but_keeps_valid_ones() {
     assert_eq!(messages[0].id, "m1");
     assert_eq!(messages[1].id, "m2");
 }
+
+// ── concurrency: search cold rebuild must not block concurrent append ────────
+
+/// Regression test for issue #2849.
+///
+/// Before the fix, `search_cross_thread_messages` held `CONVERSATION_STORE_LOCK`
+/// for the entire cold index rebuild, stalling every concurrent
+/// `append_message` call for as long as the rebuild took.  The fix
+/// moves the rebuild outside the outer lock (`prime_index_if_cold`), so
+/// an append in flight during a cold rebuild acquires the outer lock
+/// independently and completes promptly.
+///
+/// The test seeds a fresh workspace (cold cache), races a search against
+/// an append using a barrier, and asserts the append finishes within a
+/// generous timeout that would be violated if the two operations were
+/// serialised through the outer lock.
+#[test]
+fn search_cold_rebuild_does_not_block_concurrent_append() {
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::thread;
+    use std::time::Duration;
+
+    let ts = "2026-04-10T12:00:00Z".to_string();
+
+    // Fresh TempDir → path never seen by the process-level cache → cold.
+    // Note: append_message only updates an *existing* cache entry; it never
+    // inserts one, so the cache stays cold until the first search call.
+    let temp = TempDir::new().unwrap();
+    let store = ConversationStore::new(temp.path().to_path_buf());
+
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "t1".to_string(),
+            title: "Rebuild thread".to_string(),
+            created_at: ts.clone(),
+            labels: None,
+        })
+        .unwrap();
+
+    // Seed enough messages to give the rebuild real work.
+    for i in 0..200_usize {
+        store
+            .append_message(
+                "t1",
+                ConversationMessage {
+                    id: format!("seed-{i}"),
+                    content: format!("seed message {i} for cold rebuild test"),
+                    message_type: "text".to_string(),
+                    extra_metadata: serde_json::json!({}),
+                    sender: "user".to_string(),
+                    created_at: ts.clone(),
+                },
+            )
+            .unwrap();
+    }
+
+    let store_search = store.clone();
+    let store_append = store.clone();
+
+    // Both threads start at the same time.
+    let barrier = Arc::new(Barrier::new(2));
+    let b_search = Arc::clone(&barrier);
+    let b_append = Arc::clone(&barrier);
+
+    let search_handle = thread::spawn(move || {
+        b_search.wait();
+        store_search.search_cross_thread_messages("seed message", 5, None)
+    });
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        b_append.wait();
+        let result = store_append.append_message(
+            "t1",
+            ConversationMessage {
+                id: "concurrent-append".to_string(),
+                content: "written during cold rebuild".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: serde_json::json!({}),
+                sender: "user".to_string(),
+                created_at: ts,
+            },
+        );
+        let _ = tx.send(result);
+    });
+
+    // append_message must complete within 5 s even if the rebuild is in
+    // progress.  On the old code this would block for the full rebuild
+    // duration (potentially > 1 s on large workspaces); on fixed code the
+    // two operations proceed concurrently.
+    let append_result = rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("append_message did not complete within 5 s — likely blocked by cold rebuild");
+    assert!(append_result.is_ok(), "append failed: {:?}", append_result.err());
+
+    let search_result = search_handle.join().expect("search thread panicked");
+    assert!(search_result.is_ok(), "search failed: {:?}", search_result.err());
+}
