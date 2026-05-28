@@ -1556,3 +1556,78 @@ fn enrich_404_message_adds_hint_when_no_fallback() {
         "must not add hint when fallback is enabled: {result_with_fallback}"
     );
 }
+
+/// Verify that `is_native_tool_schema_unsupported` correctly detects the Ollama
+/// "does not support tools" 400 error (TAURI-RUST-4K7). The function must return
+/// `true` for every phrase in the list and `false` for unrelated 400 bodies and
+/// for non-400 statuses — so `stream_native_chat` can suppress the Sentry event
+/// and the retry loop in `chat()` can re-issue the request without tools.
+#[test]
+fn is_native_tool_schema_unsupported_matches_ollama_does_not_support_tools() {
+    use reqwest::StatusCode;
+
+    let bodies = [
+        r#"{"error":{"message":"registry.ollama.ai/library/gemma3:1b-it-qat does not support tools","type":"invalid_request_error","param":null,"code":null}}"#,
+        r#"{"error": "function calling is not supported by this model"}"#,
+        r#"{"error": {"message": "unknown parameter: tools"}}"#,
+        r#"{"error": "unsupported parameter: tools"}"#,
+        r#"{"error": "unrecognized field `tools`"}"#,
+        r#"{"error": "tool_choice is not supported"}"#,
+    ];
+
+    for body in &bodies {
+        assert!(
+            OpenAiCompatibleProvider::is_native_tool_schema_unsupported(
+                StatusCode::BAD_REQUEST,
+                body
+            ),
+            "expected detection for body: {body}"
+        );
+    }
+
+    // Non-400 status must not match even with the right body.
+    assert!(
+        !OpenAiCompatibleProvider::is_native_tool_schema_unsupported(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"does not support tools"}"#,
+        ),
+        "500 with tool-schema body must not match"
+    );
+
+    // Unrelated 400 bodies must not match.
+    for body in [
+        r#"{"error": "model not found"}"#,
+        r#"{"error": "invalid temperature"}"#,
+        r#"{"error": "model field is required"}"#,
+    ] {
+        assert!(
+            !OpenAiCompatibleProvider::is_native_tool_schema_unsupported(
+                StatusCode::BAD_REQUEST,
+                body
+            ),
+            "must not false-positive on unrelated body: {body}"
+        );
+    }
+}
+
+/// Verify `err_supports_no_tools_retry` correctly parses the anyhow error string
+/// that `stream_native_chat` returns for a "does not support tools" 400, so the
+/// retry loop in `chat()` can act on it.
+#[test]
+fn err_supports_no_tools_retry_matches_streaming_error_format() {
+    // Simulate the anyhow message produced by stream_native_chat:
+    // "{name} streaming API error ({status}): {sanitized_body}"
+    let err = r#"ollama streaming API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/gemma3:1b-it-qat does not support tools","type":"invalid_request_error"}}"#;
+    assert!(
+        OpenAiCompatibleProvider::err_supports_no_tools_retry(err),
+        "must match Ollama streaming API error with tools message"
+    );
+
+    // Unrelated streaming error must not match.
+    assert!(
+        !OpenAiCompatibleProvider::err_supports_no_tools_retry(
+            "ollama streaming API error (500 Internal Server Error): upstream crashed"
+        ),
+        "must not false-positive on unrelated streaming error"
+    );
+}
