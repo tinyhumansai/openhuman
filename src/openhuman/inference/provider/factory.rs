@@ -772,7 +772,11 @@ fn make_cloud_provider_by_slug(
     // an API request with model="" which some providers (e.g. nvidia-nim) reject
     // with "model field is required" (TAURI-RUST-4NM). This surfaces a clear,
     // actionable error at factory build time instead of a confusing provider 400.
-    if effective_model.trim().is_empty() {
+    //
+    // Exception: OpenhumanJwt entries route to the OpenHuman backend and never
+    // forward `effective_model` to an upstream API (see the OpenhumanJwt arm in
+    // the match below), so an empty model is valid for that auth style.
+    if effective_model.trim().is_empty() && entry.auth_style != AuthStyle::OpenhumanJwt {
         anyhow::bail!(
             "[chat-factory] cloud provider slug '{}' for role '{}' has no model configured. \
              Provide a model in the provider string (e.g. '{}:<model-id>') or set \
