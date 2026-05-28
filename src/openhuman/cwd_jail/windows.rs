@@ -518,7 +518,9 @@ unsafe fn derive_capability(name: &str) -> io::Result<CapabilityDerivation> {
         return Err(io::Error::last_os_error());
     }
     let capability_sids: Vec<PSID> = (0..cap_count as usize).map(|i| *cap_sids.add(i)).collect();
-    let group_sids_vec: Vec<PSID> = (0..group_count as usize).map(|i| *group_sids.add(i)).collect();
+    let group_sids_vec: Vec<PSID> = (0..group_count as usize)
+        .map(|i| *group_sids.add(i))
+        .collect();
     Ok(CapabilityDerivation {
         capability_sids,
         capability_sids_ptr: cap_sids,
