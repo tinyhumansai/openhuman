@@ -15,6 +15,7 @@ vi.mock('../../../utils/tauriCommands', () => ({
   memoryTreeFlushNow: vi.fn(),
   memoryTreeWipeAll: vi.fn(),
   memoryTreeResetTree: vi.fn(),
+  memoryTreeObsidianVaultStatus: vi.fn(),
 }));
 
 vi.mock('../../../services/memorySyncService', () => ({
@@ -45,13 +46,19 @@ vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
     }),
 }));
 
-const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
-  (await import('../../../utils/tauriCommands')) as unknown as {
-    memoryTreeGraphExport: Mock;
-    memoryTreeFlushNow: Mock;
-    memoryTreeWipeAll: Mock;
-    memoryTreeResetTree: Mock;
-  };
+const {
+  memoryTreeGraphExport,
+  memoryTreeFlushNow,
+  memoryTreeWipeAll,
+  memoryTreeResetTree,
+  memoryTreeObsidianVaultStatus,
+} = (await import('../../../utils/tauriCommands')) as unknown as {
+  memoryTreeGraphExport: Mock;
+  memoryTreeFlushNow: Mock;
+  memoryTreeWipeAll: Mock;
+  memoryTreeResetTree: Mock;
+  memoryTreeObsidianVaultStatus: Mock;
+};
 
 const { listConnections, syncConnection } =
   (await import('../../../lib/composio/composioApi')) as unknown as {
@@ -115,6 +122,14 @@ describe('MemoryWorkspace (graph view)', () => {
     openUrl.mockResolvedValue(undefined);
     openWorkspacePath.mockResolvedValue(undefined);
     revealWorkspacePath.mockResolvedValue(undefined);
+    // Default: the content root is already a registered Obsidian vault, so a
+    // View-Vault click opens it directly (the not-registered guidance branch
+    // is covered in ObsidianVaultSection.test.tsx).
+    memoryTreeObsidianVaultStatus.mockResolvedValue({
+      registered: true,
+      config_found: true,
+      content_root_abs: '/tmp/workspace/memory_tree/content',
+    });
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {
@@ -220,24 +235,23 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('hides toolkits without a memory-tree ingest provider entirely', async () => {
+  it('shows sync rows for provider-backed toolkits and hides non-syncable ones', async () => {
     listConnections.mockResolvedValue({
       connections: [
         { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
         { id: 'conn-slack', toolkit: 'slack', status: 'ACTIVE', workspace: 'acme' },
         { id: 'conn-notion', toolkit: 'notion', status: 'ACTIVE' },
+        { id: 'conn-discord', toolkit: 'discord', status: 'ACTIVE' },
       ],
     });
     renderWithProviders(<MemoryWorkspace />);
-    // Gmail row exists with a working Sync button.
+    // Provider-backed toolkits should render actionable Sync rows
     expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
-    // Non-syncable toolkits are filtered out completely — neither
-    // the row nor the Sync button render. Cleaner than a "no sync
-    // yet" placeholder for an action the user can't take.
-    expect(screen.queryByTestId('memory-source-row-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-row-notion')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
+    expect(screen.getByTestId('memory-source-sync-slack')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-source-sync-notion')).toBeInTheDocument();
+    // Non-syncable toolkits stay hidden.
+    expect(screen.queryByTestId('memory-source-row-discord')).toBeNull();
+    expect(screen.queryByTestId('memory-source-sync-discord')).toBeNull();
   });
 
   it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {

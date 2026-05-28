@@ -24,6 +24,17 @@ vi.mock('../../../../services/mascotService', () => ({
   getCachedMascotDetail: (...args: unknown[]) => getCachedMascotDetailMock(...args),
 }));
 
+vi.mock('../../../../features/human/Mascot', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../../features/human/Mascot')>();
+  return {
+    ...actual,
+    RiveMascot: () => <div data-testid="rive-mascot-preview" />,
+    CustomGifMascot: ({ src }: { src: string }) => (
+      <img data-testid="custom-gif-mascot" src={src} alt="" />
+    ),
+  };
+});
+
 vi.mock('../../../../features/human/Mascot/backend/BackendMascot', () => ({
   BackendMascot: ({ mascot }: { mascot: { id: string } }) => (
     <div data-testid={`backend-mascot-preview-${mascot.id}`} />
@@ -64,7 +75,7 @@ describe('MascotPanel', () => {
   it('renders a radio swatch for each supported color', () => {
     renderPanel();
     expect(screen.getByRole('radiogroup', { name: 'OpenHuman color' })).toBeInTheDocument();
-    for (const label of ['Yellow', 'Burgundy', 'Black', 'Navy', 'Green']) {
+    for (const label of ['Yellow', 'Burgundy', 'Black', 'Navy', 'Custom']) {
       expect(screen.getByRole('radio', { name: label })).toBeInTheDocument();
     }
   });
@@ -85,13 +96,13 @@ describe('MascotPanel', () => {
 
   it('is a no-op when clicking the already-selected color', () => {
     const store = buildStore();
-    store.dispatch(setMascotColor('green'));
+    store.dispatch(setMascotColor('custom'));
     const dispatchSpy = vi.spyOn(store, 'dispatch');
     renderPanel(store);
-    fireEvent.click(screen.getByRole('radio', { name: 'Green' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Custom' }));
     // No additional dispatches beyond what React-Redux did to subscribe.
     expect(dispatchSpy).not.toHaveBeenCalled();
-    expect(store.getState().mascot.color).toBe('green');
+    expect(store.getState().mascot.color).toBe('custom');
   });
 
   it('invokes navigateBack from the header back button', () => {
@@ -130,14 +141,14 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
   it('ignores REHYDRATE actions for other slice keys', () => {
     const store = configureStore({ reducer: { mascot: mascotReducer } });
     store.dispatch(setMascotColor('navy'));
-    store.dispatch({ type: REHYDRATE, key: 'someOtherSlice', payload: { color: 'green' } });
+    store.dispatch({ type: REHYDRATE, key: 'someOtherSlice', payload: { color: 'custom' } });
     // Should remain navy — we only handle key === 'mascot'.
     expect(store.getState().mascot.color).toBe('navy');
   });
 
   it('renders the rehydrated color as selected in the panel', () => {
     const store = configureStore({ reducer: { mascot: mascotReducer } });
-    store.dispatch({ type: REHYDRATE, key: 'mascot', payload: { color: 'green' } });
+    store.dispatch({ type: REHYDRATE, key: 'mascot', payload: { color: 'custom' } });
     render(
       <Provider store={store}>
         <MemoryRouter>
@@ -145,7 +156,7 @@ describe('MascotPanel — mascotSlice rehydrate guard', () => {
         </MemoryRouter>
       </Provider>
     );
-    expect(screen.getByRole('radio', { name: 'Green' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('radio', { name: 'Custom' })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('radio', { name: 'Yellow' })).toHaveAttribute('aria-checked', 'false');
   });
 

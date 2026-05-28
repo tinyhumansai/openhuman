@@ -32,15 +32,15 @@ describe('mascotSlice', () => {
   });
 
   it('setMascotColor ignores unknown variants', () => {
-    const before = reducer(undefined, setMascotColor('green'));
+    const before = reducer(undefined, setMascotColor('navy'));
     // Cast: simulate a stale call (e.g. an older build dispatching a removed
     // variant) without weakening the public action signature.
-    const after = reducer(before, setMascotColor('pink' as unknown as 'green'));
-    expect(after.color).toBe('green');
+    const after = reducer(before, setMascotColor('pink' as unknown as 'navy'));
+    expect(after.color).toBe('navy');
   });
 
   it('resetUserScopedState resets back to default', () => {
-    const dirty = reducer(undefined, setMascotColor('green'));
+    const dirty = reducer(undefined, setMascotColor('navy'));
     const reset = reducer(dirty, resetUserScopedState());
     expect(reset.color).toBe(DEFAULT_MASCOT_COLOR);
   });
@@ -52,7 +52,7 @@ describe('mascotSlice', () => {
 
   it('exposes all five supported colors', () => {
     expect(new Set(SUPPORTED_MASCOT_COLORS)).toEqual(
-      new Set(['yellow', 'burgundy', 'black', 'navy', 'green'])
+      new Set(['yellow', 'burgundy', 'black', 'navy', 'custom'])
     );
   });
 
@@ -60,9 +60,9 @@ describe('mascotSlice', () => {
     const rehydrate = (key: string, payload?: unknown) => ({ type: REHYDRATE, key, payload });
 
     it('ignores REHYDRATE for a different persist key', () => {
-      const initial = reducer(undefined, setMascotColor('green'));
+      const initial = reducer(undefined, setMascotColor('navy'));
       const state = reducer(initial, rehydrate('other', { color: 'navy' }));
-      expect(state.color).toBe('green');
+      expect(state.color).toBe('navy');
     });
 
     it('restores a valid persisted color for the mascot key', () => {
@@ -142,8 +142,8 @@ describe('mascotSlice', () => {
       // Pre-#1762 blobs only carry `color`; the slice must not throw or
       // crash on missing keys — that would brick rehydrate for everyone
       // on an upgrade.
-      const state = reducer(undefined, rehydrate('mascot', { color: 'green' }));
-      expect(state.color).toBe('green');
+      const state = reducer(undefined, rehydrate('mascot', { color: 'navy' }));
+      expect(state.color).toBe('navy');
       expect(state.voiceId).toBeNull();
     });
   });

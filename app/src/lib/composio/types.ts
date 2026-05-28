@@ -83,6 +83,22 @@ export interface ComposioUserScopePref {
   admin: boolean;
 }
 
+// ── GitHub repos ──────────────────────────────────────────────────
+
+export interface ComposioGithubRepo {
+  owner: string;
+  repo: string;
+  fullName: string;
+  private?: boolean;
+  defaultBranch?: string;
+  htmlUrl?: string;
+}
+
+export interface ComposioGithubReposResponse {
+  connectionId: string;
+  repositories: ComposioGithubRepo[];
+}
+
 // ── Trigger management ─────────────────────────────────────────────
 
 export type ComposioAvailableTriggerScope = 'static' | 'github_repo';

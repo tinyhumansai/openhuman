@@ -40,6 +40,18 @@ const ar3: TranslationMap = {
   'workspace.openVaultFailedMessage': 'استخدم Reveal Folder لفتح دليل المخزن مباشرة. مسار المدفن:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'كشف المجلد',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'فشل تحميل الرسم البياني للذاكرة',
   'workspace.loadingGraph': 'جارٍ تحميل الرسم البياني للذاكرة...',
   'workspace.graphViewMode': 'وضع عرض الرسم البياني للذاكرة',
@@ -249,6 +261,7 @@ const ar3: TranslationMap = {
   'memory.ingestingTitle': 'جارٍ استيعاب {title}',
   'mic.noAudioCaptured': 'لم يُلتقط أي صوت',
   'mic.noSpeechDetected': 'لم يُكتشف أي كلام',
+  'mic.lowConfidenceResult': 'تعذّر فهم الصوت بوضوح — يرجى المحاولة مرة أخرى',
   'mic.failedToStopRecording': 'فشل إيقاف التسجيل: {message}',
   'mic.transcriptionFailed': 'فشل النسخ: {message}',
   'reflections.kind.retrospective': 'مراجعة',
@@ -415,6 +428,15 @@ const ar3: TranslationMap = {
   'channels.yuanbao.reconnect': 'Reconnect',
   'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default ar3;

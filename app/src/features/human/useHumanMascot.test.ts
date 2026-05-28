@@ -366,7 +366,7 @@ describe('useHumanMascot state machine', () => {
     expect(result.current.face).toBe('thinking');
   });
 
-  it('listening does not override speaking', () => {
+  it('listening overrides streaming speech deltas', () => {
     const { result, rerender } = renderHook(
       ({ listening }: { listening: boolean }) => useHumanMascot({ listening }),
       { initialProps: { listening: false } }
@@ -375,7 +375,8 @@ describe('useHumanMascot state machine', () => {
       capturedListeners?.onTextDelta?.(fakeEvent({ round: 1, delta: 'hi' }));
     });
     rerender({ listening: true });
-    expect(result.current.face).toBe('speaking');
+    expect(result.current.face).toBe('listening');
+    expect(result.current.viseme).toEqual(VISEMES.REST);
   });
 });
 
@@ -517,6 +518,81 @@ describe('useHumanMascot TTS playback', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+  });
+
+  it('stops in-flight TTS and shows listening when the microphone becomes active', async () => {
+    const fake = makeFakePlayback(1000);
+    const stopSpy = vi.spyOn(fake.handle, 'stop');
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      audio_base64: 'AAA=',
+      audio_mime: 'audio/mpeg',
+      visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+    });
+    (playBase64Audio as ReturnType<typeof vi.fn>).mockResolvedValueOnce(fake.handle);
+
+    const { result, rerender } = renderHook(
+      ({ listening }: { listening: boolean }) => useHumanMascot({ speakReplies: true, listening }),
+      { initialProps: { listening: false } }
+    );
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('hello'));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('speaking');
+
+    act(() => {
+      rerender({ listening: true });
+    });
+
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+    expect(result.current.face).toBe('listening');
+    expect(result.current.viseme).toEqual(VISEMES.REST);
+  });
+
+  it('drops pending TTS synthesis when listening starts before playback', async () => {
+    type TestTtsPayload = {
+      audio_base64: string;
+      audio_mime: string;
+      visemes: { viseme: string; start_ms: number; end_ms: number }[];
+    };
+    let resolveSynth!: (value: TestTtsPayload) => void;
+    const pendingSynth = new Promise<TestTtsPayload>(resolve => {
+      resolveSynth = resolve;
+    });
+    (synthesizeSpeech as ReturnType<typeof vi.fn>).mockReturnValueOnce(pendingSynth);
+
+    const { result, rerender } = renderHook(
+      ({ listening }: { listening: boolean }) => useHumanMascot({ speakReplies: true, listening }),
+      { initialProps: { listening: false } }
+    );
+    await act(async () => {
+      capturedListeners?.onDone?.(fakeDone('hello'));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.face).toBe('thinking');
+
+    act(() => {
+      rerender({ listening: true });
+    });
+    expect(result.current.face).toBe('listening');
+
+    await act(async () => {
+      resolveSynth({
+        audio_base64: 'AAA=',
+        audio_mime: 'audio/mpeg',
+        visemes: [{ viseme: 'aa', start_ms: 0, end_ms: 100 }],
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(playBase64Audio).not.toHaveBeenCalled();
+    expect(result.current.face).toBe('listening');
+    expect(result.current.viseme).toEqual(VISEMES.REST);
   });
 
   it('does not surface an unhandledrejection when a newer turn cancels in-flight playback (#1472)', async () => {

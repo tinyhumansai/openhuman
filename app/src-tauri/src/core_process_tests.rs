@@ -543,7 +543,7 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
             *guard = Some(task);
         }
 
-        let message = handle.cleanup_startup_timeout(false, false).await;
+        let message = handle.cleanup_startup_timeout(false, false, 2).await;
 
         assert!(
             message.contains("core process did not become ready within"),
@@ -554,12 +554,20 @@ fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
             "timeout message should include ready signal state: {message}"
         );
         assert!(
+            message.contains("port=19006"),
+            "timeout message should include RPC port: {message}"
+        );
+        assert!(
             message.contains("port_open=false"),
             "timeout message should include final port state: {message}"
         );
         assert!(
             message.contains("task_state=running"),
             "timeout message should include task state: {message}"
+        );
+        assert!(
+            message.contains("attempt=2"),
+            "timeout message should include startup attempt: {message}"
         );
         assert!(
             handle.task.lock().await.is_none(),

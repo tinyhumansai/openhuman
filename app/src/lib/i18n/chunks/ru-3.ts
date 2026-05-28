@@ -41,6 +41,18 @@ const ru3: TranslationMap = {
     'Используйте Reveal Folder, чтобы напрямую открыть каталог хранилища. Путь к хранилищу:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Показать папку',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Не удалось загрузить граф памяти',
   'workspace.loadingGraph': 'Загрузка графа памяти...',
   'workspace.graphViewMode': 'Режим просмотра графа памяти',
@@ -255,6 +267,7 @@ const ru3: TranslationMap = {
   'memory.ingestingTitle': 'Загрузка {title}',
   'mic.noAudioCaptured': 'Аудио не захвачено',
   'mic.noSpeechDetected': 'Речь не обнаружена',
+  'mic.lowConfidenceResult': 'Не удалось чётко распознать аудио — попробуйте ещё раз',
   'mic.failedToStopRecording': 'Не удалось остановить запись: {message}',
   'mic.transcriptionFailed': 'Ошибка транскрипции: {message}',
   'reflections.kind.retrospective': 'Ретроспектива',
@@ -423,6 +436,15 @@ const ru3: TranslationMap = {
   'channels.yuanbao.reconnect': 'Reconnect',
   'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default ru3;

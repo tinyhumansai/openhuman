@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import createDebug from 'debug';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import ConnectionIndicator from '../components/ConnectionIndicator';
@@ -17,6 +18,9 @@ import { selectBlockingState } from '../store/connectivitySelectors';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { resolveTheme, setThemeMode, type ThemeMode } from '../store/themeSlice';
 import { APP_VERSION } from '../utils/config';
+import { openhumanCronList } from '../utils/tauriCommands';
+
+const homeLog = createDebug('app:home');
 
 export function resolveHomeUserName(user: unknown): string {
   if (!user || typeof user !== 'object') return 'User';
@@ -76,6 +80,21 @@ const Home = () => {
   const blocking = useAppSelector(selectBlockingState);
   const [isRestartingCore, setIsRestartingCore] = useState(false);
   const [restartError, setRestartError] = useState<string | null>(null);
+
+  // Routine count for the card on home.
+  const [activeRoutineCount, setActiveRoutineCount] = useState<number | null>(null);
+  const loadRoutineCount = useCallback(async () => {
+    try {
+      const response = await openhumanCronList();
+      const activeCount = response.result.filter(j => j.enabled).length;
+      setActiveRoutineCount(activeCount);
+    } catch (err) {
+      homeLog('failed to load routine count', err);
+    }
+  }, []);
+  useEffect(() => {
+    void loadRoutineCount();
+  }, [loadRoutineCount]);
 
   const dispatch = useAppDispatch();
   const themeMode = useAppSelector(state => state.theme.mode) as ThemeMode;
@@ -256,6 +275,45 @@ const Home = () => {
             {t('home.askAssistant')}
           </button>
         </div>
+
+        {/* Routines card */}
+        {activeRoutineCount !== null && (
+          <button
+            onClick={() => navigate('/routines')}
+            className="mt-3 w-full bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-4 flex items-center gap-3 text-left hover:border-primary-300 dark:hover:border-primary-500/40 transition-colors animate-fade-up">
+            <div className="w-9 h-9 rounded-full bg-primary-50 dark:bg-primary-500/10 flex items-center justify-center flex-shrink-0">
+              <svg
+                className="w-4.5 h-4.5 text-primary-500"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.8}
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                {t('home.routinesCard')}
+              </div>
+              <div className="text-xs text-stone-500 dark:text-neutral-400">
+                {activeRoutineCount > 0
+                  ? t('home.routinesActive').replace('{count}', String(activeRoutineCount))
+                  : t('routines.emptyHint')}
+              </div>
+            </div>
+            <svg
+              className="w-4 h-4 text-stone-400 dark:text-neutral-500 flex-shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
 
         {showEarlyBirdy && <EarlyBirdyBanner onDismiss={handleDismissEarlyBirdy} />}
 

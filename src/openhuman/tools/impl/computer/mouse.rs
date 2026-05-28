@@ -202,7 +202,9 @@ impl Tool for MouseTool {
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
         if !self.security.can_act() {
             debug!(tool = "mouse", "[computer] blocked: autonomy is read-only");
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
         if !self.security.record_action() {
             debug!(tool = "mouse", "[computer] blocked: rate limit exceeded");

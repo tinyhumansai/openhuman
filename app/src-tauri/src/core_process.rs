@@ -367,15 +367,21 @@ impl CoreProcessHandle {
 
             let port_open = self.is_rpc_port_open().await;
             return Err(self
-                .cleanup_startup_timeout(received_ready, port_open)
+                .cleanup_startup_timeout(received_ready, port_open, startup_attempt + 1)
                 .await);
         }
 
         let port_open = self.is_rpc_port_open().await;
-        Err(self.cleanup_startup_timeout(false, port_open).await)
+        Err(self.cleanup_startup_timeout(false, port_open, 2).await)
     }
 
-    async fn cleanup_startup_timeout(&self, received_ready: bool, port_open: bool) -> String {
+    async fn cleanup_startup_timeout(
+        &self,
+        received_ready: bool,
+        port_open: bool,
+        attempt: u8,
+    ) -> String {
+        let port = self.port();
         let task_state = {
             let guard = self.task.lock().await;
             match guard.as_ref() {
@@ -386,14 +392,16 @@ impl CoreProcessHandle {
         };
         log::error!(
             "[core] startup timed out after {CORE_READY_TIMEOUT_MS}ms \
-             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state}); \
+             (port={port}, ready_signal={received_ready}, port_open={port_open}, \
+             task_state={task_state}, attempt={attempt}); \
              aborting embedded startup task before retry"
         );
         self.cancel_shutdown_token(" after startup timeout").await;
         self.abort_task(" after startup timeout").await;
         format!(
             "core process did not become ready within {CORE_READY_TIMEOUT_MS}ms \
-             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state})"
+             (port={port}, ready_signal={received_ready}, port_open={port_open}, \
+             task_state={task_state}, attempt={attempt})"
         )
     }
 

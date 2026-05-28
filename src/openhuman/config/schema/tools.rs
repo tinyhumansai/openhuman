@@ -91,6 +91,11 @@ impl Default for BrowserComputerUseConfig {
 pub struct BrowserConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// DEPRECATED: the browser tool now shares the unified web-access host list
+    /// in `[http_request].allowed_domains` (see `tools::ops::all_tools_with_runtime`).
+    /// Still parsed for backward compatibility but no longer gates browser
+    /// navigation. Manage allowed hosts via Settings → Search → Allowed websites;
+    /// browser allow-all remains gated by `OPENHUMAN_BROWSER_ALLOW_ALL`.
     #[serde(default)]
     pub allowed_domains: Vec<String>,
     #[serde(default)]
@@ -134,15 +139,34 @@ impl Default for BrowserConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct HttpRequestConfig {
-    #[serde(default)]
+    /// Hosts the assistant may open/read via `web_fetch` / `curl`. An exact
+    /// host also matches its subdomains; `"*"` allows all public sites; an
+    /// empty list blocks all web access. Defaults to `["*"]` so web research
+    /// works out of the box — the SSRF guard still blocks local/private hosts
+    /// regardless. Narrow this via Settings → Search → Allowed websites.
+    #[serde(default = "default_http_allowed_domains")]
     pub allowed_domains: Vec<String>,
     #[serde(default = "default_http_max_response_size")]
     pub max_response_size: usize,
     #[serde(default = "default_http_timeout_secs")]
     pub timeout_secs: u64,
+}
+
+impl Default for HttpRequestConfig {
+    fn default() -> Self {
+        Self {
+            allowed_domains: default_http_allowed_domains(),
+            max_response_size: default_http_max_response_size(),
+            timeout_secs: default_http_timeout_secs(),
+        }
+    }
+}
+
+fn default_http_allowed_domains() -> Vec<String> {
+    vec!["*".to_string()]
 }
 
 fn default_http_max_response_size() -> usize {
@@ -653,6 +677,17 @@ mod search_config_tests {
         assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
         cfg.brave.api_key = Some("real".into());
         assert_eq!(cfg.effective_engine(), SearchEngine::Brave);
+    }
+
+    #[test]
+    fn http_request_defaults_to_allow_all() {
+        // Web research works out of the box: the default allowlist is the
+        // wildcard. The SSRF guard (url_guard) still blocks local/private
+        // hosts regardless, so this only opens public sites.
+        let cfg = HttpRequestConfig::default();
+        assert_eq!(cfg.allowed_domains, vec!["*".to_string()]);
+        assert_eq!(cfg.max_response_size, 1_000_000);
+        assert_eq!(cfg.timeout_secs, 30);
     }
 
     #[test]

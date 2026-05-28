@@ -70,10 +70,47 @@ impl RuntimeAdapter for NativeRuntime {
         command: &str,
         workspace_dir: &Path,
     ) -> anyhow::Result<tokio::process::Command> {
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-lc").arg(command).current_dir(workspace_dir);
+        // On Windows hosts there is no POSIX `sh`; drive PowerShell instead.
+        // `-NoProfile` keeps startup fast and avoids user profile side effects.
+        let mut cmd = if cfg!(windows) {
+            let mut c = tokio::process::Command::new("powershell");
+            c.arg("-NoProfile").arg("-Command").arg(command);
+            c
+        } else if let Some(bash) = bash_path() {
+            // Prefer bash with `pipefail` so a failed stage in a pipeline (e.g.
+            // `pip install … | tail`) surfaces as a non-zero exit instead of
+            // being masked by the last stage's success. Without it the harness
+            // records the call as successful and the repeated-failure circuit
+            // breaker (see tool_loop.rs) never trips, so the agent loops on a
+            // command that is silently failing. `/bin/sh` is dash on
+            // Debian/Ubuntu and rejects `set -o pipefail`, so this is gated on
+            // bash actually being present; otherwise we fall back to plain sh.
+            let mut c = tokio::process::Command::new(bash);
+            c.arg("-lc").arg(format!("set -o pipefail\n{command}"));
+            c
+        } else {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg("-lc").arg(command);
+            c
+        };
+        cmd.current_dir(workspace_dir);
         Ok(cmd)
     }
+}
+
+/// Locate a `bash` binary once (cached — this is hit on every shell call) for
+/// the `pipefail` wrapper in [`NativeRuntime::build_shell_command`]. Returns
+/// `None` on hosts without bash (e.g. minimal containers), where we fall back
+/// to plain `sh` without pipefail.
+fn bash_path() -> Option<&'static str> {
+    static BASH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    BASH.get_or_init(|| {
+        ["/usr/bin/bash", "/bin/bash"]
+            .into_iter()
+            .find(|p| Path::new(p).exists())
+            .map(str::to_string)
+    })
+    .as_deref()
 }
 
 pub struct DockerRuntime {
@@ -143,6 +180,9 @@ impl RuntimeAdapter for DockerRuntime {
         }
 
         cmd.arg(&self.config.image);
+        // No `pipefail` wrapper here (unlike NativeRuntime): the in-container
+        // shell is image-dependent (busybox/dash/bash) so we can't assume
+        // `set -o pipefail` is supported. Container commands keep POSIX `sh`.
         cmd.arg("sh").arg("-lc").arg(command);
         Ok(cmd)
     }
@@ -174,13 +214,28 @@ mod tests {
         let command = runtime
             .build_shell_command("echo hi", Path::new("/tmp"))
             .unwrap();
+        let prog = command
+            .as_std()
+            .get_program()
+            .to_string_lossy()
+            .into_owned();
         let args: Vec<String> = command
             .as_std()
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(command.as_std().get_program().to_string_lossy(), "sh");
-        assert_eq!(args, vec!["-lc", "echo hi"]);
+        // NativeRuntime prefers bash with `set -o pipefail` when bash is present
+        // (so masked pipe failures surface), and falls back to plain `sh`.
+        if let Some(bash) = bash_path() {
+            assert_eq!(prog, bash);
+            assert_eq!(
+                args,
+                vec!["-lc".to_string(), "set -o pipefail\necho hi".to_string()]
+            );
+        } else {
+            assert_eq!(prog, "sh");
+            assert_eq!(args, vec!["-lc".to_string(), "echo hi".to_string()]);
+        }
         assert_eq!(command.as_std().get_current_dir(), Some(Path::new("/tmp")));
     }
 
@@ -241,5 +296,32 @@ mod tests {
         .err()
         .unwrap();
         assert!(err.to_string().contains("Unsupported runtime kind: vm"));
+    }
+
+    /// Regression: a failed stage in a pipeline must surface as a non-zero exit
+    /// (pipefail), so the harness records the call as failed and the
+    /// repeated-failure circuit breaker can trip — rather than `… | tail`
+    /// masking the failure as success and letting the agent loop. Only
+    /// meaningful where bash is present (the pipefail wrapper); on bash-less
+    /// hosts we fall back to plain `sh` and skip.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn native_shell_pipefail_surfaces_failed_pipe_stage() {
+        if bash_path().is_none() {
+            return; // no bash → plain sh, pipefail unavailable
+        }
+        let rt = NativeRuntime::new();
+        let dir = std::env::temp_dir();
+
+        let mut failing = rt.build_shell_command("false | true", &dir).unwrap();
+        let status = failing.status().await.unwrap();
+        assert!(
+            !status.success(),
+            "pipefail must surface the failed `false` stage, not mask it behind `true`"
+        );
+
+        // A clean pipeline still succeeds.
+        let mut ok = rt.build_shell_command("true | true", &dir).unwrap();
+        assert!(ok.status().await.unwrap().success());
     }
 }

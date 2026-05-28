@@ -41,7 +41,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-pub async fn start_channels(config: Config) -> Result<()> {
+pub async fn start_channels(mut config: Config) -> Result<()> {
     // Initialize the global event bus singleton and register the tracing
     // subscriber for debug logging of all domain events.
     let bus = event_bus::init_global(DEFAULT_CAPACITY);
@@ -53,6 +53,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
     );
     crate::openhuman::memory::sync::register_sync_stage_bridge();
     crate::openhuman::composio::register_composio_trigger_subscriber();
+    // Surface parked ApprovalGate requests as chat messages so the user can
+    // answer yes/no in the thread (chat-native approval, issue #1339).
+    crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
     // Spawn the per-toolkit provider periodic sync scheduler. This is
     // a thin tokio task that ticks every minute and dispatches into
     // any provider whose `sync_interval_secs` has elapsed for an
@@ -179,10 +182,43 @@ pub async fn start_channels(config: Config) -> Result<()> {
 
     let runtime: Arc<dyn host_runtime::RuntimeAdapter> =
         Arc::from(host_runtime::create_runtime(&config.runtime)?);
-    let security = Arc::new(SecurityPolicy::from_config(
-        &config.autonomy,
-        &config.workspace_dir,
-    ));
+    // Ensure the agent's default projects home (~/OpenHuman/projects) exists and
+    // is a read-write trusted root, so the coding agent creates/edits projects
+    // there freely — distinct from the hidden internal workspace dir. A user who
+    // has already granted it (or any other root) is left untouched.
+    {
+        use crate::openhuman::security::{TrustedAccess, TrustedRoot};
+        let projects_dir = crate::openhuman::config::default_projects_dir();
+        if let Err(e) = tokio::fs::create_dir_all(&projects_dir).await {
+            tracing::warn!(
+                dir = %projects_dir.display(),
+                error = %e,
+                "[startup] could not create default projects dir"
+            );
+        }
+        let projects_path = projects_dir.to_string_lossy().to_string();
+        if !config
+            .autonomy
+            .trusted_roots
+            .iter()
+            .any(|r| r.path == projects_path)
+        {
+            config.autonomy.trusted_roots.push(TrustedRoot {
+                path: projects_path,
+                access: TrustedAccess::ReadWrite,
+            });
+        }
+    }
+    // Install as the process-global live policy so runtime autonomy changes
+    // (config.update_autonomy_settings) are reflected by `live_policy::current()`
+    // and picked up by the next session.
+    let security = crate::openhuman::security::live_policy::install(
+        Arc::new(SecurityPolicy::from_config(
+            &config.autonomy,
+            &config.workspace_dir,
+        )),
+        config.workspace_dir.clone(),
+    );
     // Phase 1 of #1401: audit logger is wired with defaults so emission paths
     // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
     // therefore the `audit` knob) onto the runtime `Config` schema so users
@@ -304,6 +340,9 @@ pub async fn start_channels(config: Config) -> Result<()> {
     let non_skill_refs: Vec<&dyn crate::openhuman::tools::Tool> =
         non_skill_tools.iter().map(|t| t.as_ref()).collect();
     system_prompt.push_str(&build_tool_instructions_filtered(&non_skill_refs));
+    // Tell the model its current filesystem access boundaries so it self-limits
+    // (advisory only — the SecurityPolicy enforces these regardless).
+    system_prompt.push_str(&format_access_context(&security));
 
     if !skills.is_empty() {
         println!(
@@ -643,6 +682,57 @@ pub async fn start_channels(config: Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Render the agent's current filesystem-access boundaries as a system-prompt
+/// section. Advisory only: the `SecurityPolicy` enforces these regardless of
+/// what the model believes, but stating them keeps the model from wasting turns
+/// attempting actions the runtime will deny.
+fn format_access_context(security: &SecurityPolicy) -> String {
+    use crate::openhuman::security::{AutonomyLevel, TrustedAccess};
+
+    let mode = match security.autonomy {
+        AutonomyLevel::ReadOnly => "read-only (observe only; no writes or shell commands)",
+        AutonomyLevel::Supervised => "supervised (acts; risky operations require approval)",
+        AutonomyLevel::Full => "full (autonomous within policy bounds)",
+    };
+    let mut s =
+        String::from("\n\n## Host access (enforced by the runtime — you cannot exceed this)\n");
+    s.push_str(&format!("- Access mode: {mode}\n"));
+    s.push_str(&format!(
+        "- Workspace: {} ({})\n",
+        security.workspace_dir.display(),
+        if security.workspace_only {
+            "file access confined to the workspace"
+        } else {
+            "workspace_only is OFF"
+        }
+    ));
+    if security.trusted_roots.is_empty() {
+        s.push_str("- Trusted roots outside the workspace: none granted\n");
+    } else {
+        s.push_str("- Trusted roots outside the workspace:\n");
+        for root in &security.trusted_roots {
+            let access = match root.access {
+                TrustedAccess::Read => "read-only",
+                TrustedAccess::ReadWrite => "read+write",
+            };
+            s.push_str(&format!("    - {} ({access})\n", root.path));
+        }
+    }
+    s.push_str(&format!(
+        "- OS package installation: {}\n",
+        if security.allow_tool_install {
+            "allowed via install_tool"
+        } else {
+            "disabled"
+        }
+    ));
+    s.push_str(
+        "Credential stores (~/.ssh, ~/.gnupg, ~/.aws) are always blocked. \
+         Use detect_tools to check what's installed before assuming a tool exists.\n",
+    );
+    s
 }
 
 /// Best-effort fill of `yb_cfg.app_secret` from the encrypted credentials

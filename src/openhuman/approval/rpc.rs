@@ -98,17 +98,51 @@ pub async fn approval_decide(
         );
         anyhow!("no pending approval found for request_id '{request_id}'")
     })?;
+
+    let mut logs = vec![format!(
+        "[approval] decided request_id={} tool={} decision={}",
+        row.request_id,
+        row.tool_name,
+        decision.as_str()
+    )];
+
+    // "Always allow": persist the tool onto the user's `autonomy.auto_approve`
+    // allowlist (config save + live-policy reload) so the gate skips prompting
+    // for it on future turns — this session and across restarts. Best-effort:
+    // `gate.decide` already resolved the current call, so a persistence failure
+    // must not fail the RPC. It degrades safely — the tool simply prompts again
+    // next time rather than being silently auto-approved.
+    if decision == ApprovalDecision::ApproveAlwaysForTool {
+        match crate::openhuman::config::ops::add_auto_approve_tool(&row.tool_name).await {
+            Ok(()) => {
+                tracing::info!(
+                    tool = row.tool_name.as_str(),
+                    "[rpc:approval_decide] tool persisted to auto_approve allowlist"
+                );
+                logs.push(format!(
+                    "[approval] '{}' added to the Always-allow list",
+                    row.tool_name
+                ));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    tool = row.tool_name.as_str(),
+                    error = %err,
+                    "[rpc:approval_decide] failed to persist auto_approve; tool will prompt again next time"
+                );
+                logs.push(format!(
+                    "[approval] WARNING: could not save 'Always allow' for '{}': {err}",
+                    row.tool_name
+                ));
+            }
+        }
+    }
+
     tracing::info!(
         request_id = row.request_id.as_str(),
         tool = row.tool_name.as_str(),
         decision = decision.as_str(),
         "[rpc:approval_decide] exit"
     );
-    let log = format!(
-        "[approval] decided request_id={} tool={} decision={}",
-        row.request_id,
-        row.tool_name,
-        decision.as_str()
-    );
-    Ok(RpcOutcome::single_log(row, log))
+    Ok(RpcOutcome::new(row, logs))
 }

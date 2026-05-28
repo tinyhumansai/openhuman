@@ -47,11 +47,8 @@ vi.mock('../../features/human/useHumanMascot', () => ({
   useHumanMascot: vi.fn(() => ({ face: 'idle', viseme: { aa: 0, E: 0, I: 0, O: 0, U: 0 } })),
 }));
 
-// Stub YellowMascot to avoid SVG / RAF complexity in tests.
 vi.mock('../../features/human/Mascot', () => ({
-  YellowMascot: ({ face }: { face: string }) => (
-    <div data-testid="yellow-mascot" data-face={face} />
-  ),
+  RiveMascot: ({ face }: { face: string }) => <div data-testid="rive-mascot" data-face={face} />,
 }));
 
 // PTT plugin mock ─ intercept before any import resolution.
@@ -138,7 +135,7 @@ afterEach(() => {
 describe('MascotScreen', () => {
   it('renders mascot canvas and input', () => {
     renderMascotScreen();
-    expect(screen.getByTestId('yellow-mascot')).toBeInTheDocument();
+    expect(screen.getByTestId('rive-mascot')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/type a message/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /send message/i })).toBeInTheDocument();
   });

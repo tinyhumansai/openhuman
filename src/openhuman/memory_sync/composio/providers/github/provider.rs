@@ -8,7 +8,7 @@
 //!   3. Resolve the authenticated user's GitHub login (used in the search
 //!      query); cached cheaply across re-fetches.
 //!   4. Search for issues and PRs involving the user via
-//!      `GITHUB_SEARCH_ISSUES` with `involves:{login}`, filtered to items
+//!      `GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS` with `involves:{login}`, filtered to items
 //!      updated since the cursor (when available).
 //!   5. For each result, persist as a single memory document if it's new
 //!      *or* edited since the last sync.
@@ -31,8 +31,8 @@ use crate::openhuman::memory_sync::composio::providers::{
     SyncReason,
 };
 
-pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_AUTHENTICATED_USER";
-pub(crate) const ACTION_SEARCH_ISSUES: &str = "GITHUB_SEARCH_ISSUES";
+pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_THE_AUTHENTICATED_USER";
+pub(crate) const ACTION_SEARCH_ISSUES: &str = "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS";
 
 /// Items per search page on steady-state syncs.
 const PAGE_SIZE: u32 = 50;
@@ -197,12 +197,7 @@ impl ComposioProvider for GitHubProvider {
         };
 
         // Build the base search query.
-        let query = match &state.cursor {
-            Some(cursor) => {
-                format!("involves:{login} updated:>{cursor}")
-            }
-            None => format!("involves:{login}"),
-        };
+        let query = build_search_query(&login, state.cursor.as_deref());
 
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
@@ -419,7 +414,25 @@ impl GitHubProvider {
         }
 
         sync::extract_user_login(&resp.data).ok_or_else(|| {
-            "[composio:github] GITHUB_GET_AUTHENTICATED_USER returned no login".to_string()
+            "[composio:github] GITHUB_GET_THE_AUTHENTICATED_USER returned no login".to_string()
         })
+    }
+}
+
+/// Build the GitHub Search-Issues query for an incremental sync.
+///
+/// `involves:` is GitHub's logical-OR over `author`, `assignee`, `mentions`,
+/// and `commenter`, so the result set covers every item the connected user
+/// has standing in — not only items explicitly assigned to them. When a
+/// cursor from a prior sync is present, an `updated:>{cursor}` clause is
+/// appended so the next page request only returns items changed since.
+///
+/// Kept as a free function (rather than inline in `sync()`) so the query
+/// contract — specifically the `involves:` qualifier — can be asserted by
+/// unit tests without spinning up the full sync pipeline.
+pub(super) fn build_search_query(login: &str, cursor: Option<&str>) -> String {
+    match cursor {
+        Some(cursor) => format!("involves:{login} updated:>{cursor}"),
+        None => format!("involves:{login}"),
     }
 }

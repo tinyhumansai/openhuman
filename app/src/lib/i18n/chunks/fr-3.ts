@@ -43,6 +43,18 @@ const fr3: TranslationMap = {
     'Utilisez Reveal Folder pour ouvrir directement le répertoire du coffre-fort. Chemin du coffre-fort :',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Révéler le dossier',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Échec du chargement du graphe de mémoire',
   'workspace.loadingGraph': 'Chargement du graphe de mémoire…',
   'workspace.graphViewMode': 'Mode de vue du graphe de mémoire',
@@ -258,6 +270,7 @@ const fr3: TranslationMap = {
   'memory.ingestingTitle': 'Ingestion de {title}',
   'mic.noAudioCaptured': 'Aucun audio capturé',
   'mic.noSpeechDetected': 'Aucune parole détectée',
+  'mic.lowConfidenceResult': "Impossible de comprendre l'audio clairement — réessaie",
   'mic.failedToStopRecording': "Échec de l'arrêt de l'enregistrement : {message}",
   'mic.transcriptionFailed': 'Échec de la transcription : {message}',
   'reflections.kind.retrospective': 'Rétrospective',
@@ -428,6 +441,15 @@ const fr3: TranslationMap = {
   'channels.yuanbao.reconnect': 'Reconnect',
   'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default fr3;
