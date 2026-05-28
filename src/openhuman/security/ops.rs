@@ -32,6 +32,31 @@ pub async fn load_and_get_security_policy_info() -> Result<RpcOutcome<serde_json
 mod tests {
     use super::*;
     use crate::openhuman::config::TEST_ENV_LOCK;
+    use std::ffi::OsString;
+
+    struct EnvRestore {
+        key: &'static str,
+        prev: Option<OsString>,
+    }
+
+    impl EnvRestore {
+        fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+            let prev = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvRestore {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prev {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
 
     // ── load_and_get_security_policy_info integration tests ──────────────────
 
@@ -44,10 +69,8 @@ mod tests {
     async fn load_and_get_security_policy_info_reflects_env_overlay() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-            std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "42");
-        }
+        let _workspace = EnvRestore::set("OPENHUMAN_WORKSPACE", tmp.path());
+        let _budget = EnvRestore::set("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "42");
 
         let outcome = load_and_get_security_policy_info()
             .await
@@ -58,23 +81,18 @@ mod tests {
             serde_json::json!(42),
             "env overlay must flow through to the RPC payload"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR");
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     /// Edge case: `OPENHUMAN_MAX_ACTIONS_PER_HOUR=0` — the limit is invalid
     /// (must be ≥ 1) so the env var must be ignored and the default preserved.
+    /// The env overlay silently ignores 0 (consistent with the RPC update path
+    /// which rejects it with an error).
     #[tokio::test]
     async fn load_and_get_security_policy_info_ignores_zero_budget() {
         let tmp = tempfile::tempdir().unwrap();
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-            std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "0");
-        }
+        let _workspace = EnvRestore::set("OPENHUMAN_WORKSPACE", tmp.path());
+        let _budget = EnvRestore::set("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "0");
 
         let outcome = load_and_get_security_policy_info()
             .await
@@ -88,11 +106,6 @@ mod tests {
             serde_json::json!(default),
             "OPENHUMAN_MAX_ACTIONS_PER_HOUR=0 should be ignored; default must be used"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR");
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     // ── security_policy_info_for_config unit tests ───────────────────────────

@@ -565,6 +565,12 @@ fn env_overlay_autonomy_max_actions_per_hour_accepts_valid_u32() {
         cfg.autonomy.max_actions_per_hour, 64,
         "invalid env value must leave the configured limit unchanged"
     );
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "0"));
+    assert_eq!(
+        cfg.autonomy.max_actions_per_hour, 64,
+        "zero is invalid (< 1); env overlay must leave the configured limit unchanged"
+    );
 }
 
 #[test]

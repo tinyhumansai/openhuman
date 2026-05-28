@@ -1416,6 +1416,9 @@ impl Config {
             let trimmed = raw.trim();
             if !trimmed.is_empty() {
                 match trimmed.parse::<u32>() {
+                    Ok(0) => tracing::warn!(
+                        "OPENHUMAN_MAX_ACTIONS_PER_HOUR=0 ignored; value must be ≥ 1"
+                    ),
                     Ok(limit) => self.autonomy.max_actions_per_hour = limit,
                     Err(_) => tracing::warn!(
                         value = %raw,
