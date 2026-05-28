@@ -352,10 +352,26 @@ impl EventHandler for ComposioTriggerSubscriber {
                     );
                 }
                 Err(e) => {
-                    tracing::error!(
-                        label = %envelope.display_label,
-                        error = %e,
-                        "[composio][triage] run_triage failed"
+                    // Route through the central observability classifier
+                    // so user-config / budget-exhausted / provider-state
+                    // rollups from `reliable.rs` (e.g. `The model
+                    // \`<id>\` may not be available on your provider …`)
+                    // get demoted to info-level breadcrumbs instead of
+                    // surfacing as raw Sentry errors. Previously this
+                    // call used `tracing::error!` directly and bypassed
+                    // the classifier — 10.7k events / 14d on self-hosted
+                    // Sentry TAURI-RUST-1V, dominated by
+                    // ProviderConfigRejection-class rollups whose inner
+                    // attempts the provider layer already demoted.
+                    let detail = format!(
+                        "[composio][triage] run_triage failed (label={}): {e:#}",
+                        envelope.display_label
+                    );
+                    crate::core::observability::report_error_or_expected(
+                        detail.as_str(),
+                        "composio",
+                        "trigger_triage",
+                        &[("label", envelope.display_label.as_str())],
                     );
                 }
             }

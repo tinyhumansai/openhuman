@@ -177,6 +177,10 @@ const bn1: TranslationMap = {
   'memory.empty':
     'এখনো কোনো মেমোরি নেই। আপনি যত ইন্টারঅ্যাক্ট করবেন, মেমোরি স্বয়ংক্রিয়ভাবে তৈরি হবে।',
   'memory.tab.memory': 'মেমোরি',
+  'memory.tab.gameplay': 'Gameplay',
+  'gameplay.spoiler.off': 'Spoiler-safe',
+  'gameplay.spoiler.light': 'Light spoilers',
+  'gameplay.spoiler.full': 'Full spoilers',
   'memory.tab.subconscious': 'সাবকনশাস',
   'memory.tab.dreams': 'স্বপ্ন',
   'memory.tab.calls': 'কল',

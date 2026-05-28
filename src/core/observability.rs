@@ -263,6 +263,20 @@ pub enum ExpectedErrorKind {
     /// returned an empty response"` is also demoted — no per-channel typed
     /// suppression needed.
     EmptyProviderResponse,
+    /// Channel supervisor (`channels::runtime::supervision::spawn_supervised_listener`)
+    /// caught a transient error from a channel listener and restarted it. The
+    /// wrapper shape `"Channel <name> error: <inner>; restarting"` is the
+    /// signature; the underlying inner error can be anything — reqwest transport
+    /// errors, OS-localized WSAETIMEDOUT messages, TLS handshake failures, gateway
+    /// disconnect strings — all of which are self-resolving via the supervisor's
+    /// own backoff/retry loop. Sustained outages still surface via
+    /// `health.bus` / `FAIL_ESCALATE_THRESHOLD` (separate path, not affected by
+    /// this kind).
+    ///
+    /// Drops Sentry TAURI-RUST-15 (~11.4 k events Discord gateway) and -BB
+    /// (~815 events Chinese-Windows variant) where the English-only
+    /// `is_network_unreachable_message` anchors miss the inner OS message.
+    ChannelSupervisorRestart,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -275,6 +289,18 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
         || lower.contains("_api_key is not configured")
     {
         return Some(ExpectedErrorKind::ApiKeyMissing);
+    }
+    // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
+    // `is_network_unreachable_message`: the supervisor wrapper contains
+    // substrings (`error sending request for url`, OS-localized WSAETIMEDOUT
+    // bodies, occasionally `connection refused`) that would otherwise classify
+    // as `NetworkUnreachable` (which only demotes to `warn!` — still a Sentry
+    // event) or `LoopbackUnavailable`. The supervisor's own restart loop
+    // handles the condition; per-restart messages carry no actionable Sentry
+    // signal (TAURI-RUST-15 / -BB). Sustained outages still surface via
+    // `health.bus` / `FAIL_ESCALATE_THRESHOLD`, which is a separate path.
+    if is_channel_supervisor_restart_message(&lower) {
+        return Some(ExpectedErrorKind::ChannelSupervisorRestart);
     }
     // Check `is_loopback_unavailable` BEFORE `is_network_unreachable_message`:
     // a loopback `Connection refused` body shape would otherwise demote to the
@@ -314,12 +340,16 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
     }
-    // Session-expired BEFORE embedding-backend-auth: the OpenHuman backend's
-    // `"Invalid token"` 401 envelope can arrive via the embedding path
-    // (TAURI-RUST-4K5) and must classify as SessionExpired, not
-    // BackendUserError. The conjunctive anchor in `is_session_expired_message`
-    // is strict enough that third-party BYO-key 401s still fall through to
-    // the `is_embedding_backend_auth_failure` catch-all below.
+    // Check `is_session_expired_message` BEFORE `is_embedding_backend_auth_failure`:
+    // the OpenHuman-backend embedding 401 "Invalid token" envelope
+    // (`Embedding API error (401 …): {"error":"Invalid token"}`) is a
+    // recoverable session expiry (TAURI-RUST-4K5, #2786), not a generic
+    // backend error. The broader `is_embedding_backend_auth_failure` matcher
+    // below would otherwise demote that exact wire shape to `BackendUserError`
+    // first and swallow the re-auth signal. `is_session_expired_message` is
+    // narrowly anchored (parenthesised `(401` + the `"error":"Invalid token"`
+    // envelope), so the bare-status `Embedding API error 401 …` shape and
+    // BYO-key 401s still fall through to the matchers below.
     if is_session_expired_message(message) {
         return Some(ExpectedErrorKind::SessionExpired);
     }
@@ -696,6 +726,15 @@ fn is_ollama_user_config_rejection(lower: &str) -> bool {
 ///   `"during handshake"`). Same user-environment shape as the other
 ///   handshake-stage entries — the socket supervisor already retries with
 ///   exponential backoff and Sentry has no actionable signal.
+/// - `"http version must be 1.1 or higher"` — tungstenite's
+///   `ProtocolError::WrongHttpVersion` render. Fires when a server (or
+///   intermediary proxy / HTTP/2-only edge) responds to the WebSocket
+///   upgrade with HTTP/2+, which the WS spec forbids — the handshake
+///   requires HTTP/1.1 (`CORE-RUST-DP`, ~2 events / 24h, first seen on
+///   `openhuman@0.56.0`). Same shape as the existing handshake-stage
+///   entries: a user-environment / infra misconfiguration that the
+///   client cannot fix; Sentry has no actionable signal beyond what the
+///   socket supervisor's exponential backoff already provides.
 fn is_network_unreachable_message(lower: &str) -> bool {
     lower.contains("error sending request for url")
         || lower.contains("dns error")
@@ -725,6 +764,35 @@ fn is_network_unreachable_message(lower: &str) -> bool {
         || lower.contains("unexpected eof during handshake")
         || lower.contains("certificate verify failed")
         || lower.contains("http error: 200 ok")
+        || lower.contains("http version must be 1.1 or higher")
+}
+
+/// Detect the canonical supervisor-wrap shape emitted by
+/// `channels::runtime::supervision::spawn_supervised_listener` —
+/// `"Channel <name> error: <inner>; restarting"`. Language-agnostic
+/// (anchored on the Rust wrapper, not the inner error wording) so it
+/// covers OS-localized variants (TAURI-RUST-BB Chinese-Windows
+/// WSAETIMEDOUT body) that escape the English-only network anchors in
+/// [`is_network_unreachable_message`].
+///
+/// The supervisor restarts the listener with its own exponential backoff;
+/// sustained outages surface via separate `health.bus` events /
+/// `FAIL_ESCALATE_THRESHOLD`. Per-restart messages carry no actionable
+/// Sentry signal — Sentry has no remediation path beyond what the
+/// supervisor already does (TAURI-RUST-15 ~11.4 k events / -BB ~815
+/// events on self-hosted `tauri-rust`).
+///
+/// Anchors on three substrings together to avoid false positives:
+///   - leading `"channel "` (with trailing space disambiguates from
+///     unrelated mentions like `"channels"` or `"channel-runtime"`)
+///   - `" error:"` (the wrapper's literal separator)
+///   - `"; restarting"` (the wrapper's literal trailer)
+///
+/// A bare `"…; restarting"` log line without the `"Channel <name> error:"`
+/// preamble must NOT classify — that's a generic restart note from some
+/// other subsystem and Sentry signal there may still be actionable.
+fn is_channel_supervisor_restart_message(lower: &str) -> bool {
+    lower.starts_with("channel ") && lower.contains(" error:") && lower.contains("; restarting")
 }
 
 /// Detect transient upstream HTTP failures that have bubbled up out of the
@@ -1446,6 +1514,28 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "empty_provider_response",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected empty-provider-response error: {message}"
+            );
+        }
+        ExpectedErrorKind::ChannelSupervisorRestart => {
+            // Channel supervisor caught a transient error from a channel
+            // listener (`spawn_supervised_listener`) and restarted it. The
+            // wrapper is language-agnostic — anchored on the Rust supervisor
+            // shape, not the inner error wording — so this catches both the
+            // English Discord-gateway body (TAURI-RUST-15 ~11.4 k events) and
+            // OS-localized variants (TAURI-RUST-BB Chinese WSAETIMEDOUT,
+            // ~815 events) that the English-only `NetworkUnreachable`
+            // matchers miss. Self-resolving via the supervisor's exponential
+            // backoff — Sentry has no remediation path. Sustained outages
+            // still surface through `health.bus` / `FAIL_ESCALATE_THRESHOLD`
+            // (separate code path, not affected by this demotion). Demote to
+            // `info!` so the breadcrumb survives for trace correlation but
+            // Sentry sees no error or warn event.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "channel_supervisor_restart",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected channel-supervisor restart: {message}"
             );
         }
     }
@@ -2571,6 +2661,43 @@ mod tests {
     }
 
     #[test]
+    fn classifies_ws_protocol_wrong_http_version_as_network_unreachable() {
+        // CORE-RUST-DP (~2 events / 24h on `openhuman@0.56.0+e8968077aeb5`,
+        // self-hosted `core-rust`): tungstenite renders
+        // `ProtocolError::WrongHttpVersion` as
+        // `"WebSocket protocol error: HTTP version must be 1.1 or higher"`,
+        // wrapped by `socket::ws_loop::run_connection` as
+        // `"WebSocket connect: <inner>"` and then by the supervisor's
+        // sustained-outage escalation as
+        // `"[socket] Connection failed (sustained outage after N attempts):
+        // WebSocket connect: WebSocket protocol error: HTTP version must be
+        // 1.1 or higher"`.
+        //
+        // The handshake requires HTTP/1.1; a server or intermediary proxy
+        // that responds with HTTP/2+ to the upgrade is misconfigured
+        // upstream — same shape as the existing `"tls handshake"` /
+        // `"certificate verify failed"` user-environment entries. The
+        // supervisor already retries with exponential backoff; Sentry has
+        // no actionable signal to add.
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: WebSocket protocol error: HTTP version must be 1.1 or higher"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+
+        // Bare tungstenite render (no socket-supervisor wrap) — fires when
+        // the same protocol error escapes through a non-supervisor call
+        // site. The classifier runs on the full anyhow chain, so the
+        // shorter form must also match.
+        assert_eq!(
+            expected_error_kind("WebSocket protocol error: HTTP version must be 1.1 or higher"),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+    }
+
+    #[test]
     fn tls_handshake_eof_anchor_does_not_silence_unrelated_log_lines() {
         // The anchor is the literal `"unexpected eof during handshake"`
         // phrase. A bare data-phase `"unexpected EOF"` (server closed
@@ -2588,6 +2715,30 @@ mod tests {
                 expected_error_kind(raw),
                 None,
                 "non-handshake unexpected-EOF log line must NOT classify: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn wrong_http_version_anchor_does_not_silence_unrelated_log_lines() {
+        // The anchor is the literal tungstenite Display string. Adjacent
+        // log lines that mention HTTP version in any other context
+        // (`"upgrading from HTTP/1.0 to HTTP/2"`, `"HTTP/1.1 only"`,
+        // `"server requires HTTP version 2.0"`) MUST NOT classify — those
+        // are unrelated transport / negotiation traces and may carry
+        // actionable signal. Pin the rejection contract so a future
+        // refactor doesn't loosen the substring into a generic
+        // `"http version"` matcher.
+        for raw in [
+            "[transport] upgrading from HTTP/1.0 to HTTP/2",
+            "server advertises HTTP version 2.0 (h2 alpn)",
+            "client supports HTTP/1.1 only",
+            "version mismatch: requires HTTP/1.2 or higher",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "unrelated HTTP-version log line must NOT classify: {raw}"
             );
         }
     }
@@ -2700,20 +2851,23 @@ mod tests {
 
     #[test]
     fn channel_supervisor_operation_timed_out_classifies_as_expected() {
-        // OPENHUMAN-TAURI-EM (128 events): `channels::runtime::supervision`
+        // OPENHUMAN-TAURI-EM (128 events) + TAURI-RUST-15/-BB: `channels::runtime::supervision`
         // wraps a channel listener failure as
         // `format!("Channel {} error: {e:#}; restarting", ch.name())` and
-        // routes the message through `report_error_or_expected`. When the
-        // discord gateway TCP/WebSocket connection hits ETIMEDOUT, the
-        // anyhow chain renders without a URL anchor (this is `std::io`-level,
-        // not reqwest) and previously fell straight through every classifier
-        // arm into `report_error` — one Sentry event per restart cycle.
+        // routes the message through `report_error_or_expected`. The
+        // newer `ChannelSupervisorRestart` classifier (added for the
+        // broader 11.4k-event Sentry leak) anchors on the supervisor
+        // wrapper shape itself — `"Channel <name> error: …; restarting"`
+        // — and takes precedence over `NetworkUnreachable`. That single
+        // arm now covers every ETIMEDOUT / WSAETIMEDOUT / hyper-prose
+        // shape the old narrower anchor pinned, plus OS-localized
+        // variants the English-only `NetworkUnreachable` would miss.
         //
-        // Pin the exact macOS wire shape from the issue, plus the Linux and
-        // Windows errno renderings so a future platform-specific change does
-        // not silently re-open the leak. The bare `"operation timed out"`
-        // anchor matches all three since the errno digits live downstream
-        // of the canonical phrase.
+        // Demotion tier difference: `ChannelSupervisorRestart` emits at
+        // `info!` (breadcrumb only, no Sentry event) where
+        // `NetworkUnreachable` emitted at `warn!` (still captured as a
+        // Sentry warn event). Sustained outages still page via
+        // `health.bus` / `FAIL_ESCALATE_THRESHOLD`.
         for raw in [
             // macOS (os error 60 = ETIMEDOUT on BSD)
             "Channel discord error: IO error: Operation timed out (os error 60); restarting",
@@ -2730,8 +2884,9 @@ mod tests {
         ] {
             assert_eq!(
                 expected_error_kind(raw),
-                Some(ExpectedErrorKind::NetworkUnreachable),
-                "channel supervisor timeout shape must classify as expected (got {:?} for {raw:?})",
+                Some(ExpectedErrorKind::ChannelSupervisorRestart),
+                "channel supervisor timeout shape must classify as ChannelSupervisorRestart \
+                 (precedence over NetworkUnreachable; got {:?} for {raw:?})",
                 expected_error_kind(raw)
             );
         }
@@ -4647,6 +4802,125 @@ mod tests {
             "rpc",
             "invoke_method",
             &[("method", "openhuman.composio_list_connections")],
+        );
+    }
+
+    #[test]
+    fn classifies_channel_supervisor_restart_english_discord_gateway() {
+        // TAURI-RUST-15 (~11.4k events / 14d on self-hosted `tauri-rust`):
+        // verbatim wrapper from `channels::runtime::supervision::spawn_supervised_listener`
+        // around the Discord gateway transport error. The English body
+        // would otherwise match `is_network_unreachable_message` (which
+        // demotes to `warn!` — still a Sentry event); the supervisor
+        // wrap precedence routes it to `ChannelSupervisorRestart`
+        // (info-only breadcrumb).
+        let body = "Channel discord error: error sending request for url \
+                    (https://discord.com/api/v10/gateway/bot); restarting";
+        assert_eq!(
+            expected_error_kind(body),
+            Some(ExpectedErrorKind::ChannelSupervisorRestart)
+        );
+    }
+
+    #[test]
+    fn classifies_channel_supervisor_restart_chinese_windows_wsaetimedout() {
+        // TAURI-RUST-BB (~815 events / 14d): same supervisor wrapper,
+        // OS-localized inner WSAETIMEDOUT body on Chinese Windows. The
+        // English-only `is_network_unreachable_message` anchors miss
+        // this inner message, so without the language-agnostic
+        // supervisor matcher it would escape classification entirely
+        // and emit a full Sentry error. The wrapper-anchored predicate
+        // catches it regardless of OS locale.
+        let body = "Channel discord error: IO error: \
+                    由于连接方在一段时间后没有正确答复或连接的主机没有反应，连接尝试失败。 \
+                    (os error 10060); restarting";
+        assert_eq!(
+            expected_error_kind(body),
+            Some(ExpectedErrorKind::ChannelSupervisorRestart)
+        );
+    }
+
+    #[test]
+    fn channel_supervisor_restart_matches_multiple_channel_names() {
+        // The wrapper format is `"Channel <name> error: <inner>; restarting"`.
+        // The name slot varies by provider (discord, slack, telegram,
+        // whatsapp, gmessages, …). The matcher must classify all of them —
+        // language-agnostic, name-agnostic.
+        for raw in [
+            "Channel slack error: gateway disconnect; restarting",
+            "Channel telegram error: tls handshake eof; restarting",
+            "Channel whatsapp error: connection reset by peer (os error 54); restarting",
+            "Channel gmessages error: WebSocket connect: HTTP error: 502 Bad Gateway; restarting",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ChannelSupervisorRestart),
+                "should classify as channel-supervisor-restart: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn channel_supervisor_restart_precedence_over_network_unreachable() {
+        // Pin the precedence: a supervisor-wrap body that ALSO contains
+        // the canonical `"error sending request for url"` anchor (which
+        // would by itself classify as `NetworkUnreachable`) MUST route
+        // to `ChannelSupervisorRestart`. The supervisor's own backoff
+        // handles the condition; `NetworkUnreachable` would demote to
+        // `warn!` (still a Sentry event), whereas
+        // `ChannelSupervisorRestart` demotes to `info!` (no event).
+        let body = "Channel discord error: error sending request for url \
+                    (https://discord.com/api/v10/gateway/bot); restarting";
+        let kind = expected_error_kind(body);
+        assert_eq!(kind, Some(ExpectedErrorKind::ChannelSupervisorRestart));
+        assert_ne!(kind, Some(ExpectedErrorKind::NetworkUnreachable));
+    }
+
+    #[test]
+    fn channel_supervisor_restart_does_not_classify_unrelated_restart_notes() {
+        // Defense against the matcher being too eager: bodies that
+        // contain `"; restarting"` but NOT the `"Channel <name> error:"`
+        // preamble must NOT classify — those are generic restart logs
+        // from other subsystems where Sentry signal may still be
+        // actionable. The matcher requires all three anchors together
+        // (`"channel "` prefix + `" error:"` separator + `"; restarting"`
+        // trailer).
+        for raw in [
+            // No `Channel <name>` preamble.
+            "systemd: docker.service; restarting",
+            // No `Channel <name>` preamble even though `; restarting`
+            // appears.
+            "Connection refused; restarting",
+            // The string `channel` appears but not as the leading
+            // `"Channel <name> error:"` wrapper — must not classify.
+            "channels::runtime::dispatch failed: error: provider exhausted; restarting",
+            // The wrapper prefix is present but the trailer is not —
+            // a half-formed log line must not classify.
+            "Channel discord error: gateway disconnect",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ChannelSupervisorRestart),
+                "must NOT classify as channel-supervisor-restart: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn report_error_or_expected_routes_channel_supervisor_restart_through_expected_path() {
+        // Smoke test: the verbatim TAURI-RUST-15 Sentry body flows through
+        // `report_error_or_expected` without panicking. The classifier
+        // routes it to `report_expected_message` (info breadcrumb) instead
+        // of `report_error_message` (`sentry::capture_message` at error
+        // level). We can't observe the Sentry hub from this test, but
+        // exercising the call path catches any future regression that
+        // re-introduces a panic or mis-types the arm.
+        report_error_or_expected(
+            "Channel discord error: error sending request for url \
+             (https://discord.com/api/v10/gateway/bot); restarting",
+            "channels",
+            "supervised_listener",
+            &[("channel", "discord")],
         );
     }
 }

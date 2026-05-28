@@ -181,6 +181,10 @@ const it1: TranslationMap = {
   'memory.empty':
     'Nessuna memoria ancora. Le memorie vengono create automaticamente mentre interagisci.',
   'memory.tab.memory': 'Memoria',
+  'memory.tab.gameplay': 'Gameplay',
+  'gameplay.spoiler.off': 'Spoiler-safe',
+  'gameplay.spoiler.light': 'Light spoilers',
+  'gameplay.spoiler.full': 'Full spoilers',
   'memory.tab.subconscious': 'Subconscio',
   'memory.tab.dreams': 'Sogni',
   'memory.tab.calls': 'Chiamate',

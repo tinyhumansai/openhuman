@@ -183,6 +183,10 @@ const fr1: TranslationMap = {
   'memory.empty':
     "Aucun souvenir pour l'instant. Les souvenirs sont créés automatiquement au fil de tes interactions.",
   'memory.tab.memory': 'Mémoire',
+  'memory.tab.gameplay': 'Gameplay',
+  'gameplay.spoiler.off': 'Spoiler-safe',
+  'gameplay.spoiler.light': 'Light spoilers',
+  'gameplay.spoiler.full': 'Full spoilers',
   'memory.tab.subconscious': 'Subconscient',
   'memory.tab.dreams': 'Rêves',
   'memory.tab.calls': 'Appels',

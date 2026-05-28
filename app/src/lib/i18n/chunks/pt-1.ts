@@ -182,6 +182,10 @@ const pt1: TranslationMap = {
   'memory.empty':
     'Nenhuma memória ainda. As memórias são criadas automaticamente conforme você interage.',
   'memory.tab.memory': 'Memória',
+  'memory.tab.gameplay': 'Gameplay',
+  'gameplay.spoiler.off': 'Spoiler-safe',
+  'gameplay.spoiler.light': 'Light spoilers',
+  'gameplay.spoiler.full': 'Full spoilers',
   'memory.tab.subconscious': 'Subconsciente',
   'memory.tab.dreams': 'Sonhos',
   'memory.tab.calls': 'Chamadas',

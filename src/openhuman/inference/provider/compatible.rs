@@ -528,19 +528,33 @@ impl OpenAiCompatibleProvider {
         tools: Option<&[crate::openhuman::tools::ToolSpec]>,
     ) -> Option<Vec<serde_json::Value>> {
         tools.map(|items| {
-            items
-                .iter()
-                .map(|tool| {
-                    serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        }
-                    })
-                })
-                .collect()
+            let mut seen: std::collections::HashSet<&str> =
+                std::collections::HashSet::with_capacity(items.len());
+            let mut dropped: Vec<&str> = Vec::new();
+            let mut out: Vec<serde_json::Value> = Vec::with_capacity(items.len());
+            for tool in items {
+                if !seen.insert(tool.name.as_str()) {
+                    dropped.push(tool.name.as_str());
+                    continue;
+                }
+                out.push(serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                }));
+            }
+            if !dropped.is_empty() {
+                log::warn!(
+                    "[providers][compatible] dropped {} duplicate tool spec(s) at wire \
+                     boundary (TAURI-RUST-2E): {:?}",
+                    dropped.len(),
+                    dropped
+                );
+            }
+            out
         })
     }
 

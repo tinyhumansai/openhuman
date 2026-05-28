@@ -20,6 +20,7 @@ import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOption
 import DevicesComingSoonPanel from '../components/settings/panels/DevicesComingSoonPanel';
 import DevWorkflowPanel from '../components/settings/panels/DevWorkflowPanel';
 import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
+import EventLogPanel from '../components/settings/panels/EventLogPanel';
 import HeartbeatPanel from '../components/settings/panels/HeartbeatPanel';
 import LedgerUsagePanel from '../components/settings/panels/LedgerUsagePanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
@@ -467,6 +468,7 @@ const Settings = () => {
         <Route path="voice-debug" element={wrapSettingsPage(<VoiceDebugPanel />)} />
         <Route path="local-model-debug" element={wrapSettingsPage(<LocalModelDebugPanel />)} />
         <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
+        <Route path="event-log" element={wrapSettingsPage(<EventLogPanel />)} />
         <Route
           path="model-health"
           element={wrapSettingsPage(<ModelHealthPanel />, { maxWidthClass: 'max-w-4xl' })}
