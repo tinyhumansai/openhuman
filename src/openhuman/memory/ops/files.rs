@@ -371,6 +371,18 @@ mod tests {
         .await
         .expect("list should succeed");
         let listed_data = listed.value.data.expect("list data");
-        assert_eq!(listed_data.files, vec!["real.md"]);
+        // The test only cares about the symlink-skipping invariant — the
+        // listing may also include the SQLite memory store files (`memory.db`,
+        // `memory.db-shm`, `memory.db-wal`) that the test fixture initializes.
+        assert!(
+            listed_data.files.iter().any(|f| f == "real.md"),
+            "expected real.md in listing, got {:?}",
+            listed_data.files
+        );
+        assert!(
+            !listed_data.files.iter().any(|f| f == "alias.md"),
+            "symlink alias.md must be skipped, got {:?}",
+            listed_data.files
+        );
     }
 }

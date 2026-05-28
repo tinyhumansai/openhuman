@@ -21,6 +21,7 @@ use super::transcript;
 use super::types::Agent;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
@@ -811,9 +812,17 @@ impl Agent {
                             "[agent_loop] provider returned an empty final response (i={}, no text, no tool calls) — surfacing as error instead of a silent blank reply",
                             iteration + 1
                         );
-                        return Err(anyhow::anyhow!(
-                            "The model returned an empty response. Please try again."
-                        ));
+                        // Typed variant so `run_single` can route this
+                        // through `AgentError::skips_sentry()` and demote
+                        // to a `log::info!` instead of escalating to
+                        // Sentry (TAURI-RUST-4JX). The `Display` impl
+                        // still renders the canonical user-facing string
+                        // for UI surfaces, so the user behaviour is
+                        // unchanged.
+                        return Err(AgentError::EmptyProviderResponse {
+                            iteration: iteration + 1,
+                        }
+                        .into());
                     }
                     log::info!(
                         "[agent] no tool calls — returning final response after {} iteration(s)",

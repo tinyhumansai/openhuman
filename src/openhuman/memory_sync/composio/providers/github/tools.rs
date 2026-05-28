@@ -117,7 +117,8 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         slug: "GITHUB_UPDATE_AN_ISSUE",
         scope: ToolScope::Write,
     },
-    // GITHUB_CLOSE_AN_ISSUE removed — use GITHUB_UPDATE_AN_ISSUE with state=closed
+    // GITHUB_CLOSE_AN_ISSUE — removed: no dedicated Composio slug.
+    // Use GITHUB_UPDATE_AN_ISSUE with state:"closed" instead.
     CuratedTool {
         slug: "GITHUB_CREATE_AN_ISSUE_COMMENT",
         scope: ToolScope::Write,
@@ -163,7 +164,16 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         slug: "GITHUB_DELETE_A_REPOSITORY",
         scope: ToolScope::Admin,
     },
-    // GITHUB_DELETE_A_BRANCH removed from Composio catalog — use GITHUB_DELETE_A_REFERENCE
+    // DELETE_A_REFERENCE maps to DELETE /repos/{owner}/{repo}/git/refs/{ref}.
+    // The ref must be a full path (e.g. `refs/heads/branch-name` or
+    // `refs/tags/v1.0`) — passing a bare branch name deletes nothing (404).
+    // This replaces the old GITHUB_DELETE_A_BRANCH slug (Composio v3 rename);
+    // it is broader — it can delete tags too — so agents should always specify
+    // a `refs/heads/` prefix when the intent is branch deletion.
+    CuratedTool {
+        slug: "GITHUB_DELETE_A_REFERENCE",
+        scope: ToolScope::Admin,
+    },
     CuratedTool {
         slug: "GITHUB_DELETE_A_FILE",
         scope: ToolScope::Admin,

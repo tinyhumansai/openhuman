@@ -763,7 +763,7 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // canonical hints (reasoning/chat/agentic/coding/summarization).
     // `hint:summarization` became canonical when `summarization-v1` shipped
     // (PR #2690), so it is no longer a passthrough case.
-    for hint in ["hint:reaction", "hint:garbage"] {
+    for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
         let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");

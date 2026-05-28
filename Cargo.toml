@@ -117,6 +117,12 @@ walkdir = "2"
 glob = "0.3"
 unicode-segmentation = "1"
 unicode-width = "0.2"
+# NFKC + combining-mark detection for the cross-thread search inverted
+# index (`memory_conversations::tokenize`). NFKC unifies CJK half/full-
+# width variants and Arabic presentation forms; `canonical_combining_class`
+# lets us strip diacritics across all scripts (Polish ą→a, Arabic harakat,
+# Hebrew niqqud, etc.) without per-language tables.
+unicode-normalization = "0.1"
 hostname = "0.4.2"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-pki-types = "1.14.0"
