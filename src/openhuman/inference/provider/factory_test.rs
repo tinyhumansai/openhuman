@@ -760,9 +760,10 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
     // must be forwarded to the backend unchanged. The backend is authoritative
     // over which hint values it accepts; the factory only translates the
-    // canonical hints (reasoning/chat/agentic/coding/summarization) — the last
-    // of which gained a dedicated tier, so it is no longer "unknown".
-    for hint in ["hint:reaction", "hint:garbage"] {
+    // canonical hints (reasoning/chat/agentic/coding/summarization).
+    // `hint:summarization` became canonical when `summarization-v1` shipped
+    // (PR #2690), so it is no longer a passthrough case.
+    for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
         let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
@@ -1085,6 +1086,38 @@ fn byok_fallback_empty_string_treated_as_unset() {
         agentic_result, "openhuman",
         "empty agentic_provider must stay on managed backend even when chat BYOK is configured"
     );
+}
+
+// ── claude_agent_sdk provider factory tests ───────────────────────────────────
+
+#[test]
+fn claude_agent_sdk_bare_provider_string_uses_default_model() {
+    let config = Config::default();
+    let (_, model) = create_chat_provider_from_string("reasoning", "claude_agent_sdk", &config)
+        .expect("claude_agent_sdk must build without a model suffix");
+    // Default model from ClaudeAgentSdkConfig
+    assert_eq!(
+        model, "claude-sonnet-4-6",
+        "claude_agent_sdk with no suffix must use the default model"
+    );
+}
+
+#[test]
+fn claude_agent_sdk_with_model_suffix() {
+    let config = Config::default();
+    let (_, model) =
+        create_chat_provider_from_string("reasoning", "claude_agent_sdk:claude-opus-4-7", &config)
+            .expect("claude_agent_sdk:<model> must build");
+    assert_eq!(model, "claude-opus-4-7");
+}
+
+#[test]
+fn claude_agent_sdk_with_custom_default_model_in_config() {
+    let mut config = Config::default();
+    config.claude_agent_sdk.default_model = "claude-haiku-4-5".to_string();
+    let (_, model) = create_chat_provider_from_string("chat", "claude_agent_sdk", &config)
+        .expect("claude_agent_sdk must build with config default model");
+    assert_eq!(model, "claude-haiku-4-5");
 }
 
 // ── resolve_byok_fallback_provider_string direct tests ───────────────────────

@@ -112,8 +112,8 @@ async fn run_pending_runs_phase_out_when_version_zero() {
 
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 5"),
-        "saved config.toml must record schema_version=5, got:\n{on_disk}"
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
     );
 }
 
@@ -128,7 +128,7 @@ async fn run_pending_bumps_version_on_fresh_install() {
 
     assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
-    assert!(on_disk.contains("schema_version = 5"));
+    assert!(on_disk.contains("schema_version = 6"));
 }
 
 #[tokio::test]
@@ -252,8 +252,8 @@ async fn run_pending_expands_autonomy_defaults_from_v3() {
     // On-disk config must reflect the new schema_version.
     let on_disk = fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 5"),
-        "saved config.toml must record schema_version=5, got:\n{on_disk}"
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
     );
 }
 
@@ -285,8 +285,79 @@ async fn run_pending_v4_to_v5_removes_write_tools_from_auto_approve() {
 
     let on_disk = fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 5"),
-        "saved config.toml must record schema_version=5, got:\n{on_disk}"
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+    );
+}
+
+// ── v5 → v6: repair_http_request_limits integration test ────────────────────
+
+/// A workspace persisted at schema_version=5 with stale-zero `[http_request]`
+/// limits (the exact bug this PR fixes) must be repaired to the schema
+/// defaults and bumped to v6 by the full `run_pending` wiring — not just the
+/// migration's own unit tests.
+#[tokio::test]
+async fn run_pending_v5_to_v6_repairs_http_request_limits() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 5;
+    config.http_request.timeout_secs = 0;
+    config.http_request.max_response_size = 0;
+
+    run_pending(&mut config).await;
+
+    let defaults = crate::openhuman::config::HttpRequestConfig::default();
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(config.http_request.timeout_secs, defaults.timeout_secs);
+    assert_eq!(
+        config.http_request.max_response_size,
+        defaults.max_response_size
+    );
+    assert_ne!(config.http_request.timeout_secs, 0);
+    assert_ne!(config.http_request.max_response_size, 0);
+
+    // The version bump must be persisted to disk too.
+    let on_disk = fs::read_to_string(&config.config_path).unwrap();
+    assert!(
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+    );
+}
+
+/// Companion to the repair test above: the same single 5 -> 6 transition must
+/// also run `reconcile_orphaned_providers`. A config at schema_version=5 with an
+/// orphaned `chat_provider` (slug not in `cloud_providers`) and a dangling
+/// `primary_cloud` must have both reset to managed and be bumped to v6 through
+/// the full `run_pending` wiring.
+#[tokio::test]
+async fn run_pending_v5_to_v6_reconciles_orphaned_providers() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 5;
+    // `openai` is not present in cloud_providers (left empty) → orphaned.
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.primary_cloud = Some("p_missing".to_string());
+
+    run_pending(&mut config).await;
+
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        config.chat_provider, None,
+        "orphaned chat_provider must be reset to managed"
+    );
+    assert_eq!(
+        config.primary_cloud, None,
+        "dangling primary_cloud must be cleared"
+    );
+
+    let on_disk = fs::read_to_string(&config.config_path).unwrap();
+    assert!(
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
     );
 }
 

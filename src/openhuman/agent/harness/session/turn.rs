@@ -21,6 +21,7 @@ use super::transcript;
 use super::types::Agent;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
@@ -733,6 +734,15 @@ impl Agent {
                         // the provider doesn't return usage.
                         if let Some(ref usage) = resp.usage {
                             self.context.record_usage(usage);
+                            // Feed the dashboard tracker. This always records
+                            // (model + usage) when the process-global tracker
+                            // is available — independent of `cost.enabled`,
+                            // which gates budget enforcement only. The call
+                            // is a no-op only when `init_global` has not yet
+                            // run (before bootstrap) or failed; errors are
+                            // logged and swallowed so cost telemetry never
+                            // breaks a turn.
+                            crate::openhuman::cost::record_provider_usage(&effective_model, usage);
                             cumulative_input_tokens += usage.input_tokens;
                             cumulative_output_tokens += usage.output_tokens;
                             cumulative_cached_input_tokens += usage.cached_input_tokens;
@@ -802,9 +812,17 @@ impl Agent {
                             "[agent_loop] provider returned an empty final response (i={}, no text, no tool calls) — surfacing as error instead of a silent blank reply",
                             iteration + 1
                         );
-                        return Err(anyhow::anyhow!(
-                            "The model returned an empty response. Please try again."
-                        ));
+                        // Typed variant so `run_single` can route this
+                        // through `AgentError::skips_sentry()` and demote
+                        // to a `log::info!` instead of escalating to
+                        // Sentry (TAURI-RUST-4JX). The `Display` impl
+                        // still renders the canonical user-facing string
+                        // for UI surfaces, so the user behaviour is
+                        // unchanged.
+                        return Err(AgentError::EmptyProviderResponse {
+                            iteration: iteration + 1,
+                        }
+                        .into());
                     }
                     log::info!(
                         "[agent] no tool calls — returning final response after {} iteration(s)",
@@ -1056,6 +1074,7 @@ impl Agent {
             // checkpoint message (mirrors the normal final-response path).
             if let Some(ref usage) = checkpoint_usage {
                 self.context.record_usage(usage);
+                crate::openhuman::cost::record_provider_usage(&effective_model, usage);
                 cumulative_input_tokens += usage.input_tokens;
                 cumulative_output_tokens += usage.output_tokens;
                 cumulative_cached_input_tokens += usage.cached_input_tokens;

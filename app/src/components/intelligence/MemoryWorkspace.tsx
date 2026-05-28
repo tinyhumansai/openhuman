@@ -39,6 +39,7 @@ import {
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
+import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
 import { ObsidianVaultSection } from './ObsidianVaultSection';
 import { VaultPanel } from './VaultPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
@@ -220,6 +221,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
   return (
     <div className="space-y-4" data-testid="memory-workspace">
+      <MemoryTreeStatusPanel onToast={onToast} />
       <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
       <VaultPanel onToast={onToast} />
       <WhatsAppMemorySection />

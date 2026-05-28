@@ -6,6 +6,7 @@ import { CORE_RPC_TIMEOUT_MS } from '../../utils/config';
 import type { AccessibilityStatus, CommandResponse } from '../../utils/tauriCommands';
 import {
   callCoreRpc,
+  classifyAuthExpiredReason,
   classifyRpcError,
   CoreRpcError,
   isThreadNotFoundCoreRpcError,
@@ -718,6 +719,27 @@ describe('classifyRpcError', () => {
     expect(classifyRpcError('Core RPC openhuman.team_list_teams timed out after 30000ms')).toBe(
       'timeout'
     );
+  });
+});
+
+describe('classifyAuthExpiredReason', () => {
+  test.each([
+    // Confirmed server-side rejection → safe to sign out immediately.
+    ['anything', 401, 'confirmed'],
+    ['Session expired. Please log in again.', undefined, 'confirmed'],
+    ['SESSION_EXPIRED', undefined, 'confirmed'],
+    ['GET /teams failed (401 Unauthorized): {"success":false}', undefined, 'confirmed'],
+    // "Token not loaded yet" → unconfirmed: fires transiently right after the
+    // restart, before the on-disk auth profile is read. Must NOT be treated as
+    // a confirmed expiry — `CoreStateProvider` corroborates before logging out.
+    ['session jwt required', undefined, 'unconfirmed'],
+    ['SESSION JWT REQUIRED', undefined, 'unconfirmed'],
+    ['no backend session token; run auth_store_session first', undefined, 'unconfirmed'],
+    ['composio unavailable: no backend session token', undefined, 'unconfirmed'],
+    // Unknown auth-expired-ish message defaults to the safe (verify) path.
+    ['some opaque auth failure', undefined, 'unconfirmed'],
+  ] as const)('%s (status=%s) => %s', (message, status, expected) => {
+    expect(classifyAuthExpiredReason(message, status)).toBe(expected);
   });
 });
 

@@ -19,6 +19,7 @@ const PREFIX_TO_LOCALE: Array<[string, Locale]> = [
   ['id', 'id'],
   ['in', 'id'],
   ['it', 'it'],
+  ['pl', 'pl'],
   ['en', 'en'],
 ];
 

@@ -196,6 +196,13 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: PathBuf::from("."),
             workspace_only: true,
+            // When adding a new entry to this allowlist, re-audit
+            // `DANGEROUS_ENV_PREFIXES` (see below). Every newly-allowed binary
+            // may introduce its own env-driven subprocess hooks (pager, editor,
+            // loader override, SSH/diff helper, preprocessor) — those names
+            // must be added to the prefix denylist so that the
+            // `KEY=cmd <allowed-binary>` shape cannot bypass allowlisting via
+            // `skip_env_assignments` in `is_command_allowed`. Cross-ref #2636.
             allowed_commands: vec![
                 // Version control
                 "git".into(),

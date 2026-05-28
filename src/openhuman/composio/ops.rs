@@ -787,18 +787,24 @@ pub async fn composio_list_tools(
             }
             tracing::debug!(
                 toolkits = scope.len(),
+                ?effective_tags,
                 "[composio-direct] list_tools: fetching v3 tool schemas"
             );
-            let mut resp = direct_list_tools(&direct, &scope).await.map_err(|e| {
-                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
-                // branch's hook (line ~451). Direct-mode `list_tools`
-                // failures are user-state when the API key is bad. Render
-                // WITH the `[composio-direct]` anchor so the classifier
-                // arm fires.
-                let rendered = format!("[composio-direct] list_tools failed: {e:#}");
-                report_composio_op_error("list_tools", &rendered);
-                rendered
-            })?;
+            // Forward the same `effective_tags` the backend branch uses so the
+            // tag filter is honoured in direct (BYO-key) mode too — previously
+            // it was computed above and then dropped on this branch.
+            let mut resp = direct_list_tools(&direct, &scope, effective_tags.as_deref())
+                .await
+                .map_err(|e| {
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
+                    // branch's hook (line ~451). Direct-mode `list_tools`
+                    // failures are user-state when the API key is bad. Render
+                    // WITH the `[composio-direct]` anchor so the classifier
+                    // arm fires.
+                    let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                    report_composio_op_error("list_tools", &rendered);
+                    rendered
+                })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but
             // OpenHuman's curation policy isn't, and direct-mode users

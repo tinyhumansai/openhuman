@@ -1811,6 +1811,12 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         }
     }
 
+    // --- Cost dashboard tracker ---
+    // Activates the previously-dormant CostTracker so the dashboard RPC
+    // surface (`openhuman.cost_get_dashboard`) and `record_provider_usage`
+    // share one JSONL-backed store. Idempotent.
+    crate::openhuman::cost::init_global(cfg.cost.clone(), &workspace_dir);
+
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
     // under `<workspace>/agents/*.toml`. Idempotent — safe to call
