@@ -219,6 +219,14 @@ pub enum ExpectedErrorKind {
     /// event (TAURI-RUST-4Z1). This string classifier closes that second
     /// emit site, mirroring how `MaxIterationsExceeded` is handled at both
     /// layers. See [`is_empty_provider_response_message`].
+    ///
+    /// Although the immediate trigger is the `web_channel.run_chat_task`
+    /// re-report, this classifier runs in the central `expected_error_kind`
+    /// dispatcher, so any caller of `report_error_or_expected`
+    /// (`channels/runtime/dispatch.rs`, `channels/runtime/supervision.rs`,
+    /// any future channel provider) whose error chain contains `"model
+    /// returned an empty response"` is also demoted — no per-channel typed
+    /// suppression needed.
     EmptyProviderResponse,
 }
 
@@ -1984,11 +1992,10 @@ mod tests {
     #[test]
     fn does_not_classify_unrelated_empty_response_phrases() {
         // Polarity contract: the anchor is `"model returned an empty
-        // response"`, NOT the looser `"empty response"`. The two internal
-        // fall-through paths use different subjects ("summarizer" /
-        // "provider") and are not user-facing failures — they must stay
-        // out of this bucket so a real regression in those paths still
-        // reaches Sentry.
+        // response"`, NOT the looser `"empty response"`. The sibling paths
+        // below use different subjects or phrasings and are not user-facing
+        // failures — they must stay out of this bucket so a real regression
+        // in those paths still reaches Sentry.
         for raw in [
             // payload_summarizer.rs:261 — internal fall-through, not a failure.
             "[payload_summarizer] summarizer returned empty response, falling through",
@@ -1996,6 +2003,16 @@ mod tests {
             "[extract_from_result] provider returned an empty response; returning empty extraction",
             // Generic mention without the model-subject anchor.
             "warning: empty response body from health probe",
+            // channels/bus.rs:185 — channel-inbound graceful fallback (routes
+            // through report_error_or_expected; subject is "agent", not "model").
+            "[channel-inbound] agent returned empty response — finalizing draft with fallback",
+            // memory/query/walk.rs:292 — debug-level memory walk, not a failure.
+            "[memory_tree_walk] turn=3 LLM gave up (empty response)",
+            // learning/reflection.rs:576 — reflection skip, not a failure.
+            "[learning] reflection skipped (empty response — gate off or local AI unavailable)",
+            // agent/harness/session/turn.rs:811 — "provider returned an empty
+            // final response" uses subject "provider", not "model"; must not match.
+            "[agent_loop] provider returned an empty final response (i=2, no text, no tool calls)",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
