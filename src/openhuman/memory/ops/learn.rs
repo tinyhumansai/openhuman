@@ -111,8 +111,10 @@ pub async fn memory_learn_all(
             "[memory.learn] running summarization for namespace='{}'",
             namespace
         );
-        let outcome =
-            crate::openhuman::tree_summarizer::ops::tree_summarizer_run(&config, namespace).await;
+        let outcome = crate::openhuman::memory_tree::tree_runtime::ops::tree_summarizer_run(
+            &config, namespace,
+        )
+        .await;
         match outcome {
             Ok(_) => {
                 tracing::info!("[memory.learn] namespace='{}' ok", namespace);
@@ -149,4 +151,206 @@ pub async fn memory_learn_all(
         },
         vec![],
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::openhuman::memory_store::NamespaceDocumentInput;
+
+    fn ensure_memory_client() {
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
+    }
+
+    struct WorkspaceEnvGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        previous: Option<OsString>,
+    }
+
+    impl WorkspaceEnvGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let lock = crate::openhuman::config::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
+            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            Self {
+                _lock: lock,
+                previous,
+            }
+        }
+    }
+
+    impl Drop for WorkspaceEnvGuard {
+        fn drop(&mut self) {
+            if let Some(previous) = self.previous.as_ref() {
+                std::env::set_var("OPENHUMAN_WORKSPACE", previous);
+            } else {
+                std::env::remove_var("OPENHUMAN_WORKSPACE");
+            }
+        }
+    }
+
+    async fn seed_namespace(prefix: &str) -> String {
+        ensure_memory_client();
+        let short_id = &uuid::Uuid::new_v4().as_simple().to_string()[..12];
+        let namespace = format!("{prefix}ns{short_id}");
+        let client = crate::openhuman::memory::global::client().expect("memory client");
+        client
+            .put_doc_light(NamespaceDocumentInput {
+                namespace: namespace.clone(),
+                key: format!("testkey{short_id}"),
+                title: "Test".into(),
+                content: "Seed content".into(),
+                source_type: "doc".into(),
+                priority: "normal".into(),
+                tags: vec!["test".into()],
+                metadata: json!({"source": "test"}),
+                category: "core".into(),
+                session_id: None,
+                document_id: None,
+            })
+            .await
+            .expect("seed namespace doc");
+        namespace
+    }
+
+    async fn write_config_with_runtime_enabled(
+        workspace_root: &std::path::Path,
+        runtime_enabled: bool,
+    ) -> WorkspaceEnvGuard {
+        let guard = WorkspaceEnvGuard::set(workspace_root);
+        let mut config = crate::openhuman::config::Config::load_or_init()
+            .await
+            .expect("load config");
+        config.local_ai.runtime_enabled = runtime_enabled;
+        config.save().await.expect("save config");
+        guard
+    }
+
+    #[tokio::test]
+    async fn memory_learn_all_is_noop_for_explicit_empty_namespace_list() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        ensure_memory_client();
+        let outcome = memory_learn_all(LearnAllParams {
+            namespaces: Some(vec![]),
+        })
+        .await
+        .expect("empty list should early-return");
+        assert_eq!(outcome.value.namespaces_processed, 0);
+        assert!(outcome.value.results.is_empty());
+        assert!(outcome.logs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn memory_learn_all_is_noop_when_requested_namespaces_do_not_exist() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        ensure_memory_client();
+        let missing = format!(
+            "missing{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
+        let outcome = memory_learn_all(LearnAllParams {
+            namespaces: Some(vec![missing]),
+        })
+        .await
+        .expect("unknown namespaces should filter to no-op");
+        assert_eq!(outcome.value.namespaces_processed, 0);
+        assert!(outcome.value.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn memory_learn_all_filters_missing_namespaces_and_dedupes_requested_order() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let namespace_a = seed_namespace("memory-learn-a").await;
+        let namespace_b = seed_namespace("memory-learn-b").await;
+        let missing = format!(
+            "missing{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
+        let tmp = TempDir::new().expect("tempdir");
+        let _workspace = write_config_with_runtime_enabled(tmp.path(), true).await;
+
+        let outcome = memory_learn_all(LearnAllParams {
+            namespaces: Some(vec![
+                missing,
+                namespace_b.clone(),
+                namespace_a.clone(),
+                namespace_b.clone(),
+            ]),
+        })
+        .await
+        .expect("existing namespaces with runtime enabled should run");
+
+        assert_eq!(outcome.value.namespaces_processed, 2);
+        assert_eq!(outcome.value.results.len(), 2);
+        assert_eq!(outcome.value.results[0].namespace, namespace_b);
+        assert_eq!(outcome.value.results[1].namespace, namespace_a);
+        assert!(outcome.value.results.iter().all(|r| r.status == "ok"));
+        assert!(outcome.value.results.iter().all(|r| r.error.is_none()));
+    }
+
+    #[tokio::test]
+    async fn memory_learn_all_requires_local_ai_once_existing_namespace_is_selected() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let namespace = seed_namespace("memory-learn-runtime").await;
+        let tmp = TempDir::new().expect("tempdir");
+        let _workspace = write_config_with_runtime_enabled(tmp.path(), false).await;
+
+        let err = memory_learn_all(LearnAllParams {
+            namespaces: Some(vec![namespace]),
+        })
+        .await
+        .expect_err("runtime-disabled config should hard-fail");
+
+        assert!(err.contains("memory_learn_all requires local_ai.runtime_enabled=true"));
+    }
+
+    #[tokio::test]
+    async fn memory_learn_all_uses_all_namespaces_when_none_is_requested() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
+        let namespace_a = seed_namespace("memory-learn-all-a").await;
+        let namespace_b = seed_namespace("memory-learn-all-b").await;
+        let tmp = TempDir::new().expect("tempdir");
+        let _workspace = write_config_with_runtime_enabled(tmp.path(), true).await;
+
+        let outcome = memory_learn_all(LearnAllParams { namespaces: None })
+            .await
+            .expect("runtime-enabled config should process all namespaces");
+
+        assert!(
+            outcome.value.namespaces_processed >= 2,
+            "expected at least the two seeded namespaces to be processed"
+        );
+        let namespaces: std::collections::BTreeSet<_> = outcome
+            .value
+            .results
+            .iter()
+            .map(|r| r.namespace.as_str())
+            .collect();
+        assert!(namespaces.contains(namespace_a.as_str()));
+        assert!(namespaces.contains(namespace_b.as_str()));
+        assert!(outcome
+            .value
+            .results
+            .iter()
+            .filter(|r| r.namespace == namespace_a || r.namespace == namespace_b)
+            .all(|r| r.status == "ok" && r.error.is_none()));
+    }
 }

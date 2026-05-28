@@ -181,18 +181,18 @@ describe('Linux CEF deb package runtime (UI → Tauri → sidecar)', () => {
     });
 
     it('sidecar binary was found and spawned (not self-subcommand fallback)', async () => {
-      // If the sidecar is running, we can check the logs or verify
-      // that the binary path resolution worked. The fact that core.ping
-      // responds means the sidecar is running.
+      // Post PR #1061 the core runs in-process (no sidecar binary), but this
+      // assertion still has value: a successful core.ping proves the core
+      // RPC server bound a port and is reachable. `httpStatus` is only set
+      // on failure paths of callOpenhumanRpcNode — so asserting on it for a
+      // success case always fails; check `ok` and absence of error instead.
 
       const result = await callOpenhumanRpc('core.ping', {});
 
-      stepLog('Verifying sidecar is running', { ok: result.ok, httpStatus: result.httpStatus });
+      stepLog('Verifying core RPC is running', { ok: result.ok, error: result.error });
 
       expect(result.ok).toBe(true);
-
-      // HTTP status should be 200 (not 502/connection refused)
-      expect(result.httpStatus).toBe(200);
+      expect(result.error).toBeUndefined();
     });
   });
 
@@ -218,9 +218,13 @@ describe('Linux CEF deb package runtime (UI → Tauri → sidecar)', () => {
 
       stepLog('Accessibility tree length', { length: source.length });
 
+      // The dump includes bundled JS source which legitimately contains the
+      // tokens "error" / "panic" inside string literals (e.g. Tauri-Error
+      // header, IPC error-handling code). Assert on crash-shaped markers
+      // instead — those are what we actually care about for diagnostics.
       expect(source.length).toBeGreaterThan(0);
-      expect(source).not.toContain('error');
-      expect(source).not.toContain('panic');
+      expect(source.toLowerCase()).not.toContain('uncaught panic');
+      expect(source.toLowerCase()).not.toContain('runtime panic at');
     });
 
     it('main window is created and visible', async () => {

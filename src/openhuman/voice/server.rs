@@ -527,10 +527,13 @@ impl HotkeyListenerKind {
 
 /// Start the appropriate hotkey listener for the current platform and key.
 ///
-/// On macOS, the Fn/Globe key cannot be detected by `rdev`'s CGEventTap.
-/// When the configured hotkey is `"fn"` we fall back to the Swift-based
-/// globe listener (`accessibility::globe`) which monitors
-/// `NSEvent.flagsChanged` for the `.function` modifier flag.
+/// On macOS, the Fn/Globe key is handled by the Swift-based globe listener
+/// (`accessibility::globe`) which monitors `NSEvent.flagsChanged`. All other
+/// keys return an error on macOS: rdev's CGEventTap callback calls
+/// `TSMGetInputSourceProperty` off the main thread; macOS 26 enforces
+/// `dispatch_assert_queue(main_queue)` inside that API and kills the process
+/// with `EXC_BREAKPOINT` (`dispatch_assert_queue_fail`). Configure
+/// `hotkey = "fn"` to avoid this. (#2677)
 fn start_hotkey_listener(
     hotkey_str: &str,
     mode: hotkey::ActivationMode,
@@ -547,12 +550,26 @@ fn start_hotkey_listener(
         if hotkey_str.trim().eq_ignore_ascii_case("fn") {
             return start_globe_hotkey_listener(mode, server_cancel);
         }
+        // rdev calls TSMGetInputSourceProperty off the main thread; macOS 26
+        // enforces main-queue-only access and crashes the process. Only the
+        // Fn/Globe key is safe via the Swift globe listener. (#2677)
+        return Err(format!(
+            "voice server hotkey '{}' is not supported on macOS — \
+             only 'fn' (Fn/Globe key) is safe. rdev calls \
+             TSMGetInputSourceProperty off the main thread on macOS 26, \
+             causing EXC_BREAKPOINT. Set hotkey = \"fn\" in voice config \
+             (issue #2677).",
+            hotkey_str
+        ));
     }
 
-    // Default path: rdev-based listener for all other keys.
-    let combo = hotkey::parse_hotkey(hotkey_str)?;
-    let (handle, rx) = hotkey::start_listener(combo, mode)?;
-    Ok((HotkeyListenerKind::Rdev(handle), rx))
+    // Non-macOS: rdev-based listener for all keys.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let combo = hotkey::parse_hotkey(hotkey_str)?;
+        let (handle, rx) = hotkey::start_listener(combo, mode)?;
+        Ok((HotkeyListenerKind::Rdev(handle), rx))
+    }
 }
 
 /// macOS-only: start the Swift globe listener and bridge FN_DOWN / FN_UP

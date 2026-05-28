@@ -15,6 +15,10 @@ interface ConnectChannelPayload {
   credentials?: Record<string, string>;
 }
 
+interface DisconnectChannelOptions {
+  clearMemory?: boolean;
+}
+
 export interface TelegramLoginStartResult {
   linkToken: string;
   telegramUrl: string;
@@ -146,8 +150,19 @@ export const channelConnectionsApi = {
   },
 
   /** Disconnect a channel for a given auth mode. */
-  disconnectChannel: async (channel: ChannelType, authMode: ChannelAuthMode): Promise<void> => {
-    await callCoreRpc({ method: 'openhuman.channels_disconnect', params: { channel, authMode } });
+  disconnectChannel: async (
+    channel: ChannelType,
+    authMode: ChannelAuthMode,
+    options?: DisconnectChannelOptions
+  ): Promise<void> => {
+    const params: { channel: ChannelType; authMode: ChannelAuthMode; clearMemory?: boolean } = {
+      channel,
+      authMode,
+    };
+    if (options?.clearMemory) {
+      params.clearMemory = true;
+    }
+    await callCoreRpc({ method: 'openhuman.channels_disconnect', params });
   },
 
   /** Test channel credentials without persisting. */

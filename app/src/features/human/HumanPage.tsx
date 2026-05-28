@@ -1,20 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { MeetingBotsModal } from '../../components/skills/MeetingBotsCard';
 import { useT } from '../../lib/i18n/I18nContext';
 import Conversations from '../../pages/Conversations';
-import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
 import { useAppSelector } from '../../store/hooks';
-import { selectMascotColor } from '../../store/mascotSlice';
-import { YellowMascot } from './Mascot';
-import { SubMascotLayer } from './SubMascotLayer';
+import {
+  selectCustomMascotGifUrl,
+  selectCustomPrimaryColor,
+  selectCustomSecondaryColor,
+  selectMascotColor,
+} from '../../store/mascotSlice';
+import { CustomGifMascot, getMascotPalette, hexToArgbInt, RiveMascot } from './Mascot';
 import { useHumanMascot } from './useHumanMascot';
 
 const SPEAK_REPLIES_KEY = 'human.speakReplies';
-
-// Stable empty reference so useAppSelector's === equality doesn't force a re-render
-// of SubMascotLayer on every store update when no subagent timeline is active.
-const EMPTY_TIMELINE: ToolTimelineEntry[] = [];
 
 const HumanPage = () => {
   const { t } = useT();
@@ -28,18 +27,21 @@ const HumanPage = () => {
     window.localStorage.setItem(SPEAK_REPLIES_KEY, speakReplies ? '1' : '0');
   }, [speakReplies]);
 
-  // Visemes are intentionally unused — the YellowMascot has its own talking lipsync.
   const { face } = useHumanMascot({ speakReplies });
   const mascotColor = useAppSelector(selectMascotColor);
-  const subMascotTimeline = useAppSelector(state => {
-    const threadId = state.thread.selectedThreadId ?? state.thread.activeThreadId;
-    return threadId
-      ? (state.chatRuntime.toolTimelineByThread[threadId] ?? EMPTY_TIMELINE)
-      : EMPTY_TIMELINE;
-  });
+  const customPrimary = useAppSelector(selectCustomPrimaryColor);
+  const customSecondary = useAppSelector(selectCustomSecondaryColor);
+  const customMascotGifUrl = useAppSelector(selectCustomMascotGifUrl);
+  const palette = getMascotPalette(mascotColor);
+  const primaryColor = useMemo(
+    () => hexToArgbInt(mascotColor === 'custom' ? customPrimary : palette.bodyFill),
+    [mascotColor, customPrimary, palette]
+  );
+  const secondaryColor = useMemo(
+    () => hexToArgbInt(mascotColor === 'custom' ? customSecondary : palette.neckShadowColor),
+    [mascotColor, customSecondary, palette]
+  );
 
-  // Sidebar reserves ~436px (420px panel + 16px gutter) on the right; the
-  // mascot stage takes the remaining width so the two never overlap.
   return (
     <div className="absolute inset-0 bg-stone-100 dark:bg-neutral-950 overflow-hidden">
       <div
@@ -52,8 +54,11 @@ const HumanPage = () => {
       {/* Mascot stage — fills the area to the left of the reserved sidebar column. */}
       <div className="absolute inset-y-0 left-0 right-[436px] flex items-center justify-center">
         <div className="relative w-[min(80vh,90%)] aspect-square">
-          <YellowMascot face={face} mascotColor={mascotColor} />
-          <SubMascotLayer entries={subMascotTimeline} />
+          {customMascotGifUrl ? (
+            <CustomGifMascot src={customMascotGifUrl} face={face} />
+          ) : (
+            <RiveMascot face={face} primaryColor={primaryColor} secondaryColor={secondaryColor} />
+          )}
         </div>
       </div>
 

@@ -35,14 +35,26 @@ const fr3: TranslationMap = {
   'workspace.building': 'Construction…',
   'workspace.buildSummaryTrees': 'Construire les arbres de résumé',
   'workspace.viewVault': 'Voir le coffre',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'Ouverture du coffre-fort dans Obsidian',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
   'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+    'Utilisez Reveal Folder pour ouvrir directement le répertoire du coffre-fort. Chemin du coffre-fort :',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'Révéler le dossier',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Échec du chargement du graphe de mémoire',
   'workspace.loadingGraph': 'Chargement du graphe de mémoire…',
   'workspace.graphViewMode': 'Mode de vue du graphe de mémoire',
@@ -194,6 +206,13 @@ const fr3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Redémarrer / Mettre à jour le runtime',
   'bootCheck.unexpectedError': 'Erreur inattendue lors de la vérification au démarrage',
   'bootCheck.actionFailed': "Une erreur s'est produite. Réessaie.",
+  'bootCheck.portConflictTitle': "Impossible de démarrer le moteur de l'application",
+  'bootCheck.portConflictBody':
+    'Un autre processus utilise le port réseau dont OpenHuman a besoin. Nous allons tenter de corriger cela automatiquement.',
+  'bootCheck.portConflictFixButton': 'Corriger automatiquement',
+  'bootCheck.portConflictFixing': 'Correction en cours…',
+  'bootCheck.portConflictFixFailed':
+    "La correction automatique n'a pas fonctionné. Veuillez redémarrer votre ordinateur et réessayer.",
   'notifications.justNow': "à l'instant",
   'notifications.minAgo': 'il y a {n} min',
   'notifications.hrAgo': 'il y a {n} h',
@@ -219,6 +238,9 @@ const fr3: TranslationMap = {
   'about.update.status.default': 'Rechercher des mises à jour',
   'welcome.connectionFailed': 'Connexion échouée : {status} {statusText}',
   'welcome.connectionFailedMsg': 'Connexion échouée : {message}',
+  'welcome.continueLocally': 'Continuer localement',
+  'welcome.localSessionStarting': 'Démarrage de la session locale...',
+  'welcome.localSessionDesc': 'Utilise un profil local hors ligne et ignore TinyHumans OAuth.',
   'chat.agentChatDesc': "Ouvrir une session de chat direct avec l'agent.",
   'channels.activeRouteValue': '{channel} via {authMode}',
   'privacy.dataKind.messages': 'Messages',
@@ -248,6 +270,7 @@ const fr3: TranslationMap = {
   'memory.ingestingTitle': 'Ingestion de {title}',
   'mic.noAudioCaptured': 'Aucun audio capturé',
   'mic.noSpeechDetected': 'Aucune parole détectée',
+  'mic.lowConfidenceResult': "Impossible de comprendre l'audio clairement — réessaie",
   'mic.failedToStopRecording': "Échec de l'arrêt de l'enregistrement : {message}",
   'mic.transcriptionFailed': 'Échec de la transcription : {message}',
   'reflections.kind.retrospective': 'Rétrospective',
@@ -383,6 +406,50 @@ const fr3: TranslationMap = {
   'channels.telegram.reconnect': 'Reconnecter',
   'channels.telegram.savedRestartRequired': "Canal enregistré. Redémarre l'app pour l'activer.",
   'channels.web.alwaysAvailable': 'Toujours disponible',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Envoyer et recevoir des messages via Discord.',
+  'channels.discord.authMode.bot_token.description':
+    'Fournissez votre propre jeton de bot Discord.',
+  'channels.discord.authMode.oauth.description':
+    'Installez le bot OpenHuman sur votre serveur Discord via OAuth.',
+  'channels.discord.authMode.managed_dm.description':
+    'Liez votre compte personnel Discord au bot OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'Jeton de bot',
+  'channels.discord.fields.bot_token.placeholder': 'Votre jeton de bot Discord',
+  'channels.discord.fields.guild_id.label': 'ID de serveur (guilde)',
+  'channels.discord.fields.guild_id.placeholder':
+    'Facultatif : restreindre à un serveur spécifique',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Envoyer et recevoir des messages via Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'Envoyez un message directement au robot OpenHuman Telegram.',
+  'channels.telegram.authMode.bot_token.description':
+    'Fournissez votre propre jeton Bot Telegram de @BotFather.',
+  'channels.telegram.fields.bot_token.label': 'Jeton de robot',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'Utilisateurs autorisés',
+  'channels.telegram.fields.allowed_users.placeholder':
+    "Noms d'utilisateur Telegram séparés par des virgules",
+  'channels.web.displayName': 'Web',
+  'channels.web.description': "Discutez via l'interface utilisateur Web intégrée.",
+  'channels.web.authMode.managed_dm.description':
+    'Utilisez le chat Web intégré – aucune configuration requise.',
+  'welcome.continueLocallyExperimental': 'Continuer localement (expérimental)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default fr3;

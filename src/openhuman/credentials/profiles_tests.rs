@@ -59,8 +59,11 @@ async fn store_roundtrip_with_encryption() {
         Some("refresh-123")
     );
 
+    // Under the keychain-backed model (FileBackend in debug builds, real OS
+    // keychain in release), secret fields are stored in the keychain and
+    // omitted from the JSON file entirely. The on-disk JSON must not leak
+    // the plaintext secrets in any form.
     let raw = tokio::fs::read_to_string(store.path()).await.unwrap();
-    assert!(raw.contains("enc2:"));
     assert!(!raw.contains("refresh-123"));
     assert!(!raw.contains("access-123"));
 }
@@ -179,10 +182,17 @@ fn load_drops_profiles_whose_decryption_fails_under_rotated_key() {
     let doomed = AuthProfile::new_token("app-session", "default", "real-jwt-payload".into());
     store.upsert_profile(doomed.clone(), true).unwrap();
 
-    // Manually corrupt the persisted token: rewrite it as a syntactically
-    // valid enc2: hex blob that the *current* key cannot decrypt.
-    // (Easier than rotating the key file because the SecretStore caches
-    // by canonical path.)
+    // Under the keychain-backed model the secret was just stored in the
+    // keychain (FileBackend in debug builds) and not in the JSON file.  To
+    // exercise the legacy enc2: decrypt-failure → drop path that this test
+    // covers, delete the keychain entry so the load falls back to the JSON
+    // decrypt path, then plant a syntactically valid enc2: blob in the JSON
+    // that the current key cannot decrypt.
+    let user_id = user_id_from_state_dir(tmp.path());
+    let keychain_key = format!("{KEYCHAIN_AUTH_PREFIX}{}", doomed.id);
+    crate::openhuman::keyring::delete(&user_id, &keychain_key)
+        .expect("delete keychain entry for test setup");
+
     let path = store.path().to_path_buf();
     let mut data: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -569,6 +579,37 @@ fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
     assert!(
         store.clear_lock_if_stale(),
         "an aged malformed lock should be reclaimed"
+    );
+    assert!(!lock_path.exists());
+}
+
+/// Regression (init hang): a pidless lock left by a kill/crash mid-write must
+/// be reclaimed after the short [`MALFORMED_LOCK_GRACE_MS`], NOT held for the
+/// full [`STALE_LOCK_AGE_MS`]. Previously a fresh pidless lock made
+/// `app_state_snapshot` (→ `acquire_lock`) block ~30s, stranding the user on
+/// "Initializing OpenHuman" after a kill+reopen.
+#[test]
+fn clear_lock_if_stale_reclaims_pidless_lock_past_short_grace() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, "garbage without a pid line\n").unwrap();
+    // Past the malformed grace but far below the 30s stale-age threshold —
+    // the old code would have left this in place and blocked ~30s.
+    assert!(MALFORMED_LOCK_GRACE_MS + 500 < STALE_LOCK_AGE_MS);
+    let aged = std::time::SystemTime::now()
+        - std::time::Duration::from_millis(MALFORMED_LOCK_GRACE_MS + 500);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("reopen lock for set_modified")
+        .set_modified(aged)
+        .expect("backdate lock mtime");
+
+    assert!(
+        store.clear_lock_if_stale(),
+        "a pidless lock past the short grace should be reclaimed without waiting STALE_LOCK_AGE_MS"
     );
     assert!(!lock_path.exists());
 }

@@ -8,6 +8,9 @@ remove_dupe_nonsense_issues
 # Diagnostic harness output (scripts/diagnose-cef-runtime.mjs)
 diagnosis-*.json
 
+# Dev-mode keyring file backend (plain-text secrets, dev artifact only)
+dev-keychain.json
+
 # Logs
 logs
 *.log
@@ -100,3 +103,8 @@ app/test/e2e/.cache/
 .cache/cargo-install/
 test-map.md
 .test-gap-analysis.md
+
+# AI assistant progress tracking
+.kimi/
+.codex-tmp
+*.enc

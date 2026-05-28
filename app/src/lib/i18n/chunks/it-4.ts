@@ -89,13 +89,13 @@ const it4: TranslationMap = {
   'home.banners.promoCreditsBody': 'Corpo crediti promozionali',
   'home.banners.promoCreditsTitle': '{amount}',
   'home.banners.promoCreditsUsage': 'Uso crediti promozionali',
-  'intelligence.memoryChunk.detail.chunk': 'Chunk',
+  'intelligence.memoryChunk.detail.chunk': 'Pezzo',
   'intelligence.memoryChunk.detail.copyChunkId': 'Copia ID chunk',
   'intelligence.memoryChunk.detail.embeddingInfo': 'bge-m3 1024dim',
   'intelligence.memoryChunk.detail.noEmbedding': 'Nessun embedding',
   'intelligence.memoryChunk.letterhead.from': 'da',
   'intelligence.memoryChunk.letterhead.to': 'a',
-  'intelligence.memoryChunk.mentioned.chunkOne': '1 chunk',
+  'intelligence.memoryChunk.mentioned.chunkOne': '1 pezzo',
   'intelligence.memoryChunk.mentioned.chunkOther': '{count} chunk',
   'intelligence.memoryChunk.mentioned.heading': 'm e n z i o n a t i',
   'intelligence.memoryChunk.scoreBars.ariaScore': 'punteggio {name} {pct} percento',
@@ -103,6 +103,19 @@ const it4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'scartati',
   'intelligence.memoryChunk.scoreBars.heading': 'p e r c h é   t e n u t i',
   'intelligence.memoryChunk.scoreBars.kept': 'tenuti',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'Tipo di entità',
   'intelligence.screenDebug.active': 'Attivo',
   'intelligence.screenDebug.app': 'App',
@@ -138,7 +151,7 @@ const it4: TranslationMap = {
   'intelligence.tasks.failedToLoad': 'Caricamento fallito',
   'intelligence.tasks.live': 'live',
   'intelligence.tasks.loadingBoards': 'Caricamento board attività…',
-  'intelligence.tasks.threadPrefix': 'Thread {thread}',
+  'intelligence.tasks.threadPrefix': 'Discussione {thread}',
   'notifications.card.dismiss': 'Ignora notifica',
   'notifications.card.importanceTitle': 'Importanza: {pct}%',
   'notifications.center.empty': 'Nessuna notifica',
@@ -146,6 +159,8 @@ const it4: TranslationMap = {
   'notifications.center.filterAll': 'Filtra tutte',
   'notifications.center.markAllRead': 'Segna tutte come lette',
   'notifications.center.title': 'Notifiche',
+  'oauth.button.loopbackTimeout':
+    'Accesso scaduto — il browser non ha completato il reindirizzamento OAuth. Riprova.',
   'oauth.button.connecting': 'Connessione...',
   'oauth.login.continueWith': 'Continua con',
   'onboarding.contextGathering.buildingDesc': 'Descrizione costruzione',
@@ -188,6 +203,9 @@ const it4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Descrizione LLM',
   'pages.settings.ai.voice': 'Voce',
   'pages.settings.ai.voiceDesc': 'Descrizione voce',
+  'pages.settings.ai.embeddings': 'Incorporamenti',
+  'pages.settings.ai.embeddingsDesc':
+    'Modello di codifica vettoriale per il recupero della memoria',
   'pages.settings.aiSection.description':
     'Provider di modelli linguistici, Ollama locale e voce (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
@@ -292,7 +310,7 @@ const it4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Cancella chiave memorizzata',
   'settings.ai.connectProvider': 'Connetti provider',
   'settings.ai.customRouting': 'Instradamento personalizzato',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Il valore predefinito si risolve in',
   'settings.ai.discard': 'Scarta',
   'settings.ai.editProvider': 'Modifica provider',
   'settings.ai.llmProviders': 'Provider LLM',
@@ -300,6 +318,18 @@ const it4: TranslationMap = {
   'settings.ai.localOllama': 'Locale (Ollama)',
   'settings.ai.modelLabel': 'Modello',
   'settings.ai.noCustomProviders': 'Nessun provider personalizzato',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <la tua chiave>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Intestazione autenticazione',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Non disponibile',
+  'settings.ai.openAiCompat.clearKey': 'Cancella chiave',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Chiave configurata',
+  'settings.ai.openAiCompat.keyRequired': 'Chiave richiesta',
+  'settings.ai.openAiCompat.rotateKey': 'Ruota chiave',
+  'settings.ai.openAiCompat.setKey': 'Imposta chiave',
+  'settings.ai.openAiCompat.title': 'Endpoint compatibile con OpenAI',
   'settings.ai.providerLabel': 'Provider',
   'settings.ai.routing': 'Instradamento',
   'settings.ai.routingCustom': 'Instradamento personalizzato',
@@ -394,6 +424,18 @@ const it4: TranslationMap = {
   'pages.settings.account.migration': 'Importa da un altro assistente',
   'pages.settings.account.migrationDesc':
     'Migra memoria e note da OpenClaw (e presto Hermes) in questo spazio di lavoro.',
+  'composio.connect.scope.read': 'Lettura',
+  'composio.connect.scope.readHint':
+    "Consenti all'agente di leggere i dati da questo collegamento.",
+  'composio.connect.scope.write': 'Scrivi',
+  'composio.connect.scope.writeHint':
+    "Consenti all'agente di creare o modificare i dati tramite questa connessione.",
+  'composio.connect.scope.admin': 'Amministratore',
+  'composio.connect.scope.adminHint':
+    "Consenti all'agente di gestire impostazioni, autorizzazioni o azioni distruttive.",
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, trigger e cronologia per le integrazioni fornite da Composio.',
 };
 
 export default it4;

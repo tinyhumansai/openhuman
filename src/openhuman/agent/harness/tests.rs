@@ -95,6 +95,7 @@ impl Provider for VisionProvider {
             text: Some("vision-ok".to_string()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -119,7 +120,6 @@ async fn run_tool_call_loop_returns_structured_error_for_non_vision_provider() {
         "mock-model",
         0.0,
         true,
-        None,
         "cli",
         &crate::openhuman::config::MultimodalConfig::default(),
         3,
@@ -128,6 +128,7 @@ async fn run_tool_call_loop_returns_structured_error_for_non_vision_provider() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("provider without vision support should fail");
@@ -164,7 +165,6 @@ async fn run_tool_call_loop_rejects_oversized_image_payload() {
         "mock-model",
         0.0,
         true,
-        None,
         "cli",
         &multimodal,
         3,
@@ -173,6 +173,7 @@ async fn run_tool_call_loop_rejects_oversized_image_payload() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("oversized payload must fail");
@@ -203,7 +204,6 @@ async fn run_tool_call_loop_accepts_valid_multimodal_request_flow() {
         "mock-model",
         0.0,
         true,
-        None,
         "cli",
         &crate::openhuman::config::MultimodalConfig::default(),
         3,
@@ -212,6 +212,7 @@ async fn run_tool_call_loop_accepts_valid_multimodal_request_flow() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("valid multimodal payload should pass");

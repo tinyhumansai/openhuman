@@ -34,7 +34,7 @@ describe('Settings - Account Preferences', () => {
     await navigateViaHash('/settings/account');
 
     await waitForText('Account', 15_000);
-    await waitForText('Recovery Phrase', 15_000);
+    await waitForText('Recovery phrase', 15_000);
     await waitForText('Connections', 15_000);
     await waitForText('Privacy', 15_000);
   });
@@ -55,9 +55,10 @@ describe('Settings - Account Preferences', () => {
     expect(wallet.result?.result?.configured).toBe(true);
     expect((wallet.result?.result?.accounts ?? []).length).toBeGreaterThan(0);
 
-    await navigateViaHash('/settings/connections');
-    await waitForText('Web3 Wallet', 15_000);
-    await waitForText('Configured', 15_000);
+    // The dedicated /settings/connections page (with the "Web3 Wallet:
+    // Configured" status card) was removed in PR #2550 settings cleanup.
+    // The wallet_status RPC assertion above is the canonical signal that
+    // the recovery-phrase flow wired through to the wallet domain.
   });
 
   it('persists privacy analytics and meet handoff toggles to core config', async function () {

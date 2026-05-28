@@ -629,12 +629,12 @@ impl MeetAgentSession {
             return None;
         }
         self.wake_active = false;
-        // 30s grace beyond the most recent caption's page timestamp.
+        // 60s grace beyond the most recent caption's page timestamp.
         // The previous 8s window was too short: Meet's caption region
         // re-renders the just-finished utterance for 5-8s, the bot's
         // reply takes another 5-15s to synthesize + speak, then any
         // natural user follow-up ("wait, did you say X?") within the
-        // same 30s window is treated as continuation rather than a
+        // same 60s window is treated as continuation rather than a
         // fresh wake. Under-prompted users especially repeat the wake
         // phrase 2-3 times before realising the bot already heard them
         // — without this, each repeat fires another tool call.
@@ -1187,5 +1187,59 @@ mod tests {
         let mut s = MeetAgentSession::new("p".into(), 16_000);
         s.set_identities("  Alice  ", "\tOpenHuman\n");
         assert_eq!(s.owner_display_name(), "Alice");
+    }
+
+    /// MIN_TURN_GAP_MS: immediately after a turn completes, the owner's
+    /// next wake must be gated so fast re-fires ("did you hear me?")
+    /// don't spawn duplicate tool calls within the 60s backstop window.
+    #[test]
+    fn note_caption_respects_min_turn_gap_after_mark_turn_done() {
+        let mut s = session_with_owner_alice();
+
+        // First wake fires normally.
+        let first = s.note_caption("Alice", "hey openhuman what time is it", 1);
+        assert!(matches!(first, CaptionOutcome::WakeFired));
+        let _ = s.take_pending_prompt();
+
+        // Simulate brain completing a turn — sets last_turn_done_at_ms to now.
+        s.mark_turn_done();
+
+        // Immediately re-firing the wake word (wall-clock gap = ~0ms)
+        // must be suppressed by MIN_TURN_GAP_MS (60s).
+        let too_soon = s.note_caption("Alice", "hey openhuman what time is it", 100);
+        assert_eq!(
+            too_soon,
+            CaptionOutcome::Ignored,
+            "wake fired within MIN_TURN_GAP_MS of prior turn must be suppressed"
+        );
+    }
+
+    /// The wake-cooldown window (COOLDOWN_MS = 60s, keyed on caption ts_ms)
+    /// must gate the same wake phrase from the owner within the cooldown
+    /// window even if the prompt was already drained.
+    #[test]
+    fn note_caption_wake_cooldown_suppresses_repeat_within_window() {
+        let mut s = session_with_owner_alice();
+
+        // First wake fires and is drained.
+        let first = s.note_caption("Alice", "openhuman help", 1_000);
+        assert!(matches!(first, CaptionOutcome::WakeFired));
+        let _ = s.take_pending_prompt();
+
+        // A different wake phrase arriving at ts_ms = 2_000 is within
+        // the 60s cooldown window (cooldown_until = 1_000 + 60_000 = 61_000).
+        let during_cooldown = s.note_caption("Alice", "hey openhuman something else", 2_000);
+        assert_eq!(
+            during_cooldown,
+            CaptionOutcome::Ignored,
+            "wake within 60s caption-ts cooldown must be suppressed"
+        );
+
+        // A caption arriving after the cooldown window (ts_ms = 62_000) fires.
+        let after_cooldown = s.note_caption("Alice", "hey openhuman one more thing", 62_000);
+        assert!(
+            matches!(after_cooldown, CaptionOutcome::WakeFired),
+            "wake after cooldown window must be allowed through: got {after_cooldown:?}"
+        );
     }
 }

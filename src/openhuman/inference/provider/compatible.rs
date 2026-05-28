@@ -545,79 +545,220 @@ impl OpenAiCompatibleProvider {
     }
 
     fn convert_messages_for_native(messages: &[ChatMessage]) -> Vec<NativeMessage> {
-        messages
-            .iter()
-            .map(|message| {
-                if message.role == "assistant" {
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&message.content)
-                    {
-                        if let Some(tool_calls_value) = value.get("tool_calls") {
-                            if let Ok(parsed_calls) =
-                                serde_json::from_value::<Vec<ProviderToolCall>>(
-                                    tool_calls_value.clone(),
-                                )
-                            {
-                                let tool_calls = parsed_calls
-                                    .into_iter()
-                                    .map(|tc| ToolCall {
-                                        id: Some(tc.id),
-                                        kind: Some("function".to_string()),
-                                        function: Some(Function {
-                                            name: Some(tc.name),
-                                            arguments: Some(serde_json::Value::String(
-                                                tc.arguments,
-                                            )),
-                                        }),
-                                    })
-                                    .collect::<Vec<_>>();
+        let converted: Vec<NativeMessage> =
+            messages
+                .iter()
+                .map(|message| {
+                    // Extract reasoning_content stored in extra_metadata by the
+                    // agent harness after each assistant turn. Thinking models
+                    // (DeepSeek-R1, Qwen3, GLM-4) require this to be echoed back
+                    // verbatim in subsequent requests, or the API returns HTTP 400.
+                    let reasoning_content = if message.role == "assistant" {
+                        message
+                            .extra_metadata
+                            .as_ref()
+                            .and_then(|m| m.get("reasoning_content"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToString::to_string)
+                    } else {
+                        None
+                    };
 
-                                let content = value
-                                    .get("content")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(ToString::to_string);
+                    if message.role == "assistant" {
+                        if let Ok(value) =
+                            serde_json::from_str::<serde_json::Value>(&message.content)
+                        {
+                            if let Some(tool_calls_value) = value.get("tool_calls") {
+                                if let Ok(parsed_calls) =
+                                    serde_json::from_value::<Vec<ProviderToolCall>>(
+                                        tool_calls_value.clone(),
+                                    )
+                                {
+                                    let tool_calls = parsed_calls
+                                        .into_iter()
+                                        .map(|tc| ToolCall {
+                                            id: Some(tc.id),
+                                            kind: Some("function".to_string()),
+                                            function: Some(Function {
+                                                name: Some(tc.name),
+                                                arguments: Some(serde_json::Value::String(
+                                                    tc.arguments,
+                                                )),
+                                            }),
+                                        })
+                                        .collect::<Vec<_>>();
 
-                                return NativeMessage {
-                                    role: "assistant".to_string(),
-                                    content,
-                                    tool_call_id: None,
-                                    tool_calls: Some(tool_calls),
-                                };
+                                    let content = value
+                                        .get("content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(ToString::to_string);
+
+                                    // Replay the assistant's reasoning so
+                                    // DeepSeek thinking mode accepts the
+                                    // tool-call turn on the follow-up request
+                                    // (Sentry TAURI-RUST-4KB). Prefer the value
+                                    // embedded in the JSON content (written by
+                                    // `build_native_assistant_history` in the
+                                    // tool-loop path); fall back to the value
+                                    // stored in `extra_metadata` (written by the
+                                    // main session-turn path).
+                                    let reasoning_content = value
+                                        .get("reasoning_content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .filter(|s| !s.trim().is_empty())
+                                        .map(ToString::to_string)
+                                        .or_else(|| reasoning_content.clone());
+
+                                    return NativeMessage {
+                                        role: "assistant".to_string(),
+                                        content,
+                                        tool_call_id: None,
+                                        tool_calls: Some(tool_calls),
+                                        reasoning_content,
+                                    };
+                                }
                             }
                         }
                     }
+
+                    if message.role == "tool" {
+                        if let Ok(value) =
+                            serde_json::from_str::<serde_json::Value>(&message.content)
+                        {
+                            let tool_call_id = value
+                                .get("tool_call_id")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string);
+                            let content = value
+                                .get("content")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string)
+                                .or_else(|| Some(message.content.clone()));
+
+                            return NativeMessage {
+                                role: "tool".to_string(),
+                                content,
+                                tool_call_id,
+                                tool_calls: None,
+                                reasoning_content: None,
+                            };
+                        }
+                    }
+
+                    NativeMessage {
+                        role: message.role.clone(),
+                        content: Some(message.content.clone()),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content,
+                    }
+                })
+                .collect();
+
+        Self::enforce_tool_message_invariants(converted)
+    }
+
+    /// Enforce the OpenAI-compatible tool-message ordering invariants on the
+    /// fully-serialized wire array, immediately before it goes on the wire.
+    ///
+    /// Several upstream defects can leave the array malformed and trip a 400
+    /// (`messages with role 'tool' must be a response to a preceding message
+    /// with 'tool_calls'`). That 400 streams back as an empty completion, which
+    /// the agent loop collapses to "The model returned an empty response" and
+    /// the chat surface shows as a generic "Something went wrong":
+    ///
+    /// * **(A)** History tail-trimming (`session::turn::trim_history` /
+    ///   `bound_cached_transcript_messages`) cuts *between* an
+    ///   `assistant(tool_calls)` and its `tool` result, dropping the assistant
+    ///   and orphaning the result at the head of the window.
+    /// * **(B)** A persisted assistant tool-call message whose `content` no
+    ///   longer deserializes as `tool_calls` (format drift) falls through the
+    ///   parser above and is emitted as plain text with its `tool_calls`
+    ///   stripped — again orphaning the following `tool` result.
+    /// * **(C)** An `assistant(tool_calls)` whose results never arrived (an
+    ///   aborted / max-iteration turn, or a partially-answered multi-call
+    ///   cycle) leaves dangling tool-call ids with no matching `tool` response.
+    ///
+    /// This pass makes the contract hold *by construction* regardless of which
+    /// path produced the array. It is **position-aware**: each
+    /// `assistant(tool_calls)` is paired with the *contiguous run of `tool`
+    /// messages that immediately follows it* (the only place valid responses can
+    /// live in the OpenAI wire format), then:
+    ///
+    /// * `tool_calls` entries with no matching response *in that run* are pruned
+    ///   (C); if none survive, the field is dropped so the message serializes as
+    ///   plain assistant text rather than an empty tool-call block.
+    /// * `tool` messages that are **not** part of such a run — a leading orphan
+    ///   from trimming (A), or one stranded after an assistant whose `tool_calls`
+    ///   were stripped (B) — are dropped.
+    ///
+    /// Pairing by adjacency (rather than a global "is this id answered anywhere"
+    /// set) is what keeps **sequential** cycles (`asst(A)→tool(A)`,
+    /// `asst(B)→tool(B)`, …) and **parallel** calls (one `asst([X,Y,Z])` answered
+    /// by `tool(X) tool(Y) tool(Z)`) correct, and makes the result well-formed
+    /// even if responses are reordered or a cycle is bisected mid-sequence — no
+    /// causal-ordering assumption required.
+    fn enforce_tool_message_invariants(messages: Vec<NativeMessage>) -> Vec<NativeMessage> {
+        use std::collections::HashSet;
+
+        let mut out: Vec<NativeMessage> = Vec::with_capacity(messages.len());
+        let mut dropped_orphans = 0usize;
+        let mut pruned_calls = 0usize;
+
+        let mut iter = messages.into_iter().peekable();
+        while let Some(mut msg) = iter.next() {
+            if msg.role == "assistant" && msg.tool_calls.is_some() {
+                // Gather the contiguous run of `tool` messages that answer this
+                // block (responses must immediately follow, in any order).
+                let mut run: Vec<NativeMessage> = Vec::new();
+                while iter.peek().is_some_and(|m| m.role == "tool") {
+                    run.push(iter.next().expect("peeked tool message"));
                 }
+                let responded: HashSet<String> =
+                    run.iter().filter_map(|t| t.tool_call_id.clone()).collect();
 
-                if message.role == "tool" {
-                    if let Ok(value) =
-                        serde_json::from_str::<serde_json::Value>(&message.content)
-                    {
-                        let tool_call_id = value
-                            .get("tool_call_id")
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string);
-                        let content = value
-                            .get("content")
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string)
-                            .or_else(|| Some(message.content.clone()));
+                // (C) keep only tool_calls answered within this run.
+                let calls = msg.tool_calls.take().unwrap_or_default();
+                let before = calls.len();
+                let kept: Vec<ToolCall> = calls
+                    .into_iter()
+                    .filter(|c| c.id.as_deref().is_some_and(|id| responded.contains(id)))
+                    .collect();
+                pruned_calls += before - kept.len();
+                let kept_ids: HashSet<String> = kept.iter().filter_map(|c| c.id.clone()).collect();
+                msg.tool_calls = if kept.is_empty() { None } else { Some(kept) };
+                out.push(msg);
 
-                        return NativeMessage {
-                            role: "tool".to_string(),
-                            content,
-                            tool_call_id,
-                            tool_calls: None,
-                        };
+                // Emit the run's responses that map to a surviving call; drop the
+                // rest (e.g. a stray tool whose id wasn't in this block).
+                for tool_msg in run {
+                    let kept = tool_msg
+                        .tool_call_id
+                        .as_deref()
+                        .is_some_and(|id| kept_ids.contains(id));
+                    if kept {
+                        out.push(tool_msg);
+                    } else {
+                        dropped_orphans += 1;
                     }
                 }
+            } else if msg.role == "tool" {
+                // (A, B) a `tool` not consumed by a preceding assistant block.
+                dropped_orphans += 1;
+            } else {
+                out.push(msg);
+            }
+        }
 
-                NativeMessage {
-                    role: message.role.clone(),
-                    content: Some(message.content.clone()),
-                    tool_call_id: None,
-                    tool_calls: None,
-                }
-            })
-            .collect()
+        if dropped_orphans > 0 || pruned_calls > 0 {
+            log::warn!(
+                "[provider] sanitized malformed tool-message ordering before send: \
+                 dropped {dropped_orphans} orphaned tool result(s), pruned {pruned_calls} \
+                 unanswered tool_call(s)"
+            );
+        }
+
+        out
     }
 
     fn with_prompt_guided_tool_instructions(
@@ -662,6 +803,17 @@ impl OpenAiCompatibleProvider {
             .ok_or_else(|| anyhow::anyhow!("No choices in response from {}", provider_name))?;
 
         let mut text = message.effective_content_optional();
+        // Capture reasoning_content before the message fields are moved into
+        // the tool-call extractors below. This must be passed back verbatim on
+        // the next turn for thinking models (e.g. DeepSeek-R1, Qwen3) whose APIs
+        // return HTTP 400 ("reasoning_content in thinking mode must be passed back")
+        // when the field is omitted from subsequent assistant messages.
+        let reasoning_content = message
+            .reasoning_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
         let mut tool_calls = message
             .tool_calls
             .unwrap_or_default()
@@ -706,10 +858,17 @@ impl OpenAiCompatibleProvider {
             }
         }
 
+        tracing::debug!(
+            has_reasoning_content = reasoning_content.is_some(),
+            reasoning_content_chars = reasoning_content.as_ref().map_or(0, |r| r.chars().count()),
+            "[provider:parse_native_response] reasoning_content capture"
+        );
+
         Ok(ProviderChatResponse {
             text,
             tool_calls,
             usage,
+            reasoning_content,
         })
     }
 
@@ -1341,7 +1500,20 @@ impl Provider for OpenAiCompatibleProvider {
                 format!("{} API error ({status}): {sanitized}", self.name),
                 status,
             );
-            if super::is_budget_exhausted_http_400(status, &error) {
+            if super::is_backend_auth_failure(self.name.as_str(), status) {
+                // Backend rejected the app session JWT (401/403): expected
+                // session-expiry (token expired/revoked/rotated), not a code
+                // bug. Publish SessionExpired so the credentials subscriber
+                // drives reauth and the scheduler-gate halts downstream LLM
+                // work, and skip the Sentry report (TAURI-RUST-N). Mirrors the
+                // `is_backend_auth_failure` arm in `super::api_error`.
+                super::publish_backend_session_expired(
+                    "chat_completions",
+                    self.name.as_str(),
+                    status,
+                    &message,
+                );
+            } else if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "chat_completions",
                     self.name.as_str(),
@@ -1569,6 +1741,7 @@ impl Provider for OpenAiCompatibleProvider {
                     text: Some(text),
                     tool_calls: vec![],
                     usage: None,
+                    reasoning_content: None,
                 });
             }
         };
@@ -1587,6 +1760,15 @@ impl Provider for OpenAiCompatibleProvider {
             .ok_or_else(|| anyhow::anyhow!("No response from {}", self.name))?;
 
         let text = choice.message.effective_content_optional();
+        // See `parse_native_response`: replay reasoning on the follow-up
+        // request so DeepSeek thinking mode accepts the tool-call turn.
+        let reasoning_content = choice
+            .message
+            .reasoning_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
         let tool_calls = choice
             .message
             .tool_calls
@@ -1608,6 +1790,7 @@ impl Provider for OpenAiCompatibleProvider {
             text,
             tool_calls,
             usage,
+            reasoning_content,
         })
     }
 
@@ -1742,6 +1925,7 @@ impl Provider for OpenAiCompatibleProvider {
                             text: Some(text),
                             tool_calls: vec![],
                             usage: None,
+                            reasoning_content: None,
                         })
                         .map_err(|responses_err| {
                             let fb = super::format_anyhow_chain(&responses_err);
@@ -1771,6 +1955,7 @@ impl Provider for OpenAiCompatibleProvider {
                     text: Some(text),
                     tool_calls: vec![],
                     usage: None,
+                    reasoning_content: None,
                 });
             }
 
@@ -1782,6 +1967,7 @@ impl Provider for OpenAiCompatibleProvider {
                         text: Some(text),
                         tool_calls: vec![],
                         usage: None,
+                        reasoning_content: None,
                     })
                     .map_err(|responses_err| {
                         let fb = super::format_anyhow_chain(&responses_err);

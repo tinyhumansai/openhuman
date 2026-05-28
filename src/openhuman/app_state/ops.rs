@@ -20,7 +20,8 @@ use crate::openhuman::autocomplete::AutocompleteStatus;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
-    load_app_session_profile, session_state_from_profile, session_token_from_profile,
+    is_local_session_token, load_app_session_profile, session_state_from_profile,
+    session_token_from_profile,
 };
 use crate::openhuman::inference::LocalAiStatus;
 use crate::openhuman::screen_intelligence::AccessibilityStatus;
@@ -33,6 +34,7 @@ const CURRENT_USER_REFRESH_TTL: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TTL: Duration = Duration::from_secs(2);
 const AUTH_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const RUNTIME_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(10);
+const SNAPSHOT_SUB_OP_TIMEOUT: Duration = Duration::from_secs(5);
 static APP_STATE_FILE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 static CURRENT_USER_CACHE: Lazy<Mutex<Option<CachedCurrentUser>>> = Lazy::new(|| Mutex::new(None));
 static RUNTIME_SNAPSHOT_CACHE: Lazy<Mutex<Option<CachedRuntimeSnapshot>>> =
@@ -88,12 +90,10 @@ pub struct AppStateSnapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_user: Option<Value>,
     pub onboarding_completed: bool,
-    /// Whether the chat-based welcome-agent flow has completed. Sourced
-    /// from [`Config::chat_onboarding_completed`]. The React app hides
-    /// the bottom tab bar, thread sidebar, and account rail while this is
-    /// `false` (and `onboarding_completed` is `true`) so the user stays
-    /// with the welcome agent until it calls
-    /// `complete_onboarding(action="complete")`.
+    /// Deprecated — the welcome agent has been removed. Retained in the
+    /// snapshot for backward compatibility with frontend code that still
+    /// reads it. This value may be `false` in newer configs; routing no
+    /// longer depends on this field.
     pub chat_onboarding_completed: bool,
     pub analytics_enabled: bool,
     /// Mirror of `Config::meet.auto_orchestrator_handoff` — gates whether
@@ -440,24 +440,47 @@ async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot
     let (screen_intelligence, local_ai, autocomplete, service) = tokio::join!(
         async {
             let t = Instant::now();
-            let _ = crate::openhuman::screen_intelligence::global_engine()
-                .apply_config(si_config)
-                .await;
-            let status = crate::openhuman::screen_intelligence::global_engine()
-                .status()
-                .await;
+            let status = match tokio::time::timeout(SNAPSHOT_SUB_OP_TIMEOUT, async {
+                let _ = crate::openhuman::screen_intelligence::global_engine()
+                    .apply_config(si_config)
+                    .await;
+                crate::openhuman::screen_intelligence::global_engine()
+                    .status()
+                    .await
+            })
+            .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    warn!(
+                        "{LOG_PREFIX} screen_intelligence timed out after {}s; using degraded sub-snapshot req_id={}",
+                        SNAPSHOT_SUB_OP_TIMEOUT.as_secs(),
+                        req_id,
+                    );
+                    degraded_runtime_snapshot(config).screen_intelligence
+                }
+            };
             (status, t.elapsed().as_millis())
         },
         async {
             let t = Instant::now();
-            let status = match crate::openhuman::inference::rpc::inference_status(
-                &config_for_local_ai,
+            let status = match tokio::time::timeout(
+                SNAPSHOT_SUB_OP_TIMEOUT,
+                crate::openhuman::inference::rpc::inference_status(&config_for_local_ai),
             )
             .await
             {
-                Ok(outcome) => outcome.value,
-                Err(error) => {
+                Ok(Ok(outcome)) => outcome.value,
+                Ok(Err(error)) => {
                     warn!("{LOG_PREFIX} local_ai status failed during snapshot: {error}");
+                    crate::openhuman::inference::LocalAiStatus::disabled(&config_for_local_ai)
+                }
+                Err(_) => {
+                    warn!(
+                        "{LOG_PREFIX} local_ai timed out after {}s; using degraded sub-snapshot req_id={}",
+                        SNAPSHOT_SUB_OP_TIMEOUT.as_secs(),
+                        req_id,
+                    );
                     crate::openhuman::inference::LocalAiStatus::disabled(&config_for_local_ai)
                 }
             };
@@ -465,9 +488,23 @@ async fn build_runtime_snapshot(config: &Config, req_id: u64) -> RuntimeSnapshot
         },
         async {
             let t = Instant::now();
-            let status = crate::openhuman::autocomplete::global_engine()
-                .status_with_config(&config_for_autocomplete)
-                .await;
+            let status = match tokio::time::timeout(
+                SNAPSHOT_SUB_OP_TIMEOUT,
+                crate::openhuman::autocomplete::global_engine()
+                    .status_with_config(&config_for_autocomplete),
+            )
+            .await
+            {
+                Ok(s) => s,
+                Err(_) => {
+                    warn!(
+                        "{LOG_PREFIX} autocomplete timed out after {}s; using degraded sub-snapshot req_id={}",
+                        SNAPSHOT_SUB_OP_TIMEOUT.as_secs(),
+                        req_id,
+                    );
+                    degraded_runtime_snapshot(config).autocomplete
+                }
+            };
             (status, t.elapsed().as_millis())
         },
         async {
@@ -536,11 +573,38 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
     // snapshot. On Windows this doubled the surface area for the
     // "Timed out waiting for auth profile lock" failure reported in
     // Sentry against `openhuman.app_state_snapshot`.
-    let session_profile = load_app_session_profile(&config)?;
+    //
+    // `load_app_session_profile` calls `acquire_lock()`, which busy-waits
+    // with `thread::sleep` for up to ~35s when the lock is contended. Calling
+    // it directly on a tokio worker thread blocks that thread for the entire
+    // wait, exhausting the thread pool under concurrent snapshot calls and
+    // triggering `ERR_CONNECTION_TIMED_OUT` on all RPC connections.
+    let config_for_profile = config.clone();
+    let session_profile =
+        tokio::task::spawn_blocking(move || load_app_session_profile(&config_for_profile))
+            .await
+            .unwrap_or_else(|e| Err(format!("[app_state] auth profile load task panicked: {e}")))?;
     let mut auth = session_state_from_profile(session_profile.as_ref());
     let session_token = session_token_from_profile(session_profile.as_ref());
     let stored_user = sanitize_snapshot_user(auth.user.clone());
-    let current_user = if let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) {
+    let auth_ms = t_auth.elapsed().as_millis();
+
+    // Resolve the live current-user refresh and the runtime snapshot
+    // CONCURRENTLY. Both touch the backend and both already fall back to local
+    // data (stored_user / degraded runtime), so running them in parallel rather
+    // than serially halves the worst-case bootstrap latency when the backend is
+    // unreachable. Together with the fast auth-profile lock reclaim this keeps
+    // the first `app_state_snapshot` from stranding the UI on "Initializing
+    // OpenHuman" (the FE clears `isBootstrapping` on this call). `tokio::join!`
+    // polls both on the current task — no extra threads.
+    let t_enrich = Instant::now();
+    let current_user_future = async {
+        let Some(token) = session_token.clone().filter(|t| !t.trim().is_empty()) else {
+            return stored_user.clone();
+        };
+        if is_local_session_token(&token) {
+            return stored_user.clone();
+        }
         match tokio::time::timeout(
             AUTH_FETCH_TIMEOUT,
             fetch_current_user_cached(&config, &token),
@@ -553,43 +617,44 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
                 stored_user.clone()
             }
             Err(_) => {
-                warn!("{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback", AUTH_FETCH_TIMEOUT.as_secs());
+                warn!(
+                    "{LOG_PREFIX} current user fetch timed out after {}s; using stored snapshot fallback",
+                    AUTH_FETCH_TIMEOUT.as_secs()
+                );
                 stored_user.clone()
             }
         }
-    } else {
-        stored_user.clone()
     };
+    let runtime_future = async {
+        match tokio::time::timeout(
+            RUNTIME_SNAPSHOT_TIMEOUT,
+            build_runtime_snapshot(&config, req_id),
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                warn!(
+                    "{LOG_PREFIX} build_runtime_snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
+                    RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
+                    req_id
+                );
+                degraded_runtime_snapshot(&config)
+            }
+        }
+    };
+    let (current_user, runtime) = tokio::join!(current_user_future, runtime_future);
+    let enrich_ms = t_enrich.elapsed().as_millis();
     auth.user = current_user.clone();
-    let auth_ms = t_auth.elapsed().as_millis();
 
     let t_local_state = Instant::now();
     let local_state = load_stored_app_state(&config)?;
     let local_state_ms = t_local_state.elapsed().as_millis();
 
-    let t_runtime = Instant::now();
-    let runtime = match tokio::time::timeout(
-        RUNTIME_SNAPSHOT_TIMEOUT,
-        build_runtime_snapshot(&config, req_id),
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(_) => {
-            warn!(
-                "{LOG_PREFIX} build_runtime_snapshot timed out after {}s req_id={}; returning degraded runtime snapshot",
-                RUNTIME_SNAPSHOT_TIMEOUT.as_secs(),
-                req_id
-            );
-            degraded_runtime_snapshot(&config)
-        }
-    };
-    let runtime_ms = t_runtime.elapsed().as_millis();
-
     let total_ms = t_total.elapsed().as_millis();
     debug!(
-        "{LOG_PREFIX} snapshot timings req_id={} config_ms={} auth_ms={} local_state_ms={} runtime_ms={} total_ms={}",
-        req_id, config_ms, auth_ms, local_state_ms, runtime_ms, total_ms
+        "{LOG_PREFIX} snapshot timings req_id={} config_ms={} auth_ms={} enrich_ms={} local_state_ms={} total_ms={}",
+        req_id, config_ms, auth_ms, enrich_ms, local_state_ms, total_ms
     );
 
     debug!(

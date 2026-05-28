@@ -86,22 +86,16 @@ describe('evaluateComposerSend', () => {
 });
 
 describe('handleComposerSlashCommand', () => {
-  it('consumes /new and blocks thread reset when welcome lock is active', () => {
-    expect(handleComposerSlashCommand('/new', true)).toEqual({
-      kind: 'new_or_clear',
-      blockedByWelcomeLock: true,
-    });
+  it('consumes /new command', () => {
+    expect(handleComposerSlashCommand('/new')).toEqual({ kind: 'new_or_clear' });
   });
 
-  it('consumes /clear when welcome lock is inactive', () => {
-    expect(handleComposerSlashCommand('/CLEAR', false)).toEqual({
-      kind: 'new_or_clear',
-      blockedByWelcomeLock: false,
-    });
+  it('consumes /clear command (case-insensitive)', () => {
+    expect(handleComposerSlashCommand('/CLEAR')).toEqual({ kind: 'new_or_clear' });
   });
 
   it('ignores normal chat text', () => {
-    expect(handleComposerSlashCommand('hello', false)).toEqual({ kind: 'not_handled' });
+    expect(handleComposerSlashCommand('hello')).toEqual({ kind: 'not_handled' });
   });
 });
 

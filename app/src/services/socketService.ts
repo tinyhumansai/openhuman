@@ -161,6 +161,13 @@ class SocketService {
       } else if (!this.socket.disconnected) {
         // Socket is connecting, wait for it
         return;
+      } else {
+        // Stale disconnected socket instance for the same token.
+        // Drop it so this connect attempt can create a fresh socket;
+        // otherwise the async stale-invocation guard below (`|| this.socket`)
+        // returns early and leaves connectivity stuck at "connecting".
+        this.socket = null;
+        this.mcpTransport = null;
       }
     }
 
@@ -200,9 +207,14 @@ class SocketService {
       coreToken,
       authExtras: { session: token },
       overrides: {
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 5,
-        timeout: 2000,
+        // A remote / tunnelled core (e.g. ~0.8s RTT) needs the socket.io
+        // handshake (~2.4s) to outlast the connect timeout — the prior 2s
+        // tripped first, flapping the socket and dropping streamed/approval
+        // events. 10s gives headroom while still surfacing a genuinely dead
+        // core reasonably fast; keep retrying rather than giving up after 5.
+        reconnectionDelay: 2000,
+        reconnectionAttempts: Infinity,
+        timeout: 10000,
         upgrade: true,
         query: {},
       },
@@ -240,6 +252,17 @@ class SocketService {
       store.dispatch(setStatusForUser({ userId: uid, status: 'connected' }));
       store.dispatch(setSocketIdForUser({ userId: uid, socketId }));
       store.dispatch(setBackend({ value: 'connected' }));
+
+      // Re-join the active thread's room so an in-flight turn's stream survives
+      // this (re)connection. Chat events are delivered to both the client_id
+      // room and a per-thread room (see socketio.rs `emit_web_channel_event`);
+      // because a reconnect produces a NEW client_id, the new socket must
+      // re-subscribe to the thread room to keep receiving the stream.
+      const threadState = store.getState().thread;
+      const activeThreadId = threadState?.selectedThreadId ?? threadState?.activeThreadId;
+      if (activeThreadId) {
+        this.socket?.emit('thread:subscribe', { thread_id: activeThreadId });
+      }
     });
 
     this.socket.on('ready', () => {
@@ -310,6 +333,36 @@ class SocketService {
     };
     this.socket.on('auth:session_expired', handleSessionExpired);
     this.socket.on('auth_session_expired', handleSessionExpired);
+
+    // MCP setup agent: server-side `request_secret` blocks until the
+    // user submits a value. Dispatch a window event so a singleton React
+    // dialog can render a native input and POST back via
+    // openhuman.mcp_setup_submit_secret. Raw secret values never travel
+    // through the socket — only the opaque ref + safe display fields.
+    const handleSecretRequested = (data: unknown) => {
+      const obj = data as Record<string, unknown> | null;
+      if (!obj || typeof obj !== 'object') {
+        socketWarn('mcp_setup:secret_requested dropped — invalid payload');
+        return;
+      }
+      const refId = typeof obj.ref_id === 'string' ? obj.ref_id : null;
+      const keyName = typeof obj.key_name === 'string' ? obj.key_name : null;
+      const prompt = typeof obj.prompt === 'string' ? obj.prompt : '';
+      if (!refId || !keyName) {
+        socketWarn('mcp_setup:secret_requested missing ref_id or key_name');
+        return;
+      }
+      socketLog('mcp_setup:secret_requested', { refId, keyName });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('openhuman:mcp-setup-secret-requested', {
+            detail: { refId, keyName, prompt },
+          })
+        );
+      }
+    };
+    this.socket.on('mcp_setup:secret_requested', handleSecretRequested);
+    this.socket.on('mcp_setup_secret_requested', handleSecretRequested);
 
     this.socket.on('channel:managed-dm-verified', data => {
       const obj = data as Record<string, unknown> | null;

@@ -6,8 +6,12 @@ use serde_json::{json, Value};
 use crate::api::config::{app_env_from_env, effective_backend_api_url, is_staging_app_env};
 use crate::api::jwt::get_session_token;
 use crate::api::rest::BackendOAuthClient;
+use crate::openhuman::channels::providers::yuanbao::sign::SignManager;
+use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
 use crate::openhuman::config::{Config, DiscordConfig, IMessageConfig, TelegramConfig};
 use crate::openhuman::credentials;
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 use super::definitions::{
@@ -108,6 +112,89 @@ fn parse_optional_bool(value: Option<&Value>) -> Option<bool> {
     }
 }
 
+/// Read a required non-empty Yuanbao credential field from the connect-channel
+/// payload. Returns the trimmed value or an error naming the missing field.
+fn require_yuanbao_field(
+    creds_map: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, String> {
+    creds_map
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("missing required {key}"))
+}
+
+/// Build the **effective** Yuanbao config that will be used for both
+/// preflight verification and persistence.
+///
+/// Starts from the existing TOML (so manually-installed deployments keep
+/// any custom routes), overlays the client-supplied endpoint overrides
+/// (`env` / `api_domain` / `ws_domain` / `route_env`), then calls
+/// `apply_env_defaults` so the verifier hits the correct cluster — e.g. a
+/// user submitting `env = "pre"` is verified against the pre-release
+/// sign-token endpoint instead of the default prod one.
+///
+/// `app_secret` is intentionally left empty: the runtime loads it from
+/// the encrypted credentials store at startup, never from `config.toml`.
+fn build_effective_yuanbao_config(
+    base: YuanbaoConfig,
+    creds_map: &serde_json::Map<String, Value>,
+    app_key: String,
+) -> YuanbaoConfig {
+    let opt_string = |key: &str| -> Option<String> {
+        creds_map
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+    };
+
+    let mut cfg = base;
+    cfg.app_key = app_key;
+    cfg.app_secret = String::new();
+    if let Some(env) = opt_string("env") {
+        cfg.env = env;
+    }
+    if let Some(api_domain) = opt_string("api_domain") {
+        cfg.api_domain = api_domain;
+    }
+    if let Some(ws_domain) = opt_string("ws_domain") {
+        cfg.ws_domain = ws_domain;
+    }
+    if let Some(route_env) = opt_string("route_env") {
+        cfg.route_env = route_env;
+    }
+    cfg.apply_env_defaults();
+    cfg
+}
+
+/// Verify Yuanbao credentials against the `sign-token` endpoint before any
+/// persistence so invalid `app_key` / `app_secret` surface the upstream API
+/// error to the user instead of silently succeeding.
+///
+/// Takes the **effective** `YuanbaoConfig` already built from the client's
+/// overrides + TOML defaults, so the verifier targets whatever cluster the
+/// runtime will use after restart.
+async fn verify_yuanbao_credentials(
+    yb_cfg: &YuanbaoConfig,
+    app_secret: &str,
+) -> Result<(), String> {
+    SignManager::new(reqwest::Client::new())
+        .get_token(
+            &yb_cfg.app_key,
+            app_secret,
+            &yb_cfg.api_domain,
+            &yb_cfg.route_env,
+        )
+        .await
+        .map_err(|e| format!("yuanbao credential verification failed: {e}"))?;
+    Ok(())
+}
+
 /// List all available channel definitions.
 pub async fn list_channels() -> Result<RpcOutcome<Vec<ChannelDefinition>>, String> {
     Ok(RpcOutcome::new(all_channel_definitions(), vec![]))
@@ -159,6 +246,21 @@ pub async fn connect_channel(
         .ok_or("credentials must be a JSON object")?;
 
     def.validate_credentials(auth_mode, creds_map)?;
+
+    // Yuanbao: build the effective config (with any client-supplied
+    // endpoint overrides applied) once, verify against THAT cluster, and
+    // reuse the same config for persistence below. This prevents the
+    // verifier from validating against prod while the runtime then
+    // reconnects to a pre-release cluster after restart.
+    let mut prebuilt_yuanbao_config: Option<YuanbaoConfig> = None;
+    if channel_id == "yuanbao" && auth_mode == ChannelAuthMode::ApiKey {
+        let app_key = require_yuanbao_field(creds_map, "app_key")?;
+        let app_secret = require_yuanbao_field(creds_map, "app_secret")?;
+        let base = config.channels_config.yuanbao.clone().unwrap_or_default();
+        let effective = build_effective_yuanbao_config(base, creds_map, app_key);
+        verify_yuanbao_credentials(&effective, &app_secret).await?;
+        prebuilt_yuanbao_config = Some(effective);
+    }
 
     // iMessage is local-only (no credentials): persist channels_config + return connected.
     if channel_id == "imessage" && auth_mode == ChannelAuthMode::ManagedDm {
@@ -332,6 +434,27 @@ pub async fn connect_channel(
             mention_only,
             "[discord] connect_channel: wrote channels_config.discord; restart core for listener to load token"
         );
+    } else if channel_id == "yuanbao" && auth_mode == ChannelAuthMode::ApiKey {
+        // Reuse the effective config built above (with `env` / `api_domain`
+        // / `ws_domain` / `route_env` overrides already applied and
+        // `app_secret` already cleared) so persistence and verification
+        // can never diverge.
+        let yb_config = prebuilt_yuanbao_config.take().ok_or_else(|| {
+            "internal error: yuanbao config not built before persistence".to_string()
+        })?;
+
+        let mut persisted = config.clone();
+        persisted.channels_config.yuanbao = Some(yb_config);
+
+        persisted
+            .save()
+            .await
+            .map_err(|e| format!("failed to persist yuanbao config.toml: {e}"))?;
+
+        tracing::info!(
+            target: "openhuman::channels",
+            "[yuanbao] connect_channel: wrote channels_config.yuanbao (secret stored in credentials); restart core for WS listener"
+        );
     }
 
     Ok(RpcOutcome::single_log(
@@ -353,6 +476,7 @@ pub async fn disconnect_channel(
     config: &Config,
     channel_id: &str,
     auth_mode: ChannelAuthMode,
+    clear_memory: bool,
 ) -> Result<RpcOutcome<Value>, String> {
     // Verify channel exists.
     find_channel_definition(channel_id).ok_or_else(|| format!("unknown channel: {channel_id}"))?;
@@ -402,7 +526,27 @@ pub async fn disconnect_channel(
                 "[imessage] disconnect_channel: cleared channels_config.imessage"
             );
         }
+    } else if channel_id == "yuanbao" && auth_mode == ChannelAuthMode::ApiKey {
+        let mut persisted = config.clone();
+        if persisted.channels_config.yuanbao.take().is_some() {
+            persisted
+                .save()
+                .await
+                .map_err(|e| format!("failed to clear yuanbao config.toml: {e}"))?;
+            tracing::info!(
+                target: "openhuman::channels",
+                "[yuanbao] disconnect_channel: cleared channels_config.yuanbao"
+            );
+        }
     }
+
+    let memory_chunks_deleted = if clear_memory {
+        clear_channel_memory(config, channel_id).map_err(|e| {
+            format!("channel disconnected, but failed to clear memory chunks: {e:#}")
+        })?
+    } else {
+        0
+    };
 
     Ok(RpcOutcome::single_log(
         json!({
@@ -410,9 +554,20 @@ pub async fn disconnect_channel(
             "auth_mode": auth_mode,
             "disconnected": true,
             "restart_required": true,
+            "memory_chunks_deleted": memory_chunks_deleted,
         }),
         format!("removed credentials for {}", provider_key),
     ))
+}
+
+fn clear_channel_memory(config: &Config, channel_id: &str) -> anyhow::Result<usize> {
+    let exact = memory_tree_store::delete_chunks_by_source(config, SourceKind::Chat, channel_id)?;
+    let prefixed = memory_tree_store::delete_chunks_by_source_prefix(
+        config,
+        SourceKind::Chat,
+        &format!("{channel_id}:"),
+    )?;
+    Ok(exact + prefixed)
 }
 
 /// Get connection status for one or all channels.
@@ -506,6 +661,9 @@ pub async fn connected_channel_slugs(config: &Config) -> Result<Vec<String>, Str
     }
     if cc.imessage.is_some() {
         slugs.insert("imessage".to_string());
+    }
+    if cc.yuanbao.is_some() {
+        slugs.insert("yuanbao".to_string());
     }
     if cc.irc.is_some() {
         slugs.insert("irc".to_string());

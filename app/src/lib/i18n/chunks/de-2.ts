@@ -287,6 +287,7 @@ const de2: TranslationMap = {
   'chat.deleteThread': 'Thread löschen',
   'chat.deleteThreadConfirm': 'Bist du sicher, dass du „{title}“ löschen möchtest?',
   'chat.untitledThread': 'Thread ohne Titel',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': 'Seitenleiste ausblenden',
   'chat.showSidebar': 'Seitenleiste anzeigen',
   'chat.newThreadShortcut': 'Neuer Thread (/new)',
@@ -318,6 +319,12 @@ const de2: TranslationMap = {
   'chat.turn': 'drehen',
   'chat.turns': 'dreht sich',
   'chat.openWorkerThread': 'Arbeitsthread öffnen',
+  'chat.attachment.attach': 'Attach image',
+  'chat.attachment.remove': 'Remove {name}',
+  'chat.attachment.tooMany': 'Maximum {max} images per message',
+  'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
+  'chat.attachment.unsupportedType': 'Unsupported file type. Use PNG, JPEG, WebP, GIF, or BMP.',
+  'chat.attachment.readFailed': 'Could not read file',
   'memory.searchAria': 'Speicher durchsuchen',
   'memory.searchPlaceholder': 'Speichereinträge durchsuchen...',
   'memory.sourceFilter.all': 'Alle Quellen',
@@ -434,6 +441,8 @@ const de2: TranslationMap = {
   'devOptions.menuComposioTriggers': 'Integrationsauslöser',
   'devOptions.menuComposioTriggersDesc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
+  'mic.deviceSelector': 'Mikrofongerät',
+  'mic.tapToSendCountdown': 'Zum Senden tippen ({seconds}s)',
 };
 
 export default de2;

@@ -17,34 +17,94 @@
 //! ```
 
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
-use crate::openhuman::memory::{MemoryClient, MemoryClientRef};
+use crate::openhuman::memory_store::{MemoryClient, MemoryClientRef};
 
-/// The process-global memory client.
-static GLOBAL_CLIENT: OnceLock<MemoryClientRef> = OnceLock::new();
+#[derive(Clone)]
+struct GlobalMemoryClient {
+    workspace_dir: PathBuf,
+    client: MemoryClientRef,
+}
 
-/// Initialise the global memory client from a workspace directory.
+type GlobalClientSlot = RwLock<Option<GlobalMemoryClient>>;
+
+/// The process-global memory client slot.
+static GLOBAL_CLIENT: OnceLock<GlobalClientSlot> = OnceLock::new();
+
+fn global_slot() -> &'static GlobalClientSlot {
+    GLOBAL_CLIENT.get_or_init(GlobalClientSlot::default)
+}
+
+/// Initialise or re-bind the global memory client from a workspace directory.
 ///
-/// Safe to call multiple times — only the first call takes effect.
-/// Returns the (possibly pre-existing) client reference.
+/// Safe to call multiple times. Calls for the same workspace return the
+/// existing client; calls for a different workspace replace the global handle
+/// so a post-login active-user switch does not keep writing to the pre-login
+/// workspace.
 pub fn init(workspace_dir: PathBuf) -> Result<MemoryClientRef, String> {
-    if let Some(existing) = GLOBAL_CLIENT.get() {
-        log::debug!("[memory:global] already initialised, returning existing client");
-        return Ok(Arc::clone(existing));
+    init_in_slot(global_slot(), workspace_dir)
+}
+
+fn init_in_slot(
+    slot: &GlobalClientSlot,
+    workspace_dir: PathBuf,
+) -> Result<MemoryClientRef, String> {
+    if let Some(existing) = slot
+        .read()
+        .map_err(|e| format!("[memory:global] read lock poisoned: {e}"))?
+        .as_ref()
+    {
+        if existing.workspace_dir == workspace_dir {
+            log::debug!("[memory:global] already initialised for current workspace");
+            return Ok(Arc::clone(&existing.client));
+        }
     }
 
     log::info!(
         "[memory:global] initialising global MemoryClient workspace={}",
         workspace_dir.display()
     );
-    let client = Arc::new(MemoryClient::from_workspace_dir(workspace_dir)?);
+    let client = match MemoryClient::from_workspace_dir(workspace_dir.clone()) {
+        Ok(client) => Arc::new(client),
+        Err(error) => {
+            let mut guard = slot
+                .write()
+                .map_err(|e| format!("[memory:global] write lock poisoned: {e}"))?;
+            if guard
+                .as_ref()
+                .is_some_and(|existing| existing.workspace_dir != workspace_dir)
+            {
+                log::warn!(
+                    "[memory:global] clearing stale MemoryClient after failed rebind to {}",
+                    workspace_dir.display()
+                );
+                *guard = None;
+            }
+            return Err(error);
+        }
+    };
 
-    // OnceLock::set can fail if another thread raced us — that's fine,
-    // just return whichever won.
-    let _ = GLOBAL_CLIENT.set(Arc::clone(&client));
+    let mut guard = slot
+        .write()
+        .map_err(|e| format!("[memory:global] write lock poisoned: {e}"))?;
+    if let Some(existing) = guard.as_ref() {
+        if existing.workspace_dir == workspace_dir {
+            return Ok(Arc::clone(&existing.client));
+        }
 
-    Ok(GLOBAL_CLIENT.get().cloned().unwrap_or(client))
+        log::info!(
+            "[memory:global] rebinding MemoryClient workspace {} -> {}",
+            existing.workspace_dir.display(),
+            workspace_dir.display()
+        );
+    }
+
+    *guard = Some(GlobalMemoryClient {
+        workspace_dir,
+        client: Arc::clone(&client),
+    });
+    Ok(client)
 }
 
 /// Initialise using the default `~/.openhuman/workspace` directory.
@@ -66,28 +126,35 @@ pub fn init_default() -> Result<MemoryClientRef, String> {
 ///
 /// Returns `Err` if [`init`] has not yet been called. There is **no** lazy
 /// fallback: a fallback would pin the global to `~/.openhuman/workspace` on
-/// the first stray call (test, early RPC, etc.), and `OnceLock::set` is
-/// one-shot, so the real `init(custom_workspace)` would silently no-op
-/// afterwards and every caller would get the wrong workspace.
+/// the first stray call (test, early RPC, etc.). The explicit init/rebind path
+/// keeps workspace ownership visible at startup and after login.
 ///
 /// Callers that can tolerate "not yet ready" should use
 /// [`client_if_ready`] instead.
 pub fn client() -> Result<MemoryClientRef, String> {
-    client_from(&GLOBAL_CLIENT)
+    client_from(global_slot())
 }
 
 /// Implementation backing [`client`] — extracted so unit tests can pass a
-/// freshly-constructed local `OnceLock` and assert the uninitialised-error
+/// freshly-constructed local slot and assert the uninitialised-error
 /// contract without racing the process-global singleton.
-fn client_from(slot: &OnceLock<MemoryClientRef>) -> Result<MemoryClientRef, String> {
-    slot.get().cloned().ok_or_else(|| {
-        "memory global accessed before init — call init(workspace) at startup".to_string()
-    })
+fn client_from(slot: &GlobalClientSlot) -> Result<MemoryClientRef, String> {
+    slot.read()
+        .map_err(|e| format!("[memory:global] read lock poisoned: {e}"))?
+        .as_ref()
+        .map(|entry| Arc::clone(&entry.client))
+        .ok_or_else(|| {
+            "memory global accessed before init — call init(workspace) at startup".to_string()
+        })
 }
 
 /// Returns the global client if already initialised, without lazy init.
 pub fn client_if_ready() -> Option<MemoryClientRef> {
-    GLOBAL_CLIENT.get().cloned()
+    global_slot()
+        .read()
+        .ok()?
+        .as_ref()
+        .map(|entry| Arc::clone(&entry.client))
 }
 
 #[cfg(test)]
@@ -95,10 +162,9 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    /// All tests must contend with the fact that `GLOBAL_CLIENT` is a
-    /// process-wide `OnceLock` — once set, it stays set for the rest of
-    /// the test binary. We tolerate both branches so test ordering doesn't
-    /// flake the suite.
+    /// All tests that touch `GLOBAL_CLIENT` must contend with process-wide
+    /// state. We tolerate both branches so test ordering doesn't flake the
+    /// suite.
     #[tokio::test]
     async fn client_if_ready_is_some_after_init_or_remains_none() {
         let before = client_if_ready();
@@ -115,13 +181,45 @@ mod tests {
 
     #[tokio::test]
     async fn init_returns_existing_client_when_already_set() {
+        let slot = GlobalClientSlot::default();
         let tmp = TempDir::new().unwrap();
-        let first = init(tmp.path().join("ws-a"));
-        let tmp2 = TempDir::new().unwrap();
-        let second = init(tmp2.path().join("ws-b"));
-        assert!(first.is_ok() && second.is_ok());
-        // Both refs point to the same global Arc — the second init is a no-op.
-        assert!(Arc::ptr_eq(&first.unwrap(), &second.unwrap()));
+        let workspace = tmp.path().join("ws");
+
+        let first = init_in_slot(&slot, workspace.clone()).unwrap();
+        let second = init_in_slot(&slot, workspace).unwrap();
+
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test]
+    async fn init_rebinds_client_when_workspace_changes() {
+        let slot = GlobalClientSlot::default();
+        let tmp = TempDir::new().unwrap();
+
+        let first = init_in_slot(&slot, tmp.path().join("ws-a")).unwrap();
+        let second = init_in_slot(&slot, tmp.path().join("ws-b")).unwrap();
+        let current = client_from(&slot).unwrap();
+
+        assert!(!Arc::ptr_eq(&first, &second));
+        assert!(Arc::ptr_eq(&second, &current));
+    }
+
+    #[tokio::test]
+    async fn init_clears_existing_client_when_rebind_workspace_cannot_initialise() {
+        let slot = GlobalClientSlot::default();
+        let tmp = TempDir::new().unwrap();
+
+        let _first = init_in_slot(&slot, tmp.path().join("ws-a")).unwrap();
+        let file_path = tmp.path().join("not-a-directory");
+        std::fs::write(&file_path, b"not a workspace").unwrap();
+
+        let err = match init_in_slot(&slot, file_path) {
+            Ok(_) => panic!("rebind to a file path must fail"),
+            Err(err) => err,
+        };
+
+        assert!(err.contains("Create workspace dir"));
+        assert!(client_from(&slot).is_err());
     }
 
     #[tokio::test]
@@ -142,7 +240,7 @@ mod tests {
         // other tests may have already called `init()` on the singleton, so
         // an `is_none`-gated check on `GLOBAL_CLIENT` would race / silently
         // skip. `client_from` lets us assert the contract deterministically.
-        let local: OnceLock<MemoryClientRef> = OnceLock::new();
+        let local = GlobalClientSlot::default();
         match client_from(&local) {
             Ok(_) => panic!("client_from(empty) must error"),
             Err(err) => assert!(

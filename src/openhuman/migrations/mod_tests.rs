@@ -7,6 +7,34 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
+/// Simulate a v3 user config: narrow allowed_commands, narrow auto_approve,
+/// and the old hard-coded `max_actions_per_hour = 20`.
+fn simulate_v3_autonomy(config: &mut Config) {
+    config.schema_version = 3;
+    config.autonomy.allowed_commands = vec![
+        "git".into(),
+        "npm".into(),
+        "cargo".into(),
+        "ls".into(),
+        "cat".into(),
+        "grep".into(),
+        "find".into(),
+        "echo".into(),
+        "pwd".into(),
+        "wc".into(),
+        "head".into(),
+        "tail".into(),
+    ];
+    config.autonomy.auto_approve = vec![
+        "file_read".into(),
+        "memory_search".into(),
+        "memory_list".into(),
+        "get_time".into(),
+        "list_dir".into(),
+    ];
+    config.autonomy.max_actions_per_hour = 20;
+}
+
 fn tainted_prompt() -> String {
     "## Identity\n\nYou are an assistant.\n\n\
      ### PROFILE.md\n\n\
@@ -74,7 +102,7 @@ async fn run_pending_runs_phase_out_when_version_zero() {
     assert_eq!(config.schema_version, 0);
     run_pending(&mut config).await;
 
-    assert_eq!(config.schema_version, 3);
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
     let session = read_transcript(&path).unwrap();
     assert!(
         !session.messages[0].content.contains("### PROFILE.md"),
@@ -84,8 +112,8 @@ async fn run_pending_runs_phase_out_when_version_zero() {
 
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
     assert!(
-        on_disk.contains("schema_version = 3"),
-        "saved config.toml must record schema_version=3, got:\n{on_disk}"
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
     );
 }
 
@@ -98,9 +126,9 @@ async fn run_pending_bumps_version_on_fresh_install() {
     let mut config = config_in(&tmp);
     run_pending(&mut config).await;
 
-    assert_eq!(config.schema_version, 3);
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
     let on_disk = std::fs::read_to_string(&config.config_path).unwrap();
-    assert!(on_disk.contains("schema_version = 3"));
+    assert!(on_disk.contains("schema_version = 6"));
 }
 
 #[tokio::test]
@@ -132,7 +160,7 @@ async fn run_pending_is_a_no_op_on_second_invocation() {
 
     let mut config = config_in(&tmp);
     run_pending(&mut config).await;
-    assert_eq!(config.schema_version, 3);
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
 
     // Mutate the config file timestamp marker by reading + comparing
     // before vs after the second invocation.
@@ -141,9 +169,215 @@ async fn run_pending_is_a_no_op_on_second_invocation() {
     run_pending(&mut config).await;
     let after = fs::metadata(&config.config_path).unwrap().modified().ok();
 
-    assert_eq!(config.schema_version, 3);
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
     assert_eq!(
         before, after,
         "config.toml must not be re-saved on second run"
+    );
+}
+
+// ── v3 → v4: expand_autonomy_defaults integration test ──────────────────────
+
+/// Verify that `run_pending` applies the v3→v4 autonomy expansion when
+/// starting from a simulated old-default config at schema_version=3.
+#[tokio::test]
+async fn run_pending_expands_autonomy_defaults_from_v3() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    simulate_v3_autonomy(&mut config);
+
+    assert_eq!(config.schema_version, 3);
+    assert_eq!(config.autonomy.max_actions_per_hour, 20);
+    assert!(!config.autonomy.allowed_commands.iter().any(|c| c == "pnpm"));
+    assert!(!config.autonomy.auto_approve.iter().any(|t| t == "glob"));
+
+    run_pending(&mut config).await;
+
+    assert_eq!(
+        config.schema_version, CURRENT_SCHEMA_VERSION,
+        "schema_version must be bumped to current"
+    );
+
+    // New commands must be present after the migration.
+    for cmd in &["pnpm", "yarn", "make", "sort", "diff", "mkdir", "cp"] {
+        assert!(
+            config.autonomy.allowed_commands.iter().any(|c| c == *cmd),
+            "expected {:?} in allowed_commands after v3→v4 migration",
+            cmd
+        );
+    }
+    // Original commands must be preserved.
+    for cmd in &["git", "npm", "cargo", "ls", "cat"] {
+        assert!(
+            config.autonomy.allowed_commands.iter().any(|c| c == *cmd),
+            "expected original command {:?} preserved",
+            cmd
+        );
+    }
+
+    // New read-only auto-approve tools must be present.
+    for tool in &["glob", "grep"] {
+        assert!(
+            config.autonomy.auto_approve.iter().any(|t| t == *tool),
+            "expected {:?} in auto_approve after v3→v4 migration",
+            tool
+        );
+    }
+    // Write tools must keep Supervised mode's ask-before-edit contract.
+    for tool in &["file_write", "edit_file"] {
+        assert!(
+            !config.autonomy.auto_approve.iter().any(|t| t == *tool),
+            "expected {:?} to require approval after v3→v4 migration",
+            tool
+        );
+    }
+    // Original auto-approve tools must be preserved.
+    for tool in &["file_read", "memory_search", "memory_list"] {
+        assert!(
+            config.autonomy.auto_approve.iter().any(|t| t == *tool),
+            "expected original tool {:?} preserved",
+            tool
+        );
+    }
+
+    // max_actions_per_hour must be bumped from the old default of 20.
+    assert_eq!(
+        config.autonomy.max_actions_per_hour,
+        u32::MAX,
+        "max_actions_per_hour must be bumped to u32::MAX"
+    );
+
+    // On-disk config must reflect the new schema_version.
+    let on_disk = fs::read_to_string(&config.config_path).unwrap();
+    assert!(
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+    );
+}
+
+// ── v4 → v5: remove_write_auto_approve integration test ─────────────────────
+
+/// Verify that workspaces already migrated to schema_version=4 have write tools
+/// removed from `auto_approve` so Supervised mode prompts before file edits.
+#[tokio::test]
+async fn run_pending_v4_to_v5_removes_write_tools_from_auto_approve() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 4;
+    config.autonomy.auto_approve = vec![
+        "file_read".into(),
+        "file_write".into(),
+        "edit_file".into(),
+        "glob".into(),
+    ];
+
+    run_pending(&mut config).await;
+
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        config.autonomy.auto_approve,
+        vec!["file_read".to_string(), "glob".to_string()]
+    );
+
+    let on_disk = fs::read_to_string(&config.config_path).unwrap();
+    assert!(
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+    );
+}
+
+// ── v5 → v6: repair_http_request_limits integration test ────────────────────
+
+/// A workspace persisted at schema_version=5 with stale-zero `[http_request]`
+/// limits (the exact bug this PR fixes) must be repaired to the schema
+/// defaults and bumped to v6 by the full `run_pending` wiring — not just the
+/// migration's own unit tests.
+#[tokio::test]
+async fn run_pending_v5_to_v6_repairs_http_request_limits() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 5;
+    config.http_request.timeout_secs = 0;
+    config.http_request.max_response_size = 0;
+
+    run_pending(&mut config).await;
+
+    let defaults = crate::openhuman::config::HttpRequestConfig::default();
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(config.http_request.timeout_secs, defaults.timeout_secs);
+    assert_eq!(
+        config.http_request.max_response_size,
+        defaults.max_response_size
+    );
+    assert_ne!(config.http_request.timeout_secs, 0);
+    assert_ne!(config.http_request.max_response_size, 0);
+
+    // The version bump must be persisted to disk too.
+    let on_disk = fs::read_to_string(&config.config_path).unwrap();
+    assert!(
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+    );
+}
+
+/// Companion to the repair test above: the same single 5 -> 6 transition must
+/// also run `reconcile_orphaned_providers`. A config at schema_version=5 with an
+/// orphaned `chat_provider` (slug not in `cloud_providers`) and a dangling
+/// `primary_cloud` must have both reset to managed and be bumped to v6 through
+/// the full `run_pending` wiring.
+#[tokio::test]
+async fn run_pending_v5_to_v6_reconciles_orphaned_providers() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    config.schema_version = 5;
+    // `openai` is not present in cloud_providers (left empty) → orphaned.
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.primary_cloud = Some("p_missing".to_string());
+
+    run_pending(&mut config).await;
+
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        config.chat_provider, None,
+        "orphaned chat_provider must be reset to managed"
+    );
+    assert_eq!(
+        config.primary_cloud, None,
+        "dangling primary_cloud must be cleared"
+    );
+
+    let on_disk = fs::read_to_string(&config.config_path).unwrap();
+    assert!(
+        on_disk.contains("schema_version = 6"),
+        "saved config.toml must record schema_version=6, got:\n{on_disk}"
+    );
+}
+
+/// Verify that a user at v3 with a deliberately customised
+/// `max_actions_per_hour` does NOT have it reset by the migration.
+#[tokio::test]
+async fn run_pending_v3_to_v4_preserves_custom_max_actions() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("workspace")).unwrap();
+
+    let mut config = config_in(&tmp);
+    simulate_v3_autonomy(&mut config);
+    // User has deliberately configured a specific ceiling.
+    config.autonomy.max_actions_per_hour = 50;
+
+    run_pending(&mut config).await;
+
+    assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+    assert_eq!(
+        config.autonomy.max_actions_per_hour, 50,
+        "user-customised max_actions_per_hour must not be overwritten"
     );
 }

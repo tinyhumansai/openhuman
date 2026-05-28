@@ -186,9 +186,15 @@ pub async fn invoke_method(state: AppState, method: &str, params: Value) -> Resu
                 method,
                 sanitized_reason
             );
-            // Scrub before publishing — subscribers log `reason`, and the
-            // upstream error string could include API keys / tokens from
-            // pasted-through provider replies.
+            // pasted-through provider replies. `sanitize_api_error` runs
+            // `scrub_secret_patterns` and truncates.
+            //
+            // Local-session protection is handled by `SessionExpiredSubscriber`
+            // in `src/openhuman/credentials/bus.rs` — it checks `is_local_session_token`
+            // after config load and short-circuits teardown with
+            // `scheduler_gate::set_signed_out(false)`. Duplicating that check
+            // here would pull a domain concern into the transport layer and would
+            // add an extra config-load round-trip on every 401.
             crate::core::event_bus::publish_global(
                 crate::core::event_bus::DomainEvent::SessionExpired {
                     source: format!("jsonrpc.invoke_method:{method}"),
@@ -393,8 +399,18 @@ struct TelegramAuthQuery {
     token: Option<String>,
 }
 
+/// Query parameters for the generic desktop auth callback.
+#[derive(Debug, serde::Deserialize)]
+struct DesktopAuthQuery {
+    /// One-time login token consumed through the backend.
+    token: Option<String>,
+    /// Deprecated backend marker for direct session JWT callbacks.
+    key: Option<String>,
+}
+
 /// Returns the HTML for a successful connection page.
-fn success_html() -> String {
+fn success_html(message: &str) -> String {
+    let escaped_message = escape_html(message);
     r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -414,11 +430,11 @@ fn success_html() -> String {
     <div class="card">
         <div class="icon">&#10004;</div>
         <h1>Connected!</h1>
-        <p>Your Telegram account has been connected to OpenHuman. You can close this tab.</p>
+        <p>__MESSAGE__</p>
     </div>
 </body>
 </html>"#
-        .to_string()
+    .replace("__MESSAGE__", &escaped_message)
 }
 
 /// Simple HTML escaping for error messages.
@@ -458,6 +474,36 @@ fn error_html(message: &str) -> String {
 </body>
 </html>"#
     )
+}
+
+/// Require desktop `/auth` callbacks to be top-level document navigations when
+/// browser fetch-metadata headers are present.
+///
+/// The preferred Tauri loopback listener has a per-login state nonce. This
+/// legacy core fallback cannot rely on that state, so it must reject embedded
+/// resource loads (`<img>`, iframe, fetch, script) before token exchange.
+fn desktop_callback_navigation_ok(headers: &axum::http::HeaderMap) -> Result<(), &'static str> {
+    let get_str = |name: &str| -> Option<&str> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+    };
+
+    if let Some(mode) = get_str("sec-fetch-mode") {
+        if mode != "navigate" {
+            return Err("Sec-Fetch-Mode must be 'navigate'");
+        }
+    }
+
+    if let Some(dest) = get_str("sec-fetch-dest") {
+        if dest != "document" {
+            return Err("Sec-Fetch-Dest must be 'document'");
+        }
+    }
+
+    Ok(())
 }
 
 /// Inspect the browser fetch-metadata + Referer/Origin headers and decide
@@ -660,7 +706,129 @@ async fn telegram_auth_handler(
         }
     }
 
-    html_response(StatusCode::OK, success_html())
+    html_response(
+        StatusCode::OK,
+        success_html(
+            "Your Telegram account has been connected to OpenHuman. You can close this tab.",
+        ),
+    )
+}
+
+/// Handles the generic desktop login callback fallback.
+///
+/// The preferred path is the `openhuman://auth?...` deep link handled in the
+/// renderer. On hosts where URL-scheme registration is broken, some login
+/// flows can fall back to the local core callback (`/auth`). This route is
+/// public because the callback carries its own one-time login token; raw
+/// session JWT callbacks are intentionally rejected on this public surface.
+async fn desktop_auth_handler(
+    headers: axum::http::HeaderMap,
+    Query(query): Query<DesktopAuthQuery>,
+) -> impl IntoResponse {
+    let html_response = |status: StatusCode, body: String| -> Response {
+        (
+            status,
+            [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+            body,
+        )
+            .into_response()
+    };
+
+    if let Err(reason) = desktop_callback_navigation_ok(&headers) {
+        log::warn!("[auth:desktop] Rejected non-navigation callback: {reason}");
+        return html_response(
+            StatusCode::BAD_REQUEST,
+            error_html("Sign-in callback must be opened as a browser page. Please try again."),
+        );
+    }
+
+    let token = match query
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        Some(t) => t.to_string(),
+        None => {
+            return html_response(
+                StatusCode::BAD_REQUEST,
+                error_html("Sign-in callback was missing a token. Please try again."),
+            )
+        }
+    };
+
+    if query
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .is_some()
+    {
+        log::warn!("[auth:desktop] Rejected deprecated direct session token callback");
+        return html_response(
+            StatusCode::BAD_REQUEST,
+            error_html("This sign-in callback is no longer supported. Please start sign-in again."),
+        );
+    }
+
+    log::info!("[auth:desktop] Received desktop auth callback");
+
+    let config = match crate::openhuman::config::Config::load_or_init().await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[auth:desktop] Failed to load config: {e}");
+            return html_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html("Internal error. Please try again."),
+            );
+        }
+    };
+
+    let api_url = crate::api::config::effective_backend_api_url(&config.api_url);
+    let client = match crate::api::rest::BackendOAuthClient::new(&api_url) {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[auth:desktop] Failed to create API client: {e}");
+            return html_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html("Internal error. Please try again."),
+            );
+        }
+    };
+
+    let jwt_token = match client.consume_login_token(&token).await {
+        Ok(jwt) => jwt,
+        Err(e) => {
+            log::warn!("[auth:desktop] Login token consumption failed: {e}");
+            return html_response(
+                StatusCode::BAD_REQUEST,
+                error_html("This sign-in link has expired or was already used. Please try again."),
+            );
+        }
+    };
+
+    match crate::openhuman::credentials::ops::store_session(&config, &jwt_token, None, None).await {
+        Ok(outcome) => {
+            for msg in &outcome.logs {
+                log::info!("[auth:desktop] {msg}");
+            }
+            log::info!("[auth:desktop] Session stored successfully");
+        }
+        Err(e) => {
+            log::error!("[auth:desktop] Failed to store session: {e}");
+            return html_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_html(
+                    "Sign-in succeeded but OpenHuman could not save the session. Please try again.",
+                ),
+            );
+        }
+    }
+
+    html_response(
+        StatusCode::OK,
+        success_html("Sign-in completed. You can close this tab and return to OpenHuman."),
+    )
 }
 
 /// WebSocket upgrade handler for streaming voice dictation.
@@ -696,6 +864,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/events/webhooks", get(webhook_events_handler))
         .route("/rpc", post(rpc_handler))
         .route("/ws/dictation", get(dictation_ws_handler))
+        .route("/auth", get(desktop_auth_handler))
         .route("/auth/telegram", get(telegram_auth_handler))
         // OpenAI-compatible inference endpoint (/v1/chat/completions, /v1/models)
         .nest("/v1", crate::openhuman::inference::http::router())
@@ -831,6 +1000,10 @@ async fn cors_middleware(req: Request, next: Next) -> Response {
 /// distinct. Disallowed origins receive no `Access-Control-Allow-Origin`
 /// header at all — the browser will then refuse to surface the response to
 /// the calling JS. Non-browser callers (no `Origin` header) are unaffected.
+///
+/// For Docker / cloud deployments where the server binds to `0.0.0.0`,
+/// extend the allowlist via the `OPENHUMAN_CORE_ALLOWED_ORIGINS` env var
+/// (comma-separated) rather than wildcarding `Access-Control-Allow-Origin`.
 pub(super) fn with_cors_headers(mut response: Response, origin: Option<&str>) -> Response {
     let headers = response.headers_mut();
     headers.append(header::VARY, HeaderValue::from_static("Origin"));
@@ -1139,6 +1312,11 @@ async fn run_server_inner(
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
+
+    // Ensure the master encryption key is loaded from keychain before any
+    // config or credential operation that needs to decrypt secrets. This is
+    // a no-op if already called (e.g. from run_core_from_args for CLI).
+    crate::openhuman::keyring::init_master_key();
 
     // Initialize the per-process RPC bearer token.
     // Written to {workspace_dir}/core.token so the Tauri shell can read it.
@@ -1503,9 +1681,10 @@ fn register_domain_subscribers(
 
         crate::openhuman::health::bus::register_health_subscriber();
         crate::openhuman::notifications::register_notification_bridge_subscriber();
-        crate::openhuman::memory::conversations::register_conversation_persistence_subscriber(
+        crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
             workspace_dir.clone(),
         );
+        crate::openhuman::memory::sync::register_sync_stage_bridge();
         if let Err(error) = crate::openhuman::composio::init_composio_trigger_history(
             workspace_dir.clone(),
         ) {
@@ -1554,7 +1733,7 @@ fn register_domain_subscribers(
             );
         }
 
-        crate::openhuman::memory::tree::jobs::start(config.clone());
+        crate::openhuman::memory_queue::start(config.clone());
 
         // Restart requests go through a subscriber so every trigger path shares
         // the same respawn logic.
@@ -1573,6 +1752,11 @@ fn register_domain_subscribers(
         // no external channel instances are registered here). Uses a
         // Once-guarded registrar so domain-level startup can't duplicate it.
         crate::openhuman::channels::proactive::register_web_only_proactive_subscriber();
+
+        // Device tunnel subscriber: handles tunnel:frame handshakes, peer-status
+        // events, and register acks. Must be registered before any tunnel:frame
+        // events can arrive.
+        crate::openhuman::devices::bus::register_device_tunnel_subscriber();
 
         // Native request handlers — typed in-process request/response.
         // The agent `agent.run_turn` handler is what channel dispatch
@@ -1627,6 +1811,12 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         }
     }
 
+    // --- Cost dashboard tracker ---
+    // Activates the previously-dormant CostTracker so the dashboard RPC
+    // surface (`openhuman.cost_get_dashboard`) and `record_provider_usage`
+    // share one JSONL-backed store. Idempotent.
+    crate::openhuman::cost::init_global(cfg.cost.clone(), &workspace_dir);
+
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
     // under `<workspace>/agents/*.toml`. Idempotent — safe to call
@@ -1640,18 +1830,39 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         );
     }
 
+    // --- Live SecurityPolicy ---
+    // Install the process-global live policy on the always-run serve boot, not
+    // only inside `start_channels` (which is skipped for web-chat-only cores
+    // with no messaging integrations). Without this, `live_policy::current()`
+    // would be empty on those cores, so the ApprovalGate's `auto_approve`
+    // allowlist and `config.update_autonomy_settings` reloads (`reload_from`)
+    // would be inert until a session with integrations starts. `from_config`
+    // injects the default projects root, so this matches what `start_channels`
+    // installs; idempotent — a later `start_channels` re-installs an equivalent
+    // policy.
+    crate::openhuman::security::live_policy::install(
+        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
+            &cfg.autonomy,
+            &workspace_dir,
+        )),
+        workspace_dir.clone(),
+    );
+
     // --- Approval gate (#1339) ---
-    // Opt-in via `OPENHUMAN_APPROVAL_GATE=1`. When enabled, tool calls
-    // with `external_effect() == true` (composio, pushover, gmail
-    // unsubscribe, proactive external sends, triage React/Escalate)
-    // route through `ApprovalGate::intercept` and park until the UI
-    // dispatches `approval_decide` (or the 10-minute TTL elapses and
-    // the call is denied). Off by default until the React UI
-    // (toast + settings panel) lands — otherwise gated tool calls
-    // would block the agent loop with nothing to release them.
+    // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).
+    // Prompt-class `external_effect()` tool calls route through
+    // `ApprovalGate::intercept` and park until the UI dispatches
+    // `approval_decide` (or the 10-minute TTL elapses → deny). Safe to default
+    // on now that the release surface exists (ApprovalRequestCard + the Agent
+    // OS access panel) AND only *interactive chat* turns park — background /
+    // triage / cron turns carry no chat context and pass straight through, so
+    // autonomous automation is never blocked.
     if std::env::var("OPENHUMAN_APPROVAL_GATE")
-        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE"))
-        .unwrap_or(false)
+        .map(|v| {
+            let t = v.trim();
+            !(t == "0" || t.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(true)
     {
         let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
             .ok()
@@ -1670,50 +1881,45 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         }
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
+        // Never log a token-derived session_id: when OPENHUMAN_CORE_TOKEN is set,
+        // session_id IS that secret. Only the generated ephemeral UUID is safe to
+        // print.
+        let session_label = if ephemeral {
+            session_id.as_str()
+        } else {
+            "<redacted>"
+        };
         log::info!(
-            "[runtime] approval gate installed (OPENHUMAN_APPROVAL_GATE=1, session_id={session_id}) — \
-             external-effect tool calls will block until approval_decide"
+            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_label}) — \
+             Prompt-class external-effect tool calls park for approval in interactive chat turns"
         );
+        // Bridge ApprovalRequested → `approval_request` web socket event. This MUST
+        // be registered here on the always-run serve boot, not only inside
+        // `start_channels` — that path is skipped when no messaging integrations
+        // (Telegram/Discord/…) are configured, which is the common web-chat-only
+        // case. Without this, the gate parks and publishes but nothing reaches the
+        // frontend → every prompt dies at the TTL. Idempotent (Once-guarded).
+        crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
     } else {
-        log::debug!(
-            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE unset) — \
-             external-effect tool calls run unsupervised"
+        log::info!(
+            "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE=0) — \
+             Prompt-class external-effect tool calls run unprompted"
         );
     }
 
-    // --- Session storage layout migration -------------------------------
-    // One-shot move from `session_raw/{DDMMYYYY}/` (≤ 0.53.4) to the new
-    // flat `session_raw/{stem}.jsonl` layout, plus DDMMYYYY → YYYY_MM_DD
-    // for the human-readable `sessions/` companions. Idempotent via a
-    // marker file at `state/migrations/session_layout_v1.done`, so this
-    // costs one stat() on every subsequent boot.
-    match crate::openhuman::agent::harness::session::migrate_session_layout_if_needed(
-        &workspace_dir,
-    ) {
-        Ok(outcome) if outcome.already_done => {
-            log::debug!("[runtime] session_layout migration already applied");
-        }
-        Ok(outcome) => {
-            log::info!(
-                "[runtime] session_layout migration applied: jsonl_moved={} md_moved={} pruned_dirs={} warnings={}",
-                outcome.jsonl_moved,
-                outcome.md_moved,
-                outcome.legacy_dirs_pruned,
-                outcome.warnings.len(),
-            );
-            for w in &outcome.warnings {
-                log::warn!("[runtime] session_layout migration warning: {w}");
-            }
-        }
-        Err(err) => {
-            // Don't bring down startup over a transcript-storage migration.
-            // The transcript module's legacy fallback covers the unmigrated
-            // case for one release window.
-            log::warn!(
-                "[runtime] session_layout migration failed: {err} — \
-                 falling back to in-place legacy reads"
-            );
-        }
+    // --- Workspace migrations --------------------------------------------
+    crate::openhuman::startup::run_workspace_migrations(&workspace_dir);
+
+    // --- MCP registry boot-spawn -----------------------------------------
+    // Bring up every locally-installed MCP server's stdio subprocess so its
+    // tools are available to the agent as soon as the core is ready.
+    // Errors are logged per-server and never block boot. Runs as a
+    // background task so a slow npx install can't gate startup.
+    {
+        let cfg = cfg.clone();
+        tokio::spawn(async move {
+            crate::openhuman::mcp_registry::boot::spawn_installed_servers(&cfg).await;
+        });
     }
 
     // --- Socket manager bootstrap ---

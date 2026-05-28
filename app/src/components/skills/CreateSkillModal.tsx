@@ -210,7 +210,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 }
               }}
               disabled={submitting}
-              aria-label="Close"
+              aria-label={t('common.close')}
               className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -292,7 +292,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                         onChange={() => setScope(s)}
                         className="h-3 w-3 accent-primary-500"
                       />
-                      <span className="capitalize">{s}</span>
+                      <span>{t(`scope.${s}`)}</span>
                     </label>
                   );
                 })}
@@ -319,7 +319,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                   onChange={e => setLicense(e.target.value)}
                   maxLength={64}
                   className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                  placeholder="MIT"
+                  placeholder={t('skills.create.licensePlaceholder')}
                 />
               </div>
               <div>
@@ -355,7 +355,7 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 onChange={e => setTagsCsv(e.target.value)}
                 maxLength={256}
                 className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder="trading, research"
+                placeholder={t('skills.create.tagsPlaceholder')}
               />
             </div>
 
@@ -374,10 +374,10 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
                 onChange={e => setAllowedToolsCsv(e.target.value)}
                 maxLength={512}
                 className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder="node_exec, fetch"
+                placeholder={t('skills.create.allowedToolsPlaceholder')}
               />
               <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                Rendered into the SKILL.md frontmatter as{' '}
+                {t('skills.create.allowedToolsHelp')}{' '}
                 <code className="font-mono">allowed-tools:</code>.
               </p>
             </div>

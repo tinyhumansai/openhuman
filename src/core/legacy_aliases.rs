@@ -21,6 +21,13 @@
 /// Order doesn't matter for correctness, but is kept alphabetical by legacy
 /// key for easier diffing against the frontend table.
 const LEGACY_ALIASES: &[(&str, &str)] = &[
+    // MCP clients — old method names that appeared in Sentry (CORE-RUST-DR/DS/DT/DV/DW).
+    // Callers used dotted namespace, bare `mcp_list`, `mcp_servers_list`, and
+    // `mcp_clients_list` before the canonical `mcp_clients_installed_list` was
+    // introduced in PR #2409. `tool_registry_call` was an early mis-spelling of
+    // `mcp_clients_tool_call` that shipped in at least one older bundle.
+    // `mcp_clients.list` sorts before all `openhuman.*` entries (m < o).
+    ("mcp_clients.list", "openhuman.mcp_clients_installed_list"),
     (
         "openhuman.get_analytics_settings",
         "openhuman.config_get_analytics_settings",
@@ -29,10 +36,23 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.get_composio_trigger_settings",
         "openhuman.config_get_composio_trigger_settings",
     ),
+    (
+        "openhuman.get_dashboard_settings",
+        "openhuman.config_get_dashboard_settings",
+    ),
     ("openhuman.get_config", "openhuman.config_get"),
     (
         "openhuman.get_runtime_flags",
         "openhuman.config_get_runtime_flags",
+    ),
+    (
+        "openhuman.mcp_clients_list",
+        "openhuman.mcp_clients_installed_list",
+    ),
+    ("openhuman.mcp_list", "openhuman.mcp_clients_installed_list"),
+    (
+        "openhuman.mcp_servers_list",
+        "openhuman.mcp_clients_installed_list",
     ),
     ("openhuman.ping", "core.ping"),
     (
@@ -40,8 +60,16 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.config_set_browser_allow_all",
     ),
     (
+        "openhuman.tool_registry_call",
+        "openhuman.mcp_clients_tool_call",
+    ),
+    (
         "openhuman.update_analytics_settings",
         "openhuman.config_update_analytics_settings",
+    ),
+    (
+        "openhuman.update_autonomy_settings",
+        "openhuman.config_update_autonomy_settings",
     ),
     (
         "openhuman.update_browser_settings",
@@ -91,6 +119,14 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.local_ai_diagnostics",
         "openhuman.inference_diagnostics",
     ),
+    // bare `health_snapshot` (no namespace prefix) was used by older clients
+    // before the canonical `openhuman.health_snapshot` form was established.
+    ("health_snapshot", "openhuman.health_snapshot"),
+    // `openhuman.system_info` was used by older clients / SDK callers before
+    // the method was namespaced under `health` as `openhuman.health_system_info`.
+    // Sentry CORE-RUST-G0 — https://sentry.tinyhumans.ai/organizations/tinyhumans/issues/6340/
+    ("openhuman.system_info", "openhuman.health_system_info"),
+    ("openhuman.inference_embed", "openhuman.embeddings_embed"),
     ("openhuman.local_ai_presets", "openhuman.inference_presets"),
     (
         "openhuman.providers_list_models",
@@ -195,7 +231,7 @@ mod tests {
         let compact = body
             .lines()
             .map(str::trim)
-            .filter(|line| !line.is_empty())
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
             .collect::<Vec<_>>()
             .join(" ");
         let mut aliases = BTreeMap::new();
@@ -207,7 +243,14 @@ mod tests {
             let (legacy, target_expr) = entry
                 .split_once(':')
                 .unwrap_or_else(|| panic!("expected legacy alias entry, got `{entry}`"));
-            let legacy = quoted_value(legacy);
+            // Prettier strips quotes from keys that are valid JS identifiers
+            // (e.g. `health_snapshot`), so accept both `'foo':` and bare `foo:`.
+            let legacy_trimmed = legacy.trim();
+            let legacy = if legacy_trimmed.starts_with('\'') || legacy_trimmed.starts_with('"') {
+                quoted_value(legacy)
+            } else {
+                legacy_trimmed.to_string()
+            };
             let target_expr = target_expr.trim();
             let canonical = if let Some(key) = target_expr.strip_prefix("CORE_RPC_METHODS.") {
                 core_methods
@@ -318,6 +361,34 @@ mod tests {
     }
 
     #[test]
+    fn parse_frontend_legacy_aliases_accepts_bare_identifier_keys_and_skips_comments() {
+        // Prettier strips redundant quotes from keys that are valid JS
+        // identifiers, so the canonical form for a simple key like
+        // `health_snapshot` is unquoted. The parser must accept both
+        // `'foo':` and bare `foo:`, and must ignore `//` comment lines
+        // in the LEGACY_METHOD_ALIASES body.
+        let source = "export const CORE_RPC_METHODS = {\n  alphaMethod: 'openhuman.alpha',\n  betaMethod: 'openhuman.beta',\n} as const;\n\nexport const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {\n  // legacy aliases for the alpha method\n  'openhuman.legacy_alpha': CORE_RPC_METHODS.alphaMethod,\n  beta_legacy: CORE_RPC_METHODS.betaMethod,\n};\n";
+        let core_methods = parse_core_rpc_methods(source);
+        let aliases = parse_frontend_legacy_aliases(source, &core_methods);
+        assert_eq!(
+            aliases.get("openhuman.legacy_alpha").map(String::as_str),
+            Some("openhuman.alpha"),
+            "quoted-key entry should still resolve"
+        );
+        assert_eq!(
+            aliases.get("beta_legacy").map(String::as_str),
+            Some("openhuman.beta"),
+            "bare-identifier key should resolve (Prettier-normalized form)"
+        );
+        assert!(
+            !aliases
+                .keys()
+                .any(|k| k.contains("//") || k.contains("legacy aliases")),
+            "comment text must not be captured as a key"
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "legacy alias references unknown CORE_RPC_METHODS")]
     fn parse_frontend_legacy_aliases_panics_on_unknown_core_method_ref() {
         let source = "export const CORE_RPC_METHODS = {\n  alphaMethod: 'openhuman.alpha',\n} as const;\n\nexport const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {\n  'openhuman.legacy_alpha': CORE_RPC_METHODS.doesNotExist,\n};\n";
@@ -344,6 +415,30 @@ mod tests {
         assert_eq!(
             resolve_legacy("openhuman.update_composio_trigger_settings"),
             "openhuman.config_update_composio_trigger_settings",
+        );
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_bare_health_snapshot() {
+        // Sentry CORE-RUST-FG: older clients (and some SDK callers) issued
+        // `health_snapshot` without the `openhuman.` namespace prefix.  The
+        // alias table must rewrite it to the canonical form so the call
+        // resolves against the registered controller.
+        assert_eq!(
+            resolve_legacy("health_snapshot"),
+            "openhuman.health_snapshot",
+        );
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_system_info() {
+        // Sentry CORE-RUST-G0: older clients called `openhuman.system_info`
+        // before the method was namespaced under `health` as
+        // `openhuman.health_system_info`.  The alias table must rewrite it so
+        // the call resolves against the registered controller.
+        assert_eq!(
+            resolve_legacy("openhuman.system_info"),
+            "openhuman.health_system_info",
         );
     }
 

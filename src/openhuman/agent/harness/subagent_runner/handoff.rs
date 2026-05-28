@@ -29,7 +29,7 @@ use std::sync::Mutex as StdMutex;
 /// cache instead of being pushed into history raw. Token count is
 /// estimated at ~4 chars/token (mirrors
 /// `crate::openhuman::agent::harness::payload_summarizer` and
-/// `crate::openhuman::tree_summarizer::types::estimate_tokens`).
+/// `crate::openhuman::memory_tree::tree_runtime::types::estimate_tokens`).
 ///
 /// Set at `50_000` so the clean Gmail / Notion envelopes emitted by provider
 /// post-processing fit through unchanged for normal workloads — only

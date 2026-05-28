@@ -1,17 +1,12 @@
 // @ts-nocheck
 import { browser, expect } from '@wdio/globals';
 
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
-import {
-  dumpAccessibilityTree,
-  waitForText,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
+import { dumpAccessibilityTree, waitForText } from '../helpers/element-helpers';
 import { supportsExecuteScript } from '../helpers/platform';
-import { completeOnboardingIfVisible, navigateViaHash } from '../helpers/shared-flows';
+import { resetApp } from '../helpers/reset-app';
+import { navigateViaHash } from '../helpers/shared-flows';
 import { startMockServer, stopMockServer } from '../mock-server';
 
 function stepLog(message: string, context?: unknown): void {
@@ -70,16 +65,15 @@ async function waitForCoreSidecar(timeout = 30_000): Promise<void> {
   );
 }
 
+// Module-level capture: ingest returns a server-generated UUID; share it
+// across tests so mark_read and list can reference the same notification.
+let ingestedNotifId: string | undefined;
+
 describe('Notifications', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();
-
-    await triggerAuthDeepLinkBypass('e2e-notifications-user');
-    await waitForWindowVisible(25_000);
-    await waitForWebView(15_000);
-    await waitForAppReady(15_000);
-    await completeOnboardingIfVisible('[NotificationsE2E]');
+    await resetApp('e2e-notifications-user');
 
     // Fail fast if core sidecar is not up.
     await waitForCoreSidecar(30_000);
@@ -90,18 +84,21 @@ describe('Notifications', () => {
   });
 
   it('notification_ingest creates a new notification via core RPC', async () => {
+    // Required params: provider, title, body, raw_payload (no id/category/timestamp_ms).
     const result = await callOpenhumanRpc('openhuman.notification_ingest', {
-      id: 'e2e-notif-001',
-      category: 'system',
+      provider: 'e2e',
       title: 'E2E Test Notification',
       body: 'Created by the notifications E2E spec',
-      timestamp_ms: Date.now(),
+      raw_payload: {},
     });
     stepLog('notification_ingest result', { ok: result.ok, result: result.result });
     expect(result.ok).toBe(true);
-    const payload = result.result?.result ?? {};
+    // handle_ingest returns RpcOutcome::new(..., vec![]) → bare value (no extra .result wrapper)
+    const payload = (result.result as any) ?? {};
     expect(payload.skipped).not.toBe(true);
-    expect(payload.id).toBe('e2e-notif-001');
+    expect(typeof payload.id).toBe('string');
+    ingestedNotifId = payload.id as string;
+    stepLog('captured notification id', { id: ingestedNotifId });
   });
 
   it('notification_list returns the ingested notification', async () => {
@@ -109,13 +106,13 @@ describe('Notifications', () => {
     stepLog('notification_list result', { ok: result.ok, result: result.result });
     expect(result.ok).toBe(true);
 
-    const items: unknown[] =
-      result.result?.result?.notifications ?? result.result?.result?.items ?? [];
+    // handle_list returns bare value → result.result is {items: [...], unread_count: n}
+    const items: unknown[] = (result.result as any)?.items ?? [];
     const found = items.some(
       (n: unknown) =>
         typeof n === 'object' &&
         n !== null &&
-        (n as Record<string, unknown>)['id'] === 'e2e-notif-001'
+        (n as Record<string, unknown>)['title'] === 'E2E Test Notification'
     );
     expect(found).toBe(true);
   });
@@ -123,18 +120,31 @@ describe('Notifications', () => {
   it('notification_mark_read transitions notification status', async () => {
     const before = await callOpenhumanRpc('openhuman.notification_stats', {});
     expect(before.ok).toBe(true);
-    const beforeStats = before.result?.result ?? {};
+    // handle_stats returns bare value → result.result is {total, unread, ...}
+    const beforeStats = (before.result as any) ?? {};
     const initialUnread = getUnreadCount(beforeStats);
 
-    const result = await callOpenhumanRpc('openhuman.notification_mark_read', {
-      id: 'e2e-notif-001',
-    });
+    // Use the UUID from the ingest test; fall back to a fresh ingest if needed.
+    let notifId = ingestedNotifId;
+    if (!notifId) {
+      stepLog('no cached notifId — ingesting a fresh notification for mark_read');
+      const fresh = await callOpenhumanRpc('openhuman.notification_ingest', {
+        provider: 'e2e',
+        title: 'E2E Mark Read Fallback',
+        body: 'Fallback notification for mark_read test',
+        raw_payload: {},
+      });
+      notifId = (fresh.result as any)?.id as string | undefined;
+    }
+    expect(notifId).toBeDefined();
+
+    const result = await callOpenhumanRpc('openhuman.notification_mark_read', { id: notifId });
     stepLog('notification_mark_read result', { ok: result.ok, result: result.result });
     expect(result.ok).toBe(true);
 
     const after = await callOpenhumanRpc('openhuman.notification_stats', {});
     expect(after.ok).toBe(true);
-    const afterStats = after.result?.result ?? {};
+    const afterStats = (after.result as any) ?? {};
     const finalUnread = getUnreadCount(afterStats);
     if (initialUnread > 0) {
       expect(finalUnread).toBeLessThan(initialUnread);
@@ -147,7 +157,8 @@ describe('Notifications', () => {
     const result = await callOpenhumanRpc('openhuman.notification_stats', {});
     stepLog('notification_stats result', { ok: result.ok, result: result.result });
     expect(result.ok).toBe(true);
-    const stats = result.result?.result ?? {};
+    // handle_stats returns bare value → result.result is {total, unread, unscored, ...}
+    const stats = (result.result as any) ?? {};
     // Stats must have at least a numeric total or unread count.
     const hasNumericField = Object.values(stats).some(v => typeof v === 'number');
     expect(hasNumericField).toBe(true);
@@ -159,12 +170,26 @@ describe('Notifications', () => {
       return;
     }
 
-    await navigateViaHash('/notifications');
-    await waitForNotificationsSections(10_000);
+    // Navigate to /notifications via direct hash set — the route exists but
+    // may not have a bottom-tab button. Retry the hash set if it bounces.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await browser.execute(() => {
+        window.location.hash = '/notifications';
+      });
+      await browser.pause(1_500);
+      const h = await browser.execute(() => window.location.hash);
+      if (String(h).includes('/notifications')) break;
+      stepLog(`hash bounce attempt ${attempt}`, { hash: h });
+    }
 
     const currentHash = await browser.execute(() => window.location.hash);
     stepLog('Notifications route hash', { currentHash });
+
+    // If the route redirected (e.g. auth guard), skip the UI assertions
+    // since the RPC tests above already prove the notification backend works.
     expect(String(currentHash)).toContain('/notifications');
+
+    await waitForNotificationsSections(10_000);
 
     // The integration notifications section wraps NotificationCenter.
     const sectionVisible = await browser.execute(() => {
@@ -201,9 +226,10 @@ describe('Notifications', () => {
     }
     expect(sectionVisible).toBe(true);
 
-    // The heading text should also be present.
-    await waitForText('System Events', 8_000);
-    await waitForText('All caught up', 8_000);
+    // The heading text and empty state — the section renders t('alerts.title') = 'Alerts'
+    // and t('alerts.empty') = 'No alerts yet' when no system notifications are queued.
+    await waitForText('Alerts', 8_000);
+    await waitForText('No alerts yet', 8_000);
   });
 
   it('native notification permission command returns a valid state', async () => {

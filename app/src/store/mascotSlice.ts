@@ -15,7 +15,7 @@ export const SUPPORTED_MASCOT_COLORS: readonly MascotColor[] = [
   'burgundy',
   'black',
   'navy',
-  'green',
+  'custom',
 ];
 
 export const DEFAULT_MASCOT_COLOR: MascotColor = 'yellow';
@@ -38,6 +38,7 @@ export const DEFAULT_MASCOT_VOICE_GENDER: MascotVoiceGender = 'male';
  * is dropped at the reducer boundary.
  */
 export const MAX_MASCOT_VOICE_ID_LEN = 128;
+export const MAX_CUSTOM_MASCOT_GIF_URL_LEN = 2048;
 
 /**
  * Loose shape check for a stored mascot voice id. Issue #1762 lets users
@@ -55,6 +56,27 @@ function isMascotVoiceId(value: unknown): value is string {
     value.trim().length > 0 &&
     value.trim().length <= MAX_MASCOT_VOICE_ID_LEN
   );
+}
+
+function hasGifPath(value: string): boolean {
+  const [path = ''] = value.split(/[?#]/, 1);
+  return path.toLowerCase().endsWith('.gif');
+}
+
+export function isCustomMascotGifUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_CUSTOM_MASCOT_GIF_URL_LEN) return false;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!hasGifPath(parsed.pathname)) return false;
+    if (parsed.protocol === 'https:' || parsed.protocol === 'file:') return true;
+    if (parsed.protocol !== 'http:') return false;
+    return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(parsed.hostname);
+  } catch {
+    return hasGifPath(trimmed) && (trimmed.startsWith('/') || trimmed.startsWith('~/'));
+  }
 }
 
 function isMascotVoiceGender(value: unknown): value is MascotVoiceGender {
@@ -96,6 +118,14 @@ export interface MascotState {
    * persisted blob bounded.
    */
   selectedMascotId: string | null;
+  /**
+   * User-supplied animated avatar source. Kept as a plain validated
+   * string so the renderer can fall back to YellowMascot whenever the
+   * override is absent or scrubbed during rehydrate.
+   */
+  customMascotGifUrl: string | null;
+  customPrimaryColor: string;
+  customSecondaryColor: string;
 }
 
 const initialState: MascotState = {
@@ -104,6 +134,9 @@ const initialState: MascotState = {
   voiceGender: DEFAULT_MASCOT_VOICE_GENDER,
   voiceUseLocaleDefault: false,
   selectedMascotId: null,
+  customMascotGifUrl: null,
+  customPrimaryColor: '#F7D145',
+  customSecondaryColor: '#B23C05',
 };
 
 function isMascotColor(value: unknown): value is MascotColor {
@@ -132,8 +165,21 @@ const mascotSlice = createSlice({
       }
       if (isMascotVoiceId(action.payload)) {
         state.selectedMascotId = action.payload.trim();
+        state.customMascotGifUrl = null;
       } else {
         state.selectedMascotId = null;
+      }
+    },
+    setCustomMascotGifUrl(state, action: PayloadAction<string | null>) {
+      if (action.payload == null) {
+        state.customMascotGifUrl = null;
+        return;
+      }
+      if (isCustomMascotGifUrl(action.payload)) {
+        state.customMascotGifUrl = action.payload.trim();
+        state.selectedMascotId = null;
+      } else {
+        state.customMascotGifUrl = null;
       }
     },
     /**
@@ -164,6 +210,12 @@ const mascotSlice = createSlice({
     setMascotVoiceUseLocaleDefault(state, action: PayloadAction<boolean>) {
       state.voiceUseLocaleDefault = Boolean(action.payload);
     },
+    setCustomPrimaryColor(state, action: PayloadAction<string>) {
+      state.customPrimaryColor = action.payload;
+    },
+    setCustomSecondaryColor(state, action: PayloadAction<string>) {
+      state.customSecondaryColor = action.payload;
+    },
   },
   extraReducers: builder => {
     builder.addCase(resetUserScopedState, () => initialState);
@@ -179,6 +231,9 @@ const mascotSlice = createSlice({
           voiceGender?: unknown;
           voiceUseLocaleDefault?: unknown;
           selectedMascotId?: unknown;
+          customMascotGifUrl?: unknown;
+          customPrimaryColor?: unknown;
+          customSecondaryColor?: unknown;
         };
       };
       if (rehydrateAction.key !== 'mascot') return;
@@ -191,6 +246,14 @@ const mascotSlice = createSlice({
           : isMascotVoiceId(restoredSelectedMascotId)
             ? (restoredSelectedMascotId as string).trim()
             : null;
+      const restoredCustomMascotGifUrl = rehydrateAction.payload?.customMascotGifUrl;
+      state.customMascotGifUrl =
+        restoredCustomMascotGifUrl == null
+          ? null
+          : isCustomMascotGifUrl(restoredCustomMascotGifUrl)
+            ? (restoredCustomMascotGifUrl as string).trim()
+            : null;
+      if (state.customMascotGifUrl) state.selectedMascotId = null;
       // `voiceId` is optional in older persisted blobs (pre-#1762) — the
       // `null` fallback is the intended default and matches a fresh
       // install. Invalid values are scrubbed so a corrupted localStorage
@@ -210,6 +273,12 @@ const mascotSlice = createSlice({
         typeof rehydrateAction.payload?.voiceUseLocaleDefault === 'boolean'
           ? rehydrateAction.payload.voiceUseLocaleDefault
           : false;
+      const rpc = rehydrateAction.payload?.customPrimaryColor;
+      state.customPrimaryColor =
+        typeof rpc === 'string' && rpc.length > 0 ? rpc : initialState.customPrimaryColor;
+      const rsc = rehydrateAction.payload?.customSecondaryColor;
+      state.customSecondaryColor =
+        typeof rsc === 'string' && rsc.length > 0 ? rsc : initialState.customSecondaryColor;
     });
   },
 });
@@ -220,6 +289,9 @@ export const {
   setMascotVoiceGender,
   setMascotVoiceUseLocaleDefault,
   setSelectedMascotId,
+  setCustomMascotGifUrl,
+  setCustomPrimaryColor,
+  setCustomSecondaryColor,
 } = mascotSlice.actions;
 
 export const selectMascotColor = (state: { mascot: MascotState }): MascotColor =>
@@ -236,6 +308,15 @@ export const selectMascotVoiceUseLocaleDefault = (state: { mascot: MascotState }
 
 export const selectSelectedMascotId = (state: { mascot: MascotState }): string | null =>
   state.mascot.selectedMascotId;
+
+export const selectCustomMascotGifUrl = (state: { mascot: MascotState }): string | null =>
+  state.mascot.customMascotGifUrl;
+
+export const selectCustomPrimaryColor = (state: { mascot: MascotState }): string =>
+  state.mascot.customPrimaryColor;
+
+export const selectCustomSecondaryColor = (state: { mascot: MascotState }): string =>
+  state.mascot.customSecondaryColor;
 
 /**
  * Resolve the voice id the next reply will be synthesised with, taking

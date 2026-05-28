@@ -23,6 +23,7 @@ fn sample_vault(root: PathBuf) -> Vault {
         id: "vault-test-1".to_string(),
         name: "Test".to_string(),
         root_path: root.to_string_lossy().to_string(),
+        host_os: None,
         namespace: "vault:vault-test-1".to_string(),
         include_globs: vec![],
         exclude_globs: vec![],
@@ -30,6 +31,100 @@ fn sample_vault(root: PathBuf) -> Vault {
         last_synced_at: None,
         file_count: 0,
     }
+}
+
+fn incompatible_path_for_current_host() -> &'static str {
+    if cfg!(windows) {
+        "/home/leigh/OHvault"
+    } else {
+        r"C:\Users\leigh\OHvault"
+    }
+}
+
+#[test]
+fn path_compatibility_rejects_cross_platform_absolute_paths() {
+    assert!(store::path_looks_compatible_with_host_os(
+        r"C:\Users\leigh\OHvault",
+        "windows"
+    ));
+    assert!(store::path_looks_compatible_with_host_os(
+        r"\\server\share\OHvault",
+        "windows"
+    ));
+    // Forward-slash `//…` is POSIX-legal, not Windows UNC.
+    assert!(!store::path_looks_compatible_with_host_os(
+        "//server/share/OHvault",
+        "windows"
+    ));
+    assert!(!store::path_looks_compatible_with_host_os(
+        "/home/leigh/OHvault",
+        "windows"
+    ));
+
+    assert!(store::path_looks_compatible_with_host_os(
+        "/home/leigh/OHvault",
+        "linux"
+    ));
+    assert!(store::path_looks_compatible_with_host_os(
+        "/Users/leigh/OHvault",
+        "macos"
+    ));
+    assert!(!store::path_looks_compatible_with_host_os(
+        r"C:\Users\leigh\OHvault",
+        "linux"
+    ));
+    assert!(!store::path_looks_compatible_with_host_os(
+        r"\\server\share\OHvault",
+        "macos"
+    ));
+    // Forward-slash `//…` is POSIX-legal — compatible with Unix hosts.
+    assert!(store::path_looks_compatible_with_host_os(
+        "//server/share/OHvault",
+        "macos"
+    ));
+    assert!(store::path_looks_compatible_with_host_os(
+        "//server/share/OHvault",
+        "linux"
+    ));
+}
+
+#[test]
+fn store_stamps_new_vaults_with_current_host_os() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let vault = sample_vault(tmp.path().to_path_buf());
+
+    store::insert_vault(&config, &vault).unwrap();
+
+    let listed = store::list_vaults(&config).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].host_os.as_deref(), Some(std::env::consts::OS));
+}
+
+#[test]
+fn store_filters_legacy_vaults_whose_path_belongs_to_another_host_family() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let mut vault = sample_vault(PathBuf::from(incompatible_path_for_current_host()));
+    vault.host_os = None;
+
+    store::insert_vault_preserving_host_for_tests(&config, &vault).unwrap();
+
+    assert!(store::list_vaults(&config).unwrap().is_empty());
+    assert!(store::get_vault(&config, &vault.id).unwrap().is_none());
+}
+
+#[test]
+fn store_filters_vaults_created_on_a_different_host_os() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let mut vault = sample_vault(tmp.path().to_path_buf());
+    vault.host_os = Some(if cfg!(windows) { "linux" } else { "windows" }.to_string());
+
+    store::insert_vault_preserving_host_for_tests(&config, &vault).unwrap();
+
+    assert!(store::list_vaults(&config).unwrap().is_empty());
+    assert!(store::get_vault(&config, &vault.id).unwrap().is_none());
 }
 
 #[test]
@@ -230,6 +325,24 @@ fn state_update_progress_noop_on_missing() {
 // ---------------------------------------------------------------------------
 // ops.rs — vault_sync_status RPC operation
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn vault_create_returns_current_host_os() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+
+    let outcome = ops::vault_create(
+        &config,
+        "Test",
+        tmp.path().to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome.value.host_os.as_deref(), Some(std::env::consts::OS));
+}
 
 #[tokio::test]
 async fn vault_sync_status_returns_idle_for_unknown_vault() {

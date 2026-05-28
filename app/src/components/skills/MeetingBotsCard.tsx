@@ -25,18 +25,27 @@ interface Props {
 
 interface PlatformDef {
   platform: MascotMeetPlatform;
-  label: string;
-  domainHint: string;
+  labelKey: string;
+  domainHintKey: string;
   comingSoon?: boolean;
 }
 
 const PLATFORMS: PlatformDef[] = [
-  { platform: 'gmeet', label: 'Google Meet', domainHint: 'meet.google.com/abc-defg-hij' },
-  { platform: 'zoom', label: 'Zoom', domainHint: 'zoom.us/j/…', comingSoon: true },
+  {
+    platform: 'gmeet',
+    labelKey: 'skills.meetingBots.platforms.gmeet',
+    domainHintKey: 'skills.meetingBots.platformHints.gmeet',
+  },
+  {
+    platform: 'zoom',
+    labelKey: 'skills.meetingBots.platforms.zoom',
+    domainHintKey: 'skills.meetingBots.platformHints.zoom',
+    comingSoon: true,
+  },
   {
     platform: 'teams',
-    label: 'Microsoft Teams',
-    domainHint: 'teams.microsoft.com/…',
+    labelKey: 'skills.meetingBots.platforms.teams',
+    domainHintKey: 'skills.meetingBots.platformHints.teams',
     comingSoon: true,
   },
 ];
@@ -152,6 +161,7 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
   }, [refreshRecentCalls]);
 
   const selected = PLATFORMS.find(p => p.platform === platform) ?? PLATFORMS[0];
+  const selectedLabel = t(selected.labelKey);
   const isComingSoon = !!selected.comingSoon;
 
   // Esc closes the modal — matches the OpenhumanLinkModal pattern.
@@ -167,7 +177,7 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
     event.preventDefault();
     setError(null);
     if (isComingSoon) {
-      setError(`${selected.label} support is coming soon.`);
+      setError(t('skills.meetingBots.platformComingSoon').replace('{label}', selectedLabel));
       return;
     }
     setSubmitting(true);
@@ -216,7 +226,7 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('common.close')}
             className="absolute right-3 top-3 rounded-full p-1 text-stone-500 dark:text-neutral-400 hover:bg-white/80 dark:hover:bg-neutral-800/60 hover:text-stone-800 dark:hover:text-neutral-100">
             ✕
           </button>
@@ -243,8 +253,12 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
                       ? 'bg-primary-500 text-white'
                       : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-700'
                   }`}>
-                  {p.label}
-                  {p.comingSoon && <span className="ml-1 opacity-70">· soon</span>}
+                  {t(p.labelKey)}
+                  {p.comingSoon && (
+                    <span className="ml-1 opacity-70">
+                      · {t('skills.meetingBots.soonSuffix')}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -262,7 +276,7 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
                 spellCheck={false}
                 value={meetUrl}
                 onChange={e => setMeetUrl(e.target.value)}
-                placeholder={selected.domainHint}
+                placeholder={t(selected.domainHintKey)}
                 disabled={isComingSoon || submitting}
                 autoFocus
                 className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-stone-50 dark:disabled:bg-neutral-800/60"
@@ -329,10 +343,10 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
                 }
                 className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-200 dark:disabled:bg-neutral-700 disabled:text-stone-400 dark:disabled:text-neutral-500">
                 {isComingSoon
-                  ? `${selected.label} ${t('skills.meetingBots.comingSoon')}`
+                  ? t('skills.meetingBots.comingSoon').replace('{label}', selectedLabel)
                   : submitting
                     ? t('skills.meetingBots.starting')
-                    : `${t('skills.meetingBots.sendTo')} ${selected.label}`}
+                    : t('skills.meetingBots.sendTo').replace('{label}', selectedLabel)}
               </button>
             </div>
           </form>

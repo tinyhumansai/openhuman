@@ -75,6 +75,7 @@ vi.mock('../../services/api/threadApi', () => ({
     updateMessage: vi.fn().mockResolvedValue({}),
     purge: vi.fn().mockResolvedValue({}),
     updateLabels: vi.fn().mockResolvedValue({}),
+    updateTitle: vi.fn().mockResolvedValue({}),
     persistReaction: vi.fn().mockResolvedValue({}),
   },
 }));
@@ -197,6 +198,15 @@ async function renderConversations(preload: Record<string, unknown> = {}) {
   return store;
 }
 
+/** Click the sidebar toggle so the thread list becomes visible.
+ *  The sidebar starts hidden (showSidebar=false) in this PR. */
+async function openSidebar() {
+  const toggleBtn = screen.getByTitle('Show sidebar');
+  await act(async () => {
+    fireEvent.click(toggleBtn);
+  });
+}
+
 // Default empty state
 const emptyThreadState = {
   threads: [],
@@ -301,6 +311,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // The "Threads" header is always rendered in page mode (sidebar guard removed)
     expect(screen.getByText('Threads')).toBeInTheDocument();
   });
@@ -310,6 +323,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
@@ -327,6 +343,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for loadThreads to complete and the thread list to render.
     // Use getAllByText because the title may appear in both the sidebar list
@@ -436,6 +455,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // The sidebar "New thread" button has title="New thread"
     const newThreadBtn = screen.getByTitle('New thread');
     await act(async () => {
@@ -477,6 +499,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     // Wait for the thread to appear in the sidebar
     await waitFor(() => {
@@ -1026,6 +1051,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     // All four tabs must be present regardless of thread count.
     expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Work' })).toBeInTheDocument();
@@ -1038,6 +1066,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Work' })).toHaveAttribute('aria-selected', 'false');
   });
@@ -1047,6 +1078,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
       await renderConversations({ thread: emptyThreadState });
     });
 
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
+
     expect(screen.getByText('No threads yet')).toBeInTheDocument();
   });
 
@@ -1054,6 +1088,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Work' }));
 
@@ -1070,6 +1107,9 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState });
     });
+
+    // Sidebar is hidden by default — open it first.
+    await openSidebar();
 
     fireEvent.click(screen.getByRole('tab', { name: 'Workers' }));
 
@@ -1269,5 +1309,138 @@ describe('Conversations — worker thread back-to-parent navigation (#1624)', ()
 
     // Loading span with animate-pulse is present when teamUsage=null and loading
     expect(screen.getByText('Loading…')).toBeInTheDocument();
+  });
+});
+
+describe('Conversations — thread title editing', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseUsageState.mockReturnValue({
+      teamUsage: null,
+      currentPlan: null,
+      currentTier: 'FREE' as const,
+      isFreeTier: true,
+      usagePct: 0,
+      isNearLimit: false,
+      isAtLimit: false,
+      isBudgetExhausted: false,
+      shouldShowBudgetCompletedMessage: false,
+      isLoading: false,
+      refresh: vi.fn(),
+    });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+  });
+
+  it('shows pencil icon on hover and enters edit mode on click', async () => {
+    const thread = makeThread({ id: 'edit-title-thread', title: 'Original Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(screen.getByText('Original Title')).toBeInTheDocument();
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    expect(editBtn).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    expect(input).toBeInTheDocument();
+    expect(input).toHaveValue('Original Title');
+  });
+
+  it('commits edited title on Enter and dispatches updateThreadTitle', async () => {
+    const thread = makeThread({ id: 'commit-title-thread', title: 'Old Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    (threadApi.updateTitle as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...thread,
+      title: 'New Title',
+    });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'New Title' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(threadApi.updateTitle).toHaveBeenCalledWith('commit-title-thread', 'New Title');
+    });
+  });
+
+  it('cancels editing on Escape without dispatching', async () => {
+    const thread = makeThread({ id: 'cancel-title-thread', title: 'Keep Me' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: 'Changed' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Escape' });
+    });
+
+    expect(screen.getByText('Keep Me')).toBeInTheDocument();
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
+  });
+
+  it('does not dispatch when title is empty after trim', async () => {
+    const thread = makeThread({ id: 'empty-title-thread', title: 'Has Title' });
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    const editBtn = screen.getByRole('button', { name: 'Edit thread title' });
+    await act(async () => {
+      fireEvent.click(editBtn);
+    });
+
+    const input = screen.getByLabelText('Edit thread title');
+    await act(async () => {
+      fireEvent.change(input, { target: { value: '   ' } });
+    });
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' });
+    });
+
+    expect(threadApi.updateTitle).not.toHaveBeenCalled();
   });
 });

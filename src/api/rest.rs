@@ -27,6 +27,19 @@ pub enum BackendApiError {
         /// Provider-specific message id from the URL.
         message_id: String,
     },
+    /// Backend rejected the bearer JWT with `401 Unauthorized`. This is an
+    /// expected user-session state (token expired, revoked, rotated
+    /// server-side) — not a code bug. Callers can route to a re-sign-in
+    /// flow; the auth domain owns recovery. Targets `OPENHUMAN-TAURI-4K8`
+    /// (12 events on `/openai/v1/audio/speech` mascot TTS, but the same
+    /// shape fires on every authed endpoint once the session lapses).
+    #[error("backend rejected session token on {method} {path}")]
+    Unauthorized {
+        /// HTTP method as a static string (`"GET"`, `"POST"`, …).
+        method: String,
+        /// Request path the 401 came back from (no query string).
+        path: String,
+    },
 }
 
 /// Extract `(provider, message_id)` from a backend channel path of the
@@ -76,6 +89,17 @@ fn build_backend_reqwest_client() -> Result<Client> {
             HeaderName::from_static("x-core-version"),
             HeaderValue::from_str(&version).context("invalid x-core-version header value")?,
         );
+    }
+    // The Tauri shell sets `OPENHUMAN_TAURI_VERSION` to its own package version
+    // before spawning the in-process core, so backend analytics can attribute
+    // core-originated requests to the desktop shell build that hosts them.
+    if let Ok(raw) = std::env::var("OPENHUMAN_TAURI_VERSION") {
+        if let Some(version) = sanitize_client_version(&raw) {
+            default_headers.insert(
+                HeaderName::from_static("x-tauri-version"),
+                HeaderValue::from_str(&version).context("invalid x-tauri-version header value")?,
+            );
+        }
     }
 
     // Platform-appropriate TLS backend: Windows → schannel (honors the OS
@@ -514,6 +538,32 @@ impl BackendOAuthClient {
         if !status.is_success() {
             let status_code = status.as_u16();
             let status_str = status_code.to_string();
+
+            // 401 on any authed backend endpoint is an expected user-session
+            // state (token expired / revoked / rotated server-side), not a
+            // code bug — every authed endpoint will see this once the session
+            // lapses. Surface a typed `BackendApiError::Unauthorized` so the
+            // auth domain can drive recovery, and skip `report_error` to
+            // avoid Sentry noise. Targets `OPENHUMAN-TAURI-4K8` (mascot TTS
+            // surfaced it first on `/openai/v1/audio/speech`, but the same
+            // shape applies to every `authed_json` path).
+            if status_code == 401 {
+                tracing::info!(
+                    domain = "backend_api",
+                    operation = "authed_json",
+                    method = method.as_str(),
+                    path = url.path(),
+                    status = status_code,
+                    failure = "non_2xx",
+                    "[backend_api] 401 on {} {} — session token rejected, surfacing typed error",
+                    method.as_str(),
+                    url.path(),
+                );
+                return Err(anyhow::Error::new(BackendApiError::Unauthorized {
+                    method: method.as_str().to_string(),
+                    path: url.path().to_string(),
+                }));
+            }
 
             // 404 on `/channels/<provider>/messages/<id>` is an expected
             // state (user deleted the message provider-side, or backend

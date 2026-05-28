@@ -187,7 +187,7 @@ const ReferralRewardsSection = () => {
               type="button"
               onClick={() => void loadStats()}
               className="ml-2 underline font-medium">
-              Retry
+              {t('rewards.referralSection.retry')}
             </button>
           </div>
         ) : null}

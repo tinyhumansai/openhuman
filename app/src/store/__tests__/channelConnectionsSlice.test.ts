@@ -177,6 +177,31 @@ describe('channelConnectionsSlice', () => {
     });
   });
 
+  it('lazily initialises a channel modes bucket when persisted state is missing the key', () => {
+    // Simulates a rehydrated state from before yuanbao existed: the channel
+    // key is absent so `state.connections.yuanbao` is undefined. Without
+    // `ensureChannelModes()` the first upsert would crash on
+    // `state.connections[channel][authMode]`. See `ensureChannelModes` in
+    // channelConnectionsSlice.ts.
+    const migrated = reducer(undefined, completeBreakingMigration());
+    const partial = {
+      ...migrated,
+      connections: { ...migrated.connections, yuanbao: undefined as never },
+    };
+
+    const next = reducer(
+      partial,
+      upsertChannelConnection({
+        channel: 'yuanbao',
+        authMode: 'api_key',
+        patch: { status: 'connected' },
+      })
+    );
+
+    expect(next.connections.yuanbao).toBeDefined();
+    expect(next.connections.yuanbao.api_key?.status).toBe('connected');
+  });
+
   it('clears stale lastError when patch explicitly sets undefined', () => {
     const withError = reducer(
       undefined,

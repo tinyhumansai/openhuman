@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "OpenHuman",
+  "version": "0.54.10",
+  "identifier": "com.openhuman.app",
+  "build": {
+    "beforeDevCommand": "pnpm --filter openhuman-app run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm --filter openhuman-app run build:app",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OpenHuman",
+        "width": 390,
+        "height": 844,
+        "decorations": true,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' 'unsafe-inline' data: blob: https: wss: ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; img-src 'self' data: blob: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* http: ws://127.0.0.1:* ws://localhost:* ws: https: wss: data: blob:; frame-src 'self' https: data: blob:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app"],
+    "icon": ["icons/icon.png"],
+    "resources": [],
+    "iOS": {
+      "minimumSystemVersion": "16.0",
+      "frameworks": ["AVFoundation.framework", "Speech.framework"],
+      "developmentTeam": ""
+    },
+    "android": {
+      "minSdkVersion": 24
+    }
+  }
+}

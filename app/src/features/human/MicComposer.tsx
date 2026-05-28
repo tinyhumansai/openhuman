@@ -1,5 +1,6 @@
 import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { transcribeWithFactory } from './voice/sttClient';
@@ -12,6 +13,65 @@ interface AudioInputDevice {
 }
 
 const composerLog = debug('human:mic-composer');
+
+/**
+ * Maximum recording duration in milliseconds. Auto-stops the recorder when
+ * reached so accidental or forgotten recordings don't run indefinitely.
+ * 60 seconds matches the practical ceiling for single-utterance STT accuracy.
+ * Exported for test assertions.
+ */
+export const MAX_RECORDING_MS = 60_000;
+
+/** Maximum number of retries for transient STT failures per encoding path. */
+const STT_MAX_RETRIES = 2;
+
+/** Base delay for exponential backoff (ms). Delay = base * 2^attempt. */
+const STT_RETRY_BASE_MS = 500;
+
+/**
+ * Errors that indicate a permanent failure — retrying won't help.
+ * Matched case-insensitively against the error message.
+ */
+const PERMANENT_ERROR_PATTERNS = [
+  'unknown method', // stale sidecar
+  'audio blob is empty',
+  'unavailable in this build',
+];
+
+class TranscriptionCancelledError extends Error {
+  constructor() {
+    super('transcription cancelled');
+    this.name = 'TranscriptionCancelledError';
+  }
+}
+
+function isTranscriptionCancelledError(err: unknown): err is TranscriptionCancelledError {
+  return err instanceof TranscriptionCancelledError;
+}
+
+function isTransientError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return !PERMANENT_ERROR_PATTERNS.some(p => msg.includes(p));
+}
+
+/**
+ * Heuristic check for low-confidence transcripts. The backend doesn't expose
+ * a confidence score, so we detect likely bad results from text patterns:
+ * - Single character (often a stray noise → "I" or "A")
+ * - Repeated single character ("aaa", "mmm")
+ * - Only punctuation / whitespace
+ * Exported for testing.
+ */
+export function isLowConfidenceTranscript(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return true;
+  if (trimmed.length === 1) return true;
+  // All same character repeated: "aaa", "mmm", "..."
+  if (/^(.)\1+$/i.test(trimmed)) return true;
+  // Only punctuation, whitespace, or symbols — no actual words
+  if (!/\p{L}/u.test(trimmed)) return true;
+  return false;
+}
 
 /** MIME types MediaRecorder will be asked to use, in priority order.
  *
@@ -43,6 +103,9 @@ export interface MicComposerProps {
   language?: string;
   /** Show a microphone device selector beneath the button. Defaults to false. */
   showDeviceSelector?: boolean;
+  /** When provided, renders a keyboard FAB next to the gear that switches the
+   *  surrounding composer back to text input. */
+  onSwitchToText?: () => void;
 }
 
 type RecordingState = 'idle' | 'recording' | 'transcribing';
@@ -66,11 +129,15 @@ export function MicComposer({
   onError,
   language = 'en',
   showDeviceSelector = false,
+  onSwitchToText,
 }: MicComposerProps) {
   const { t } = useT();
   const [state, setState] = useState<RecordingState>('idle');
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
+  const gearButtonRef = useRef<HTMLButtonElement | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<{ top: number; left: number } | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -82,6 +149,10 @@ export function MicComposer({
   // Without this, two awaited `getUserMedia` calls can resolve back-to-back
   // and leave one of the granted streams orphaned (mic indicator stuck on).
   const startInFlightRef = useRef(false);
+  // Recording timeout — auto-stops after MAX_RECORDING_MS.
+  const recordingTimerRef = useRef<number | null>(null);
+  const countdownRef = useRef<number | null>(null);
+  const [remainingSecs, setRemainingSecs] = useState<number | null>(null);
 
   // If the component unmounts mid-record, release the mic so the OS indicator
   // doesn't get stuck on.
@@ -89,6 +160,7 @@ export function MicComposer({
     disposedRef.current = false;
     return () => {
       disposedRef.current = true;
+      clearRecordingTimer();
       // Detach onstop first — `recorder.stop()` below is what would fire it,
       // and we don't want finalizeRecording running post-unmount.
       if (recorderRef.current) recorderRef.current.onstop = null;
@@ -209,6 +281,33 @@ export function MicComposer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, disabled]);
 
+  function clearRecordingTimer() {
+    if (recordingTimerRef.current != null) {
+      window.clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (countdownRef.current != null) {
+      window.clearInterval(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setRemainingSecs(null);
+  }
+
+  function startRecordingTimer() {
+    clearRecordingTimer();
+    const totalSecs = Math.ceil(MAX_RECORDING_MS / 1000);
+    let tick = totalSecs;
+    setRemainingSecs(tick);
+    countdownRef.current = window.setInterval(() => {
+      tick = Math.max(0, tick - 1);
+      setRemainingSecs(tick);
+    }, 1000);
+    recordingTimerRef.current = window.setTimeout(() => {
+      composerLog('recording auto-stopped after %dms', MAX_RECORDING_MS);
+      stopRecording();
+    }, MAX_RECORDING_MS);
+  }
+
   function stopStream() {
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
@@ -315,12 +414,14 @@ export function MicComposer({
     recorder.start();
     setState('recording');
     startInFlightRef.current = false;
+    startRecordingTimer();
     composerLog('recording started mime=%s', recorder.mimeType || '(default)');
   }
 
   function stopRecording() {
     const recorder = recorderRef.current;
     if (!recorder || recorder.state === 'inactive') return;
+    clearRecordingTimer();
     setState('transcribing');
     try {
       recorder.stop();
@@ -364,44 +465,104 @@ export function MicComposer({
 
     try {
       const transcript = await transcribeWithFallback(blob);
+      if (disposedRef.current) return;
       if (!transcript) {
         onError?.(t('mic.noSpeechDetected'));
         setState('idle');
         return;
       }
+      if (isLowConfidenceTranscript(transcript)) {
+        composerLog('low-confidence transcript detected length=%d', transcript.length);
+        onError?.(t('mic.lowConfidenceResult'));
+        setState('idle');
+        return;
+      }
       await onSubmit(transcript);
     } catch (err) {
+      if (disposedRef.current || isTranscriptionCancelledError(err)) {
+        composerLog('transcribe cancelled after composer disposal');
+        return;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       composerLog('transcribe failed: %s', msg);
       onError?.(t('mic.transcriptionFailed').replace('{message}', msg));
     } finally {
-      setState('idle');
+      if (!disposedRef.current) setState('idle');
     }
+  }
+
+  /**
+   * Retry a transcription call up to `STT_MAX_RETRIES` times with
+   * exponential backoff for transient errors. Permanent errors (stale
+   * sidecar, empty blob) are rethrown immediately.
+   */
+  async function transcribeWithRetry(blob: Blob, label: string): Promise<string> {
+    const opts = language ? { language } : undefined;
+    let lastErr: unknown;
+    const throwIfDisposed = () => {
+      if (disposedRef.current) throw new TranscriptionCancelledError();
+    };
+    for (let attempt = 0; attempt <= STT_MAX_RETRIES; attempt++) {
+      throwIfDisposed();
+      try {
+        composerLog(
+          'transcribe attempt=%s/%d bytes=%d mime=%s lang=%s',
+          label,
+          attempt,
+          blob.size,
+          blob.type,
+          language || 'auto'
+        );
+        const transcript = await transcribeWithFactory(blob, opts);
+        throwIfDisposed();
+        return transcript;
+      } catch (err) {
+        if (isTranscriptionCancelledError(err)) throw err;
+        lastErr = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!isTransientError(err)) {
+          composerLog('transcribe permanent failure attempt=%s/%d: %s', label, attempt, msg);
+          throw err;
+        }
+        if (attempt < STT_MAX_RETRIES) {
+          const delay = STT_RETRY_BASE_MS * Math.pow(2, attempt);
+          composerLog(
+            'transcribe transient failure attempt=%s/%d, retrying in %dms: %s',
+            label,
+            attempt,
+            delay,
+            msg
+          );
+          await new Promise(r => setTimeout(r, delay));
+          throwIfDisposed();
+        } else {
+          composerLog('transcribe exhausted retries attempt=%s/%d: %s', label, attempt, msg);
+        }
+      }
+    }
+    throw lastErr;
   }
 
   /**
    * Send the recorder's native blob first (Opus-in-WebM ~3KB/sec) — Scribe
    * accepts it natively and it uploads ~30x faster than the 16kHz mono WAV
    * we used to transcode (~32KB/sec). If that ever fails (older STT
-   * provider behind a feature flag, codec mismatch, …), retry once with a
-   * re-encoded WAV so we don't regress correctness for the speed win.
+   * provider behind a feature flag, codec mismatch, …), re-encode to WAV
+   * and retry so we don't regress correctness for the speed win. Each path
+   * retries transient errors with exponential backoff.
    */
   async function transcribeWithFallback(blob: Blob): Promise<string> {
     const startedAt = Date.now();
-    const opts = language ? { language } : undefined;
     try {
-      composerLog(
-        'transcribe attempt=native bytes=%d mime=%s lang=%s',
-        blob.size,
-        blob.type,
-        language || 'auto'
-      );
-      const text = await transcribeWithFactory(blob, opts);
-      composerLog('transcribe ok attempt=native ms=%d', Math.round(Date.now() - startedAt));
+      const text = await transcribeWithRetry(blob, 'native');
+      composerLog('transcribe ok path=native ms=%d', Math.round(Date.now() - startedAt));
       return text;
     } catch (err) {
+      if (isTranscriptionCancelledError(err)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
-      composerLog('transcribe failed attempt=native — falling back to wav: %s', msg);
+      // Permanent errors don't benefit from a WAV re-encode — bail early.
+      if (!isTransientError(err)) throw err;
+      composerLog('transcribe native path exhausted — falling back to wav: %s', msg);
       const reEncodeStart = Date.now();
       const wav = await encodeBlobToWav(blob);
       composerLog(
@@ -409,9 +570,9 @@ export function MicComposer({
         wav.size,
         Math.round(Date.now() - reEncodeStart)
       );
-      const text = await transcribeWithFactory(wav, opts);
+      const text = await transcribeWithRetry(wav, 'wav');
       composerLog(
-        'transcribe ok attempt=wav-fallback total_ms=%d',
+        'transcribe ok path=wav-fallback total_ms=%d',
         Math.round(Date.now() - startedAt)
       );
       return text;
@@ -425,28 +586,18 @@ export function MicComposer({
   const label = isBusy
     ? t('mic.transcribing')
     : isRecording
-      ? t('mic.tapToSend')
+      ? remainingSecs != null && remainingSecs <= 10
+        ? t('mic.tapToSendCountdown').replace('{seconds}', String(remainingSecs))
+        : t('mic.tapToSend')
       : disabled
         ? t('mic.waitingForAgent')
         : t('mic.tapAndSpeak');
 
+  const showDeviceMenuFab = showDeviceSelector && devices.length > 1;
+
   return (
     <div className="flex flex-col items-center gap-2">
-      {showDeviceSelector && devices.length > 0 && (
-        <select
-          aria-label="Microphone device"
-          value={selectedDeviceId}
-          onChange={e => setSelectedDeviceId(e.target.value)}
-          disabled={state !== 'idle' || devices.length <= 1}
-          className="text-xs text-stone-600 dark:text-neutral-300 bg-stone-100 dark:bg-neutral-800 border border-stone-200 dark:border-neutral-700 rounded px-2 py-1 max-w-[220px] truncate disabled:opacity-50">
-          {devices.map(d => (
-            <option key={d.deviceId} value={d.deviceId}>
-              {d.label}
-            </option>
-          ))}
-        </select>
-      )}
-      <div className="flex items-center justify-center gap-3">
+      <div className="relative flex items-center justify-center gap-3">
         <button
           type="button"
           aria-label={isRecording ? t('mic.stopRecording') : t('mic.startRecording')}
@@ -489,6 +640,128 @@ export function MicComposer({
             </svg>
           )}
         </button>
+        {showDeviceMenuFab && (
+          <div className="relative">
+            <button
+              ref={gearButtonRef}
+              type="button"
+              aria-label={t('mic.deviceSelector') || 'Microphone device'}
+              aria-expanded={deviceMenuOpen}
+              onClick={() => {
+                const rect = gearButtonRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setMenuAnchor({ top: rect.bottom + 8, left: rect.left + rect.width / 2 });
+                }
+                setDeviceMenuOpen(open => !open);
+              }}
+              disabled={state !== 'idle'}
+              className="w-8 h-8 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={1.8}
+                viewBox="0 0 24 24"
+                aria-hidden>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+                />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                />
+              </svg>
+            </button>
+            {deviceMenuOpen &&
+              menuAnchor &&
+              createPortal(
+                <>
+                  <div
+                    className="fixed inset-0"
+                    style={{ zIndex: 99998 }}
+                    onClick={() => setDeviceMenuOpen(false)}
+                    aria-hidden
+                  />
+                  <div
+                    role="menu"
+                    aria-label={t('mic.deviceSelector') || 'Microphone device'}
+                    style={{
+                      position: 'fixed',
+                      top: menuAnchor.top,
+                      left: menuAnchor.left,
+                      transform: 'translateX(-50%)',
+                      zIndex: 99999,
+                    }}
+                    className="w-64 rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 shadow-soft py-1">
+                    {devices.map(d => {
+                      const selected = d.deviceId === selectedDeviceId;
+                      return (
+                        <button
+                          key={d.deviceId}
+                          role="menuitemradio"
+                          aria-checked={selected}
+                          type="button"
+                          onClick={() => {
+                            setSelectedDeviceId(d.deviceId);
+                            setDeviceMenuOpen(false);
+                          }}
+                          className={`w-full flex items-center gap-2 px-3 py-2 text-left text-xs transition-colors ${
+                            selected
+                              ? 'bg-primary-50 dark:bg-primary-900/20 text-stone-900 dark:text-neutral-100'
+                              : 'text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800'
+                          }`}>
+                          <span className="flex-1 min-w-0 truncate">{d.label}</span>
+                          {selected && (
+                            <svg
+                              className="w-3.5 h-3.5 text-primary-500 flex-shrink-0"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth={2.5}
+                              viewBox="0 0 24 24"
+                              aria-hidden>
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M5 13l4 4L19 7"
+                              />
+                            </svg>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>,
+                document.body
+              )}
+          </div>
+        )}
+        {onSwitchToText && (
+          <button
+            type="button"
+            aria-label={t('chat.switchToText')}
+            title={t('chat.switchToText')}
+            onClick={onSwitchToText}
+            disabled={state !== 'idle'}
+            className="w-8 h-8 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-stone-700 dark:hover:text-neutral-200 hover:border-stone-300 dark:hover:border-neutral-600 transition-colors shadow-soft disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.8}
+              viewBox="0 0 24 24"
+              aria-hidden>
+              <rect x="2" y="6" width="20" height="12" rx="2" ry="2" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"
+              />
+            </svg>
+          </button>
+        )}
         <span className="text-xs text-stone-500 dark:text-neutral-400 select-none">{label}</span>
       </div>
     </div>

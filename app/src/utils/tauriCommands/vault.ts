@@ -8,6 +8,7 @@ export interface CoreVault {
   id: string;
   name: string;
   root_path: string;
+  host_os?: string | null;
   namespace: string;
   include_globs: string[];
   exclude_globs: string[];

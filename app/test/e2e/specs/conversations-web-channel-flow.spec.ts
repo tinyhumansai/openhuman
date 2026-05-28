@@ -1,19 +1,21 @@
 // @ts-nocheck
-import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
-import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
+import { waitForApp } from '../helpers/app-helpers';
 import {
-  dumpAccessibilityTree,
-  textExists,
-  waitForText,
-  waitForWebView,
-  waitForWindowVisible,
-} from '../helpers/element-helpers';
+  clickByTitle,
+  clickSend,
+  typeIntoComposer,
+  waitForSocketConnected,
+} from '../helpers/chat-harness';
+import { dumpAccessibilityTree, textExists, waitForText } from '../helpers/element-helpers';
+import { resetApp } from '../helpers/reset-app';
+import { navigateToConversations, navigateViaHash } from '../helpers/shared-flows';
 import {
-  completeOnboardingIfVisible,
-  navigateToConversations,
-  navigateViaHash,
-} from '../helpers/shared-flows';
-import { clearRequestLog, getRequestLog, startMockServer, stopMockServer } from '../mock-server';
+  clearRequestLog,
+  getRequestLog,
+  setMockBehavior,
+  startMockServer,
+  stopMockServer,
+} from '../mock-server';
 
 function stepLog(message: string, context?: unknown) {
   const stamp = new Date().toISOString();
@@ -46,37 +48,27 @@ suiteRunner('Conversations web channel flow', () => {
     await startMockServer();
     stepLog('waiting for app');
     await waitForApp();
+    stepLog('resetting app');
+    await resetApp('e2e-conversations-token');
+
+    // Configure mock LLM to return a simple text response. Without this, the
+    // mock's agentic detection path (triggered by the orchestrator sending
+    // tools in the request) returns spurious tool calls instead of plain text.
+    const script = [{ text: 'Hello from e2e mock agent' }, { finish: 'stop' }];
+    setMockBehavior('llmStreamScript', JSON.stringify(script));
+
     stepLog('clearing request log');
     clearRequestLog();
   });
 
   after(async () => {
+    setMockBehavior('llmStreamScript', '');
     stepLog('stopping mock server');
     await stopMockServer();
   });
 
   it('sends UI message through agent loop and renders response', async function () {
     this.timeout(180_000);
-    stepLog('trigger deep link');
-    await triggerAuthDeepLinkBypass('e2e-conversations-token');
-    stepLog('wait for window');
-    await waitForWindowVisible(25_000);
-    stepLog('wait for webview');
-    await waitForWebView(15_000);
-    stepLog('wait for app ready');
-    await waitForAppReady(15_000);
-
-    // triggerAuthDeepLinkBypass uses key=auth which sets the token directly
-    // (no /telegram/login-tokens/ consume call). Wait for user profile instead.
-    stepLog('wait for user profile request');
-    const profileCall = await waitForRequest('GET', '/auth/me', 15_000);
-    if (!profileCall) {
-      stepLog('user profile call not found — bypass token may have been set without API call');
-    }
-
-    stepLog('complete onboarding');
-    await completeOnboardingIfVisible('[ConversationsE2E]');
-
     stepLog('open conversations');
     // Navigate via hash to /chat (the unified agent + web channel page).
     // 'Message OpenHuman' button was removed from Home in a redesign — navigate directly.
@@ -88,62 +80,36 @@ suiteRunner('Conversations web channel flow', () => {
       await browser.pause(2_000);
     }
 
-    stepLog('send message');
-    // The chat input uses a textarea with placeholder attribute — not visible as text content.
-    // Use browser.execute to find and focus it, then type.
-    const foundInput = await browser.execute(() => {
-      const textarea = document.querySelector(
-        'textarea[placeholder*="Type a message"]'
-      ) as HTMLTextAreaElement;
-      if (textarea) {
-        textarea.focus();
-        textarea.click();
-        return true;
-      }
-      // Fallback: any textarea or contenteditable
-      const fallback = document.querySelector('textarea, [contenteditable="true"]') as HTMLElement;
-      if (fallback) {
-        fallback.focus();
-        (fallback as HTMLElement).click();
-        return true;
-      }
-      return false;
+    stepLog('ensure thread exists');
+    // The agent pipeline requires an active thread. Click "New thread" to
+    // ensure one is selected (same pattern as chat-harness-send-stream).
+    await browser.waitUntil(async () => await textExists('Threads'), {
+      timeout: 15_000,
+      timeoutMsg: 'Conversations did not mount (Threads heading missing)',
     });
-    if (!foundInput) {
-      const tree = await dumpAccessibilityTree();
-      stepLog('Chat input not found. Tree:', tree.slice(0, 4000));
-      throw new Error('Chat input textarea not found');
-    }
-    stepLog('Chat input focused');
-    await browser.pause(500);
-
-    // Set value via JS and dispatch input event (browser.keys unreliable on tauri-driver)
-    await browser.execute(() => {
-      const textarea = document.querySelector(
-        'textarea[placeholder*="Type a message"]'
-      ) as HTMLTextAreaElement;
-      if (!textarea) return;
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        'value'
-      )?.set;
-      nativeInputValueSetter?.call(textarea, 'hello from e2e web channel');
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await browser.pause(500);
-
-    // Submit by pressing Enter via JS (simulates form submission)
-    await browser.execute(() => {
-      const textarea = document.querySelector(
-        'textarea[placeholder*="Type a message"]'
-      ) as HTMLTextAreaElement;
-      if (!textarea) return;
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
-      );
-    });
+    expect(await clickByTitle('New thread', 8_000)).toBe(true);
     await browser.pause(1_000);
+
+    stepLog('send message');
+    // Wait for Socket.IO to connect — composerSendDecision blocks sends when
+    // the socket is not yet up.
+    const socketReady = await waitForSocketConnected(30_000);
+    if (!socketReady) {
+      stepLog('socket did not connect within 30 s — send may fail');
+    }
+
+    // Use the proven chat-harness helpers: real keyboard events through
+    // Chromium's input pipeline so React's controlled state updates correctly.
+    await typeIntoComposer('hello from e2e web channel');
+    const sent = await browser.waitUntil(async () => await clickSend(), {
+      timeout: 15_000,
+      timeoutMsg: 'Send button never enabled',
+    });
+    if (!sent) {
+      const tree = await dumpAccessibilityTree();
+      stepLog('Send failed. Tree:', tree.slice(0, 4000));
+    }
+    expect(sent).toBe(true);
 
     await waitForText('hello from e2e web channel', 20_000);
     await waitForText('Hello from e2e mock agent', 30_000);
@@ -159,7 +125,8 @@ suiteRunner('Conversations web channel flow', () => {
     expect(await textExists('chat_send is not available')).toBe(false);
   });
 
-  it('continues in-flight chat when switching tabs', async () => {
+  it('continues in-flight chat when switching tabs', async function () {
+    this.timeout(90_000);
     clearRequestLog();
     await navigateToConversations();
 
@@ -168,35 +135,13 @@ suiteRunner('Conversations web channel flow', () => {
     });
 
     const uniquePayload = `tab-switch-${Date.now()}`;
-    const foundInput = await browser.execute(() => {
-      const textarea = document.querySelector(
-        'textarea[placeholder*="Type a message"]'
-      ) as HTMLTextAreaElement;
-      if (!textarea) return false;
-      textarea.focus();
-      textarea.click();
-      return true;
+    await waitForSocketConnected(15_000);
+    await typeIntoComposer(uniquePayload);
+    const sent = await browser.waitUntil(async () => await clickSend(), {
+      timeout: 15_000,
+      timeoutMsg: 'Send button never enabled (tab-switch test)',
     });
-    if (!foundInput) {
-      throw new Error('Chat input textarea not found');
-    }
-
-    await browser.execute((text: string) => {
-      const textarea = document.querySelector(
-        'textarea[placeholder*="Type a message"]'
-      ) as HTMLTextAreaElement;
-      if (!textarea) return;
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype,
-        'value'
-      )?.set;
-      nativeInputValueSetter?.call(textarea, text);
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-      textarea.dispatchEvent(new Event('change', { bubbles: true }));
-      textarea.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true })
-      );
-    }, uniquePayload);
+    expect(sent).toBe(true);
 
     await waitForText(uniquePayload, 20_000);
     await navigateViaHash('/skills');

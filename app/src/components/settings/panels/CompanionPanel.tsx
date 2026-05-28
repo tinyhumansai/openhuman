@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useT } from '../../../lib/i18n/I18nContext';
 import { callCoreRpc } from '../../../services/coreRpcClient';
 import type {
   CompanionConfig,
@@ -12,6 +13,7 @@ import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const CompanionPanel = () => {
+  const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const companionState = useAppSelector(state => state.companion.state);
 
@@ -97,7 +99,7 @@ const CompanionPanel = () => {
   return (
     <div>
       <SettingsHeader
-        title="Desktop Companion"
+        title={t('settings.companion.title')}
         showBackButton
         onBack={navigateBack}
         breadcrumbs={breadcrumbs}
@@ -107,9 +109,13 @@ const CompanionPanel = () => {
         {/* Status */}
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-stone-800">Session</p>
+            <p className="text-sm font-medium text-stone-800">{t('settings.companion.session')}</p>
             <p className="text-xs text-stone-500">
-              {isLoading ? 'Loading…' : sessionActive ? `Active — ${companionState}` : 'Inactive'}
+              {isLoading
+                ? t('common.loading')
+                : sessionActive
+                  ? `${t('settings.companion.activeLabel')} — ${companionState}`
+                  : t('settings.companion.inactiveStatus')}
             </p>
           </div>
           <div>
@@ -119,7 +125,9 @@ const CompanionPanel = () => {
                 onClick={handleStop}
                 disabled={isStopping}
                 className="rounded-lg bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50">
-                {isStopping ? 'Stopping…' : 'Stop Session'}
+                {isStopping
+                  ? t('settings.companion.stopping')
+                  : t('settings.companion.stopSession')}
               </button>
             ) : (
               <button
@@ -127,7 +135,9 @@ const CompanionPanel = () => {
                 onClick={handleStart}
                 disabled={isStarting || isLoading}
                 className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 disabled:opacity-50">
-                {isStarting ? 'Starting…' : 'Start Session'}
+                {isStarting
+                  ? t('settings.companion.starting')
+                  : t('settings.companion.startSession')}
               </button>
             )}
           </div>
@@ -137,12 +147,15 @@ const CompanionPanel = () => {
         {sessionActive && status && (
           <div className="rounded-lg bg-stone-50 p-3 text-xs text-stone-600 space-y-1">
             <p>
-              Session ID: <span className="font-mono">{status.session_id?.slice(0, 8)}…</span>
+              {t('settings.companion.sessionId')}:{' '}
+              <span className="font-mono">{status.session_id?.slice(0, 8)}…</span>
             </p>
-            <p>Turns: {status.turn_count}</p>
+            <p>
+              {t('settings.companion.turns')}: {status.turn_count}
+            </p>
             {status.remaining_ms != null && (
               <p>
-                Remaining: {Math.floor(status.remaining_ms / 60000)}m{' '}
+                {t('settings.companion.remaining')}: {Math.floor(status.remaining_ms / 60000)}m{' '}
                 {Math.floor((status.remaining_ms % 60000) / 1000)}s
               </p>
             )}
@@ -153,32 +166,36 @@ const CompanionPanel = () => {
         {config && (
           <div className="space-y-3 border-t border-stone-100 pt-4">
             <p className="text-xs font-medium uppercase tracking-wide text-stone-400">
-              Configuration
+              {t('settings.companion.configuration')}
             </p>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">Hotkey</span>
+              <span className="text-sm text-stone-700">{t('settings.companion.hotkey')}</span>
               <span className="rounded bg-stone-100 px-2 py-0.5 font-mono text-xs text-stone-600">
                 {config.hotkey}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">Activation Mode</span>
+              <span className="text-sm text-stone-700">
+                {t('settings.companion.activationMode')}
+              </span>
               <span className="text-xs text-stone-500">{config.activation_mode}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">Session TTL</span>
+              <span className="text-sm text-stone-700">{t('settings.companion.sessionTtl')}</span>
               <span className="text-xs text-stone-500">{config.ttl_secs}s</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">Screen Capture</span>
+              <span className="text-sm text-stone-700">
+                {t('settings.companion.screenCapture')}
+              </span>
               <span className="text-xs text-stone-500">
-                {config.capture_screen ? 'Enabled' : 'Disabled'}
+                {config.capture_screen ? t('common.enabled') : t('common.disabled')}
               </span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-sm text-stone-700">App Context</span>
+              <span className="text-sm text-stone-700">{t('settings.companion.appContext')}</span>
               <span className="text-xs text-stone-500">
-                {config.include_app_context ? 'Enabled' : 'Disabled'}
+                {config.include_app_context ? t('common.enabled') : t('common.disabled')}
               </span>
             </div>
           </div>

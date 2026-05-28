@@ -1,6 +1,3 @@
-import * as path from 'node:path';
-import { promises as fs } from 'node:fs';
-
 // @ts-nocheck
 import { waitForApp } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
@@ -26,10 +23,9 @@ const USER_ID = 'e2e-tool-filesystem';
  * sidecar — that's the denial assertion required by gitbooks/developing/testing-strategy.md.
  *
  * Side-effect verification: every successful write is asserted twice — once
- * from the response payload (bytes_written) and once by reading the resulting
- * file from disk via Node `fs` against the temp `OPENHUMAN_WORKSPACE` exported
- * by `app/scripts/e2e-run-spec.sh`. This catches transport mismatches that
- * would otherwise pass a payload-only assertion.
+ * from the response payload (bytes_written) and once via the test-support
+ * workspace file reader against the sidecar's active workspace. This catches
+ * transport mismatches that would otherwise pass a payload-only assertion.
  */
 function stepLog(message: string, context?: unknown): void {
   const stamp = new Date().toISOString();
@@ -40,21 +36,12 @@ function stepLog(message: string, context?: unknown): void {
   console.log(`[ToolFilesystemE2E][${stamp}] ${message}`, JSON.stringify(context, null, 2));
 }
 
-const TEST_RELATIVE_PATH = 'memory/e2e-967-filesystem-canary.txt';
+const TEST_RELATIVE_PATH = 'e2e-967-filesystem-canary.txt';
+const TEST_WORKSPACE_RELATIVE_PATH = `memory/${TEST_RELATIVE_PATH}`;
 const TEST_CONTENT =
   'OpenHuman filesystem tool canary fact — issue #967 — bytes asserted both via RPC and disk';
 const TRAVERSAL_PATH = '../escape-967.txt';
 const ABSOLUTE_PATH = '/tmp/openhuman-967-absolute-escape.txt';
-
-function workspaceDir(): string {
-  const ws = process.env.OPENHUMAN_WORKSPACE;
-  if (!ws) {
-    throw new Error(
-      'OPENHUMAN_WORKSPACE not set; this spec must be launched via app/scripts/e2e-run-spec.sh'
-    );
-  }
-  return ws;
-}
 
 interface WriteResultEnvelope {
   data?: { relative_path?: string; written?: boolean; bytes_written?: number };
@@ -68,23 +55,22 @@ interface ListResultEnvelope {
   data?: { relative_dir?: string; files?: string[]; count?: number };
 }
 
+interface WorkspaceReadResultEnvelope {
+  result?: {
+    content_utf8?: string;
+    rel_path?: string;
+    returned_bytes?: number;
+    size_on_disk?: number;
+    truncated?: boolean;
+  };
+}
+
 describe('System tools — Filesystem (file_read / file_write / path restriction)', () => {
   before(async function beforeSuite() {
     this.timeout(90_000);
     await startMockServer();
     await waitForApp();
     await resetApp(USER_ID);
-
-    // Pre-clean any state from a previous run so 6.1.1 read assertion is
-    // unambiguous if the same workspace is reused across restarts.
-    const ws = workspaceDir();
-    const fullPath = path.join(ws, TEST_RELATIVE_PATH);
-    try {
-      await fs.unlink(fullPath);
-      stepLog(`pre-clean removed prior canary at ${fullPath}`);
-    } catch {
-      // ignore — file may not exist
-    }
   });
 
   after(async () => {
@@ -105,21 +91,30 @@ describe('System tools — Filesystem (file_read / file_write / path restriction
 
     const data = writeResult.result?.data;
     expect(data?.written).toBe(true);
-    expect(data?.bytes_written).toBe(TEST_CONTENT.length);
+    // Rust returns UTF-8 byte count; em-dashes (—) are 3 bytes each in UTF-8
+    expect(data?.bytes_written).toBe(Buffer.byteLength(TEST_CONTENT, 'utf8'));
     expect(data?.relative_path).toBe(TEST_RELATIVE_PATH);
 
     // Disk-side assertion: the byte payload must round-trip via the workspace.
     // This is the load-bearing "side effect proof" that the sidecar actually
-    // wrote to OPENHUMAN_WORKSPACE rather than only echoing a success payload.
-    const onDisk = await fs.readFile(path.join(workspaceDir(), TEST_RELATIVE_PATH), 'utf8');
-    expect(onDisk).toBe(TEST_CONTENT);
+    // wrote the file rather than only echoing a success payload.
+    const diskRead = await callOpenhumanRpc<WorkspaceReadResultEnvelope>(
+      'openhuman.test_support_read_workspace_file',
+      { rel_path: TEST_WORKSPACE_RELATIVE_PATH, max_bytes: 1024 }
+    );
+    expect(diskRead.ok).toBe(true);
+    expect(diskRead.result?.result?.content_utf8).toBe(TEST_CONTENT);
+    expect(diskRead.result?.result?.size_on_disk).toBe(Buffer.byteLength(TEST_CONTENT, 'utf8'));
   });
 
   it('6.1.1 reads back the file via memory_read_file and content matches', async () => {
     // Seed the canary in-test so the read assertion remains valid when the
     // suite is run with `--grep` and the write test has not preceded it.
-    await fs.mkdir(path.join(workspaceDir(), 'memory'), { recursive: true });
-    await fs.writeFile(path.join(workspaceDir(), TEST_RELATIVE_PATH), TEST_CONTENT, 'utf8');
+    const seed = await callOpenhumanRpc<WriteResultEnvelope>('openhuman.memory_write_file', {
+      relative_path: TEST_RELATIVE_PATH,
+      content: TEST_CONTENT,
+    });
+    expect(seed.ok).toBe(true);
 
     stepLog('issuing memory_read_file', { relative_path: TEST_RELATIVE_PATH });
     const readResult = await callOpenhumanRpc<ReadResultEnvelope>('openhuman.memory_read_file', {
@@ -133,7 +128,7 @@ describe('System tools — Filesystem (file_read / file_write / path restriction
     // Cross-check with memory_list_files to prove directory listing also
     // honours the workspace boundary and surfaces the canary.
     const listResult = await callOpenhumanRpc<ListResultEnvelope>('openhuman.memory_list_files', {
-      relative_dir: 'memory',
+      relative_dir: '',
     });
     stepLog('list response', listResult);
     expect(listResult.ok).toBe(true);

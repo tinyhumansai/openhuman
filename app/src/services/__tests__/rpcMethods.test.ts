@@ -53,6 +53,66 @@ describe('rpcMethods catalog', () => {
     );
   });
 
+  describe('MCP client legacy alias resolution (Sentry CORE-RUST-DW/DV/DT/DS/DR)', () => {
+    test('mcp_clients.list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('mcp_clients.list')).toBe(CORE_RPC_METHODS.mcpClientsInstalledList);
+    });
+
+    test('openhuman.mcp_clients_list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_clients_list')).toBe(
+        CORE_RPC_METHODS.mcpClientsInstalledList
+      );
+    });
+
+    test('openhuman.mcp_list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_list')).toBe(
+        CORE_RPC_METHODS.mcpClientsInstalledList
+      );
+    });
+
+    test('openhuman.mcp_servers_list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_servers_list')).toBe(
+        CORE_RPC_METHODS.mcpClientsInstalledList
+      );
+    });
+
+    test('openhuman.tool_registry_call resolves to mcp_clients_tool_call', () => {
+      expect(normalizeRpcMethod('openhuman.tool_registry_call')).toBe(
+        CORE_RPC_METHODS.mcpClientsToolCall
+      );
+    });
+
+    test('canonical mcp_clients_installed_list passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_clients_installed_list')).toBe(
+        'openhuman.mcp_clients_installed_list'
+      );
+    });
+
+    test('canonical mcp_clients_tool_call passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_clients_tool_call')).toBe(
+        'openhuman.mcp_clients_tool_call'
+      );
+    });
+  });
+
+  describe('health legacy alias resolution (Sentry CORE-RUST-FG / CORE-RUST-G0)', () => {
+    test('health_snapshot resolves to openhuman.health_snapshot', () => {
+      expect(normalizeRpcMethod('health_snapshot')).toBe(CORE_RPC_METHODS.healthSnapshot);
+    });
+
+    test('openhuman.system_info resolves to openhuman.health_system_info (Sentry CORE-RUST-G0)', () => {
+      // Older clients called openhuman.system_info before the method was
+      // namespaced under health as openhuman.health_system_info.
+      expect(normalizeRpcMethod('openhuman.system_info')).toBe(CORE_RPC_METHODS.healthSystemInfo);
+    });
+
+    test('canonical health_system_info passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.health_system_info')).toBe(
+        'openhuman.health_system_info'
+      );
+    });
+  });
+
   test('catalog canonical methods exist in core schema registry (drift guard)', () => {
     const schemaSources = [
       fs.readFileSync(
@@ -71,6 +131,18 @@ describe('rpcMethods catalog', () => {
         path.resolve(__dirname, '../../../../src/openhuman/inference/schemas.rs'),
         'utf8'
       ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/embeddings/schemas.rs'),
+        'utf8'
+      ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/mcp_registry/schemas.rs'),
+        'utf8'
+      ),
+      fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/health/schemas.rs'),
+        'utf8'
+      ),
     ].join('\n');
 
     for (const method of Object.values(CORE_RPC_METHODS)) {
@@ -81,9 +153,15 @@ describe('rpcMethods catalog', () => {
         ? 'screen_intelligence'
         : methodRoot.startsWith('inference_')
           ? 'inference'
-          : methodRoot.startsWith('providers_')
-            ? 'providers'
-            : 'config';
+          : methodRoot.startsWith('embeddings_')
+            ? 'embeddings'
+            : methodRoot.startsWith('providers_')
+              ? 'providers'
+              : methodRoot.startsWith('mcp_clients_')
+                ? 'mcp_clients'
+                : methodRoot.startsWith('health_')
+                  ? 'health'
+                  : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);

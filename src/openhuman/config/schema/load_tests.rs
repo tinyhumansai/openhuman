@@ -547,6 +547,48 @@ fn env_overlay_temperature_accepts_valid_and_ignores_out_of_range_or_garbage() {
 }
 
 #[test]
+fn env_overlay_autonomy_max_actions_per_hour_accepts_valid_u32() {
+    let mut cfg = Config::default();
+    cfg.autonomy.max_actions_per_hour = 20;
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "64"));
+    assert_eq!(cfg.autonomy.max_actions_per_hour, 64);
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "  "));
+    assert_eq!(
+        cfg.autonomy.max_actions_per_hour, 64,
+        "blank env value must leave the configured limit unchanged"
+    );
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "NaN"));
+    assert_eq!(
+        cfg.autonomy.max_actions_per_hour, 64,
+        "invalid env value must leave the configured limit unchanged"
+    );
+}
+
+#[test]
+fn env_overlay_output_language_accepts_non_empty_value() {
+    let mut cfg = Config::default();
+    assert!(cfg.output_language.is_none());
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_OUTPUT_LANGUAGE", "zh-CN"));
+    assert_eq!(cfg.output_language.as_deref(), Some("zh-CN"));
+    assert!(cfg
+        .output_language_directive()
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Simplified Chinese"));
+
+    cfg.apply_env_overlay_with(&HashMapEnv::new().with("OPENHUMAN_OUTPUT_LANGUAGE", "   "));
+    assert_eq!(
+        cfg.output_language.as_deref(),
+        Some("zh-CN"),
+        "blank env value must not clear an explicit config value"
+    );
+}
+
+#[test]
 fn env_overlay_reasoning_enabled_recognises_truthy_falsy_and_ignores_garbage() {
     let mut cfg = Config::default();
     cfg.runtime.reasoning_enabled = None;
@@ -1426,6 +1468,68 @@ default_temperature = 0.7
     );
 }
 
+#[tokio::test]
+async fn load_or_init_reads_valid_config_through_retry_wrapper() {
+    // OPENHUMAN-TAURI-9R regression: the config read is wrapped in
+    // `retry_with_backoff_async`. Confirm the happy path is untouched —
+    // a present, readable, valid config loads on the first attempt with
+    // no behavior change from the wrapper.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        &root.join("config.toml"),
+        r#"default_model = "gpt-through-retry"
+default_temperature = 0.5
+"#,
+    )
+    .await;
+
+    let config = load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        config.default_model.as_deref(),
+        Some("gpt-through-retry"),
+        "valid config must load on first attempt through the retry wrapper"
+    );
+}
+
+#[tokio::test]
+async fn load_or_init_read_failure_embeds_path_in_error_context() {
+    // OPENHUMAN-TAURI-9R (~8k events, Windows): the read at the
+    // `config_path.exists()` branch raced `Config::save`'s atomic rename
+    // and surfaced the opaque "Failed to read config file" with no path
+    // or underlying cause. The fix retries transient Windows locking
+    // errors AND embeds the config path in the context so any residual
+    // non-transient failure is triageable in Sentry.
+    //
+    // Simulate a non-transient read failure portably by placing a
+    // *directory* at the config path: `exists()` is true (so we enter the
+    // read branch), but `read_to_string` fails with EISDIR (unix) /
+    // ERROR_ACCESS_DENIED (windows) — neither is classified transient by
+    // `is_transient_fs_error`, so the retry bails immediately and returns
+    // the path-embedded context.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let config_path = root.join("config.toml");
+    std::fs::create_dir(&config_path).unwrap();
+
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
+    let err = Config::load_or_init_with_env_lookup(root, &root.join("workspace"), &env)
+        .await
+        .expect_err("reading a directory as config.toml must fail");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Failed to read config file"),
+        "error must carry the read-failure context: {msg}"
+    );
+    assert!(
+        msg.contains("config.toml"),
+        "error context must embed the config path so Sentry titles are triageable: {msg}"
+    );
+}
+
 #[test]
 fn redact_url_strips_basic_auth_and_query() {
     let out = redact_url_for_log(
@@ -1658,6 +1762,49 @@ allowed_users = ["@admin"]
         Some(known_secret),
         "decrypt path broken: reloaded bot_token '{reloaded_token:?}' \
          does not match original '{known_secret}'"
+    );
+}
+
+/// Regression for keyring-loss scenario: if a channel token was encrypted with
+/// a key that is no longer accessible (e.g. keyring reset, machine migration),
+/// config load must NOT fail hard. The field should be cleared and a warning
+/// logged, so the rest of the app continues to work.
+#[tokio::test]
+async fn config_load_succeeds_when_decryption_key_inaccessible() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config_path = tmp.path().join("config.toml");
+    let workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace_dir).unwrap();
+
+    // Write a config whose discord.bot_token is encrypted with a key from a
+    // *different* workspace so the current SecretStore (keyed to `tmp`) cannot
+    // decrypt it. The `enc2:` prefix makes `is_encrypted()` return true.
+    // The hex blob is garbage — intentionally undecryptable.
+    let stale_ciphertext =
+        "enc2:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    let toml_content = format!(
+        r#"[secrets]
+encrypt = true
+
+[channels_config.discord]
+bot_token = "{stale_ciphertext}"
+"#
+    );
+    std::fs::write(&config_path, toml_content.as_bytes()).unwrap();
+
+    // Config load must succeed even though the token cannot be decrypted.
+    let reloaded = load_or_init_for_workspace(tmp.path()).await;
+
+    // Discord config should be cleared (None bot_token → channel won't start)
+    // rather than crashing the entire config load.
+    let discord_token = reloaded
+        .channels_config
+        .discord
+        .as_ref()
+        .map(|d| d.bot_token.as_str());
+    assert!(
+        discord_token.map_or(true, |t| t.is_empty()),
+        "Expected discord.bot_token to be cleared after decryption failure, got: {discord_token:?}"
     );
 }
 

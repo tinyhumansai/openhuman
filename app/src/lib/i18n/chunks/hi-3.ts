@@ -33,14 +33,26 @@ const hi3: TranslationMap = {
   'workspace.building': 'बन रहा है...',
   'workspace.buildSummaryTrees': 'समरी ट्री बनाएं',
   'workspace.viewVault': 'वॉल्ट देखें',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'ओब्सीडियन में तिजोरी खोलना',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
   'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+    'वॉल्ट निर्देशिका को सीधे खोलने के लिए रिवील फोल्डर का उपयोग करें। तिजोरी पथ:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'फ़ोल्डर प्रकट करें',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'मेमोरी ग्राफ लोड नहीं हो पाया',
   'workspace.loadingGraph': 'मेमोरी ग्राफ लोड हो रहा है...',
   'workspace.graphViewMode': 'मेमोरी ग्राफ व्यू मोड',
@@ -189,6 +201,13 @@ const hi3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'रनटाइम रीस्टार्ट / अपडेट करें',
   'bootCheck.unexpectedError': 'अनपेक्षित बूट-चेक एरर',
   'bootCheck.actionFailed': 'कुछ गड़बड़ हो गई। दोबारा कोशिश करें।',
+  'bootCheck.portConflictTitle': 'ऐप इंजन शुरू नहीं हो सका',
+  'bootCheck.portConflictBody':
+    'कोई अन्य प्रक्रिया उस नेटवर्क पोर्ट का उपयोग कर रही है जो OpenHuman को चाहिए। हम इसे स्वचालित रूप से ठीक करने का प्रयास करेंगे।',
+  'bootCheck.portConflictFixButton': 'स्वचालित रूप से ठीक करें',
+  'bootCheck.portConflictFixing': 'ठीक हो रहा है…',
+  'bootCheck.portConflictFixFailed':
+    'स्वचालित सुधार काम नहीं आया। कृपया अपना कंप्यूटर पुनः आरंभ करें और पुनः प्रयास करें।',
   'notifications.justNow': 'अभी-अभी',
   'notifications.minAgo': '{n}मि. पहले',
   'notifications.hrAgo': '{n}घं. पहले',
@@ -214,6 +233,10 @@ const hi3: TranslationMap = {
   'about.update.status.default': 'अपडेट चेक करें',
   'welcome.connectionFailed': 'कनेक्शन विफल: {status} {statusText}',
   'welcome.connectionFailedMsg': 'कनेक्शन विफल: {message}',
+  'welcome.continueLocally': 'स्थानीय स्तर पर जारी रखें',
+  'welcome.localSessionStarting': 'स्थानीय सत्र प्रारंभ हो रहा है...',
+  'welcome.localSessionDesc':
+    'ऑफ़लाइन स्थानीय प्रोफ़ाइल का उपयोग करता है और TinyHumans OAuth को छोड़ देता है।',
   'chat.agentChatDesc': 'एजेंट के साथ डायरेक्ट चैट सेशन खोलें।',
   'channels.activeRouteValue': '{channel} द्वारा {authMode}',
   'privacy.dataKind.messages': 'मैसेज',
@@ -243,6 +266,7 @@ const hi3: TranslationMap = {
   'memory.ingestingTitle': '{title} इन्जेस्ट हो रहा है',
   'mic.noAudioCaptured': 'कोई ऑडियो कैप्चर नहीं हुआ',
   'mic.noSpeechDetected': 'कोई बोलना नहीं मिला',
+  'mic.lowConfidenceResult': 'ऑडियो स्पष्ट रूप से समझ नहीं आया — कृपया पुनः प्रयास करें',
   'mic.failedToStopRecording': 'रिकॉर्डिंग रोकने में दिक्कत: {message}',
   'mic.transcriptionFailed': 'ट्रांसक्रिप्शन विफल: {message}',
   'reflections.kind.retrospective': 'रेट्रोस्पेक्टिव',
@@ -379,6 +403,48 @@ const hi3: TranslationMap = {
   'channels.telegram.savedRestartRequired':
     'चैनल सेव हो गया। एक्टिवेट करने के लिए ऐप रीस्टार्ट करें।',
   'channels.web.alwaysAvailable': 'हमेशा उपलब्ध',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Discord के माध्यम से संदेश भेजें और प्राप्त करें।',
+  'channels.discord.authMode.bot_token.description': 'अपना स्वयं का Discord बॉट टोकन प्रदान करें।',
+  'channels.discord.authMode.oauth.description':
+    'OpenHuman बॉट को OAuth के माध्यम से अपने Discord सर्वर पर स्थापित करें।',
+  'channels.discord.authMode.managed_dm.description':
+    'अपने व्यक्तिगत Discord खाते को OpenHuman बॉट से लिंक करें।',
+  'channels.discord.fields.bot_token.label': 'बॉट टोकन',
+  'channels.discord.fields.bot_token.placeholder': 'आपका Discord बॉट टोकन',
+  'channels.discord.fields.guild_id.label': 'सर्वर (गिल्ड) आईडी',
+  'channels.discord.fields.guild_id.placeholder': 'वैकल्पिक: एक विशिष्ट सर्वर तक सीमित रखें',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Telegram के माध्यम से संदेश भेजें और प्राप्त करें।',
+  'channels.telegram.authMode.managed_dm.description':
+    'OpenHuman Telegram बॉट को सीधे संदेश भेजें।',
+  'channels.telegram.authMode.bot_token.description':
+    '@BotFather से अपना स्वयं का Telegram बॉट टोकन प्रदान करें।',
+  'channels.telegram.fields.bot_token.label': 'बॉट टोकन',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'अनुमत उपयोगकर्ता',
+  'channels.telegram.fields.allowed_users.placeholder':
+    'अल्पविराम से अलग किए गए Telegram उपयोक्तानाम',
+  'channels.web.displayName': 'वेब',
+  'channels.web.description': 'अंतर्निहित वेब यूआई के माध्यम से चैट करें।',
+  'channels.web.authMode.managed_dm.description':
+    'एम्बेडेड वेब चैट का उपयोग करें - किसी सेटअप की आवश्यकता नहीं है।',
+  'welcome.continueLocallyExperimental': 'स्थानीय रूप से जारी रखें (प्रायोगिक)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default hi3;

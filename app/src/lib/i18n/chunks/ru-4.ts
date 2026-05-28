@@ -103,6 +103,19 @@ const ru4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'отброшено',
   'intelligence.memoryChunk.scoreBars.heading': 'п о ч е м у   с о х р а н е н о',
   'intelligence.memoryChunk.scoreBars.kept': 'сохранено',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'Тип сущности',
   'intelligence.screenDebug.active': 'Активно',
   'intelligence.screenDebug.app': 'Приложение',
@@ -146,6 +159,8 @@ const ru4: TranslationMap = {
   'notifications.center.filterAll': 'Все',
   'notifications.center.markAllRead': 'Отметить всё прочитанным',
   'notifications.center.title': 'Уведомления',
+  'oauth.button.loopbackTimeout':
+    'Время входа истекло — браузер не завершил перенаправление OAuth. Пожалуйста, попробуйте снова.',
   'oauth.button.connecting': 'Подключение...',
   'oauth.login.continueWith': 'Продолжить через',
   'onboarding.contextGathering.buildingDesc': 'Сборка профиля',
@@ -187,6 +202,8 @@ const ru4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Описание LLM',
   'pages.settings.ai.voice': 'Голос',
   'pages.settings.ai.voiceDesc': 'Описание голоса',
+  'pages.settings.ai.embeddings': 'Эмбеддинги',
+  'pages.settings.ai.embeddingsDesc': 'Модель векторного кодирования для извлечения из памяти',
   'pages.settings.aiSection.description': 'Языковые модели, локальный Ollama и голос (STT / TTS).',
   'pages.settings.aiSection.title': 'ИИ',
   'pages.settings.features.desktopCompanion': 'Десктоп-спутник',
@@ -289,7 +306,7 @@ const ru4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Очистить сохранённый ключ',
   'settings.ai.connectProvider': 'Подключить провайдера',
   'settings.ai.customRouting': 'Пользовательская маршрутизация',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'По умолчанию используется',
   'settings.ai.discard': 'Отменить',
   'settings.ai.editProvider': 'Изменить провайдера',
   'settings.ai.llmProviders': 'LLM-провайдеры',
@@ -297,6 +314,18 @@ const ru4: TranslationMap = {
   'settings.ai.localOllama': 'Локально (Ollama)',
   'settings.ai.modelLabel': 'Модель',
   'settings.ai.noCustomProviders': 'Нет пользовательских провайдеров',
+  'settings.ai.openAiCompat.authHeaderExample': 'Авторизация: Носитель <ваш ключ>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Заголовок аутентификации',
+  'settings.ai.openAiCompat.baseUrlLabel': 'База URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Недоступно',
+  'settings.ai.openAiCompat.clearKey': 'Очистить ключ',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Ключ настроен',
+  'settings.ai.openAiCompat.keyRequired': 'Требуется ключ',
+  'settings.ai.openAiCompat.rotateKey': 'Повернуть ключ',
+  'settings.ai.openAiCompat.setKey': 'Установить ключ',
+  'settings.ai.openAiCompat.title': 'OpenAI-совместимая конечная точка',
   'settings.ai.providerLabel': 'Провайдер',
   'settings.ai.routing': 'Маршрутизация',
   'settings.ai.routingCustom': 'Пользовательская маршрутизация',
@@ -391,6 +420,17 @@ const ru4: TranslationMap = {
   'pages.settings.account.migration': 'Импорт из другого ассистента',
   'pages.settings.account.migrationDesc':
     'Перенесите память и заметки из OpenClaw (а вскоре и Hermes) в это рабочее пространство.',
+  'composio.connect.scope.read': 'Чтение',
+  'composio.connect.scope.readHint': 'Разрешить агенту читать данные из этого соединения.',
+  'composio.connect.scope.write': 'Запись',
+  'composio.connect.scope.writeHint':
+    'Разрешить агенту создавать или изменять данные через это соединение.',
+  'composio.connect.scope.admin': 'Администратор',
+  'composio.connect.scope.adminHint':
+    'Разрешить агенту управлять настройками, разрешениями или деструктивными действиями.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Маршрутизация, триггеры и история интеграций на базе Composio.',
 };
 
 export default ru4;

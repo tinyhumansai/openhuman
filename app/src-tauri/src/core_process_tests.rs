@@ -1,6 +1,6 @@
 use super::{
     current_rpc_token, default_core_port, generate_rpc_token, is_expected_port_clash,
-    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle,
+    is_openhuman_root_body, parse_lsof_pid, parse_netstat_pid, CoreProcessHandle, RecoveryOutcome,
 };
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -277,6 +277,158 @@ Active Connections
     assert_eq!(parse_netstat_pid(stdout, 9999), None);
 }
 
+#[test]
+fn parse_netstat_pid_skips_protected_kernel_pids() {
+    // HTTP.sys / driver-level reservations occasionally show as LISTENING
+    // under PID 4 (NT Kernel) or PID 0 (System Idle). Returning those pids
+    // would lead startup recovery to call taskkill on a process that cannot
+    // be signalled from user mode — aborting the entire takeover flow.
+    // The parser must treat these entries as "no owner" so callers fall
+    // back to the port-reroute path instead of trying to kill the kernel.
+    let stdout = "\
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:7788         0.0.0.0:0              LISTENING       4
+  TCP    127.0.0.1:7789         0.0.0.0:0              LISTENING       0
+  TCP    127.0.0.1:7790         0.0.0.0:0              LISTENING       1234
+";
+    assert_eq!(parse_netstat_pid(stdout, 7788), None);
+    assert_eq!(parse_netstat_pid(stdout, 7789), None);
+    assert_eq!(parse_netstat_pid(stdout, 7790), Some(1234));
+}
+
+#[test]
+fn parse_netstat_pid_falls_through_protected_to_real_owner_on_dual_stack() {
+    // Real-world dual-stack listener: kernel-reserved entry sits ahead of
+    // the actual user-mode owner on the same port. The parser must keep
+    // scanning past the protected pid and return the genuine owner.
+    let stdout = "\
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    [::]:7788              [::]:0                 LISTENING       4
+  TCP    127.0.0.1:7788         0.0.0.0:0              LISTENING       9999
+";
+    assert_eq!(parse_netstat_pid(stdout, 7788), Some(9999));
+}
+
+// ---------------------------------------------------------------------------
+// Windows end-to-end port-takeover test
+//
+// Spawns a real child process that occupies a TCP port, then walks the same
+// path the Tauri host walks at startup (find_pid_on_port → kill_pid_force →
+// is_port_open) and asserts the port is actually freed. This is the
+// behavior the user reported broken — a unit-only parser test is not enough
+// to catch netstat/taskkill drift on real Windows machines.
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+#[test]
+fn windows_port_takeover_finds_and_kills_listener() {
+    use crate::process_kill::kill_pid_force;
+    use std::net::TcpListener;
+    use std::os::windows::process::CommandExt;
+    use std::time::{Duration, Instant};
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    // Bind in this process first to claim an ephemeral free port the OS
+    // picks for us, capture the port, then drop the listener so the child
+    // can bind to the same port. There is a tiny TOCTOU window here but
+    // ephemeral ports on Windows are not aggressively recycled so it is
+    // robust enough for a single-shot test.
+    let probe = TcpListener::bind("127.0.0.1:0").expect("bind probe");
+    let port = probe.local_addr().expect("probe addr").port();
+    drop(probe);
+
+    // Use PowerShell to spawn a listener that holds the port open for 60s.
+    // PowerShell ships with every supported Windows version.
+    let script = format!(
+        "$l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, {port}); \
+         $l.Start(); Start-Sleep -Seconds 60; $l.Stop()"
+    );
+    let mut child = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn powershell listener");
+
+    // Wait until the listener is actually bound (PowerShell startup is slow).
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut bound = false;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(100),
+        )
+        .is_ok()
+        {
+            bound = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if !bound {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("child listener never bound to 127.0.0.1:{port}");
+    }
+
+    // Walk the production path: pid lookup via netstat, then force-kill.
+    let pid = match super::find_pid_on_port(port) {
+        Some(pid) => pid,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("find_pid_on_port returned None for port {port}");
+        }
+    };
+    // The pid we discovered won't be `child.id()` directly — the powershell
+    // process is the listener, and on Windows `child.id()` IS that pid.
+    // Sanity-check they match so a future netstat parser regression is loud.
+    // Tear down the child *before* panicking so a 60s listener doesn't leak
+    // into the rest of the test suite.
+    if pid != child.id() {
+        let expected = child.id();
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("find_pid_on_port returned pid {pid}, expected child pid {expected}");
+    }
+
+    kill_pid_force(pid).expect("force-kill listener");
+
+    // Verify the port is actually free within a reasonable window — this is
+    // the assertion that fails when taskkill mis-reports success or when
+    // /T fails to take down the powershell subtree.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut freed = false;
+    while Instant::now() < deadline {
+        if std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(100),
+        )
+        .is_err()
+        {
+            freed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let _ = child.wait();
+    assert!(
+        freed,
+        "port {port} still bound after kill_pid_force(pid={pid})"
+    );
+
+    // Idempotency: kill the same pid again — must be Ok, not Err, because
+    // the process is already gone and recovery code calls force-kill after
+    // a re-validation that may race.
+    kill_pid_force(pid).expect("kill_pid_force on dead pid must be idempotent");
+}
+
 // ---------------------------------------------------------------------------
 // Token generation tests
 // ---------------------------------------------------------------------------
@@ -374,4 +526,158 @@ fn send_terminate_signal_cancels_shutdown_token() {
             "send_terminate_signal must cancel graceful Axum shutdown before aborting the task"
         );
     });
+}
+
+#[test]
+fn startup_timeout_cleanup_aborts_task_and_clears_slot() {
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let handle = CoreProcessHandle::new(19006);
+        let task = tokio::spawn(async {
+            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+            Ok::<(), anyhow::Error>(())
+        });
+
+        {
+            let mut guard = handle.task.lock().await;
+            *guard = Some(task);
+        }
+
+        let message = handle.cleanup_startup_timeout(false, false, 2).await;
+
+        assert!(
+            message.contains("core process did not become ready within"),
+            "timeout message should include the readiness budget: {message}"
+        );
+        assert!(
+            message.contains("ready_signal=false"),
+            "timeout message should include ready signal state: {message}"
+        );
+        assert!(
+            message.contains("port=19006"),
+            "timeout message should include RPC port: {message}"
+        );
+        assert!(
+            message.contains("port_open=false"),
+            "timeout message should include final port state: {message}"
+        );
+        assert!(
+            message.contains("task_state=running"),
+            "timeout message should include task state: {message}"
+        );
+        assert!(
+            message.contains("attempt=2"),
+            "timeout message should include startup attempt: {message}"
+        );
+        assert!(
+            handle.task.lock().await.is_none(),
+            "cleanup must clear the managed task slot so retry can spawn fresh"
+        );
+        assert!(
+            handle.shutdown_token_is_cancelled().await,
+            "cleanup must cancel the startup token before aborting"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// RecoveryOutcome serialization tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recovery_outcome_serializes_correctly() {
+    let outcome = RecoveryOutcome {
+        success: true,
+        message: "Core recovered on port 7789".to_string(),
+        new_port: Some(7789),
+    };
+    let json = serde_json::to_value(&outcome).expect("serialize");
+    assert_eq!(json["success"], serde_json::json!(true));
+    assert_eq!(
+        json["message"],
+        serde_json::json!("Core recovered on port 7789")
+    );
+    assert_eq!(json["new_port"], serde_json::json!(7789));
+}
+
+#[test]
+fn recovery_outcome_failure_serializes_with_null_port() {
+    let outcome = RecoveryOutcome {
+        success: false,
+        message: "Recovery failed: port still busy".to_string(),
+        new_port: None,
+    };
+    let json = serde_json::to_value(&outcome).expect("serialize");
+    assert_eq!(json["success"], serde_json::json!(false));
+    assert!(
+        json["new_port"].is_null(),
+        "new_port should be null when None"
+    );
+}
+
+#[test]
+fn recover_port_conflict_succeeds_when_port_is_free() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+    let outcome = rt.block_on(async {
+        // Bind a port, then release it so it's free when recover_port_conflict runs.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        drop(listener);
+        // Brief yield to let the OS fully release the port.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let handle = CoreProcessHandle::new(port);
+        let outcome = handle.recover_port_conflict().await;
+        handle.shutdown().await;
+        outcome
+    });
+
+    assert!(
+        outcome.success,
+        "recovery should succeed when port is free: {}",
+        outcome.message
+    );
+    assert!(
+        outcome.new_port.is_some(),
+        "new_port should be set on success"
+    );
+}
+
+#[test]
+fn recover_port_conflict_handles_stale_listener() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+
+    // Bind a port, attempt recovery — the recovery must still succeed because
+    // ensure_running's fallback range kicks in when the preferred port is busy.
+    let outcome = rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let handle = CoreProcessHandle::new(port);
+        let outcome = handle.recover_port_conflict().await;
+        handle.shutdown().await;
+        drop(listener);
+        outcome
+    });
+
+    // Recovery may succeed via port fallback even with the listener held.
+    // We only assert that the outcome is well-formed.
+    assert!(
+        !outcome.message.is_empty(),
+        "outcome message must always be populated"
+    );
+    if outcome.success {
+        assert!(outcome.new_port.is_some());
+    } else {
+        assert!(outcome.new_port.is_none());
+    }
 }

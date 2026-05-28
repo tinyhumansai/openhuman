@@ -15,6 +15,7 @@ vi.mock('../../../utils/tauriCommands', () => ({
   memoryTreeFlushNow: vi.fn(),
   memoryTreeWipeAll: vi.fn(),
   memoryTreeResetTree: vi.fn(),
+  memoryTreeObsidianVaultStatus: vi.fn(),
 }));
 
 vi.mock('../../../services/memorySyncService', () => ({
@@ -28,18 +29,36 @@ vi.mock('../../../lib/composio/composioApi', () => ({
 
 // Stub `openUrl` so deep-link clicks land in a mock instead of routing
 // through `tauri-plugin-opener` (which isn't loaded in the test env).
-vi.mock('../../../utils/openUrl', () => ({
-  openUrl: vi.fn().mockResolvedValue(undefined),
-  revealPath: vi.fn().mockResolvedValue(undefined),
+vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(undefined) }));
+
+vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
+  openWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  revealWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  previewWorkspaceText: vi
+    .fn()
+    .mockResolvedValue({
+      path: 'memory_tree/content/wiki/summaries/source-alice-x-com/L1/summary-L1-abc.md',
+      absolutePath:
+        '/tmp/workspace/memory_tree/content/wiki/summaries/source-alice-x-com/L1/summary-L1-abc.md',
+      contents: '# Gmail summary',
+      truncated: false,
+      sizeBytes: 15,
+    }),
 }));
 
-const { memoryTreeGraphExport, memoryTreeFlushNow, memoryTreeWipeAll, memoryTreeResetTree } =
-  (await import('../../../utils/tauriCommands')) as unknown as {
-    memoryTreeGraphExport: Mock;
-    memoryTreeFlushNow: Mock;
-    memoryTreeWipeAll: Mock;
-    memoryTreeResetTree: Mock;
-  };
+const {
+  memoryTreeGraphExport,
+  memoryTreeFlushNow,
+  memoryTreeWipeAll,
+  memoryTreeResetTree,
+  memoryTreeObsidianVaultStatus,
+} = (await import('../../../utils/tauriCommands')) as unknown as {
+  memoryTreeGraphExport: Mock;
+  memoryTreeFlushNow: Mock;
+  memoryTreeWipeAll: Mock;
+  memoryTreeResetTree: Mock;
+  memoryTreeObsidianVaultStatus: Mock;
+};
 
 const { listConnections, syncConnection } =
   (await import('../../../lib/composio/composioApi')) as unknown as {
@@ -47,10 +66,13 @@ const { listConnections, syncConnection } =
     syncConnection: Mock;
   };
 
-const { openUrl, revealPath } = (await import('../../../utils/openUrl')) as unknown as {
-  openUrl: Mock;
-  revealPath: Mock;
-};
+const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
+
+const { openWorkspacePath, revealWorkspacePath } =
+  (await import('../../../utils/tauriCommands/workspacePaths')) as unknown as {
+    openWorkspacePath: Mock;
+    revealWorkspacePath: Mock;
+  };
 
 function makeSummary(partial: Partial<GraphNode>): GraphNode {
   return {
@@ -98,7 +120,16 @@ describe('MemoryWorkspace (graph view)', () => {
     listConnections.mockResolvedValue({ connections: [] });
     syncConnection.mockResolvedValue({ ok: true });
     openUrl.mockResolvedValue(undefined);
-    revealPath.mockResolvedValue(undefined);
+    openWorkspacePath.mockResolvedValue(undefined);
+    revealWorkspacePath.mockResolvedValue(undefined);
+    // Default: the content root is already a registered Obsidian vault, so a
+    // View-Vault click opens it directly (the not-registered guidance branch
+    // is covered in ObsidianVaultSection.test.tsx).
+    memoryTreeObsidianVaultStatus.mockResolvedValue({
+      registered: true,
+      config_found: true,
+      content_root_abs: '/tmp/workspace/memory_tree/content',
+    });
   });
 
   it('renders the SVG graph once the export RPC resolves', async () => {
@@ -154,7 +185,7 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(typeof toast.action?.handler).toBe('function');
   });
 
-  it('Reveal Folder action on the success toast calls revealPath with the vault content root', async () => {
+  it('Reveal Folder action on the success toast uses the shared workspace reveal command', async () => {
     const onToast = vi.fn();
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
     fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
@@ -162,7 +193,7 @@ describe('MemoryWorkspace (graph view)', () => {
     const toast = onToast.mock.calls[0][0];
     toast.action.handler();
     await waitFor(() => {
-      expect(revealPath).toHaveBeenCalledWith('/tmp/workspace/memory_tree/content');
+      expect(revealWorkspacePath).toHaveBeenCalledWith('memory_tree/content');
     });
   });
 
@@ -178,8 +209,8 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(toast.action?.label).toBeTruthy();
   });
 
-  it('Reveal Folder fallback surfaces an error toast when revealPath itself fails', async () => {
-    revealPath.mockRejectedValueOnce(new Error('reveal failed'));
+  it('Reveal Folder fallback surfaces an error toast when workspace reveal itself fails', async () => {
+    revealWorkspacePath.mockRejectedValueOnce(new Error('reveal failed'));
     const onToast = vi.fn();
     renderWithProviders(<MemoryWorkspace onToast={onToast} />);
     fireEvent.click(await screen.findByTestId('memory-open-in-obsidian'));
@@ -194,37 +225,33 @@ describe('MemoryWorkspace (graph view)', () => {
     expect(errorToast.message).toContain('reveal failed');
   });
 
-  it('clicking a summary node opens that file in Obsidian via the deep link', async () => {
+  it('clicking a summary node opens that file through the shared workspace path command', async () => {
     renderWithProviders(<MemoryWorkspace />);
     const node = await screen.findByTestId('memory-graph-node-child-1');
     fireEvent.click(node);
-    const expectedRel = 'wiki/summaries/source-gmail-alice-x-com/L1/summary-L1-abc.md';
-    const expectedAbs = '/tmp/workspace/memory_tree/content/' + expectedRel;
+    const expectedRel = 'wiki/summaries/source-alice-x-com/L1/summary-L1-abc.md';
     await waitFor(() => {
-      expect(openUrl).toHaveBeenCalledWith(
-        'obsidian://open?path=' + encodeURIComponent(expectedAbs)
-      );
+      expect(openWorkspacePath).toHaveBeenCalledWith(`memory_tree/content/${expectedRel}`);
     });
   });
 
-  it('hides toolkits without a memory-tree ingest provider entirely', async () => {
+  it('shows sync rows for provider-backed toolkits and hides non-syncable ones', async () => {
     listConnections.mockResolvedValue({
       connections: [
         { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
         { id: 'conn-slack', toolkit: 'slack', status: 'ACTIVE', workspace: 'acme' },
         { id: 'conn-notion', toolkit: 'notion', status: 'ACTIVE' },
+        { id: 'conn-discord', toolkit: 'discord', status: 'ACTIVE' },
       ],
     });
     renderWithProviders(<MemoryWorkspace />);
-    // Gmail row exists with a working Sync button.
+    // Provider-backed toolkits should render actionable Sync rows
     expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
-    // Non-syncable toolkits are filtered out completely — neither
-    // the row nor the Sync button render. Cleaner than a "no sync
-    // yet" placeholder for an action the user can't take.
-    expect(screen.queryByTestId('memory-source-row-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-row-notion')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
+    expect(screen.getByTestId('memory-source-sync-slack')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-source-sync-notion')).toBeInTheDocument();
+    // Non-syncable toolkits stay hidden.
+    expect(screen.queryByTestId('memory-source-row-discord')).toBeNull();
+    expect(screen.queryByTestId('memory-source-sync-discord')).toBeNull();
   });
 
   it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {

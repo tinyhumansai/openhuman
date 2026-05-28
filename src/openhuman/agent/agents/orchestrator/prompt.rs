@@ -91,6 +91,10 @@ fn render_delegation_guide(integrations: &[ConnectedIntegration]) -> String {
     }
     let mut out = String::from(
         "## Connected Integrations\n\n\
+         IMPORTANT: You MUST use the `delegate_to_integrations_agent` tool for any request \
+         involving connected services. You do NOT have direct access to these services — all \
+         interaction must go through delegation. Never claim you cannot access a connected \
+         service without first attempting delegation.\n\n\
          The following services have an active connection. Their tool implementations \
          live inside the `integrations_agent` sub-agent — NOT in your own tool list. \
          Delegate with `delegate_to_integrations_agent`, passing the toolkit slug as \
@@ -237,6 +241,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
@@ -248,6 +253,15 @@ mod tests {
         assert!(!body.contains("spawn_subagent(agent_id=\"integrations_agent\""));
         // Delegator voice must NOT use the skill-executor wording.
         assert!(!body.contains("You have direct access"));
+        // Must contain the hardened delegation instruction.
+        assert!(
+            body.contains("IMPORTANT"),
+            "delegation guide must contain the IMPORTANT instruction"
+        );
+        assert!(
+            body.contains("Never claim you cannot access a connected service without first attempting delegation"),
+            "delegation guide must instruct the model to always attempt delegation"
+        );
     }
 
     #[test]
@@ -268,6 +282,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: true,
+            non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(body.contains("## Connected Integrations"));
@@ -290,6 +305,7 @@ mod tests {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: true,
+                non_active_status: None,
             },
             ConnectedIntegration {
                 toolkit: "linear".into(),
@@ -297,6 +313,7 @@ mod tests {
                 tools: Vec::new(),
                 gated_tools: Vec::new(),
                 connected: false,
+                non_active_status: None,
             },
         ];
         let body = build(&ctx_with(&integrations)).unwrap();
@@ -312,6 +329,7 @@ mod tests {
             tools: Vec::new(),
             gated_tools: Vec::new(),
             connected: false,
+            non_active_status: None,
         }];
         let body = build(&ctx_with(&integrations)).unwrap();
         assert!(!body.contains("## Connected Integrations"));

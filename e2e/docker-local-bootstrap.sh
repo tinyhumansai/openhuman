@@ -84,6 +84,13 @@ if [ ! -d node_modules ] || [ ! -e node_modules/.modules.yaml ]; then
   pnpm install --frozen-lockfile
 fi
 
+# 3b. Playwright browser bundle — required by the web E2E lane. Cache it via
+# the dedicated ms-playwright volume so warm re-runs avoid a re-download.
+if [ ! -x "${HOME}/.cache/ms-playwright/chromium_headless_shell-1223/chrome-headless-shell-linux64/chrome-headless-shell" ]; then
+  echo "[e2e-bootstrap] Installing Playwright Chromium headless shell..."
+  pnpm --dir /workspace/app exec playwright install chromium-headless-shell >/dev/null
+fi
+
 # 4. Ensure stub env files exist (CI does this too).
 #
 # Local developers often symlink `.env` to a secrets directory outside the

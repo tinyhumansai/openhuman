@@ -122,6 +122,11 @@ impl ReflectionHook {
              Keep each entry concise (one sentence). Return ONLY valid JSON, no markdown.\n\n",
         );
 
+        if let Some(directive) = self.full_config.output_language_directive() {
+            prompt.push_str(&directive);
+            prompt.push_str("\n\n");
+        }
+
         prompt.push_str(&format!(
             "## User Message\n{}\n\n",
             truncate(&ctx.user_message, 500)

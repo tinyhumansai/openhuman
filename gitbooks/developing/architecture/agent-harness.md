@@ -61,6 +61,7 @@ A **session** is the live conversation an `Agent` instance is running. The `Agen
 * The tool registry visible to the model.
 * A memory loader that hydrates relevant memories before each user message.
 * Per-turn budgets - max tool iterations, max payload size, max USD cost.
+* Local action budget - a rolling hourly cap for side-effecting tool actions, read from `config.autonomy.max_actions_per_hour`.
 
 `Agent::turn(user_message)` is the hot path. In one turn it:
 
@@ -159,7 +160,7 @@ Custom archetypes ship as TOML files under `$OPENHUMAN_WORKSPACE/agents/*.toml` 
 When the orchestrator calls `spawn_subagent` (or one of the `delegate_*` convenience tools), the runner:
 
 1. Reads the parent's execution context from a task-local - the parent's provider, sandbox mode, cancellation fence, transcript root.
-2. Resolves the sub-agent's model - inherit from parent, follow a hint (`fast` / `reasoning` / `summarization`), or pin an exact model.
+2. Resolves the sub-agent's model - inline `model` override first, then config-level pins (`[orchestrator].model`, `[teams.*].lead_model`, `[teams.*].agent_model`), then the archetype hint or inherited parent model.
 3. Filters the parent's tool registry per the definition's `tools`, `disallowed_tools`, and `skill_filter`. In `fork` mode, the parent's full registry is inherited verbatim.
 4. Builds a narrow system prompt, omitting the sections the definition asks to strip.
 5. Runs an inner tool-call loop using the same machinery as the parent.
@@ -234,6 +235,7 @@ Stop hooks fire **between** iterations of the tool-call loop. They're the policy
 
 * **Budget stop hook** - caps cumulative turn cost in USD using the per-iteration cost accumulator.
 * **Max-iterations stop hook** - caps iteration count from outside the agent's persistent config.
+* **Action budget policy** - `SecurityPolicy` enforces `config.autonomy.max_actions_per_hour` for side-effecting tool operations. Users can tune it in Settings -> Advanced -> Agent autonomy, or operators can override it with `OPENHUMAN_MAX_ACTIONS_PER_HOUR`.
 
 A hook returning `Stop` aborts the loop with a clear reason the caller can surface to the user. Stop hooks are distinct from interrupts (next section): they're policy-driven, not user-driven.
 

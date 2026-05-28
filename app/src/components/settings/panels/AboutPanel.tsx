@@ -6,11 +6,14 @@
  * is driven by the globally-mounted `<AppUpdatePrompt />` — calling `apply()`
  * here would race with that component's own state machine.
  */
-import { useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { useEffect, useState } from 'react';
 
 import { useAppUpdate } from '../../../hooks/useAppUpdate';
 import { useT } from '../../../lib/i18n/I18nContext';
+import { useAppSelector } from '../../../store/hooks';
 import { APP_VERSION, LATEST_APP_DOWNLOAD_URL } from '../../../utils/config';
+import { isTauriEnvironment } from '../../../utils/configPersistence';
 import { openUrl } from '../../../utils/openUrl';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -22,6 +25,35 @@ const AboutPanel = () => {
   // disable it here so opening the panel doesn't double-trigger probes.
   const { phase, info, error, check } = useAppUpdate({ autoCheck: false });
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
+  const coreMode = useAppSelector(state => state.coreMode.mode);
+  const [rpcUrl, setRpcUrl] = useState<string | null>(null);
+
+  // Local mode picks a dynamic port at app launch, so the authoritative
+  // value lives in the Tauri shell (`core_rpc_url` command) rather than the
+  // build-time constant. Cloud mode stores the URL the user picked in
+  // Redux; surface that directly.
+  useEffect(() => {
+    if (coreMode.kind === 'cloud') {
+      setRpcUrl(coreMode.url);
+      return;
+    }
+    if (!isTauriEnvironment()) {
+      setRpcUrl(null);
+      return;
+    }
+    let cancelled = false;
+    invoke<string>('core_rpc_url')
+      .then(url => {
+        if (!cancelled) setRpcUrl(url);
+      })
+      .catch(err => {
+        console.warn('[about-panel] failed to resolve core_rpc_url', err);
+        if (!cancelled) setRpcUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [coreMode]);
 
   const isChecking = phase === 'checking';
   const summary = summaryFor(phase, info, error, t);
@@ -79,6 +111,41 @@ const AboutPanel = () => {
               {isChecking ? t('settings.about.checking') : t('settings.about.checkForUpdates')}
             </button>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+          <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+            {t('settings.about.connection')}
+          </div>
+          <div className="mt-2 space-y-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-stone-500 dark:text-neutral-400">
+                {t('settings.about.connectionMode')}
+              </span>
+              <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+                {coreMode.kind === 'local'
+                  ? t('settings.about.connectionModeLocal')
+                  : coreMode.kind === 'cloud'
+                    ? t('settings.about.connectionModeCloud')
+                    : t('settings.about.connectionModeUnset')}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-stone-500 dark:text-neutral-400 shrink-0">
+                {t('settings.about.serverUrl')}
+              </span>
+              <span
+                className="text-xs font-mono text-stone-900 dark:text-neutral-100 truncate"
+                title={rpcUrl ?? undefined}>
+                {rpcUrl ?? t('settings.about.serverUrlUnavailable')}
+              </span>
+            </div>
+          </div>
+          <p className="mt-2 text-[11px] text-stone-500 dark:text-neutral-400 leading-relaxed">
+            {coreMode.kind === 'cloud'
+              ? t('settings.about.connectionHelperCloud')
+              : t('settings.about.connectionHelperLocal')}
+          </p>
         </div>
 
         <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">

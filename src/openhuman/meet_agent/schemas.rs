@@ -252,6 +252,12 @@ fn schema_poll_speech() -> ControllerSchema {
                 comment: "True when the current outbound utterance is complete.",
                 required: true,
             },
+            FieldSchema {
+                name: "flush_pending",
+                ty: TypeSchema::Bool,
+                comment: "True when the shell should flush in-flight audio (barge-in). The shell must call __openhumanFlushAudio() before feeding the next PCM chunk.",
+                required: true,
+            },
         ],
     }
 }

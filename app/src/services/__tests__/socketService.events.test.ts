@@ -10,7 +10,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 type EventHandlerMap = Record<string, (...args: unknown[]) => void>;
 
 // All mocks must be hoisted to module scope.
-const storeMock = { dispatch: vi.fn() };
+type ThreadStateShape = {
+  thread: { selectedThreadId: string | null; activeThreadId: string | null };
+};
+const storeMock = {
+  dispatch: vi.fn(),
+  getState: vi.fn(
+    (): ThreadStateShape => ({ thread: { selectedThreadId: null, activeThreadId: null } })
+  ),
+};
 vi.mock('../../store', () => ({ store: storeMock }));
 
 const setBackendMock = vi.fn((x: unknown) => ({ type: 'connectivity/setBackend', payload: x }));
@@ -85,6 +93,9 @@ describe('socketService — socket event handler dispatches (lines 212, 230, 237
   beforeEach(() => {
     vi.resetModules();
     storeMock.dispatch.mockClear();
+    storeMock.getState.mockReturnValue({
+      thread: { selectedThreadId: null, activeThreadId: null },
+    });
     setBackendMock.mockClear();
     getCoreRpcUrlMock.mockReset();
   });
@@ -114,6 +125,47 @@ describe('socketService — socket event handler dispatches (lines 212, 230, 237
       ([arg]) => (arg as { value: string }).value === 'connected'
     );
     expect(connectedCall).toBeDefined();
+  });
+
+  it('re-subscribes to the active thread room on connect (thread:subscribe)', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+    storeMock.getState.mockReturnValue({
+      thread: { selectedThreadId: 'thread-xyz', activeThreadId: null },
+    });
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-thread-sub');
+
+    await pollUntil(() => expect(handlers['connect']).toBeDefined());
+
+    handlers['connect']!();
+
+    expect((mockSocket as { emit: ReturnType<typeof vi.fn> }).emit).toHaveBeenCalledWith(
+      'thread:subscribe',
+      { thread_id: 'thread-xyz' }
+    );
+  });
+
+  it('does not emit thread:subscribe on connect when no active thread', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+    // beforeEach already sets thread ids to null.
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-no-thread');
+
+    await pollUntil(() => expect(handlers['connect']).toBeDefined());
+
+    handlers['connect']!();
+
+    const emitMock = (mockSocket as { emit: ReturnType<typeof vi.fn> }).emit;
+    const threadSub = emitMock.mock.calls.find(([ev]) => ev === 'thread:subscribe');
+    expect(threadSub).toBeUndefined();
   });
 
   it('dispatches setBackend(disconnected) with reason when socket emits "disconnect" (line 230)', async () => {

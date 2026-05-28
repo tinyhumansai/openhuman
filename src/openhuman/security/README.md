@@ -10,7 +10,7 @@ Trust boundary for the autonomous core. Owns the autonomy / risk policy, sandbox
 - `pub trait Sandbox` / `pub struct NoopSandbox` — `traits.rs` — pluggable sandbox abstraction.
 - `pub fn create_sandbox(config: &SecurityConfig) -> Arc<dyn Sandbox>` — `detect.rs:1` — pick the best backend for the host.
 - Sandbox backends: `pub mod docker`, `pub mod bubblewrap`, `pub mod firejail`, `pub mod landlock` — domain-specific implementations of `Sandbox`.
-- `pub struct SecretStore` — `secrets.rs` — XOR / OS-keychain encrypted secret persistence with round-trip helpers.
+- `pub struct SecretStore` — `keyring/encrypted_store.rs` (re-exported here) — encrypted-on-disk secret codec whose master key lives in keychain-backed storage.
 - `pub struct AuditLogger` / `pub enum AuditEventType` / `pub struct AuditEvent` / `pub struct Actor` / `pub struct Action` / `pub struct ExecutionResult` / `pub struct SecurityContext` / `pub struct CommandExecutionLog` — `audit.rs` — append-only audit trail.
 - `pub struct PairingGuard` / `pub fn constant_time_eq` / `pub fn is_public_bind` — `pairing.rs` — pairing-token check before binding the RPC server publicly.
 - `pub fn redact(value: &str) -> String` — `core.rs:3` — uniform 4-char-prefix redaction for logs.
@@ -20,7 +20,7 @@ Trust boundary for the autonomous core. Owns the autonomy / risk policy, sandbox
 
 - `src/openhuman/config/` — `SecurityConfig`, `AutonomyConfig` for policy + sandbox selection.
 - OS-level sandbox tools — `docker`, `bwrap`, `firejail`, `landlock` syscalls (per backend).
-- Filesystem under the workspace dir for the audit log + secrets store.
+- Filesystem under the workspace dir for the audit log + encrypted ciphertext payloads.
 
 ## Called by
 
@@ -33,6 +33,6 @@ Trust boundary for the autonomous core. Owns the autonomy / risk policy, sandbox
 
 ## Tests
 
-- Unit: `pairing_tests.rs`, `policy_tests.rs`, `secrets_tests.rs`.
+- Unit: `pairing_tests.rs`, `policy_tests.rs`, `keyring/encrypted_store_tests.rs`.
 - `core.rs` `#[cfg(test)] mod tests` — round-trips `SecretStore` encrypt/decrypt, `redact()` cases, `PairingGuard` defaults.
 - Sandbox-backend smoke: each backend file has its own `#[cfg(test)]` blocks where the binary is available.

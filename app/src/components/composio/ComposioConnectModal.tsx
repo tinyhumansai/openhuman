@@ -34,6 +34,11 @@ import {
   setUserScopes,
 } from '../../lib/composio/composioApi';
 import {
+  isMetaOAuthToolkit,
+  isOAuthRateLimitedError,
+  metaOAuthRateLimitMessage,
+} from '../../lib/composio/oauthHandoff';
+import {
   type ComposioConnection,
   type ComposioUserScopePref,
   deriveComposioState,
@@ -172,6 +177,8 @@ export default function ComposioConnectModal({
   const pollDeadlineRef = useRef<number>(0);
   const isPollingRef = useRef<boolean>(false);
   const inFlightRef = useRef<boolean>(false);
+  const connectInFlightRef = useRef<boolean>(false);
+  const [connectInFlight, setConnectInFlight] = useState(false);
 
   const initialState = deriveComposioState(connection);
   const initiallyConnected = initialState === 'connected';
@@ -187,6 +194,7 @@ export default function ComposioConnectModal({
   );
   const [error, setError] = useState<string | null>(null);
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
+  const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState(false);
 
   // Provider-specific required fields are sourced from the declarative
   // registry rather than per-toolkit booleans (#2127). New providers
@@ -300,7 +308,7 @@ export default function ComposioConnectModal({
     // Fire once immediately, then recurse via setTimeout once the previous
     // tick resolves. Avoids overlapping async ticks entirely.
     void tick();
-  }, [onChanged, stopPolling, toolkit.slug]);
+  }, [onChanged, stopPolling, t, toolkit.slug]);
 
   // If the modal opens while an OAuth handoff is already in flight
   // (status = PENDING/INITIATED/…), resume polling instead of asking
@@ -327,8 +335,17 @@ export default function ComposioConnectModal({
   }, [requiredFields, fieldValues]);
 
   const handleConnect = useCallback(async () => {
+    if (connectInFlightRef.current) {
+      console.debug(
+        '[composio][authorize] ignored duplicate Connect click toolkit=%s',
+        toolkit.slug
+      );
+      return;
+    }
     if (!validateRequiredFields()) return;
 
+    connectInFlightRef.current = true;
+    setConnectInFlight(true);
     setPhase('authorizing');
     setError(null);
     setFieldErrors({});
@@ -358,9 +375,13 @@ export default function ComposioConnectModal({
         resp.connectionId
       );
       setConnectUrl(resp.connectUrl);
-      await openUrl(resp.connectUrl);
       setPhase('waiting');
       startPolling();
+      try {
+        await openUrl(resp.connectUrl);
+      } catch (openErr) {
+        console.warn('[composio][authorize] failed to open connectUrl:', openErr);
+      }
     } catch (err) {
       console.error(
         '[composio][authorize] failed toolkit=%s slug_check=%s',
@@ -392,9 +413,24 @@ export default function ComposioConnectModal({
       }
 
       setPhase('error');
-      setError(sanitizeAuthError(err));
+      if (isMetaOAuthToolkit(toolkit.slug) && isOAuthRateLimitedError(err)) {
+        setError(metaOAuthRateLimitMessage(toolkit.name));
+      } else {
+        setError(sanitizeAuthError(err));
+      }
+    } finally {
+      connectInFlightRef.current = false;
+      setConnectInFlight(false);
     }
-  }, [validateRequiredFields, requiredFields, fieldValues, startPolling, toolkit.slug]);
+  }, [
+    validateRequiredFields,
+    requiredFields,
+    fieldValues,
+    startPolling,
+    toolkit.slug,
+    toolkit.name,
+    t,
+  ]);
 
   // Fetch the stored scope pref whenever the modal lands in the
   // 'connected' phase. Re-fetching each time we transition (rather
@@ -417,7 +453,7 @@ export default function ComposioConnectModal({
     return () => {
       cancelled = true;
     };
-  }, [phase, toolkit.slug]);
+  }, [phase, t, toolkit.slug]);
 
   const handleToggleScope = useCallback(
     async (key: keyof ComposioUserScopePref) => {
@@ -465,7 +501,7 @@ export default function ComposioConnectModal({
         setSavingScope(null);
       }
     },
-    [savingScope, scopes, toolkit.slug]
+    [savingScope, scopes, t, toolkit.slug]
   );
 
   const handleDisconnect = useCallback(async () => {
@@ -473,16 +509,18 @@ export default function ComposioConnectModal({
     setPhase('disconnecting');
     setError(null);
     try {
-      await deleteConnection(activeConnection.id);
+      await deleteConnection(activeConnection.id, { clearMemory: clearMemoryOnDisconnect });
       setActiveConnection(undefined);
+      setClearMemoryOnDisconnect(false);
       setPhase('idle');
       onChanged?.();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setPhase('error');
       setError(`${t('composio.connect.disconnectFailed')}: ${msg}`);
+      setClearMemoryOnDisconnect(false);
     }
-  }, [activeConnection, onChanged]);
+  }, [activeConnection, clearMemoryOnDisconnect, onChanged, t]);
 
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -577,8 +615,9 @@ export default function ComposioConnectModal({
               {error && phase === 'idle' && <p className="text-[11px] text-coral-600">{error}</p>}
               <button
                 type="button"
+                disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
                 {`${t('composio.connect.connect')} ${toolkit.name}`}
               </button>
             </>
@@ -607,8 +646,9 @@ export default function ComposioConnectModal({
               />
               <button
                 type="button"
+                disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
                 {t('composio.connect.retryConnection')}
               </button>
               <button
@@ -655,18 +695,18 @@ export default function ComposioConnectModal({
               <div className="rounded-xl border border-coral-200 bg-coral-50 p-3">
                 <div className="flex items-center gap-2 text-sm font-medium text-coral-800">
                   <div className="w-2 h-2 rounded-full bg-coral-500" />
-                  {toolkit.name} authorization expired
+                  {t('composio.expiredAuthorization').replace('{name}', toolkit.name)}
                 </div>
                 <p className="mt-2 text-xs leading-relaxed text-coral-700">
-                  Reconnect to re-enable {toolkit.name} tools. OpenHuman will keep this integration
-                  unavailable until you refresh OAuth access.
+                  {t('composio.expiredDescription').replace('{name}', toolkit.name)}
                 </p>
               </div>
               <button
                 type="button"
+                disabled={connectInFlight}
                 onClick={() => void handleConnect()}
-                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-                Reconnect {toolkit.name}
+                className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors disabled:opacity-60 disabled:cursor-not-allowed">
+                {`${t('composio.reconnect')} ${toolkit.name}`}
               </button>
             </>
           )}
@@ -697,6 +737,22 @@ export default function ComposioConnectModal({
                   connectionId={activeConnection.id}
                 />
               )}
+              <label className="flex items-start gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={clearMemoryOnDisconnect}
+                  onChange={event => setClearMemoryOnDisconnect(event.currentTarget.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-stone-300 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium text-stone-800 dark:text-neutral-100">
+                    {t('accounts.disconnectClearMemory')}
+                  </span>
+                  <span className="block text-xs text-stone-500 dark:text-neutral-400">
+                    {t('accounts.disconnectClearMemoryHint')}
+                  </span>
+                </span>
+              </label>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -728,6 +784,7 @@ export default function ComposioConnectModal({
               <button
                 type="button"
                 onClick={() => {
+                  setClearMemoryOnDisconnect(false);
                   setPhase(
                     initiallyConnected ? 'connected' : initiallyExpired ? 'expired' : 'idle'
                   );

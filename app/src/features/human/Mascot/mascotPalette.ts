@@ -1,4 +1,4 @@
-export type MascotColor = 'yellow' | 'burgundy' | 'black' | 'navy' | 'green';
+export type MascotColor = 'yellow' | 'burgundy' | 'black' | 'navy' | 'custom';
 
 export interface MascotPalette {
   armHighlightMatrix: string;
@@ -56,18 +56,17 @@ const palettes: Record<MascotColor, MascotPalette> = {
     headShadowMatrix: '0 0 0 0 0.0705882 0 0 0 0 0.14902 0 0 0 0 0.270588 0 0 0 1 0',
     neckShadowColor: '#16324D',
   },
-  green: {
-    armHighlightMatrix: '0 0 0 0 0.403922 0 0 0 0 0.654902 0 0 0 0 0.364706 0 0 0 1 0',
-    armShadowMatrix: '0 0 0 0 0.113725 0 0 0 0 0.270588 0 0 0 0 0.117647 0 0 0 1 0',
-    bodyFill: '#5FA64F',
-    bodyHighlightMatrix: '0 0 0 0 0.403922 0 0 0 0 0.654902 0 0 0 0 0.364706 0 0 0 1 0',
-    bodyShadowMatrix: '0 0 0 0 0.113725 0 0 0 0 0.270588 0 0 0 0 0.117647 0 0 0 1 0',
-    headHighlightMatrix: '0 0 0 0 0.780392 0 0 0 0 0.894118 0 0 0 0 0.733333 0 0 0 1 0',
-    headShadowMatrix: '0 0 0 0 0.113725 0 0 0 0 0.270588 0 0 0 0 0.117647 0 0 0 1 0',
-    neckShadowColor: '#2E5A24',
-  },
+  custom: YELLOW_PALETTE,
 };
 
 export function getMascotPalette(color: MascotColor): MascotPalette {
-  return palettes[color];
+  return palettes[color] ?? YELLOW_PALETTE;
+}
+
+export function hexToArgbInt(hex: string): number {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return ((0xff << 24) | (r << 16) | (g << 8) | b) >>> 0;
 }

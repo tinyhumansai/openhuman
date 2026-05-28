@@ -1,4 +1,10 @@
 use super::*;
+use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::{
+    chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+};
+use chrono::{TimeZone, Utc};
 use tempfile::tempdir;
 
 fn isolated_test_config() -> (tempfile::TempDir, Config) {
@@ -8,6 +14,29 @@ fn isolated_test_config() -> (tempfile::TempDir, Config) {
     config.config_path = tmp.path().join("config.toml");
     std::fs::create_dir_all(&config.workspace_dir).expect("failed to create workspace dir");
     (tmp, config)
+}
+
+fn sample_chat_chunk(source_id: &str, seq: u32) -> Chunk {
+    let ts = Utc
+        .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
+        .unwrap();
+    Chunk {
+        id: chunk_id(SourceKind::Chat, source_id, seq, "channel memory"),
+        content: format!("channel memory {source_id} {seq}"),
+        metadata: Metadata {
+            source_kind: SourceKind::Chat,
+            source_id: source_id.to_string(),
+            owner: "alice@example.com".to_string(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec!["channel".to_string()],
+            source_ref: Some(SourceRef::new(format!("discord://{source_id}/{seq}"))),
+        },
+        token_count: 12,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    }
 }
 
 #[tokio::test]
@@ -138,7 +167,7 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
         .await
         .expect("preloaded config should be persisted");
 
-    disconnect_channel(&config, "discord", ChannelAuthMode::BotToken)
+    disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, false)
         .await
         .expect("discord disconnect should succeed");
 
@@ -152,6 +181,49 @@ async fn disconnect_discord_bot_token_clears_runtime_config() {
         discord.is_none(),
         "channels_config.discord should be removed after disconnect"
     );
+}
+
+#[tokio::test]
+async fn disconnect_channel_clear_memory_deletes_matching_chat_sources() {
+    let (_tmp, mut config) = isolated_test_config();
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "discord-token-abc".to_string(),
+        guild_id: Some("guild-1".to_string()),
+        channel_id: Some("channel-2".to_string()),
+        allowed_users: vec![],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+    config
+        .save()
+        .await
+        .expect("preloaded config should be persisted");
+
+    let target_a = sample_chat_chunk("discord:guild-1", 0);
+    let target_b = sample_chat_chunk("discord:guild-1:channel-2", 1);
+    let unrelated = sample_chat_chunk("telegram:chat-1", 0);
+    memory_tree_store::upsert_chunks(&config, &[target_a, target_b, unrelated])
+        .expect("chunks should seed");
+
+    let result = disconnect_channel(&config, "discord", ChannelAuthMode::BotToken, true)
+        .await
+        .expect("discord disconnect should succeed");
+
+    assert_eq!(
+        result.value["memory_chunks_deleted"].as_u64(),
+        Some(2),
+        "disconnect should report deleted memory chunks"
+    );
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Chat),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].metadata.source_id, "telegram:chat-1");
 }
 
 #[tokio::test]
@@ -349,7 +421,7 @@ async fn disconnect_imessage_clears_runtime_config() {
         .await
         .expect("preloaded config should be persisted");
 
-    disconnect_channel(&config, "imessage", ChannelAuthMode::ManagedDm)
+    disconnect_channel(&config, "imessage", ChannelAuthMode::ManagedDm, false)
         .await
         .expect("imessage disconnect should succeed");
 
@@ -480,5 +552,273 @@ async fn connected_channel_slugs_empty_when_nothing_configured() {
     assert!(
         slugs.is_empty(),
         "fresh config should yield no channels: {slugs:?}"
+    );
+}
+
+// ── Yuanbao channel credential verification ────────────────────
+// Issue: connect_channel for yuanbao previously stored creds and returned
+// "connected" without ever calling the upstream sign-token endpoint, so
+// random input (e.g. app_key=12) showed as Connected in the UI. The fix
+// calls `/api/v5/robotLogic/sign-token` and propagates the API error.
+
+/// Build a Config pre-pointed at a mock `api_domain` so the verification
+/// step hits the wiremock server instead of the live prod URL.
+fn yuanbao_test_config(mock_uri: &str) -> (tempfile::TempDir, Config) {
+    let (tmp, mut config) = isolated_test_config();
+    config.channels_config.yuanbao = Some(YuanbaoConfig {
+        api_domain: mock_uri.to_string(),
+        ..Default::default()
+    });
+    (tmp, config)
+}
+
+#[tokio::test]
+async fn connect_yuanbao_rejects_invalid_credentials() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 40001,
+            "msg": "invalid signature",
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, config) = yuanbao_test_config(&server.uri());
+    let err = connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({ "app_key": "12", "app_secret": "12" }),
+    )
+    .await
+    .expect_err("invalid yuanbao credentials should fail");
+
+    assert!(
+        err.contains("yuanbao credential verification failed") && err.contains("invalid signature"),
+        "expected upstream API msg in error, got: {err}"
+    );
+
+    // Nothing should be persisted on failure: no TOML write, no credential row.
+    let raw = tokio::fs::read_to_string(&config.config_path).await.ok();
+    if let Some(text) = raw {
+        let parsed: toml::Value = toml::from_str(&text).expect("config parses");
+        // The mock api_domain we pre-loaded is allowed to be present, but
+        // app_key / app_secret must NOT have been written.
+        if let Some(yb) = parsed
+            .get("channels_config")
+            .and_then(|v| v.get("yuanbao"))
+            .and_then(toml::Value::as_table)
+        {
+            assert_ne!(
+                yb.get("app_key").and_then(toml::Value::as_str),
+                Some("12"),
+                "app_key must not be persisted when verification fails"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn connect_yuanbao_persists_when_credentials_valid() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "token": "tok-abc",
+                "bot_id": "bot-123",
+                "product": "yuanbao",
+                "source": "openhuman",
+                "duration": 3600,
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, config) = yuanbao_test_config(&server.uri());
+    let result = connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({ "app_key": "real-key", "app_secret": "real-secret" }),
+    )
+    .await
+    .expect("valid yuanbao credentials should succeed");
+
+    assert_eq!(result.value.status, "connected");
+    assert!(result.value.restart_required);
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("config should be persisted");
+    let parsed: toml::Value = toml::from_str(&raw).expect("config parses");
+    let yb = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("yuanbao"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.yuanbao persisted");
+    assert_eq!(
+        yb.get("app_key").and_then(toml::Value::as_str),
+        Some("real-key")
+    );
+    // The plaintext `app_secret` must NOT be persisted in TOML — the
+    // runtime loads it from the encrypted credentials store instead.
+    let toml_secret = yb.get("app_secret").and_then(toml::Value::as_str);
+    assert!(
+        toml_secret.is_none() || toml_secret == Some(""),
+        "app_secret must not be persisted in plaintext TOML, got {toml_secret:?}"
+    );
+
+    // The credentials store should contain the secret so startup can recover it.
+    let auth = crate::openhuman::credentials::AuthService::from_config(&config);
+    let profile = auth
+        .get_profile("channel:yuanbao:api_key", None)
+        .expect("credentials lookup succeeds")
+        .expect("yuanbao credentials stored");
+    assert_eq!(
+        profile.metadata.get("app_secret").map(String::as_str),
+        Some("real-secret")
+    );
+    assert_eq!(
+        profile.metadata.get("app_key").map(String::as_str),
+        Some("real-key")
+    );
+}
+
+#[tokio::test]
+async fn connect_yuanbao_verifies_against_overridden_api_domain() {
+    // Regression: previously, `verify_yuanbao_credentials` rebuilt the
+    // YuanbaoConfig from `config.channels_config.yuanbao` alone and
+    // ignored the `api_domain` / `env` / `route_env` overrides on the
+    // connect-channel payload. A user submitting `env = "pre"` could
+    // pass verification against PROD and then fail after restart when
+    // the persisted override took effect.
+    //
+    // Here the base TOML's `api_domain` deliberately points at an
+    // unreachable URL — verification only succeeds if the override
+    // supplied in `creds_map` is what actually gets used.
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .and(header("X-Route-Env", "canary"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "token": "tok-override",
+                "bot_id": "bot-1",
+                "product": "yuanbao",
+                "source": "openhuman",
+                "duration": 3600,
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, mut config) = isolated_test_config();
+    // Base TOML points to a black hole so the test fails immediately if
+    // the verifier ignores the override.
+    config.channels_config.yuanbao = Some(YuanbaoConfig {
+        api_domain: "http://127.0.0.1:1".to_string(),
+        ..Default::default()
+    });
+
+    let mock_uri = server.uri();
+    let result = connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({
+            "app_key": "k",
+            "app_secret": "s",
+            "api_domain": mock_uri.clone(),
+            "route_env": "canary",
+        }),
+    )
+    .await
+    .expect("override should be applied before verify");
+
+    assert_eq!(result.value.status, "connected");
+
+    // The override should also have been persisted (single source of
+    // truth between verify and persist).
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("config should be persisted");
+    let parsed: toml::Value = toml::from_str(&raw).expect("config parses");
+    let yb = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("yuanbao"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.yuanbao persisted");
+    assert_eq!(
+        yb.get("api_domain").and_then(toml::Value::as_str),
+        Some(mock_uri.as_str()),
+    );
+    assert_eq!(
+        yb.get("route_env").and_then(toml::Value::as_str),
+        Some("canary"),
+    );
+}
+
+#[tokio::test]
+async fn connect_yuanbao_persists_env_override() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v5/robotLogic/sign-token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "data": {
+                "token": "tok-pre",
+                "bot_id": "bot-456",
+                "product": "yuanbao",
+                "source": "openhuman",
+                "duration": 3600,
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let (_tmp, config) = yuanbao_test_config(&server.uri());
+    connect_channel(
+        &config,
+        "yuanbao",
+        ChannelAuthMode::ApiKey,
+        serde_json::json!({
+            "app_key": "k",
+            "app_secret": "s",
+            "env": "pre",
+            "route_env": "canary",
+        }),
+    )
+    .await
+    .expect("valid yuanbao credentials should succeed");
+
+    let raw = tokio::fs::read_to_string(&config.config_path)
+        .await
+        .expect("config should be persisted");
+    let parsed: toml::Value = toml::from_str(&raw).expect("config parses");
+    let yb = parsed
+        .get("channels_config")
+        .and_then(|v| v.get("yuanbao"))
+        .and_then(toml::Value::as_table)
+        .expect("channels_config.yuanbao persisted");
+    assert_eq!(yb.get("env").and_then(toml::Value::as_str), Some("pre"));
+    assert_eq!(
+        yb.get("route_env").and_then(toml::Value::as_str),
+        Some("canary")
     );
 }

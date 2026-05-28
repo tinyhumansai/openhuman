@@ -113,6 +113,7 @@ impl Provider for NoopProvider {
             text: Some("ok".into()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -479,6 +480,7 @@ fn text_response(text: impl Into<String>) -> ChatResponse {
         text: Some(text.into()),
         tool_calls: Vec::new(),
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -491,6 +493,7 @@ fn tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
             arguments: arguments.to_string(),
         }],
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -507,8 +510,9 @@ async fn agent_turn_runs_long_parallel_subagent_flow_with_many_nested_tool_calls
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     let tools: Vec<Box<dyn Tool>> = vec![
         Box::new(SpawnParallelAgentsTool::new()),

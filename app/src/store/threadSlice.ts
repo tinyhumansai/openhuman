@@ -12,16 +12,10 @@ interface ThreadState {
   threads: Thread[];
   selectedThreadId: string | null;
   activeThreadId: string | null;
-  // [#1123] Commented out — welcome-agent onboarding replaced by Joyride walkthrough
-  // /**
-  //  * Thread created by `OnboardingLayout` to host the proactive welcome
-  //  * conversation. Tracked so we can delete it once the welcome agent
-  //  * calls `complete_onboarding` and `chat_onboarding_completed` flips —
-  //  * the welcome thread is transient onboarding chat, not history we
-  //  * want to clutter the user's thread list with.
-  //  */
-  // welcomeThreadId: string | null;
-  /** @deprecated [#1123] — welcome-agent replaced by Joyride walkthrough; kept for TS compat */
+  /**
+   * @deprecated — welcome-agent replaced by Joyride walkthrough. Always null
+   * for new users; retained for redux-persist deserialization compatibility.
+   */
   welcomeThreadId: string | null;
   messagesByThreadId: Record<string, ThreadMessage[]>;
   messages: ThreadMessage[];
@@ -158,16 +152,16 @@ export const addMessageLocal = createAsyncThunk(
     try {
       const persisted = await threadApi.appendMessage(payload.threadId, payload.message);
       if (payload.message.sender === 'user' && payload.message.content.trim()) {
-        try {
-          await dispatch(generateThreadTitleIfNeeded({ threadId: payload.threadId })).unwrap();
-        } catch (error) {
-          if (IS_DEV) {
-            console.debug('[threadSlice] addMessageLocal title refresh failed', {
-              threadId: payload.threadId,
-              error,
-            });
-          }
-        }
+        void dispatch(generateThreadTitleIfNeeded({ threadId: payload.threadId }))
+          .unwrap()
+          .catch(error => {
+            if (IS_DEV) {
+              console.debug('[threadSlice] addMessageLocal title refresh failed', {
+                threadId: payload.threadId,
+                error,
+              });
+            }
+          });
       }
       return { threadId: payload.threadId, message: persisted };
     } catch (error) {
@@ -293,6 +287,19 @@ export const updateThreadLabels = createAsyncThunk(
     } catch (error) {
       return rejectWithValue(
         error instanceof Error ? error.message : 'Failed to update thread labels'
+      );
+    }
+  }
+);
+
+export const updateThreadTitle = createAsyncThunk(
+  'thread/updateThreadTitle',
+  async (payload: { threadId: string; title: string }, { rejectWithValue }) => {
+    try {
+      return await threadApi.updateTitle(payload.threadId, payload.title);
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : 'Failed to update thread title'
       );
     }
   }
@@ -437,6 +444,12 @@ const threadSlice = createSlice({
       })
       .addCase(deleteThread.fulfilled, (state, action) => {
         delete state.messagesByThreadId[action.payload.threadId];
+      })
+      .addCase(updateThreadTitle.fulfilled, (state, action) => {
+        const idx = state.threads.findIndex(t => t.id === action.payload.id);
+        if (idx >= 0) {
+          state.threads[idx] = action.payload;
+        }
       })
       .addCase(resetUserScopedState, () => initialState);
   },

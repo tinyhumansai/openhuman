@@ -8,7 +8,33 @@
 //! These ops are also callable directly from other domains (e.g. the
 //! agent harness) when they need composio data at runtime.
 
+/// Toolkits that honour the `tags` query param on the backend tool-list endpoint.
+/// Expand this list when a new toolkit gains tag support.
+const TAG_QUERYABLE_TOOLKITS: &[&str] = &["github"];
+
+/// Returns `true` when `tags` should be forwarded to the backend.
+///
+/// Tags are forwarded when no toolkit filter is active (`None` / empty slice)
+/// or when at least one requested toolkit is in [`TAG_QUERYABLE_TOOLKITS`].
+/// This is `pub(crate)` so `tools.rs` can reuse it without duplicating the list.
+pub(crate) fn should_forward_tags(toolkits: Option<&[String]>) -> bool {
+    match toolkits {
+        None => true,
+        Some(kits) => {
+            kits.is_empty()
+                || kits.iter().any(|k| {
+                    TAG_QUERYABLE_TOOLKITS
+                        .iter()
+                        .any(|t| k.trim().eq_ignore_ascii_case(t))
+                })
+        }
+    }
+}
+
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::MemoryClient;
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -22,11 +48,12 @@ type OpResult<T> = std::result::Result<T, String>;
 use std::sync::Arc;
 
 use super::client::{
-    build_composio_client, create_composio_client, direct_authorize, direct_list_connections,
-    direct_list_tools, ComposioClient, ComposioClientKind,
+    build_composio_client, create_composio_client, direct_list_connections, direct_list_tools,
+    ComposioClient, ComposioClientKind,
 };
 use super::providers::{
-    capability_matrix, get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    agent_ready_toolkits, capability_matrix, get_provider, sync_state::SyncState, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason,
 };
 use super::types::{
     ComposioActiveTriggersResponse, ComposioAuthorizeResponse, ComposioAvailableTriggersResponse,
@@ -87,7 +114,7 @@ fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
 /// handshake eof`, …), we tag `failure="transport"` instead so the
 /// `before_send` filter's transport-phrase branch fires — and keep the
 /// status tag absent (transport failures don't carry a status).
-fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
+pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
     // `{err:#}` renders the full anyhow chain when applicable; for plain
     // `String` / `&str` errors it falls back to the Display impl.
     let rendered = format!("{err:#}");
@@ -211,6 +238,28 @@ pub async fn composio_list_capabilities(
     ))
 }
 
+/// List every toolkit slug that ships an agent-ready curated catalog.
+///
+/// Connected toolkits that are NOT in this list can still be
+/// authorized via OAuth, but the agent has no curated action surface
+/// for them — the UI should label such connections as
+/// "preview / agent integration coming soon" so users aren't led into
+/// a broken `composio_list_tools` → max-iterations loop. See #2283.
+pub async fn composio_list_agent_ready_toolkits(
+) -> OpResult<RpcOutcome<super::types::ComposioAgentReadyToolkitsResponse>> {
+    tracing::debug!("[composio] rpc list_agent_ready_toolkits");
+    let toolkits: Vec<String> = agent_ready_toolkits()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let count = toolkits.len();
+    let resp = super::types::ComposioAgentReadyToolkitsResponse { toolkits };
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: {count} agent-ready toolkit(s) listed")],
+    ))
+}
+
 // ── Connections ─────────────────────────────────────────────────────
 
 pub async fn composio_list_connections(
@@ -243,9 +292,22 @@ pub async fn composio_list_connections(
                 "[composio-direct] list_connections: fetching v3 \
                  /connected_accounts for the user's personal Composio tenant"
             );
-            let resp = direct_list_connections(&direct)
-                .await
-                .map_err(|e| format!("[composio-direct] list_connections failed: {e:#}"))?;
+            let resp = direct_list_connections(&direct).await.map_err(|e| {
+                // [#1166 / Sentry TAURI-RUST-X9] Restore symmetric error
+                // routing for the direct-mode branch. Without this hook the
+                // direct-mode 401 ("Invalid API key …") wire shape bypassed
+                // `report_error_or_expected` and leaked ~15.7k events in ~22h
+                // — same UI 5 s poll + `periodic.rs` tick that the
+                // backend branch (line ~266) was already classifying.
+                //
+                // Render WITH the `[composio-direct]` anchor BEFORE
+                // reporting so the classifier arm in
+                // `is_provider_user_state_message` (which gates on that
+                // prefix) actually fires.
+                let rendered = format!("[composio-direct] list_connections failed: {e:#}");
+                report_composio_op_error("list_connections", &rendered);
+                rendered
+            })?;
             let active = resp.connections.iter().filter(|c| c.is_active()).count();
             let total = resp.connections.len();
             // Reconcile the integrations cache against this fresh live
@@ -300,10 +362,13 @@ pub async fn composio_authorize(
     let resp = match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!(toolkit = %toolkit, "[composio] authorize: backend variant");
-            client.authorize(toolkit, extra_params).await.map_err(|e| {
-                report_composio_op_error("authorize", &e);
-                format!("[composio] authorize failed: {e:#}")
-            })?
+            super::oauth_handoff::authorize_with_meta_guard(&client, toolkit, extra_params)
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("authorize", &e);
+                    let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                    format!("[composio] authorize failed: {wrapped:#}")
+                })?
         }
         ComposioClientKind::Direct(direct) => {
             tracing::info!(
@@ -327,9 +392,25 @@ pub async fn composio_authorize(
                      app.composio.dev for your auth config"
                 );
             }
-            direct_authorize(&direct, toolkit, &config.composio.entity_id)
-                .await
-                .map_err(|e| format!("[composio-direct] authorize failed: {e:#}"))?
+            super::oauth_handoff::direct_authorize_with_meta_guard(
+                &direct,
+                toolkit,
+                &config.composio.entity_id,
+            )
+            .await
+            .map_err(|e| {
+                let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the
+                // backend branch's `report_composio_op_error` on the
+                // same handler — direct-mode 401s from
+                // `connected_accounts/link` were leaking otherwise.
+                // Render WITH the `[composio-direct]` anchor so the
+                // classifier arm fires; wrapped error preserves any
+                // rate-limit classifications fed up the ladder.
+                let rendered = format!("[composio-direct] authorize failed: {wrapped:#}");
+                report_composio_op_error("authorize", &rendered);
+                rendered
+            })?
         }
     };
 
@@ -352,16 +433,48 @@ pub async fn composio_authorize(
 pub async fn composio_delete_connection(
     config: &Config,
     connection_id: &str,
+    clear_memory: bool,
 ) -> OpResult<RpcOutcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
     let client = resolve_client(config)?;
-    let toolkit = resolve_toolkit_for_connection(&client, connection_id)
-        .await
-        .ok();
-    let resp = client.delete_connection(connection_id).await.map_err(|e| {
+    let toolkit = match resolve_toolkit_for_connection(&client, connection_id).await {
+        Ok(toolkit) => Some(toolkit),
+        Err(error) if clear_memory => {
+            return Err(format!(
+                "[composio] delete_connection cannot clear memory without resolving toolkit: {error}"
+            ));
+        }
+        Err(_) => None,
+    };
+    let memory_targets = if clear_memory {
+        composio_memory_targets_for_connection(config, toolkit.as_deref(), connection_id)
+            .await
+            .map_err(|error| {
+                format!("[composio] delete_connection cannot enumerate memory targets: {error:#}")
+            })?
+    } else {
+        Vec::new()
+    };
+    let mut resp = client.delete_connection(connection_id).await.map_err(|e| {
         report_composio_op_error("delete_connection", &e);
         format!("[composio] delete_connection failed: {e:#}")
     })?;
+    let mut memory_chunks_deleted = 0;
+    let mut memory_clear_errors = Vec::new();
+    for target in &memory_targets {
+        match target.delete(config) {
+            Ok(deleted) => {
+                memory_chunks_deleted += deleted;
+            }
+            Err(error) => {
+                memory_clear_errors.push(format!(
+                    "[composio] connection deleted, but failed to clear memory chunks for {}: {error:#}",
+                    target.label()
+                ));
+            }
+        }
+    }
+    resp.memory_chunks_deleted = memory_chunks_deleted;
     if let Some(toolkit) = toolkit.as_deref() {
         let deleted =
             super::providers::profile::delete_connected_identity_facets(toolkit, connection_id);
@@ -422,10 +535,155 @@ pub async fn composio_delete_connection(
             );
         }
     }
+    if !memory_clear_errors.is_empty() {
+        return Err(memory_clear_errors.join("; "));
+    }
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
     ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MemoryCleanupTarget {
+    Exact(SourceKind, String),
+    Prefix(SourceKind, String),
+    Owner(SourceKind, String),
+}
+
+impl MemoryCleanupTarget {
+    fn delete(&self, config: &Config) -> anyhow::Result<usize> {
+        match self {
+            Self::Exact(source_kind, source_id) => {
+                memory_tree_store::delete_chunks_by_source(config, *source_kind, source_id)
+            }
+            Self::Prefix(source_kind, source_id_prefix) => {
+                memory_tree_store::delete_chunks_by_source_prefix(
+                    config,
+                    *source_kind,
+                    source_id_prefix,
+                )
+            }
+            Self::Owner(source_kind, owner) => {
+                memory_tree_store::delete_chunks_by_owner(config, *source_kind, owner)
+            }
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Exact(source_kind, source_id) => {
+                format!("{}:{source_id}", source_kind.as_str())
+            }
+            Self::Prefix(source_kind, source_id_prefix) => {
+                format!("{}:{source_id_prefix}*", source_kind.as_str())
+            }
+            Self::Owner(source_kind, owner) => {
+                format!("{}:owner:{owner}", source_kind.as_str())
+            }
+        }
+    }
+}
+
+async fn composio_memory_targets_for_connection(
+    config: &Config,
+    toolkit: Option<&str>,
+    connection_id: &str,
+) -> anyhow::Result<Vec<MemoryCleanupTarget>> {
+    let Some(toolkit) = toolkit.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    let targets = match toolkit.to_ascii_lowercase().as_str() {
+        "slack" => vec![MemoryCleanupTarget::Exact(
+            SourceKind::Chat,
+            format!("slack:{connection_id}"),
+        )],
+        "gmail" => gmail_memory_sources_for_connection(connection_id),
+        "notion" => notion_memory_targets_for_connection(config, connection_id).await?,
+        "drive" | "googledrive" | "google_drive" => {
+            drive_memory_targets_for_connection(connection_id)
+        }
+        _ => Vec::new(),
+    };
+    Ok(targets)
+}
+
+fn gmail_memory_sources_for_connection(connection_id: &str) -> Vec<MemoryCleanupTarget> {
+    vec![
+        MemoryCleanupTarget::Owner(SourceKind::Email, format!("gmail-sync:{connection_id}")),
+        MemoryCleanupTarget::Exact(SourceKind::Email, format!("gmail:{connection_id}")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}:")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}/")),
+    ]
+}
+
+async fn notion_memory_targets_for_connection(
+    config: &Config,
+    connection_id: &str,
+) -> anyhow::Result<Vec<MemoryCleanupTarget>> {
+    let mut targets = connection_scoped_document_targets("notion", connection_id);
+
+    let memory = Arc::new(
+        MemoryClient::from_workspace_dir(config.workspace_dir.clone()).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to open memory client for notion cleanup target discovery: {error}"
+            )
+        })?,
+    );
+    let state = SyncState::load(&memory, "notion", connection_id)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("failed to load notion sync state for memory cleanup: {error}")
+        })?;
+    for raw_id in state.synced_ids {
+        let Some(page_id) = notion_synced_page_id(&raw_id) else {
+            continue;
+        };
+        targets.push(MemoryCleanupTarget::Exact(
+            SourceKind::Document,
+            format!("notion:{page_id}"),
+        ));
+        targets.push(MemoryCleanupTarget::Exact(
+            SourceKind::Document,
+            format!("composio-notion-page-{page_id}"),
+        ));
+    }
+
+    Ok(dedupe_memory_targets(targets))
+}
+
+fn drive_memory_targets_for_connection(connection_id: &str) -> Vec<MemoryCleanupTarget> {
+    ["drive", "googledrive", "google_drive"]
+        .into_iter()
+        .flat_map(|prefix| connection_scoped_document_targets(prefix, connection_id))
+        .collect()
+}
+
+fn connection_scoped_document_targets(
+    prefix: &str,
+    connection_id: &str,
+) -> Vec<MemoryCleanupTarget> {
+    vec![
+        MemoryCleanupTarget::Exact(SourceKind::Document, format!("{prefix}:{connection_id}")),
+        MemoryCleanupTarget::Prefix(SourceKind::Document, format!("{prefix}:{connection_id}:")),
+        MemoryCleanupTarget::Prefix(SourceKind::Document, format!("{prefix}:{connection_id}/")),
+    ]
+}
+
+fn notion_synced_page_id(raw_id: &str) -> Option<String> {
+    let page_id = raw_id.split_once('@').map_or(raw_id, |(id, _)| id).trim();
+    (!page_id.is_empty()).then(|| page_id.to_string())
+}
+
+fn dedupe_memory_targets(targets: Vec<MemoryCleanupTarget>) -> Vec<MemoryCleanupTarget> {
+    let mut unique = Vec::new();
+    for target in targets {
+        if !unique.contains(&target) {
+            unique.push(target);
+        }
+    }
+    unique
 }
 
 // ── Tools ───────────────────────────────────────────────────────────
@@ -433,8 +691,14 @@ pub async fn composio_delete_connection(
 pub async fn composio_list_tools(
     config: &Config,
     toolkits: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
 ) -> OpResult<RpcOutcome<ComposioToolsResponse>> {
-    tracing::debug!(?toolkits, "[composio] rpc list_tools");
+    let effective_tags = if should_forward_tags(toolkits.as_deref()) {
+        tags
+    } else {
+        None
+    };
+    tracing::debug!(?toolkits, ?effective_tags, "[composio] rpc list_tools");
     // Route through the mode-aware factory. In direct mode the backend
     // tool catalogue (which is shaped by the tinyhumans-tenant
     // allowlist + curated whitelist) does NOT apply — the user's
@@ -447,10 +711,13 @@ pub async fn composio_list_tools(
     match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!("[composio] list_tools: backend variant");
-            let resp = client.list_tools(toolkits.as_deref()).await.map_err(|e| {
-                report_composio_op_error("list_tools", &e);
-                format!("[composio] list_tools failed: {e:#}")
-            })?;
+            let resp = client
+                .list_tools(toolkits.as_deref(), effective_tags.as_deref())
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("list_tools", &e);
+                    format!("[composio] list_tools failed: {e:#}")
+                })?;
             let count = resp.tools.len();
             Ok(RpcOutcome::new(
                 resp,
@@ -470,7 +737,17 @@ pub async fn composio_list_tools(
                 Some(list) if !list.is_empty() => list,
                 _ => {
                     let conns = direct_list_connections(&direct).await.map_err(|e| {
-                        format!("[composio-direct] list_tools: prefetch connections failed: {e:#}")
+                        // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                        // routing — the prefetch call goes to the same v3
+                        // `/connected_accounts` endpoint as `list_connections`
+                        // and would emit the same 401 wire shape. Render
+                        // WITH the `[composio-direct]` anchor so the
+                        // classifier arm fires on the prefetch path too.
+                        let rendered = format!(
+                            "[composio-direct] list_tools: prefetch connections failed: {e:#}"
+                        );
+                        report_composio_op_error("list_connections", &rendered);
+                        rendered
                     })?;
                     let mut v: Vec<String> = conns
                         .connections
@@ -498,11 +775,24 @@ pub async fn composio_list_tools(
             }
             tracing::debug!(
                 toolkits = scope.len(),
+                ?effective_tags,
                 "[composio-direct] list_tools: fetching v3 tool schemas"
             );
-            let mut resp = direct_list_tools(&direct, &scope)
+            // Forward the same `effective_tags` the backend branch uses so the
+            // tag filter is honoured in direct (BYO-key) mode too — previously
+            // it was computed above and then dropped on this branch.
+            let mut resp = direct_list_tools(&direct, &scope, effective_tags.as_deref())
                 .await
-                .map_err(|e| format!("[composio-direct] list_tools failed: {e:#}"))?;
+                .map_err(|e| {
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
+                    // branch's hook (line ~451). Direct-mode `list_tools`
+                    // failures are user-state when the API key is bad. Render
+                    // WITH the `[composio-direct]` anchor so the classifier
+                    // arm fires.
+                    let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                    report_composio_op_error("list_tools", &rendered);
+                    rendered
+                })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but
             // OpenHuman's curation policy isn't, and direct-mode users
@@ -1566,7 +1856,10 @@ async fn fetch_connected_integrations_uncached(
             let tools = if connected_slugs_for_tools.is_empty() {
                 Vec::new()
             } else {
-                match client.list_tools(Some(&connected_slugs_for_tools)).await {
+                match client
+                    .list_tools(Some(&connected_slugs_for_tools), None)
+                    .await
+                {
                     Ok(resp) => resp.tools,
                     Err(e) => {
                         tracing::warn!(
@@ -1634,21 +1927,23 @@ async fn fetch_connected_integrations_uncached(
             // (definitional source). Failure is non-fatal — we fall
             // back to empty tools and let lazy resolution handle it.
             let tools = match super::client::build_composio_client(config) {
-                Some(backend_client) => match backend_client.list_tools(Some(&allowlist)).await {
-                    Ok(resp) => {
-                        tracing::debug!(
+                Some(backend_client) => {
+                    match backend_client.list_tools(Some(&allowlist), None).await {
+                        Ok(resp) => {
+                            tracing::debug!(
                             count = resp.tools.len(),
                             "[composio-direct] fetch_connected_integrations: pulled tool schemas from backend (tenant-agnostic definitional source)"
                         );
-                        resp.tools
-                    }
-                    Err(e) => {
-                        tracing::info!(
+                            resp.tools
+                        }
+                        Err(e) => {
+                            tracing::info!(
                             "[composio-direct] fetch_connected_integrations: backend list_tools failed (will use lazy fallback at delegation time): {e:#}"
                         );
-                        Vec::new()
+                            Vec::new()
+                        }
                     }
-                },
+                }
                 None => {
                     tracing::info!(
                         "[composio-direct] fetch_connected_integrations: no backend session for schema fetch; lazy fallback at delegation time"
@@ -1667,6 +1962,86 @@ async fn fetch_connected_integrations_uncached(
         .map(|c| c.normalized_toolkit())
         .filter(|toolkit| !toolkit.is_empty())
         .collect();
+
+    // Most-informative *non-active* status per toolkit slug. Lets the
+    // integrations_agent spawn-gate (#2365) emit a precise message
+    // when a connection row exists but isn't usable yet (`INITIATED`
+    // — OAuth still in progress) or any longer (`EXPIRED` / `FAILED`)
+    // — instead of the legacy generic "available but not authorized".
+    //
+    // Status priority (UI-actionability):
+    //   1. EXPIRED  — reconnect path
+    //   2. FAILED / ERROR — reconnect path
+    //   3. INITIATED / INITIALIZING / PENDING — finish OAuth in browser
+    //   4. anything else — passes through verbatim
+    let non_active_status_by_slug: std::collections::HashMap<String, String> = {
+        fn priority(status: &str) -> u8 {
+            let s = status.trim().to_ascii_uppercase();
+            match s.as_str() {
+                "EXPIRED" => 4,
+                "FAILED" | "ERROR" => 3,
+                "INITIATED" | "INITIALIZING" | "PENDING" => 2,
+                _ => 1,
+            }
+        }
+        let mut map: std::collections::HashMap<String, (u8, String)> =
+            std::collections::HashMap::new();
+        for conn in connections.iter().filter(|c| !c.is_active()) {
+            let slug = conn.normalized_toolkit();
+            if slug.is_empty() {
+                continue;
+            }
+            // Don't override an ACTIVE-slug — those carry no non-active
+            // status from this map's perspective.
+            if connected_slugs.contains(&slug) {
+                continue;
+            }
+            let p = priority(&conn.status);
+            map.entry(slug.clone())
+                .and_modify(|cur| {
+                    if p > cur.0 {
+                        tracing::debug!(
+                            target: "composio",
+                            toolkit = %slug,
+                            previous_status = %cur.1,
+                            previous_priority = cur.0,
+                            new_status = %conn.status,
+                            new_priority = p,
+                            "[composio] non_active_status_by_slug: upgraded most-informative status"
+                        );
+                        *cur = (p, conn.status.clone());
+                    } else {
+                        tracing::trace!(
+                            target: "composio",
+                            toolkit = %slug,
+                            kept_status = %cur.1,
+                            kept_priority = cur.0,
+                            candidate_status = %conn.status,
+                            candidate_priority = p,
+                            "[composio] non_active_status_by_slug: kept higher-priority status"
+                        );
+                    }
+                })
+                .or_insert_with(|| {
+                    tracing::debug!(
+                        target: "composio",
+                        toolkit = %slug,
+                        status = %conn.status,
+                        priority = p,
+                        "[composio] non_active_status_by_slug: first non-active row"
+                    );
+                    (p, conn.status.clone())
+                });
+        }
+        let final_map: std::collections::HashMap<String, String> =
+            map.into_iter().map(|(k, (_, v))| (k, v)).collect();
+        tracing::debug!(
+            target: "composio",
+            entries = final_map.len(),
+            "[composio] non_active_status_by_slug: final map"
+        );
+        final_map
+    };
 
     // Deduplicate the allowlist so a backend that returns duplicates
     // doesn't produce dual entries downstream.
@@ -1764,6 +2139,11 @@ async fn fetch_connected_integrations_uncached(
             tools,
             gated_tools,
             connected,
+            non_active_status: if connected {
+                None
+            } else {
+                non_active_status_by_slug.get(slug).cloned()
+            },
         });
     }
 
@@ -1779,6 +2159,7 @@ async fn fetch_connected_integrations_uncached(
         tracing::debug!(
             toolkit = %ci.toolkit,
             connected = ci.connected,
+            non_active_status = ?ci.non_active_status,
             tool_count = ci.tools.len(),
             "[composio] integration overview"
         );
@@ -1801,6 +2182,10 @@ async fn fetch_connected_integrations_uncached(
 /// `fetch_connected_integrations_uncached`'s own namespacing rule so
 /// siblings like `github` / `git` don't leak into each other's buckets.
 ///
+/// `tags` narrows the result by Composio action tag (OR semantics). Only
+/// honoured for the GitHub toolkit; passed through to `list_tools` so the
+/// backend can skip the repo-list force-include and return a focused set.
+///
 /// Returns an empty vec when the backend has no actions for the
 /// toolkit (valid steady state for a freshly-authorised integration
 /// whose catalogue hasn't been published yet). Returns `Err` only for
@@ -1808,14 +2193,20 @@ async fn fetch_connected_integrations_uncached(
 pub async fn fetch_toolkit_actions(
     client: &ComposioClient,
     toolkit: &str,
+    tags: Option<&[String]>,
 ) -> anyhow::Result<Vec<ConnectedIntegrationTool>> {
     let toolkit_slug = toolkit.trim();
     if toolkit_slug.is_empty() {
         anyhow::bail!("fetch_toolkit_actions: toolkit must not be empty");
     }
-    tracing::debug!(toolkit = %toolkit_slug, "[composio] fetch_toolkit_actions");
+    let effective_tags = if should_forward_tags(Some(&[toolkit_slug.to_string()])) {
+        tags
+    } else {
+        None
+    };
+    tracing::debug!(toolkit = %toolkit_slug, ?effective_tags, "[composio] fetch_toolkit_actions");
     let resp = client
-        .list_tools(Some(&[toolkit_slug.to_string()]))
+        .list_tools(Some(&[toolkit_slug.to_string()]), effective_tags)
         .await
         .map_err(|e| anyhow::anyhow!("list_tools failed for toolkit `{toolkit_slug}`: {e}"))?;
     let action_prefix = format!("{}_", toolkit_slug.to_uppercase());

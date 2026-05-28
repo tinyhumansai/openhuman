@@ -93,8 +93,11 @@ export const CONSUMER_FIRST_SESSION_ENABLED =
 export const SKILLS_GITHUB_REPO =
   import.meta.env.VITE_SKILLS_GITHUB_REPO || 'tinyhumansai/openhuman-skills';
 
-/** Google Analytics 4 Measurement ID. Leave blank to disable GA. Skipped in dev builds. */
+/** Google Analytics 4 Measurement ID. Leave blank to disable GA. */
 export const GA_MEASUREMENT_ID = import.meta.env.VITE_GA_MEASUREMENT_ID as string | undefined;
+
+/** When true, allow GA in dev builds (for local debugging). Set `VITE_GA_FORCE_DEV=true` in `.env.local`. */
+export const GA_FORCE_DEV = import.meta.env.VITE_GA_FORCE_DEV === 'true';
 
 /** Sentry DSN for error reporting. Leave blank to disable. */
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN as string | undefined;

@@ -160,6 +160,7 @@ pub fn all_channel_definitions() -> Vec<ChannelDefinition> {
         imessage_definition(),
         lark_definition(),
         dingtalk_definition(),
+        yuanbao_definition(),
     ]
 }
 
@@ -441,6 +442,44 @@ fn dingtalk_definition() -> ChannelDefinition {
             auth_action: None,
         }],
         capabilities: vec![ChannelCapability::SendText, ChannelCapability::ReceiveText],
+    }
+}
+
+fn yuanbao_definition() -> ChannelDefinition {
+    // Endpoint URLs (api_domain / ws_domain) are not user-facing — the
+    // channel derives them from the `env` field of `YuanbaoConfig`
+    // (default: production). Advanced users can override via TOML.
+    ChannelDefinition {
+        id: "yuanbao",
+        display_name: "元宝",
+        description: "通过元宝（Yuanbao）机器人收发消息。",
+        icon: "yuanbao",
+        auth_modes: vec![AuthModeSpec {
+            mode: ChannelAuthMode::ApiKey,
+            description: "提供元宝开放平台的 AppID 和 AppSecret。",
+            fields: vec![
+                FieldRequirement {
+                    key: "app_key",
+                    label: "AppID",
+                    field_type: "string",
+                    required: true,
+                    placeholder: "元宝开放平台 AppID",
+                },
+                FieldRequirement {
+                    key: "app_secret",
+                    label: "AppSecret",
+                    field_type: "secret",
+                    required: true,
+                    placeholder: "元宝开放平台 AppSecret",
+                },
+            ],
+            auth_action: None,
+        }],
+        capabilities: vec![
+            ChannelCapability::SendText,
+            ChannelCapability::ReceiveText,
+            ChannelCapability::Typing,
+        ],
     }
 }
 

@@ -2,7 +2,7 @@
 //!
 //! The reset deliberately mirrors what the user sees on a fresh install:
 //!   - no authenticated user (active_user.toml removed, api_key cleared)
-//!   - onboarding not yet completed (chat_onboarding_completed=false)
+//!   - onboarding not yet completed (onboarding_completed=false, chat_onboarding_completed=false)
 //!   - no cron jobs (so the post-onboarding seed re-creates `morning_briefing`)
 //!   - no memory-tree chunks, summaries, content dirs, or sync cursors
 //!
@@ -15,7 +15,7 @@ use serde_json::json;
 use crate::openhuman::config::Config;
 use crate::openhuman::config::{clear_active_user, default_root_openhuman_dir};
 use crate::openhuman::cron;
-use crate::openhuman::memory::tree::read_rpc;
+use crate::openhuman::memory::read_rpc;
 use crate::rpc::RpcOutcome;
 
 const E2E_MODE_ENV_VAR: &str = "OPENHUMAN_E2E_MODE";
@@ -68,12 +68,13 @@ pub async fn reset() -> Result<RpcOutcome<ResetSummary>, String> {
         .await
         .map_err(|e| format!("test_reset: failed to load config: {e}"))?;
     log::trace!(
-        "[test_reset] config loaded — onboarding_completed={}, api_key_set={}",
+        "[test_reset] config loaded — onboarding_completed={} chat_onboarding_completed={}, api_key_set={}",
+        config.onboarding_completed,
         config.chat_onboarding_completed,
         config.api_key.is_some()
     );
 
-    let onboarding_was_completed = config.chat_onboarding_completed;
+    let onboarding_was_completed = config.chat_onboarding_completed || config.onboarding_completed;
     let api_key_was_set = config.api_key.is_some();
 
     log::debug!("[test_reset] step=wipe_cron start");
@@ -91,6 +92,7 @@ pub async fn reset() -> Result<RpcOutcome<ResetSummary>, String> {
     );
 
     log::debug!("[test_reset] step=clear_config_fields start");
+    config.onboarding_completed = false;
     config.chat_onboarding_completed = false;
     config.api_key = None;
     config
@@ -134,7 +136,7 @@ pub async fn reset() -> Result<RpcOutcome<ResetSummary>, String> {
         vec![
             format!("removed {cron_jobs_removed} cron jobs"),
             memory_tree_log,
-            format!("chat_onboarding_completed: {onboarding_was_completed} → false"),
+            format!("onboarding_completed + chat_onboarding_completed: {onboarding_was_completed} → false"),
             format!("api_key cleared (was set: {api_key_was_set})"),
             "active_user.toml removed".to_string(),
         ],

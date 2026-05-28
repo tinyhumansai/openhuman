@@ -28,6 +28,41 @@ require() {
   done
 }
 
+# Run the picked agent CLI on a single positional prompt. Each known agent
+# is launched in its equivalent "yolo" mode so headless / detached runs
+# (CI, background tasks, tmux workers) don't stall on per-tool permission
+# prompts that have no responder. Set REVIEW_AGENT_SAFE=1 to keep the
+# prompts (e.g. an interactive local run where you want to vet each step).
+#
+# Mirrors the precedent in bin/spawn-issue, which already passes
+# --dangerously-skip-permissions to its detached claude workers, and brings
+# the claude path in line with the existing codex / cursor handling.
+agent_exec() {
+  local agent="$1"
+  local prompt="$2"
+  if [ "${REVIEW_AGENT_SAFE:-0}" = "1" ]; then
+    case "$agent" in
+      codex) codex exec "$prompt" ;;
+      *) "$agent" "$prompt" ;;
+    esac
+    return
+  fi
+  case "$agent" in
+    claude)
+      claude --dangerously-skip-permissions "$prompt"
+      ;;
+    codex)
+      codex exec --dangerously-bypass-approvals-and-sandbox "$prompt"
+      ;;
+    cursor|cursor-agent)
+      cursor-agent --yolo "$prompt"
+      ;;
+    *)
+      "$agent" "$prompt"
+      ;;
+  esac
+}
+
 gh_assign_self_issue() {
   local issue="$1"
   local repo="$2"
