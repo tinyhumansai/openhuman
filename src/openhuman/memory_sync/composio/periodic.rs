@@ -50,7 +50,7 @@ use tokio::time::interval;
 
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::scheduler_gate::gate::current_policy;
-use crate::openhuman::scheduler_gate::policy::{PauseReason, Policy};
+use crate::openhuman::scheduler_gate::policy::PauseReason;
 
 use super::providers::{get_provider, ProviderContext, SyncReason};
 use crate::openhuman::composio::client::{

@@ -5306,6 +5306,7 @@ dependencies = [
  "tracing-appender",
  "tracing-log",
  "tracing-subscriber",
+ "unicode-normalization",
  "unicode-segmentation",
  "unicode-width",
  "url",
