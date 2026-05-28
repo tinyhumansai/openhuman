@@ -17,6 +17,17 @@ pub async fn migrate_openclaw(
     Ok(RpcOutcome::single_log(report, "migration completed"))
 }
 
+pub async fn migrate_hermes(
+    config: &Config,
+    source_workspace: Option<PathBuf>,
+    dry_run: bool,
+) -> Result<RpcOutcome<MigrationReport>, String> {
+    let report = migration::migrate_hermes_memory(config, source_workspace, dry_run)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(report, "migration completed"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +114,111 @@ mod tests {
         assert!(
             !err.is_empty(),
             "error string must be non-empty so the RPC caller sees a reason"
+        );
+    }
+
+    // ── Hermes migration tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn migrate_hermes_dry_run_on_empty_source_returns_report() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let result = migrate_hermes(&config, Some(tmp.path().to_path_buf()), true).await;
+        match result {
+            Ok(outcome) => {
+                assert!(
+                    outcome
+                        .logs
+                        .iter()
+                        .any(|l| l.contains("migration completed")),
+                    "expected 'migration completed' log, got logs: {:?}",
+                    outcome.logs
+                );
+            }
+            Err(e) => panic!("dry_run on empty source should not error: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn migrate_hermes_apply_imports_markdown_entries() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+
+        let source = tmp.path().join("hermes-src");
+        std::fs::create_dir_all(&source).unwrap();
+        // Cover the full Hermes file mapping (MEMORY.md / USER.md / SOUL.md)
+        // so the apply path is exercised for every category — including the
+        // `Custom("persona")` SOUL.md branch which @graycyrus called out as
+        // untested in the original review on this PR.
+        std::fs::write(source.join("MEMORY.md"), "# Agent memory\nremember this").unwrap();
+        std::fs::write(
+            source.join("USER.md"),
+            "# User profile\nprefers concise answers",
+        )
+        .unwrap();
+        std::fs::write(source.join("SOUL.md"), "# Persona\ncalm and curious").unwrap();
+
+        let outcome = migrate_hermes(&config, Some(source), false)
+            .await
+            .expect("apply path should succeed");
+        let report = outcome.value;
+        assert!(!report.dry_run);
+        assert!(
+            report.stats.imported >= 3,
+            "apply must import all 3 entries; stats={:?}",
+            report.stats
+        );
+        assert_eq!(report.stats.from_markdown, 3);
+    }
+
+    #[tokio::test]
+    async fn migrate_hermes_skips_missing_optional_files() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+
+        let source = tmp.path().join("hermes-src");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("MEMORY.md"), "# Memory\nonly memory").unwrap();
+
+        let outcome = migrate_hermes(&config, Some(source), true)
+            .await
+            .expect("should succeed with partial files");
+        let report = outcome.value;
+        assert_eq!(report.stats.from_markdown, 1);
+        assert!(
+            report.warnings.iter().any(|w| w.contains("USER.md")),
+            "warnings should mention missing USER.md: {:?}",
+            report.warnings
+        );
+        assert!(
+            report.warnings.iter().any(|w| w.contains("SOUL.md")),
+            "warnings should mention missing SOUL.md: {:?}",
+            report.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn migrate_hermes_returns_error_for_missing_source() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        let missing = tmp.path().join("does-not-exist");
+        let err = migrate_hermes(&config, Some(missing), false)
+            .await
+            .expect_err("missing source must surface as Err");
+        assert!(!err.is_empty());
+    }
+
+    #[tokio::test]
+    async fn migrate_hermes_refuses_self_migration() {
+        let tmp = TempDir::new().unwrap();
+        let config = test_config(&tmp);
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let err = migrate_hermes(&config, Some(config.workspace_dir.clone()), false)
+            .await
+            .expect_err("self-migration must be refused");
+        assert!(
+            err.contains("self-migration"),
+            "error should mention self-migration: {err}"
         );
     }
 }

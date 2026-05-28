@@ -430,6 +430,7 @@ const ko1: TranslationMap = {
   'migration.vendorLabel': '소스 공급업체',
   'migration.sourceLabel': '소스 작업공간 경로(선택 사항)',
   'migration.sourcePlaceholder': '자동 감지하려면 비워 두세요(예: ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
   'migration.previewAction': '미리 보기',
@@ -452,10 +453,6 @@ const ko1: TranslationMap = {
     'No data has been imported yet. Click Apply import to copy it over.',
   'migration.report.appliedHint':
     'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
-  'migration.hermesComingSoonPrefix': 'Hermes 수입업체가 로드맵에 있습니다. — 참조',
-  'migration.hermesComingSoonSuffix':
-    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
   'migration.confirmImport.plural':
@@ -665,7 +662,7 @@ const ko1: TranslationMap = {
   'common.breadcrumb': '이동 경로',
   'settings.betaBuild': '베타 빌드 - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (출시 예정)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'ChatGPT Plus/Pro 구독 또는 OpenAI API 키를 사용할 수 있으며, 둘 다 필요하지는 않습니다.',
   'onboarding.apiKeys.openaiOauthOpening': '로그인 여는 중…',

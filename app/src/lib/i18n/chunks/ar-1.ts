@@ -422,6 +422,7 @@ const ar1: TranslationMap = {
   'migration.vendorLabel': 'المصدر',
   'migration.sourceLabel': 'مسار مساحة العمل المصدر (اختياري)',
   'migration.sourcePlaceholder': 'اتركه فارغًا للاكتشاف التلقائي (مثال: ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'يستخدم الموقع الافتراضي للمصدر عند تركه فارغًا. حدد مسارًا صريحًا إذا نقلت مساحة العمل إلى مكان آخر.',
   'migration.previewAction': 'معاينة',
@@ -443,9 +444,6 @@ const ar1: TranslationMap = {
   'migration.report.previewHint': 'لم تُستورد أي بيانات بعد. اضغط «تطبيق الاستيراد» للنسخ.',
   'migration.report.appliedHint':
     'العناصر المستوردة أصبحت الآن في ذاكرتك. أعد تشغيل «المعاينة» للمقارنة مرة أخرى.',
-  'migration.hermesComingSoonPrefix': 'مستورد Hermes ضمن خارطة الطريق — راجع ',
-  'migration.hermesComingSoonSuffix': ' للسياق. استخدم OpenClaw للترحيل اليوم؛ سيصل Hermes لاحقًا.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'استيراد {count} عنصر إلى مساحة العمل الحالية؟\n\nالمصدر: {source}\nالهدف: {target}\n\nسيتم نسخ الذاكرة الحالية احتياطيًا قبل بدء الاستيراد.',
   'migration.confirmImport.plural':
@@ -656,7 +654,7 @@ const ar1: TranslationMap = {
   'common.breadcrumb': 'مسار التنقل',
   'settings.betaBuild': 'إصدار تجريبي - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (قريبًا)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'استخدم ChatGPT Plus/Pro (اشتراك) أو مفتاح OpenAI API، ولا تحتاج إلى كليهما.',
   'onboarding.apiKeys.openaiOauthOpening': 'جارٍ فتح تسجيل الدخول…',

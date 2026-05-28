@@ -430,6 +430,7 @@ const bn1: TranslationMap = {
   'migration.vendorLabel': 'উৎস',
   'migration.sourceLabel': 'উৎস ওয়ার্কস্পেসের পাথ (ঐচ্ছিক)',
   'migration.sourcePlaceholder': 'অটো-ডিটেক্টের জন্য খালি রাখুন (যেমন ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'খালি রাখলে উৎসের ডিফল্ট লোকেশন ব্যবহার হবে। ওয়ার্কস্পেস সরিয়ে থাকলে স্পষ্ট পাথ দিন।',
   'migration.previewAction': 'প্রিভিউ',
@@ -451,10 +452,6 @@ const bn1: TranslationMap = {
   'migration.report.previewHint': 'এখনো কোনো ডেটা আমদানি হয়নি। কপি করতে Apply চাপুন।',
   'migration.report.appliedHint':
     'আমদানিকৃত এন্ট্রি এখন আপনার মেমরিতে আছে। তুলনা করতে আবার Preview চালান।',
-  'migration.hermesComingSoonPrefix': 'Hermes ইম্পোর্টার রোডম্যাপে আছে — দেখুন ',
-  'migration.hermesComingSoonSuffix':
-    ' প্রসঙ্গের জন্য। আজ OpenClaw বেছে নিন; Hermes পরবর্তী রিলিজে আসবে।',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'বর্তমান ওয়ার্কস্পেসে {count}টি এন্ট্রি আমদানি করবেন?\n\nউৎস: {source}\nলক্ষ্য: {target}\n\nআমদানির আগে বর্তমান মেমরির ব্যাকআপ নেওয়া হবে।',
   'migration.confirmImport.plural':
@@ -665,7 +662,7 @@ const bn1: TranslationMap = {
   'common.breadcrumb': 'ব্রেডক্রাম্ব নেভিগেশন',
   'settings.betaBuild': 'বেটা বিল্ড - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (শীঘ্রই আসছে)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'ChatGPT Plus/Pro (সাবস্ক্রিপশন) বা OpenAI API কী ব্যবহার করুন — দুটিই প্রয়োজন নয়।',
   'onboarding.apiKeys.openaiOauthOpening': 'সাইন-ইন খোলা হচ্ছে…',

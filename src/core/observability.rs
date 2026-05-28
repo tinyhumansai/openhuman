@@ -160,6 +160,26 @@ pub enum ExpectedErrorKind {
     /// state snapshots) — every one of them emits the same canonical errno
     /// rendering.
     DiskFull,
+    /// A memory-store write (document upsert or KV set) was rejected because
+    /// the namespace or key contained what the PII guard classified as a
+    /// personal identifier (national ID, phone number, formatted credential,
+    /// etc.). The guard fires *before* the write reaches SQLite so no data
+    /// is persisted, and the LLM or caller that triggered the write already
+    /// receives the error string. Sentry has no remediation path — the fix
+    /// is either a less aggressive namespace/key choice from the caller or a
+    /// PII-guard allowlist update — and the volume is high from a single user
+    /// (TAURI-RUST-54T: 915 events, escalating), indicating that the guard
+    /// is flagging false positives on valid channel names or usernames used
+    /// as namespace/key identifiers. Demote to `warn` so the breadcrumb
+    /// survives for local diagnosis but Sentry sees no error event.
+    ///
+    /// Canonical wire shapes (from `memory_store/unified/documents.rs` and
+    /// `memory_store/kv.rs`):
+    ///
+    /// - `"document namespace/key cannot contain personal identifiers"`
+    /// - `"kv key cannot contain personal identifiers"`
+    /// - `"kv namespace/key cannot contain personal identifiers"`
+    MemoryStorePiiRejection,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -240,6 +260,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_disk_full_message(&lower) {
         return Some(ExpectedErrorKind::DiskFull);
+    }
+    if is_memory_store_pii_rejection(&lower) {
+        return Some(ExpectedErrorKind::MemoryStorePiiRejection);
     }
     None
 }
@@ -811,6 +834,31 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
         || lower.contains("prompt blocked by security policy")
 }
 
+/// Detect memory-store writes rejected because the namespace or key contained
+/// a personal identifier detected by the PII guard.
+///
+/// The three canonical wire shapes are emitted by
+/// `memory_store/unified/documents.rs` and `memory_store/kv.rs`:
+///
+/// - `"document namespace/key cannot contain personal identifiers"` —
+///   `upsert_document` / `upsert_document_metadata_only`
+/// - `"kv key cannot contain personal identifiers"` — `kv_set_global`
+/// - `"kv namespace/key cannot contain personal identifiers"` — `kv_set_namespace`
+///
+/// These are expected user-content conditions: the PII guard classifies a
+/// channel name, username, or LLM-generated key as a personal identifier and
+/// rejects the write. The LLM or caller already receives the error message;
+/// Sentry has no remediation path. Drops TAURI-RUST-54T (~915 events,
+/// escalating — all from a single user hitting false positives on valid
+/// namespace/key identifiers).
+///
+/// Anchor on `"cannot contain personal identifiers"` — the exact string
+/// shared by all three sites — so typos or future rewordings that drop the
+/// anchor still reach Sentry until explicitly classified.
+fn is_memory_store_pii_rejection(lower: &str) -> bool {
+    lower.contains("cannot contain personal identifiers")
+}
+
 /// Capture an error to Sentry with structured tags.
 ///
 /// `domain` and `operation` are required and become tags `domain:<…>` and
@@ -1056,6 +1104,20 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "memory_store_breaker_open",
                 "[observability] {domain}.{operation} skipped expected memory-store circuit-breaker-open error"
+            );
+        }
+        ExpectedErrorKind::MemoryStorePiiRejection => {
+            // PII guard rejected a memory-store write because the namespace or
+            // key was classified as containing a personal identifier. The guard
+            // already logs a `[memory:safety]` warn at the write site; this
+            // match arm keeps the diagnostic breadcrumb at warn level (not
+            // error) so local log files retain the context without spawning a
+            // Sentry error event. TAURI-RUST-54T (~915 events from one user).
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "memory_store_pii_rejection",
+                "[observability] {domain}.{operation} skipped expected memory-store PII rejection"
             );
         }
     }
@@ -1724,6 +1786,36 @@ mod tests {
     }
 
     #[test]
+    fn classifies_memory_store_pii_rejection_errors() {
+        // TAURI-RUST-54T: ~915 events from one user where the PII guard
+        // rejected memory-store writes on namespace/key values that look like
+        // personal identifiers. All three canonical wire shapes — from
+        // `documents.rs` (upsert_document / upsert_document_metadata_only)
+        // and `kv.rs` (kv_set_global / kv_set_namespace) — must classify as
+        // expected so they stop reaching Sentry.
+        for raw in [
+            "document namespace/key cannot contain personal identifiers",
+            "kv key cannot contain personal identifiers",
+            "kv namespace/key cannot contain personal identifiers",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::MemoryStorePiiRejection),
+                "should classify as memory-store PII rejection: {raw}"
+            );
+        }
+
+        // Wrapped by the RPC dispatch layer — substring match must survive the
+        // `rpc.invoke_method failed: ` prefix that `jsonrpc.rs` prepends.
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: document namespace/key cannot contain personal identifiers"
+            ),
+            Some(ExpectedErrorKind::MemoryStorePiiRejection)
+        );
+    }
+
+    #[test]
     fn classifies_memory_store_breaker_open() {
         // TAURI-RUST-52X (~455 events on self-hosted Sentry): the chunk-store
         // per-path circuit breaker tripped after consecutive SQLite init
@@ -1779,6 +1871,24 @@ mod tests {
         assert_eq!(
             expected_error_kind("not enough memory to allocate buffer"),
             None
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_messages_as_memory_pii_rejection() {
+        // A generic "personal identifiers" mention without the "cannot contain"
+        // anchor must not be silenced.
+        assert_eq!(
+            expected_error_kind("processing personal identifiers"),
+            None,
+            "must not match a bare 'personal identifiers' mention"
+        );
+        // The secret-rejection variant uses different wording and must not be
+        // swallowed by the PII classifier.
+        assert_eq!(
+            expected_error_kind("document namespace/key cannot contain secrets"),
+            None,
+            "secret rejection must remain unclassified"
         );
     }
 

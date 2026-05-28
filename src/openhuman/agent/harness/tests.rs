@@ -95,6 +95,7 @@ impl Provider for VisionProvider {
             text: Some("vision-ok".to_string()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }

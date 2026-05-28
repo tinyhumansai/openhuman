@@ -68,4 +68,15 @@ pub struct ToolPolicyDiagnostics {
     pub json_rpc_tools: usize,
     pub possible_write_surfaces: Vec<String>,
     pub policy_surfaces: Vec<String>,
+    pub capability_providers: CapabilityProviderDiagnostics,
+}
+
+/// Redacted diagnostics for configured external capability providers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CapabilityProviderDiagnostics {
+    pub total_providers: usize,
+    pub enabled_providers: usize,
+    pub trusted_providers: usize,
+    pub trusted_enabled_providers: usize,
+    pub registry_errors: Vec<String>,
 }

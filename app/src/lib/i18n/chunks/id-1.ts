@@ -431,6 +431,7 @@ const id1: TranslationMap = {
   'migration.sourceLabel': 'Path ruang kerja sumber (opsional)',
   'migration.sourcePlaceholder':
     'Biarkan kosong untuk deteksi otomatis (misalnya ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'Kosong berarti memakai lokasi default sumber. Isi path eksplisit jika ruang kerja sudah dipindahkan.',
   'migration.previewAction': 'Pratinjau',
@@ -453,10 +454,6 @@ const id1: TranslationMap = {
     'Belum ada data yang diimpor. Klik Terapkan impor untuk menyalinnya.',
   'migration.report.appliedHint':
     'Entri yang diimpor kini ada di memori Anda. Jalankan Pratinjau lagi untuk membandingkan.',
-  'migration.hermesComingSoonPrefix': 'Pengimpor Hermes ada di peta jalan — lihat ',
-  'migration.hermesComingSoonSuffix':
-    ' untuk konteks. Pilih OpenClaw untuk migrasi hari ini; Hermes menyusul.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Impor {count} entri ke ruang kerja saat ini?\n\nSumber: {source}\nTujuan: {target}\n\nMemori yang ada akan dicadangkan sebelum impor dimulai.',
   'migration.confirmImport.plural':
@@ -668,7 +665,7 @@ const id1: TranslationMap = {
   'common.breadcrumb': 'Jejak navigasi',
   'settings.betaBuild': 'Build beta - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (segera hadir)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'Gunakan ChatGPT Plus/Pro (langganan) atau kunci API OpenAI — tidak perlu keduanya.',
   'onboarding.apiKeys.openaiOauthOpening': 'Membuka masuk…',
