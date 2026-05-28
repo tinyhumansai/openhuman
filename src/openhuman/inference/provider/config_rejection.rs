@@ -127,12 +127,16 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // OpenRouter shape that re-emits via `agent.run_single`.)
         "requires more credits",
         // TAURI-RUST-4ZF — DeepSeek (custom BYO-key) 402 when the user's
-        // DeepSeek account balance is exhausted. Body carries the
-        // upstream `{"error":{"message":"Insufficient Balance",...}}`
-        // envelope. Same user-billing class as the OpenRouter S5 shape
-        // above; the OpenHuman backend balance gate is handled separately
-        // by `is_budget_exhausted_message`, which never emits this
-        // DeepSeek-specific token, so there's no backend false-positive.
+        // DeepSeek account balance is exhausted. Body carries the upstream
+        // `{"error":{"message":"Insufficient Balance",...}}` envelope.
+        // Same user-billing class as the OpenRouter S5 shape above.
+        // NOTE: `is_budget_exhausted_message` (billing_error.rs) also
+        // contains this phrase. In `expected_error_kind` (observability.rs)
+        // this classifier is checked first (line 199 vs 205), so a re-
+        // reported "Insufficient Balance" error routes to
+        // `ProviderConfigRejection` rather than `BudgetExhausted`. Both
+        // suppress Sentry at info-level — no event-volume regression — but
+        // the telemetry `kind` tag becomes "provider_config_rejection".
         "insufficient balance",
         // OPENHUMAN-TAURI-Y0 — litellm-style proxy rejected the model
         // id pre-routing with `Invalid model name passed in model=…`.
