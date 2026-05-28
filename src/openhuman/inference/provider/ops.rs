@@ -626,20 +626,60 @@ pub(super) fn log_provider_config_rejection(
 /// custom / self-hosted gateways mis-report it as `500` (Sentry
 /// TAURI-RUST-501: `"custom API error (500 …): Context size has been
 /// exceeded."`). Matching on the body keeps all of them in one bucket.
+///
+/// Anchoring is deliberately two-tier because this matcher now also feeds
+/// `core::observability::expected_error_kind` (Sentry suppression) and the
+/// `reliable` non-retryable decision, so an over-broad match would both
+/// hide a real error from Sentry *and* wrongly mark a retryable error as
+/// permanent:
+///
+/// - **Length/context phrases** ([`CONTEXT_HINTS`]) are unambiguous —
+///   "context window", "context length", "prompt is too long" only describe
+///   request-size overflow — so they match alone.
+/// - **Token-count phrases** ([`TOKEN_HINTS`]) collide with per-minute token
+///   *rate* limits ("rate limit reached … too many tokens per min"), which
+///   are transient 429s that MUST stay retryable and keep reaching Sentry.
+///   They only count as context-overflow when no rate-limit marker is
+///   present.
 pub fn is_context_window_exceeded_message(body: &str) -> bool {
     let lower = body.to_ascii_lowercase();
-    const HINTS: &[&str] = &[
+
+    // Unambiguous request-size / context phrases — match on their own.
+    const CONTEXT_HINTS: &[&str] = &[
         "exceeds the context window",
         "context window of this model",
         "maximum context length",
         "context length exceeded",
         "context size has been exceeded",
-        "too many tokens",
-        "token limit exceeded",
         "prompt is too long",
         "input is too long",
     ];
-    HINTS.iter().any(|hint| lower.contains(hint))
+    if CONTEXT_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return true;
+    }
+
+    // Token-count phrases are ambiguous with token-per-minute RATE limits.
+    // Treat them as context-overflow only when the body carries no
+    // rate-limit marker — otherwise a transient TPM 429 would be silenced
+    // from Sentry and (via `reliable`) wrongly classified as non-retryable.
+    const TOKEN_HINTS: &[&str] = &["too many tokens", "token limit exceeded"];
+    if TOKEN_HINTS.iter().any(|hint| lower.contains(hint)) {
+        const RATE_LIMIT_MARKERS: &[&str] = &[
+            "per minute",
+            "per min",
+            "rate limit",
+            "rate_limit",
+            "tpm",
+            "requests per",
+            "retry after",
+            "try again in",
+        ];
+        return !RATE_LIMIT_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker));
+    }
+
+    false
 }
 
 pub(super) fn log_context_window_exceeded(
@@ -1637,6 +1677,29 @@ mod tests {
                     "must NOT match unrelated body: {body}"
                 );
             }
+        }
+
+        #[test]
+        fn token_rate_limits_are_not_context_overflow() {
+            // Token-count phrases collide with per-minute token RATE limits.
+            // Those are transient 429s that must stay retryable and keep
+            // reaching Sentry — they must NOT be classified as context
+            // overflow (CodeRabbit review of #2820). The rate-limit marker
+            // disambiguates.
+            for body in [
+                "Rate limit reached: too many tokens per minute (TPM) for this org",
+                "rate_limit_exceeded: token limit exceeded, retry after 12s",
+                "You have hit too many tokens per min; try again in 30s",
+            ] {
+                assert!(
+                    !is_context_window_exceeded_message(body),
+                    "TPM rate-limit must NOT match as context overflow: {body}"
+                );
+            }
+            // …but a token-count overflow with NO rate marker still matches.
+            assert!(is_context_window_exceeded_message(
+                "Request rejected: too many tokens in the input for this model"
+            ));
         }
 
         #[test]
