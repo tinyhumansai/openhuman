@@ -193,6 +193,17 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         "thinking mode must be passed back",
         // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
         "requires a subscription, upgrade for access",
+        // TAURI-RUST-35 family — user picked a model that doesn't
+        // implement tool calling, agent harness sent a tool spec
+        // anyway, upstream rejected with `{"error":{"message":
+        // "<model id> does not support tools",
+        // "type":"invalid_request_error",...}}`. Same body across the
+        // `cloud` / `ollama` / `custom_openai` provider prefixes — one
+        // phrase drops all 10+ sibling Sentry issues currently
+        // fragmented by model id (TAURI-RUST-35, -DF, -123, -4K7,
+        // -4FS, -4F6, -2YA, -4KR, -4KH, -4KY — ~458 events). The user
+        // must pick a tool-capable model; Sentry has no remediation.
+        "does not support tools",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -349,6 +360,103 @@ mod tests {
             assert!(
                 is_provider_config_rejection_message(body),
                 "TAURI-RUST-{sentry_id} insufficient-balance 402 must classify as provider config-rejection: {body:?}"
+            );
+        }
+    }
+
+    /// TAURI-RUST-35 family — model picked by the user doesn't implement
+    /// tool calling. The agent harness tries to send a tool spec and the
+    /// upstream (Ollama / cloud Ollama relay / hosted OpenAI-compatible)
+    /// rejects with `{"error":{"message":"<model> does not support tools",
+    /// "type":"invalid_request_error",...}}`. Pure user-config — the user
+    /// has to pick a tool-capable model (or run a non-agent flow). No
+    /// remediation path through Sentry, and the long tail is large: each
+    /// distinct model id + provider prefix combo creates a new Sentry
+    /// fingerprint, so the same root cause is currently split across at
+    /// least 10 unresolved Sentry issues (458 events total as of
+    /// 2026-05-28):
+    ///
+    /// | shortId | events | provider prefix |
+    /// |---|---|---|
+    /// | TAURI-RUST-35  | 307 | cloud |
+    /// | TAURI-RUST-DF  | 83  | cloud |
+    /// | TAURI-RUST-123 | 25  | cloud |
+    /// | TAURI-RUST-4K7 | 19  | ollama |
+    /// | TAURI-RUST-4FS | 10  | cloud |
+    /// | TAURI-RUST-4F6 | 5   | cloud |
+    /// | TAURI-RUST-2YA | 4   | cloud |
+    /// | TAURI-RUST-4KR | 3   | ollama |
+    /// | TAURI-RUST-4KH | 1   | cloud |
+    /// | TAURI-RUST-4KY | 1   | ollama |
+    ///
+    /// Anchored on the exact `"does not support tools"` substring (the
+    /// message body's stable token — the model id varies per user). The
+    /// `streaming API error` / `API error` wrappers and the
+    /// `cloud` / `ollama` / `custom_openai` provider prefixes all share
+    /// this body, so a single phrase covers every variant.
+    #[test]
+    fn detects_does_not_support_tools_family() {
+        for (sentry_id, body) in [
+            // TAURI-RUST-35 — verbatim from latest issue 168 event
+            // (model=`gemma3:1b-it-qat`, provider=cloud).
+            (
+                "35",
+                r#"cloud streaming API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/gemma3:1b-it-qat does not support tools","type":"invalid_request_error","param":null,"code":null}}"#,
+            ),
+            // TAURI-RUST-4K7 — ollama prefix, different upstream wrapper.
+            (
+                "4K7",
+                r#"ollama streaming API error (400 Bad Request): {"error":{"message":"some-local-model does not support tools","type":"invalid_request_error","param":null,"code":null}}"#,
+            ),
+            // Non-streaming sibling — `API error` (no `streaming` token)
+            // for hosted providers that aren't using the streaming endpoint.
+            (
+                "non-streaming",
+                r#"cloud API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/qwen2.5:0.5b does not support tools","type":"invalid_request_error"}}"#,
+            ),
+            // Bare body (no wrapper) — what `expected_error_kind` would
+            // see if the body got extracted from the envelope upstream.
+            (
+                "bare",
+                r#"{"error":{"message":"phi3.5:mini does not support tools","type":"invalid_request_error"}}"#,
+            ),
+            // TAURI-RUST-4Z0 — verbatim from issue 5664 (model=`deepseek-r1:8b`,
+            // provider=ollama). The envelope carries `"type":"api_error"`
+            // rather than `"invalid_request_error"` — pin it so the matcher
+            // can never be narrowed to require a specific `type` token; the
+            // `"does not support tools"` body substring is the only anchor.
+            (
+                "4Z0",
+                r#"ollama streaming API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/deepseek-r1:8b does not support tools","type":"api_error","param":null,"code":null}}"#,
+            ),
+        ] {
+            assert!(
+                is_provider_config_rejection_message(body),
+                "TAURI-RUST-{sentry_id} body must classify as provider config-rejection: {body:?}"
+            );
+        }
+    }
+
+    /// Polarity guard for the does-not-support-tools arm. The phrase is
+    /// scoped enough that no real bug-class body should accidentally
+    /// match — but pin a few near-miss shapes so a future loosening of
+    /// the matcher can't silently re-classify them.
+    #[test]
+    fn does_not_classify_unrelated_tools_phrases_as_config_rejection() {
+        for body in [
+            // Tool-call dispatch failure (real bug) — must reach Sentry.
+            "tool execution failed: shell returned exit 1",
+            // Generic "tools" mention without the does-not-support phrase.
+            "agent ran with 0 tools available",
+            // Reversed phrasing — provider says they DO support tools but
+            // the call shape is wrong. Still actionable for triage.
+            "supports tools but received malformed tool_calls array",
+            // Empty body.
+            "",
+        ] {
+            assert!(
+                !is_provider_config_rejection_message(body),
+                "{body:?} must NOT classify as a provider config-rejection"
             );
         }
     }
