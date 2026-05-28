@@ -1370,6 +1370,8 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "empty_provider_response",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected empty-provider-response error: {message}"
+            );
+        }
         ExpectedErrorKind::ChannelSupervisorRestart => {
             // Channel supervisor caught a transient error from a channel
             // listener (`spawn_supervised_listener`) and restarted it. The
@@ -2558,20 +2560,23 @@ mod tests {
 
     #[test]
     fn channel_supervisor_operation_timed_out_classifies_as_expected() {
-        // OPENHUMAN-TAURI-EM (128 events): `channels::runtime::supervision`
+        // OPENHUMAN-TAURI-EM (128 events) + TAURI-RUST-15/-BB: `channels::runtime::supervision`
         // wraps a channel listener failure as
         // `format!("Channel {} error: {e:#}; restarting", ch.name())` and
-        // routes the message through `report_error_or_expected`. When the
-        // discord gateway TCP/WebSocket connection hits ETIMEDOUT, the
-        // anyhow chain renders without a URL anchor (this is `std::io`-level,
-        // not reqwest) and previously fell straight through every classifier
-        // arm into `report_error` — one Sentry event per restart cycle.
+        // routes the message through `report_error_or_expected`. The
+        // newer `ChannelSupervisorRestart` classifier (added for the
+        // broader 11.4k-event Sentry leak) anchors on the supervisor
+        // wrapper shape itself — `"Channel <name> error: …; restarting"`
+        // — and takes precedence over `NetworkUnreachable`. That single
+        // arm now covers every ETIMEDOUT / WSAETIMEDOUT / hyper-prose
+        // shape the old narrower anchor pinned, plus OS-localized
+        // variants the English-only `NetworkUnreachable` would miss.
         //
-        // Pin the exact macOS wire shape from the issue, plus the Linux and
-        // Windows errno renderings so a future platform-specific change does
-        // not silently re-open the leak. The bare `"operation timed out"`
-        // anchor matches all three since the errno digits live downstream
-        // of the canonical phrase.
+        // Demotion tier difference: `ChannelSupervisorRestart` emits at
+        // `info!` (breadcrumb only, no Sentry event) where
+        // `NetworkUnreachable` emitted at `warn!` (still captured as a
+        // Sentry warn event). Sustained outages still page via
+        // `health.bus` / `FAIL_ESCALATE_THRESHOLD`.
         for raw in [
             // macOS (os error 60 = ETIMEDOUT on BSD)
             "Channel discord error: IO error: Operation timed out (os error 60); restarting",
@@ -2588,8 +2593,9 @@ mod tests {
         ] {
             assert_eq!(
                 expected_error_kind(raw),
-                Some(ExpectedErrorKind::NetworkUnreachable),
-                "channel supervisor timeout shape must classify as expected (got {:?} for {raw:?})",
+                Some(ExpectedErrorKind::ChannelSupervisorRestart),
+                "channel supervisor timeout shape must classify as ChannelSupervisorRestart \
+                 (precedence over NetworkUnreachable; got {:?} for {raw:?})",
                 expected_error_kind(raw)
             );
         }
