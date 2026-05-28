@@ -293,6 +293,19 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_backend_user_error_message(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
     }
+    // Check `is_session_expired_message` BEFORE `is_embedding_backend_auth_failure`:
+    // the OpenHuman-backend embedding 401 "Invalid token" envelope
+    // (`Embedding API error (401 …): {"error":"Invalid token"}`) is a
+    // recoverable session expiry (TAURI-RUST-4K5, #2786), not a generic
+    // backend error. The broader `is_embedding_backend_auth_failure` matcher
+    // below would otherwise demote that exact wire shape to `BackendUserError`
+    // first and swallow the re-auth signal. `is_session_expired_message` is
+    // narrowly anchored (parenthesised `(401` + the `"error":"Invalid token"`
+    // envelope), so the bare-status `Embedding API error 401 …` shape and
+    // BYO-key 401s still fall through to the matchers below.
+    if is_session_expired_message(message) {
+        return Some(ExpectedErrorKind::SessionExpired);
+    }
     if is_embedding_backend_auth_failure(&lower) {
         return Some(ExpectedErrorKind::BackendUserError);
     }
@@ -310,9 +323,6 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if crate::openhuman::inference::provider::is_budget_exhausted_message(message) {
         return Some(ExpectedErrorKind::BudgetExhausted);
-    }
-    if is_session_expired_message(message) {
-        return Some(ExpectedErrorKind::SessionExpired);
     }
     if is_prompt_injection_blocked_message(&lower) {
         return Some(ExpectedErrorKind::PromptInjectionBlocked);
@@ -1847,18 +1857,23 @@ mod tests {
     #[test]
     fn classifies_embedding_backend_auth_failure() {
         // TAURI-RUST-T (~4k events): OpenHuman backend rejected the
-        // embeddings worker's bearer token. Both the bare-status and
-        // parenthesised wire shapes must classify.
-        for raw in [
-            r#"Embedding API error 401 Unauthorized: {"success":false,"error":"Invalid token"}"#,
-            r#"Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#,
-        ] {
-            assert_eq!(
-                expected_error_kind(raw),
-                Some(ExpectedErrorKind::BackendUserError),
-                "should classify embedding backend auth failure: {raw}"
-            );
-        }
+        // embeddings worker's bearer token, rendered as the bare-status
+        // `Embedding API error 401 …` wire shape. The parenthesised
+        // `Embedding API error (401 …)` shape carrying the same
+        // `"error":"Invalid token"` envelope is now owned by
+        // `is_session_expired_message` (TAURI-RUST-4K5, #2786) and asserted by
+        // `classifies_embedding_api_invalid_token_401_as_session_expired`;
+        // since `is_session_expired_message` runs first in
+        // `expected_error_kind`, only the bare-status shape (which the
+        // session matcher's `(401` anchor does not match) still reaches this
+        // `BackendUserError` bucket.
+        assert_eq!(
+            expected_error_kind(
+                r#"Embedding API error 401 Unauthorized: {"success":false,"error":"Invalid token"}"#
+            ),
+            Some(ExpectedErrorKind::BackendUserError),
+            "bare-status embedding backend auth failure must classify as BackendUserError"
+        );
     }
 
     #[test]
