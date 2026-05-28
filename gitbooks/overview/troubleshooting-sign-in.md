@@ -41,6 +41,30 @@ Successful desktop OAuth ends with an `openhuman://auth?...` callback. If the br
 2. Restart the app, keep the same remote-core settings, and retry sign-in.
 3. If using a remote core, check whether the core receives `openhuman.auth_store_session`.
 
+## Windows: `openhuman://` handler not registered
+
+On Windows the `openhuman://` URL scheme is registered to the running executable via `HKEY_CURRENT_USER\Software\Classes\openhuman\shell\open\command` at first launch. If that registration silently failed — or if the install was moved/copied after first launch — the browser cannot hand the OAuth callback back to the app, and sign-in stalls after the provider step (issue #2699).
+
+The Tauri shell now emits a `log::error!` line at startup when this happens. Look for it in your log file (default `%USERPROFILE%\.openhuman\logs\openhuman.*.log`):
+
+```
+[deep-link] openhuman:// scheme registration unhealthy — OAuth callbacks may never reach the app.
+register_all_error=…, hkcu_status=NotRegistered|MissingCommand|Stale { … }|ReadError(…)
+```
+
+To repair manually, open PowerShell **as the same user that runs OpenHuman** (no admin required — HKCU is per-user) and replace the path with your actual install location:
+
+```powershell
+$exe = 'C:\Path\To\OpenHuman.exe'   # update this
+New-Item -Path 'HKCU:\Software\Classes\openhuman' -Force | Out-Null
+Set-ItemProperty -Path 'HKCU:\Software\Classes\openhuman' -Name '(Default)' -Value 'URL:OpenHuman Protocol'
+New-ItemProperty -Path 'HKCU:\Software\Classes\openhuman' -Name 'URL Protocol' -Value '' -Force | Out-Null
+New-Item -Path 'HKCU:\Software\Classes\openhuman\shell\open\command' -Force | Out-Null
+Set-ItemProperty -Path 'HKCU:\Software\Classes\openhuman\shell\open\command' -Name '(Default)' -Value ('"' + $exe + '" "%1"')
+```
+
+Restart OpenHuman afterwards and retry sign-in. If `register_all_error` is non-`None` in the log — for example because antivirus or a locked-down image is blocking writes to `HKCU\Software\Classes` — fixing the underlying policy is required; the manual script above will hit the same block.
+
 For a remote core, a temporary manual injection can confirm the core is otherwise healthy:
 
 ```bash

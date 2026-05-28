@@ -11,7 +11,7 @@ use crate::openhuman::memory_sync::composio::providers::pick_str;
 
 /// Walk the Composio response envelope for GitHub search issue results.
 ///
-/// `GITHUB_SEARCH_ISSUES` wraps GitHub's `GET /search/issues` response, which
+/// `GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS` wraps GitHub's `GET /search/issues` response, which
 /// returns `{"total_count": N, "items": [...]}`. Composio may re-wrap this under
 /// `data` or `data.data`; we probe each shape in order.
 pub(crate) fn extract_issues(data: &Value) -> Vec<Value> {
@@ -111,7 +111,7 @@ pub(crate) fn extract_issue_updated_at(issue: &Value) -> Option<String> {
 }
 
 /// Extract the authenticated user's login handle from a
-/// `GITHUB_GET_AUTHENTICATED_USER` response.
+/// `GITHUB_GET_THE_AUTHENTICATED_USER` response.
 pub(crate) fn extract_user_login(data: &Value) -> Option<String> {
     pick_str(data, &["login", "data.login"])
 }

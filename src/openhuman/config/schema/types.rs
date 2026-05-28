@@ -208,6 +208,11 @@ pub struct Config {
     #[serde(default)]
     pub local_ai: LocalAiConfig,
 
+    /// Claude Agent SDK provider configuration — routes inference through the
+    /// `claude -p` CLI subprocess using the subscriber's Claude plan credit.
+    #[serde(default)]
+    pub claude_agent_sdk: ClaudeAgentSdkConfig,
+
     // ── Unified AI provider routing ──────────────────────────────────────────
     //
     // Provider-string grammar (consumed by `providers::factory`):
@@ -628,6 +633,7 @@ impl Default for Config {
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
+            claude_agent_sdk: ClaudeAgentSdkConfig::default(),
             cloud_providers: Vec::new(),
             primary_cloud: None,
             chat_provider: None,

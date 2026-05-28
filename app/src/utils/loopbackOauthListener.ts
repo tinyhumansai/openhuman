@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
+import { E2E_RESTART_APP_AS_RELOAD } from './config';
 import { isTauri } from './tauriCommands/common';
 
 /**
@@ -97,14 +98,25 @@ export const startLoopbackOauthListener = async (
 
   const awaitCallback = (): Promise<string> =>
     new Promise<string>((resolve, reject) => {
+      // `timedOut` closes the race where `setTimeout` fires *before* the async
+      // `listen()` registration resolves: previously the just-registered
+      // unlisten handle was stored in module-global `activeUnlisten` after the
+      // promise had already rejected, leaving the listener armed until the
+      // next `startLoopbackOauthListener` call cleaned it up.
+      let timedOut = false;
       let unlisten: UnlistenFn | null = null;
       const timer = window.setTimeout(() => {
-        if (unlisten) unlisten();
+        timedOut = true;
+        if (unlisten) {
+          unlisten();
+          if (activeUnlisten === unlisten) activeUnlisten = null;
+        }
         void stop();
         reject(new Error('Loopback OAuth listener timed out'));
       }, timeoutSecs * 1000);
 
       listen<CallbackPayload>(CALLBACK_EVENT, event => {
+        if (timedOut) return;
         window.clearTimeout(timer);
         if (unlisten) {
           unlisten();
@@ -113,10 +125,18 @@ export const startLoopbackOauthListener = async (
         resolve(event.payload.url);
       })
         .then(fn => {
+          if (timedOut) {
+            // Timer already rejected the promise — tear down the
+            // just-registered handle so it does not leak into
+            // `activeUnlisten` and stay armed past the timeout.
+            fn();
+            return;
+          }
           unlisten = fn;
           activeUnlisten = fn;
         })
         .catch(err => {
+          if (timedOut) return;
           window.clearTimeout(timer);
           reject(err);
         });
@@ -135,10 +155,7 @@ const appendState = (uri: string, state: string): string => {
 // emit + frontend listener) without scripting the OAuth button UI itself.
 // Gated on the E2E-mode VITE flag baked in by app/scripts/e2e-build.sh so it
 // never leaks into release bundles.
-if (
-  typeof window !== 'undefined' &&
-  import.meta.env.VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD === 'true'
-) {
+if (typeof window !== 'undefined' && E2E_RESTART_APP_AS_RELOAD) {
   type WithE2eHook = Window & { __startLoopbackOauthListener?: typeof startLoopbackOauthListener };
   (window as WithE2eHook).__startLoopbackOauthListener = startLoopbackOauthListener;
 }

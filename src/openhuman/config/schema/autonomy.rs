@@ -25,10 +25,12 @@ pub struct AutonomyConfig {
     pub require_approval_for_medium_risk: bool,
     #[serde(default = "default_true")]
     pub block_high_risk_commands: bool,
+    /// Tool names the user has pre-approved ("Always allow"). The `ApprovalGate`
+    /// skips the interactive prompt for any tool listed here. Populated by the
+    /// "Always allow" approval decision or hand-edited, and surfaced in
+    /// Settings → Agent access. Read live by the gate via `SecurityPolicy`.
     #[serde(default = "default_auto_approve")]
     pub auto_approve: Vec<String>,
-    #[serde(default = "default_always_ask")]
-    pub always_ask: Vec<String>,
     /// Directories outside the workspace the agent may access. Each entry grants
     /// read (or read+write) to its subtree, taking precedence over `workspace_only`
     /// and `forbidden_paths` — except credential stores (~/.ssh, ~/.gnupg, ~/.aws),
@@ -58,9 +60,18 @@ fn default_max_cost_per_day_cents() -> u32 {
 
 fn default_allowed_commands() -> Vec<String> {
     vec![
+        // Version control
         "git".into(),
+        // Package managers / build systems. `make` can run arbitrary recipes,
+        // but the shell policy still gates execution to this command allow-list
+        // and Supervised mode approval remains responsible for risky invocations.
         "npm".into(),
+        "pnpm".into(),
+        "yarn".into(),
         "cargo".into(),
+        "make".into(),
+        "cmake".into(),
+        // Directory / file inspection (read-only)
         "ls".into(),
         "cat".into(),
         "grep".into(),
@@ -71,6 +82,26 @@ fn default_allowed_commands() -> Vec<String> {
         "head".into(),
         "tail".into(),
         "date".into(),
+        "sort".into(),
+        "uniq".into(),
+        "diff".into(),
+        "which".into(),
+        "uname".into(),
+        "basename".into(),
+        "dirname".into(),
+        "tr".into(),
+        "cut".into(),
+        "realpath".into(),
+        "readlink".into(),
+        "stat".into(),
+        "file".into(),
+        // Filesystem mutations (medium-risk — require approval in Supervised mode)
+        "mkdir".into(),
+        "touch".into(),
+        "cp".into(),
+        "mv".into(),
+        "ln".into(),
+        // Windows read-only equivalents for ls/cat/grep/which
         "dir".into(),
         "type".into(),
         "where".into(),
@@ -104,16 +135,16 @@ fn default_forbidden_paths() -> Vec<String> {
 
 fn default_auto_approve() -> Vec<String> {
     vec![
+        // Read-only tools — always safe to skip the approval prompt
         "file_read".into(),
         "memory_search".into(),
         "memory_list".into(),
         "get_time".into(),
         "list_dir".into(),
+        // Workspace-scoped search tools — read-only, no side effects
+        "glob".into(),
+        "grep".into(),
     ]
-}
-
-fn default_always_ask() -> Vec<String> {
-    vec![]
 }
 
 impl Default for AutonomyConfig {
@@ -128,7 +159,6 @@ impl Default for AutonomyConfig {
             require_approval_for_medium_risk: default_true(),
             block_high_risk_commands: default_true(),
             auto_approve: default_auto_approve(),
-            always_ask: default_always_ask(),
             trusted_roots: Vec::new(),
             allow_tool_install: false,
         }

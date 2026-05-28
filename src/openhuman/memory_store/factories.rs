@@ -29,32 +29,58 @@ use crate::openhuman::memory_store::unified::UnifiedMemory;
 static OLLAMA_HEALTH_REPORTED: AtomicBool = AtomicBool::new(false);
 
 /// Reports the Ollama-unreachable fallback to Sentry at most once per
-/// process. Returns `true` on the firing call, `false` afterwards — callers
-/// use the return value only for logging context.
-fn report_ollama_health_gate_once(base_url: &str) -> bool {
+/// process and publishes an [`EmbeddingModelUnhealthy`] domain event.
+///
+/// Returns `true` on the firing call, `false` afterwards — callers use the
+/// return value only for logging context.
+///
+/// [`EmbeddingModelUnhealthy`]: crate::core::event_bus::events::DomainEvent::EmbeddingModelUnhealthy
+fn report_ollama_health_gate_once(base_url: &str, model: &str) -> bool {
     if OLLAMA_HEALTH_REPORTED
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         log::debug!(
-            "[memory::factory] ollama health-gate fallback already reported this process; suppressing duplicate at {base_url}"
+            "[memory::factory] ollama health-gate fallback already reported this process; suppressing duplicate at {base_url} model={model}"
         );
         return false;
     }
     // Tags are indexed and grouped on; keep them low-cardinality and free of
     // credentials. Full URL stays in the message body for diagnostics.
     let host_tag = redact_ollama_host(base_url);
-    let message = format!(
+    let sentry_message = format!(
         "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
     );
     // Call report_error_message directly to avoid a redundant format!("{:#}") round-trip
     // that report_error would perform on an already-formatted &str.
     crate::core::observability::report_error_message(
-        &message,
+        &sentry_message,
         "memory",
         "ollama_health_gate",
         &[("ollama_host", host_tag), ("fallback", "cloud")],
     );
+
+    // Publish a user-visible domain event so the UI can surface a notification
+    // with an actionable fix hint. The event bus is best-effort (no runtime
+    // present in unit-test contexts without `init_global`), so we fire-and-
+    // forget and ignore any lagged-receiver errors.
+    let user_message = format!(
+        "Local embedding model unreachable — falling back to cloud embeddings. \
+         Run `ollama pull {model}` to fix."
+    );
+    log::debug!(
+        "[memory::factory] publishing EmbeddingModelUnhealthy event: provider=ollama model={model} fallback=cloud"
+    );
+    let event = crate::core::event_bus::DomainEvent::EmbeddingModelUnhealthy {
+        provider: "ollama".to_string(),
+        model: model.to_string(),
+        fallback_provider: "cloud".to_string(),
+        message: user_message,
+    };
+    // publish_global is infallible (drops the event when no receivers are
+    // registered, which is fine for the health-gate use case).
+    crate::core::event_bus::publish_global(event);
+
     true
 }
 
@@ -244,9 +270,10 @@ pub async fn effective_embedding_settings_probed(
     // doesn't recreate the per-embed flood we're fixing. Then fall back to
     // cloud so the user has a working app.
     log::warn!(
-        "[memory::factory] ollama unreachable at {base_url}; falling back to cloud embedder for this session"
+        "[memory::factory] ollama unreachable at {base_url} (model={}); falling back to cloud embedder for this session",
+        intended.1
     );
-    report_ollama_health_gate_once(&base_url);
+    report_ollama_health_gate_once(&base_url, &intended.1);
     cloud_embedding_fallback()
 }
 
@@ -364,9 +391,10 @@ fn create_memory_full(
             intended
         } else {
             log::warn!(
-                "[memory::factory] ollama unreachable at {base_url}; falling back to cloud embedder for this session"
+                "[memory::factory] ollama unreachable at {base_url} (model={}); falling back to cloud embedder for this session",
+                intended.1
             );
-            report_ollama_health_gate_once(&base_url);
+            report_ollama_health_gate_once(&base_url, &intended.1);
             gate_triggered = true;
             cloud_embedding_fallback()
         }
@@ -707,6 +735,8 @@ mod tests {
     /// subsequent calls in the same process must be suppressed. We can't
     /// observe the Sentry side effect directly here, but the boolean return
     /// value is the gate's contract — covers the once-per-process guarantee.
+    /// Event publication is fire-and-forget via the global event bus and is
+    /// verified manually/log-side rather than by this unit test.
     ///
     /// Acquires the local-AI domain mutex to serialize with `probed_settings_*`
     /// tests that also touch the latch; without that, parallel test execution
@@ -719,15 +749,15 @@ mod tests {
         reset_health_gate_for_test();
 
         assert!(
-            report_ollama_health_gate_once("http://127.0.0.1:1"),
+            report_ollama_health_gate_once("http://127.0.0.1:1", "bge-m3"),
             "first call must fire the report"
         );
         assert!(
-            !report_ollama_health_gate_once("http://127.0.0.1:1"),
+            !report_ollama_health_gate_once("http://127.0.0.1:1", "bge-m3"),
             "second call must be suppressed"
         );
         assert!(
-            !report_ollama_health_gate_once("http://example.invalid:11434"),
+            !report_ollama_health_gate_once("http://example.invalid:11434", "nomic-embed-text"),
             "different URL also suppressed — gate is process-scoped, not per-URL"
         );
     }

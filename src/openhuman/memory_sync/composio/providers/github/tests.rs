@@ -164,8 +164,8 @@ fn curated_tools_contains_core_actions() {
     let p = GitHubProvider::new();
     let curated = p.curated_tools().expect("GITHUB_CURATED is registered");
     let slugs: Vec<&str> = curated.iter().map(|t| t.slug).collect();
-    assert!(slugs.contains(&"GITHUB_GET_AUTHENTICATED_USER"));
-    assert!(slugs.contains(&"GITHUB_SEARCH_ISSUES"));
+    assert!(slugs.contains(&"GITHUB_GET_THE_AUTHENTICATED_USER"));
+    assert!(slugs.contains(&"GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS"));
     assert!(slugs.contains(&"GITHUB_LIST_REPOSITORY_ISSUES"));
 }
 

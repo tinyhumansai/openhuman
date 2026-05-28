@@ -78,6 +78,28 @@ pub enum DomainEvent {
     },
 
     // ── Memory ──────────────────────────────────────────────────────────
+    /// The configured embedding provider is unreachable or the requested model
+    /// is not installed, so the memory pipeline fell back to an alternative.
+    ///
+    /// Published by `memory_store::factories` (once per process via the
+    /// `OLLAMA_HEALTH_REPORTED` latch) so the UI can surface a user-visible
+    /// warning with an actionable fix hint. The `message` field is a
+    /// pre-formatted human-readable string safe to show in a notification.
+    EmbeddingModelUnhealthy {
+        /// Short provider slug, e.g. `"ollama"`.
+        provider: String,
+        /// The model that was intended but could not be reached / found,
+        /// e.g. `"bge-m3"`.
+        model: String,
+        /// The provider that will serve embeddings for this session instead,
+        /// e.g. `"cloud"`.
+        fallback_provider: String,
+        /// Human-readable explanation with an actionable fix,
+        /// e.g. `"Local embedding model unreachable — falling back to cloud
+        /// embeddings. Run \`ollama pull bge-m3\` to fix."`.
+        message: String,
+    },
+
     /// A memory entry was stored.
     MemoryStored {
         key: String,
@@ -623,7 +645,8 @@ impl DomainEvent {
             | Self::SubagentCompleted { .. }
             | Self::SubagentFailed { .. } => "agent",
 
-            Self::MemoryStored { .. }
+            Self::EmbeddingModelUnhealthy { .. }
+            | Self::MemoryStored { .. }
             | Self::MemoryRecalled { .. }
             | Self::MemorySyncRequested { .. }
             | Self::MemorySyncStageChanged { .. }

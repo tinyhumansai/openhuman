@@ -41,7 +41,7 @@ const hi5: TranslationMap = {
   'settings.cron.jobs.loadingRuns': 'रन लोड हो रहे हैं',
   'settings.cron.jobs.nextRun': 'अगला रन',
   'settings.cron.jobs.pause': 'रोकें',
-  'settings.cron.jobs.paused': 'चालू है',
+  'settings.cron.jobs.paused': 'रोका गया',
   'settings.cron.jobs.recentRuns': 'हाल के रन',
   'settings.cron.jobs.removing': 'हटाया जा रहा है',
   'settings.cron.jobs.resume': 'फिर शुरू करें',
@@ -179,6 +179,49 @@ const hi5: TranslationMap = {
   'settings.developerMenu.agentChat.title': 'एजेंट चैट',
   'settings.developerMenu.agentChat.desc':
     'मॉडल और तापमान ओवरराइड के साथ एजेंट वार्तालाप का परीक्षण करें',
+  'settings.developerMenu.devWorkflow.title': 'Dev Workflow',
+  'settings.developerMenu.devWorkflow.desc':
+    'Autonomous agent that picks your GitHub issues and raises PRs on a schedule',
+  'settings.developerMenu.devWorkflow.panelDesc':
+    'Configure an autonomous developer agent that picks GitHub issues assigned to you and raises pull requests automatically on a schedule.',
+  'settings.devWorkflow.githubRepository': 'GitHub Repository',
+  'settings.devWorkflow.loadingRepositories': 'Loading repositories...',
+  'settings.devWorkflow.selectRepository': 'Select a repository',
+  'settings.devWorkflow.privateTag': '(private)',
+  'settings.devWorkflow.detectingForkInfo': 'Detecting fork info...',
+  'settings.devWorkflow.forkDetected': 'Fork detected',
+  'settings.devWorkflow.upstream': 'Upstream:',
+  'settings.devWorkflow.forkPrNote': 'PRs will be raised against the upstream repository.',
+  'settings.devWorkflow.notForkNote':
+    'Not a fork. PRs will be raised against this repository directly.',
+  'settings.devWorkflow.targetBranch': 'Target Branch',
+  'settings.devWorkflow.targetBranchNote': 'PRs will be raised against this branch',
+  'settings.devWorkflow.loadingBranches': 'Loading branches...',
+  'settings.devWorkflow.runFrequency': 'Run Frequency',
+  'settings.devWorkflow.runFrequencyNote':
+    'How often the agent should check for issues and raise PRs.',
+  'settings.devWorkflow.updateConfiguration': 'Update Configuration',
+  'settings.devWorkflow.saveConfiguration': 'Save Configuration',
+  'settings.devWorkflow.remove': 'Remove',
+  'settings.devWorkflow.saved': 'Saved',
+  'settings.devWorkflow.activeConfiguration': 'Active Configuration',
+  'settings.devWorkflow.activeConfigRepository': 'Repository:',
+  'settings.devWorkflow.activeConfigUpstream': 'Upstream:',
+  'settings.devWorkflow.activeConfigTargetBranch': 'Target branch:',
+  'settings.devWorkflow.activeConfigSchedule': 'Schedule:',
+  'settings.devWorkflow.phase2Note':
+    'Phase 2: This will automatically create a cron job to pick issues and raise PRs.',
+  'settings.devWorkflow.errorNotConnected':
+    'GitHub is not connected. Please connect GitHub via Settings > Advanced > Composio first.',
+  'settings.devWorkflow.errorToolNotEnabled':
+    'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER tool is not enabled on this backend. Please ask your admin to enable it in the Composio integration (backend#842).',
+  'settings.devWorkflow.errorNotAuthenticated': 'Not authenticated. Please sign in first.',
+  'settings.devWorkflow.errorNoRepositories': 'No repositories found for this GitHub account.',
+  'settings.devWorkflow.schedule.every30min': 'Every 30 minutes',
+  'settings.devWorkflow.schedule.everyHour': 'Every hour',
+  'settings.devWorkflow.schedule.every2hours': 'Every 2 hours',
+  'settings.devWorkflow.schedule.every6hours': 'Every 6 hours',
+  'settings.devWorkflow.schedule.onceDaily': 'Once daily (9 AM)',
   'settings.developerMenu.cronJobs.title': 'Cron जॉब्स',
   'settings.developerMenu.cronJobs.desc':
     'रनटाइम स्किल्स के लिए शेड्यूल किए गए जॉब देखें और कॉन्फ़िगर करें',
@@ -437,8 +480,8 @@ const hi5: TranslationMap = {
   'webhooks.tunnels.descriptionPlaceholder': 'विवरण (वैकल्पिक)',
   'webhooks.tunnels.echo': 'इको',
   'webhooks.tunnels.empty': 'खाली है',
-  'webhooks.tunnels.enableEcho': 'Echo हटाएं',
-  'webhooks.tunnels.inactive': 'एक्टिव',
+  'webhooks.tunnels.enableEcho': 'Echo चालू करें',
+  'webhooks.tunnels.inactive': 'निष्क्रिय',
   'webhooks.tunnels.namePlaceholder': 'टनल का नाम (जैसे telegram-bot)',
   'webhooks.tunnels.newTunnel': 'नया टनल',
   'webhooks.tunnels.removeEcho': 'Echo हटाएं',
@@ -743,6 +786,10 @@ const hi5: TranslationMap = {
   'settings.agentAccess.confine.desc':
     'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
   'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.alwaysAllow': 'Always-allowed tools',
+  'settings.agentAccess.alwaysAllowDesc':
+    'Tools you marked "Always allow" in chat run without asking. Remove one to be prompted again.',
+  'settings.agentAccess.alwaysAllowNone': 'No always-allowed tools yet.',
   'settings.agentAccess.grantedDesc':
     'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
   'settings.agentAccess.noneGranted': 'No folders granted.',

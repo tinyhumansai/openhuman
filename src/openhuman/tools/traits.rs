@@ -154,10 +154,32 @@ pub trait Tool: Send + Sync {
     }
 
     /// Permission level required to execute this tool.
-    /// Channels with a lower maximum permission level will reject this tool.
+    ///
+    /// For tools that expose multiple actions with different permission
+    /// requirements, this should return the **minimum** level needed by
+    /// any action — so the tool is not statically blocked on channels that
+    /// could legitimately run the read-only actions. The per-call level is
+    /// enforced by [`Self::permission_level_with_args`].
+    ///
+    /// Channels with a lower maximum permission level will reject this tool
+    /// before any per-call check runs.
     /// Default: `ReadOnly`. Override for write/execute/dangerous tools.
     fn permission_level(&self) -> PermissionLevel {
         PermissionLevel::ReadOnly
+    }
+
+    /// Args-aware version of [`Self::permission_level`].
+    ///
+    /// Tools that expose multiple actions with differing permission
+    /// requirements (e.g. `schedule list` vs `schedule create`) override
+    /// this to return the exact level for the specific call. The agent
+    /// harness calls this at call time to enforce the per-action level
+    /// against the channel's `allowed_permission`.
+    ///
+    /// Default: delegates to the arg-less [`Self::permission_level`] so
+    /// existing tools keep working without changes.
+    fn permission_level_with_args(&self, _args: &serde_json::Value) -> PermissionLevel {
+        self.permission_level()
     }
 
     /// Where this tool may be executed. Default: `All`.

@@ -545,79 +545,186 @@ impl OpenAiCompatibleProvider {
     }
 
     fn convert_messages_for_native(messages: &[ChatMessage]) -> Vec<NativeMessage> {
-        messages
-            .iter()
-            .map(|message| {
-                if message.role == "assistant" {
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&message.content)
-                    {
-                        if let Some(tool_calls_value) = value.get("tool_calls") {
-                            if let Ok(parsed_calls) =
-                                serde_json::from_value::<Vec<ProviderToolCall>>(
-                                    tool_calls_value.clone(),
-                                )
-                            {
-                                let tool_calls = parsed_calls
-                                    .into_iter()
-                                    .map(|tc| ToolCall {
-                                        id: Some(tc.id),
-                                        kind: Some("function".to_string()),
-                                        function: Some(Function {
-                                            name: Some(tc.name),
-                                            arguments: Some(serde_json::Value::String(
-                                                tc.arguments,
-                                            )),
-                                        }),
-                                    })
-                                    .collect::<Vec<_>>();
+        let converted: Vec<NativeMessage> =
+            messages
+                .iter()
+                .map(|message| {
+                    if message.role == "assistant" {
+                        if let Ok(value) =
+                            serde_json::from_str::<serde_json::Value>(&message.content)
+                        {
+                            if let Some(tool_calls_value) = value.get("tool_calls") {
+                                if let Ok(parsed_calls) =
+                                    serde_json::from_value::<Vec<ProviderToolCall>>(
+                                        tool_calls_value.clone(),
+                                    )
+                                {
+                                    let tool_calls = parsed_calls
+                                        .into_iter()
+                                        .map(|tc| ToolCall {
+                                            id: Some(tc.id),
+                                            kind: Some("function".to_string()),
+                                            function: Some(Function {
+                                                name: Some(tc.name),
+                                                arguments: Some(serde_json::Value::String(
+                                                    tc.arguments,
+                                                )),
+                                            }),
+                                        })
+                                        .collect::<Vec<_>>();
 
-                                let content = value
-                                    .get("content")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(ToString::to_string);
+                                    let content = value
+                                        .get("content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(ToString::to_string);
 
-                                return NativeMessage {
-                                    role: "assistant".to_string(),
-                                    content,
-                                    tool_call_id: None,
-                                    tool_calls: Some(tool_calls),
-                                };
+                                    return NativeMessage {
+                                        role: "assistant".to_string(),
+                                        content,
+                                        tool_call_id: None,
+                                        tool_calls: Some(tool_calls),
+                                    };
+                                }
                             }
                         }
                     }
+
+                    if message.role == "tool" {
+                        if let Ok(value) =
+                            serde_json::from_str::<serde_json::Value>(&message.content)
+                        {
+                            let tool_call_id = value
+                                .get("tool_call_id")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string);
+                            let content = value
+                                .get("content")
+                                .and_then(serde_json::Value::as_str)
+                                .map(ToString::to_string)
+                                .or_else(|| Some(message.content.clone()));
+
+                            return NativeMessage {
+                                role: "tool".to_string(),
+                                content,
+                                tool_call_id,
+                                tool_calls: None,
+                            };
+                        }
+                    }
+
+                    NativeMessage {
+                        role: message.role.clone(),
+                        content: Some(message.content.clone()),
+                        tool_call_id: None,
+                        tool_calls: None,
+                    }
+                })
+                .collect();
+
+        Self::enforce_tool_message_invariants(converted)
+    }
+
+    /// Enforce the OpenAI-compatible tool-message ordering invariants on the
+    /// fully-serialized wire array, immediately before it goes on the wire.
+    ///
+    /// Several upstream defects can leave the array malformed and trip a 400
+    /// (`messages with role 'tool' must be a response to a preceding message
+    /// with 'tool_calls'`). That 400 streams back as an empty completion, which
+    /// the agent loop collapses to "The model returned an empty response" and
+    /// the chat surface shows as a generic "Something went wrong":
+    ///
+    /// * **(A)** History tail-trimming (`session::turn::trim_history` /
+    ///   `bound_cached_transcript_messages`) cuts *between* an
+    ///   `assistant(tool_calls)` and its `tool` result, dropping the assistant
+    ///   and orphaning the result at the head of the window.
+    /// * **(B)** A persisted assistant tool-call message whose `content` no
+    ///   longer deserializes as `tool_calls` (format drift) falls through the
+    ///   parser above and is emitted as plain text with its `tool_calls`
+    ///   stripped — again orphaning the following `tool` result.
+    /// * **(C)** An `assistant(tool_calls)` whose results never arrived (an
+    ///   aborted / max-iteration turn, or a partially-answered multi-call
+    ///   cycle) leaves dangling tool-call ids with no matching `tool` response.
+    ///
+    /// This pass makes the contract hold *by construction* regardless of which
+    /// path produced the array. It is **position-aware**: each
+    /// `assistant(tool_calls)` is paired with the *contiguous run of `tool`
+    /// messages that immediately follows it* (the only place valid responses can
+    /// live in the OpenAI wire format), then:
+    ///
+    /// * `tool_calls` entries with no matching response *in that run* are pruned
+    ///   (C); if none survive, the field is dropped so the message serializes as
+    ///   plain assistant text rather than an empty tool-call block.
+    /// * `tool` messages that are **not** part of such a run — a leading orphan
+    ///   from trimming (A), or one stranded after an assistant whose `tool_calls`
+    ///   were stripped (B) — are dropped.
+    ///
+    /// Pairing by adjacency (rather than a global "is this id answered anywhere"
+    /// set) is what keeps **sequential** cycles (`asst(A)→tool(A)`,
+    /// `asst(B)→tool(B)`, …) and **parallel** calls (one `asst([X,Y,Z])` answered
+    /// by `tool(X) tool(Y) tool(Z)`) correct, and makes the result well-formed
+    /// even if responses are reordered or a cycle is bisected mid-sequence — no
+    /// causal-ordering assumption required.
+    fn enforce_tool_message_invariants(messages: Vec<NativeMessage>) -> Vec<NativeMessage> {
+        use std::collections::HashSet;
+
+        let mut out: Vec<NativeMessage> = Vec::with_capacity(messages.len());
+        let mut dropped_orphans = 0usize;
+        let mut pruned_calls = 0usize;
+
+        let mut iter = messages.into_iter().peekable();
+        while let Some(mut msg) = iter.next() {
+            if msg.role == "assistant" && msg.tool_calls.is_some() {
+                // Gather the contiguous run of `tool` messages that answer this
+                // block (responses must immediately follow, in any order).
+                let mut run: Vec<NativeMessage> = Vec::new();
+                while iter.peek().is_some_and(|m| m.role == "tool") {
+                    run.push(iter.next().expect("peeked tool message"));
                 }
+                let responded: HashSet<String> =
+                    run.iter().filter_map(|t| t.tool_call_id.clone()).collect();
 
-                if message.role == "tool" {
-                    if let Ok(value) =
-                        serde_json::from_str::<serde_json::Value>(&message.content)
-                    {
-                        let tool_call_id = value
-                            .get("tool_call_id")
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string);
-                        let content = value
-                            .get("content")
-                            .and_then(serde_json::Value::as_str)
-                            .map(ToString::to_string)
-                            .or_else(|| Some(message.content.clone()));
+                // (C) keep only tool_calls answered within this run.
+                let calls = msg.tool_calls.take().unwrap_or_default();
+                let before = calls.len();
+                let kept: Vec<ToolCall> = calls
+                    .into_iter()
+                    .filter(|c| c.id.as_deref().is_some_and(|id| responded.contains(id)))
+                    .collect();
+                pruned_calls += before - kept.len();
+                let kept_ids: HashSet<String> = kept.iter().filter_map(|c| c.id.clone()).collect();
+                msg.tool_calls = if kept.is_empty() { None } else { Some(kept) };
+                out.push(msg);
 
-                        return NativeMessage {
-                            role: "tool".to_string(),
-                            content,
-                            tool_call_id,
-                            tool_calls: None,
-                        };
+                // Emit the run's responses that map to a surviving call; drop the
+                // rest (e.g. a stray tool whose id wasn't in this block).
+                for tool_msg in run {
+                    let kept = tool_msg
+                        .tool_call_id
+                        .as_deref()
+                        .is_some_and(|id| kept_ids.contains(id));
+                    if kept {
+                        out.push(tool_msg);
+                    } else {
+                        dropped_orphans += 1;
                     }
                 }
+            } else if msg.role == "tool" {
+                // (A, B) a `tool` not consumed by a preceding assistant block.
+                dropped_orphans += 1;
+            } else {
+                out.push(msg);
+            }
+        }
 
-                NativeMessage {
-                    role: message.role.clone(),
-                    content: Some(message.content.clone()),
-                    tool_call_id: None,
-                    tool_calls: None,
-                }
-            })
-            .collect()
+        if dropped_orphans > 0 || pruned_calls > 0 {
+            log::warn!(
+                "[provider] sanitized malformed tool-message ordering before send: \
+                 dropped {dropped_orphans} orphaned tool result(s), pruned {pruned_calls} \
+                 unanswered tool_call(s)"
+            );
+        }
+
+        out
     }
 
     fn with_prompt_guided_tool_instructions(

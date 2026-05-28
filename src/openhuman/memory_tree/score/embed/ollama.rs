@@ -209,12 +209,13 @@ impl Embedder for OllamaEmbedder {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!(format_embedding_status_error(
-                status,
-                &body,
-                &self.endpoint,
-                &self.model
-            ));
+            let msg = format_embedding_status_error(status, &body, &self.endpoint, &self.model);
+            // Log at WARN so missing-model failures surface in traces without
+            // requiring debug-level logging to be enabled. Missing-model 404s
+            // include the `ollama pull` remediation hint from
+            // `format_embedding_status_error`.
+            log::warn!("[embeddings] {msg}");
+            anyhow::bail!(msg);
         }
 
         let payload: EmbedResponse = resp

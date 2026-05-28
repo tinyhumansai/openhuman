@@ -740,7 +740,9 @@ async fn run_typed_mode(
                 // behaviour on network failure.
                 let fresh_actions = match &client_kind {
                     Some(ComposioClientKind::Backend(client)) => {
-                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk).await {
+                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk, None)
+                            .await
+                        {
                             Ok(actions) if !actions.is_empty() => actions,
                             Ok(_) => {
                                 tracing::debug!(

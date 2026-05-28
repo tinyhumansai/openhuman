@@ -1811,6 +1811,12 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         }
     }
 
+    // --- Cost dashboard tracker ---
+    // Activates the previously-dormant CostTracker so the dashboard RPC
+    // surface (`openhuman.cost_get_dashboard`) and `record_provider_usage`
+    // share one JSONL-backed store. Idempotent.
+    crate::openhuman::cost::init_global(cfg.cost.clone(), &workspace_dir);
+
     // --- Sub-agent definition registry bootstrap ---
     // Loads built-in archetype definitions plus any custom TOML files
     // under `<workspace>/agents/*.toml`. Idempotent — safe to call
@@ -1823,6 +1829,24 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
              spawn_subagent will be unavailable until restart"
         );
     }
+
+    // --- Live SecurityPolicy ---
+    // Install the process-global live policy on the always-run serve boot, not
+    // only inside `start_channels` (which is skipped for web-chat-only cores
+    // with no messaging integrations). Without this, `live_policy::current()`
+    // would be empty on those cores, so the ApprovalGate's `auto_approve`
+    // allowlist and `config.update_autonomy_settings` reloads (`reload_from`)
+    // would be inert until a session with integrations starts. `from_config`
+    // injects the default projects root, so this matches what `start_channels`
+    // installs; idempotent — a later `start_channels` re-installs an equivalent
+    // policy.
+    crate::openhuman::security::live_policy::install(
+        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
+            &cfg.autonomy,
+            &workspace_dir,
+        )),
+        workspace_dir.clone(),
+    );
 
     // --- Approval gate (#1339) ---
     // ON by default; opt out with `OPENHUMAN_APPROVAL_GATE=0` (or `false`).

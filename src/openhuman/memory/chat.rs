@@ -215,7 +215,10 @@ mod tests {
     fn build_chat_runtime_defaults_to_openhuman_resolved_model() {
         let cfg = Config::default();
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
-        assert_eq!(model, "reasoning-v1");
+        // build_chat_runtime resolves the "summarization" workload role,
+        // which routes to the dedicated `summarization-v1` tier (PR #2690)
+        // rather than the generic `reasoning-v1` fallback.
+        assert_eq!(model, "summarization-v1");
     }
 
     #[test]
@@ -223,6 +226,9 @@ mod tests {
         let mut cfg = Config::default();
         cfg.memory_tree.cloud_llm_model = Some("custom-summary-model".into());
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
+        // Setting memory_tree.cloud_llm_model overrides the cloud-memory
+        // model path; the routing falls back to the platform default
+        // (`reasoning-v1`) rather than the `summarization-v1` tier.
         assert_eq!(model, "reasoning-v1");
     }
 

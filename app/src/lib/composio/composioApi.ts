@@ -21,6 +21,7 @@ import type {
   ComposioDisableTriggerResponse,
   ComposioEnableTriggerResponse,
   ComposioExecuteResponse,
+  ComposioGithubReposResponse,
   ComposioToolkitsResponse,
   ComposioToolsResponse,
   ComposioUserScopePref,
@@ -187,6 +188,21 @@ export async function execute(
     params: { tool, arguments: args ?? {} },
   });
   return unwrapCliEnvelope<ComposioExecuteResponse>(raw);
+}
+
+/**
+ * List GitHub repositories available through the user's authorized
+ * Composio connection. Wraps `openhuman.composio_list_github_repos`
+ * which hits the dedicated backend endpoint (not `composio_execute`).
+ */
+export async function listGithubRepos(connectionId?: string): Promise<ComposioGithubReposResponse> {
+  const params: Record<string, unknown> = {};
+  if (connectionId) params.connection_id = connectionId;
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_github_repos',
+    params,
+  });
+  return unwrapCliEnvelope<ComposioGithubReposResponse>(raw);
 }
 
 /**

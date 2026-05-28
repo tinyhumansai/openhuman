@@ -1,9 +1,6 @@
 use super::*;
-use crate::openhuman::approval::ApprovalManager;
-use crate::openhuman::config::AutonomyConfig;
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
 use crate::openhuman::inference::provider::ChatResponse;
-use crate::openhuman::security::AutonomyLevel;
 use crate::openhuman::tools::{ToolResult, ToolScope};
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -217,7 +214,6 @@ async fn run_tool_call_loop_intercepts_oversized_tool_results_via_summarizer() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         2,
@@ -269,7 +265,6 @@ async fn run_tool_call_loop_rejects_vision_markers_for_non_vision_provider() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         1,
@@ -308,7 +303,6 @@ async fn run_tool_call_loop_streams_final_text_chunks() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         1,
@@ -362,7 +356,6 @@ async fn run_tool_call_loop_blocks_cli_rpc_only_tools_in_prompt_mode() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         2,
@@ -419,7 +412,6 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         2,
@@ -440,64 +432,6 @@ async fn run_tool_call_loop_persists_native_tool_results_as_tool_messages() {
         .expect("native tool result should be persisted");
     assert!(tool_msg.content.contains("\"tool_call_id\":\"call-1\""));
     assert!(tool_msg.content.contains("echo-out"));
-}
-
-#[tokio::test]
-async fn run_tool_call_loop_auto_approves_supervised_tools_on_non_cli_channels() {
-    let provider = ScriptedProvider {
-        responses: Mutex::new(vec![
-            Ok(ChatResponse {
-                text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
-                tool_calls: vec![],
-                usage: None,
-            }),
-            Ok(ChatResponse {
-                text: Some("done".into()),
-                tool_calls: vec![],
-                usage: None,
-            }),
-        ]),
-        native_tools: false,
-        vision: false,
-    };
-    let mut history = vec![ChatMessage::user("hello")];
-    let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
-    let approval = ApprovalManager::from_config(&AutonomyConfig {
-        level: AutonomyLevel::Supervised,
-        auto_approve: vec![],
-        always_ask: vec!["echo".into()],
-        ..AutonomyConfig::default()
-    });
-
-    let result = run_tool_call_loop(
-        &provider,
-        &mut history,
-        &tools,
-        "test-provider",
-        "model",
-        0.0,
-        true,
-        Some(&approval),
-        "telegram",
-        &crate::openhuman::config::MultimodalConfig::default(),
-        2,
-        None,
-        None,
-        &[],
-        None,
-        None,
-        &crate::openhuman::tools::policy::DefaultToolPolicy,
-    )
-    .await
-    .expect("non-cli channels should auto-approve supervised tools");
-
-    assert_eq!(result, "done");
-    let tool_results = history
-        .iter()
-        .find(|msg| msg.role == "user" && msg.content.contains("[Tool results]"))
-        .expect("tool results should be appended");
-    assert!(tool_results.content.contains("echo-out"));
-    assert_eq!(approval.audit_log().len(), 1);
 }
 
 #[tokio::test]
@@ -528,7 +462,6 @@ async fn run_tool_call_loop_reports_unknown_tool_and_uses_default_max_iterations
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         0,
@@ -585,7 +518,6 @@ async fn run_tool_call_loop_formats_tool_error_paths() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         2,
@@ -626,7 +558,6 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         1,
@@ -660,7 +591,6 @@ async fn run_tool_call_loop_propagates_provider_errors_and_max_iteration_failure
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         1,
@@ -737,7 +667,6 @@ async fn run_tool_call_loop_aborts_when_stop_hook_returns_stop() {
             "model",
             0.0,
             true,
-            None,
             "channel",
             &crate::openhuman::config::MultimodalConfig::default(),
             10,
@@ -790,7 +719,6 @@ async fn run_tool_call_loop_runs_unchanged_when_no_stop_hooks_installed() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         1,
@@ -866,7 +794,6 @@ async fn run_tool_call_loop_applies_per_tool_max_result_size_cap() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         2,
@@ -933,7 +860,6 @@ async fn run_tool_call_loop_halts_on_repeated_identical_failure() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         10, // max_iterations — must NOT be reached; breaker fires at 3
@@ -997,7 +923,6 @@ async fn run_tool_call_loop_halts_when_no_progress() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         20,
@@ -1228,7 +1153,6 @@ async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
         "model",
         0.0,
         true,
-        None,
         "channel",
         &crate::openhuman::config::MultimodalConfig::default(),
         2,
@@ -1258,5 +1182,128 @@ async fn run_tool_call_loop_dedups_duplicate_tool_names_before_provider_call() {
         "duplicate tool names must be dropped before the provider call \
          (TAURI-RUST-4) — got names={:?}",
         names
+    );
+}
+
+// ── End-to-end: agent loop → ApprovalGate → auto_approve short-circuit ──
+//
+// Exercises the real seam: a scripted LLM emits a tool call for an
+// external-effect tool, the loop routes it through the process-global
+// `ApprovalGate` (`try_global`), and the tool's presence on the
+// `auto_approve` "Always allow" list short-circuits the gate to `Allow`
+// *before* parking — so the tool executes without a prompt, even though a
+// chat context is present (which would otherwise park it).
+
+/// A tool with an external side effect, so the loop gates it via the
+/// `ApprovalGate`. Records whether `execute` actually ran.
+struct ExternalEffectTool {
+    ran: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait]
+impl Tool for ExternalEffectTool {
+    fn name(&self) -> &str {
+        "ext_effect_e2e_tool"
+    }
+    fn description(&self) -> &str {
+        "external effect (e2e gate test)"
+    }
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        true
+    }
+    async fn execute(&self, _args: serde_json::Value) -> Result<ToolResult> {
+        self.ran.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(ToolResult::success("did-external-effect"))
+    }
+}
+
+#[tokio::test]
+async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() {
+    use std::sync::atomic::Ordering;
+    use std::sync::Arc;
+    // Serialize live-policy / gate global access against the other tests that
+    // install or reload them (gate auto_approve test, live_policy test, autonomy
+    // ops tests) — all take this same lock.
+    let _env = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    let tool_name = "ext_effect_e2e_tool";
+
+    // Always-allow the tool via the live policy the gate reads.
+    let policy = crate::openhuman::security::SecurityPolicy {
+        auto_approve: vec![tool_name.into()],
+        ..crate::openhuman::security::SecurityPolicy::default()
+    };
+    crate::openhuman::security::live_policy::install(Arc::new(policy), std::env::temp_dir());
+
+    // Install the process-global gate so the loop's external-effect branch has a
+    // gate to route through (idempotent; the loop calls `ApprovalGate::try_global`).
+    let cfg = crate::openhuman::config::Config {
+        workspace_dir: std::env::temp_dir(),
+        ..crate::openhuman::config::Config::default()
+    };
+    crate::openhuman::approval::ApprovalGate::init_global(cfg, "loop-gate-e2e-session");
+
+    let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let provider = ScriptedProvider {
+        responses: Mutex::new(vec![
+            Ok(ChatResponse {
+                text: Some(format!(
+                    "<tool_call>{{\"name\":\"{tool_name}\",\"arguments\":{{}}}}</tool_call>"
+                )),
+                tool_calls: vec![],
+                usage: None,
+            }),
+            Ok(ChatResponse {
+                text: Some("done".into()),
+                tool_calls: vec![],
+                usage: None,
+            }),
+        ]),
+        native_tools: false,
+        vision: false,
+    };
+    let mut history = vec![ChatMessage::user("please act")];
+    let tools: Vec<Box<dyn Tool>> = vec![Box::new(ExternalEffectTool { ran: ran.clone() })];
+
+    // Run *inside* a chat context: without the allowlist the gate would park
+    // this external-effect call — so a clean completion proves the auto_approve
+    // shortcut (checked before chat-context parking) is what let it through.
+    let result = crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+        .scope(
+            crate::openhuman::approval::ApprovalChatContext {
+                thread_id: "t-e2e".into(),
+                client_id: "c-e2e".into(),
+            },
+            run_tool_call_loop(
+                &provider,
+                &mut history,
+                &tools,
+                "test-provider",
+                "model",
+                0.0,
+                true,
+                "channel",
+                &crate::openhuman::config::MultimodalConfig::default(),
+                2,
+                None,
+                None,
+                &[],
+                None,
+                None,
+                &crate::openhuman::tools::policy::DefaultToolPolicy,
+            ),
+        )
+        .await
+        .expect("loop should complete without parking on an auto-approved tool");
+
+    assert_eq!(result, "done");
+    assert!(
+        ran.load(Ordering::SeqCst),
+        "auto-approved external-effect tool must execute (gate must not park it)"
     );
 }

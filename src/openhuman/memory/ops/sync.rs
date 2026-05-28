@@ -367,6 +367,9 @@ mod tests {
         let client = ensure_memory_client();
         let state = client.ingestion_state();
 
+        // Reset any residue from background ingestion left by prior tests.
+        state.reset_for_test();
+
         state.enqueue();
         state.mark_running("doc-sync", "Sync Title", "sync-test");
 

@@ -370,6 +370,53 @@ fn trim_history_preserves_system_and_keeps_latest_non_system_entries() {
         .any(|msg| matches!(msg, ConversationMessage::Chat(chat) if chat.content == "a2")));
 }
 
+/// When the `max_history_messages` cap drops an `AssistantToolCalls` opener but
+/// keeps its `ToolResults`, the window would otherwise open on an orphaned tool
+/// result — serialized, a `tool` message with no preceding `tool_calls`, which
+/// the provider rejects (the 400 that surfaces as "Something went wrong").
+/// `trim_history` must snap past the orphan so the window starts on a clean turn.
+#[test]
+fn trim_history_snaps_past_orphaned_tool_results() {
+    use crate::openhuman::inference::provider::{ToolCall, ToolResultMessage};
+
+    let mut agent = make_agent(None); // max_history_messages = 3
+    agent.history = vec![
+        ConversationMessage::Chat(ChatMessage::system("sys")),
+        // This opener is the oldest non-system entry, so the cap drops it...
+        ConversationMessage::AssistantToolCalls {
+            text: Some("calling".into()),
+            tool_calls: vec![ToolCall {
+                id: "call_x".into(),
+                name: "shell".into(),
+                arguments: "{}".into(),
+            }],
+        },
+        // ...orphaning this result at the head of the kept window.
+        ConversationMessage::ToolResults(vec![ToolResultMessage {
+            tool_call_id: "call_x".into(),
+            content: "result".into(),
+        }]),
+        ConversationMessage::Chat(ChatMessage::user("u2")),
+        ConversationMessage::Chat(ChatMessage::assistant("a2")),
+    ];
+
+    agent.trim_history();
+
+    assert!(
+        !agent
+            .history
+            .iter()
+            .any(|m| matches!(m, ConversationMessage::ToolResults(_))),
+        "orphaned ToolResults must be dropped, not left at the window head"
+    );
+    assert!(
+        matches!(agent.history.first(), Some(ConversationMessage::Chat(c)) if c.role == "system"),
+        "system message is preserved"
+    );
+    // system + u2 + a2 (the bisected cycle is gone entirely).
+    assert_eq!(agent.history.len(), 3);
+}
+
 #[test]
 fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     let mut agent = make_agent(None);
