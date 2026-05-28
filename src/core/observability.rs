@@ -61,11 +61,25 @@ const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
 /// Message fragments observed from Tauri/core updater transient failures.
 /// Keep these updater-specific so unrelated GitHub or generic transport
 /// failures still reach Sentry.
+///
+/// The last entry is `tauri-plugin-updater`'s own non-success log line
+/// (`updater.rs`: `log::error!("update endpoint did not respond with a
+/// successful status code")`). The plugin emits it on *any* non-2xx
+/// response and **discards the status code**, so the Sentry event carries
+/// no `domain`/`status` tag and no actionable detail — it can only be
+/// matched by this message string. It is distinctive to the updater
+/// (literally names "update endpoint"), so matching it domain-agnostically
+/// is safe. A genuinely-broken update manifest still surfaces with full
+/// structured context (status + url) through the core's `domain=update`
+/// `check_releases` path, which keeps non-transient statuses visible — see
+/// `UPDATER_TRANSIENT_HTTP_STATUSES` (404 deliberately omitted there).
+/// Drops TAURI-RUST-CD (~151 events / 9 days, Windows background checks).
 const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
     "failed to check for updates: error sending request",
     "github api error: 403",
     "github api error: 5",
     "error sending request for url (https://github.com/tinyhumansai/openhuman/releases/",
+    "update endpoint did not respond with a successful status code",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2932,6 +2946,48 @@ mod tests {
             !is_updater_transient_event(&event),
             "update-domain events without a transient updater shape must still reach Sentry"
         );
+    }
+
+    #[test]
+    fn updater_endpoint_non_success_message_is_dropped() {
+        // TAURI-RUST-CD (~151 events / 9 days, Windows): `tauri-plugin-updater`
+        // logs `update endpoint did not respond with a successful status code`
+        // (updater.rs) on any non-2xx response and discards the status, so the
+        // captured event has NO `domain`/`status` tag — only the bare message.
+        // It can therefore only be matched via the message fast-path.
+        assert!(is_updater_transient_message(
+            "update endpoint did not respond with a successful status code"
+        ));
+
+        let event = event_with_tags_and_message(
+            &[],
+            "update endpoint did not respond with a successful status code",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "the plugin's status-blind, domain-less non-success log line is unactionable updater noise"
+        );
+    }
+
+    #[test]
+    fn updater_endpoint_non_success_anchor_does_not_silence_unrelated_errors() {
+        // The new anchor is the literal plugin string. Other updater failures
+        // that DO carry an actionable signal (signature/permission failures on
+        // apply, deserialize errors) and unrelated non-updater errors that
+        // merely mention a status code MUST NOT be dropped by it. Pin the
+        // rejection contract so a future refactor doesn't loosen the substring.
+        for msg in [
+            "failed to apply update: signature verification failed",
+            "failed to deserialize update response: missing field `version`",
+            "backend request to /agent-integrations failed with status code 500",
+            "tool exited with non-zero status code 1",
+        ] {
+            let event = event_with_tags_and_message(&[], msg);
+            assert!(
+                !is_updater_transient_event(&event),
+                "unrelated/actionable error must still reach Sentry: {msg}"
+            );
+        }
     }
 
     #[test]
