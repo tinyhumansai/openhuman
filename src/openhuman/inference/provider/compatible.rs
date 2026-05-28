@@ -549,6 +549,21 @@ impl OpenAiCompatibleProvider {
             messages
                 .iter()
                 .map(|message| {
+                    // Extract reasoning_content stored in extra_metadata by the
+                    // agent harness after each assistant turn. Thinking models
+                    // (DeepSeek-R1, Qwen3, GLM-4) require this to be echoed back
+                    // verbatim in subsequent requests, or the API returns HTTP 400.
+                    let reasoning_content = if message.role == "assistant" {
+                        message
+                            .extra_metadata
+                            .as_ref()
+                            .and_then(|m| m.get("reasoning_content"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToString::to_string)
+                    } else {
+                        None
+                    };
+
                     if message.role == "assistant" {
                         if let Ok(value) =
                             serde_json::from_str::<serde_json::Value>(&message.content)
@@ -583,6 +598,7 @@ impl OpenAiCompatibleProvider {
                                         content,
                                         tool_call_id: None,
                                         tool_calls: Some(tool_calls),
+                                        reasoning_content,
                                     };
                                 }
                             }
@@ -608,6 +624,7 @@ impl OpenAiCompatibleProvider {
                                 content,
                                 tool_call_id,
                                 tool_calls: None,
+                                reasoning_content: None,
                             };
                         }
                     }
@@ -617,6 +634,7 @@ impl OpenAiCompatibleProvider {
                         content: Some(message.content.clone()),
                         tool_call_id: None,
                         tool_calls: None,
+                        reasoning_content,
                     }
                 })
                 .collect();
@@ -769,6 +787,12 @@ impl OpenAiCompatibleProvider {
             .ok_or_else(|| anyhow::anyhow!("No choices in response from {}", provider_name))?;
 
         let mut text = message.effective_content_optional();
+        // Capture reasoning_content before the message fields are moved into
+        // the tool-call extractors below. This must be passed back verbatim on
+        // the next turn for thinking models (e.g. DeepSeek-R1, Qwen3) whose APIs
+        // return HTTP 400 ("reasoning_content in thinking mode must be passed back")
+        // when the field is omitted from subsequent assistant messages.
+        let reasoning_content = message.reasoning_content.clone();
         let mut tool_calls = message
             .tool_calls
             .unwrap_or_default()
@@ -813,10 +837,17 @@ impl OpenAiCompatibleProvider {
             }
         }
 
+        tracing::debug!(
+            has_reasoning_content = reasoning_content.is_some(),
+            reasoning_content_chars = reasoning_content.as_ref().map_or(0, |r| r.chars().count()),
+            "[provider:parse_native_response] reasoning_content capture"
+        );
+
         Ok(ProviderChatResponse {
             text,
             tool_calls,
             usage,
+            reasoning_content,
         })
     }
 
@@ -1676,6 +1707,7 @@ impl Provider for OpenAiCompatibleProvider {
                     text: Some(text),
                     tool_calls: vec![],
                     usage: None,
+                    reasoning_content: None,
                 });
             }
         };
@@ -1715,6 +1747,7 @@ impl Provider for OpenAiCompatibleProvider {
             text,
             tool_calls,
             usage,
+            reasoning_content: None,
         })
     }
 
@@ -1849,6 +1882,7 @@ impl Provider for OpenAiCompatibleProvider {
                             text: Some(text),
                             tool_calls: vec![],
                             usage: None,
+                            reasoning_content: None,
                         })
                         .map_err(|responses_err| {
                             let fb = super::format_anyhow_chain(&responses_err);
@@ -1878,6 +1912,7 @@ impl Provider for OpenAiCompatibleProvider {
                     text: Some(text),
                     tool_calls: vec![],
                     usage: None,
+                    reasoning_content: None,
                 });
             }
 
@@ -1889,6 +1924,7 @@ impl Provider for OpenAiCompatibleProvider {
                         text: Some(text),
                         tool_calls: vec![],
                         usage: None,
+                        reasoning_content: None,
                     })
                     .map_err(|responses_err| {
                         let fb = super::format_anyhow_chain(&responses_err);

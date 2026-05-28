@@ -112,9 +112,10 @@ const en: TranslationMap = {
     'Migrate memory and notes from another local assistant into this workspace. Start with a Preview to see exactly what would change, then Apply to copy the data over. Your current memory is backed up first.',
   'migration.vendorLabel': 'Source vendor',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (coming soon)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'migration.sourceLabel': 'Source workspace path (optional)',
   'migration.sourcePlaceholder': 'Leave blank to auto-detect (e.g. ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
   'migration.previewAction': 'Preview',
@@ -137,10 +138,6 @@ const en: TranslationMap = {
     'No data has been imported yet. Click Apply import to copy it over.',
   'migration.report.appliedHint':
     'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
-  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
-  'migration.hermesComingSoonSuffix':
-    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
   'migration.confirmImport.plural':
@@ -1654,6 +1651,7 @@ const en: TranslationMap = {
   'mic.stopRecording': 'Stop recording and send',
   'mic.startRecording': 'Start recording',
   'mic.deviceSelector': 'Microphone device',
+  'mic.tapToSendCountdown': 'Tap to send ({seconds}s)',
 
   // Token
   'token.usageLimitReached': 'Usage limit reached',
@@ -2023,6 +2021,7 @@ const en: TranslationMap = {
   // Mic: error messages
   'mic.noAudioCaptured': 'No audio captured',
   'mic.noSpeechDetected': 'No speech detected',
+  'mic.lowConfidenceResult': 'Could not understand the audio clearly — please try again',
   'mic.failedToStopRecording': 'Failed to stop recording: {message}',
   'mic.transcriptionFailed': 'Transcription failed: {message}',
 
@@ -3386,6 +3385,30 @@ const en: TranslationMap = {
     'Smallest memory window. Cheapest, fastest, least continuity between runs.',
   'settings.memoryWindow.minimal.label': 'Minimal',
   'settings.memoryWindow.title': 'Long-term memory window',
+  'settings.modelHealth.title': 'Model Health',
+  'settings.modelHealth.desc':
+    'Per-model quality, hallucination rate, and cost comparison across active models',
+  'settings.modelHealth.allStatuses': 'All statuses',
+  'settings.modelHealth.models': 'models',
+  'settings.modelHealth.loading': 'Loading model data...',
+  'settings.modelHealth.empty': 'No models registered',
+  'settings.modelHealth.col.model': 'Model',
+  'settings.modelHealth.col.quality': 'Quality',
+  'settings.modelHealth.col.halluc': 'Halluc. Rate',
+  'settings.modelHealth.col.cost': 'Cost / 1M out',
+  'settings.modelHealth.col.agents': 'Agents',
+  'settings.modelHealth.col.status': 'Status',
+  'settings.modelHealth.badge.keep': 'Keep',
+  'settings.modelHealth.badge.replace': 'Replace',
+  'settings.modelHealth.badge.staging': 'Staging test',
+  'settings.modelHealth.badge.vision': 'Vision only',
+  'settings.modelHealth.swap': 'Swap?',
+  'settings.modelHealth.modal.title': 'Replace Model?',
+  'settings.modelHealth.modal.hallucRate': 'Hallucination rate',
+  'settings.modelHealth.modal.cancel': 'Cancel',
+  'settings.modelHealth.modal.apply': 'Apply Replacement',
+  'settings.modelHealth.tag.cheaper': 'CHEAPER',
+  'settings.modelHealth.tag.better': 'BETTER',
   'settings.screenIntel.permissions.accessibility': 'Accessibility',
   'settings.screenIntel.permissions.grantHint':
     'Grant these permissions in System Settings, then restart the core.',

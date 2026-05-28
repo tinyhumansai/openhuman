@@ -78,6 +78,7 @@ async fn native_tool_call_decodes_json_encoded_arguments_string() {
             arguments: "{\"city\":\"Berlin\",\"n\":3}".to_string(),
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (tool, captured) = ArgsCapturingTool::new("captured", "captured-ok");
@@ -139,6 +140,7 @@ async fn documents_silent_drop_of_non_json_arguments_string() {
             arguments: "world".to_string(),
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (tool, captured) = ArgsCapturingTool::new("captured", "captured-ok");
@@ -194,6 +196,7 @@ async fn parallel_tool_calls_in_single_iteration_all_execute() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -289,6 +292,7 @@ async fn markdown_fenced_tool_call_block_is_parsed() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -342,6 +346,7 @@ async fn native_tool_calls_take_precedence_over_xml_in_text() {
             arguments: "{\"src\":\"native\"}".into(),
         }],
         usage: None,
+        reasoning_content: None,
     });
 
     let (a, a_calls) = ArgsCapturingTool::new("tool_a", "tool_a-ok");
@@ -453,6 +458,7 @@ async fn empty_response_with_no_tool_calls_terminates_with_empty_text() {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let tools: Vec<Box<dyn Tool>> = vec![];

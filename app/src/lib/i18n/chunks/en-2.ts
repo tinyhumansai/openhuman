@@ -350,6 +350,7 @@ const en2: TranslationMap = {
   'mic.stopRecording': 'Stop recording and send',
   'mic.startRecording': 'Start recording',
   'mic.deviceSelector': 'Microphone device',
+  'mic.tapToSendCountdown': 'Tap to send ({seconds}s)',
   'token.usageLimitReached': 'Usage limit reached',
   'token.approachingLimit': 'Approaching limit',
   'token.planClickForDetails': 'plan - click for details',

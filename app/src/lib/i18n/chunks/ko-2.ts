@@ -382,6 +382,7 @@ const ko2: TranslationMap = {
   'localModel.ollamaServer.unreachable': '연결할 수 없음',
   'localModel.ollamaServer.validationError': '유효한 http:// 또는 https:// URL이어야 합니다.',
   'mic.deviceSelector': '마이크 장치',
+  'mic.tapToSendCountdown': '탭하여 보내기 ({seconds}초)',
   'devOptions.menuAi': 'AI 구성',
   'devOptions.menuAiDesc': '클라우드 공급자, 로컬 Ollama 모델 및 워크로드별 라우팅',
   'devOptions.menuScreenAware': '화면 인식',
