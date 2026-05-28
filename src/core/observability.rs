@@ -1001,10 +1001,9 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
 
 /// Detect an RPC-level filesystem path validation failure from user input.
 ///
-/// Anchored on the literal phrase `"path is not a directory:"` (with the
-/// trailing colon followed by the user-supplied path). This matches the
-/// two known wire shapes — both emitted at the RPC entry boundary when a
-/// user typed/picked a path that doesn't resolve to an existing directory:
+/// Anchored on the two known wire shapes — both emitted at the RPC entry
+/// boundary when a user typed/picked a path that doesn't resolve to an
+/// existing directory:
 ///
 /// - `"root_path is not a directory: <path>"` —
 ///   [`crate::openhuman::vault::ops::vault_create`] when the chosen vault
@@ -1018,21 +1017,24 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
 /// handler, BEFORE any side-effect happens. The UI already surfaces the
 /// typed error and Sentry has no remediation path.
 ///
-/// **Polarity contract** — the trailing colon discriminates user input
-/// from invariant violations:
+/// **Polarity contract** — explicit wire-shape anchors prevent accidental
+/// demotion of future errors whose bodies happen to contain "path is not
+/// a directory:" in a different context:
 ///
 /// - `skills::ops_install` emits `"{path} is not a directory — refusing
-///   to remove"` (em-dash separator, no colon after `"directory"`). That
-///   is an `rm -rf` safety guard catching an UNEXPECTED state, not user
-///   input — it must STAY actionable.
-/// - A narrative log line like `"this path is not a directory check
-///   passed"` lacks the colon and won't classify.
+///   to remove"` (em-dash separator, no "root_path" or "hosted path"
+///   prefix). That is an `rm -rf` safety guard catching an UNEXPECTED
+///   state, not user input — it must STAY actionable.
+/// - A generic `"input config path is not a directory: /etc/foo"` from a
+///   future provider/wallet/storage error would NOT match (no known
+///   prefix) and would reach Sentry as intended.
 ///
 /// All matches are substring-based against the lower-cased message so
 /// the classifier survives caller wrapping (`rpc.invoke_method`,
 /// anyhow context chains, …).
 fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
-    lower.contains("path is not a directory:")
+    lower.contains("root_path is not a directory:")
+        || lower.contains("hosted path is not a directory:")
 }
 
 /// Detect memory-store writes rejected because the namespace or key contained
@@ -1355,14 +1357,16 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
             // boundary — e.g. `openhuman.vault_create` called with a
             // `root_path` that doesn't exist. The typed error is
             // already shown to the user; Sentry has no remediation
-            // path. Demote to `warn!` so the local trace still pins
-            // which RPC + which method tripped the gate.
+            // path. Demote to `info!` — same tier as
+            // `PromptInjectionBlocked`, which is the closest severity
+            // class ("user input we already surfaced a typed error for";
+            // not operator-actionable like `DiskFull` / `NetworkUnreachable`).
             //
             // **Do not include the raw `message` here.** The message
             // body embeds the user's local filesystem layout (username,
             // project name, document directory, …) and
             // `sentry_tracing_layer` in `core::logging` maps
-            // `Level::WARN` to `EventFilter::Breadcrumb` — so any
+            // `Level::INFO` to `EventFilter::Breadcrumb` — so any
             // formatted body would be attached as a breadcrumb to
             // every subsequent Sentry event from this hub, leaking
             // user paths into unrelated reports. Log only `domain` /
@@ -1372,7 +1376,7 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
             // Full-path diagnostics for local debugging stay available
             // via `RUST_LOG=…=debug` since `Level::DEBUG` / `TRACE`
             // are mapped to `EventFilter::Ignore`.
-            tracing::warn!(
+            tracing::info!(
                 domain = domain,
                 operation = operation,
                 kind = "filesystem_user_path_invalid",
@@ -2197,6 +2201,10 @@ mod tests {
             "open /etc/passwd failed: Is a directory (os error 21)",
             // Bare path with no `directory` mention — must NOT classify.
             "root_path must be absolute: ./relative/path",
+            // Generic body with the trailing colon but no known vault/http_host
+            // prefix — must NOT classify (future provider/storage errors that
+            // happen to embed "path is not a directory: ..." should reach Sentry).
+            "input config path is not a directory: /etc/foo",
         ] {
             assert_eq!(
                 expected_error_kind(raw),
