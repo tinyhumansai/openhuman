@@ -406,6 +406,19 @@ describe('VoicePanel', () => {
     await waitFor(() => expect(whisperChip).toHaveAttribute('aria-checked', 'true'));
   });
 
+  it('renders the Piper chip as on when TTS routing is set to piper', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    await waitFor(() => expect(piperChip).toHaveAttribute('aria-checked', 'true'));
+  });
+
   it('renders the ElevenLabs chip as off when no provider is registered', async () => {
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
