@@ -171,6 +171,9 @@ impl YuanbaoConfig {
     }
 }
 
+/// Default value for [`YuanbaoConfig::bot_version`] — populates
+/// `DeviceInfo.app_version` (server `plugin_version`) when the user config
+/// omits the field.
 fn default_bot_version() -> String {
     DEFAULT_PLUGIN_VERSION.into()
 }

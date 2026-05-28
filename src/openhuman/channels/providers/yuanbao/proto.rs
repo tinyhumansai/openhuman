@@ -599,18 +599,12 @@ mod tests {
         assert_eq!(frame.data, b"payload");
     }
 
+    /// Smoke-test that [`encode_auth_bind`] produces a frame round-trippable
+    /// via [`decode_conn_msg`] with the expected `cmd` / `module` tags.
     #[test]
     fn auth_bind_smoke() {
         let buf = encode_auth_bind(
-            "biz",
-            "uid",
-            "openclaw",
-            "tok",
-            "mid",
-            "0.1.0",
-            "linux",
-            "1.0",
-            "",
+            "biz", "uid", "openclaw", "tok", "mid", "0.1.0", "linux", "1.0", "",
         );
         let frame = decode_conn_msg(&buf).unwrap();
         assert_eq!(frame.cmd, cmd::AUTH_BIND);
