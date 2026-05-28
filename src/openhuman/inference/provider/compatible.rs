@@ -583,8 +583,33 @@ impl OpenAiCompatibleProvider {
                                         content,
                                         tool_call_id: None,
                                         tool_calls: Some(tool_calls),
+                                        reasoning_content: None,
                                     };
                                 }
+                            }
+
+                            // Thinking-mode assistant messages are stored as JSON
+                            // {"content": "…", "reasoning_content": "…"} so the
+                            // reasoning content survives across turns and can be
+                            // passed back to the API as required by DeepSeek-R1,
+                            // Qwen3 thinking, and similar models.
+                            if let Some(rc) = value
+                                .get("reasoning_content")
+                                .and_then(serde_json::Value::as_str)
+                                .filter(|s| !s.is_empty())
+                            {
+                                let content = value
+                                    .get("content")
+                                    .and_then(serde_json::Value::as_str)
+                                    .filter(|s| !s.is_empty())
+                                    .map(ToString::to_string);
+                                return NativeMessage {
+                                    role: "assistant".to_string(),
+                                    content,
+                                    tool_call_id: None,
+                                    tool_calls: None,
+                                    reasoning_content: Some(rc.to_string()),
+                                };
                             }
                         }
                     }
@@ -608,6 +633,7 @@ impl OpenAiCompatibleProvider {
                                 content,
                                 tool_call_id,
                                 tool_calls: None,
+                                reasoning_content: None,
                             };
                         }
                     }
@@ -617,6 +643,7 @@ impl OpenAiCompatibleProvider {
                         content: Some(message.content.clone()),
                         tool_call_id: None,
                         tool_calls: None,
+                        reasoning_content: None,
                     }
                 })
                 .collect();
@@ -810,6 +837,29 @@ impl OpenAiCompatibleProvider {
                     tool_calls = json_tool_calls;
                     text = json_text.or(text);
                 }
+            }
+        }
+
+        // When the model returned reasoning_content (thinking mode) and there are
+        // no tool calls, encode both fields as JSON so the next conversation turn
+        // can pass reasoning_content back — required by DeepSeek-R1, Qwen3, and
+        // other thinking-mode models that return 400 if it is omitted.
+        if tool_calls.is_empty() {
+            let reasoning = message
+                .reasoning_content
+                .as_deref()
+                .filter(|s| !s.is_empty());
+            if let Some(rc) = reasoning {
+                let json = serde_json::json!({
+                    "content": message.content.as_deref().unwrap_or(""),
+                    "reasoning_content": rc,
+                });
+                text = Some(json.to_string());
+                log::debug!(
+                    "[provider:{}] preserving reasoning_content ({} chars) for multi-turn replay",
+                    provider_name,
+                    rc.len(),
+                );
             }
         }
 

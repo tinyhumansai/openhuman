@@ -77,6 +77,11 @@ pub(crate) struct NativeMessage {
     pub(crate) tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_calls: Option<Vec<ToolCall>>,
+    /// Thinking/reasoning content from models that support extended reasoning
+    /// (e.g. DeepSeek-R1, Qwen3 in thinking mode). Required by the API on
+    /// subsequent turns — must be passed back verbatim alongside `content`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

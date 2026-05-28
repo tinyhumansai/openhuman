@@ -415,6 +415,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
             content: Some("hello".to_string()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }],
         temperature: Some(0.7),
         stream: Some(true),
@@ -1555,4 +1556,92 @@ fn enrich_404_message_adds_hint_when_no_fallback() {
         result_with_fallback, "openai API error (404 Not Found): model not found",
         "must not add hint when fallback is enabled: {result_with_fallback}"
     );
+}
+
+// ── Issue #2800: reasoning_content multi-turn replay ─────────────────────────
+
+#[test]
+fn parse_native_response_preserves_reasoning_content_as_json() {
+    // When a thinking model returns both content and reasoning_content, the
+    // response text should be JSON so the next turn can pass reasoning_content
+    // back to the API.
+    let msg = ResponseMessage {
+        content: Some("The answer is 42.".to_string()),
+        reasoning_content: Some("Let me think step by step...".to_string()),
+        tool_calls: None,
+        function_call: None,
+    };
+    let resp = OpenAiCompatibleProvider::parse_native_response(
+        wrap_message(msg),
+        "deepseek",
+    )
+    .unwrap();
+
+    let text = resp.text.expect("should have text");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).expect("text should be valid JSON");
+    assert_eq!(parsed["content"], "The answer is 42.");
+    assert_eq!(parsed["reasoning_content"], "Let me think step by step...");
+    assert!(resp.tool_calls.is_empty());
+}
+
+#[test]
+fn parse_native_response_no_reasoning_content_returns_plain_text() {
+    // Without reasoning_content the text should be the plain string, not JSON.
+    let msg = ResponseMessage {
+        content: Some("Hello world".to_string()),
+        reasoning_content: None,
+        tool_calls: None,
+        function_call: None,
+    };
+    let resp = OpenAiCompatibleProvider::parse_native_response(
+        wrap_message(msg),
+        "openai",
+    )
+    .unwrap();
+
+    assert_eq!(resp.text.as_deref(), Some("Hello world"));
+}
+
+#[test]
+fn convert_messages_for_native_restores_reasoning_content() {
+    // A stored assistant message with JSON-encoded reasoning_content must be
+    // expanded back into a NativeMessage with the reasoning_content field set,
+    // so the next API call carries it as required by the spec.
+    let stored_content = serde_json::json!({
+        "content": "The answer is 42.",
+        "reasoning_content": "Let me think step by step...",
+    })
+    .to_string();
+
+    let messages = vec![
+        ChatMessage::user("What is the meaning of life?"),
+        ChatMessage::assistant(stored_content),
+    ];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+    assert_eq!(native.len(), 2);
+
+    let asst = &native[1];
+    assert_eq!(asst.role, "assistant");
+    assert_eq!(asst.content.as_deref(), Some("The answer is 42."));
+    assert_eq!(
+        asst.reasoning_content.as_deref(),
+        Some("Let me think step by step...")
+    );
+    assert!(asst.tool_calls.is_none());
+}
+
+#[test]
+fn convert_messages_for_native_plain_text_has_no_reasoning_content() {
+    // A regular (non-thinking-model) assistant message must not gain a
+    // spurious reasoning_content field.
+    let messages = vec![
+        ChatMessage::user("Hi"),
+        ChatMessage::assistant("Hello there!"),
+    ];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+    let asst = &native[1];
+    assert!(asst.reasoning_content.is_none());
 }
