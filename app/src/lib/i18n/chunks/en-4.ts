@@ -310,7 +310,7 @@ const en4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Clear stored key',
   'settings.ai.connectProvider': 'Connect provider',
   'settings.ai.customRouting': 'Custom routing',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Default resolves to',
   'settings.ai.discard': 'Discard',
   'settings.ai.editProvider': 'Edit provider',
   'settings.ai.llmProviders': 'LLM Providers',

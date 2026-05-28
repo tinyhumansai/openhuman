@@ -22,6 +22,8 @@
 //!   revoked API key into the provider config)
 //! - `"This request requires more credits"` (S5 — OpenRouter `402` when
 //!   the user's account is out of credits)
+//! - `"Insufficient Balance"` (4ZF — DeepSeek custom BYO-key `402` when
+//!   the user's DeepSeek account balance is exhausted)
 //! - `"Invalid model name passed in model="` (Y0 — litellm-style proxy
 //!   rejecting a model id pre-routing)
 //! - `"No active credentials for provider:"` (JN / KB — user hasn't
@@ -30,6 +32,15 @@
 //!   from a user OAuth/scope gap)
 //! - `"not_found_error"` (J2 / J5 / J4 — litellm-compatible envelope
 //!   `type` field carrying "model 'X' not found")
+//! - `"does not support tools"` / `"function calling is not supported"` /
+//!   `"unknown parameter: tools"` / `"unrecognized field \`tools\`"` /
+//!   `"unsupported parameter: tools"` (TAURI-RUST-4K7 — Ollama models such
+//!   as `gemma3:1b-it-qat` and `huihui_ai/deepseek-r1-abliterated:8b`
+//!   reject tool-enabled requests with HTTP 400. The compatible provider
+//!   already retries without tools, so the initial 400 is not a
+//!   bug — it's expected discovery of the model's capability boundary.
+//!   Sentry noise suppressed here; the retry path in `compatible.rs` runs
+//!   unchanged.)
 //!
 //! These are **deterministic user-configuration state**, not bugs the
 //! maintainers can act on: the user pointed OpenHuman at a custom
@@ -124,6 +135,18 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // OpenHuman-backend balance gate; this catches the third-party
         // OpenRouter shape that re-emits via `agent.run_single`.)
         "requires more credits",
+        // TAURI-RUST-4ZF — DeepSeek (custom BYO-key) 402 when the user's
+        // DeepSeek account balance is exhausted. Body carries the upstream
+        // `{"error":{"message":"Insufficient Balance",...}}` envelope.
+        // Same user-billing class as the OpenRouter S5 shape above.
+        // NOTE: `is_budget_exhausted_message` (billing_error.rs) also
+        // contains this phrase. In `expected_error_kind` (observability.rs)
+        // this classifier is checked first (line 199 vs 205), so a re-
+        // reported "Insufficient Balance" error routes to
+        // `ProviderConfigRejection` rather than `BudgetExhausted`. Both
+        // suppress Sentry at info-level — no event-volume regression — but
+        // the telemetry `kind` tag becomes "provider_config_rejection".
+        "insufficient balance",
         // OPENHUMAN-TAURI-Y0 — litellm-style proxy rejected the model
         // id pre-routing with `Invalid model name passed in model=…`.
         // Anchored on the `passed in model=` suffix so a stray "invalid
@@ -148,39 +171,27 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // this is the `type` field used by litellm/Anthropic-style
         // envelopes for the same class of user-state error.
         "not_found_error",
+        // TAURI-RUST-4K7 — Ollama models that don't support tool calling
+        // (e.g. gemma3:1b-it-qat, huihui_ai/deepseek-r1-abliterated:8b)
+        // return HTTP 400 with one of these phrases. The compatible
+        // provider (`compatible.rs`) detects the error and retries
+        // without tools, so the 400 is expected capability-discovery
+        // rather than a product bug. Suppress Sentry to avoid noise from
+        // the first-attempt rejection that precedes the successful retry.
+        "does not support tools",
+        "function calling is not supported",
+        "unknown parameter: tools",
+        "unrecognized field `tools`",
+        "unsupported parameter: tools",
         // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
         // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
         // when the request body contains an empty `"model":""` field.
-        // This is deterministic user-configuration state: the user's
-        // provider string had no model id and the config entry has no
-        // default_model. Factory now bails early, but guard the Sentry
-        // signal for in-flight requests from older configs.
-        // Note: match on the message phrase only — "missing_required_field"
-        // is too generic and would incorrectly suppress unrelated errors.
         "model field is required",
         // TAURI-RUST-2G (~2684 events) / TAURI-RUST-2F (~950 events) —
-        // thinking-mode model (DeepSeek-R1 / Moonshot K2-thinking on
-        // `provider=cloud` custom_openai) rejects a follow-up turn that
-        // doesn't echo the prior assistant's `reasoning_content` field.
-        // Body shape (backtick-quoted JSON literal in the upstream body):
-        // `{"error":{"message":"The `reasoning_content` in the thinking
-        // mode must be passed back to the API.",...}}`. The
-        // provider-contract gap is on our side, but until the thinking-
-        // mode round-tripping ships in the inference layer, every affected
-        // turn fires a fresh Sentry event — and the UI already surfaces
-        // the actionable error to the user. Anchor on the unique
-        // `thinking mode must be passed back` substring so the match
-        // doesn't depend on the upstream's backtick-quoting around
-        // `reasoning_content` (some provider versions ship without them).
+        // thinking-mode model rejects a follow-up turn that doesn't echo
+        // the prior assistant's `reasoning_content` field.
         "thinking mode must be passed back",
         // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
-        // Body: `{"error":"this model requires a subscription, upgrade for
-        // access: https://ollama.com/upgrade (ref: <uuid>)"}` on a 403
-        // Forbidden from `compatible::OpenAiCompatibleProvider` with
-        // `name = "ollama"`. User-state: the model picked in Settings is
-        // a paid-tier Ollama Cloud model the user's account doesn't
-        // cover. The UI surfaces an actionable upgrade link in the
-        // remediation message itself.
         "requires a subscription, upgrade for access",
     ];
 
@@ -312,6 +323,36 @@ mod tests {
         }
     }
 
+    /// TAURI-RUST-4ZF — a user's custom BYO-key DeepSeek provider returns
+    /// HTTP 402 with `{"error":{"message":"… Insufficient Balance …"}}`
+    /// when their DeepSeek account is out of credits. Same user-billing
+    /// class as the OpenRouter S5 "requires more credits" 402 already in
+    /// the list — the remediation is "top up the provider account", which
+    /// Sentry cannot act on. The DeepSeek wire token is `Insufficient
+    /// Balance` (vs OpenRouter's `requires more credits`).
+    #[test]
+    fn detects_insufficient_balance_402_family() {
+        for (sentry_id, body) in [
+            // TAURI-RUST-4ZF — verbatim (truncated) from issue 5679,
+            // model=`ds/deepseek-v4-flash`, provider=custom, status=402.
+            (
+                "4ZF",
+                r#"custom API error (402 Payment Required): {"error":{"message":"[deepseek/deepseek-v4-flash] [402]: {\"error\":{\"message\":\"Insufficient Balance\",\"type\":\"unknown_error\",\"param\":null,\"code\":\"invali (reset after 57s)"}}"#,
+            ),
+            // Bare upstream envelope — what a future caller might re-emit
+            // after unwrapping one layer.
+            (
+                "bare",
+                r#"{"error":{"message":"Insufficient Balance","type":"unknown_error"}}"#,
+            ),
+        ] {
+            assert!(
+                is_provider_config_rejection_message(body),
+                "TAURI-RUST-{sentry_id} insufficient-balance 402 must classify as provider config-rejection: {body:?}"
+            );
+        }
+    }
+
     #[test]
     fn detection_is_case_insensitive() {
         assert!(is_provider_config_rejection_message(
@@ -388,6 +429,66 @@ mod tests {
             assert!(
                 !is_openai_compatible_unknown_model_message(body),
                 "{body:?} must NOT match the narrow openai-compatible-unknown-model helper"
+            );
+        }
+    }
+
+    /// TAURI-RUST-4K7 — Ollama models that don't support tool calling
+    /// (e.g. `gemma3:1b-it-qat`, `huihui_ai/deepseek-r1-abliterated:8b`)
+    /// return HTTP 400 with one of several tool-rejection phrases.
+    /// The compatible provider retries without tools, so the 400 is expected
+    /// capability-discovery rather than a product bug. These phrases must be
+    /// classified as config-rejections so Sentry is not flooded on every turn.
+    #[test]
+    fn detects_ollama_tool_unsupported_bodies() {
+        for (sentry_id, body) in [
+            (
+                "4K7-a",
+                r#"{"error":"gemma3:1b-it-qat does not support tools"}"#,
+            ),
+            (
+                "4K7-b",
+                r#"{"error":"huihui_ai/deepseek-r1-abliterated:8b does not support tools"}"#,
+            ),
+            (
+                "4K7-c",
+                r#"ollama streaming API error (400 Bad Request): {"error":"phi3:mini does not support tools"}"#,
+            ),
+            (
+                "4K7-d",
+                r#"{"error":"function calling is not supported by this model"}"#,
+            ),
+            (
+                "4K7-e",
+                r#"{"error":{"message":"unknown parameter: tools","type":"invalid_request_error"}}"#,
+            ),
+            (
+                "4K7-f",
+                r#"{"error":"unrecognized field `tools` in request body"}"#,
+            ),
+            (
+                "4K7-g",
+                r#"{"error":{"message":"unsupported parameter: tools","type":"invalid_request_error"}}"#,
+            ),
+        ] {
+            assert!(
+                is_provider_config_rejection_message(body),
+                "TAURI-RUST-{sentry_id} body must classify as provider config-rejection (tool-unsupported): {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_ollama_tool_unsupported_bodies_case_insensitive() {
+        // Ollama error messages should match regardless of casing.
+        for body in [
+            "Model 'gemma3:1b-it-qat' DOES NOT SUPPORT TOOLS",
+            "Function Calling Is Not Supported By This Model",
+            "Unknown Parameter: Tools",
+        ] {
+            assert!(
+                is_provider_config_rejection_message(body),
+                "{body:?} must classify as config-rejection regardless of case"
             );
         }
     }

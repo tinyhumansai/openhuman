@@ -84,12 +84,56 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "get_artifact",
             description: "Retrieve metadata for a single artifact by ID.",
             inputs: vec![artifact_id_input("Identifier of the artifact to retrieve.")],
-            outputs: vec![FieldSchema {
-                name: "artifact",
-                ty: TypeSchema::Ref("ArtifactMeta"),
-                comment: "Artifact metadata plus absolute_path field.",
-                required: true,
-            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "id",
+                    ty: TypeSchema::String,
+                    comment: "Unique artifact identifier.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "kind",
+                    ty: TypeSchema::String,
+                    comment: "Category of the artifact (presentation, document, image, other).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "title",
+                    ty: TypeSchema::String,
+                    comment: "Human-readable title.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "path",
+                    ty: TypeSchema::String,
+                    comment: "Relative path from the artifacts root.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "size_bytes",
+                    ty: TypeSchema::U64,
+                    comment: "Artifact file size in bytes.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "status",
+                    ty: TypeSchema::String,
+                    comment: "Lifecycle status (pending, ready, failed).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "created_at",
+                    ty: TypeSchema::String,
+                    comment: "UTC timestamp when the artifact was created (ISO 8601).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "absolute_path",
+                    ty: TypeSchema::String,
+                    comment: "Absolute on-disk path to the artifact directory.",
+                    required: true,
+                },
+            ],
         },
         "delete_artifact" => ControllerSchema {
             namespace: "ai",
@@ -252,6 +296,18 @@ mod tests {
         assert_eq!(s.inputs.len(), 1);
         assert_eq!(s.inputs[0].name, "artifact_id");
         assert!(s.inputs[0].required);
+        // Output should be flat fields matching the actual JSON response shape
+        let output_names: Vec<_> = s.outputs.iter().map(|f| f.name).collect();
+        assert!(output_names.contains(&"id"));
+        assert!(output_names.contains(&"kind"));
+        assert!(output_names.contains(&"title"));
+        assert!(output_names.contains(&"path"));
+        assert!(output_names.contains(&"size_bytes"));
+        assert!(output_names.contains(&"status"));
+        assert!(output_names.contains(&"created_at"));
+        assert!(output_names.contains(&"absolute_path"));
+        // Must NOT have an opaque "artifact" wrapper
+        assert!(!output_names.contains(&"artifact"));
     }
 
     #[test]

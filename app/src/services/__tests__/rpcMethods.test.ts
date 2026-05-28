@@ -53,6 +53,48 @@ describe('rpcMethods catalog', () => {
     );
   });
 
+  describe('MCP client legacy alias resolution (Sentry CORE-RUST-DW/DV/DT/DS/DR)', () => {
+    test('mcp_clients.list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('mcp_clients.list')).toBe(CORE_RPC_METHODS.mcpClientsInstalledList);
+    });
+
+    test('openhuman.mcp_clients_list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_clients_list')).toBe(
+        CORE_RPC_METHODS.mcpClientsInstalledList
+      );
+    });
+
+    test('openhuman.mcp_list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_list')).toBe(
+        CORE_RPC_METHODS.mcpClientsInstalledList
+      );
+    });
+
+    test('openhuman.mcp_servers_list resolves to mcp_clients_installed_list', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_servers_list')).toBe(
+        CORE_RPC_METHODS.mcpClientsInstalledList
+      );
+    });
+
+    test('openhuman.tool_registry_call resolves to mcp_clients_tool_call', () => {
+      expect(normalizeRpcMethod('openhuman.tool_registry_call')).toBe(
+        CORE_RPC_METHODS.mcpClientsToolCall
+      );
+    });
+
+    test('canonical mcp_clients_installed_list passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_clients_installed_list')).toBe(
+        'openhuman.mcp_clients_installed_list'
+      );
+    });
+
+    test('canonical mcp_clients_tool_call passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.mcp_clients_tool_call')).toBe(
+        'openhuman.mcp_clients_tool_call'
+      );
+    });
+  });
+
   test('catalog canonical methods exist in core schema registry (drift guard)', () => {
     const schemaSources = [
       fs.readFileSync(
@@ -76,6 +118,10 @@ describe('rpcMethods catalog', () => {
         'utf8'
       ),
       fs.readFileSync(
+        path.resolve(__dirname, '../../../../src/openhuman/mcp_registry/schemas.rs'),
+        'utf8'
+      ),
+      fs.readFileSync(
         path.resolve(__dirname, '../../../../src/openhuman/health/schemas.rs'),
         'utf8'
       ),
@@ -93,9 +139,11 @@ describe('rpcMethods catalog', () => {
             ? 'embeddings'
             : methodRoot.startsWith('providers_')
               ? 'providers'
-              : methodRoot.startsWith('health_')
-                ? 'health'
-                : 'config';
+              : methodRoot.startsWith('mcp_clients_')
+                ? 'mcp_clients'
+                : methodRoot.startsWith('health_')
+                  ? 'health'
+                  : 'config';
       const fnName = methodRoot.slice(`${namespace}_`.length);
       expect(schemaSources).toContain(`namespace: "${namespace}"`);
       expect(schemaSources).toContain(`function: "${fnName}"`);
