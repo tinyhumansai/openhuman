@@ -3957,12 +3957,21 @@ mod tests {
 
     #[test]
     fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
+        // Assert the two GPU-disable flags are absent rather than the whole
+        // arg list being empty: on root-Linux runners (CI in some configs)
+        // the function still appends `--no-sandbox` via the orthogonal
+        // OPENHUMAN-TAURI-K1 branch, which would make a strict `is_empty()`
+        // check fail spuriously. We only care about the GPU branch here.
         let mut args = Vec::new();
         append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"));
 
         assert!(
-            args.is_empty(),
-            "OPENHUMAN_FORCE_GPU=1 must suppress the Linux GPU disable flags, got: {args:?}"
+            !args.contains(&("--disable-gpu", None)),
+            "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu, got: {args:?}"
+        );
+        assert!(
+            !args.contains(&("--disable-gpu-compositing", None)),
+            "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu-compositing, got: {args:?}"
         );
     }
 
