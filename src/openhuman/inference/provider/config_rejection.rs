@@ -334,7 +334,9 @@ mod tests {
             "TAURI-RUST-4NM body must classify as provider config-rejection: {body:?}"
         );
         // Also verify the bare phrase on its own (defense-in-depth path).
-        assert!(is_provider_config_rejection_message("model field is required"));
+        assert!(is_provider_config_rejection_message(
+            "model field is required"
+        ));
     }
 
     #[test]

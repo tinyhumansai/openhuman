@@ -385,11 +385,10 @@ fn cloud_provider_with_no_model_and_no_default_rejected() {
         ..Default::default()
     });
 
-    let err =
-        match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
-            Ok(_) => panic!("empty model must fail"),
-            Err(e) => e,
-        };
+    let err = match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
+        Ok(_) => panic!("empty model must fail"),
+        Err(e) => e,
+    };
     let msg = err.to_string();
     assert!(
         msg.contains("no model configured"),
@@ -416,9 +415,8 @@ fn cloud_provider_default_model_used_when_model_part_is_empty() {
         ..Default::default()
     });
 
-    let (_, model) =
-        create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
-            .expect("empty model with default_model must succeed");
+    let (_, model) = create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
+        .expect("empty model with default_model must succeed");
     assert_eq!(model, "meta/llama-3.1-8b-instruct");
 }
 
