@@ -31,6 +31,71 @@ pub async fn load_and_get_security_policy_info() -> Result<RpcOutcome<serde_json
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::config::TEST_ENV_LOCK;
+
+    // ── load_and_get_security_policy_info integration tests ──────────────────
+
+    /// Full chain: `OPENHUMAN_MAX_ACTIONS_PER_HOUR` env var → config load →
+    /// `load_and_get_security_policy_info()` → RPC payload contains the value.
+    ///
+    /// Covers the path that was previously only exercised by the full
+    /// JSON-RPC smoke test (follow-up from #2499 / issue #2688).
+    #[tokio::test]
+    async fn load_and_get_security_policy_info_reflects_env_overlay() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+            std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "42");
+        }
+
+        let outcome = load_and_get_security_policy_info()
+            .await
+            .expect("load_and_get_security_policy_info should succeed");
+
+        assert_eq!(
+            outcome.value["max_actions_per_hour"],
+            serde_json::json!(42),
+            "env overlay must flow through to the RPC payload"
+        );
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR");
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+        }
+    }
+
+    /// Edge case: `OPENHUMAN_MAX_ACTIONS_PER_HOUR=0` — the limit is invalid
+    /// (must be ≥ 1) so the env var must be ignored and the default preserved.
+    #[tokio::test]
+    async fn load_and_get_security_policy_info_ignores_zero_budget() {
+        let tmp = tempfile::tempdir().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+            std::env::set_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR", "0");
+        }
+
+        let outcome = load_and_get_security_policy_info()
+            .await
+            .expect("load should succeed even with invalid env var");
+
+        let default = crate::openhuman::config::Config::default()
+            .autonomy
+            .max_actions_per_hour;
+        assert_eq!(
+            outcome.value["max_actions_per_hour"],
+            serde_json::json!(default),
+            "OPENHUMAN_MAX_ACTIONS_PER_HOUR=0 should be ignored; default must be used"
+        );
+
+        unsafe {
+            std::env::remove_var("OPENHUMAN_MAX_ACTIONS_PER_HOUR");
+            std::env::remove_var("OPENHUMAN_WORKSPACE");
+        }
+    }
+
+    // ── security_policy_info_for_config unit tests ───────────────────────────
 
     #[test]
     fn security_policy_info_returns_all_documented_fields() {
