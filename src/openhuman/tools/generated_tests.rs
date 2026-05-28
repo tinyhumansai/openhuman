@@ -188,6 +188,37 @@ fn admission_rejects_untrusted_provider() {
 }
 
 #[test]
+fn admission_rejects_disabled_provider() {
+    let mut definition = sample_definition();
+    let config = GeneratedToolAdmissionConfig {
+        enforce_provenance: true,
+        trusted_providers: BTreeSet::from(["trusted.runtime".to_string()]),
+        disabled_providers: BTreeSet::from(["trusted.runtime".to_string()]),
+        ..Default::default()
+    };
+    definition.provider_id = Some("trusted.runtime".into());
+    let report = admit_generated_tool_definitions(vec![definition], &config);
+    assert!(report.admitted.is_empty());
+    assert!(report.rejected[0].reason.contains("disabled"));
+}
+
+#[test]
+fn admission_rejects_disabled_capabilities() {
+    let definition = sample_definition();
+    let config = GeneratedToolAdmissionConfig {
+        enforce_provenance: true,
+        trusted_providers: BTreeSet::from(["trusted.runtime".to_string()]),
+        disabled_capabilities: BTreeSet::from(["updates.send".to_string()]),
+        ..Default::default()
+    };
+
+    let report = admit_generated_tool_definitions(vec![definition], &config);
+
+    assert!(report.admitted.is_empty());
+    assert!(report.rejected[0].reason.contains("disabled"));
+}
+
+#[test]
 fn admission_rejects_duplicate_tool_names() {
     let report = admit_generated_tool_definitions(
         vec![sample_definition(), sample_definition()],

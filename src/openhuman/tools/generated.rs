@@ -243,10 +243,23 @@ pub fn admit_generated_tool_definitions(
     let mut admitted = Vec::new();
     let mut rejected = Vec::new();
 
+    // Pre-normalize provider allow/deny sets once before the admission loop
+    // so we do not redo the O(N) normalization work per tool.
+    let normalized_disabled_providers =
+        normalize_provider_set(&config.disabled_providers, "disabled_providers");
+    let normalized_trusted_providers =
+        normalize_provider_set(&config.trusted_providers, "trusted_providers");
+
     for mut definition in definitions {
         normalize_definition(&mut definition);
         let tool_name = definition.name.clone();
-        match validate_admission(&definition, config, &mut seen) {
+        match validate_admission(
+            &definition,
+            config,
+            &normalized_disabled_providers,
+            &normalized_trusted_providers,
+            &mut seen,
+        ) {
             Ok(()) => {
                 log::debug!(
                     "[generated_tools] admission accepted tool_name={} provider_id={:?} capability_id={:?}",
@@ -301,6 +314,8 @@ fn validate_definition(definition: &GeneratedToolDefinition) -> anyhow::Result<(
 fn validate_admission(
     definition: &GeneratedToolDefinition,
     config: &GeneratedToolAdmissionConfig,
+    normalized_disabled_providers: &BTreeSet<String>,
+    normalized_trusted_providers: &BTreeSet<String>,
     seen: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     validate_definition(definition).map_err(|err| err.to_string())?;
@@ -327,16 +342,13 @@ fn validate_admission(
             definition.name
         ));
     }
-    if normalize_provider_set(&config.disabled_providers, "disabled_providers")
-        .contains(provider_id)
-    {
+    if normalized_disabled_providers.contains(provider_id) {
         return Err(format!(
             "generated tool `{}` provider `{provider_id}` is disabled",
             definition.name
         ));
     }
-    if !normalize_provider_set(&config.trusted_providers, "trusted_providers").contains(provider_id)
-    {
+    if !normalized_trusted_providers.contains(provider_id) {
         return Err(format!(
             "generated tool `{}` provider `{provider_id}` is not trusted",
             definition.name
