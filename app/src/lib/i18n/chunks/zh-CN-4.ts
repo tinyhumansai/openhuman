@@ -143,6 +143,7 @@ const zhCN4: TranslationMap = {
   'notifications.center.filterAll': '全部',
   'notifications.center.markAllRead': '全部标记已读',
   'notifications.center.title': '通知',
+  'oauth.button.loopbackTimeout': '登录超时 — 浏览器未完成 OAuth 跳转。请重试。',
   'oauth.button.connecting': '连接中...',
   'oauth.login.continueWith': '继续使用',
   'onboarding.contextGathering.buildingDesc': '正在分析你的历史记录...',

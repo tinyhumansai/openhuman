@@ -24,6 +24,7 @@ pub const MODEL_CHAT_V1: &str = "chat-v1";
 /// reasoning is needed.
 pub const MODEL_REASONING_QUICK_V1: &str = "reasoning-quick-v1";
 pub const MODEL_CODING_V1: &str = "coding-v1";
+pub const MODEL_SUMMARIZATION_V1: &str = "summarization-v1";
 /// Default model used when no explicit model is configured.
 ///
 /// Set to `reasoning-quick-v1` (Kimi K2.6 Turbo on Fireworks — low-latency,
@@ -206,6 +207,11 @@ pub struct Config {
 
     #[serde(default)]
     pub local_ai: LocalAiConfig,
+
+    /// Claude Agent SDK provider configuration — routes inference through the
+    /// `claude -p` CLI subprocess using the subscriber's Claude plan credit.
+    #[serde(default)]
+    pub claude_agent_sdk: ClaudeAgentSdkConfig,
 
     // ── Unified AI provider routing ──────────────────────────────────────────
     //
@@ -627,6 +633,7 @@ impl Default for Config {
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),
+            claude_agent_sdk: ClaudeAgentSdkConfig::default(),
             cloud_providers: Vec::new(),
             primary_cloud: None,
             chat_provider: None,

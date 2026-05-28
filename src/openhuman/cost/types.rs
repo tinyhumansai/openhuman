@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 /// Token usage information from a single API call.
@@ -150,6 +151,80 @@ impl Default for CostSummary {
             by_model: std::collections::HashMap::new(),
         }
     }
+}
+
+/// Per-day aggregate of cost and token usage for the dashboard charts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyCostEntry {
+    /// Calendar date in UTC (YYYY-MM-DD).
+    pub date: NaiveDate,
+    /// Total cost in USD for the day.
+    pub cost_usd: f64,
+    /// Total input tokens for the day.
+    pub input_tokens: u64,
+    /// Total output tokens for the day.
+    pub output_tokens: u64,
+    /// Sum of input + output tokens for the day.
+    pub total_tokens: u64,
+    /// Number of recorded requests for the day.
+    pub request_count: usize,
+    /// Per-model aggregates for the day.
+    pub by_model: std::collections::HashMap<String, ModelStats>,
+}
+
+impl DailyCostEntry {
+    /// Construct an empty entry for the given date — used to fill gaps when
+    /// no usage was recorded on a calendar day so charts still render the bar.
+    pub fn empty(date: NaiveDate) -> Self {
+        Self {
+            date,
+            cost_usd: 0.0,
+            input_tokens: 0,
+            output_tokens: 0,
+            total_tokens: 0,
+            request_count: 0,
+            by_model: std::collections::HashMap::new(),
+        }
+    }
+}
+
+/// Budget status derived from the configured warn/alert thresholds and the
+/// current month-to-date spend. Drives bar colour-coding on the dashboard.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BudgetStatus {
+    /// Spend is below the warn threshold.
+    Normal,
+    /// Spend is above warn but below alert.
+    Warning,
+    /// Spend has reached or crossed the alert threshold.
+    Exceeded,
+}
+
+/// Aggregate dashboard payload returned by `cost_get_dashboard`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostDashboard {
+    /// 7-day daily entries, oldest first, gaps zero-filled.
+    pub days: Vec<DailyCostEntry>,
+    /// Sum of `cost_usd` across `days`.
+    pub period_total_usd: f64,
+    /// Projected monthly spend: daily average × 30.
+    pub monthly_pace_usd: f64,
+    /// Configured monthly budget limit (USD).
+    pub budget_limit_monthly_usd: f64,
+    /// Month-to-date spend (USD).
+    pub month_to_date_usd: f64,
+    /// Fraction of the monthly budget consumed (`month_to_date / limit`).
+    /// Capped at 1.0 for display purposes; UIs that need overrun should
+    /// recompute from `month_to_date_usd` and `budget_limit_monthly_usd`.
+    pub budget_utilization: f64,
+    /// Derived status based on warn/alert thresholds.
+    pub budget_status: BudgetStatus,
+    /// Display currency label, e.g. "USD". All amounts are stored in USD;
+    /// this is purely a presentation hint.
+    pub currency: String,
+    /// Per-model breakdown across the 7-day window, sorted by cost desc.
+    pub by_model: Vec<ModelStats>,
 }
 
 #[cfg(test)]

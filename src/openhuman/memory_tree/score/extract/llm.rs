@@ -213,6 +213,20 @@ impl LlmEntityExtractor {
 
         let parsed: LlmExtractionOutput = match serde_json::from_str(&raw) {
             Ok(v) => v,
+            Err(e) if e.is_eof() => {
+                // Truncated mid-JSON: the response stream closed before the
+                // closing brace (token budget or a server-side timeout cut
+                // it short). Unlike a wrong-shape body, this is transient —
+                // signal a retryable failure (`None`) so `extract`'s backoff
+                // loop tries again rather than silently dropping the whole
+                // chunk (bug-report-2026-05-26 I1).
+                log::warn!(
+                    "[memory_tree::extract::llm] LLM response truncated mid-JSON ({e}); \
+                     response_bytes={} — retrying",
+                    raw.len()
+                );
+                return None;
+            }
             Err(e) => {
                 log::warn!(
                     "[memory_tree::extract::llm] LLM returned non-JSON or wrong-shape \

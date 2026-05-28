@@ -123,7 +123,7 @@ async fn composio_delete_connection_errors_without_session() {
 async fn composio_list_tools_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_list_tools(&config, None).await.unwrap_err();
+    let err = composio_list_tools(&config, None, None).await.unwrap_err();
     // Same tolerance as `composio_list_toolkits_errors_without_session`.
     assert!(
         err.to_lowercase().contains("composio")
@@ -668,7 +668,7 @@ async fn composio_list_tools_via_mock_with_filter() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]))
+    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]), None)
         .await
         .unwrap();
     assert_eq!(outcome.value.tools.len(), 2);
@@ -1536,7 +1536,7 @@ async fn composio_list_connections_routes_through_direct_mode() {
 async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
-    let result = composio_list_tools(&config, None).await;
+    let result = composio_list_tools(&config, None, None).await;
     match result {
         Ok(outcome) => {
             // If the prefetch returns empty connections (test env may

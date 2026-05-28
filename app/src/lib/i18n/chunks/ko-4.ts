@@ -137,6 +137,8 @@ const ko4: TranslationMap = {
   'notifications.center.filterAll': '전체 필터',
   'notifications.center.markAllRead': '모두 읽음으로 표시',
   'notifications.center.title': '알림',
+  'oauth.button.loopbackTimeout':
+    '로그인 시간 초과 — 브라우저가 OAuth 리디렉션을 완료하지 못했습니다. 다시 시도해 주세요.',
   'oauth.button.connecting': '연결 중...',
   'oauth.login.continueWith': '다음으로 계속:',
   'onboarding.contextGathering.buildingDesc': '작성 설명',

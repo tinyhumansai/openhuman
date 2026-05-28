@@ -154,6 +154,8 @@ const en4: TranslationMap = {
   'notifications.center.filterAll': 'Filter all',
   'notifications.center.markAllRead': 'Mark all read',
   'notifications.center.title': 'Notifications',
+  'oauth.button.loopbackTimeout':
+    'Sign-in timed out — the browser did not complete the OAuth redirect. Please try again.',
   'oauth.button.connecting': 'Connecting...',
   'oauth.login.continueWith': 'Continue with',
   'onboarding.contextGathering.buildingDesc': 'Building desc',

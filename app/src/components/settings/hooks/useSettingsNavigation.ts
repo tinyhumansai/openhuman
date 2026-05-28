@@ -40,6 +40,7 @@ export type SettingsRoute =
   | 'composio-triggers'
   | 'composio-routing'
   | 'mcp-server'
+  | 'dev-workflow'
   | 'devices';
 
 export interface BreadcrumbItem {
@@ -121,6 +122,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
     if (path.includes('/settings/mcp-server')) return 'mcp-server';
+    if (path.includes('/settings/dev-workflow')) return 'dev-workflow';
     return 'home';
   };
 
@@ -228,6 +230,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'composio-routing':
       case 'notification-routing':
       case 'mcp-server':
+      case 'dev-workflow':
       case 'autonomy':
         return [settingsCrumb, developerCrumb];
 

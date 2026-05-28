@@ -157,7 +157,6 @@ pub async fn memory_learn_all(
 mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
-    use std::sync::OnceLock;
 
     use serde_json::json;
     use tempfile::TempDir;
@@ -166,15 +165,7 @@ mod tests {
     use crate::openhuman::memory_store::NamespaceDocumentInput;
 
     fn ensure_memory_client() {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        let _ = crate::openhuman::memory::global::init(workspace.clone());
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
     }
 
     struct WorkspaceEnvGuard {

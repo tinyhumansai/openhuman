@@ -56,8 +56,18 @@ impl EventHandler for TelegramRemoteSubscriber {
             DomainEvent::ChannelMessageReceived {
                 channel,
                 reply_target,
+                workspace_dir,
                 ..
             } if channel == "telegram" => {
+                if *workspace_dir != self.workspace_dir {
+                    tracing::debug!(
+                        "{LOG_PREFIX} dropping stale-workspace ChannelMessageReceived \
+                         event_ws={} self_ws={}",
+                        workspace_dir.display(),
+                        self.workspace_dir.display()
+                    );
+                    return;
+                }
                 tracing::debug!("{LOG_PREFIX} turn started reply_target={reply_target}");
                 self.set_busy(reply_target, true).await;
             }
@@ -66,8 +76,18 @@ impl EventHandler for TelegramRemoteSubscriber {
                 reply_target,
                 success,
                 elapsed_ms,
+                workspace_dir,
                 ..
             } if channel == "telegram" => {
+                if *workspace_dir != self.workspace_dir {
+                    tracing::debug!(
+                        "{LOG_PREFIX} dropping stale-workspace ChannelMessageProcessed \
+                         event_ws={} self_ws={}",
+                        workspace_dir.display(),
+                        self.workspace_dir.display()
+                    );
+                    return;
+                }
                 tracing::debug!(
                     "{LOG_PREFIX} turn finished reply_target={reply_target} success={success} elapsed_ms={elapsed_ms}"
                 );

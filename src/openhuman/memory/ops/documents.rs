@@ -492,34 +492,36 @@ pub async fn memory_recall_memories(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::OnceLock;
-
     use serde_json::json;
-    use tempfile::TempDir;
 
     use super::*;
 
-    /// Held for the whole test: pins `OPENHUMAN_WORKSPACE` at a stable,
-    /// never-torn-down workspace under `TEST_ENV_LOCK`. These tests call
-    /// `memory_init` → `current_workspace_dir` → `Config::load_or_init`, which
-    /// reads that process-global env var; without this, a concurrent
-    /// env-mutating test can swap the var and tear down its tempdir mid-call,
-    /// yielding `SQLITE_IOERR` / config atomic-replace `ENOENT`.
+    /// Pins `OPENHUMAN_WORKSPACE` to the shared memory workspace for a test's
+    /// duration, holding [`crate::openhuman::config::TEST_ENV_LOCK`] so sibling
+    /// tests that mutate the env var (e.g. `config::ops`, `update::ops`,
+    /// autonomy settings) cannot change it mid-run.
+    ///
+    /// `documents` tests are the only `memory::ops` tests that resolve the
+    /// workspace from the env var (`memory_init` → `current_workspace_dir` →
+    /// `Config::load_or_init`), so without this pin they race those tests and
+    /// `memory_init` intermittently fails — surfaced under `cargo-llvm-cov`
+    /// timing. Lock order is `GLOBAL_MEMORY_TEST_LOCK` → `TEST_ENV_LOCK` (the
+    /// test takes the memory lock first, then this guard takes the env lock); no
+    /// code path takes them in the opposite order, so there is no deadlock.
     struct WorkspaceEnvGuard {
-        _lock: std::sync::MutexGuard<'static, ()>,
+        _env_lock: std::sync::MutexGuard<'static, ()>,
         previous: Option<std::ffi::OsString>,
     }
 
     impl WorkspaceEnvGuard {
-        fn set(path: &std::path::Path) -> Self {
-            let lock = crate::openhuman::config::TEST_ENV_LOCK
+        fn pin(workspace: &std::path::Path) -> Self {
+            let env_lock = crate::openhuman::config::TEST_ENV_LOCK
                 .lock()
-                .unwrap_or_else(|e| e.into_inner());
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
-            std::env::set_var("OPENHUMAN_WORKSPACE", path);
+            std::env::set_var("OPENHUMAN_WORKSPACE", workspace);
             Self {
-                _lock: lock,
+                _env_lock: env_lock,
                 previous,
             }
         }
@@ -527,28 +529,20 @@ mod tests {
 
     impl Drop for WorkspaceEnvGuard {
         fn drop(&mut self) {
-            if let Some(previous) = self.previous.as_ref() {
-                std::env::set_var("OPENHUMAN_WORKSPACE", previous);
-            } else {
-                std::env::remove_var("OPENHUMAN_WORKSPACE");
+            match self.previous.take() {
+                Some(value) => std::env::set_var("OPENHUMAN_WORKSPACE", value),
+                None => std::env::remove_var("OPENHUMAN_WORKSPACE"),
             }
         }
     }
 
+    /// Bind the shared memory client and pin `OPENHUMAN_WORKSPACE` to its
+    /// workspace for the test (see [`WorkspaceEnvGuard`]). Hold the returned
+    /// guard for the whole test: `let _env = ensure_memory_client();`.
     #[must_use]
     fn ensure_memory_client() -> WorkspaceEnvGuard {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        // Pin the env BEFORE init so config load/save targets the stable dir.
-        let env_guard = WorkspaceEnvGuard::set(workspace);
-        let _ = crate::openhuman::memory::global::init(workspace.clone());
-        env_guard
+        let workspace = crate::openhuman::memory::ops::ensure_shared_memory_client();
+        WorkspaceEnvGuard::pin(&workspace)
     }
 
     fn unique_namespace(prefix: &str) -> String {

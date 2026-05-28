@@ -20,6 +20,7 @@ const autonomy = (max_actions_per_hour: number): AutonomySettings => ({
   trusted_roots: [],
   allow_tool_install: false,
   max_actions_per_hour,
+  auto_approve: [],
 });
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({

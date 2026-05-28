@@ -273,6 +273,36 @@ const en: TranslationMap = {
   'memory.tab.settings': 'Settings',
   'memory.analyzeNow': 'Analyze Now',
 
+  // Memory Tree status panel (#1856 Part 1)
+  'memoryTree.status.title': 'Memory Tree',
+  'memoryTree.status.autoSyncLabel': 'Auto-sync',
+  'memoryTree.status.autoSyncDescription':
+    'Pause to stop new ingestion. Existing wiki stays queryable.',
+  'memoryTree.status.statusTile': 'Status',
+  'memoryTree.status.lastSyncTile': 'Last sync',
+  'memoryTree.status.totalChunksTile': 'Total chunks',
+  'memoryTree.status.wikiSizeTile': 'Wiki size',
+  'memoryTree.status.statusRunning': 'Running',
+  'memoryTree.status.statusPaused': 'Paused',
+  'memoryTree.status.statusSyncing': 'Syncing',
+  'memoryTree.status.statusError': 'Error',
+  'memoryTree.status.statusIdle': 'Idle',
+  'memoryTree.status.never': 'Never',
+  'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
+  'memoryTree.status.retry': 'Retry',
+  'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",
+  // Relative-time buckets surfaced by the last-sync tile. `{count}` is
+  // replaced client-side at the call site (the runtime `t()` does not
+  // interpolate — see I18nContext.tsx).
+  'memoryTree.status.justNow': 'just now',
+  'memoryTree.status.secondsAgo': '{count}s ago',
+  'memoryTree.status.minuteAgo': '1 min ago',
+  'memoryTree.status.minutesAgo': '{count} min ago',
+  'memoryTree.status.hourAgo': '1 hr ago',
+  'memoryTree.status.hoursAgo': '{count} hr ago',
+  'memoryTree.status.dayAgo': '1 day ago',
+  'memoryTree.status.daysAgo': '{count} days ago',
+
   // Notifications / Alerts
   'alerts.title': 'Alerts',
   'alerts.empty': 'No alerts yet',
@@ -599,6 +629,59 @@ const en: TranslationMap = {
   'settings.heartbeat.desc': 'Control background scheduling cadences and inspect the loop map.',
   'settings.ledgerUsage.title': 'Usage ledger',
   'settings.ledgerUsage.desc': 'Recent credit spend, budget math, and background API read budget.',
+  'settings.costDashboard.title': 'Cost dashboard',
+  'settings.costDashboard.desc':
+    '7-day spend and token burn across the swarm, with budget pace and per-model breakdown.',
+  'settings.costDashboard.sevenDayCost': '7-day daily cost',
+  'settings.costDashboard.sevenDayTokens': '7-day token usage',
+  'settings.costDashboard.totalSpend': '7-day total',
+  'settings.costDashboard.monthlyPace': 'Monthly pace',
+  'settings.costDashboard.budgetLimit': 'Budget limit',
+  'settings.costDashboard.utilization': 'Utilisation',
+  'settings.costDashboard.modelBreakdown': 'Per-model breakdown',
+  'settings.costDashboard.model': 'Model',
+  'settings.costDashboard.provider': 'Provider',
+  'settings.costDashboard.cost': 'Cost',
+  'settings.costDashboard.tokens': 'Tokens',
+  'settings.costDashboard.requests': 'Requests',
+  'settings.costDashboard.percentOfTotal': '% of total',
+  'settings.costDashboard.inputTokens': 'Input',
+  'settings.costDashboard.outputTokens': 'Output',
+  'settings.costDashboard.budgetNormal': 'On track',
+  'settings.costDashboard.budgetWarning': 'Warning',
+  'settings.costDashboard.budgetExceeded': 'Over budget',
+  'settings.costDashboard.noBudget': 'No limit set',
+  'settings.costDashboard.noData': 'No cost recorded yet for the last 7 days.',
+  'settings.costDashboard.noModels': 'No model activity in the last 7 days.',
+  'settings.costDashboard.loading': 'Loading cost dashboard…',
+  'settings.costDashboard.disabledHint':
+    'Cost dashboard is disabled in config. Set [cost.dashboard] enabled = true in config.toml to re-enable.',
+  'settings.costDashboard.subtitle':
+    'Live spend and token burn across the swarm. Bars auto-refresh every few seconds — no page reload needed.',
+  'settings.costDashboard.summaryAriaLabel': 'Cost summary metrics',
+  'settings.costDashboard.lastSevenDays': 'last 7 days',
+  'settings.costDashboard.utilizationOf': 'of',
+  'settings.costDashboard.thisMonth': 'this month',
+  'settings.costDashboard.monthlyPaceHint':
+    'Projected monthly spend at the current daily run-rate (avg × 30).',
+  'settings.costDashboard.budgetLimitHint':
+    'Monthly budget read from cost.monthly_limit_usd in config.toml.',
+  'settings.costDashboard.dailyTarget': 'Daily target',
+  'settings.costDashboard.today': 'Today',
+  'settings.costDashboard.todayBadge': 'TODAY',
+  'settings.costDashboard.unknownProvider': '—',
+  'settings.costDashboard.justNow': 'Just now',
+  'settings.costDashboard.secondsAgo': '{value}s ago',
+  'settings.costDashboard.minutesAgo': '{value}m ago',
+  'settings.costDashboard.hoursAgo': '{value}h ago',
+  'settings.costDashboard.daysAgo': '{value}d ago',
+  'settings.costDashboard.updated': 'Updated',
+  'settings.costDashboard.refresh': 'Refresh',
+  'settings.costDashboard.utcNote': 'Days bucketed in UTC',
+  'settings.costDashboard.stackedNote': 'Input + output stacked',
+  'settings.costDashboard.modelBreakdownHint': 'Aggregated across the last 7 days.',
+  'settings.costDashboard.noDataHint':
+    'Send an agent message — token usage from the next provider call will populate the chart within ~10 seconds.',
   'settings.search.title': 'Search engine',
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
@@ -632,6 +715,19 @@ const en: TranslationMap = {
   'settings.search.placeholderStored': '•••••••• (stored)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Hosts the assistant may open and read — via web fetch and the browser tool — one per line, e.g. reuters.com. A host also covers its subdomains. Web search itself is not restricted by this list.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
   // ─── Embeddings settings ───────────────────────────────────
   'settings.embeddings.title': 'Embeddings',
   'settings.embeddings.description':
@@ -2009,6 +2105,8 @@ const en: TranslationMap = {
   'channels.telegram.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.web.alwaysAvailable': 'Always available',
   'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
   'chat.approval.deciding': 'Working…',
   'chat.approval.deny': 'Deny',
   'chat.approval.error': 'Could not record your decision — try again.',
@@ -2254,6 +2352,8 @@ const en: TranslationMap = {
   'notifications.center.markAllRead': 'Mark all read',
   'notifications.center.title': 'Notifications',
   'oauth.button.connecting': 'Connecting...',
+  'oauth.button.loopbackTimeout':
+    'Sign-in timed out — the browser did not complete the OAuth redirect. Please try again.',
   'oauth.login.continueWith': 'Continue with',
   'onboarding.contextGathering.buildingDesc': 'Gathering context from your connected accounts…',
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
@@ -2969,6 +3069,49 @@ const en: TranslationMap = {
   'settings.developerMenu.agentChat.title': 'Agent Chat',
   'settings.developerMenu.agentChat.desc':
     'Test agent conversation with model and temperature overrides',
+  'settings.developerMenu.devWorkflow.title': 'Dev Workflow',
+  'settings.developerMenu.devWorkflow.desc':
+    'Autonomous agent that picks your GitHub issues and raises PRs on a schedule',
+  'settings.developerMenu.devWorkflow.panelDesc':
+    'Configure an autonomous developer agent that picks GitHub issues assigned to you and raises pull requests automatically on a schedule.',
+  'settings.devWorkflow.githubRepository': 'GitHub Repository',
+  'settings.devWorkflow.loadingRepositories': 'Loading repositories...',
+  'settings.devWorkflow.selectRepository': 'Select a repository',
+  'settings.devWorkflow.privateTag': '(private)',
+  'settings.devWorkflow.detectingForkInfo': 'Detecting fork info...',
+  'settings.devWorkflow.forkDetected': 'Fork detected',
+  'settings.devWorkflow.upstream': 'Upstream:',
+  'settings.devWorkflow.forkPrNote': 'PRs will be raised against the upstream repository.',
+  'settings.devWorkflow.notForkNote':
+    'Not a fork. PRs will be raised against this repository directly.',
+  'settings.devWorkflow.targetBranch': 'Target Branch',
+  'settings.devWorkflow.targetBranchNote': 'PRs will be raised against this branch',
+  'settings.devWorkflow.loadingBranches': 'Loading branches...',
+  'settings.devWorkflow.runFrequency': 'Run Frequency',
+  'settings.devWorkflow.runFrequencyNote':
+    'How often the agent should check for issues and raise PRs.',
+  'settings.devWorkflow.updateConfiguration': 'Update Configuration',
+  'settings.devWorkflow.saveConfiguration': 'Save Configuration',
+  'settings.devWorkflow.remove': 'Remove',
+  'settings.devWorkflow.saved': 'Saved',
+  'settings.devWorkflow.activeConfiguration': 'Active Configuration',
+  'settings.devWorkflow.activeConfigRepository': 'Repository:',
+  'settings.devWorkflow.activeConfigUpstream': 'Upstream:',
+  'settings.devWorkflow.activeConfigTargetBranch': 'Target branch:',
+  'settings.devWorkflow.activeConfigSchedule': 'Schedule:',
+  'settings.devWorkflow.phase2Note':
+    'Phase 2: This will automatically create a cron job to pick issues and raise PRs.',
+  'settings.devWorkflow.errorNotConnected':
+    'GitHub is not connected. Please connect GitHub via Settings > Advanced > Composio first.',
+  'settings.devWorkflow.errorToolNotEnabled':
+    'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER tool is not enabled on this backend. Please ask your admin to enable it in the Composio integration (backend#842).',
+  'settings.devWorkflow.errorNotAuthenticated': 'Not authenticated. Please sign in first.',
+  'settings.devWorkflow.errorNoRepositories': 'No repositories found for this GitHub account.',
+  'settings.devWorkflow.schedule.every30min': 'Every 30 minutes',
+  'settings.devWorkflow.schedule.everyHour': 'Every hour',
+  'settings.devWorkflow.schedule.every2hours': 'Every 2 hours',
+  'settings.devWorkflow.schedule.every6hours': 'Every 6 hours',
+  'settings.devWorkflow.schedule.onceDaily': 'Once daily (9 AM)',
   'settings.developerMenu.cronJobs.title': 'Cron Jobs',
   'settings.developerMenu.cronJobs.desc': 'View and configure scheduled jobs for runtime skills',
   'settings.developerMenu.localModelDebug.title': 'Local Model Debug',
@@ -3040,6 +3183,10 @@ const en: TranslationMap = {
   'settings.agentAccess.confine.desc':
     'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
   'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.alwaysAllow': 'Always-allowed tools',
+  'settings.agentAccess.alwaysAllowDesc':
+    'Tools you marked "Always allow" in chat run without asking. Remove one to be prompted again.',
+  'settings.agentAccess.alwaysAllowNone': 'No always-allowed tools yet.',
   'settings.agentAccess.grantedDesc':
     'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
   'settings.agentAccess.noneGranted': 'No folders granted.',

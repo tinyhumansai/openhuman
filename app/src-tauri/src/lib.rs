@@ -14,6 +14,10 @@ mod core_rpc;
 mod deep_link_ipc;
 #[cfg(target_os = "windows")]
 mod deep_link_ipc_windows;
+// Cross-platform module: the registry-reading function is windows-only, but
+// the parsing helpers compile (and test) everywhere so `cargo test` on the
+// developer host covers them.
+mod deep_link_registration_check;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
@@ -2230,8 +2234,34 @@ pub fn run() {
 
         // SAFETY: mutex_name is null-terminated UTF-16; handle is checked below.
         let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+        // Capture GetLastError immediately after CreateMutexW so no intervening
+        // syscall (e.g. logging) can clobber the thread-local error code.
+        let last_error = unsafe { GetLastError() };
 
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // Primary: hold the handle until run() returns.
+        struct OwnedMutex(isize);
+        impl Drop for OwnedMutex {
+            fn drop(&mut self) {
+                if self.0 != 0 {
+                    unsafe { CloseHandle(self.0 as _) };
+                }
+            }
+        }
+
+        if handle.is_null() {
+            // CreateMutexW failed for a reason other than "already exists"
+            // (which returns a valid handle plus ERROR_ALREADY_EXISTS). Likely
+            // causes: out-of-memory, security-descriptor fault, or other
+            // Win32-level anomaly. Without the guard, a concurrent second
+            // launch can re-trigger the cef::initialize panic this block was
+            // added to prevent — but refusing to start at all is strictly
+            // worse for the user. Log loudly so the failure is observable in
+            // Sentry / log files and continue best-effort.
+            log::error!(
+                "[single-instance] CreateMutexW returned NULL handle (GetLastError={last_error}); continuing without pre-CEF single-instance guard — concurrent launches may hit OPENHUMAN-TAURI-A"
+            );
+            OwnedMutex(0)
+        } else if last_error == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
             // touch CEF at all. Forward deep links first so OAuth callbacks
             // are not dropped by this early pre-plugin exit.
@@ -2244,25 +2274,14 @@ pub fn run() {
                     );
                 }
             }
-            if !handle.is_null() {
-                unsafe { CloseHandle(handle) };
-            }
+            unsafe { CloseHandle(handle) };
             log::info!(
                 "[single-instance] pre-CEF mutex held by primary; secondary exiting (OPENHUMAN-TAURI-A fix)"
             );
             std::process::exit(0);
+        } else {
+            OwnedMutex(handle as isize)
         }
-
-        // Primary: hold the handle until run() returns.
-        struct OwnedMutex(isize);
-        impl Drop for OwnedMutex {
-            fn drop(&mut self) {
-                if self.0 != 0 {
-                    unsafe { CloseHandle(self.0 as _) };
-                }
-            }
-        }
-        OwnedMutex(handle as isize)
     };
 
     #[cfg(windows)]
@@ -2572,8 +2591,34 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(windows)]
             {
-                if let Err(err) = app.deep_link().register_all() {
-                    log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                // `register_all` writes HKCU\Software\Classes\openhuman so the
+                // browser can hand `openhuman://auth?...` callbacks back to
+                // the running instance. The plugin only returns an Err — and
+                // it only logs at `warn` — when its single internal write
+                // fails outright; it does not verify what's on disk. Issue
+                // #2699 reports OAuth callbacks silently disappearing on
+                // some Windows installs, which traced back to a missing or
+                // stale `command` value here. Read it back and log loudly
+                // (Sentry-level `error`) so the failure mode is observable
+                // in support logs; we deliberately do NOT auto-repair —
+                // writing the wrong exe path can brick a working install.
+                let register_err = app.deep_link().register_all().err();
+                let status = deep_link_registration_check::verify_protocol_registration();
+                let status_log = status.redacted();
+                if register_err.is_none() && status.is_healthy() {
+                    log::info!("[deep-link] openhuman:// scheme registered ({status_log})");
+                } else {
+                    // Use the redacted form so per-user install paths
+                    // (`C:\Users\<username>\...`) do not land in Sentry / user
+                    // logs — basenames are kept so the diagnostic still
+                    // identifies the registered exe.
+                    log::error!(
+                        "[deep-link] openhuman:// scheme registration unhealthy — \
+                         OAuth callbacks may never reach the app. \
+                         register_all_error={register_err:?}, hkcu_status={status_log}. \
+                         See gitbooks/overview/troubleshooting-sign-in.md \
+                         (\"Windows: openhuman:// handler not registered\") for the manual repair."
+                    );
                 }
                 deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }

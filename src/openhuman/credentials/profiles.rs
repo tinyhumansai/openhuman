@@ -1093,8 +1093,10 @@ impl AuthProfilesStore {
         let too_old = age.map_or(false, |a| a >= Duration::from_millis(STALE_LOCK_AGE_MS));
         // A pidless lock needs only a short grace: no healthy holder leaves the
         // file without a `pid=` line for more than the microsecond gap between
-        // `create_new` and the write, so anything older is abandoned.
-        let malformed_too_old = age.map_or(false, |a| {
+        // `create_new` and the write, so anything older is abandoned. If mtime
+        // is unreadable (clock skew, platform limitation) default to stale —
+        // no legitimate in-flight writer would be undetectable for that long.
+        let malformed_too_old = age.map_or(true, |a| {
             a >= Duration::from_millis(MALFORMED_LOCK_GRACE_MS)
         });
 
