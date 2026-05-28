@@ -1441,11 +1441,34 @@ async fn run_server_inner(
     // explicit RPC token. Without this, the entire RPC surface (tool
     // execution, file access, credentials) is unauthenticated and reachable
     // from the network. See: https://github.com/tinyhumansai/openhuman/issues/1919
+    //
+    // "Explicit token" means any of:
+    //   - An in-memory bearer supplied by the embedded caller via the
+    //     `rpc_token` parameter (the Tauri shell hands its
+    //     `CoreProcessHandle.rpc_token` in this way — see
+    //     `init_rpc_token_with_value`). This never lands on the process env.
+    //   - `OPENHUMAN_CORE_TOKEN` set in the process environment (operator
+    //     config for standalone CLI / Docker / cloud).
+    //
+    // Checking only the env var would emit a false security warning whenever
+    // an embedded caller binds on a non-loopback host with an in-memory
+    // bearer — the server is already protected in that case.
     if crate::openhuman::security::pairing::is_public_bind(&resolved_host) {
-        let has_explicit_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
+        let has_in_memory_token = rpc_token
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let has_env_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
             .ok()
             .filter(|s| !s.trim().is_empty())
             .is_some();
+        // Auth subsystem was already initialised above; fall back to the live
+        // token if neither input matched but somehow a token is seeded (e.g.
+        // a future caller route that doesn't thread the value through here).
+        let has_initialized_token = crate::core::auth::get_rpc_token()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        let has_explicit_token = has_in_memory_token || has_env_token || has_initialized_token;
         if !has_explicit_token {
             log::error!(
                 "[core] ⚠️  SECURITY WARNING: Binding on public address {resolved_host} without \
