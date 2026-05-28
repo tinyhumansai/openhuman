@@ -21,6 +21,13 @@
 /// Order doesn't matter for correctness, but is kept alphabetical by legacy
 /// key for easier diffing against the frontend table.
 const LEGACY_ALIASES: &[(&str, &str)] = &[
+    // MCP clients — old method names that appeared in Sentry (CORE-RUST-DR/DS/DT/DV/DW).
+    // Callers used dotted namespace, bare `mcp_list`, `mcp_servers_list`, and
+    // `mcp_clients_list` before the canonical `mcp_clients_installed_list` was
+    // introduced in PR #2409. `tool_registry_call` was an early mis-spelling of
+    // `mcp_clients_tool_call` that shipped in at least one older bundle.
+    // `mcp_clients.list` sorts before all `openhuman.*` entries (m < o).
+    ("mcp_clients.list", "openhuman.mcp_clients_installed_list"),
     (
         "openhuman.get_analytics_settings",
         "openhuman.config_get_analytics_settings",
@@ -34,10 +41,23 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.get_runtime_flags",
         "openhuman.config_get_runtime_flags",
     ),
+    (
+        "openhuman.mcp_clients_list",
+        "openhuman.mcp_clients_installed_list",
+    ),
+    ("openhuman.mcp_list", "openhuman.mcp_clients_installed_list"),
+    (
+        "openhuman.mcp_servers_list",
+        "openhuman.mcp_clients_installed_list",
+    ),
     ("openhuman.ping", "core.ping"),
     (
         "openhuman.set_browser_allow_all",
         "openhuman.config_set_browser_allow_all",
+    ),
+    (
+        "openhuman.tool_registry_call",
+        "openhuman.mcp_clients_tool_call",
     ),
     (
         "openhuman.update_analytics_settings",
@@ -95,6 +115,9 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.local_ai_diagnostics",
         "openhuman.inference_diagnostics",
     ),
+    // bare `health_snapshot` (no namespace prefix) was used by older clients
+    // before the canonical `openhuman.health_snapshot` form was established.
+    ("health_snapshot", "openhuman.health_snapshot"),
     ("openhuman.inference_embed", "openhuman.embeddings_embed"),
     ("openhuman.local_ai_presets", "openhuman.inference_presets"),
     (
@@ -349,6 +372,18 @@ mod tests {
         assert_eq!(
             resolve_legacy("openhuman.update_composio_trigger_settings"),
             "openhuman.config_update_composio_trigger_settings",
+        );
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_bare_health_snapshot() {
+        // Sentry CORE-RUST-FG: older clients (and some SDK callers) issued
+        // `health_snapshot` without the `openhuman.` namespace prefix.  The
+        // alias table must rewrite it to the canonical form so the call
+        // resolves against the registered controller.
+        assert_eq!(
+            resolve_legacy("health_snapshot"),
+            "openhuman.health_snapshot",
         );
     }
 

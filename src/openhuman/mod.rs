@@ -21,6 +21,7 @@ pub mod agent_experience;
 pub mod agent_tool_policy;
 pub mod app_state;
 pub mod approval;
+pub mod artifacts;
 pub mod audio_toolkit;
 pub mod autocomplete;
 pub mod billing;

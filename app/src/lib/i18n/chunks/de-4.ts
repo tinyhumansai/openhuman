@@ -301,7 +301,7 @@ const de4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Gespeicherten Schlüssel löschen',
   'settings.ai.connectProvider': 'Anbieter verbinden',
   'settings.ai.customRouting': 'Benutzerdefiniertes Routing',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Standard wird aufgelöst zu',
   'settings.ai.discard': 'Verwerfen',
   'settings.ai.editProvider': 'Anbieter bearbeiten',
   'settings.ai.llmProviders': 'LLM Anbieter',
