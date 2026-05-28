@@ -761,9 +761,22 @@ fn make_cloud_provider_by_slug(
     })?;
 
     // Resolve effective model: use provided model if non-empty, else fall back
-    // to the entry's legacy default_model (if any), else empty → error.
+    // to the entry's legacy default_model, then to config.default_model, then
+    // to the global DEFAULT_MODEL constant.  An empty model sent to an
+    // OpenAI-compatible /v1/chat/completions endpoint produces a 400 error
+    // ("model field is required"), so we must never let it reach the wire.
     let mut effective_model = if model.trim().is_empty() {
-        entry.default_model.clone().unwrap_or_default()
+        entry
+            .default_model
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| {
+                config
+                    .default_model
+                    .clone()
+                    .filter(|m| !m.trim().is_empty())
+            })
+            .unwrap_or_else(|| crate::openhuman::config::DEFAULT_MODEL.to_string())
     } else {
         model.to_string()
     };
