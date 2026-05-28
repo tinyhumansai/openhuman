@@ -311,6 +311,18 @@ async fn pick_fallback_port(
         }
     }
 
+    // When an OS-exclusion blocked the preferred port *and* every fallback is
+    // also unavailable, surface the Windows diagnostic command so users can
+    // identify the reserved range without waiting for a support escalation.
+    if unusable_label.contains("excluded by OS") {
+        warn!(
+            "[CORE] preferred port {} and all fallbacks {:?} are unavailable. \
+             On Windows, run `netsh interface ipv4 show excludedportrange protocol=tcp` \
+             to inspect system-reserved port ranges (Hyper-V / WinNAT / WSL2 / Docker).",
+            preferred, fallback_ports
+        );
+    }
+
     Err(PickListenPortError::NoAvailablePort {
         preferred,
         fingerprint: unusable_label,
