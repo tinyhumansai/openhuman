@@ -315,7 +315,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
         return Some(ExpectedErrorKind::BackendUserError);
     }
     if is_embedding_backend_auth_failure(&lower) {
-        return Some(ExpectedErrorKind::BackendUserError);
+        return Some(ExpectedErrorKind::SessionExpired);
     }
     // Provider config-rejection (unknown model / abstract tier leaked to a
     // custom provider / model-specific temperature). Body-shape based and
@@ -1943,17 +1943,20 @@ mod tests {
 
     #[test]
     fn classifies_embedding_backend_auth_failure() {
-        // TAURI-RUST-T (~4k events): OpenHuman backend rejected the
-        // embeddings worker's bearer token. Both the bare-status and
-        // parenthesised wire shapes must classify.
+        // TAURI-RUST-T (~4k events) — companion of TAURI-RUST-4K5: the
+        // OpenHuman backend rejected the embeddings worker's bearer
+        // token. Both the bare-status and parenthesised wire shapes
+        // must classify as SessionExpired so the FE re-login prompt
+        // fires (matches the contract introduced by #2786 and
+        // exercised by classifies_embedding_api_invalid_token_401_as_session_expired).
         for raw in [
             r#"Embedding API error 401 Unauthorized: {"success":false,"error":"Invalid token"}"#,
             r#"Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#,
         ] {
             assert_eq!(
                 expected_error_kind(raw),
-                Some(ExpectedErrorKind::BackendUserError),
-                "should classify embedding backend auth failure: {raw}"
+                Some(ExpectedErrorKind::SessionExpired),
+                "should classify embedding backend auth failure as SessionExpired: {raw}"
             );
         }
     }
