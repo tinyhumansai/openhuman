@@ -64,7 +64,9 @@ request_native_global(method, req)   → call and wait for response
 
 - HTTP JSON-RPC protected by **HTTP Basic Auth**
 - Realm: `"OpenHuman Hosted Directory"`
-- Per-launch bearer token stored in `OPENHUMAN_CORE_TOKEN` env var
+- Per-launch bearer token, transported differently per deployment shape:
+  - **Desktop / Tauri shell**: bearer is generated in `CoreProcessHandle::new()` and held in-memory as `CoreProcessHandle.rpc_token: Arc<String>`, then handed to the embedded server via an internal in-memory handle (`run_server_embedded_with_ready(rpc_token: Some(_))`). **Not** published to the process environment.
+  - **Standalone CLI / Docker / cloud**: bearer is read from the `OPENHUMAN_CORE_TOKEN` env var (via `init_rpc_token`) or from the `{workspace}/core.token` file. This is the operator-supplied configuration surface for those deployments and is intentional.
 - Frontend obtains bearer via `invoke('core_rpc_token')` Tauri command
 
 ### Stored Credentials
