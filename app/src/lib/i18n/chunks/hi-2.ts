@@ -310,6 +310,12 @@ const hi2: TranslationMap = {
   'chat.turn': 'टर्न',
   'chat.turns': 'टर्न्स',
   'chat.openWorkerThread': 'वर्कर थ्रेड खोलें',
+  'chat.attachment.attach': 'Attach image',
+  'chat.attachment.remove': 'Remove {name}',
+  'chat.attachment.tooMany': 'Maximum {max} images per message',
+  'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
+  'chat.attachment.unsupportedType': 'Unsupported file type. Use PNG, JPEG, WebP, GIF, or BMP.',
+  'chat.attachment.readFailed': 'Could not read file',
   'memory.searchAria': 'मेमोरी सर्च करें',
   'memory.searchPlaceholder': 'मेमोरी एंट्रीज़ सर्च करें...',
   'memory.sourceFilter.all': 'सभी सोर्स',
@@ -423,6 +429,7 @@ const hi2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Composio एकीकरण ट्रिगर के लिए AI ट्राइएज सेटिंग्स कॉन्फ़िगर करें',
   'mic.deviceSelector': 'माइक्रोफोन डिवाइस',
+  'mic.tapToSendCountdown': 'भेजने के लिए टैप करें ({seconds}स)',
 };
 
 export default hi2;

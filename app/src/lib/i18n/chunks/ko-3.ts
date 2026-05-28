@@ -264,6 +264,7 @@ const ko3: TranslationMap = {
   'memory.ingestingTitle': '{title} 수집 중',
   'mic.noAudioCaptured': '캡처된 오디오가 없습니다',
   'mic.noSpeechDetected': '음성이 감지되지 않았습니다',
+  'mic.lowConfidenceResult': '오디오를 명확하게 이해할 수 없습니다 — 다시 시도해 주세요',
   'mic.failedToStopRecording': '녹음을 중지하지 못했습니다: {message}',
   'mic.transcriptionFailed': '전사에 실패했습니다: {message}',
   'reflections.kind.retrospective': '회고',

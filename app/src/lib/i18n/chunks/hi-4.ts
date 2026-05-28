@@ -103,6 +103,19 @@ const hi4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'हटाया गया',
   'intelligence.memoryChunk.scoreBars.heading': 'क्यों रखा',
   'intelligence.memoryChunk.scoreBars.kept': 'रखा गया',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'इकाई प्रकार',
   'intelligence.screenDebug.active': 'एक्टिव',
   'intelligence.screenDebug.app': 'ऐप',
@@ -294,7 +307,7 @@ const hi4: TranslationMap = {
   'settings.ai.clearStoredKey': 'स्टोर्ड key क्लियर करें',
   'settings.ai.connectProvider': 'प्रदाता कनेक्ट करें',
   'settings.ai.customRouting': 'कस्टम रूटिंग',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'डिफ़ॉल्ट इसमें हल होता है',
   'settings.ai.discard': 'रद्द करें',
   'settings.ai.editProvider': 'प्रदाता संपादित करें',
   'settings.ai.llmProviders': 'LLM प्रोवाइडर',

@@ -1468,6 +1468,68 @@ default_temperature = 0.7
     );
 }
 
+#[tokio::test]
+async fn load_or_init_reads_valid_config_through_retry_wrapper() {
+    // OPENHUMAN-TAURI-9R regression: the config read is wrapped in
+    // `retry_with_backoff_async`. Confirm the happy path is untouched —
+    // a present, readable, valid config loads on the first attempt with
+    // no behavior change from the wrapper.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        &root.join("config.toml"),
+        r#"default_model = "gpt-through-retry"
+default_temperature = 0.5
+"#,
+    )
+    .await;
+
+    let config = load_or_init_for_workspace(root).await;
+
+    assert_eq!(
+        config.default_model.as_deref(),
+        Some("gpt-through-retry"),
+        "valid config must load on first attempt through the retry wrapper"
+    );
+}
+
+#[tokio::test]
+async fn load_or_init_read_failure_embeds_path_in_error_context() {
+    // OPENHUMAN-TAURI-9R (~8k events, Windows): the read at the
+    // `config_path.exists()` branch raced `Config::save`'s atomic rename
+    // and surfaced the opaque "Failed to read config file" with no path
+    // or underlying cause. The fix retries transient Windows locking
+    // errors AND embeds the config path in the context so any residual
+    // non-transient failure is triageable in Sentry.
+    //
+    // Simulate a non-transient read failure portably by placing a
+    // *directory* at the config path: `exists()` is true (so we enter the
+    // read branch), but `read_to_string` fails with EISDIR (unix) /
+    // ERROR_ACCESS_DENIED (windows) — neither is classified transient by
+    // `is_transient_fs_error`, so the retry bails immediately and returns
+    // the path-embedded context.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let config_path = root.join("config.toml");
+    std::fs::create_dir(&config_path).unwrap();
+
+    let env = MapEnv::default().with("OPENHUMAN_WORKSPACE", root.to_str().unwrap());
+    let err = Config::load_or_init_with_env_lookup(root, &root.join("workspace"), &env)
+        .await
+        .expect_err("reading a directory as config.toml must fail");
+
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Failed to read config file"),
+        "error must carry the read-failure context: {msg}"
+    );
+    assert!(
+        msg.contains("config.toml"),
+        "error context must embed the config path so Sentry titles are triageable: {msg}"
+    );
+}
+
 #[test]
 fn redact_url_strips_basic_auth_and_query() {
     let out = redact_url_for_log(

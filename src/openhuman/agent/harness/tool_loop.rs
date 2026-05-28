@@ -583,7 +583,11 @@ pub(crate) async fn run_tool_call_loop(
                     let assistant_history_content = if resp.tool_calls.is_empty() {
                         response_text.clone()
                     } else {
-                        build_native_assistant_history(&response_text, &resp.tool_calls)
+                        build_native_assistant_history(
+                            &response_text,
+                            resp.reasoning_content.as_deref(),
+                            &resp.tool_calls,
+                        )
                     };
 
                     let native_calls = resp.tool_calls;

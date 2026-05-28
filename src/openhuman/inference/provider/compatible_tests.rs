@@ -415,6 +415,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
             content: Some("hello".to_string()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }],
         temperature: Some(0.7),
         stream: Some(true),
@@ -657,6 +658,49 @@ fn parse_native_response_preserves_tool_call_id() {
     assert_eq!(parsed.tool_calls[0].name, "shell");
 }
 
+/// DeepSeek thinking mode emits the chain-of-thought in `reasoning_content`
+/// alongside the tool call. `parse_native_response` must surface it so the
+/// agent loop can replay it on the follow-up request (Sentry TAURI-RUST-4KB).
+#[test]
+fn parse_native_response_captures_reasoning_content() {
+    let message = ResponseMessage {
+        content: None,
+        tool_calls: Some(vec![ToolCall {
+            id: Some("call_r".to_string()),
+            kind: Some("function".to_string()),
+            function: Some(Function {
+                name: Some("shell".to_string()),
+                arguments: Some(serde_json::Value::String("{}".to_string())),
+            }),
+        }]),
+        function_call: None,
+        reasoning_content: Some("  weighing the options  ".to_string()),
+    };
+
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "deepseek").unwrap();
+    assert_eq!(
+        parsed.reasoning_content.as_deref(),
+        Some("weighing the options")
+    );
+}
+
+/// Whitespace-only / empty reasoning is normalised to `None` so it never
+/// produces a spurious `reasoning_content` key on the wire.
+#[test]
+fn parse_native_response_blank_reasoning_is_none() {
+    let message = ResponseMessage {
+        content: Some("hello".to_string()),
+        tool_calls: None,
+        function_call: None,
+        reasoning_content: Some("   ".to_string()),
+    };
+
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "deepseek").unwrap();
+    assert!(parsed.reasoning_content.is_none());
+}
+
 #[test]
 fn convert_messages_for_native_maps_tool_result_payload() {
     // A `tool` result must be opened by a preceding `assistant(tool_calls)`,
@@ -895,6 +939,53 @@ fn tool_invariants_drop_orphan_but_keep_following_cycle() {
     assert_eq!(roles(&converted), vec!["assistant", "tool", "assistant"]);
     assert_eq!(converted[0].tool_calls.as_ref().unwrap().len(), 1);
     assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_b"));
+}
+
+/// DeepSeek thinking mode (Sentry TAURI-RUST-4KB): an `assistant` turn that
+/// carries `tool_calls` must replay its `reasoning_content` on the follow-up
+/// request, otherwise DeepSeek returns
+/// `400 The reasoning_content in the thinking mode must be passed back to the
+/// API.` The history JSON written by `build_native_assistant_history` carries
+/// `reasoning_content`; `convert_messages_for_native` must lift it back onto
+/// the wire message.
+#[test]
+fn convert_preserves_reasoning_content_on_tool_call_turn() {
+    let input = vec![ChatMessage::assistant(
+        r#"{"content":null,"reasoning_content":"let me think about this","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+    )];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(converted.len(), 1);
+    assert_eq!(
+        converted[0].reasoning_content.as_deref(),
+        Some("let me think about this")
+    );
+
+    // The wire payload must actually carry the field for DeepSeek to accept it.
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+    assert_eq!(wire["reasoning_content"], "let me think about this");
+}
+
+/// Assistant tool-call turns from non-reasoning models carry no
+/// `reasoning_content`; it must never appear on the wire for them (most
+/// OpenAI-compatible providers don't recognise the field).
+#[test]
+fn convert_omits_reasoning_content_when_absent() {
+    let input = vec![ChatMessage::assistant(
+        r#"{"content":"sure","tool_calls":[{"id":"call_y","name":"shell","arguments":"{}"}]}"#,
+    )];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(converted.len(), 1);
+    assert!(converted[0].reasoning_content.is_none());
+
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+    assert!(
+        wire.get("reasoning_content").is_none(),
+        "reasoning_content must be omitted from the wire when absent"
+    );
 }
 
 #[test]
@@ -1554,5 +1645,143 @@ fn enrich_404_message_adds_hint_when_no_fallback() {
     assert_eq!(
         result_with_fallback, "openai API error (404 Not Found): model not found",
         "must not add hint when fallback is enabled: {result_with_fallback}"
+    );
+}
+
+// ── reasoning_content round-trip tests (issue #2800 / Sentry TAURI-RUST-4WC) ─
+
+/// `parse_native_response` must capture `reasoning_content` from a non-streaming
+/// `ApiChatResponse` and surface it on `ChatResponse`.
+#[test]
+fn parse_native_response_captures_reasoning_content_from_api_response() {
+    let api_resp = ApiChatResponse {
+        choices: vec![Choice {
+            message: ResponseMessage {
+                content: Some("Here is my answer.".into()),
+                reasoning_content: Some("I thought about it carefully.".into()),
+                tool_calls: None,
+                function_call: None,
+            },
+        }],
+        usage: None,
+        openhuman: None,
+    };
+    let result = OpenAiCompatibleProvider::parse_native_response(api_resp, "deepseek").unwrap();
+    assert_eq!(
+        result.reasoning_content.as_deref(),
+        Some("I thought about it carefully."),
+        "reasoning_content must be propagated to ChatResponse"
+    );
+    assert_eq!(result.text.as_deref(), Some("Here is my answer."));
+}
+
+/// When a response has no `reasoning_content`, `ChatResponse.reasoning_content`
+/// must be `None` (no spurious field emitted on the next turn).
+#[test]
+fn parse_native_response_no_reasoning_content_stays_none() {
+    let api_resp = ApiChatResponse {
+        choices: vec![Choice {
+            message: ResponseMessage {
+                content: Some("Just a plain answer.".into()),
+                reasoning_content: None,
+                tool_calls: None,
+                function_call: None,
+            },
+        }],
+        usage: None,
+        openhuman: None,
+    };
+    let result = OpenAiCompatibleProvider::parse_native_response(api_resp, "gpt-4o").unwrap();
+    assert!(
+        result.reasoning_content.is_none(),
+        "reasoning_content must be None when the provider did not return it"
+    );
+}
+
+/// `convert_messages_for_native` must echo `reasoning_content` back in the
+/// `NativeMessage` for assistant turns that have it stored in `extra_metadata`.
+/// This is the load-bearing contract: without it the API returns HTTP 400.
+#[test]
+fn convert_messages_for_native_echoes_reasoning_content_from_extra_metadata() {
+    let mut assistant_msg = ChatMessage::assistant("Here is my answer.");
+    assistant_msg.extra_metadata =
+        Some(serde_json::json!({ "reasoning_content": "I thought carefully." }));
+
+    let messages = vec![
+        ChatMessage::user("What is 2+2?"),
+        assistant_msg,
+        ChatMessage::user("Are you sure?"),
+    ];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+
+    // User messages must not carry reasoning_content.
+    assert!(
+        native[0].reasoning_content.is_none(),
+        "user message must not have reasoning_content"
+    );
+    // The assistant message with extra_metadata must have reasoning_content echoed.
+    assert_eq!(
+        native[1].reasoning_content.as_deref(),
+        Some("I thought carefully."),
+        "assistant message must echo reasoning_content from extra_metadata"
+    );
+    // Second user message must not carry reasoning_content.
+    assert!(
+        native[2].reasoning_content.is_none(),
+        "second user message must not have reasoning_content"
+    );
+}
+
+/// Assistant messages without `extra_metadata` (or without a `reasoning_content`
+/// key) must produce a `NativeMessage` with `reasoning_content = None` — the
+/// `skip_serializing_if` attribute then omits the field from the JSON body so
+/// standard providers don't reject the request.
+#[test]
+fn convert_messages_for_native_no_reasoning_content_stays_none() {
+    let messages = vec![ChatMessage::user("hello"), ChatMessage::assistant("world")];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+    assert!(
+        native[1].reasoning_content.is_none(),
+        "assistant without extra_metadata must produce reasoning_content = None"
+    );
+}
+
+/// The `reasoning_content` field must be omitted from the JSON serialized wire
+/// payload when it is `None`, so standard providers that do not understand the
+/// field are not broken.
+#[test]
+fn native_message_reasoning_content_omitted_when_none() {
+    let msg = NativeMessage {
+        role: "assistant".to_string(),
+        content: Some("hello".to_string()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    };
+    let json = serde_json::to_value(&msg).unwrap();
+    assert!(
+        json.get("reasoning_content").is_none(),
+        "reasoning_content must be absent from the wire payload when None"
+    );
+}
+
+/// When `reasoning_content` is present it must appear in the serialized payload
+/// so thinking-model providers receive it.
+#[test]
+fn native_message_reasoning_content_present_when_some() {
+    let msg = NativeMessage {
+        role: "assistant".to_string(),
+        content: Some("hello".to_string()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: Some("I thought carefully.".to_string()),
+    };
+    let json = serde_json::to_value(&msg).unwrap();
+    assert_eq!(
+        json.get("reasoning_content").and_then(|v| v.as_str()),
+        Some("I thought carefully."),
+        "reasoning_content must be present in the wire payload when Some"
     );
 }

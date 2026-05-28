@@ -69,4 +69,4 @@ if [ -n "$extra_prompt" ]; then
 ${extra_prompt}"
 fi
 
-"$agent" "$prompt"
+agent_exec "$agent" "$prompt"

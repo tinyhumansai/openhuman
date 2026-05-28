@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
+import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import IntelligenceCallsTab from '../components/intelligence/IntelligenceCallsTab';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
@@ -19,7 +20,7 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams' | 'tasks';
+type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams' | 'tasks' | 'diagram';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -91,6 +92,7 @@ export default function Intelligence() {
     { id: 'memory', label: t('memory.tab.memory') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     { id: 'tasks', label: 'Tasks' },
+    { id: 'diagram', label: t('memory.tab.diagram') },
     { id: 'calls', label: t('memory.tab.calls') },
     { id: 'dreams', label: t('memory.tab.dreams') },
   ];
@@ -169,6 +171,8 @@ export default function Intelligence() {
             )}
 
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
+
+            {activeTab === 'diagram' && <DiagramViewerTab />}
 
             {activeTab === 'calls' && <IntelligenceCallsTab onToast={addToast} />}
 

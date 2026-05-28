@@ -81,7 +81,7 @@ pub struct UsageInfo {
 }
 
 /// An LLM response that may contain text, tool calls, or both.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ChatResponse {
     /// Text content of the response (may be empty if only tool calls).
     pub text: Option<String>,
@@ -89,6 +89,15 @@ pub struct ChatResponse {
     pub tool_calls: Vec<ToolCall>,
     /// Token usage info from the provider (if available).
     pub usage: Option<UsageInfo>,
+    /// Raw reasoning/thinking content returned by thinking models (e.g.
+    /// DeepSeek-R1, Qwen3) in the `reasoning_content` field. This must be
+    /// passed back verbatim on the next turn — the API returns HTTP 400
+    /// ("reasoning_content in thinking mode must be passed back") if it is
+    /// omitted from the assistant message in a multi-turn conversation.
+    ///
+    /// Stored separately from `text` so callers can preserve it through
+    /// the conversation history without merging it into the visible reply.
+    pub reasoning_content: Option<String>,
 }
 
 impl ChatResponse {
@@ -439,6 +448,7 @@ pub trait Provider: Send + Sync {
                     text: Some(text),
                     tool_calls: Vec::new(),
                     usage: None,
+                    reasoning_content: None,
                 });
             }
         }
@@ -457,6 +467,7 @@ pub trait Provider: Send + Sync {
             text: Some(text),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 
@@ -491,6 +502,7 @@ pub trait Provider: Send + Sync {
             text: Some(text),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 

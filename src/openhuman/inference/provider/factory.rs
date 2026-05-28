@@ -768,22 +768,31 @@ fn make_cloud_provider_by_slug(
         model.to_string()
     };
 
-    // Fail fast when there is still no model after resolution rather than sending
-    // an API request with model="" which some providers (e.g. nvidia-nim) reject
-    // with "model field is required" (TAURI-RUST-4NM). This surfaces a clear,
-    // actionable error at factory build time instead of a confusing provider 400.
+    // Guard: if effective_model is still empty after fallback, bail with an
+    // actionable error. Sending an empty model string to providers like
+    // nvidia-nim causes a 400 "model field is required" — a confusing error
+    // that obscures the real cause (missing model in the provider string or
+    // unset default_model on the config entry).
+    // See https://github.com/tinyhumansai/openhuman/issues/2784.
     //
-    // Exception: OpenhumanJwt entries route to the OpenHuman backend and never
-    // forward `effective_model` to an upstream API (see the OpenhumanJwt arm in
-    // the match below), so an empty model is valid for that auth style.
-    if effective_model.trim().is_empty() && entry.auth_style != AuthStyle::OpenhumanJwt {
-        anyhow::bail!(
-            "[chat-factory] cloud provider slug '{}' for role '{}' has no model configured. \
-             Provide a model in the provider string (e.g. '{}:<model-id>') or set \
-             default_model in the [[cloud_providers]] config entry for this slug.",
-            slug,
+    // OpenhumanJwt entries are exempt: they always delegate to
+    // make_openhuman_backend which derives the model from config.default_model,
+    // ignoring whatever effective_model we computed here.
+    if entry.auth_style != AuthStyle::OpenhumanJwt && effective_model.trim().is_empty() {
+        log::warn!(
+            "[nvidia-nim][chat-factory] role={} slug={} resolved to empty model — \
+             provider string must include a model id (e.g. '{}:<model-id>') or \
+             set default_model on the cloud_providers entry",
             role,
-            slug
+            slug,
+            slug,
+        );
+        anyhow::bail!(
+            "[chat-factory] role '{}' resolved to an empty model id for slug '{}'. \
+             Include a model in the provider string (e.g. '{slug}:<model-id>') or \
+             set default_model on the cloud_providers entry for slug '{slug}'.",
+            role,
+            slug,
         );
     }
 

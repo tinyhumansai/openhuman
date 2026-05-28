@@ -914,24 +914,32 @@ const MetricTile = ({
   value: string;
   detail?: string;
 }) => (
-  <div className="rounded-md bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
-    <div className="text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
+  <div className="min-w-0 overflow-hidden rounded-md bg-stone-50 dark:bg-neutral-800/60 px-3 py-2">
+    <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-stone-400 dark:text-neutral-500">
       {label}
     </div>
-    <div className="mt-1 text-sm font-semibold text-stone-900 dark:text-neutral-100">{value}</div>
+    <div className="mt-1 truncate text-sm font-semibold text-stone-900 dark:text-neutral-100">
+      {value}
+    </div>
     {detail ? (
-      <div className="mt-0.5 text-[11px] text-stone-500 dark:text-neutral-400">{detail}</div>
+      <div className="mt-0.5 truncate text-[11px] text-stone-500 dark:text-neutral-400">
+        {detail}
+      </div>
     ) : null}
   </div>
 );
 
 const FormulaRow = ({ label, value, detail }: { label: string; value: string; detail: string }) => (
-  <div className="rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
+  <div className="min-w-0 overflow-hidden rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2">
     <div className="flex items-center justify-between gap-3">
-      <span className="text-xs font-medium text-stone-800 dark:text-neutral-100">{label}</span>
-      <span className="font-mono text-xs text-stone-600 dark:text-neutral-300">{value}</span>
+      <span className="min-w-0 truncate text-xs font-medium text-stone-800 dark:text-neutral-100">
+        {label}
+      </span>
+      <span className="shrink-0 font-mono text-xs text-stone-600 dark:text-neutral-300">
+        {value}
+      </span>
     </div>
-    <div className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">{detail}</div>
+    <div className="mt-1 truncate text-[11px] text-stone-500 dark:text-neutral-400">{detail}</div>
   </div>
 );
 
@@ -1167,7 +1175,7 @@ export const BackgroundLoopControls = ({
   const showHeartbeat = view === 'all' || view === 'heartbeat';
   const showLedger = view === 'all' || view === 'ledger';
   const gridCols =
-    view === 'all' ? 'lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.8fr)]' : 'lg:grid-cols-1';
+    view === 'all' ? 'md:grid-cols-[minmax(0,1fr)_minmax(260px,0.8fr)]' : 'grid-cols-1';
 
   return (
     <div className="space-y-4">
@@ -1237,9 +1245,9 @@ export const BackgroundLoopControls = ({
                       void applyHeartbeatPatch({ notify_meetings: !settings.notify_meetings })
                     }
                   />
-                  <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 md:grid-cols-3">
-                    <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>{t('settings.ai.calendarCap')}</span>
+                  <div className="grid gap-2 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 sm:grid-cols-3">
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      <span className="whitespace-nowrap">{t('settings.ai.calendarCap')}</span>
                       <select
                         value={maxCalendarConnectionsPerTick}
                         disabled={saving === 'max_calendar_connections_per_tick'}
@@ -1256,8 +1264,8 @@ export const BackgroundLoopControls = ({
                         ))}
                       </select>
                     </label>
-                    <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>{t('settings.ai.meetingLookahead')}</span>
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      <span className="whitespace-nowrap">{t('settings.ai.meetingLookahead')}</span>
                       <select
                         value={settings.meeting_lookahead_minutes}
                         disabled={saving === 'meeting_lookahead_minutes'}
@@ -1274,8 +1282,10 @@ export const BackgroundLoopControls = ({
                         ))}
                       </select>
                     </label>
-                    <label className="space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
-                      <span>{t('settings.ai.reminderLookahead')}</span>
+                    <label className="min-w-0 space-y-1 text-xs font-medium text-stone-700 dark:text-neutral-200">
+                      <span className="whitespace-nowrap">
+                        {t('settings.ai.reminderLookahead')}
+                      </span>
                       <select
                         value={settings.reminder_lookahead_minutes}
                         disabled={saving === 'reminder_lookahead_minutes'}
@@ -1379,8 +1389,8 @@ export const BackgroundLoopControls = ({
               <div className="divide-y divide-stone-200 dark:divide-neutral-800">
                 {loops.map(loop => (
                   <div key={loop.name} className="grid gap-2 px-3 py-3 md:grid-cols-[150px_1fr]">
-                    <div>
-                      <div className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-stone-900 dark:text-neutral-100">
                         {loop.name}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-stone-500 dark:text-neutral-400">
@@ -1388,7 +1398,7 @@ export const BackgroundLoopControls = ({
                         <span>{loop.cadence}</span>
                       </div>
                     </div>
-                    <div className="text-xs text-stone-600 dark:text-neutral-300">
+                    <div className="min-w-0 text-xs text-stone-600 dark:text-neutral-300">
                       <div>{loop.work}</div>
                       <div className="mt-1 font-mono text-[11px] text-stone-500 dark:text-neutral-400">
                         {t('settings.ai.routeLabel').replace('{route}', loop.route)}

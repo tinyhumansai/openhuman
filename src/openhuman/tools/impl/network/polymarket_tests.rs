@@ -243,19 +243,46 @@ fn pop_response(
     routes: &mut HashMap<String, VecDeque<MockResponse>>,
     target: &str,
 ) -> MockResponse {
-    if let Some(response) = pop_from_queue(routes.get_mut(target)) {
-        return response;
-    }
-
-    let path_only = target.split('?').next().unwrap_or(target);
-    if let Some(response) = pop_from_queue(routes.get_mut(path_only)) {
-        return response;
+    for key in route_lookup_keys(target) {
+        if let Some(response) = pop_from_queue(routes.get_mut(&key)) {
+            return response;
+        }
     }
 
     MockResponse {
         status: 404,
         body: r#"{"error":"not found"}"#.to_string(),
         delay_ms: 0,
+    }
+}
+
+fn route_lookup_keys(target: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    push_lookup_key(&mut keys, target.to_string());
+    push_path_only_key(&mut keys, target);
+
+    if let Ok(url) = reqwest::Url::parse(target) {
+        let mut normalized = url.path().to_string();
+        if let Some(query) = url.query() {
+            normalized.push('?');
+            normalized.push_str(query);
+        }
+        push_lookup_key(&mut keys, normalized.clone());
+        push_path_only_key(&mut keys, &normalized);
+    }
+
+    keys
+}
+
+fn push_path_only_key(keys: &mut Vec<String>, target: &str) {
+    if let Some(path_only) = target.split('?').next() {
+        push_lookup_key(keys, path_only.to_string());
+    }
+}
+
+fn push_lookup_key(keys: &mut Vec<String>, key: String) {
+    if !keys.iter().any(|existing| existing == &key) {
+        keys.push(key);
     }
 }
 
@@ -279,6 +306,16 @@ fn reason_phrase(status: u16) -> &'static str {
         504 => "Gateway Timeout",
         _ => "Error",
     }
+}
+
+#[test]
+fn route_lookup_keys_normalizes_absolute_targets() {
+    let keys = route_lookup_keys("http://127.0.0.1:1234/nonce?user=0xabc");
+
+    assert!(keys.contains(&"http://127.0.0.1:1234/nonce?user=0xabc".to_string()));
+    assert!(keys.contains(&"http://127.0.0.1:1234/nonce".to_string()));
+    assert!(keys.contains(&"/nonce?user=0xabc".to_string()));
+    assert!(keys.contains(&"/nonce".to_string()));
 }
 
 fn parse_tool_output(result: &ToolResult) -> Value {
@@ -770,10 +807,9 @@ async fn place_order_happy_path_posts_signed_order() {
         .expect("wallet setup");
 
     let mut routes = HashMap::new();
-    routes.insert(
-        format!("/nonce?user={user}"),
-        vec![MockResponse::body(200, r#"{"nonce": 42}"#)],
-    );
+    let nonce_response = vec![MockResponse::body(200, r#"{"nonce": 42}"#)];
+    routes.insert(format!("/nonce?user={user}"), nonce_response.clone());
+    routes.insert("/nonce".to_string(), nonce_response);
     routes.insert(
         "/order".to_string(),
         vec![MockResponse::body(
@@ -812,10 +848,11 @@ async fn place_order_happy_path_posts_signed_order() {
         .await
         .unwrap();
 
+    let requests = captured.lock().unwrap().clone();
     assert!(
         !result.is_error,
-        "expected success, got: {}",
-        result.output()
+        "expected success, got: {}\nobserved requests: {requests:#?}",
+        result.output(),
     );
     let output = parse_tool_output(&result);
     assert_eq!(output["action"], "place_order");
@@ -823,7 +860,6 @@ async fn place_order_happy_path_posts_signed_order() {
     assert_eq!(output["data"]["success"], true);
     assert_eq!(output["data"]["orderID"], "ord-test-1");
 
-    let requests = captured.lock().unwrap().clone();
     assert_eq!(requests.len(), 2);
 
     let nonce_request = &requests[0];

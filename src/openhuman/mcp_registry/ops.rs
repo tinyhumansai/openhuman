@@ -148,6 +148,12 @@ pub async fn mcp_clients_install(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
+    // The legacy install path only ever picked stdio connections (see the
+    // `c.r#type == "stdio"` filter above), so legacy installs continue to
+    // be stdio-only. HTTP-remote installs go through the newer
+    // `setup_ops::mcp_setup_install_and_connect` setup-agent path, which
+    // picks the right transport based on what the registry actually
+    // exposes.
     let server = InstalledServer {
         server_id: server_id.clone(),
         qualified_name: qualified_name.trim().to_string(),
@@ -161,6 +167,7 @@ pub async fn mcp_clients_install(
         config: config_value,
         installed_at: now_ms,
         last_connected_at: None,
+        transport: super::types::Transport::Stdio,
     };
 
     store::insert_server(config, &server).map_err(|e| e.to_string())?;

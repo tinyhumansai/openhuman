@@ -4,31 +4,14 @@ import { resolvePreferredAuthModeForChannel } from '../../lib/channels/routing';
 import { useT } from '../../lib/i18n/I18nContext';
 import { useAppSelector } from '../../store/hooks';
 import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '../../types/channels';
+import { renderChannelIcon } from './channelIcon';
 import ChannelStatusBadge from './ChannelStatusBadge';
-import YuanbaoIcon from './YuanbaoIcon';
 
 interface ChannelSelectorProps {
   definitions: ChannelDefinition[];
   selectedChannel: ChannelType;
   onSelectChannel: (channel: ChannelType) => void;
 }
-
-// Emoji icons for channels rendered as plain text. `yuanbao` is handled
-// separately with a branded SVG (see `YuanbaoIcon`).
-const CHANNEL_ICONS: Record<string, string> = {
-  telegram: '✈️',
-  discord: '🎮',
-  web: '🌐',
-  yuanbao: '🟡',
-  mcp: '🔌',
-};
-
-const renderChannelIcon = (icon: string) =>
-  icon === 'yuanbao' ? (
-    <YuanbaoIcon />
-  ) : (
-    <span className="text-base">{CHANNEL_ICONS[icon] ?? ''}</span>
-  );
 
 /** Virtual (static) tabs that are not backed by a ChannelDefinition from the core. */
 const VIRTUAL_TABS: { id: ChannelType; display_name: string }[] = [
