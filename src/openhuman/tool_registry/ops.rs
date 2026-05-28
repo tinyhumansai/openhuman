@@ -494,5 +494,6 @@ fn title_from_function(function: &str) -> String {
         .join(" ")
 }
 
+#[cfg(test)]
 #[path = "ops_test.rs"]
 mod tests;
