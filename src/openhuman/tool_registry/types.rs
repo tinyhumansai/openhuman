@@ -72,6 +72,7 @@ pub struct ToolPolicyDiagnostics {
     pub mcp_allowlists: McpAllowlistDiagnostics,
     pub mcp_write_audit: McpWriteAuditHealth,
     pub recent_denials: Vec<RecentPolicyDenial>,
+    pub capability_providers: CapabilityProviderDiagnostics,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -115,4 +116,14 @@ pub struct RecentPolicyDenial {
     pub policy: String,
     pub action: String,
     pub reason: String,
+}
+
+/// Redacted diagnostics for configured external capability providers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CapabilityProviderDiagnostics {
+    pub total_providers: usize,
+    pub enabled_providers: usize,
+    pub trusted_providers: usize,
+    pub trusted_enabled_providers: usize,
+    pub registry_errors: Vec<String>,
 }

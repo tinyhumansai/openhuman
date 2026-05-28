@@ -435,6 +435,7 @@ const es2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Configurar los ajustes de clasificación de IA para los activadores de integración Composio',
   'mic.deviceSelector': 'Dispositivo de micrófono',
+  'mic.tapToSendCountdown': 'Toca para enviar ({seconds}s)',
 };
 
 export default es2;

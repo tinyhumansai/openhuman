@@ -399,6 +399,7 @@ const zhCN2: TranslationMap = {
   'devOptions.menuComposioTriggers': '集成触发器',
   'devOptions.menuComposioTriggersDesc': '为 Composio 集成触发器配置 AI 分级设置',
   'mic.deviceSelector': '麦克风装置',
+  'mic.tapToSendCountdown': '点击发送 ({seconds}秒)',
 };
 
 export default zhCN2;

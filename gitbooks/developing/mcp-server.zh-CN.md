@@ -114,8 +114,25 @@ HTTP JSON-RPC 服务器还暴露一个只读的全局工具注册表，供需要
 | --- | --- |
 | `openhuman.tool_registry_list` | 列出 MCP stdio 工具和控制器支持的工具，包含稳定的 `tool_id`、路由、版本、输入/输出 schema、允许的智能体、标签、启用状态和健康状况。 |
 | `openhuman.tool_registry_get` | 通过 `tool_id` 返回一个注册表条目，例如 `memory.search` 或 `tools.web_search`。 |
+| `openhuman.tool_registry_diagnostics` | 返回脱敏的清单统计、疑似写入面、策略面以及外部能力提供方诊断信息。 |
 
 注册表仅用于发现。它不改变工具分派或权限检查；MCP 调用仍通过 `tools/call`，控制器支持的工具仍通过其现有的 JSON-RPC 方法路由。
+
+### 外部能力提供方
+
+OpenHuman 可以在 `config.toml` 中记录可信外部能力提供方。这只是治理元数据：不会安装包、执行远程代码，也不会绕过现有 MCP/控制器分派路径。
+
+```toml
+[[capability_providers]]
+id = "Acme Tools"
+display_name = "Acme Tools"
+source_uri = "https://example.com/openhuman/acme-tools"
+source_digest = "sha256:abc123"
+trust_state = "trusted"
+enabled = true
+```
+
+Provider id 会在策略检查前规范化。例如 `Acme Tools` 会变成 `acme-tools`；规范化后重复的 id 会被拒绝。只有同时满足 `enabled = true` 和 `trust_state = "trusted"` 的提供方，才会被后续准入检查视为可用。没有 provider 配置时保持旧行为：provider 注册表为空，现有工具不会被隐藏。
 
 ## 冒烟测试
 

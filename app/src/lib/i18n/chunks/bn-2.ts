@@ -425,6 +425,7 @@ const bn2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Composio ইন্টিগ্রেশন ট্রিগারের জন্য AI ট্রাইজ সেটিংস কনফিগার করুন',
   'mic.deviceSelector': 'মাইক্রোফোন ডিভাইস',
+  'mic.tapToSendCountdown': 'পাঠাতে ট্যাপ করুন ({seconds}স)',
 };
 
 export default bn2;

@@ -123,11 +123,13 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("The tool said: echo-out".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
     };
@@ -188,6 +190,7 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
             text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
     };
     let mut history = vec![ChatMessage::user("loop me")];
@@ -254,11 +257,13 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("corrected response".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
     };
@@ -313,11 +318,13 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("heard echo-out".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
     };

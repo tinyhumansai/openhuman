@@ -282,6 +282,18 @@ async fn invoke_migrate_openclaw_rejects_unknown_param() {
     assert!(err.contains("unknown param 'x'"));
 }
 
+#[tokio::test]
+async fn invoke_migrate_hermes_rejects_unknown_param() {
+    let err = invoke_method(
+        default_state(),
+        "openhuman.migrate_hermes",
+        json!({ "x": 1 }),
+    )
+    .await
+    .expect_err("unknown param should fail");
+    assert!(err.contains("unknown param 'x'"));
+}
+
 #[test]
 fn http_schema_dump_includes_openhuman_and_core_methods() {
     let dump = build_http_schema_dump();

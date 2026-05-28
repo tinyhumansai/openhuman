@@ -268,6 +268,7 @@ const pt3: TranslationMap = {
   'memory.ingestingTitle': 'Ingerindo {title}',
   'mic.noAudioCaptured': 'Nenhum áudio capturado',
   'mic.noSpeechDetected': 'Nenhuma fala detectada',
+  'mic.lowConfidenceResult': 'Não foi possível entender o áudio com clareza — tente novamente',
   'mic.failedToStopRecording': 'Falha ao parar a gravação: {message}',
   'mic.transcriptionFailed': 'Falha na transcrição: {message}',
   'reflections.kind.retrospective': 'Retrospectiva',

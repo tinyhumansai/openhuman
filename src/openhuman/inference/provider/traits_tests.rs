@@ -44,6 +44,7 @@ fn chat_response_helpers() {
         text: None,
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
     assert!(!empty.has_tool_calls());
     assert_eq!(empty.text_or_empty(), "");
@@ -56,6 +57,7 @@ fn chat_response_helpers() {
             arguments: "{}".into(),
         }],
         usage: None,
+        reasoning_content: None,
     };
     assert!(with_tools.has_tool_calls());
     assert_eq!(with_tools.text_or_empty(), "Let me check");

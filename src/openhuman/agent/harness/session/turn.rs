@@ -796,6 +796,14 @@ impl Agent {
                     calls.len()
                 );
                 if calls.is_empty() {
+                    // Capture reasoning_content before response.text is moved.
+                    // Thinking models (DeepSeek-R1, Qwen3, GLM-4) return
+                    // chain-of-thought in this field; the API contract requires
+                    // it to be echoed back verbatim in subsequent turns or it
+                    // returns HTTP 400. We stash it in extra_metadata so
+                    // convert_messages_for_native can include it when building
+                    // the next request's message list.
+                    let turn_reasoning_content = response.reasoning_content.clone();
                     let final_text = if text.is_empty() {
                         response.text.unwrap_or_default()
                     } else {
@@ -829,9 +837,10 @@ impl Agent {
                         iteration + 1
                     );
                     log::info!(
-                        "[agent_loop] final response i={} final_chars={}",
+                        "[agent_loop] final response i={} final_chars={} has_reasoning_content={}",
                         iteration + 1,
-                        final_text.chars().count()
+                        final_text.chars().count(),
+                        turn_reasoning_content.is_some()
                     );
 
                     self.emit_progress(AgentProgress::TurnCompleted {
@@ -839,10 +848,24 @@ impl Agent {
                     })
                     .await;
 
-                    self.history
-                        .push(ConversationMessage::Chat(ChatMessage::assistant(
-                            final_text.clone(),
-                        )));
+                    let mut assistant_msg = ChatMessage::assistant(final_text.clone());
+                    if let Some(rc) = turn_reasoning_content {
+                        // Store reasoning_content in extra_metadata so it
+                        // survives in history and is passed back to the
+                        // provider on the next turn.
+                        assistant_msg.extra_metadata =
+                            Some(serde_json::json!({ "reasoning_content": rc }));
+                        log::debug!(
+                            "[agent_loop] stored reasoning_content in extra_metadata for next turn (chars={})",
+                            assistant_msg
+                                .extra_metadata
+                                .as_ref()
+                                .and_then(|m| m.get("reasoning_content"))
+                                .and_then(|v| v.as_str())
+                                .map_or(0, |s| s.chars().count())
+                        );
+                    }
+                    self.history.push(ConversationMessage::Chat(assistant_msg));
                     self.trim_history();
 
                     // Mirror the final assistant reply into the transcript
