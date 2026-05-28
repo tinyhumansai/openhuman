@@ -593,6 +593,22 @@ impl OpenAiCompatibleProvider {
                                         .and_then(serde_json::Value::as_str)
                                         .map(ToString::to_string);
 
+                                    // Replay the assistant's reasoning so
+                                    // DeepSeek thinking mode accepts the
+                                    // tool-call turn on the follow-up request
+                                    // (Sentry TAURI-RUST-4KB). Prefer the value
+                                    // embedded in the JSON content (written by
+                                    // `build_native_assistant_history` in the
+                                    // tool-loop path); fall back to the value
+                                    // stored in `extra_metadata` (written by the
+                                    // main session-turn path).
+                                    let reasoning_content = value
+                                        .get("reasoning_content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .filter(|s| !s.trim().is_empty())
+                                        .map(ToString::to_string)
+                                        .or_else(|| reasoning_content.clone());
+
                                     return NativeMessage {
                                         role: "assistant".to_string(),
                                         content,
@@ -792,7 +808,12 @@ impl OpenAiCompatibleProvider {
         // the next turn for thinking models (e.g. DeepSeek-R1, Qwen3) whose APIs
         // return HTTP 400 ("reasoning_content in thinking mode must be passed back")
         // when the field is omitted from subsequent assistant messages.
-        let reasoning_content = message.reasoning_content.clone();
+        let reasoning_content = message
+            .reasoning_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
         let mut tool_calls = message
             .tool_calls
             .unwrap_or_default()
@@ -1739,6 +1760,15 @@ impl Provider for OpenAiCompatibleProvider {
             .ok_or_else(|| anyhow::anyhow!("No response from {}", self.name))?;
 
         let text = choice.message.effective_content_optional();
+        // See `parse_native_response`: replay reasoning on the follow-up
+        // request so DeepSeek thinking mode accepts the tool-call turn.
+        let reasoning_content = choice
+            .message
+            .reasoning_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
         let tool_calls = choice
             .message
             .tool_calls
@@ -1760,7 +1790,7 @@ impl Provider for OpenAiCompatibleProvider {
             text,
             tool_calls,
             usage,
-            reasoning_content: None,
+            reasoning_content,
         })
     }
 
