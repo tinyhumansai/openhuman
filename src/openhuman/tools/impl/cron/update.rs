@@ -1,7 +1,7 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{self, CronJobPatch};
 use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -39,6 +39,16 @@ impl Tool for CronUpdateTool {
     }
 
     fn supports_markdown(&self) -> bool {
+        true
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Execute
+    }
+
+    fn external_effect(&self) -> bool {
+        // Patching a job can change the stored command or re-enable a
+        // disabled job.  Require approval via the gate (GHSA-f46p-6vf9-64mm).
         true
     }
 
@@ -176,5 +186,38 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("blocked by security policy"));
+    }
+
+    // ── GHSA-f46p-6vf9-64mm: approval gate must fire for cron_update ─
+
+    #[test]
+    fn cron_update_is_external_effect() {
+        let tmp = TempDir::new().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let cfg = Arc::new(config);
+        let tool = CronUpdateTool::new(cfg.clone(), test_security(&cfg));
+        assert!(
+            tool.external_effect(),
+            "cron_update must declare external_effect=true so ApprovalGate is consulted"
+        );
+    }
+
+    #[test]
+    fn cron_update_permission_level_is_execute() {
+        let tmp = TempDir::new().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let cfg = Arc::new(config);
+        let tool = CronUpdateTool::new(cfg.clone(), test_security(&cfg));
+        assert_eq!(tool.permission_level(), PermissionLevel::Execute);
     }
 }

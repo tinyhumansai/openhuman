@@ -12,6 +12,7 @@
 
 mod http;
 mod protocol;
+mod resources;
 mod session;
 mod stdio;
 mod tools;

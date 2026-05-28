@@ -113,6 +113,37 @@ pub struct WebChannelEvent {
     /// Type of error, if the event represents a failure.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
+    /// Structured rate-limit / error metadata produced by
+    /// `classify_inference_error` (issue #2606). All four fields are
+    /// additive — older FE clients that only read `message`/`error_type`
+    /// keep working; new clients can read these to render countdown,
+    /// retry-button, and fallback-CTA UI without regexing the message.
+    ///
+    /// Where the limit originated:
+    /// `"provider"` | `"openhuman_budget"` | `"agent_loop"`
+    /// | `"openhuman_billing"` | `"transport"` | `"config"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_source: Option<String>,
+    /// Whether the same prompt can be retried in this same thread.
+    /// `false` for non-retryable business 429s, auth, model_unavailable,
+    /// context_overflow, and billing exhaustion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_retryable: Option<bool>,
+    /// Milliseconds to wait before retrying, as supplied by the upstream
+    /// `Retry-After:` / `retry_after:` header. `None` when the upstream
+    /// didn't supply one or the error class has no retry-after concept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_retry_after_ms: Option<u64>,
+    /// Provider name extracted from `"<provider> API error (...)"`
+    /// envelopes. `None` for non-provider errors (OpenHuman budget cap,
+    /// agent loop) and for transport failures without a provider prefix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_provider: Option<String>,
+    /// `Some(false)` once the reliable-provider chain has exhausted
+    /// every configured `model_fallbacks` entry. `None` means "unknown
+    /// — FE should not promise a fallback".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_fallback_available: Option<bool>,
     /// Name of the tool being called.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,

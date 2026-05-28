@@ -37,6 +37,10 @@ Env:
   REVIEW_REPO=owner/name                  Override target repo (default: upstream remote)
   REVIEW_BANNED_COAUTHOR_RE=<regex>       Substrings filtered from Co-authored-by lines
                                           (default includes copilot/codex/cursor/claude/…)
+  REVIEW_AGENT_SAFE=1                     Run the picked agent CLI bare instead of in
+                                          its "yolo" mode. Default 0 — claude / codex /
+                                          cursor are launched with their skip-permissions
+                                          flag so headless runs don't stall on prompts.
 EOF
 }
 

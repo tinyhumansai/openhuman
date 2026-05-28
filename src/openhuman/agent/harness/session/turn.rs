@@ -21,6 +21,7 @@ use super::transcript;
 use super::types::Agent;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
@@ -733,6 +734,15 @@ impl Agent {
                         // the provider doesn't return usage.
                         if let Some(ref usage) = resp.usage {
                             self.context.record_usage(usage);
+                            // Feed the dashboard tracker. This always records
+                            // (model + usage) when the process-global tracker
+                            // is available — independent of `cost.enabled`,
+                            // which gates budget enforcement only. The call
+                            // is a no-op only when `init_global` has not yet
+                            // run (before bootstrap) or failed; errors are
+                            // logged and swallowed so cost telemetry never
+                            // breaks a turn.
+                            crate::openhuman::cost::record_provider_usage(&effective_model, usage);
                             cumulative_input_tokens += usage.input_tokens;
                             cumulative_output_tokens += usage.output_tokens;
                             cumulative_cached_input_tokens += usage.cached_input_tokens;
@@ -802,9 +812,17 @@ impl Agent {
                             "[agent_loop] provider returned an empty final response (i={}, no text, no tool calls) — surfacing as error instead of a silent blank reply",
                             iteration + 1
                         );
-                        return Err(anyhow::anyhow!(
-                            "The model returned an empty response. Please try again."
-                        ));
+                        // Typed variant so `run_single` can route this
+                        // through `AgentError::skips_sentry()` and demote
+                        // to a `log::info!` instead of escalating to
+                        // Sentry (TAURI-RUST-4JX). The `Display` impl
+                        // still renders the canonical user-facing string
+                        // for UI surfaces, so the user behaviour is
+                        // unchanged.
+                        return Err(AgentError::EmptyProviderResponse {
+                            iteration: iteration + 1,
+                        }
+                        .into());
                     }
                     log::info!(
                         "[agent] no tool calls — returning final response after {} iteration(s)",
@@ -1056,6 +1074,7 @@ impl Agent {
             // checkpoint message (mirrors the normal final-response path).
             if let Some(ref usage) = checkpoint_usage {
                 self.context.record_usage(usage);
+                crate::openhuman::cost::record_provider_usage(&effective_model, usage);
                 cumulative_input_tokens += usage.input_tokens;
                 cumulative_output_tokens += usage.output_tokens;
                 cumulative_cached_input_tokens += usage.cached_input_tokens;
@@ -1309,113 +1328,140 @@ impl Agent {
                     false,
                 )
             } else {
-                let context = ToolCallContext::session(
-                    self.event_session_id(),
-                    self.event_channel(),
-                    self.agent_definition_id.to_string(),
-                    call_id.clone(),
-                    (iteration + 1) as u32,
-                );
-                let mut policy_request =
-                    ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
-                if let Some(generated_context) = tool.generated_runtime_context(&call.arguments) {
-                    policy_request = policy_request.with_generated_tool_context(generated_context);
-                }
-                let policy_decision = self.tool_policy.check(&policy_request).await;
-                if let Some(reason) = policy_decision.blocking_reason() {
-                    let blocked_action = match &policy_decision {
-                        ToolPolicyDecision::RequireApproval { .. } => "requires approval",
-                        ToolPolicyDecision::Deny { .. } => "denied",
-                        ToolPolicyDecision::Allow => "allowed",
-                    };
+                // Per-call args-aware permission check: tools that expose
+                // multi-level actions (e.g. schedule list vs schedule create)
+                // set a low static permission_level() so the tool is visible
+                // on read-capable channels, but declare the true per-action
+                // level via permission_level_with_args.
+                let call_required = tool.permission_level_with_args(&call.arguments);
+                if call_required > session_decision.allowed_permission {
                     tracing::debug!(
                         tool = call.name.as_str(),
-                        policy = self.tool_policy.name(),
-                        action = blocked_action,
-                        reason = %reason,
-                        "[agent_loop] tool blocked by policy"
+                        call_required = %call_required,
+                        allowed = %session_decision.allowed_permission,
+                        "[agent_loop] tool action blocked by per-call permission check"
                     );
                     (
                         format!(
-                            "Tool '{}' {blocked_action} by policy '{}': {reason}",
+                            "Tool '{}' action requires {} permission, channel '{}' allows {}",
                             call.name,
-                            self.tool_policy.name()
+                            call_required,
+                            self.event_channel,
+                            session_decision.allowed_permission
                         ),
                         false,
                     )
                 } else {
-                    // Per-call options: ask the tool for markdown output when the
-                    // context manager is configured to prefer it. Tools that
-                    // implement `execute_with_options` will populate
-                    // `markdown_formatted`; others fall through to the default
-                    // implementation which forwards to `execute`.
-                    let prefer_markdown = self.context.prefer_markdown_tool_output();
-                    let options = ToolCallOptions { prefer_markdown };
-                    let outcome = tool
-                        .execute_with_options(call.arguments.clone(), options)
-                        .await;
-                    match outcome {
-                        Ok(r) => {
-                            if !r.is_error {
-                                let mut output = r.output_for_llm(prefer_markdown);
-                                if prefer_markdown && r.markdown_formatted.is_some() {
-                                    log::debug!(
+                    let context = ToolCallContext::session(
+                        self.event_session_id(),
+                        self.event_channel(),
+                        self.agent_definition_id.to_string(),
+                        call_id.clone(),
+                        (iteration + 1) as u32,
+                    );
+                    let mut policy_request =
+                        ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
+                    if let Some(generated_context) = tool.generated_runtime_context(&call.arguments)
+                    {
+                        policy_request =
+                            policy_request.with_generated_tool_context(generated_context);
+                    }
+                    let policy_decision = self.tool_policy.check(&policy_request).await;
+                    if let Some(reason) = policy_decision.blocking_reason() {
+                        let blocked_action = match &policy_decision {
+                            ToolPolicyDecision::RequireApproval { .. } => "requires approval",
+                            ToolPolicyDecision::Deny { .. } => "denied",
+                            ToolPolicyDecision::Allow => "allowed",
+                        };
+                        tracing::debug!(
+                            tool = call.name.as_str(),
+                            policy = self.tool_policy.name(),
+                            action = blocked_action,
+                            reason = %reason,
+                            "[agent_loop] tool blocked by policy"
+                        );
+                        (
+                            format!(
+                                "Tool '{}' {blocked_action} by policy '{}': {reason}",
+                                call.name,
+                                self.tool_policy.name()
+                            ),
+                            false,
+                        )
+                    } else {
+                        // Per-call options: ask the tool for markdown output when the
+                        // context manager is configured to prefer it. Tools that
+                        // implement `execute_with_options` will populate
+                        // `markdown_formatted`; others fall through to the default
+                        // implementation which forwards to `execute`.
+                        let prefer_markdown = self.context.prefer_markdown_tool_output();
+                        let options = ToolCallOptions { prefer_markdown };
+                        let outcome = tool
+                            .execute_with_options(call.arguments.clone(), options)
+                            .await;
+                        match outcome {
+                            Ok(r) => {
+                                if !r.is_error {
+                                    let mut output = r.output_for_llm(prefer_markdown);
+                                    if prefer_markdown && r.markdown_formatted.is_some() {
+                                        log::debug!(
                                         "[agent_loop] tool={} returned markdown payload bytes={}",
                                         call.name,
                                         output.len()
                                     );
-                                }
-                                // Issue #574 — if a payload summarizer is wired
-                                // in (orchestrator session only) and the output
-                                // exceeds the configured threshold, hand it to
-                                // the summarizer sub-agent before it enters
-                                // history. On any failure or below-threshold
-                                // payload, leave `output` untouched and let the
-                                // existing tool_result_budget_bytes truncation
-                                // pipeline handle it downstream.
-                                if let Some(ps) = self.payload_summarizer.as_ref() {
-                                    log::debug!(
+                                    }
+                                    // Issue #574 — if a payload summarizer is wired
+                                    // in (orchestrator session only) and the output
+                                    // exceeds the configured threshold, hand it to
+                                    // the summarizer sub-agent before it enters
+                                    // history. On any failure or below-threshold
+                                    // payload, leave `output` untouched and let the
+                                    // existing tool_result_budget_bytes truncation
+                                    // pipeline handle it downstream.
+                                    if let Some(ps) = self.payload_summarizer.as_ref() {
+                                        log::debug!(
                                     "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
                                     call.name,
                                     output.len()
                                 );
-                                    match ps.maybe_summarize(&call.name, None, &output).await {
-                                        Ok(Some(payload)) => {
-                                            log::info!(
+                                        match ps.maybe_summarize(&call.name, None, &output).await {
+                                            Ok(Some(payload)) => {
+                                                log::info!(
                                             "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
                                             call.name,
                                             payload.original_bytes,
                                             payload.summary_bytes
                                         );
-                                            output = payload.summary;
-                                        }
-                                        Ok(None) => {
-                                            log::debug!(
+                                                output = payload.summary;
+                                            }
+                                            Ok(None) => {
+                                                log::debug!(
                                             "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
                                             call.name,
                                             output.len()
                                         );
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
+                                            }
+                                            Err(e) => {
+                                                log::warn!(
                                             "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
                                             call.name,
                                             e
                                         );
+                                            }
                                         }
                                     }
+                                    (output, true)
+                                } else {
+                                    (
+                                        format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                                        false,
+                                    )
                                 }
-                                (output, true)
-                            } else {
-                                (
-                                    format!("Error: {}", r.output_for_llm(prefer_markdown)),
-                                    false,
-                                )
                             }
+                            Err(e) => (format!("Error executing {}: {e}", call.name), false),
                         }
-                        Err(e) => (format!("Error executing {}: {e}", call.name), false),
                     }
-                }
+                } // end else { // per-call permission ok
             }
         } else {
             (format!("Unknown tool: {}", call.name), false)

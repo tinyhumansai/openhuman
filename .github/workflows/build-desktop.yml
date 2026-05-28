@@ -85,8 +85,7 @@ on:
         type: boolean
         default: false
       skip_pretests:
-        description:
-          Metadata-only flag propagated by caller workflows when they
+        description: Metadata-only flag propagated by caller workflows when they
           intentionally bypass the upstream pretest phase. This reusable build
           workflow does not execute pretests itself, but it logs the policy so
           the build run captures whether the normal release gate was relaxed for
@@ -124,6 +123,10 @@ jobs:
             args: --target x86_64-unknown-linux-gnu --bundles deb appimage
             target: x86_64-unknown-linux-gnu
             artifact_suffix: ubuntu
+          - platform: ubuntu-24.04-arm
+            args: --target aarch64-unknown-linux-gnu --bundles deb appimage
+            target: aarch64-unknown-linux-gnu
+            artifact_suffix: ubuntu-arm64
           - platform: windows-latest
             args: --target x86_64-pc-windows-msvc
             target: x86_64-pc-windows-msvc
@@ -162,13 +165,13 @@ jobs:
         with:
           targets: ${{ matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
       - name: Install Tauri dependencies (ubuntu only)
-        if: matrix.settings.platform == 'ubuntu-24.04'
+        if: startsWith(matrix.settings.platform, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
             patchelf cmake libasound2-dev libxdo-dev libxtst-dev libx11-dev libxi-dev \
-            libevdev-dev libssl-dev libclang-dev \
+            libevdev-dev libssl-dev libclang-dev desktop-file-utils \
             libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
             libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
@@ -458,7 +461,7 @@ jobs:
       # ensures this still runs when `cargo tauri build` failed at bundling
       # (the binary itself is produced before bundling starts).
       - name: Dump linked libraries of built binary (ubuntu debug)
-        if: always() && matrix.settings.platform == 'ubuntu-24.04'
+        if: always() && startsWith(matrix.settings.platform, 'ubuntu-')
         shell: bash
         env:
           PROFILE: ${{ inputs.build_profile }}
@@ -487,7 +490,7 @@ jobs:
       # untouched. Re-signs the AppImage + updater tarball when signing
       # is enabled.
       - name: Strip host graphics libs from AppImage
-        if: matrix.settings.platform == 'ubuntu-24.04'
+        if: startsWith(matrix.settings.platform, 'ubuntu-')
         shell: bash
         env:
           MATRIX_TARGET: ${{ matrix.settings.target }}
