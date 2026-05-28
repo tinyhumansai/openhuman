@@ -420,6 +420,15 @@ mod tests {
                 "bare",
                 r#"{"error":{"message":"phi3.5:mini does not support tools","type":"invalid_request_error"}}"#,
             ),
+            // TAURI-RUST-4Z0 — verbatim from issue 5664 (model=`deepseek-r1:8b`,
+            // provider=ollama). The envelope carries `"type":"api_error"`
+            // rather than `"invalid_request_error"` — pin it so the matcher
+            // can never be narrowed to require a specific `type` token; the
+            // `"does not support tools"` body substring is the only anchor.
+            (
+                "4Z0",
+                r#"ollama streaming API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/deepseek-r1:8b does not support tools","type":"api_error","param":null,"code":null}}"#,
+            ),
         ] {
             assert!(
                 is_provider_config_rejection_message(body),
