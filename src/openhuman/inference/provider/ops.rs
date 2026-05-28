@@ -46,11 +46,15 @@ async fn list_configured_models_from_config(
 
     log::debug!("[providers][list_models] provider_id={}", provider_id);
 
+    // Explicit `cloud_providers` entry wins (e.g. a user-pointed remote
+    // ollama box at https://ollama.example.com/v1). Falling back to the
+    // local-runtime synthesis below only happens when no entry matches.
     let entry = config
         .cloud_providers
         .iter()
         .find(|e| e.id == provider_id || e.slug == provider_id)
         .cloned()
+        .or_else(|| synthesize_local_runtime_entry(&provider_id, config))
         .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
     let base = entry.endpoint.trim_end_matches('/');
@@ -122,10 +126,28 @@ async fn list_configured_models_from_config(
         ));
     }
 
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("[providers][list_models] failed to parse JSON: {}", e))?;
+    // TAURI-RUST-12: `response.json()` discards the body when decoding fails,
+    // so Sentry just sees `error decoding response body` with no clue what the
+    // server actually sent. In practice the offending body is HTML from a
+    // captive portal / corporate proxy login page, an upstream load-balancer
+    // 502 served as HTML with a `200 OK`, or a JSON parser tripping on a
+    // wrong-path endpoint. Read the body as text first, then parse, and
+    // surface a sanitized + truncated snippet so the failure is diagnosable
+    // from the error string alone.
+    let raw_body = response.text().await.map_err(|e| {
+        format!(
+            "[providers][list_models] failed to read response body: {}",
+            e
+        )
+    })?;
+    let body: serde_json::Value = serde_json::from_str(&raw_body).map_err(|e| {
+        let sanitized = sanitize_api_error(&raw_body);
+        let snippet = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
+        format!(
+            "[providers][list_models] failed to parse JSON: {} (body: {})",
+            e, snippet
+        )
+    })?;
 
     // OpenAI-compatible servers occasionally return HTTP 200 with an error
     // payload instead of a 4xx (LM Studio does this for unknown paths like
@@ -254,6 +276,60 @@ fn json_value_kind(v: &serde_json::Value) -> &'static str {
         serde_json::Value::Array(_) => "array",
         serde_json::Value::Object(_) => "object",
     }
+}
+
+/// Synthesize a transient [`CloudProviderCreds`] entry for the well-known
+/// local-runtime slugs (`ollama`, `lmstudio`) so [`list_configured_models`]
+/// can probe their OpenAI-compatible `/v1/models` endpoint even when the
+/// user has not registered a matching `cloud_providers` row.
+///
+/// Background: the AI settings panel registers an `ollama` `cloud_providers`
+/// entry when the user configures Ollama (see comment on
+/// [`crate::openhuman::config::schema::cloud_providers::is_slug_reserved`]),
+/// but in practice some users hit
+/// `inference_list_models("ollama")` without that entry — config drift,
+/// flush-vs-probe race, or upgrade from a build that only persisted
+/// `config.local_ai.base_url`. Sentry TAURI-RUST-28Z captures this:
+/// 24 events / 7d, all `domain=rpc, method=openhuman.inference_list_models,
+/// operation=invoke_method`. Without this fallback, the dropdown surfaces
+/// the bare `"no cloud provider with id or slug 'ollama' found"` error
+/// (also visible in the Sentry breadcrumb) instead of returning models.
+///
+/// Returns `None` for any slug that is not a recognized local-runtime
+/// alias — callers continue down the normal "no cloud provider" error
+/// path for `openai` / `anthropic` / opaque ids / typos.
+fn synthesize_local_runtime_entry(
+    slug: &str,
+    config: &crate::openhuman::config::Config,
+) -> Option<crate::openhuman::config::schema::cloud_providers::CloudProviderCreds> {
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+
+    let endpoint = match slug {
+        // Ollama's OpenAI-compatible surface at `<base>/v1/models` returns
+        // the same `{"data": [...]}` shape the existing parser handles, so
+        // we route through that rather than the native `/api/tags`.
+        "ollama" => {
+            let base = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+            format!("{}/v1", base.trim_end_matches('/'))
+        }
+        // `lm_studio_base_url` already ends in `/v1`.
+        "lmstudio" => crate::openhuman::inference::local::lm_studio::lm_studio_base_url(config),
+        _ => return None,
+    };
+
+    Some(CloudProviderCreds {
+        id: format!("synthetic_local_{slug}"),
+        slug: slug.to_string(),
+        label: slug.to_string(),
+        endpoint,
+        // Local runtimes accept unauthenticated requests on loopback.
+        // The probe at `<endpoint>/models` runs without an Authorization
+        // header — `lookup_key_for_slug` may still return a key, but
+        // `AuthStyle::None` ignores it (see auth-style match below).
+        auth_style: AuthStyle::None,
+        legacy_type: None,
+        default_model: None,
+    })
 }
 
 fn is_openrouter_provider(
@@ -1755,6 +1831,115 @@ mod tests {
         assert_eq!(crabs_count, MAX_API_ERROR_CHARS);
     }
 
+    // ── TAURI-RUST-12: list_models JSON parse error must surface body ──────
+    //
+    // `response.json()` previously dropped the body when decoding failed, so
+    // Sentry saw `[providers][list_models] failed to parse JSON: error decoding
+    // response body` with no clue what the server actually returned. The fix
+    // reads the body as text first, parses with `serde_json::from_str`, and
+    // appends a sanitized + truncated snippet to the error string so the
+    // failure is diagnosable from the log line alone.
+
+    #[derive(Clone)]
+    struct StaticResponse {
+        status: StatusCode,
+        body: &'static str,
+    }
+
+    async fn static_models_handler(State(s): State<StaticResponse>) -> Response {
+        (s.status, s.body).into_response()
+    }
+
+    async fn spawn_static_models_server(status: StatusCode, body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let app = Router::new()
+            .route("/models", get(static_models_handler))
+            .with_state(StaticResponse { status, body });
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+        format!("http://{addr}")
+    }
+
+    async fn configure_generic_workspace(tmp: &TempDir, endpoint: String) -> Config {
+        // Non-`openrouter` slug so the OpenRouter pre-validation path is
+        // skipped and the test hits `/models` directly.
+        let mut config = Config {
+            config_path: tmp.path().join("config.toml"),
+            workspace_dir: tmp.path().join("workspace"),
+            ..Config::default()
+        };
+        config.secrets.encrypt = false;
+        config.cloud_providers.push(CloudProviderCreds {
+            id: "p_generic_test".to_string(),
+            slug: "generic-test".to_string(),
+            label: "Generic".to_string(),
+            endpoint,
+            auth_style: AuthStyle::None,
+            legacy_type: None,
+            default_model: None,
+        });
+        config.save().await.expect("save config");
+        config
+    }
+
+    #[tokio::test]
+    async fn list_models_html_body_returns_diagnostic_snippet() {
+        // Captive-portal / proxy-login wire shape: 200 OK with HTML.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let html = "<html><head><title>Sign in</title></head><body>captive portal</body></html>";
+        let endpoint = spawn_static_models_server(StatusCode::OK, html).await;
+        let config = configure_generic_workspace(&tmp, endpoint).await;
+
+        let err = list_configured_models_from_config("generic-test", &config)
+            .await
+            .expect_err("HTML body must not parse as JSON");
+
+        assert!(
+            err.contains("failed to parse JSON"),
+            "error must keep canonical prefix: {err}"
+        );
+        assert!(
+            err.contains("captive portal") || err.contains("Sign in") || err.contains("html"),
+            "error must include a body snippet for diagnosis: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_models_empty_body_returns_diagnostic_error() {
+        // Some misconfigured load balancers return 200 with an empty body.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let endpoint = spawn_static_models_server(StatusCode::OK, "").await;
+        let config = configure_generic_workspace(&tmp, endpoint).await;
+
+        let err = list_configured_models_from_config("generic-test", &config)
+            .await
+            .expect_err("empty body must not parse as JSON");
+
+        assert!(
+            err.contains("failed to parse JSON"),
+            "error must keep canonical prefix: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_models_valid_json_still_succeeds() {
+        // Regression guard: the new text-then-parse path must still accept
+        // a valid `/models` JSON response.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let body = r#"{"data":[{"id":"some-model","owned_by":"vendor","context_length":4096}]}"#;
+        let endpoint = spawn_static_models_server(StatusCode::OK, body).await;
+        let config = configure_generic_workspace(&tmp, endpoint).await;
+
+        let outcome = list_configured_models_from_config("generic-test", &config)
+            .await
+            .expect("valid JSON must list models");
+        assert_eq!(outcome.value["models"][0]["id"], "some-model");
+    }
+
     // ── parse_models_response (TAURI-RUST-4Y) ──────────────────────────────
     //
     // Before this fix the `/models` parser collapsed "no `data` field" and
@@ -1827,6 +2012,63 @@ mod tests {
             assert!(
                 err.contains(label),
                 "wrong-type error must name the actual JSON kind ({label}): {err}"
+            );
+        }
+    }
+
+    // ── synthesize_local_runtime_entry (TAURI-RUST-28Z fallback) ────────────
+
+    #[test]
+    fn synthesize_local_runtime_entry_ollama_returns_v1_endpoint_with_no_auth() {
+        // Sentry TAURI-RUST-28Z fires when `inference_list_models("ollama")`
+        // runs against a config that has no `ollama` cloud_providers entry.
+        // The synth fallback must produce an entry routed to Ollama's
+        // OpenAI-compatible `/v1/models` surface at the resolved base URL,
+        // with `AuthStyle::None` so the probe runs without an Authorization
+        // header (loopback Ollama accepts unauthenticated requests).
+        let config = Config::default();
+        let entry = synthesize_local_runtime_entry("ollama", &config)
+            .expect("ollama must produce a synthetic entry");
+        assert_eq!(entry.slug, "ollama");
+        assert_eq!(entry.auth_style, AuthStyle::None);
+        assert!(
+            entry.endpoint.ends_with("/v1"),
+            "ollama endpoint must terminate at /v1 so `<endpoint>/models` hits the OpenAI-compat surface; got {}",
+            entry.endpoint
+        );
+    }
+
+    #[test]
+    fn synthesize_local_runtime_entry_lmstudio_returns_v1_endpoint_with_no_auth() {
+        // LM Studio's default `lm_studio_base_url` already terminates at
+        // `/v1`; the synth must preserve that and select `AuthStyle::None`
+        // so the probe doesn't attach a bearer header (LM Studio runs
+        // unauthenticated on loopback).
+        let config = Config::default();
+        let entry = synthesize_local_runtime_entry("lmstudio", &config)
+            .expect("lmstudio must produce a synthetic entry");
+        assert_eq!(entry.slug, "lmstudio");
+        assert_eq!(entry.auth_style, AuthStyle::None);
+        assert!(
+            entry.endpoint.ends_with("/v1"),
+            "lmstudio endpoint must terminate at /v1; got {}",
+            entry.endpoint
+        );
+    }
+
+    #[test]
+    fn synthesize_local_runtime_entry_returns_none_for_unknown_slug() {
+        // Only `ollama` and `lmstudio` are the recognized local-runtime
+        // aliases. Every other slug — built-in cloud providers (`openai`,
+        // `anthropic`), opaque ids (`p_random_xyz`), or typos — must fall
+        // through to the existing "no cloud provider" error. Pinning this
+        // rejection contract guards against the synth growing into a
+        // blanket "any unknown slug points at localhost" matcher.
+        let config = Config::default();
+        for slug in ["openai", "anthropic", "openrouter", "p_random_xyz", "", " "] {
+            assert!(
+                synthesize_local_runtime_entry(slug, &config).is_none(),
+                "{slug:?} must NOT synthesize a local-runtime entry"
             );
         }
     }
@@ -2031,6 +2273,102 @@ mod tests {
         assert!(
             !reason.contains("sk-LIVEB9876543210fedcbaSECRET"),
             "raw secret must not survive into the SessionExpired reason: {reason}"
+        );
+    }
+
+    #[test]
+    fn synthesize_local_runtime_entry_ollama_respects_config_base_url() {
+        // The synth must honor `config.local_ai.base_url` (the same
+        // priority `ollama_base_url_from_config` uses for chat routing).
+        // This is the path users hit when they point Ollama at a non-loopback
+        // host (e.g. a LAN box at 192.168.1.5).
+        let mut config = Config::default();
+        config.local_ai.base_url = Some("http://192.168.1.5:11434".to_string());
+        let entry = synthesize_local_runtime_entry("ollama", &config)
+            .expect("ollama with custom base_url must still synthesize");
+        assert_eq!(
+            entry.endpoint, "http://192.168.1.5:11434/v1",
+            "synth must use config.local_ai.base_url and append /v1 once",
+        );
+    }
+
+    #[test]
+    fn cloud_providers_entry_takes_precedence_over_local_runtime_synthesis() {
+        // Pin the precedence: if the user has explicitly added an `ollama`
+        // entry to `cloud_providers` (e.g. a remote ollama box at
+        // https://ollama.example.com/v1), that entry MUST win — the synth
+        // fallback is reached only when the find returns `None`. Mirrors
+        // the lookup in `list_configured_models_from_config` so a future
+        // refactor that swaps `find().or_else(synth)` for unconditional
+        // synthesis fails this test loudly.
+        let mut config = Config::default();
+        config.cloud_providers.push(CloudProviderCreds {
+            id: "p_ollama_explicit".to_string(),
+            slug: "ollama".to_string(),
+            label: "Remote Ollama".to_string(),
+            endpoint: "https://ollama.example.com/v1".to_string(),
+            auth_style: AuthStyle::Bearer,
+            legacy_type: None,
+            default_model: None,
+        });
+
+        let resolved = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "ollama" || e.slug == "ollama")
+            .cloned()
+            .or_else(|| synthesize_local_runtime_entry("ollama", &config))
+            .expect("either explicit or synth must resolve");
+        assert_eq!(
+            resolved.endpoint, "https://ollama.example.com/v1",
+            "explicit cloud_providers entry must beat local-runtime synth",
+        );
+        assert_eq!(resolved.auth_style, AuthStyle::Bearer);
+    }
+
+    #[test]
+    fn missing_cloud_providers_entry_falls_back_to_local_runtime_synth() {
+        // The TAURI-RUST-28Z regression contract: when no `ollama` entry
+        // exists in `cloud_providers` AND the slug is a recognized
+        // local-runtime alias, the find/synth chain must yield a synthetic
+        // entry (instead of `None`, which produces the
+        // "no cloud provider with id or slug 'ollama' found" Sentry error).
+        let config = Config::default();
+        assert!(
+            config.cloud_providers.is_empty(),
+            "precondition: clean config has no providers configured",
+        );
+
+        let resolved = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "ollama" || e.slug == "ollama")
+            .cloned()
+            .or_else(|| synthesize_local_runtime_entry("ollama", &config));
+        assert!(
+            resolved.is_some(),
+            "ollama must resolve via synth when cloud_providers is empty"
+        );
+        assert_eq!(resolved.unwrap().slug, "ollama");
+    }
+
+    #[test]
+    fn missing_cloud_providers_entry_for_unknown_slug_still_errors() {
+        // The synth is intentionally narrow: only `ollama` and `lmstudio`
+        // get fallback routing. An unknown slug with no `cloud_providers`
+        // match must continue to produce `None` (which the caller surfaces
+        // as the "no cloud provider" error) — otherwise typos would
+        // silently route to localhost.
+        let config = Config::default();
+        let resolved = config
+            .cloud_providers
+            .iter()
+            .find(|e| e.id == "tpyo" || e.slug == "tpyo")
+            .cloned()
+            .or_else(|| synthesize_local_runtime_entry("tpyo", &config));
+        assert!(
+            resolved.is_none(),
+            "unknown slug with no cloud_providers entry must NOT synthesize",
         );
     }
 }

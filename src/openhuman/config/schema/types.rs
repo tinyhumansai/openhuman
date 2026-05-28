@@ -87,6 +87,9 @@ pub struct Config {
     pub temperature_unsupported_models: Vec<String>,
 
     #[serde(default)]
+    pub dashboard: DashboardConfig,
+
+    #[serde(default)]
     pub observability: ObservabilityConfig,
 
     #[serde(default)]
@@ -367,9 +370,6 @@ pub struct Config {
     pub chat_onboarding_completed: bool,
 
     #[serde(default)]
-    pub dashboard: DashboardConfig,
-
-    #[serde(default)]
     pub model_registry: Vec<ModelRegistryEntry>,
 }
 
@@ -618,6 +618,7 @@ impl Default for Config {
             output_language: None,
             temperature_unsupported_models: default_temperature_unsupported_models(),
             observability: ObservabilityConfig::default(),
+            dashboard: DashboardConfig::default(),
             autonomy: AutonomyConfig::default(),
             runtime: RuntimeConfig::default(),
             screen_intelligence: ScreenIntelligenceConfig::default(),
@@ -680,7 +681,6 @@ impl Default for Config {
             meet: MeetConfig::default(),
             onboarding_completed: false,
             chat_onboarding_completed: false,
-            dashboard: DashboardConfig::default(),
             model_registry: Vec::new(),
         }
     }

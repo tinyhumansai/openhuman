@@ -862,6 +862,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/schema", get(schema_handler))
         .route("/events", get(events_handler))
         .route("/events/webhooks", get(webhook_events_handler))
+        .route("/events/domain", get(domain_events_handler))
         .route("/rpc", post(rpc_handler))
         .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth", get(desktop_auth_handler))
@@ -1186,6 +1187,101 @@ async fn webhook_events_handler() -> Response {
         .into_response()
 }
 
+/// SSE endpoint streaming DomainEvent bus events for the live event log panel.
+///
+/// Requires bearer auth. Streams all domain events as JSON with event type
+/// set to the domain name (agent, tool, memory, etc.).
+async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let bearer_ok = bearer
+        .map(crate::core::auth::verify_bearer_token)
+        .unwrap_or(false);
+
+    if !bearer_ok {
+        log::warn!("[events/domain] reject subscribe: missing or invalid bearer token");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "unauthorized",
+                "message": "Bearer token required for domain event stream"
+            })),
+        )
+            .into_response();
+    }
+
+    // Read dashboard config for event stream settings.
+    let es_cfg = crate::openhuman::config::rpc::load_config_with_timeout()
+        .await
+        .map(|c| c.dashboard.event_stream)
+        .unwrap_or_default();
+
+    if !es_cfg.enabled {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "event stream disabled by config" })),
+        )
+            .into_response();
+    }
+
+    let bus = match crate::core::event_bus::global() {
+        Some(bus) => bus,
+        None => {
+            log::warn!("[events/domain] event bus not initialized");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "ok": false, "error": "event bus not initialized" })),
+            )
+                .into_response();
+        }
+    };
+
+    log::debug!("[events/domain] client connected, streaming domain events");
+
+    // Send config as first SSE event so frontend can apply settings.
+    let config_event = Event::default().event("config").data(
+        serde_json::to_string(&json!({
+            "max_entries": es_cfg.max_entries,
+            "new_entries": es_cfg.new_entries,
+        }))
+        .unwrap_or_default(),
+    );
+
+    let rx = bus.raw_receiver();
+    let event_stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
+        |item| -> Option<Result<Event, std::convert::Infallible>> {
+            let event = match item {
+                Ok(ev) => ev,
+                Err(_) => return None,
+            };
+            let domain = event.domain().to_string();
+            let event_name = event.variant_name();
+            let agent = event.agent_hint().unwrap_or("").to_string();
+            let data = json!({
+                "domain": domain,
+                "event": event_name,
+                "agent": agent,
+                "timestamp": chrono::Utc::now().format("%H:%M:%S").to_string(),
+            });
+            let data_str = serde_json::to_string(&data).ok()?;
+            Some(Ok(Event::default().event(domain).data(data_str)))
+        },
+    );
+
+    let config_stream =
+        futures::stream::once(async move { Ok::<_, std::convert::Infallible>(config_event) });
+    let stream = config_stream.chain(event_stream);
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(5)))
+        .into_response()
+}
+
 /// Handler for the root endpoint, returning server information and available endpoints.
 async fn root_handler() -> impl IntoResponse {
     let api_server = match crate::openhuman::config::Config::load_or_init().await {
@@ -1261,7 +1357,7 @@ pub async fn run_server(
     port: Option<u16>,
     socketio_enabled: bool,
 ) -> anyhow::Result<()> {
-    run_server_inner(host, port, socketio_enabled, false, None, None).await
+    run_server_inner(host, port, socketio_enabled, false, None, None, None).await
 }
 
 /// Like [`run_server`] but marks the instance as embedded.
@@ -1278,17 +1374,26 @@ pub async fn run_server_embedded(
         true,
         Some(shutdown_token),
         None,
+        None,
     )
     .await
 }
 
 /// Embedded entrypoint with an explicit readiness callback.
+///
+/// When the caller already holds the per-launch RPC bearer in memory (the
+/// Tauri shell now that the core runs in-process — PR #1061), it should
+/// pass `Some(token)` so the embedded server can seed its auth subsystem
+/// via [`crate::core::auth::init_rpc_token_with_value`] without ever
+/// reading `OPENHUMAN_CORE_TOKEN` from the process environment.  Passing
+/// `None` preserves the env-as-config fallback (CLI / docker / cloud).
 pub async fn run_server_embedded_with_ready(
     host: Option<&str>,
     port: Option<u16>,
     socketio_enabled: bool,
     shutdown_token: CancellationToken,
     ready_tx: tokio::sync::oneshot::Sender<EmbeddedReadySignal>,
+    rpc_token: Option<std::sync::Arc<String>>,
 ) -> anyhow::Result<()> {
     run_server_inner(
         host,
@@ -1297,6 +1402,7 @@ pub async fn run_server_embedded_with_ready(
         true,
         Some(shutdown_token),
         Some(ready_tx),
+        rpc_token,
     )
     .await
 }
@@ -1309,6 +1415,7 @@ async fn run_server_inner(
     embedded_core: bool,
     shutdown_token: Option<CancellationToken>,
     ready_tx: Option<tokio::sync::oneshot::Sender<EmbeddedReadySignal>>,
+    rpc_token: Option<std::sync::Arc<String>>,
 ) -> anyhow::Result<()> {
     // Ensure all controllers are registered before starting.
     let _ = all::all_registered_controllers();
@@ -1319,13 +1426,30 @@ async fn run_server_inner(
     crate::openhuman::keyring::init_master_key();
 
     // Initialize the per-process RPC bearer token.
-    // Written to {workspace_dir}/core.token so the Tauri shell can read it.
-    let token_dir = crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
-        dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".openhuman")
-    });
-    crate::core::auth::init_rpc_token(&token_dir)?;
+    //
+    // Preferred path (in-process core spawned by the Tauri shell): the caller
+    // passes the bearer it already holds in `CoreProcessHandle.rpc_token` as
+    // `rpc_token: Some(_)`. The token is seeded directly into the auth
+    // subsystem without ever crossing `OPENHUMAN_CORE_TOKEN` on the process
+    // environment — closing the same-UID readback channel (sysctl
+    // KERN_PROCARGS2 / ps eww on macOS, /proc/<pid>/environ on Linux).
+    //
+    // Fallback (standalone CLI / docker / cloud `openhuman core run`):
+    // `rpc_token: None` lets `init_rpc_token` read `OPENHUMAN_CORE_TOKEN`
+    // from the environment when present (env-as-config — legit operator
+    // surface), or generate a fresh token and write `{workspace_dir}/core.token`
+    // (0o600 on Unix) so CLI callers can authenticate.
+    if let Some(token) = rpc_token.as_deref() {
+        crate::core::auth::init_rpc_token_with_value(token)?;
+    } else {
+        let token_dir =
+            crate::openhuman::config::default_root_openhuman_dir().unwrap_or_else(|_| {
+                dirs::home_dir()
+                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                    .join(".openhuman")
+            });
+        crate::core::auth::init_rpc_token(&token_dir)?;
+    }
 
     // Initialize the global MemoryClient so composio providers
     // (gmail/slack/notion) can persist their sync_state via kv_get/kv_set,
@@ -1413,11 +1537,34 @@ async fn run_server_inner(
     // explicit RPC token. Without this, the entire RPC surface (tool
     // execution, file access, credentials) is unauthenticated and reachable
     // from the network. See: https://github.com/tinyhumansai/openhuman/issues/1919
+    //
+    // "Explicit token" means any of:
+    //   - An in-memory bearer supplied by the embedded caller via the
+    //     `rpc_token` parameter (the Tauri shell hands its
+    //     `CoreProcessHandle.rpc_token` in this way — see
+    //     `init_rpc_token_with_value`). This never lands on the process env.
+    //   - `OPENHUMAN_CORE_TOKEN` set in the process environment (operator
+    //     config for standalone CLI / Docker / cloud).
+    //
+    // Checking only the env var would emit a false security warning whenever
+    // an embedded caller binds on a non-loopback host with an in-memory
+    // bearer — the server is already protected in that case.
     if crate::openhuman::security::pairing::is_public_bind(&resolved_host) {
-        let has_explicit_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
+        let has_in_memory_token = rpc_token
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let has_env_token = std::env::var(crate::core::auth::CORE_TOKEN_ENV_VAR)
             .ok()
             .filter(|s| !s.trim().is_empty())
             .is_some();
+        // Auth subsystem was already initialised above; fall back to the live
+        // token if neither input matched but somehow a token is seeded (e.g.
+        // a future caller route that doesn't thread the value through here).
+        let has_initialized_token = crate::core::auth::get_rpc_token()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
+        let has_explicit_token = has_in_memory_token || has_env_token || has_initialized_token;
         if !has_explicit_token {
             log::error!(
                 "[core] ⚠️  SECURITY WARNING: Binding on public address {resolved_host} without \
@@ -1864,16 +2011,19 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         })
         .unwrap_or(true)
     {
-        let (session_id, ephemeral) = match std::env::var("OPENHUMAN_CORE_TOKEN")
-            .ok()
-            .filter(|s| !s.is_empty())
-        {
-            Some(token) => (token, false),
+        // Read the active bearer from the in-memory auth subsystem instead of
+        // OPENHUMAN_CORE_TOKEN — same value (init_rpc_token / init_rpc_token_with_value
+        // both populate the OnceLock that get_rpc_token reads), no env crossing.
+        // Init ordering: run_server_inner seeds the auth subsystem above
+        // (line ~1340) before bootstrap_core_runtime runs, so the bearer is
+        // always present here when supplied.
+        let (session_id, ephemeral) = match crate::core::auth::get_rpc_token() {
+            Some(token) => (token.to_string(), false),
             None => (format!("session-{}", uuid::Uuid::new_v4()), true),
         };
         if ephemeral {
             log::debug!(
-                "[runtime] OPENHUMAN_CORE_TOKEN unset; generated ephemeral session_id={session_id} \
+                "[runtime] auth bearer uninitialized; generated ephemeral session_id={session_id} \
                  for approval gate — `approval_list_pending` is session-agnostic so pending rows \
                  from prior launches will still be visible, but per-session audit grouping will not \
                  correlate across restarts"

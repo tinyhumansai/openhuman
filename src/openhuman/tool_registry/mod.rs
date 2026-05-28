@@ -1,5 +1,6 @@
 //! Unified read-only tool registry for discovery across OpenHuman tool surfaces.
 
+pub mod denials;
 pub mod ops;
 mod providers;
 mod schemas;
@@ -17,6 +18,7 @@ pub use schemas::{
     all_registered_controllers as all_tool_registry_registered_controllers,
 };
 pub use types::{
-    CapabilityProviderDiagnostics, ToolPolicyDiagnostics, ToolRegistryEntry, ToolRegistryHealth,
-    ToolRegistryList, ToolRegistryTransport,
+    CapabilityProviderDiagnostics, McpAllowlistDiagnostics, McpServerAllowlistSummary,
+    McpWriteAuditHealth, RecentPolicyDenial, ToolPolicyDiagnostics, ToolPolicyPosture,
+    ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList, ToolRegistryTransport,
 };

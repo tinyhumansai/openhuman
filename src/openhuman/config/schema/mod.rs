@@ -14,6 +14,7 @@ mod autonomy;
 mod capability_providers;
 mod channels;
 mod context;
+mod dashboard;
 mod defaults;
 mod dictation;
 mod heartbeat_cron;
@@ -54,6 +55,7 @@ pub use channels::{
     TelegramConfig, WebhookConfig, WhatsAppConfig,
 };
 pub use context::ContextConfig;
+pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
 pub use dictation::{DictationActivationMode, DictationConfig};
 pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
 pub use identity_cost::{CostConfig, ModelPricing};
@@ -92,7 +94,5 @@ pub use voice_providers::{
     generate_voice_provider_id, is_voice_slug_reserved, BuiltinVoiceProvider, SttApiStyle,
     TtsApiStyle, VoiceCapability, VoiceProviderCreds, BUILTIN_VOICE_PROVIDERS,
 };
-mod dashboard;
-pub use dashboard::{DashboardConfig, EventStreamConfig, ModelHealthConfig};
 mod types;
 pub use types::*;

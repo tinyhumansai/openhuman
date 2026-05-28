@@ -204,6 +204,17 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // -4FS, -4F6, -2YA, -4KR, -4KH, -4KY — ~458 events). The user
         // must pick a tool-capable model; Sentry has no remediation.
         "does not support tools",
+        // TAURI-RUST-1V — reliable-provider chain rolls up exhausted
+        // fallbacks into `All providers/models failed. Attempts:\n…\nThe
+        // model `<id>` may not be available on your provider. Configure
+        // a fallback chain via `reliability.model_fallbacks` in …`.
+        // Emitted at `src/openhuman/inference/provider/reliable.rs:332`.
+        // The remediation is "fix your `model_fallbacks` config" — pure
+        // user-config, nothing Sentry can act on. Anchor on the canonical
+        // remediation phrase so this doesn't collide with unrelated
+        // mentions of model availability (`reliable.rs:332` is the sole
+        // producer in-tree).
+        "may not be available on your provider",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -489,6 +500,41 @@ mod tests {
                 "{body:?} must NOT classify as a provider config-rejection"
             );
         }
+    }
+
+    #[test]
+    fn detects_reliable_chain_exhaustion_rollup() {
+        // TAURI-RUST-1V — `reliable.rs:325` rolls every attempt into
+        // `All providers/models failed. Attempts:\n…\nThe model `<id>`
+        // may not be available on your provider. Configure a fallback
+        // chain via `reliability.model_fallbacks` in …`. The wrapped err
+        // bubbles to `memory_sync::composio::bus` which previously
+        // emitted it as a raw `tracing::error!` — 10.7k events / 14d on
+        // self-hosted Sentry. The remediation lives entirely in the
+        // user's `reliability.model_fallbacks` config; Sentry has no
+        // remediation path.
+        let rollup = "All providers/models failed. Attempts:\n\
+            provider=openhuman model=gemini-3-flash-preview attempt 1/3: \
+            non_retryable; error=custom_openai API error (404 Not Found): \
+            <html>...</html>\n\
+            The model `gemini-3-flash-preview` may not be available on \
+            your provider. Configure a fallback chain via \
+            `reliability.model_fallbacks` in your config to route around \
+            unavailable models.";
+        assert!(
+            is_provider_config_rejection_message(rollup),
+            "TAURI-RUST-1V multi-line rollup must classify as provider config-rejection"
+        );
+
+        // Single-line `reliable.rs:332` emission (without the outer
+        // rollup wrapper) also matches — defensive against callers that
+        // surface only the inner remediation message.
+        let bare = "The model `chat-v1` may not be available on your provider. \
+            Configure a fallback chain via `reliability.model_fallbacks` in …";
+        assert!(
+            is_provider_config_rejection_message(bare),
+            "bare `may not be available on your provider` phrase must classify"
+        );
     }
 
     #[test]

@@ -223,5 +223,42 @@ mod tests {
             .get("policy_surfaces")
             .and_then(Value::as_array)
             .is_some());
+
+        // Expanded diagnostics surface for #2136.
+        let posture = diagnostics
+            .get("posture")
+            .and_then(Value::as_object)
+            .expect("posture");
+        assert!(posture
+            .get("autonomy_level")
+            .and_then(Value::as_str)
+            .is_some());
+        assert!(posture
+            .get("workspace_only")
+            .and_then(Value::as_bool)
+            .is_some());
+
+        let mcp_allowlists = diagnostics
+            .get("mcp_allowlists")
+            .and_then(Value::as_object)
+            .expect("mcp_allowlists");
+        assert!(mcp_allowlists
+            .get("server_count")
+            .and_then(Value::as_u64)
+            .is_some());
+
+        let mcp_write_audit = diagnostics
+            .get("mcp_write_audit")
+            .and_then(Value::as_object)
+            .expect("mcp_write_audit");
+        assert!(mcp_write_audit
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .is_some());
+
+        assert!(diagnostics
+            .get("recent_denials")
+            .and_then(Value::as_array)
+            .is_some());
     }
 }

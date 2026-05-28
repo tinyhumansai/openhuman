@@ -217,9 +217,10 @@ mod tests {
         let (_provider, model) = build_chat_runtime(&cfg).unwrap();
         assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
         // build_chat_runtime resolves the "summarization" workload role,
-        // which routes to the dedicated `summarization-v1` tier (PR #2690)
-        // rather than the generic `reasoning-v1` fallback.
-        assert_eq!(model, "summarization-v1");
+        // which routes to the dedicated DEFAULT_CLOUD_LLM_MODEL
+        // (`summarization-v1`, PR #2690) rather than the generic
+        // `reasoning-v1` fallback.
+        assert_eq!(model, DEFAULT_CLOUD_LLM_MODEL);
     }
 
     #[test]

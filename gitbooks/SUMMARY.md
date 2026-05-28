@@ -50,6 +50,9 @@
 * [Agent Observability](developing/agent-observability.md)
 * [Architecture](developing/architecture/README.md)
   * [Agent Harness](developing/architecture/agent-harness.md)
+  * [Memory Tree (`src/openhuman/memory_tree/`)](developing/architecture/memory-tree.md)
+  * [MCP Registry (`src/openhuman/mcp_registry/`)](developing/architecture/mcp-registry.md)
+  * [Security (`src/openhuman/security/`)](developing/architecture/security.md)
   * [Frontend (app/src/)](developing/architecture/frontend.md)
   * [Tauri Shell (app/src-tauri/)](developing/architecture/tauri-shell.md)
 

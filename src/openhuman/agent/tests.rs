@@ -1317,22 +1317,67 @@ fn xml_dispatcher_converts_history_to_provider_messages() {
 
 #[test]
 fn native_dispatcher_converts_tool_results_to_tool_messages() {
+    // TAURI-RUST-7: `to_provider_messages` now drops orphan `ToolResults`
+    // that aren't preceded by an emitted `AssistantToolCalls`, since the
+    // OpenAI chat-completions contract rejects a `tool` message that does
+    // not follow a `tool_calls` opener. Feed a properly paired cycle so
+    // this test continues to verify the serialisation shape of ToolResults
+    // (one `tool` ChatMessage per result) rather than the orphan path.
     let dispatcher = NativeToolDispatcher;
-    let history = vec![ConversationMessage::ToolResults(vec![
-        ToolResultMessage {
-            tool_call_id: "tc1".into(),
-            content: "output1".into(),
+    let history = vec![
+        ConversationMessage::AssistantToolCalls {
+            text: None,
+            tool_calls: vec![
+                ToolCall {
+                    id: "tc1".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+                ToolCall {
+                    id: "tc2".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+            ],
         },
-        ToolResultMessage {
-            tool_call_id: "tc2".into(),
-            content: "output2".into(),
-        },
-    ])];
+        ConversationMessage::ToolResults(vec![
+            ToolResultMessage {
+                tool_call_id: "tc1".into(),
+                content: "output1".into(),
+            },
+            ToolResultMessage {
+                tool_call_id: "tc2".into(),
+                content: "output2".into(),
+            },
+        ]),
+    ];
 
     let messages = dispatcher.to_provider_messages(&history);
-    assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].role, "tool");
+    // assistant tool_calls opener + one `tool` message per tool_call_id.
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0].role, "assistant");
     assert_eq!(messages[1].role, "tool");
+    assert_eq!(messages[2].role, "tool");
+}
+
+#[test]
+fn native_dispatcher_drops_standalone_orphan_tool_results() {
+    // TAURI-RUST-7 regression: a `ToolResults` without a preceding
+    // `AssistantToolCalls` is an invalid wire shape (the provider rejects
+    // a `tool` message that doesn't follow a `tool_calls` opener). The
+    // dispatcher must drop it before serialising.
+    let dispatcher = NativeToolDispatcher;
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "tc-orphan".into(),
+        content: "stranded".into(),
+    }])];
+
+    let messages = dispatcher.to_provider_messages(&history);
+    assert!(
+        messages.is_empty(),
+        "standalone ToolResults must be dropped, got {} message(s)",
+        messages.len()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

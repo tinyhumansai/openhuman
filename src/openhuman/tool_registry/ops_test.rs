@@ -60,6 +60,9 @@ fn diagnostics_reports_inventory_and_policy_surfaces() {
         .possible_write_surfaces
         .iter()
         .any(|tool_id| tool_id == "tools.composio_execute"));
+
+    assert!(!outcome.value.posture.autonomy_level.is_empty());
+    assert!(outcome.value.mcp_write_audit.enabled);
 }
 
 #[tokio::test]

@@ -450,6 +450,25 @@ export interface SearchSettings {
   allow_all: boolean;
 }
 
+export interface DiagramViewerSettings {
+  enabled: boolean;
+  source_url: string;
+  refresh_interval_seconds: number;
+}
+
+export interface DashboardSettings {
+  diagram_viewer: DiagramViewerSettings;
+}
+
+export async function openhumanGetDashboardSettings(): Promise<CommandResponse<DashboardSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<DashboardSettings>>({
+    method: CORE_RPC_METHODS.configGetDashboardSettings,
+  });
+}
+
 export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {
   if (!isTauri()) {
     throw new Error('Not running in Tauri');

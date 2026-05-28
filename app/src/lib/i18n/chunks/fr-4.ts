@@ -103,6 +103,19 @@ const fr4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'abandonné',
   'intelligence.memoryChunk.scoreBars.heading': 'p o u r q u o i   c o n s e r v é',
   'intelligence.memoryChunk.scoreBars.kept': 'conservé',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': "Type d'entité",
   'intelligence.screenDebug.active': 'Actif',
   'intelligence.screenDebug.app': 'Application',

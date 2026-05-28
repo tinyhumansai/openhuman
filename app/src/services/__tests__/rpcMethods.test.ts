@@ -95,6 +95,24 @@ describe('rpcMethods catalog', () => {
     });
   });
 
+  describe('health legacy alias resolution (Sentry CORE-RUST-FG / CORE-RUST-G0)', () => {
+    test('health_snapshot resolves to openhuman.health_snapshot', () => {
+      expect(normalizeRpcMethod('health_snapshot')).toBe(CORE_RPC_METHODS.healthSnapshot);
+    });
+
+    test('openhuman.system_info resolves to openhuman.health_system_info (Sentry CORE-RUST-G0)', () => {
+      // Older clients called openhuman.system_info before the method was
+      // namespaced under health as openhuman.health_system_info.
+      expect(normalizeRpcMethod('openhuman.system_info')).toBe(CORE_RPC_METHODS.healthSystemInfo);
+    });
+
+    test('canonical health_system_info passes through unchanged', () => {
+      expect(normalizeRpcMethod('openhuman.health_system_info')).toBe(
+        'openhuman.health_system_info'
+      );
+    });
+  });
+
   test('catalog canonical methods exist in core schema registry (drift guard)', () => {
     const schemaSources = [
       fs.readFileSync(

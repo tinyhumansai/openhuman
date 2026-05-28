@@ -51,6 +51,51 @@ use anyhow::Result;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+/// True when `msg` is an `assistant` ChatMessage whose JSON-encoded content
+/// carries a non-empty `tool_calls` array.
+///
+/// `to_provider_messages` (in `agent/dispatcher.rs`) serialises an
+/// `AssistantToolCalls` ConversationMessage as a single `assistant` ChatMessage
+/// with a JSON body of the form `{"content": "...", "tool_calls": [...]}`. To
+/// detect those at the `ChatMessage` boundary (where `bound_cached_transcript_messages`
+/// operates) we have to peek inside the JSON. See TAURI-RUST-7 for the
+/// failure mode this guards against.
+fn assistant_message_has_tool_calls(msg: &ChatMessage) -> bool {
+    if msg.role != "assistant" {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&msg.content) else {
+        return false;
+    };
+    // CodeRabbit follow-up: only treat this as the native tool_calls envelope
+    // when the full expected shape is present:
+    //   - top-level JSON object
+    //   - `content` key present (the envelope `dispatcher.rs` emits — see
+    //     `to_provider_messages`)
+    //   - non-empty `tool_calls` array whose every element carries an `id`
+    //     string, a `name` string, and an `arguments` field
+    // This stops a legitimate assistant text reply that happens to contain
+    // the literal string `tool_calls` from being misclassified and dropped at
+    // the bound-cached-transcript boundary.
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    if !obj.contains_key("content") {
+        return false;
+    }
+    let Some(tool_calls) = obj.get("tool_calls").and_then(|tc| tc.as_array()) else {
+        return false;
+    };
+    if tool_calls.is_empty() {
+        return false;
+    }
+    tool_calls.iter().all(|tc| {
+        tc.get("id").and_then(|v| v.as_str()).is_some()
+            && tc.get("name").and_then(|v| v.as_str()).is_some()
+            && tc.get("arguments").is_some()
+    })
+}
+
 /// Instruction appended (as a synthetic user turn) to the provider
 /// messages when a turn hits the tool-call iteration cap. Asks the model
 /// to wrap up with a resumable checkpoint instead of letting the turn die.
@@ -1396,6 +1441,12 @@ impl Agent {
                             ToolPolicyDecision::Deny { .. } => "denied",
                             ToolPolicyDecision::Allow => "allowed",
                         };
+                        crate::openhuman::tool_registry::denials::record(
+                            call.name.as_str(),
+                            self.tool_policy.name(),
+                            blocked_action,
+                            reason,
+                        );
                         tracing::debug!(
                             tool = call.name.as_str(),
                             policy = self.tool_policy.name(),
@@ -1725,6 +1776,30 @@ impl Agent {
             bounded.push(messages[0].clone());
         }
         bounded.extend(tail.iter().cloned());
+
+        // TAURI-RUST-7: symmetric guard to the leading-orphan strip above. A
+        // resumed transcript that ends on an `assistant` message containing
+        // `tool_calls` (because the cached transcript was captured mid-cycle,
+        // before the tool responses were persisted) is rejected by the
+        // provider with `400 An assistant message with 'tool_calls' must be
+        // followed by tool messages`. Pop any such trailing assistant
+        // tool_calls so the bounded transcript ends on a clean turn boundary.
+        let mut dropped_tail = 0usize;
+        while bounded
+            .last()
+            .map(assistant_message_has_tool_calls)
+            .unwrap_or(false)
+        {
+            bounded.pop();
+            dropped_tail += 1;
+        }
+        if dropped_tail > 0 {
+            log::debug!(
+                "[agent] bound_cached_transcript_messages stripped {dropped_tail} trailing \
+                 assistant tool_calls message(s) without paired tool responses"
+            );
+        }
+
         bounded
     }
 
