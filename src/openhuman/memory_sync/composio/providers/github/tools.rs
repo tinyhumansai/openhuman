@@ -10,11 +10,11 @@ use crate::openhuman::memory_sync::composio::providers::tool_scope::{CuratedTool
 pub const GITHUB_CURATED: &[CuratedTool] = &[
     // ── Read: user / repos ──────────────────────────────────────────
     CuratedTool {
-        slug: "GITHUB_GET_AUTHENTICATED_USER",
+        slug: "GITHUB_GET_THE_AUTHENTICATED_USER",
         scope: ToolScope::Read,
     },
     CuratedTool {
-        slug: "GITHUB_LIST_REPOSITORIES_FOR_AUTHENTICATED_USER",
+        slug: "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
         scope: ToolScope::Read,
     },
     CuratedTool {
@@ -35,7 +35,7 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         scope: ToolScope::Read,
     },
     CuratedTool {
-        slug: "GITHUB_SEARCH_ISSUES",
+        slug: "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
         scope: ToolScope::Read,
     },
     CuratedTool {
@@ -92,7 +92,7 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
     // CuratedTool { slug: "GITHUB_LIST_WORKFLOW_RUNS", scope: ToolScope::Read },
     // ── Write: repos / contents ─────────────────────────────────────
     CuratedTool {
-        slug: "GITHUB_CREATE_A_REPOSITORY_FOR_AUTHENTICATED_USER",
+        slug: "GITHUB_CREATE_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER",
         scope: ToolScope::Write,
     },
     CuratedTool {
@@ -103,10 +103,7 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         slug: "GITHUB_CREATE_A_COMMIT",
         scope: ToolScope::Write,
     },
-    CuratedTool {
-        slug: "GITHUB_COMMIT_MULTIPLE_FILES",
-        scope: ToolScope::Write,
-    },
+    // GITHUB_COMMIT_MULTIPLE_FILES removed from Composio catalog
     CuratedTool {
         slug: "GITHUB_CREATE_A_COMMIT_COMMENT",
         scope: ToolScope::Write,
@@ -120,10 +117,8 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         slug: "GITHUB_UPDATE_AN_ISSUE",
         scope: ToolScope::Write,
     },
-    CuratedTool {
-        slug: "GITHUB_CLOSE_AN_ISSUE",
-        scope: ToolScope::Write,
-    },
+    // GITHUB_CLOSE_AN_ISSUE — removed: no dedicated Composio slug.
+    // Use GITHUB_UPDATE_AN_ISSUE with state:"closed" instead.
     CuratedTool {
         slug: "GITHUB_CREATE_AN_ISSUE_COMMENT",
         scope: ToolScope::Write,
@@ -169,8 +164,14 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         slug: "GITHUB_DELETE_A_REPOSITORY",
         scope: ToolScope::Admin,
     },
+    // DELETE_A_REFERENCE maps to DELETE /repos/{owner}/{repo}/git/refs/{ref}.
+    // The ref must be a full path (e.g. `refs/heads/branch-name` or
+    // `refs/tags/v1.0`) — passing a bare branch name deletes nothing (404).
+    // This replaces the old GITHUB_DELETE_A_BRANCH slug (Composio v3 rename);
+    // it is broader — it can delete tags too — so agents should always specify
+    // a `refs/heads/` prefix when the intent is branch deletion.
     CuratedTool {
-        slug: "GITHUB_DELETE_A_BRANCH",
+        slug: "GITHUB_DELETE_A_REFERENCE",
         scope: ToolScope::Admin,
     },
     CuratedTool {
@@ -182,7 +183,7 @@ pub const GITHUB_CURATED: &[CuratedTool] = &[
         scope: ToolScope::Admin,
     },
     CuratedTool {
-        slug: "GITHUB_CANCEL_WORKFLOW_RUN",
+        slug: "GITHUB_CANCEL_A_WORKFLOW_RUN",
         scope: ToolScope::Admin,
     },
 ];

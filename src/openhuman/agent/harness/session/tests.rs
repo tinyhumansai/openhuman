@@ -795,3 +795,47 @@ fn bound_cached_transcript_messages_without_system_prefix_keeps_tail() {
     assert_eq!(bounded[1].content, "a2");
     assert_eq!(bounded[2].content, "u3");
 }
+
+/// The cached-transcript resume path operates on wire-form `ChatMessage`s. When
+/// the window cut lands so the tail opens on a `tool` result whose `tool_calls`
+/// opener fell outside the window, `bound_cached_transcript_messages` must snap
+/// past it — a leading `tool` message has no preceding `tool_calls` and the
+/// provider 400s (surfacing as "Something went wrong").
+#[test]
+fn bound_cached_transcript_messages_snaps_past_leading_orphan_tool() {
+    use crate::openhuman::inference::provider::ChatMessage;
+
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+    agent.config.max_history_messages = 3;
+
+    // 5 messages, cap 3: the tail slice is [tool(a), user(u2), assistant(a2)];
+    // the assistant `tool_calls` opener fell outside the window.
+    let messages = vec![
+        ChatMessage::assistant(
+            r#"{"content":"calling","tool_calls":[{"id":"call_a","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"orphaned"}"#),
+        ChatMessage::user("u2"),
+        ChatMessage::assistant("a2"),
+        ChatMessage::user("u3"),
+    ];
+
+    let bounded = agent.bound_cached_transcript_messages(messages);
+
+    assert!(
+        bounded.first().map(|m| m.role.as_str()) != Some("tool"),
+        "window must not open on an orphaned tool result"
+    );
+    assert!(
+        !bounded.iter().any(|m| m.role == "tool"),
+        "the orphaned tool result must be dropped"
+    );
+    // tail [tool, u2, a2, u3] -> drop leading tool -> [u2, a2, u3].
+    assert_eq!(
+        bounded
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec!["u2", "a2", "u3"]
+    );
+}

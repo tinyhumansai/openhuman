@@ -363,7 +363,8 @@ pub struct RuntimeSettingsPatch {
 
 /// Partial update for the `[autonomy]` block — the agent's filesystem access
 /// mode. Each `None` field is left unchanged. `trusted_roots`, `allowed_commands`,
-/// and `forbidden_paths`, when `Some`, REPLACE the corresponding array wholesale.
+/// `forbidden_paths`, and `auto_approve`, when `Some`, REPLACE the corresponding
+/// array wholesale.
 #[derive(Debug, Clone, Default)]
 pub struct AutonomySettingsPatch {
     /// `"readonly" | "supervised" | "full"` (case-insensitive).
@@ -374,6 +375,8 @@ pub struct AutonomySettingsPatch {
     pub trusted_roots: Option<Vec<crate::openhuman::security::TrustedRoot>>,
     pub allow_tool_install: Option<bool>,
     pub max_actions_per_hour: Option<u32>,
+    /// "Always allow" allowlist — tool names the gate skips prompting for.
+    pub auto_approve: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -860,6 +863,9 @@ pub async fn apply_autonomy_settings(
         }
         config.autonomy.max_actions_per_hour = max_actions_per_hour;
     }
+    if let Some(auto_approve) = update.auto_approve {
+        config.autonomy.auto_approve = auto_approve;
+    }
 
     config.save().await.map_err(|e| e.to_string())?;
 
@@ -886,6 +892,42 @@ pub async fn load_and_apply_autonomy_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_autonomy_settings(&mut config, update).await
+}
+
+/// Serializes the load-modify-save in [`add_auto_approve_tool`] so two
+/// concurrent "Always allow" appends (different tools) can't read the same
+/// `auto_approve`, each push their own, and clobber the other on save
+/// (last-write-wins lost-update). Holding it across load→save makes the second
+/// caller observe the first's write and union the entries. Process-local; the
+/// allowlist lives in a single per-launch config file. (CodeRabbit, PR #2706.)
+fn auto_approve_write_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Append `tool_name` to `autonomy.auto_approve` ("Always allow") and persist +
+/// reload the live policy. Idempotent — a no-op (no disk write) when the tool is
+/// already allow-listed. Backs the `ApproveAlwaysForTool` approval decision.
+pub async fn add_auto_approve_tool(tool_name: &str) -> Result<(), String> {
+    // Serialize the read-modify-write against concurrent appends (see lock doc).
+    let _guard = auto_approve_write_lock().lock().await;
+    let mut config = load_config_with_timeout().await?;
+    if config.autonomy.auto_approve.iter().any(|t| t == tool_name) {
+        tracing::debug!(
+            tool = tool_name,
+            "[config:auto_approve] tool already allow-listed; nothing to persist"
+        );
+        return Ok(());
+    }
+    let mut next = config.autonomy.auto_approve.clone();
+    next.push(tool_name.to_string());
+    let patch = AutonomySettingsPatch {
+        auto_approve: Some(next),
+        ..AutonomySettingsPatch::default()
+    };
+    apply_autonomy_settings(&mut config, patch)
+        .await
+        .map(|_| ())
 }
 
 /// Returns the current `[autonomy]` settings block as JSON (no secrets).

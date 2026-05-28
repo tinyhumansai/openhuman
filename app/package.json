@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.54.16",
+  "version": "0.57.1",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -93,6 +93,7 @@
     "buffer": "^6.0.3",
     "cmdk": "^1.1.1",
     "debug": "^4.4.3",
+    "katex": "^0.16.47",
     "lottie-react": "^2.4.1",
     "os-browserify": "^0.3.0",
     "process": "^0.11.10",
@@ -105,7 +106,10 @@
     "react-markdown": "^10.1.0",
     "react-redux": "^9.2.0",
     "react-router-dom": "^7.13.0",
+    "recharts": "^2.15.0",
     "redux-persist": "^6.0.0",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
     "remotion": "4.0.454",
     "socket.io-client": "^4.8.3",
     "tauri-plugin-ptt-api": "workspace:*",
@@ -114,8 +118,8 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@playwright/test": "^1.56.1",
     "@eslint/js": "^9.39.2",
+    "@playwright/test": "^1.56.1",
     "@sentry/vite-plugin": "^2.22.6",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/typography": "^0.5.19",

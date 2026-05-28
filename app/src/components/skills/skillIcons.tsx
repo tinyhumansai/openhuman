@@ -7,7 +7,6 @@ import YuanbaoIcon from '../channels/YuanbaoIcon';
 import {
   LuBlocks,
   LuBot,
-  LuEye,
   LuKeyboard,
   LuMessageSquareMore,
   LuMic,
@@ -155,12 +154,6 @@ const CATEGORY_META: Record<
     chipClassName: 'bg-stone-100 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200',
     iconClassName: 'text-stone-500 dark:text-neutral-400',
     headingClassName: 'text-stone-500 dark:text-neutral-400',
-  },
-  Preview: {
-    icon: LuEye,
-    chipClassName: 'bg-amber-50 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200',
-    iconClassName: 'text-amber-600 dark:text-amber-300',
-    headingClassName: 'text-amber-600 dark:text-amber-300',
   },
 };
 

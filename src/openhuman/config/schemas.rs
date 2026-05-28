@@ -214,6 +214,9 @@ struct AutonomySettingsUpdate {
     // Accept u64 to match the published schema (`TypeSchema::U64`); clamped to the
     // internal u32 at apply time. u32::MAX/hr is already effectively unlimited.
     max_actions_per_hour: Option<u64>,
+    /// Replaces the "Always allow" allowlist wholesale — tool names the agent
+    /// may run without an approval prompt. Empty list clears it.
+    auto_approve: Option<Vec<String>>,
 }
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -598,6 +601,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "max_actions_per_hour",
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Rate limit for side-effecting actions per hour.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "auto_approve",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Replace the \"Always allow\" allowlist (array of tool names the agent runs without an approval prompt). Empty array clears it.",
                     required: false,
                 },
             ],
@@ -1212,6 +1221,7 @@ fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFutu
             max_actions_per_hour: update
                 .max_actions_per_hour
                 .map(|v| u32::try_from(v).unwrap_or(u32::MAX)),
+            auto_approve: update.auto_approve,
         };
         to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
     })

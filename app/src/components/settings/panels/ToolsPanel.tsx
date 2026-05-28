@@ -7,6 +7,7 @@ import {
   getDefaultEnabledTools,
   getEnabledRustToolNames,
   getToolsByCategory,
+  normalizeEnabledToolList,
   TOOL_CATEGORIES,
 } from '../../../utils/toolDefinitions';
 import SettingsHeader from '../components/SettingsHeader';
@@ -38,7 +39,14 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
   useEffect(() => {
     if (savingRef.current) return;
     const persisted = onboardingTasks?.enabledTools;
-    const enabledList = persisted && persisted.length > 0 ? persisted : getDefaultEnabledTools();
+    // normalizeEnabledToolList converts persisted Rust tool names (e.g.
+    // "web_search_tool") back to UI toggle IDs ("web_search") so the
+    // includes() check below works regardless of what format was saved
+    // (fixes #2742: web_search toggle auto-reverts to OFF).
+    const enabledList =
+      persisted && persisted.length > 0
+        ? normalizeEnabledToolList(persisted)
+        : getDefaultEnabledTools();
     const map: Record<string, boolean> = {};
     for (const cat of TOOL_CATEGORIES) {
       for (const tool of toolsByCategory[cat]) {

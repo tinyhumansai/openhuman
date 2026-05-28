@@ -316,6 +316,8 @@ export interface AutonomySettings {
   trusted_roots: TrustedRoot[];
   allow_tool_install: boolean;
   max_actions_per_hour: number;
+  /** "Always allow" allowlist — tool names the agent runs without a prompt. */
+  auto_approve: string[];
 }
 
 /** Partial update — omitted fields are left unchanged. */
@@ -327,6 +329,8 @@ export interface AutonomySettingsUpdate {
   trusted_roots?: TrustedRoot[];
   allow_tool_install?: boolean;
   max_actions_per_hour?: number;
+  /** Replaces the "Always allow" allowlist wholesale. */
+  auto_approve?: string[];
 }
 
 export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {

@@ -1335,6 +1335,19 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "security.always_allow_tool",
+        name: "Always Allow a Tool",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "On an approval prompt, choose \"Always allow\" to stop being asked for that \
+                      tool. The choice is saved to your allow-list and persists across restarts; \
+                      remove it any time under Settings → Agent OS access to be prompted again. \
+                      Policy still blocks forbidden paths and high-risk commands regardless.",
+        how_to: "Click \"Always allow\" on an approval prompt; manage the list in Settings → Agent OS access.",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
         id: "tool.detect_tools",
         name: "Detect Installed Tools",
         domain: "tools",
