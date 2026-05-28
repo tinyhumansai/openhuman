@@ -192,6 +192,27 @@ pub enum ExpectedErrorKind {
     /// state snapshots) — every one of them emits the same canonical errno
     /// rendering.
     DiskFull,
+    /// A user-supplied filesystem path failed an RPC-level validation
+    /// check — e.g. `openhuman.vault_create` was called with a
+    /// `root_path` that doesn't exist or points at a file rather than a
+    /// directory. The UI already shows the typed error to the user, and
+    /// Sentry has no remediation path (we can't `mkdir -p` a folder the
+    /// user hasn't actually picked yet). User-supplied paths can also
+    /// embed PII fragments (the home-directory segment leaks the OS
+    /// username), so demoting these out of the Sentry event stream is a
+    /// small privacy win on top of the noise reduction.
+    ///
+    /// Drops Sentry TAURI-RUST-4QH (`root_path is not a directory:
+    /// /Users/<user>/Documents/<vault>`, observed on
+    /// `openhuman@0.56.0`) and preempts the symmetric
+    /// `hosted path is not a directory:` shape from
+    /// `openhuman::http_host::path_utils` once it starts surfacing.
+    /// See [`is_filesystem_user_path_invalid_message`] for the polarity
+    /// contract — the safety-guard variant in `skills::ops_install`
+    /// (`{path} is not a directory — refusing to remove`) is
+    /// deliberately not matched because that's an `rm -rf` invariant
+    /// violation, not user input.
+    FilesystemUserPathInvalid,
     /// A memory-store write (document upsert or KV set) was rejected because
     /// the namespace or key contained what the PII guard classified as a
     /// personal identifier (national ID, phone number, formatted credential,
@@ -342,6 +363,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     // web_channel re-report where the type was flattened to a String).
     if is_empty_provider_response_message(&lower) {
         return Some(ExpectedErrorKind::EmptyProviderResponse);
+    }
+    // RPC-level filesystem path validation — explicit wire-shape anchors
+    // (root_path / hosted path) prevent accidental demotion of unrelated
+    // errors. See the variant doc-comment and
+    // [`is_filesystem_user_path_invalid_message`] polarity contract.
+    if is_filesystem_user_path_invalid_message(&lower) {
+        return Some(ExpectedErrorKind::FilesystemUserPathInvalid);
     }
     None
 }
@@ -971,6 +999,44 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
         || lower.contains("prompt blocked by security policy")
 }
 
+/// Detect an RPC-level filesystem path validation failure from user input.
+///
+/// Anchored on the two known wire shapes — both emitted at the RPC entry
+/// boundary when a user typed/picked a path that doesn't resolve to an
+/// existing directory:
+///
+/// - `"root_path is not a directory: <path>"` —
+///   [`crate::openhuman::vault::ops::vault_create`] when the chosen vault
+///   folder doesn't exist or points at a file (Sentry TAURI-RUST-4QH).
+/// - `"hosted path is not a directory: <path>"` —
+///   [`crate::openhuman::http_host::path_utils`] when an HTTP host config
+///   references a missing directory. Not yet observed in Sentry but
+///   shares the same user-input failure mode; preempts a future ID.
+///
+/// Both are deterministic Err returns at the validation gate of an RPC
+/// handler, BEFORE any side-effect happens. The UI already surfaces the
+/// typed error and Sentry has no remediation path.
+///
+/// **Polarity contract** — explicit wire-shape anchors prevent accidental
+/// demotion of future errors whose bodies happen to contain "path is not
+/// a directory:" in a different context:
+///
+/// - `skills::ops_install` emits `"{path} is not a directory — refusing
+///   to remove"` (em-dash separator, no "root_path" or "hosted path"
+///   prefix). That is an `rm -rf` safety guard catching an UNEXPECTED
+///   state, not user input — it must STAY actionable.
+/// - A generic `"input config path is not a directory: /etc/foo"` from a
+///   future provider/wallet/storage error would NOT match (no known
+///   prefix) and would reach Sentry as intended.
+///
+/// All matches are substring-based against the lower-cased message so
+/// the classifier survives caller wrapping (`rpc.invoke_method`,
+/// anyhow context chains, …).
+fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
+    lower.contains("root_path is not a directory:")
+        || lower.contains("hosted path is not a directory:")
+}
+
 /// Detect memory-store writes rejected because the namespace or key contained
 /// a personal identifier detected by the PII guard.
 ///
@@ -1284,6 +1350,37 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "memory_store_breaker_open",
                 "[observability] {domain}.{operation} skipped expected memory-store circuit-breaker-open error"
+            );
+        }
+        ExpectedErrorKind::FilesystemUserPathInvalid => {
+            // User-input validation failure surfaced at the RPC
+            // boundary — e.g. `openhuman.vault_create` called with a
+            // `root_path` that doesn't exist. The typed error is
+            // already shown to the user; Sentry has no remediation
+            // path. Demote to `info!` — same tier as
+            // `PromptInjectionBlocked`, which is the closest severity
+            // class ("user input we already surfaced a typed error for";
+            // not operator-actionable like `DiskFull` / `NetworkUnreachable`).
+            //
+            // **Do not include the raw `message` here.** The message
+            // body embeds the user's local filesystem layout (username,
+            // project name, document directory, …) and
+            // `sentry_tracing_layer` in `core::logging` maps
+            // `Level::INFO` to `EventFilter::Breadcrumb` — so any
+            // formatted body would be attached as a breadcrumb to
+            // every subsequent Sentry event from this hub, leaking
+            // user paths into unrelated reports. Log only `domain` /
+            // `operation` / `kind` (no PII), matching the
+            // `LoopbackUnavailable` arm above ("metadata over raw text
+            // for noise demotions", per the #1719 review feedback).
+            // Full-path diagnostics for local debugging stay available
+            // via `RUST_LOG=…=debug` since `Level::DEBUG` / `TRACE`
+            // are mapped to `EventFilter::Ignore`.
+            tracing::info!(
+                domain = domain,
+                operation = operation,
+                kind = "filesystem_user_path_invalid",
+                "[observability] {domain}.{operation} skipped expected filesystem path validation error"
             );
         }
         ExpectedErrorKind::MemoryStorePiiRejection => {
@@ -2030,6 +2127,89 @@ mod tests {
                 expected_error_kind(raw),
                 None,
                 "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    // ── FilesystemUserPathInvalid (TAURI-RUST-4QH) ─────────────────────────
+
+    #[test]
+    fn classifies_vault_create_root_path_not_a_directory_as_filesystem_user_path_invalid() {
+        // TAURI-RUST-4QH: verbatim wire shape from
+        // `openhuman::vault::ops::vault_create` line 37 when the
+        // user-picked vault folder doesn't resolve to an existing
+        // directory. Bubbles up as the RPC dispatcher's
+        // `display_message` and reaches `report_error_or_expected` —
+        // must classify so no Sentry event fires.
+        assert_eq!(
+            expected_error_kind(
+                "root_path is not a directory: /Users/zadam/Documents/SndBrainOpenHuman"
+            ),
+            Some(ExpectedErrorKind::FilesystemUserPathInvalid)
+        );
+
+        // The same body wrapped by the JSON-RPC dispatcher's `display_message`
+        // prefix (`rpc.invoke_method` re-emit shape from `src/core/jsonrpc.rs`).
+        // Must still classify so the dispatch-site re-report doesn't escape
+        // the matcher even if a future caller layers more context.
+        assert_eq!(
+            expected_error_kind(
+                "rpc.invoke_method failed: root_path is not a directory: /Users/alice/openhuman-data"
+            ),
+            Some(ExpectedErrorKind::FilesystemUserPathInvalid)
+        );
+    }
+
+    #[test]
+    fn classifies_http_host_hosted_path_not_a_directory_as_filesystem_user_path_invalid() {
+        // Preempt the symmetric shape from
+        // `openhuman::http_host::path_utils:23` —
+        // `"hosted path is not a directory: <path>"`. Not yet observed
+        // in Sentry but shares the same RPC validation polarity as
+        // vault_create's `root_path` check. Anchoring on
+        // `"path is not a directory:"` (with trailing colon) covers
+        // both without two separate matchers.
+        assert_eq!(
+            expected_error_kind("hosted path is not a directory: /var/www/static-site"),
+            Some(ExpectedErrorKind::FilesystemUserPathInvalid)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_path_messages_as_filesystem_user_path_invalid() {
+        // Polarity contract — the anchor requires a trailing colon
+        // after `"is not a directory"`, which discriminates user input
+        // (path follows the colon) from other shapes:
+        //
+        // 1. The `skills::ops_install:475` SAFETY GUARD —
+        //    `"<path> is not a directory — refusing to remove"` — must
+        //    stay actionable. It catches an `rm -rf` invariant violation
+        //    (the target should have been a directory but wasn't),
+        //    which is a code bug, not user input.
+        // 2. A narrative log line that happens to mention the phrase
+        //    without the user-path colon suffix is not a validation
+        //    failure and must not be silenced.
+        // 3. The dot-prefix variant from POSIX `EISDIR`/`ENOTDIR`
+        //    renderings (`"Is a directory (os error 21)"`) is the
+        //    inverse condition — different code path entirely.
+        for raw in [
+            // Safety guard — must NOT classify.
+            "/tmp/openhuman-cache is not a directory — refusing to remove",
+            // Narrative log line — must NOT classify.
+            "checked that path is not a directory before mkdir",
+            // Inverse condition (os error 21: EISDIR) — must NOT classify.
+            "open /etc/passwd failed: Is a directory (os error 21)",
+            // Bare path with no `directory` mention — must NOT classify.
+            "root_path must be absolute: ./relative/path",
+            // Generic body with the trailing colon but no known vault/http_host
+            // prefix — must NOT classify (future provider/storage errors that
+            // happen to embed "path is not a directory: ..." should reach Sentry).
+            "input config path is not a directory: /etc/foo",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "polarity contract: must NOT classify as FilesystemUserPathInvalid: {raw}"
             );
         }
     }
