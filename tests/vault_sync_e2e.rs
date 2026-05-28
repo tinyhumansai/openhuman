@@ -2,7 +2,14 @@
 //!
 //! Runs the public `vault.*` operations against a real temp workspace:
 //! create a vault, sync supported files, verify per-file ledger + memory
-//! metadata, then modify/delete/add files and sync again.
+//! tree state, then modify/delete/add files and sync again.
+//!
+//! Memory-side assertions target the **memory_tree backend** (the canonical
+//! RAG layer for `memory.search` / `tree.read_chunk` / agent recall).
+//! Prior to #2720 vault sync wrote to the legacy `UnifiedMemory.memory_docs`
+//! table — silently invisible to retrieval. The fix migrated vault sync to
+//! the memory-tree pipeline, so this test now probes `mem_tree_chunks` and
+//! `mem_tree_ingested_sources` instead of `list_documents`.
 
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
@@ -12,6 +19,8 @@ use tempfile::tempdir;
 
 use openhuman_core::openhuman::config::Config;
 use openhuman_core::openhuman::memory::global as memory_global;
+use openhuman_core::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
+use openhuman_core::openhuman::memory_store::chunks::types::SourceKind;
 use openhuman_core::openhuman::vault::ops;
 use openhuman_core::openhuman::vault::VaultSyncStatus;
 
@@ -42,14 +51,6 @@ async fn wait_for_sync(vault_id: &str) -> openhuman_core::openhuman::vault::Vaul
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     panic!("vault sync did not finish within polling window");
-}
-
-fn documents_from_payload(payload: &serde_json::Value) -> Vec<serde_json::Value> {
-    payload
-        .get("documents")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default()
 }
 
 #[tokio::test]
@@ -113,20 +114,36 @@ async fn vault_sync_roundtrip_updates_memory_and_ledger() {
     assert!(files.iter().any(|file| file.rel_path == "notes/one.md"));
     assert!(files.iter().any(|file| file.rel_path == "docs/two.json"));
 
-    let docs = memory_global::client()
-        .expect("global memory client")
-        .list_documents(Some(&vault.namespace))
-        .await
-        .expect("list vault documents");
-    let docs = documents_from_payload(&docs);
-    assert_eq!(docs.len(), 2);
-    assert!(docs.iter().any(|doc| {
-        doc.get("key").and_then(serde_json::Value::as_str) == Some("notes/one.md")
-            && doc.get("sourceType").and_then(serde_json::Value::as_str) == Some("vault")
-    }));
-    assert!(docs.iter().any(|doc| {
-        doc.get("key").and_then(serde_json::Value::as_str) == Some("docs/two.json")
-    }));
+    // After #2720, vault sync writes to memory_tree (mem_tree_chunks +
+    // mem_tree_ingested_sources). Both files must register as sources, and
+    // the chunk count must be > 0 (otherwise the chunker / pipeline silently
+    // dropped them — the exact failure mode this test guards against).
+    let chunks_after_first = count_chunks(&config).expect("count_chunks after first sync");
+    assert!(
+        chunks_after_first > 0,
+        "vault sync must populate mem_tree_chunks; got {chunks_after_first}"
+    );
+    let one_id = format!("vault:{}:notes/one.md", vault.id);
+    let two_id = format!("vault:{}:docs/two.json", vault.id);
+    assert!(
+        is_source_ingested(&config, SourceKind::Document, &one_id).expect("source check one.md"),
+        "notes/one.md missing from mem_tree_ingested_sources (source_id={one_id})"
+    );
+    assert!(
+        is_source_ingested(&config, SourceKind::Document, &two_id).expect("source check two.json"),
+        "docs/two.json missing from mem_tree_ingested_sources (source_id={two_id})"
+    );
+
+    // Vault ledger continues to track the per-file row count and rel_paths
+    // — same contract as before #2720; only the `document_id` semantic
+    // changed (now holds the memory-tree source_id).
+    for file in &files {
+        assert!(
+            file.document_id.starts_with("vault:"),
+            "ledger document_id must encode memory-tree source_id, got {}",
+            file.document_id
+        );
+    }
 
     let note_ledger = files
         .iter()
@@ -165,4 +182,27 @@ async fn vault_sync_roundtrip_updates_memory_and_ledger() {
     assert!(files.iter().any(|file| file.rel_path == "notes/one.md"));
     assert!(files.iter().any(|file| file.rel_path == "docs/three.toml"));
     assert!(!files.iter().any(|file| file.rel_path == "docs/two.json"));
+
+    // Memory-tree side of the lifecycle (post-#2720):
+    //   - notes/one.md  : content updated → delete_chunks_by_source then
+    //                     re-ingest; source must still be registered.
+    //   - docs/two.json : file removed   → delete_chunks_by_source dropped
+    //                     it; source must no longer register as ingested.
+    //   - docs/three.toml: brand-new file → freshly registered.
+    let three_id = format!("vault:{}:docs/three.toml", vault.id);
+    assert!(
+        is_source_ingested(&config, SourceKind::Document, &one_id)
+            .expect("source check one.md after update"),
+        "notes/one.md must remain ingested after re-sync of updated content (source_id={one_id})"
+    );
+    assert!(
+        is_source_ingested(&config, SourceKind::Document, &three_id)
+            .expect("source check three.toml"),
+        "docs/three.toml (new file) missing from mem_tree_ingested_sources (source_id={three_id})"
+    );
+    assert!(
+        !is_source_ingested(&config, SourceKind::Document, &two_id).expect("source check two.json"),
+        "docs/two.json was deleted on disk; vault sync's Phase 4 must remove \
+         it from mem_tree_ingested_sources (source_id={two_id})"
+    );
 }

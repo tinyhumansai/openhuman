@@ -431,6 +431,7 @@ const id1: TranslationMap = {
   'migration.sourceLabel': 'Path ruang kerja sumber (opsional)',
   'migration.sourcePlaceholder':
     'Biarkan kosong untuk deteksi otomatis (misalnya ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'Kosong berarti memakai lokasi default sumber. Isi path eksplisit jika ruang kerja sudah dipindahkan.',
   'migration.previewAction': 'Pratinjau',
@@ -453,10 +454,6 @@ const id1: TranslationMap = {
     'Belum ada data yang diimpor. Klik Terapkan impor untuk menyalinnya.',
   'migration.report.appliedHint':
     'Entri yang diimpor kini ada di memori Anda. Jalankan Pratinjau lagi untuk membandingkan.',
-  'migration.hermesComingSoonPrefix': 'Pengimpor Hermes ada di peta jalan — lihat ',
-  'migration.hermesComingSoonSuffix':
-    ' untuk konteks. Pilih OpenClaw untuk migrasi hari ini; Hermes menyusul.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Impor {count} entri ke ruang kerja saat ini?\n\nSumber: {source}\nTujuan: {target}\n\nMemori yang ada akan dicadangkan sebelum impor dimulai.',
   'migration.confirmImport.plural':
@@ -668,7 +665,7 @@ const id1: TranslationMap = {
   'common.breadcrumb': 'Jejak navigasi',
   'settings.betaBuild': 'Build beta - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (segera hadir)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'Gunakan ChatGPT Plus/Pro (langganan) atau kunci API OpenAI — tidak perlu keduanya.',
   'onboarding.apiKeys.openaiOauthOpening': 'Membuka masuk…',
@@ -1274,6 +1271,69 @@ const id1: TranslationMap = {
   'mcp.installed.empty': 'Belum ada server MCP yang terinstal.',
   'mcp.installed.toolSingular': '{count} alat',
   'mcp.installed.toolPlural': '{count} alat',
+  'mcp.inventory.openButton': 'Inventory',
+  'mcp.inventory.openAria': 'Open the sharable MCP inventory panel',
+  'mcp.inventory.title': 'Sharable MCP Inventory',
+  'mcp.inventory.subtitle':
+    'Export your installed MCP servers as a portable, secret-free manifest, or import one from a teammate. Secret env values are never included or imported.',
+  'mcp.inventory.close': 'Close inventory panel',
+  'mcp.inventory.tablistAria': 'Inventory sections',
+  'mcp.inventory.tab.export': 'Export',
+  'mcp.inventory.tab.import': 'Import',
+  'mcp.inventory.export.empty':
+    'No MCP servers installed yet — nothing to export. Install one from the catalog first.',
+  'mcp.inventory.export.privacyTitle': 'What is in this manifest',
+  'mcp.inventory.export.privacyBody':
+    'Server names, qualified names, env-variable KEY NAMES, and non-secret config only. Secret values, your machine identifiers, and per-install timestamps are intentionally stripped.',
+  'mcp.inventory.export.serverCount': '{count} servers in this manifest',
+  'mcp.inventory.export.copy': 'Copy',
+  'mcp.inventory.export.copied': 'Copied',
+  'mcp.inventory.export.copyAria': 'Copy the manifest JSON to the clipboard',
+  'mcp.inventory.export.download': 'Download',
+  'mcp.inventory.export.downloadAria': 'Download the manifest as a JSON file',
+  'mcp.inventory.import.trustTitle': 'Treat imported manifests as untrusted code',
+  'mcp.inventory.import.trustBody':
+    'An MCP server is a tool you grant your agent. Only import manifests from sources you trust. Each install requires your explicit click; nothing is auto-installed.',
+  'mcp.inventory.import.pasteLabel': 'Paste manifest JSON',
+  'mcp.inventory.import.pastePlaceholder': 'Paste a manifest here, or upload a .json file below.',
+  'mcp.inventory.import.preview': 'Preview',
+  'mcp.inventory.import.clear': 'Clear',
+  'mcp.inventory.import.uploadFile': 'or upload a .json file',
+  'mcp.inventory.import.uploadFileAria': 'Upload a manifest .json file',
+  'mcp.inventory.import.fileTooLarge': 'File is too large (over 1 MB). Refusing to load.',
+  'mcp.inventory.import.fileReadFailed': 'Could not read file.',
+  'mcp.inventory.import.parseErrorPrefix': 'Could not parse manifest:',
+  'mcp.inventory.import.previewHeading': 'Preview',
+  'mcp.inventory.import.previewCounts':
+    '{total} servers — {newly} new, {already} already installed',
+  'mcp.inventory.import.previewEmpty': 'Manifest contains no servers.',
+  'mcp.inventory.import.exportedFrom': 'Exported from {exporter}',
+  'mcp.inventory.import.exportedAt': 'at {when}',
+  'mcp.inventory.import.statusNew': 'New',
+  'mcp.inventory.import.statusAlreadyInstalled': 'Already installed',
+  'mcp.inventory.import.envKeysLabel': 'Env keys',
+  'mcp.inventory.import.install': 'Install',
+  'mcp.inventory.import.installAria': 'Install {name} from this manifest',
+  'mcp.inventory.import.skipped': 'skipped',
+  'mcp.inventory.parseError.empty': 'Manifest is empty.',
+  'mcp.inventory.parseError.invalidJson': 'Invalid JSON.',
+  'mcp.inventory.parseError.rootNotObject': 'Manifest must be a JSON object at the root.',
+  'mcp.inventory.parseError.unsupportedSchema':
+    'Unsupported manifest schema — this file was not produced by a compatible exporter.',
+  'mcp.inventory.parseError.missingExportedAt': 'Missing or invalid `exported_at` field.',
+  'mcp.inventory.parseError.missingExportedBy': 'Missing or invalid `exported_by` field.',
+  'mcp.inventory.parseError.invalidServers': 'Missing or invalid `servers` array.',
+  'mcp.inventory.parseError.serverNotObject': 'A server entry is not an object.',
+  'mcp.inventory.parseError.serverMissingQualifiedName':
+    'A server entry is missing its qualified_name.',
+  'mcp.inventory.parseError.serverMissingDisplayName':
+    'A server entry is missing its display_name.',
+  'mcp.inventory.parseError.serverEnvKeysNotArray':
+    'A server entry has an env_keys field that is not an array of strings.',
+  'mcp.inventory.parseError.serverContainsEnv':
+    'A server entry contains an `env` value map. Refusing to import — manifests must only carry env_keys (names), never secret values.',
+  'mcp.inventory.parseError.duplicateQualifiedName':
+    'Duplicate qualified_name found in manifest. Each server must appear at most once.',
   'mcp.tab.loading': 'Memuat MCP server...',
   'mcp.tab.emptyDetail': 'Pilih server atau telusuri katalog.',
   'mcp.install.loadingDetail': 'Memuat detail server...',

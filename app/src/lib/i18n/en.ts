@@ -112,9 +112,10 @@ const en: TranslationMap = {
     'Migrate memory and notes from another local assistant into this workspace. Start with a Preview to see exactly what would change, then Apply to copy the data over. Your current memory is backed up first.',
   'migration.vendorLabel': 'Source vendor',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (coming soon)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'migration.sourceLabel': 'Source workspace path (optional)',
   'migration.sourcePlaceholder': 'Leave blank to auto-detect (e.g. ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
   'migration.previewAction': 'Preview',
@@ -137,10 +138,6 @@ const en: TranslationMap = {
     'No data has been imported yet. Click Apply import to copy it over.',
   'migration.report.appliedHint':
     'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
-  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
-  'migration.hermesComingSoonSuffix':
-    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
   'migration.confirmImport.plural':
@@ -869,6 +866,69 @@ const en: TranslationMap = {
   'mcp.installed.empty': 'No MCP servers installed yet.',
   'mcp.installed.toolSingular': '{count} tool',
   'mcp.installed.toolPlural': '{count} tools',
+  'mcp.inventory.openButton': 'Inventory',
+  'mcp.inventory.openAria': 'Open the sharable MCP inventory panel',
+  'mcp.inventory.title': 'Sharable MCP Inventory',
+  'mcp.inventory.subtitle':
+    'Export your installed MCP servers as a portable, secret-free manifest, or import one from a teammate. Secret env values are never included or imported.',
+  'mcp.inventory.close': 'Close inventory panel',
+  'mcp.inventory.tablistAria': 'Inventory sections',
+  'mcp.inventory.tab.export': 'Export',
+  'mcp.inventory.tab.import': 'Import',
+  'mcp.inventory.export.empty':
+    'No MCP servers installed yet — nothing to export. Install one from the catalog first.',
+  'mcp.inventory.export.privacyTitle': 'What is in this manifest',
+  'mcp.inventory.export.privacyBody':
+    'Server names, qualified names, env-variable KEY NAMES, and non-secret config only. Secret values, your machine identifiers, and per-install timestamps are intentionally stripped.',
+  'mcp.inventory.export.serverCount': '{count} servers in this manifest',
+  'mcp.inventory.export.copy': 'Copy',
+  'mcp.inventory.export.copied': 'Copied',
+  'mcp.inventory.export.copyAria': 'Copy the manifest JSON to the clipboard',
+  'mcp.inventory.export.download': 'Download',
+  'mcp.inventory.export.downloadAria': 'Download the manifest as a JSON file',
+  'mcp.inventory.import.trustTitle': 'Treat imported manifests as untrusted code',
+  'mcp.inventory.import.trustBody':
+    'An MCP server is a tool you grant your agent. Only import manifests from sources you trust. Each install requires your explicit click; nothing is auto-installed.',
+  'mcp.inventory.import.pasteLabel': 'Paste manifest JSON',
+  'mcp.inventory.import.pastePlaceholder': 'Paste a manifest here, or upload a .json file below.',
+  'mcp.inventory.import.preview': 'Preview',
+  'mcp.inventory.import.clear': 'Clear',
+  'mcp.inventory.import.uploadFile': 'or upload a .json file',
+  'mcp.inventory.import.uploadFileAria': 'Upload a manifest .json file',
+  'mcp.inventory.import.fileTooLarge': 'File is too large (over 1 MB). Refusing to load.',
+  'mcp.inventory.import.fileReadFailed': 'Could not read file.',
+  'mcp.inventory.import.parseErrorPrefix': 'Could not parse manifest:',
+  'mcp.inventory.import.previewHeading': 'Preview',
+  'mcp.inventory.import.previewCounts':
+    '{total} servers — {newly} new, {already} already installed',
+  'mcp.inventory.import.previewEmpty': 'Manifest contains no servers.',
+  'mcp.inventory.import.exportedFrom': 'Exported from {exporter}',
+  'mcp.inventory.import.exportedAt': 'at {when}',
+  'mcp.inventory.import.statusNew': 'New',
+  'mcp.inventory.import.statusAlreadyInstalled': 'Already installed',
+  'mcp.inventory.import.envKeysLabel': 'Env keys',
+  'mcp.inventory.import.install': 'Install',
+  'mcp.inventory.import.installAria': 'Install {name} from this manifest',
+  'mcp.inventory.import.skipped': 'skipped',
+  'mcp.inventory.parseError.empty': 'Manifest is empty.',
+  'mcp.inventory.parseError.invalidJson': 'Invalid JSON.',
+  'mcp.inventory.parseError.rootNotObject': 'Manifest must be a JSON object at the root.',
+  'mcp.inventory.parseError.unsupportedSchema':
+    'Unsupported manifest schema — this file was not produced by a compatible exporter.',
+  'mcp.inventory.parseError.missingExportedAt': 'Missing or invalid `exported_at` field.',
+  'mcp.inventory.parseError.missingExportedBy': 'Missing or invalid `exported_by` field.',
+  'mcp.inventory.parseError.invalidServers': 'Missing or invalid `servers` array.',
+  'mcp.inventory.parseError.serverNotObject': 'A server entry is not an object.',
+  'mcp.inventory.parseError.serverMissingQualifiedName':
+    'A server entry is missing its qualified_name.',
+  'mcp.inventory.parseError.serverMissingDisplayName':
+    'A server entry is missing its display_name.',
+  'mcp.inventory.parseError.serverEnvKeysNotArray':
+    'A server entry has an env_keys field that is not an array of strings.',
+  'mcp.inventory.parseError.serverContainsEnv':
+    'A server entry contains an `env` value map. Refusing to import — manifests must only carry env_keys (names), never secret values.',
+  'mcp.inventory.parseError.duplicateQualifiedName':
+    'Duplicate qualified_name found in manifest. Each server must appear at most once.',
   'mcp.tab.loading': 'Loading MCP servers...',
   'mcp.tab.emptyDetail': 'Select a server or browse the catalog.',
   'mcp.install.loadingDetail': 'Loading server details...',
@@ -1590,6 +1650,7 @@ const en: TranslationMap = {
   'mic.stopRecording': 'Stop recording and send',
   'mic.startRecording': 'Start recording',
   'mic.deviceSelector': 'Microphone device',
+  'mic.tapToSendCountdown': 'Tap to send ({seconds}s)',
 
   // Token
   'token.usageLimitReached': 'Usage limit reached',
@@ -1959,6 +2020,7 @@ const en: TranslationMap = {
   // Mic: error messages
   'mic.noAudioCaptured': 'No audio captured',
   'mic.noSpeechDetected': 'No speech detected',
+  'mic.lowConfidenceResult': 'Could not understand the audio clearly — please try again',
   'mic.failedToStopRecording': 'Failed to stop recording: {message}',
   'mic.transcriptionFailed': 'Transcription failed: {message}',
 
@@ -3309,6 +3371,30 @@ const en: TranslationMap = {
     'Smallest memory window. Cheapest, fastest, least continuity between runs.',
   'settings.memoryWindow.minimal.label': 'Minimal',
   'settings.memoryWindow.title': 'Long-term memory window',
+  'settings.modelHealth.title': 'Model Health',
+  'settings.modelHealth.desc':
+    'Per-model quality, hallucination rate, and cost comparison across active models',
+  'settings.modelHealth.allStatuses': 'All statuses',
+  'settings.modelHealth.models': 'models',
+  'settings.modelHealth.loading': 'Loading model data...',
+  'settings.modelHealth.empty': 'No models registered',
+  'settings.modelHealth.col.model': 'Model',
+  'settings.modelHealth.col.quality': 'Quality',
+  'settings.modelHealth.col.halluc': 'Halluc. Rate',
+  'settings.modelHealth.col.cost': 'Cost / 1M out',
+  'settings.modelHealth.col.agents': 'Agents',
+  'settings.modelHealth.col.status': 'Status',
+  'settings.modelHealth.badge.keep': 'Keep',
+  'settings.modelHealth.badge.replace': 'Replace',
+  'settings.modelHealth.badge.staging': 'Staging test',
+  'settings.modelHealth.badge.vision': 'Vision only',
+  'settings.modelHealth.swap': 'Swap?',
+  'settings.modelHealth.modal.title': 'Replace Model?',
+  'settings.modelHealth.modal.hallucRate': 'Hallucination rate',
+  'settings.modelHealth.modal.cancel': 'Cancel',
+  'settings.modelHealth.modal.apply': 'Apply Replacement',
+  'settings.modelHealth.tag.cheaper': 'CHEAPER',
+  'settings.modelHealth.tag.better': 'BETTER',
   'settings.screenIntel.permissions.accessibility': 'Accessibility',
   'settings.screenIntel.permissions.grantHint':
     'Grant these permissions in System Settings, then restart the core.',

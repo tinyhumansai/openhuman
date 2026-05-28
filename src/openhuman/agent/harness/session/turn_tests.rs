@@ -43,6 +43,7 @@ impl Provider for DummyProvider {
             text: Some("unused".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -756,11 +757,13 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some("final answer".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
@@ -843,6 +846,7 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
             text: Some("cached-final".into()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
         requests: AsyncMutex::new(Vec::new()),
     });
@@ -889,6 +893,7 @@ async fn turn_emits_checkpoint_when_max_tool_iterations_are_exceeded() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some(
@@ -896,6 +901,7 @@ async fn turn_emits_checkpoint_when_max_tool_iterations_are_exceeded() {
                 ),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
@@ -952,6 +958,7 @@ async fn turn_errors_on_empty_provider_response() {
             text: Some(String::new()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })]),
         requests: AsyncMutex::new(Vec::new()),
     });
@@ -988,11 +995,13 @@ async fn turn_checkpoint_falls_back_to_deterministic_summary_when_model_summary_
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             Ok(ChatResponse {
                 text: Some(String::new()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),
@@ -1037,6 +1046,7 @@ async fn turn_checkpoint_usage_is_folded_into_transcript_accounting() {
                 text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             }),
             // Checkpoint call — reports usage that must be accounted for.
             Ok(ChatResponse {
@@ -1049,6 +1059,7 @@ async fn turn_checkpoint_usage_is_folded_into_transcript_accounting() {
                     charged_amount_usd: 0.05,
                     ..UsageInfo::default()
                 }),
+                reasoning_content: None,
             }),
         ]),
         requests: AsyncMutex::new(Vec::new()),

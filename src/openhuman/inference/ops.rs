@@ -9,9 +9,25 @@ use crate::openhuman::inference::{device, presets, sentiment, SentimentResult};
 use crate::openhuman::inference::{LocalAiEmbeddingResult, LocalAiStatus};
 use crate::rpc::RpcOutcome;
 use serde_json::{json, Value};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const LOG_PREFIX: &str = "[inference::ops]";
+
+/// User picked a provider id (slug) that isn't registered in the cloud
+/// provider list — e.g. selecting `"ollama"` as a cloud provider when it's
+/// actually a local runtime. Matches the literal phrase emitted at
+/// `src/openhuman/inference/provider/ops.rs:54`
+/// (`"no cloud provider with id or slug '{}' found"`).
+///
+/// Used by [`inference_list_models`] to demote this user-config case to
+/// `warn!` so it stops escalating to Sentry (TAURI-RUST-X, ~5740 events).
+/// The matcher is anchored on the exact phrase so unrelated sibling
+/// failures (TAURI-RUST-12 JSON parse, TAURI-RUST-2W reqwest builder,
+/// TAURI-RUST-JP local ollama_admin transport) still surface as real
+/// errors.
+fn is_unknown_provider_user_config(err: &str) -> bool {
+    err.contains("no cloud provider with id or slug")
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InferenceTestProviderModelResult {
@@ -245,7 +261,29 @@ pub async fn inference_list_models(provider_id: &str) -> Result<RpcOutcome<Value
     let result = providers::ops::list_configured_models(provider_id).await;
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} list_models:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} list_models:error"),
+        Err(err) => {
+            if is_unknown_provider_user_config(err) {
+                // User selected a provider id that isn't a registered
+                // cloud provider (e.g. picking "ollama", a local runtime).
+                // Demote to `warn!` so it stays in local logs but doesn't
+                // escalate to Sentry. Targets TAURI-RUST-X (~5740 events).
+                warn!(
+                    provider_id,
+                    error = %err,
+                    "{LOG_PREFIX} list_models:unknown-provider (user-config)"
+                );
+            } else {
+                // Real error — embed `{err}` in the format string so
+                // Sentry's event title carries the actionable cause
+                // instead of the opaque `list_models:error` shape that
+                // made TAURI-RUST-X untriageable.
+                error!(
+                    provider_id,
+                    error = %err,
+                    "{LOG_PREFIX} list_models:error: {err}"
+                );
+            }
+        }
     }
     result
 }

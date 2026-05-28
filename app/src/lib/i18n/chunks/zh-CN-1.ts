@@ -425,6 +425,7 @@ const zhCN1: TranslationMap = {
   'migration.vendorLabel': '来源助手',
   'migration.sourceLabel': '来源工作区路径（可选）',
   'migration.sourcePlaceholder': '留空可自动检测（例如 ~/.openclaw/workspace）',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     '留空时使用该助手的默认位置。如果你已将工作区移到其他位置，请填写明确路径。',
   'migration.previewAction': '预览',
@@ -444,9 +445,6 @@ const zhCN1: TranslationMap = {
   'migration.report.warnings': '警告',
   'migration.report.previewHint': '尚未导入任何数据。点击「应用导入」开始复制。',
   'migration.report.appliedHint': '导入的条目已加入你的记忆。如需再次比较，请重新运行预览。',
-  'migration.hermesComingSoonPrefix': 'Hermes 导入器仍在规划中 — 详见 ',
-  'migration.hermesComingSoonSuffix': '。今天可以先用 OpenClaw 迁移；Hermes 将在后续版本中加入。',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     '将 {count} 条数据导入当前工作区？\n\n来源：{source}\n目标：{target}\n\n导入前会先备份现有记忆。',
   'migration.confirmImport.plural':
@@ -649,7 +647,7 @@ const zhCN1: TranslationMap = {
   'common.breadcrumb': '面包屑导航',
   'settings.betaBuild': '测试版构建 - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent（即将推出）',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     '可以使用 ChatGPT Plus/Pro 订阅或 OpenAI API 密钥，无需两者都提供。',
   'onboarding.apiKeys.openaiOauthOpening': '打开登录…',
@@ -1254,6 +1252,69 @@ const zhCN1: TranslationMap = {
   'mcp.installed.empty': '尚未安装 MCP 服务器。',
   'mcp.installed.toolSingular': '{count} 工具',
   'mcp.installed.toolPlural': '{count} 工具',
+  'mcp.inventory.openButton': 'Inventory',
+  'mcp.inventory.openAria': 'Open the sharable MCP inventory panel',
+  'mcp.inventory.title': 'Sharable MCP Inventory',
+  'mcp.inventory.subtitle':
+    'Export your installed MCP servers as a portable, secret-free manifest, or import one from a teammate. Secret env values are never included or imported.',
+  'mcp.inventory.close': 'Close inventory panel',
+  'mcp.inventory.tablistAria': 'Inventory sections',
+  'mcp.inventory.tab.export': 'Export',
+  'mcp.inventory.tab.import': 'Import',
+  'mcp.inventory.export.empty':
+    'No MCP servers installed yet — nothing to export. Install one from the catalog first.',
+  'mcp.inventory.export.privacyTitle': 'What is in this manifest',
+  'mcp.inventory.export.privacyBody':
+    'Server names, qualified names, env-variable KEY NAMES, and non-secret config only. Secret values, your machine identifiers, and per-install timestamps are intentionally stripped.',
+  'mcp.inventory.export.serverCount': '{count} servers in this manifest',
+  'mcp.inventory.export.copy': 'Copy',
+  'mcp.inventory.export.copied': 'Copied',
+  'mcp.inventory.export.copyAria': 'Copy the manifest JSON to the clipboard',
+  'mcp.inventory.export.download': 'Download',
+  'mcp.inventory.export.downloadAria': 'Download the manifest as a JSON file',
+  'mcp.inventory.import.trustTitle': 'Treat imported manifests as untrusted code',
+  'mcp.inventory.import.trustBody':
+    'An MCP server is a tool you grant your agent. Only import manifests from sources you trust. Each install requires your explicit click; nothing is auto-installed.',
+  'mcp.inventory.import.pasteLabel': 'Paste manifest JSON',
+  'mcp.inventory.import.pastePlaceholder': 'Paste a manifest here, or upload a .json file below.',
+  'mcp.inventory.import.preview': 'Preview',
+  'mcp.inventory.import.clear': 'Clear',
+  'mcp.inventory.import.uploadFile': 'or upload a .json file',
+  'mcp.inventory.import.uploadFileAria': 'Upload a manifest .json file',
+  'mcp.inventory.import.fileTooLarge': 'File is too large (over 1 MB). Refusing to load.',
+  'mcp.inventory.import.fileReadFailed': 'Could not read file.',
+  'mcp.inventory.import.parseErrorPrefix': 'Could not parse manifest:',
+  'mcp.inventory.import.previewHeading': 'Preview',
+  'mcp.inventory.import.previewCounts':
+    '{total} servers — {newly} new, {already} already installed',
+  'mcp.inventory.import.previewEmpty': 'Manifest contains no servers.',
+  'mcp.inventory.import.exportedFrom': 'Exported from {exporter}',
+  'mcp.inventory.import.exportedAt': 'at {when}',
+  'mcp.inventory.import.statusNew': 'New',
+  'mcp.inventory.import.statusAlreadyInstalled': 'Already installed',
+  'mcp.inventory.import.envKeysLabel': 'Env keys',
+  'mcp.inventory.import.install': 'Install',
+  'mcp.inventory.import.installAria': 'Install {name} from this manifest',
+  'mcp.inventory.import.skipped': 'skipped',
+  'mcp.inventory.parseError.empty': 'Manifest is empty.',
+  'mcp.inventory.parseError.invalidJson': 'Invalid JSON.',
+  'mcp.inventory.parseError.rootNotObject': 'Manifest must be a JSON object at the root.',
+  'mcp.inventory.parseError.unsupportedSchema':
+    'Unsupported manifest schema — this file was not produced by a compatible exporter.',
+  'mcp.inventory.parseError.missingExportedAt': 'Missing or invalid `exported_at` field.',
+  'mcp.inventory.parseError.missingExportedBy': 'Missing or invalid `exported_by` field.',
+  'mcp.inventory.parseError.invalidServers': 'Missing or invalid `servers` array.',
+  'mcp.inventory.parseError.serverNotObject': 'A server entry is not an object.',
+  'mcp.inventory.parseError.serverMissingQualifiedName':
+    'A server entry is missing its qualified_name.',
+  'mcp.inventory.parseError.serverMissingDisplayName':
+    'A server entry is missing its display_name.',
+  'mcp.inventory.parseError.serverEnvKeysNotArray':
+    'A server entry has an env_keys field that is not an array of strings.',
+  'mcp.inventory.parseError.serverContainsEnv':
+    'A server entry contains an `env` value map. Refusing to import — manifests must only carry env_keys (names), never secret values.',
+  'mcp.inventory.parseError.duplicateQualifiedName':
+    'Duplicate qualified_name found in manifest. Each server must appear at most once.',
   'mcp.tab.loading': '正在加载 MCP 服务器...',
   'mcp.tab.emptyDetail': '选择服务器或浏览目录。',
   'mcp.install.loadingDetail': '正在加载服务器详细信息...',

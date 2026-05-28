@@ -430,6 +430,7 @@ const ru2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Настройка параметров сортировки AI для триггеров интеграции Composio',
   'mic.deviceSelector': 'Микрофонное устройство',
+  'mic.tapToSendCountdown': 'Нажми для отправки ({seconds}с)',
 };
 
 export default ru2;

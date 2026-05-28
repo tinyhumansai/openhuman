@@ -148,6 +148,40 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // this is the `type` field used by litellm/Anthropic-style
         // envelopes for the same class of user-state error.
         "not_found_error",
+        // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
+        // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
+        // when the request body contains an empty `"model":""` field.
+        // This is deterministic user-configuration state: the user's
+        // provider string had no model id and the config entry has no
+        // default_model. Factory now bails early, but guard the Sentry
+        // signal for in-flight requests from older configs.
+        // Note: match on the message phrase only — "missing_required_field"
+        // is too generic and would incorrectly suppress unrelated errors.
+        "model field is required",
+        // TAURI-RUST-2G (~2684 events) / TAURI-RUST-2F (~950 events) —
+        // thinking-mode model (DeepSeek-R1 / Moonshot K2-thinking on
+        // `provider=cloud` custom_openai) rejects a follow-up turn that
+        // doesn't echo the prior assistant's `reasoning_content` field.
+        // Body shape (backtick-quoted JSON literal in the upstream body):
+        // `{"error":{"message":"The `reasoning_content` in the thinking
+        // mode must be passed back to the API.",...}}`. The
+        // provider-contract gap is on our side, but until the thinking-
+        // mode round-tripping ships in the inference layer, every affected
+        // turn fires a fresh Sentry event — and the UI already surfaces
+        // the actionable error to the user. Anchor on the unique
+        // `thinking mode must be passed back` substring so the match
+        // doesn't depend on the upstream's backtick-quoting around
+        // `reasoning_content` (some provider versions ship without them).
+        "thinking mode must be passed back",
+        // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
+        // Body: `{"error":"this model requires a subscription, upgrade for
+        // access: https://ollama.com/upgrade (ref: <uuid>)"}` on a 403
+        // Forbidden from `compatible::OpenAiCompatibleProvider` with
+        // `name = "ollama"`. User-state: the model picked in Settings is
+        // a paid-tier Ollama Cloud model the user's account doesn't
+        // cover. The UI surfaces an actionable upgrade link in the
+        // remediation message itself.
+        "requires a subscription, upgrade for access",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -249,6 +283,26 @@ mod tests {
             (
                 "J4",
                 r#"custom_openai streaming API error (404 Not Found): {"error":{"message":"model 'llama3.3' not found","type":"not_found_error","param":null,"code":null}}"#,
+            ),
+            // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
+            // this body when the request body has an empty `"model":""`.
+            // This is user-configuration state: the provider string had no
+            // model id and the config entry has no default_model set.
+            (
+                "4NM",
+                r#"nvidia-nim API error (400 Bad Request): {"error":{"message":"model field is required","type":"invalid_request_error","param":null,"code":"missing_required_field"}}"#,
+            ),
+            (
+                "TAURI-RUST-4XK",
+                r#"ollama API error (403 Forbidden): {"error":"this model requires a subscription, upgrade for access: https://ollama.com/upgrade (ref: bc48f3c8-fba1-40b6-93a9-786a167d16f9)"}"#,
+            ),
+            (
+                "TAURI-RUST-2G",
+                r#"cloud API error (400 Bad Request): {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#,
+            ),
+            (
+                "TAURI-RUST-2F",
+                r#"cloud streaming API error (400 Bad Request): {"error":{"message":"The `reasoning_content` in the thinking mode must be passed back to the API.","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#,
             ),
         ] {
             assert!(

@@ -1161,9 +1161,32 @@ impl Config {
                 }
             }
 
-            let contents = fs::read_to_string(&config_path)
-                .await
-                .context("Failed to read config file")?;
+            // Sentry OPENHUMAN-TAURI-9R (~8k events, Windows): this read can
+            // race the atomic-replace in `Config::save` (temp file →
+            // `fs::rename` over `config_path`). On Windows the in-flight
+            // rename / a transient AV or indexer handle makes the read fail
+            // with ERROR_SHARING_VIOLATION (32) / ERROR_ACCESS_DENIED (5) /
+            // ERROR_DELETE_PENDING (303) even though `config_path.exists()`
+            // just returned true. `inference_status` polls `load_config`
+            // frequently, so each coincidence with a save produced one
+            // "Failed to read config file" event. Retry on the transient
+            // Windows locking codes (the same class `retry_with_backoff_async`
+            // already handles for the auth-profile + team_get_usage paths) so
+            // the read succeeds once the writer releases its handle.
+            // `is_transient_fs_error` is `false` for every non-Windows error
+            // (and for NotFound on Windows), so this is a no-op on
+            // macOS/Linux and never masks a genuinely-unreadable config.
+            let contents = crate::openhuman::util::retry_with_backoff_async(
+                "read config file",
+                5,
+                20,
+                || async {
+                    fs::read_to_string(&config_path).await.with_context(|| {
+                        format!("Failed to read config file: {}", config_path.display())
+                    })
+                },
+            )
+            .await?;
             let (mut config, config_was_corrupted) =
                 parse_config_with_recovery(&config_path, &contents).await;
             config.config_path = config_path.clone();

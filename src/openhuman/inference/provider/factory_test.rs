@@ -763,7 +763,7 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // canonical hints (reasoning/chat/agentic/coding/summarization).
     // `hint:summarization` became canonical when `summarization-v1` shipped
     // (PR #2690), so it is no longer a passthrough case.
-    for hint in ["hint:reaction", "hint:garbage"] {
+    for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
         let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
@@ -1294,5 +1294,77 @@ async fn live_ollama_provider_streams_text() {
     assert!(
         streamed_text.contains("OLLAMA_LIVE_OK"),
         "streamed text never surfaced the final answer: {streamed_text}"
+    );
+}
+
+// ── nvidia-nim / empty-model guard tests (issue #2784) ─────────────────────
+
+/// Helper: build a minimal nvidia-nim-style cloud provider entry.
+fn nvidia_nim_entry(id: &str, default_model: Option<&str>) -> CloudProviderCreds {
+    CloudProviderCreds {
+        id: id.to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: default_model.map(ToString::to_string),
+        ..Default::default()
+    }
+}
+
+/// When the provider string includes a model id the factory should build
+/// successfully and return that model id unchanged.
+#[test]
+fn nvidia_nim_with_explicit_model_builds_correctly() {
+    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let (_, model) = create_chat_provider_from_string(
+        "reasoning",
+        "nvidia-nim:meta/llama-3.1-8b-instruct",
+        &config,
+    )
+    .expect("nvidia-nim with explicit model must build");
+    assert_eq!(
+        model, "meta/llama-3.1-8b-instruct",
+        "model id must pass through unchanged"
+    );
+}
+
+/// When the provider string has no model id (`"nvidia-nim:"`) and no
+/// default_model is configured, the factory must fail with a clear error
+/// rather than silently sending an empty model string to the API (which
+/// triggers a 400 "model field is required" from nvidia-nim).
+///
+/// Regression test for https://github.com/tinyhumansai/openhuman/issues/2784.
+#[test]
+fn nvidia_nim_empty_model_in_provider_string_errors_clearly() {
+    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let err = match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
+        Ok(_) => panic!("empty model string must not succeed — would send model='' to the API"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("empty model id"),
+        "error must mention empty model id, got: {msg}"
+    );
+    assert!(
+        msg.contains("nvidia-nim"),
+        "error must name the provider slug, got: {msg}"
+    );
+}
+
+/// When the provider string has no model id but the entry has a concrete
+/// default_model, that default should be used — no error.
+#[test]
+fn nvidia_nim_falls_back_to_default_model_when_no_model_in_string() {
+    let config = config_with_providers(vec![nvidia_nim_entry(
+        "p_nim",
+        Some("meta/llama-3.1-70b-instruct"),
+    )]);
+    let (_, model) = create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
+        .expect("nvidia-nim: with default_model configured must build");
+    assert_eq!(
+        model, "meta/llama-3.1-70b-instruct",
+        "should fall back to default_model from config entry"
     );
 }

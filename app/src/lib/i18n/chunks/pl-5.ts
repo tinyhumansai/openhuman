@@ -674,7 +674,7 @@ const pl5: TranslationMap = {
   'settings.betaBuild': 'Wersja beta - v{version}',
   // migration (extras)
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (wkrótce)',
+  'migration.vendor.hermes': 'Hermes Agent',
   // onboarding.apiKeys
   'onboarding.apiKeys.openaiOauthHint':
     'Użyj ChatGPT Plus/Pro (subskrypcja) lub klucza API OpenAI — nie potrzeba obu.',

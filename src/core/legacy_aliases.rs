@@ -95,6 +95,9 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.local_ai_diagnostics",
         "openhuman.inference_diagnostics",
     ),
+    // bare `health_snapshot` (no namespace prefix) was used by older clients
+    // before the canonical `openhuman.health_snapshot` form was established.
+    ("health_snapshot", "openhuman.health_snapshot"),
     ("openhuman.inference_embed", "openhuman.embeddings_embed"),
     ("openhuman.local_ai_presets", "openhuman.inference_presets"),
     (
@@ -349,6 +352,18 @@ mod tests {
         assert_eq!(
             resolve_legacy("openhuman.update_composio_trigger_settings"),
             "openhuman.config_update_composio_trigger_settings",
+        );
+    }
+
+    #[test]
+    fn resolve_legacy_rewrites_bare_health_snapshot() {
+        // Sentry CORE-RUST-FG: older clients (and some SDK callers) issued
+        // `health_snapshot` without the `openhuman.` namespace prefix.  The
+        // alias table must rewrite it to the canonical form so the call
+        // resolves against the registered controller.
+        assert_eq!(
+            resolve_legacy("health_snapshot"),
+            "openhuman.health_snapshot",
         );
     }
 
