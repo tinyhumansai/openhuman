@@ -9,7 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::YuanbaoError;
 
-/// Default plugin version (`DeviceInfo.app_version` / server `plugin_version`).
+/// Default value for `DeviceInfo.app_version` (server-side `plugin_version`).
+///
+/// In `yuanbao-openclaw-plugin`'s wire mapping, `plugin_version` represents
+/// the *plugin-layer* (npm package) version while `bot_version` represents
+/// the *framework runtime* version. OpenHuman has no separate plugin layer;
+/// we reuse this slot for the **yuanbao channel provider's** own iteration
+/// version. Bump it when the provider's protocol adapter changes in a way
+/// the server might care about. The framework runtime version is reported
+/// separately via `CARGO_PKG_VERSION` in `DeviceInfo.bot_version`.
 pub(crate) const DEFAULT_PLUGIN_VERSION: &str = "0.1.0";
 
 /// Strip legacy `openhuman/` prefix from version strings in config/TOML.
@@ -54,15 +62,17 @@ pub struct YuanbaoConfig {
     /// `api_domain/api/token/sign` with `(app_key, app_secret)` to fetch one.
     #[serde(default)]
     pub token: String,
-    /// Plugin version reported in `AuthBindReq.DeviceInfo.app_version`
-    /// (server-side `plugin_version`).
+    /// Yuanbao channel-provider iteration version, reported in
+    /// `AuthBindReq.DeviceInfo.app_version` (server-side `plugin_version`).
     ///
     /// **NOTE:** Despite the legacy `bot_version` TOML key name, this value
-    /// is wired to the *plugin* version, not the framework `bot_version`.
-    /// The framework version (`DeviceInfo.bot_version` / server
-    /// `bot_version`) is sourced from `CARGO_PKG_VERSION` and is not
-    /// user-configurable. Operators who previously set this to a framework
-    /// version string should rename their intent to "plugin version".
+    /// fills the *plugin*-version slot on the wire — see
+    /// [`DEFAULT_PLUGIN_VERSION`] for the semantic mapping. The framework
+    /// runtime version (`DeviceInfo.bot_version` / server `bot_version`)
+    /// is sourced from `CARGO_PKG_VERSION` and is **not** user-configurable;
+    /// operators who previously set this key intending to override the
+    /// framework version should drop it. New configs may use the clearer
+    /// `plugin_version` alias.
     #[serde(default = "default_bot_version", alias = "plugin_version")]
     pub bot_version: String,
     /// Optional bot display name — used by the `@bot` mention guard.
