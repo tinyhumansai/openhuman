@@ -400,6 +400,17 @@ fn is_ollama_user_config_rejection(lower: &str) -> bool {
 ///   ~66 events). Tungstenite-only — reqwest renders HTTP 200 as
 ///   `"HTTP status server error (200)"`, so this can't collide with the
 ///   regular HTTP call path.
+/// - `"unexpected eof during handshake"` — `native-tls`'s render when the
+///   peer (or an intercepting firewall / antivirus / corporate TLS proxy)
+///   closes the TCP connection mid-TLS-handshake, surfacing as
+///   `"TLS error: native-tls error: unexpected EOF during handshake"`
+///   wrapped by `socket::ws_loop::run_connection` into
+///   `"WebSocket connect: …"` (`TAURI-RUST-4ZD`, first seen on
+///   `openhuman@0.56.0`, Windows). The existing `"tls handshake"` anchor
+///   misses it because the words aren't contiguous (`"tls error"` …
+///   `"during handshake"`). Same user-environment shape as the other
+///   handshake-stage entries — the socket supervisor already retries with
+///   exponential backoff and Sentry has no actionable signal.
 fn is_network_unreachable_message(lower: &str) -> bool {
     lower.contains("error sending request for url")
         || lower.contains("dns error")
@@ -410,6 +421,7 @@ fn is_network_unreachable_message(lower: &str) -> bool {
         || lower.contains("network is unreachable")
         || lower.contains("no route to host")
         || lower.contains("tls handshake")
+        || lower.contains("unexpected eof during handshake")
         || lower.contains("certificate verify failed")
         || lower.contains("http error: 200 ok")
 }
@@ -1614,6 +1626,60 @@ mod tests {
             expected_error_kind("upstream returned status: 200 OK after retry"),
             None
         );
+    }
+
+    #[test]
+    fn classifies_tls_handshake_eof_as_network_unreachable() {
+        // TAURI-RUST-4ZD (first seen on `openhuman@0.56.0+e8968077aeb5`,
+        // Windows): `native-tls` renders a peer / firewall / antivirus /
+        // corporate-proxy TCP close mid-TLS-handshake as
+        // `"TLS error: native-tls error: unexpected EOF during handshake"`,
+        // which `socket::ws_loop::run_connection` wraps as
+        // `"WebSocket connect: <inner>"` and the supervisor's
+        // sustained-outage escalation wraps again. The existing
+        // `"tls handshake"` arm misses it because the words are not
+        // contiguous in this render (`"tls error"` … `"during handshake"`).
+        // Same user-environment shape as the other handshake-stage entries:
+        // the socket supervisor already retries with exponential backoff and
+        // Sentry has no actionable signal beyond that.
+        assert_eq!(
+            expected_error_kind(
+                "[socket] Connection failed (sustained outage after 5 attempts): \
+                 WebSocket connect: TLS error: native-tls error: unexpected EOF during handshake"
+            ),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+
+        // Bare native-tls render (no socket-supervisor wrap) — fires when the
+        // same handshake EOF escapes through a non-supervisor call site. The
+        // classifier runs on the full anyhow chain, so the shorter form must
+        // also match.
+        assert_eq!(
+            expected_error_kind("TLS error: native-tls error: unexpected EOF during handshake"),
+            Some(ExpectedErrorKind::NetworkUnreachable)
+        );
+    }
+
+    #[test]
+    fn tls_handshake_eof_anchor_does_not_silence_unrelated_log_lines() {
+        // The anchor is the literal `"unexpected eof during handshake"`
+        // phrase. A bare data-phase `"unexpected EOF"` (server closed
+        // mid-stream, parser truncation, …) MUST NOT classify — those are
+        // outside the handshake stage and may carry actionable signal. Pin
+        // the rejection contract so a future refactor doesn't loosen the
+        // substring into a generic `"unexpected eof"` matcher.
+        for raw in [
+            "stream closed: unexpected EOF",
+            "reqwest: unexpected EOF while reading body",
+            "json parser: unexpected EOF at byte 1024",
+            "decoder hit unexpected eof mid-frame",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "non-handshake unexpected-EOF log line must NOT classify: {raw}"
+            );
+        }
     }
 
     #[test]
