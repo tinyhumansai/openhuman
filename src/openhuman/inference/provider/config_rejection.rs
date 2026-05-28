@@ -179,6 +179,37 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // regression. Demote from Sentry; the factory now validates this
         // up-front so in practice this phrase should no longer appear.
         "model field is required",
+        // TAURI-RUST-4XK — Ollama 403 when the requested model requires a
+        // paid Ollama subscription. Body carries the upgrade URL. User must
+        // switch to a free model or upgrade their Ollama account.
+        "requires a subscription",
+        // TAURI-RUST-2G / TAURI-RUST-2F — DeepSeek / compatible providers
+        // that use extended thinking reject tool-call turns when the
+        // `reasoning_content` block from a prior assistant turn is not
+        // threaded back. This is user-config state (model requires the
+        // caller to replay the thinking block; the frontend replay logic in
+        // `turn.rs` handles it for subsequent turns, so the first-turn 400
+        // is expected capability-discovery, not a regression).
+        "in the thinking mode must be passed back",
+        // TAURI-RUST-35 / TAURI-RUST-4K7 / TAURI-RUST-4Z0 — Ollama models
+        // (e.g. gemma3, phi3, deepseek-r1) that do not support function
+        // calling return HTTP 400 with this phrase. The compatible provider
+        // retries without tools on 400, so the initial rejection is expected
+        // capability-discovery. Sentry noise suppressed here.
+        "does not support tools",
+        // TAURI-RUST-4K7-d — alternative phrasing used by some Ollama model
+        // versions for the same tool-unsupported condition.
+        "function calling is not supported",
+        // TAURI-RUST-4K7-e — litellm / OpenAI-compatible proxies reject the
+        // `tools` key in the request body when the backing model does not
+        // support tool use (e.g. local Ollama via LiteLLM gateway).
+        "unknown parameter: tools",
+        // TAURI-RUST-4K7-f — Ollama native API surface rejects the field
+        // outright when the model has no function-calling capability.
+        "unrecognized field `tools`",
+        // TAURI-RUST-4K7-g — another litellm / proxy variant of the same
+        // tool-unsupported condition.
+        "unsupported parameter: tools",
     ];
 
     let lower = body.to_ascii_lowercase();
