@@ -142,6 +142,24 @@ pub enum ExpectedErrorKind {
     /// ~56 events/hour, all from `openhuman.agent_chat` via
     /// `local_ai.ops.agent_chat`).
     PromptInjectionBlocked,
+    /// The request exceeded the model's context window — the
+    /// conversation/prompt is too long for the configured model. A
+    /// deterministic user-state / usage condition; the remediation is
+    /// "start a new chat, trim the conversation, or pick a larger-context
+    /// model", which the UI surfaces. Sentry has no signal to act on.
+    ///
+    /// The provider HTTP layer (`providers::ops::api_error`) suppresses its
+    /// own per-attempt event for this condition, and
+    /// `providers::reliable` marks it non-retryable. This arm catches the
+    /// **re-report** when the same error is raised again by
+    /// `agent.run_single` / `web_channel.run_chat_task` under a different
+    /// `domain` tag (same two-emit-site shape as the empty-response and
+    /// session-expired fixes). Delegates to the single-source matcher
+    /// [`crate::openhuman::inference::provider::is_context_window_exceeded_message`]
+    /// so the retry classifier, the api_error cascade, and this arm can't
+    /// drift. Drops Sentry TAURI-RUST-501
+    /// (`Context size has been exceeded`, custom-provider 500).
+    ContextWindowExceeded,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -210,6 +228,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_prompt_injection_blocked_message(&lower) {
         return Some(ExpectedErrorKind::PromptInjectionBlocked);
+    }
+    // Context-window-exceeded re-report from a higher layer (agent /
+    // web_channel). The provider api_error cascade suppresses its own
+    // emit; this catches the re-raise. Delegates to the single-source
+    // provider matcher so the phrasing can't drift. Runs last so a more
+    // specific matcher always wins.
+    if crate::openhuman::inference::provider::is_context_window_exceeded_message(message) {
+        return Some(ExpectedErrorKind::ContextWindowExceeded);
     }
     None
 }
@@ -917,6 +943,21 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected prompt-injection-blocked error"
             );
         }
+        ExpectedErrorKind::ContextWindowExceeded => {
+            // Request too long for the model's context window. The provider
+            // api_error cascade already demotes its own emit; this is the
+            // higher-layer re-report. Deterministic user-state — the UI
+            // shows the retry message and the user trims / starts a new
+            // chat. Demote to `warn!` (breadcrumb only) — same tier as the
+            // other usage-state conditions.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "context_window_exceeded",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected context-window-exceeded error: {message}"
+            );
+        }
     }
 }
 
@@ -1510,6 +1551,57 @@ mod tests {
             expected_error_kind("security review required for deploy"),
             None
         );
+    }
+
+    // ── ContextWindowExceeded (TAURI-RUST-501) ─────────────────────────────
+
+    #[test]
+    fn classifies_context_window_exceeded_rereport() {
+        // TAURI-RUST-501: the custom-provider 500 body that escapes the
+        // provider api_error cascade's own status-gated checks. When the
+        // error is re-raised by `agent.run_single` / `web_channel.
+        // run_chat_task`, `report_error_or_expected` runs the classifier on
+        // the full message — this arm must catch the new phrasing.
+        assert_eq!(
+            expected_error_kind(
+                "custom API error (500 Internal Server Error): \
+                 {\"error\":{\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}}"
+            ),
+            Some(ExpectedErrorKind::ContextWindowExceeded)
+        );
+
+        // The established phrasings the provider/reliable layer already
+        // recognized must classify here too (single-source matcher).
+        for raw in [
+            "OpenAI API error (400): This model's maximum context length is 8192 tokens",
+            "request exceeds the context window of this model",
+            "context length exceeded",
+            "prompt is too long",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ContextWindowExceeded),
+                "should classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_messages_as_context_window_exceeded() {
+        // Anchors are context-overflow specific. A generic "window" or
+        // "context" mention, or an unrelated rate-limit "exceeded", must
+        // not classify.
+        for raw in [
+            "rate limit exceeded, retry after 30s",
+            "failed to open context menu window",
+            "tool call exceeded the allowed budget",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
     }
 
     #[test]

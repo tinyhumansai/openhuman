@@ -544,6 +544,61 @@ pub(super) fn log_provider_config_rejection(
     );
 }
 
+/// Whether a provider error body indicates the request exceeded the model's
+/// context window (the conversation/prompt is too long for the configured
+/// model). This is a deterministic user-state / usage condition — the
+/// remediation is "start a new chat, trim the conversation, or pick a
+/// larger-context model" — not a product bug. Sentry has no signal to act
+/// on.
+///
+/// Single source of truth for the context-overflow phrasing, shared by:
+/// - [`super::reliable`]'s non-retryable classifier (retrying the same
+///   oversized request can't help),
+/// - the [`api_error`] Sentry-suppression cascade (below), and
+/// - the `core::observability` `ContextWindowExceeded` classifier (which
+///   catches the higher-layer re-report under `domain=agent` /
+///   `web_channel`).
+///
+/// Status-agnostic on purpose: providers disagree on the HTTP code for this
+/// condition — OpenAI / most emit `400 context_length_exceeded`, but some
+/// custom / self-hosted gateways mis-report it as `500` (Sentry
+/// TAURI-RUST-501: `"custom API error (500 …): Context size has been
+/// exceeded."`). Matching on the body keeps all of them in one bucket.
+pub fn is_context_window_exceeded_message(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+    const HINTS: &[&str] = &[
+        "exceeds the context window",
+        "context window of this model",
+        "maximum context length",
+        "context length exceeded",
+        "context size has been exceeded",
+        "too many tokens",
+        "token limit exceeded",
+        "prompt is too long",
+        "input is too long",
+    ];
+    HINTS.iter().any(|hint| lower.contains(hint))
+}
+
+pub(super) fn log_context_window_exceeded(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::warn!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "context_window_exceeded",
+        "[llm_provider] {operation} context-window exceeded ({status}) — \
+         request too long for the model, not reporting to Sentry"
+    );
+}
+
 /// Build a sanitized provider error from a failed HTTP response.
 ///
 /// Reports the failure to Sentry with `provider` and `status` tags so
@@ -585,6 +640,10 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         is_custom_openai_upstream_bad_request_http_400(provider, status, &body);
     let is_provider_access_policy_denied = is_provider_access_policy_denied_http_403(status, &body);
     let is_provider_config_rejection = is_provider_config_rejection_http(status, provider, &body);
+    // Context-overflow is status-agnostic: match the body directly (some
+    // custom gateways mis-report it as 500 — TAURI-RUST-501 — so a status
+    // gate would let those through to `should_report_provider_http_failure`).
+    let is_context_window_exceeded = is_context_window_exceeded_message(&body);
 
     if is_auth_failure && is_backend {
         tracing::warn!(
@@ -613,6 +672,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_provider_access_policy_denied_http_403("api_error", provider, None, status);
     } else if is_provider_config_rejection {
         log_provider_config_rejection("api_error", provider, None, status);
+    } else if is_context_window_exceeded {
+        log_context_window_exceeded("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -1462,6 +1523,69 @@ mod tests {
                 "custom_openai",
                 Some("reasoning-v1"),
                 reqwest::StatusCode::BAD_REQUEST,
+            );
+        }
+    }
+
+    mod context_window_exceeded_suppression {
+        use super::*;
+
+        #[test]
+        fn classifies_tauri_rust_501_custom_provider_500_body() {
+            // TAURI-RUST-501: the custom-provider 500 wire body. The
+            // matcher is status-agnostic, so the 500 mis-report is caught
+            // (the provider api_error cascade routes it to
+            // `log_context_window_exceeded` instead of `report_error`).
+            assert!(is_context_window_exceeded_message(
+                "{\"error\":{\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}}"
+            ));
+        }
+
+        #[test]
+        fn classifies_established_context_overflow_phrasings() {
+            // The phrasings the reliable.rs non-retryable classifier
+            // recognized before this refactor must all still match through
+            // the shared single-source matcher.
+            for body in [
+                "This model's maximum context length is 8192 tokens",
+                "request exceeds the context window of this model",
+                "context length exceeded",
+                "too many tokens in the prompt",
+                "token limit exceeded",
+                "prompt is too long for the selected model",
+                "input is too long",
+            ] {
+                assert!(
+                    is_context_window_exceeded_message(body),
+                    "should match context-overflow body: {body}"
+                );
+            }
+        }
+
+        #[test]
+        fn does_not_match_unrelated_bodies() {
+            for body in [
+                "rate limit exceeded, retry after 30s",
+                "Invalid request: model not found",
+                "Insufficient budget",
+                "tool call exceeded the allowed budget",
+            ] {
+                assert!(
+                    !is_context_window_exceeded_message(body),
+                    "must NOT match unrelated body: {body}"
+                );
+            }
+        }
+
+        #[test]
+        fn log_helper_runs_without_panicking() {
+            // Smoke for the demotion path taken by `api_error` — no tracing
+            // subscriber in unit tests.
+            log_context_window_exceeded(
+                "api_error",
+                "custom_openai",
+                None,
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
             );
         }
     }
