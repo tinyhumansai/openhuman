@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::errors::YuanbaoError;
 
 /// Default plugin version (`DeviceInfo.app_version` / server `plugin_version`).
-pub(crate) const DEFAULT_PLUGIN_VERSION: &str = "0.1.1";
+pub(crate) const DEFAULT_PLUGIN_VERSION: &str = "0.1.0";
 
 /// Strip legacy `openhuman/` prefix from version strings in config/TOML.
 pub(crate) fn strip_version_prefix(version: &str) -> &str {
@@ -55,9 +55,15 @@ pub struct YuanbaoConfig {
     #[serde(default)]
     pub token: String,
     /// Plugin version reported in `AuthBindReq.DeviceInfo.app_version`
-    /// (server `plugin_version`). Framework version uses `CARGO_PKG_VERSION`
-    /// for `DeviceInfo.bot_version` (server `bot_version`).
-    #[serde(default = "default_bot_version")]
+    /// (server-side `plugin_version`).
+    ///
+    /// **NOTE:** Despite the legacy `bot_version` TOML key name, this value
+    /// is wired to the *plugin* version, not the framework `bot_version`.
+    /// The framework version (`DeviceInfo.bot_version` / server
+    /// `bot_version`) is sourced from `CARGO_PKG_VERSION` and is not
+    /// user-configurable. Operators who previously set this to a framework
+    /// version string should rename their intent to "plugin version".
+    #[serde(default = "default_bot_version", alias = "plugin_version")]
     pub bot_version: String,
     /// Optional bot display name — used by the `@bot` mention guard.
     #[serde(default)]
