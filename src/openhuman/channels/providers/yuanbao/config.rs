@@ -9,6 +9,14 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::YuanbaoError;
 
+/// Default plugin version (`DeviceInfo.app_version` / server `plugin_version`).
+pub(crate) const DEFAULT_PLUGIN_VERSION: &str = "0.1.1";
+
+/// Strip legacy `openhuman/` prefix from version strings in config/TOML.
+pub(crate) fn strip_version_prefix(version: &str) -> &str {
+    version.strip_prefix("openhuman/").unwrap_or(version)
+}
+
 /// Production environment endpoints (default).
 const PROD_API_DOMAIN: &str = "https://bot.yuanbao.tencent.com";
 const PROD_WS_URL: &str = "wss://bot-wss.yuanbao.tencent.com/wss/connection";
@@ -46,7 +54,9 @@ pub struct YuanbaoConfig {
     /// `api_domain/api/token/sign` with `(app_key, app_secret)` to fetch one.
     #[serde(default)]
     pub token: String,
-    /// Plugin/bot version reported in `AuthBindReq.DeviceInfo.bot_version`.
+    /// Plugin version reported in `AuthBindReq.DeviceInfo.app_version`
+    /// (server `plugin_version`). Framework version uses `CARGO_PKG_VERSION`
+    /// for `DeviceInfo.bot_version` (server `bot_version`).
     #[serde(default = "default_bot_version")]
     pub bot_version: String,
     /// Optional bot display name — used by the `@bot` mention guard.
@@ -162,7 +172,7 @@ impl YuanbaoConfig {
 }
 
 fn default_bot_version() -> String {
-    "openhuman/0.1.0".into()
+    DEFAULT_PLUGIN_VERSION.into()
 }
 
 fn default_env() -> String {

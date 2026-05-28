@@ -607,9 +607,9 @@ mod tests {
             "openclaw",
             "tok",
             "mid",
-            "1.0",
+            "0.1.0",
             "linux",
-            "openhuman/0.1.0",
+            "1.0",
             "",
         );
         let frame = decode_conn_msg(&buf).unwrap();
