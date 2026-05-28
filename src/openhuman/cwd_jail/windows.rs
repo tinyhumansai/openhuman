@@ -45,10 +45,10 @@ use windows_sys::Win32::Security::Authorization::{
 };
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
-    DeriveCapabilitySidsFromName,
 };
 use windows_sys::Win32::Security::{
-    FreeSid, ACL, DACL_SECURITY_INFORMATION, PSID, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+    DeriveCapabilitySidsFromName, FreeSid, ACL, DACL_SECURITY_INFORMATION, PSID,
+    SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
 };
 
 // Well-known Win32 access masks. `windows-sys` has moved these constants
@@ -79,9 +79,12 @@ const SE_GROUP_ENABLED: u32 = 0x0000_0004;
 ///   inbound public-internet connections.
 /// - `privateNetworkClientServer` — would let the child `bind()` on the
 ///   LAN, granting inbound LAN reachability beyond the documented
-///   outbound-only semantics. The Linux Seatbelt/Landlock backends do
-///   not grant this either; keeping Windows in line preserves
-///   cross-platform parity.
+///   outbound-only semantics. Excluding it keeps this backend faithful to
+///   the `Jail.allow_net` doc-string contract ("Allow outbound network"),
+///   which is the invariant being enforced here — not the actual network
+///   posture of the other backends (macOS Seatbelt grants `allow default`,
+///   i.e. full network, on `allow_net == true`, and the Linux Landlock
+///   backend does not gate network at all).
 ///
 /// If a future caller needs LAN inbound or public server roles, add a
 /// dedicated `Jail` flag (e.g. `allow_private_lan_server`) and extend
@@ -515,9 +518,7 @@ unsafe fn derive_capability(name: &str) -> io::Result<CapabilityDerivation> {
         return Err(io::Error::last_os_error());
     }
     let capability_sids: Vec<PSID> = (0..cap_count as usize).map(|i| *cap_sids.add(i)).collect();
-    let group_sids_vec: Vec<PSID> = (0..group_count as usize)
-        .map(|i| *group_sids.add(i))
-        .collect();
+    let group_sids_vec: Vec<PSID> = (0..group_count as usize).map(|i| *group_sids.add(i)).collect();
     Ok(CapabilityDerivation {
         capability_sids,
         capability_sids_ptr: cap_sids,
