@@ -1571,15 +1571,11 @@ fn parse_native_response_preserves_reasoning_content_as_json() {
         tool_calls: None,
         function_call: None,
     };
-    let resp = OpenAiCompatibleProvider::parse_native_response(
-        wrap_message(msg),
-        "deepseek",
-    )
-    .unwrap();
+    let resp =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(msg), "deepseek").unwrap();
 
     let text = resp.text.expect("should have text");
-    let parsed: serde_json::Value =
-        serde_json::from_str(&text).expect("text should be valid JSON");
+    let parsed: serde_json::Value = serde_json::from_str(&text).expect("text should be valid JSON");
     assert_eq!(parsed["content"], "The answer is 42.");
     assert_eq!(parsed["reasoning_content"], "Let me think step by step...");
     assert!(resp.tool_calls.is_empty());
@@ -1594,11 +1590,8 @@ fn parse_native_response_no_reasoning_content_returns_plain_text() {
         tool_calls: None,
         function_call: None,
     };
-    let resp = OpenAiCompatibleProvider::parse_native_response(
-        wrap_message(msg),
-        "openai",
-    )
-    .unwrap();
+    let resp =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(msg), "openai").unwrap();
 
     assert_eq!(resp.text.as_deref(), Some("Hello world"));
 }
