@@ -176,6 +176,12 @@ pub fn list_resources_result() -> Value {
     json!({ "resources": resources })
 }
 
+/// Returns the `resources/templates/list` result payload.
+/// Resource templates are not currently exposed; returns empty array.
+pub fn list_resource_templates_result() -> Value {
+    json!({ "resourceTemplates": [] })
+}
+
 /// Returns the `resources/read` result payload for the given URI, or a JSON-RPC
 /// error value when the URI is unknown (`-32002`) or missing (`-32602`).
 pub fn read_resource_result(params: &Value) -> Result<Value, (i64, &'static str, String)> {
@@ -342,5 +348,14 @@ mod tests {
             original_len, deduped_len,
             "RESOURCE_CATALOG contains duplicate URIs"
         );
+    }
+
+    #[test]
+    fn list_resource_templates_returns_empty_array() {
+        let result = list_resource_templates_result();
+        let templates = result["resourceTemplates"]
+            .as_array()
+            .expect("resourceTemplates must be an array");
+        assert_eq!(templates.len(), 0, "resourceTemplates should be empty");
     }
 }

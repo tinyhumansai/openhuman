@@ -178,6 +178,10 @@ async fn handle_request(id: Value, method: &str, params: Value, session: &mut Mc
                 }
             }
         }
+        "resources/templates/list" => {
+            log::debug!("[mcp_server] resources/templates/list request id={request_id}");
+            success_response(id, resources::list_resource_templates_result())
+        }
         "tools/call" => match parse_tool_call_params(params) {
             Ok((name, arguments)) => {
                 log::debug!(
@@ -732,5 +736,44 @@ mod tests {
         .await;
 
         assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_returns_empty_array() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "resources/templates/list"
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        let templates = response["result"]["resourceTemplates"]
+            .as_array()
+            .expect("resourceTemplates must be an array");
+        assert_eq!(templates.len(), 0, "resourceTemplates should be empty");
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_with_cursor_param_tolerates_extra_params() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "resources/templates/list",
+            "params": { "cursor": "unused_value" }
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "extra params should be tolerated: {response}"
+        );
+        let templates = response["result"]["resourceTemplates"]
+            .as_array()
+            .expect("resourceTemplates must be an array");
+        assert_eq!(templates.len(), 0);
     }
 }
