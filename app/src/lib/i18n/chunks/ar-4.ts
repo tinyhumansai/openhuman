@@ -145,6 +145,8 @@ const ar4: TranslationMap = {
   'notifications.center.filterAll': 'تصفية الكل',
   'notifications.center.markAllRead': 'تحديد الكل كمقروء',
   'notifications.center.title': 'الإشعارات',
+  'oauth.button.loopbackTimeout':
+    'انتهت مهلة تسجيل الدخول — لم يكتمل المتصفح إعادة توجيه OAuth. يرجى المحاولة مرة أخرى.',
   'oauth.button.connecting': 'جارٍ الاتصال...',
   'oauth.login.continueWith': 'المتابعة مع',
   'onboarding.contextGathering.buildingDesc': 'وصف البناء',
@@ -289,7 +291,7 @@ const ar4: TranslationMap = {
   'settings.ai.clearStoredKey': 'مسح المفتاح المحفوظ',
   'settings.ai.connectProvider': 'ربط مزود',
   'settings.ai.customRouting': 'توجيه مخصص',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'الافتراضي يُحل إلى',
   'settings.ai.discard': 'تجاهل',
   'settings.ai.editProvider': 'تعديل المزود',
   'settings.ai.llmProviders': 'مزودو LLM',

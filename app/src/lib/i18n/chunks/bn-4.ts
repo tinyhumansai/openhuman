@@ -146,6 +146,8 @@ const bn4: TranslationMap = {
   'notifications.center.filterAll': 'সব ফিল্টার',
   'notifications.center.markAllRead': 'সব পঠিত চিহ্নিত করুন',
   'notifications.center.title': 'বিজ্ঞপ্তি',
+  'oauth.button.loopbackTimeout':
+    'সাইন-ইন টাইম আউট হয়েছে — ব্রাউজার OAuth পুনর্নির্দেশনা সম্পন্ন করেনি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'oauth.button.connecting': 'সংযোগ হচ্ছে...',
   'oauth.login.continueWith': 'দিয়ে চালিয়ে যান',
   'onboarding.contextGathering.buildingDesc': 'বিল্ডিং বিবরণ',
@@ -291,7 +293,7 @@ const bn4: TranslationMap = {
   'settings.ai.clearStoredKey': 'সংরক্ষিত কী মুছুন',
   'settings.ai.connectProvider': 'প্রোভাইডার সংযোগ করুন',
   'settings.ai.customRouting': 'কাস্টম রুটিং',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'ডিফল্ট এতে সমাধান হয়',
   'settings.ai.discard': 'বাতিল করুন',
   'settings.ai.editProvider': 'প্রোভাইডার সম্পাদনা করুন',
   'settings.ai.llmProviders': 'LLM প্রোভাইডার',

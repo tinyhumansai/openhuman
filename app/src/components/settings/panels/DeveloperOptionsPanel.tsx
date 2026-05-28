@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -6,7 +5,11 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { triggerSentryTestEvent } from '../../../services/analytics';
 import { useAppSelector } from '../../../store/hooks';
 import { APP_ENVIRONMENT } from '../../../utils/config';
-import { isTauri } from '../../../utils/tauriCommands/common';
+// `safeInvoke` (aliased to `invoke`) converts the CEF
+// `window.ipc.postMessage` synchronous throw — Sentry TAURI-REACT-7 /
+// TAURI-REACT-6 — into a rejected Promise so the existing `.catch(...)` /
+// try/catch handlers see it as a normal IPC failure.
+import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
 import { resetWalkthrough } from '../../walkthrough/AppWalkthrough';
 import SettingsHeader from '../components/SettingsHeader';
 import SettingsMenuItem from '../components/SettingsMenuItem';
@@ -67,6 +70,22 @@ const developerItems = [
           strokeLinejoin="round"
           strokeWidth={2}
           d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'dev-workflow',
+    titleKey: 'settings.developerMenu.devWorkflow.title',
+    descriptionKey: 'settings.developerMenu.devWorkflow.desc',
+    route: 'dev-workflow',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
         />
       </svg>
     ),
@@ -166,6 +185,22 @@ const developerItems = [
           strokeLinejoin="round"
           strokeWidth={2}
           d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'model-health',
+    titleKey: 'settings.modelHealth.title',
+    descriptionKey: 'settings.modelHealth.desc',
+    route: 'model-health',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
         />
       </svg>
     ),

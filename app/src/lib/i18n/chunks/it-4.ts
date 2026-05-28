@@ -146,6 +146,8 @@ const it4: TranslationMap = {
   'notifications.center.filterAll': 'Filtra tutte',
   'notifications.center.markAllRead': 'Segna tutte come lette',
   'notifications.center.title': 'Notifiche',
+  'oauth.button.loopbackTimeout':
+    'Accesso scaduto — il browser non ha completato il reindirizzamento OAuth. Riprova.',
   'oauth.button.connecting': 'Connessione...',
   'oauth.login.continueWith': 'Continua con',
   'onboarding.contextGathering.buildingDesc': 'Descrizione costruzione',
@@ -295,7 +297,7 @@ const it4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Cancella chiave memorizzata',
   'settings.ai.connectProvider': 'Connetti provider',
   'settings.ai.customRouting': 'Instradamento personalizzato',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Il valore predefinito si risolve in',
   'settings.ai.discard': 'Scarta',
   'settings.ai.editProvider': 'Modifica provider',
   'settings.ai.llmProviders': 'Provider LLM',

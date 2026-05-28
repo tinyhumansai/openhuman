@@ -146,6 +146,8 @@ const id4: TranslationMap = {
   'notifications.center.filterAll': 'Filter semua',
   'notifications.center.markAllRead': 'Tandai semua sudah dibaca',
   'notifications.center.title': 'Notifikasi',
+  'oauth.button.loopbackTimeout':
+    'Masuk habis waktu — browser tidak menyelesaikan pengalihan OAuth. Silakan coba lagi.',
   'oauth.button.connecting': 'Menghubungkan...',
   'oauth.login.continueWith': 'Lanjutkan dengan',
   'onboarding.contextGathering.buildingDesc': 'Deskripsi pembangunan',
@@ -293,7 +295,7 @@ const id4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Hapus key tersimpan',
   'settings.ai.connectProvider': 'Hubungkan penyedia',
   'settings.ai.customRouting': 'Routing kustom',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Default diarahkan ke',
   'settings.ai.discard': 'Buang',
   'settings.ai.editProvider': 'Edit penyedia',
   'settings.ai.llmProviders': 'Penyedia LLM',

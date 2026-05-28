@@ -146,6 +146,8 @@ const de4: TranslationMap = {
   'notifications.center.filterAll': 'Alles filtern',
   'notifications.center.markAllRead': 'Alles als gelesen markieren',
   'notifications.center.title': 'Benachrichtigungen',
+  'oauth.button.loopbackTimeout':
+    'Anmeldung abgelaufen — der Browser hat die OAuth-Weiterleitung nicht abgeschlossen. Bitte versuche es erneut.',
   'oauth.button.connecting': 'Verbinden...',
   'oauth.login.continueWith': 'Weiter mit',
   'onboarding.contextGathering.buildingDesc': 'Gebäudebeschreibung',
@@ -299,7 +301,7 @@ const de4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Gespeicherten Schlüssel löschen',
   'settings.ai.connectProvider': 'Anbieter verbinden',
   'settings.ai.customRouting': 'Benutzerdefiniertes Routing',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Standard wird aufgelöst zu',
   'settings.ai.discard': 'Verwerfen',
   'settings.ai.editProvider': 'Anbieter bearbeiten',
   'settings.ai.llmProviders': 'LLM Anbieter',

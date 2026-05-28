@@ -15,11 +15,19 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isTauri, parseServiceCliOutput } from './common';
+import { IpcUnavailableError, isTauri, parseServiceCliOutput, safeInvoke } from './common';
 
 const coreIsTauriMock = vi.fn();
+const coreInvokeMock = vi.fn();
 
-vi.mock('@tauri-apps/api/core', () => ({ isTauri: () => coreIsTauriMock() }));
+vi.mock('@tauri-apps/api/core', () => ({
+  isTauri: () => coreIsTauriMock(),
+  // Forward only the args that `safeInvoke` actually passed so arity-strict
+  // expectations (`toHaveBeenCalledWith(cmd)` / `toHaveBeenCalledWith(cmd,
+  // args)`) match the wrapper's contract. Spreading `arguments` would invent
+  // a trailing `undefined`; using rest preserves the original arity.
+  invoke: (...args: unknown[]) => coreInvokeMock(...args),
+}));
 
 describe('isTauri (tauriCommands/common)', () => {
   // We mutate `window` to simulate Tauri-runtime bootstrap state across cases.
@@ -149,5 +157,119 @@ describe('parseServiceCliOutput (tauriCommands/common)', () => {
     expect(() => parseServiceCliOutput(JSON.stringify({ result: 1, logs: [1, 2] }))).toThrow(
       /CommandResponse shape/
     );
+  });
+});
+
+// `safeInvoke` is the migration target for every IPC call site that today
+// hands a bare `invoke(...)` Promise to `.catch(noop)` or to a try/catch.
+// Under CEF the underlying `coreInvoke` can throw **synchronously** when the
+// vendored `ipc-protocol.js` fallback path runs into the unwired
+// `window.ipc.postMessage` (see OPENHUMAN-TAURI-REACT-7 / TAURI-REACT-6). The
+// sync throw escapes the surrounding Promise body and lands on
+// `onunhandledrejection`, where Sentry captures it as noisy `Non-Error
+// promise rejection` events. `safeInvoke` must convert that into a rejected
+// Promise tagged with `IpcUnavailableError`.
+describe('safeInvoke (tauriCommands/common)', () => {
+  beforeEach(() => {
+    coreInvokeMock.mockReset();
+  });
+
+  it('returns the resolved value when the underlying invoke resolves', async () => {
+    coreInvokeMock.mockResolvedValue('ok');
+
+    await expect(safeInvoke<string>('greet')).resolves.toBe('ok');
+    // Wrapper forwards only the args the caller passed (preserves arity for
+    // strict-match test mocks like `tauriBridge.test.ts`).
+    expect(coreInvokeMock).toHaveBeenCalledWith('greet');
+  });
+
+  it('forwards args (and only args) when called with two arguments', async () => {
+    coreInvokeMock.mockResolvedValue(42);
+
+    await safeInvoke<number>('doStuff', { foo: 1 });
+
+    expect(coreInvokeMock).toHaveBeenCalledWith('doStuff', { foo: 1 });
+  });
+
+  it('forwards args and options when called with three arguments', async () => {
+    coreInvokeMock.mockResolvedValue(42);
+
+    await safeInvoke<number>('doStuff', { foo: 1 }, { headers: { 'X-Test': '1' } });
+
+    expect(coreInvokeMock).toHaveBeenCalledWith(
+      'doStuff',
+      { foo: 1 },
+      { headers: { 'X-Test': '1' } }
+    );
+  });
+
+  it('rejects with the original error when the underlying invoke returns a rejected promise (no sync throw)', async () => {
+    coreInvokeMock.mockRejectedValue(new Error('command failed'));
+
+    await expect(safeInvoke<string>('whatever')).rejects.toThrow('command failed');
+  });
+
+  // The OPENHUMAN-TAURI-REACT-7 / TAURI-REACT-6 regression: a sync `TypeError`
+  // thrown inside the IPC fallback (vendored `ipc-protocol.js:84`) escapes the
+  // Promise body of `coreInvoke` if the call site doesn't wrap it. `safeInvoke`
+  // must catch that throw and surface it as a *rejected* Promise instead, so
+  // existing `.catch(...)` chains keep working and Sentry stops capturing the
+  // raw TypeError as an unhandled rejection.
+  it('converts a synchronous coreInvoke throw into a rejected Promise', async () => {
+    coreInvokeMock.mockImplementation(() => {
+      throw new Error('something went wrong sync');
+    });
+
+    const promise = safeInvoke<string>('willThrow');
+    // The wrapper must return a Promise *object* even though the underlying
+    // call threw synchronously. `expect(...).rejects` would fail with a
+    // confusing message if the wrapper itself re-threw.
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toThrow('something went wrong sync');
+  });
+
+  it('wraps the CEF "postMessage of undefined" TypeError in IpcUnavailableError', async () => {
+    const cefThrow = new TypeError("Cannot read properties of undefined (reading 'postMessage')");
+    coreInvokeMock.mockImplementation(() => {
+      throw cefThrow;
+    });
+
+    const err = await safeInvoke<void>('webview_account_hide').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(IpcUnavailableError);
+    const typed = err as IpcUnavailableError;
+    expect(typed.name).toBe('IpcUnavailableError');
+    expect(typed.cmd).toBe('webview_account_hide');
+    expect(typed.cause).toBe(cefThrow);
+    expect(typed.message).toContain('webview_account_hide');
+    expect(typed.message).toContain('postMessage');
+  });
+
+  it('does NOT wrap unrelated TypeErrors that do not mention postMessage', async () => {
+    const otherTypeError = new TypeError('something else entirely');
+    coreInvokeMock.mockImplementation(() => {
+      throw otherTypeError;
+    });
+
+    const err = await safeInvoke<void>('some_cmd').catch((e: unknown) => e);
+
+    // Pass through verbatim — existing message-based classifiers (e.g.
+    // `classifyWebviewAccountError`) must keep seeing the original error.
+    expect(err).toBe(otherTypeError);
+    expect(err).not.toBeInstanceOf(IpcUnavailableError);
+  });
+
+  it('also rejects with IpcUnavailableError when the failure mode arrives via the promise (mid-session fallback)', async () => {
+    // The fallback path can also surface the same TypeError via the rejected
+    // Promise pathway (when CEF eventually wires the bridge object, the call
+    // proceeds far enough to construct the Promise but still fails on the
+    // missing `postMessage`). Same classifier must handle both shapes.
+    const cefThrow = new TypeError("Cannot read properties of undefined (reading 'postMessage')");
+    coreInvokeMock.mockRejectedValue(cefThrow);
+
+    const err = await safeInvoke<void>('webview_account_reveal').catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(IpcUnavailableError);
+    expect((err as IpcUnavailableError).cmd).toBe('webview_account_reveal');
   });
 });

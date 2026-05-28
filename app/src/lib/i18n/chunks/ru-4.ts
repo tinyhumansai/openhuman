@@ -146,6 +146,8 @@ const ru4: TranslationMap = {
   'notifications.center.filterAll': 'Все',
   'notifications.center.markAllRead': 'Отметить всё прочитанным',
   'notifications.center.title': 'Уведомления',
+  'oauth.button.loopbackTimeout':
+    'Время входа истекло — браузер не завершил перенаправление OAuth. Пожалуйста, попробуйте снова.',
   'oauth.button.connecting': 'Подключение...',
   'oauth.login.continueWith': 'Продолжить через',
   'onboarding.contextGathering.buildingDesc': 'Сборка профиля',
@@ -291,7 +293,7 @@ const ru4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Очистить сохранённый ключ',
   'settings.ai.connectProvider': 'Подключить провайдера',
   'settings.ai.customRouting': 'Пользовательская маршрутизация',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'По умолчанию используется',
   'settings.ai.discard': 'Отменить',
   'settings.ai.editProvider': 'Изменить провайдера',
   'settings.ai.llmProviders': 'LLM-провайдеры',

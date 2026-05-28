@@ -27,6 +27,7 @@ const RecoveryPhrasePanel = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [revealed, setRevealed] = useState(false);
 
   const mnemonic = useMemo(() => generateMnemonicPhrase(), []);
   const words = useMemo(() => mnemonic.split(' '), [mnemonic]);
@@ -255,8 +256,14 @@ const RecoveryPhrasePanel = () => {
                     </div>
                   </div>
 
-                  <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-2xl p-4 mb-4 border border-stone-200 dark:border-neutral-800">
-                    <div className="grid grid-cols-3 gap-2">
+                  <div className="bg-stone-50 dark:bg-neutral-800/60 rounded-2xl p-4 mb-4 border border-stone-200 dark:border-neutral-800 relative">
+                    <div
+                      className="grid grid-cols-3 gap-2 transition-all duration-300"
+                      style={{
+                        filter: revealed ? 'none' : 'blur(8px)',
+                        userSelect: revealed ? 'auto' : 'none',
+                        pointerEvents: revealed ? 'auto' : 'none',
+                      }}>
                       {words.map((word, index) => (
                         <div
                           key={index}
@@ -268,11 +275,33 @@ const RecoveryPhrasePanel = () => {
                         </div>
                       ))}
                     </div>
+                    {!revealed && (
+                      <button
+                        type="button"
+                        onClick={() => setRevealed(true)}
+                        aria-label={t('mnemonic.revealPhrase')}
+                        className="absolute inset-0 flex items-center justify-center cursor-pointer bg-transparent">
+                        <svg
+                          className="w-7 h-7 text-stone-900 dark:text-white transition-opacity duration-200 hover:opacity-70"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={1.5}>
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"
+                          />
+                          <line x1="1" y1="1" x2="23" y2="23" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
 
                   <button
                     onClick={handleCopy}
-                    className="w-full flex items-center justify-center gap-2 border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 font-medium py-2.5 text-sm rounded-xl text-stone-700 dark:text-neutral-200 transition-all duration-200 mb-3">
+                    disabled={!revealed}
+                    className="w-full flex items-center justify-center gap-2 border border-stone-200 dark:border-neutral-800 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 font-medium py-2.5 text-sm rounded-xl text-stone-700 dark:text-neutral-200 transition-all duration-200 mb-3 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 dark:disabled:hover:border-neutral-800">
                     {copied ? (
                       <>
                         <svg

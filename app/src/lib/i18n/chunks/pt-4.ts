@@ -147,6 +147,8 @@ const pt4: TranslationMap = {
   'notifications.center.filterAll': 'Filtrar todos',
   'notifications.center.markAllRead': 'Marcar todos como lidos',
   'notifications.center.title': 'Notificações',
+  'oauth.button.loopbackTimeout':
+    'Login expirou — o navegador não concluiu o redirecionamento OAuth. Por favor, tente novamente.',
   'oauth.button.connecting': 'Conectando...',
   'oauth.login.continueWith': 'Continuar com',
   'onboarding.contextGathering.buildingDesc': 'Descrição de construção',
@@ -294,7 +296,7 @@ const pt4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Limpar chave armazenada',
   'settings.ai.connectProvider': 'Conectar provedor',
   'settings.ai.customRouting': 'Roteamento personalizado',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'O padrão resolve para',
   'settings.ai.discard': 'Descartar',
   'settings.ai.editProvider': 'Editar provedor',
   'settings.ai.llmProviders': 'Provedores LLM',

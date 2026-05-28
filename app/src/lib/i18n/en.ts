@@ -112,9 +112,10 @@ const en: TranslationMap = {
     'Migrate memory and notes from another local assistant into this workspace. Start with a Preview to see exactly what would change, then Apply to copy the data over. Your current memory is backed up first.',
   'migration.vendorLabel': 'Source vendor',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (coming soon)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'migration.sourceLabel': 'Source workspace path (optional)',
   'migration.sourcePlaceholder': 'Leave blank to auto-detect (e.g. ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
   'migration.previewAction': 'Preview',
@@ -137,10 +138,6 @@ const en: TranslationMap = {
     'No data has been imported yet. Click Apply import to copy it over.',
   'migration.report.appliedHint':
     'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
-  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
-  'migration.hermesComingSoonSuffix':
-    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
   'migration.confirmImport.plural':
@@ -272,6 +269,36 @@ const en: TranslationMap = {
   'memory.tab.calls': 'Calls',
   'memory.tab.settings': 'Settings',
   'memory.analyzeNow': 'Analyze Now',
+
+  // Memory Tree status panel (#1856 Part 1)
+  'memoryTree.status.title': 'Memory Tree',
+  'memoryTree.status.autoSyncLabel': 'Auto-sync',
+  'memoryTree.status.autoSyncDescription':
+    'Pause to stop new ingestion. Existing wiki stays queryable.',
+  'memoryTree.status.statusTile': 'Status',
+  'memoryTree.status.lastSyncTile': 'Last sync',
+  'memoryTree.status.totalChunksTile': 'Total chunks',
+  'memoryTree.status.wikiSizeTile': 'Wiki size',
+  'memoryTree.status.statusRunning': 'Running',
+  'memoryTree.status.statusPaused': 'Paused',
+  'memoryTree.status.statusSyncing': 'Syncing',
+  'memoryTree.status.statusError': 'Error',
+  'memoryTree.status.statusIdle': 'Idle',
+  'memoryTree.status.never': 'Never',
+  'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
+  'memoryTree.status.retry': 'Retry',
+  'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",
+  // Relative-time buckets surfaced by the last-sync tile. `{count}` is
+  // replaced client-side at the call site (the runtime `t()` does not
+  // interpolate — see I18nContext.tsx).
+  'memoryTree.status.justNow': 'just now',
+  'memoryTree.status.secondsAgo': '{count}s ago',
+  'memoryTree.status.minuteAgo': '1 min ago',
+  'memoryTree.status.minutesAgo': '{count} min ago',
+  'memoryTree.status.hourAgo': '1 hr ago',
+  'memoryTree.status.hoursAgo': '{count} hr ago',
+  'memoryTree.status.dayAgo': '1 day ago',
+  'memoryTree.status.daysAgo': '{count} days ago',
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
@@ -549,6 +576,7 @@ const en: TranslationMap = {
     'Never share your recovery phrase. Anyone with these words can access your account.',
   'mnemonic.copied': 'Recovery phrase copied to clipboard',
   'mnemonic.reveal': 'Reveal phrase',
+  'mnemonic.revealPhrase': 'Reveal recovery phrase',
   'mnemonic.hidden': 'Recovery phrase is hidden',
 
   // What Leaves My Computer
@@ -598,6 +626,59 @@ const en: TranslationMap = {
   'settings.heartbeat.desc': 'Control background scheduling cadences and inspect the loop map.',
   'settings.ledgerUsage.title': 'Usage ledger',
   'settings.ledgerUsage.desc': 'Recent credit spend, budget math, and background API read budget.',
+  'settings.costDashboard.title': 'Cost dashboard',
+  'settings.costDashboard.desc':
+    '7-day spend and token burn across the swarm, with budget pace and per-model breakdown.',
+  'settings.costDashboard.sevenDayCost': '7-day daily cost',
+  'settings.costDashboard.sevenDayTokens': '7-day token usage',
+  'settings.costDashboard.totalSpend': '7-day total',
+  'settings.costDashboard.monthlyPace': 'Monthly pace',
+  'settings.costDashboard.budgetLimit': 'Budget limit',
+  'settings.costDashboard.utilization': 'Utilisation',
+  'settings.costDashboard.modelBreakdown': 'Per-model breakdown',
+  'settings.costDashboard.model': 'Model',
+  'settings.costDashboard.provider': 'Provider',
+  'settings.costDashboard.cost': 'Cost',
+  'settings.costDashboard.tokens': 'Tokens',
+  'settings.costDashboard.requests': 'Requests',
+  'settings.costDashboard.percentOfTotal': '% of total',
+  'settings.costDashboard.inputTokens': 'Input',
+  'settings.costDashboard.outputTokens': 'Output',
+  'settings.costDashboard.budgetNormal': 'On track',
+  'settings.costDashboard.budgetWarning': 'Warning',
+  'settings.costDashboard.budgetExceeded': 'Over budget',
+  'settings.costDashboard.noBudget': 'No limit set',
+  'settings.costDashboard.noData': 'No cost recorded yet for the last 7 days.',
+  'settings.costDashboard.noModels': 'No model activity in the last 7 days.',
+  'settings.costDashboard.loading': 'Loading cost dashboard…',
+  'settings.costDashboard.disabledHint':
+    'Cost dashboard is disabled in config. Set [cost.dashboard] enabled = true in config.toml to re-enable.',
+  'settings.costDashboard.subtitle':
+    'Live spend and token burn across the swarm. Bars auto-refresh every few seconds — no page reload needed.',
+  'settings.costDashboard.summaryAriaLabel': 'Cost summary metrics',
+  'settings.costDashboard.lastSevenDays': 'last 7 days',
+  'settings.costDashboard.utilizationOf': 'of',
+  'settings.costDashboard.thisMonth': 'this month',
+  'settings.costDashboard.monthlyPaceHint':
+    'Projected monthly spend at the current daily run-rate (avg × 30).',
+  'settings.costDashboard.budgetLimitHint':
+    'Monthly budget read from cost.monthly_limit_usd in config.toml.',
+  'settings.costDashboard.dailyTarget': 'Daily target',
+  'settings.costDashboard.today': 'Today',
+  'settings.costDashboard.todayBadge': 'TODAY',
+  'settings.costDashboard.unknownProvider': '—',
+  'settings.costDashboard.justNow': 'Just now',
+  'settings.costDashboard.secondsAgo': '{value}s ago',
+  'settings.costDashboard.minutesAgo': '{value}m ago',
+  'settings.costDashboard.hoursAgo': '{value}h ago',
+  'settings.costDashboard.daysAgo': '{value}d ago',
+  'settings.costDashboard.updated': 'Updated',
+  'settings.costDashboard.refresh': 'Refresh',
+  'settings.costDashboard.utcNote': 'Days bucketed in UTC',
+  'settings.costDashboard.stackedNote': 'Input + output stacked',
+  'settings.costDashboard.modelBreakdownHint': 'Aggregated across the last 7 days.',
+  'settings.costDashboard.noDataHint':
+    'Send an agent message — token usage from the next provider call will populate the chart within ~10 seconds.',
   'settings.search.title': 'Search engine',
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
@@ -631,6 +712,19 @@ const en: TranslationMap = {
   'settings.search.placeholderStored': '•••••••• (stored)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.allowedSitesLabel': 'Allowed websites',
+  'settings.search.allowedSitesHint':
+    'Hosts the assistant may open and read — via web fetch and the browser tool — one per line, e.g. reuters.com. A host also covers its subdomains. Web search itself is not restricted by this list.',
+  'settings.search.allowedSitesAllOn':
+    'The assistant can open any public website. Local and private addresses stay blocked.',
+  'settings.search.allowedSitesPlaceholder': 'reuters.com\napnews.com\ngithub.com',
+  'settings.search.allowedSitesSave': 'Save websites',
+  'settings.search.accessModeAria': 'Web access mode',
+  'settings.search.accessAllowAll': 'Allow all',
+  'settings.search.accessCustom': 'Custom',
+  'settings.search.accessBlockAll': 'Block all',
+  'settings.search.accessBlockAllHint':
+    'All web access is blocked — the assistant cannot open or read any website.',
   // ─── Embeddings settings ───────────────────────────────────
   'settings.embeddings.title': 'Embeddings',
   'settings.embeddings.description':
@@ -772,6 +866,69 @@ const en: TranslationMap = {
   'mcp.installed.empty': 'No MCP servers installed yet.',
   'mcp.installed.toolSingular': '{count} tool',
   'mcp.installed.toolPlural': '{count} tools',
+  'mcp.inventory.openButton': 'Inventory',
+  'mcp.inventory.openAria': 'Open the sharable MCP inventory panel',
+  'mcp.inventory.title': 'Sharable MCP Inventory',
+  'mcp.inventory.subtitle':
+    'Export your installed MCP servers as a portable, secret-free manifest, or import one from a teammate. Secret env values are never included or imported.',
+  'mcp.inventory.close': 'Close inventory panel',
+  'mcp.inventory.tablistAria': 'Inventory sections',
+  'mcp.inventory.tab.export': 'Export',
+  'mcp.inventory.tab.import': 'Import',
+  'mcp.inventory.export.empty':
+    'No MCP servers installed yet — nothing to export. Install one from the catalog first.',
+  'mcp.inventory.export.privacyTitle': 'What is in this manifest',
+  'mcp.inventory.export.privacyBody':
+    'Server names, qualified names, env-variable KEY NAMES, and non-secret config only. Secret values, your machine identifiers, and per-install timestamps are intentionally stripped.',
+  'mcp.inventory.export.serverCount': '{count} servers in this manifest',
+  'mcp.inventory.export.copy': 'Copy',
+  'mcp.inventory.export.copied': 'Copied',
+  'mcp.inventory.export.copyAria': 'Copy the manifest JSON to the clipboard',
+  'mcp.inventory.export.download': 'Download',
+  'mcp.inventory.export.downloadAria': 'Download the manifest as a JSON file',
+  'mcp.inventory.import.trustTitle': 'Treat imported manifests as untrusted code',
+  'mcp.inventory.import.trustBody':
+    'An MCP server is a tool you grant your agent. Only import manifests from sources you trust. Each install requires your explicit click; nothing is auto-installed.',
+  'mcp.inventory.import.pasteLabel': 'Paste manifest JSON',
+  'mcp.inventory.import.pastePlaceholder': 'Paste a manifest here, or upload a .json file below.',
+  'mcp.inventory.import.preview': 'Preview',
+  'mcp.inventory.import.clear': 'Clear',
+  'mcp.inventory.import.uploadFile': 'or upload a .json file',
+  'mcp.inventory.import.uploadFileAria': 'Upload a manifest .json file',
+  'mcp.inventory.import.fileTooLarge': 'File is too large (over 1 MB). Refusing to load.',
+  'mcp.inventory.import.fileReadFailed': 'Could not read file.',
+  'mcp.inventory.import.parseErrorPrefix': 'Could not parse manifest:',
+  'mcp.inventory.import.previewHeading': 'Preview',
+  'mcp.inventory.import.previewCounts':
+    '{total} servers — {newly} new, {already} already installed',
+  'mcp.inventory.import.previewEmpty': 'Manifest contains no servers.',
+  'mcp.inventory.import.exportedFrom': 'Exported from {exporter}',
+  'mcp.inventory.import.exportedAt': 'at {when}',
+  'mcp.inventory.import.statusNew': 'New',
+  'mcp.inventory.import.statusAlreadyInstalled': 'Already installed',
+  'mcp.inventory.import.envKeysLabel': 'Env keys',
+  'mcp.inventory.import.install': 'Install',
+  'mcp.inventory.import.installAria': 'Install {name} from this manifest',
+  'mcp.inventory.import.skipped': 'skipped',
+  'mcp.inventory.parseError.empty': 'Manifest is empty.',
+  'mcp.inventory.parseError.invalidJson': 'Invalid JSON.',
+  'mcp.inventory.parseError.rootNotObject': 'Manifest must be a JSON object at the root.',
+  'mcp.inventory.parseError.unsupportedSchema':
+    'Unsupported manifest schema — this file was not produced by a compatible exporter.',
+  'mcp.inventory.parseError.missingExportedAt': 'Missing or invalid `exported_at` field.',
+  'mcp.inventory.parseError.missingExportedBy': 'Missing or invalid `exported_by` field.',
+  'mcp.inventory.parseError.invalidServers': 'Missing or invalid `servers` array.',
+  'mcp.inventory.parseError.serverNotObject': 'A server entry is not an object.',
+  'mcp.inventory.parseError.serverMissingQualifiedName':
+    'A server entry is missing its qualified_name.',
+  'mcp.inventory.parseError.serverMissingDisplayName':
+    'A server entry is missing its display_name.',
+  'mcp.inventory.parseError.serverEnvKeysNotArray':
+    'A server entry has an env_keys field that is not an array of strings.',
+  'mcp.inventory.parseError.serverContainsEnv':
+    'A server entry contains an `env` value map. Refusing to import — manifests must only carry env_keys (names), never secret values.',
+  'mcp.inventory.parseError.duplicateQualifiedName':
+    'Duplicate qualified_name found in manifest. Each server must appear at most once.',
   'mcp.tab.loading': 'Loading MCP servers...',
   'mcp.tab.emptyDetail': 'Select a server or browse the catalog.',
   'mcp.install.loadingDetail': 'Loading server details...',
@@ -1448,6 +1605,12 @@ const en: TranslationMap = {
   'chat.turn': 'turn',
   'chat.turns': 'turns',
   'chat.openWorkerThread': 'Open worker thread',
+  'chat.attachment.attach': 'Attach image',
+  'chat.attachment.remove': 'Remove {name}',
+  'chat.attachment.tooMany': 'Maximum {max} images per message',
+  'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
+  'chat.attachment.unsupportedType': 'Unsupported file type. Use PNG, JPEG, WebP, GIF, or BMP.',
+  'chat.attachment.readFailed': 'Could not read file',
 
   // Memory (additional)
   'memory.searchAria': 'Search memory',
@@ -1493,6 +1656,7 @@ const en: TranslationMap = {
   'mic.stopRecording': 'Stop recording and send',
   'mic.startRecording': 'Start recording',
   'mic.deviceSelector': 'Microphone device',
+  'mic.tapToSendCountdown': 'Tap to send ({seconds}s)',
 
   // Token
   'token.usageLimitReached': 'Usage limit reached',
@@ -1586,6 +1750,18 @@ const en: TranslationMap = {
     'Use Reveal Folder to open the vault directory directly. Vault path:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
   'workspace.revealFolder': 'Reveal Folder',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Failed to load memory graph',
   'workspace.loadingGraph': 'Loading memory graph...',
   'workspace.graphViewMode': 'Memory graph view mode',
@@ -1754,6 +1930,13 @@ const en: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Restart / Update Runtime',
   'bootCheck.unexpectedError': 'Unexpected Boot-Check Error',
   'bootCheck.actionFailed': 'Something went wrong. Please try again.',
+  'bootCheck.portConflictTitle': "Couldn't Start the App Engine",
+  'bootCheck.portConflictBody':
+    "Another process is using the network port OpenHuman needs. We'll try to fix this automatically.",
+  'bootCheck.portConflictFixButton': 'Fix Automatically',
+  'bootCheck.portConflictFixing': 'Fixing…',
+  'bootCheck.portConflictFixFailed':
+    "Automatic fix didn't work. Please restart your computer and try again.",
 
   // Notifications: category labels & timestamps
   'notifications.justNow': 'just now',
@@ -1843,6 +2026,7 @@ const en: TranslationMap = {
   // Mic: error messages
   'mic.noAudioCaptured': 'No audio captured',
   'mic.noSpeechDetected': 'No speech detected',
+  'mic.lowConfidenceResult': 'Could not understand the audio clearly — please try again',
   'mic.failedToStopRecording': 'Failed to stop recording: {message}',
   'mic.transcriptionFailed': 'Transcription failed: {message}',
 
@@ -1988,6 +2172,15 @@ const en: TranslationMap = {
   'channels.telegram.reconnect': 'Reconnect',
   'channels.telegram.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.web.alwaysAvailable': 'Always available',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 
   // Auth mode labels
   'channels.authMode.managed_dm': 'Login with OpenHuman',
@@ -2227,6 +2420,8 @@ const en: TranslationMap = {
   'notifications.center.markAllRead': 'Mark all read',
   'notifications.center.title': 'Notifications',
   'oauth.button.connecting': 'Connecting...',
+  'oauth.button.loopbackTimeout':
+    'Sign-in timed out — the browser did not complete the OAuth redirect. Please try again.',
   'oauth.login.continueWith': 'Continue with',
   'onboarding.contextGathering.buildingDesc': 'Gathering context from your connected accounts…',
   'onboarding.contextGathering.buildingProfile': 'Building your profile...',
@@ -2381,7 +2576,7 @@ const en: TranslationMap = {
   'settings.ai.clearStoredKey': 'Clear stored key',
   'settings.ai.connectProvider': 'Connect',
   'settings.ai.customRouting': 'Custom routing',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Default resolves to',
   'settings.ai.discard': 'Discard',
   'settings.ai.editProvider': 'Edit {label}',
   'settings.ai.llmProviders': 'LLM Providers',
@@ -2942,6 +3137,49 @@ const en: TranslationMap = {
   'settings.developerMenu.agentChat.title': 'Agent Chat',
   'settings.developerMenu.agentChat.desc':
     'Test agent conversation with model and temperature overrides',
+  'settings.developerMenu.devWorkflow.title': 'Dev Workflow',
+  'settings.developerMenu.devWorkflow.desc':
+    'Autonomous agent that picks your GitHub issues and raises PRs on a schedule',
+  'settings.developerMenu.devWorkflow.panelDesc':
+    'Configure an autonomous developer agent that picks GitHub issues assigned to you and raises pull requests automatically on a schedule.',
+  'settings.devWorkflow.githubRepository': 'GitHub Repository',
+  'settings.devWorkflow.loadingRepositories': 'Loading repositories...',
+  'settings.devWorkflow.selectRepository': 'Select a repository',
+  'settings.devWorkflow.privateTag': '(private)',
+  'settings.devWorkflow.detectingForkInfo': 'Detecting fork info...',
+  'settings.devWorkflow.forkDetected': 'Fork detected',
+  'settings.devWorkflow.upstream': 'Upstream:',
+  'settings.devWorkflow.forkPrNote': 'PRs will be raised against the upstream repository.',
+  'settings.devWorkflow.notForkNote':
+    'Not a fork. PRs will be raised against this repository directly.',
+  'settings.devWorkflow.targetBranch': 'Target Branch',
+  'settings.devWorkflow.targetBranchNote': 'PRs will be raised against this branch',
+  'settings.devWorkflow.loadingBranches': 'Loading branches...',
+  'settings.devWorkflow.runFrequency': 'Run Frequency',
+  'settings.devWorkflow.runFrequencyNote':
+    'How often the agent should check for issues and raise PRs.',
+  'settings.devWorkflow.updateConfiguration': 'Update Configuration',
+  'settings.devWorkflow.saveConfiguration': 'Save Configuration',
+  'settings.devWorkflow.remove': 'Remove',
+  'settings.devWorkflow.saved': 'Saved',
+  'settings.devWorkflow.activeConfiguration': 'Active Configuration',
+  'settings.devWorkflow.activeConfigRepository': 'Repository:',
+  'settings.devWorkflow.activeConfigUpstream': 'Upstream:',
+  'settings.devWorkflow.activeConfigTargetBranch': 'Target branch:',
+  'settings.devWorkflow.activeConfigSchedule': 'Schedule:',
+  'settings.devWorkflow.phase2Note':
+    'Phase 2: This will automatically create a cron job to pick issues and raise PRs.',
+  'settings.devWorkflow.errorNotConnected':
+    'GitHub is not connected. Please connect GitHub via Settings > Advanced > Composio first.',
+  'settings.devWorkflow.errorToolNotEnabled':
+    'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER tool is not enabled on this backend. Please ask your admin to enable it in the Composio integration (backend#842).',
+  'settings.devWorkflow.errorNotAuthenticated': 'Not authenticated. Please sign in first.',
+  'settings.devWorkflow.errorNoRepositories': 'No repositories found for this GitHub account.',
+  'settings.devWorkflow.schedule.every30min': 'Every 30 minutes',
+  'settings.devWorkflow.schedule.everyHour': 'Every hour',
+  'settings.devWorkflow.schedule.every2hours': 'Every 2 hours',
+  'settings.devWorkflow.schedule.every6hours': 'Every 6 hours',
+  'settings.devWorkflow.schedule.onceDaily': 'Once daily (9 AM)',
   'settings.developerMenu.cronJobs.title': 'Cron Jobs',
   'settings.developerMenu.cronJobs.desc': 'View and configure scheduled jobs for runtime skills',
   'settings.developerMenu.localModelDebug.title': 'Local Model Debug',
@@ -2988,6 +3226,46 @@ const en: TranslationMap = {
   'settings.mcpServer.configFilePath': 'Config file',
   'settings.mcpServer.clientSelectorAriaLabel': 'MCP client selector',
   'settings.appearance.menuDesc': 'Pick light, dark, or match your system theme',
+  'settings.agentAccess.title': 'Agent OS access',
+  'settings.agentAccess.menuDesc':
+    'Control where the agent can read/write and whether it can use the shell.',
+  'settings.agentAccess.loadError': 'Failed to load access settings',
+  'settings.agentAccess.saveError': 'Failed to save access settings',
+  'settings.agentAccess.saved': 'Saved — applies on your next message.',
+  'settings.agentAccess.desktopOnly': 'Access settings are only available in the desktop app.',
+  'settings.agentAccess.loading': 'Loading…',
+  'settings.agentAccess.accessMode': 'Access mode',
+  'settings.agentAccess.tier.readonly.title': 'Read-only',
+  'settings.agentAccess.tier.readonly.desc':
+    'Reads files and runs read-only commands to explore — but never writes, edits, or runs anything that changes state.',
+  'settings.agentAccess.tier.supervised.title': 'Ask before edit',
+  'settings.agentAccess.tier.supervised.desc':
+    'Creates new files freely, but asks for your approval before editing an existing file, running a command, reaching the network, or installing anything.',
+  'settings.agentAccess.tier.full.title': 'Full access',
+  'settings.agentAccess.tier.full.desc':
+    'Runs commands with your full user account access — it can read/write anywhere allowed, except credential and system stores. Destructive commands, network access, and installs still ask for approval.',
+  'settings.agentAccess.defaultTag': '(default)',
+  'settings.agentAccess.fullWarning':
+    '⚠ Full access runs commands with your full account access and is not sandboxed. Only enable it when you trust the agent with this machine. Credential and system directories stay blocked, and destructive, network, and install actions still ask for approval.',
+  'settings.agentAccess.confine.label': 'Confine to workspace',
+  'settings.agentAccess.confine.desc':
+    'Restrict the agent to the workspace directory (plus any granted folders), whichever access mode is selected. When off, it can reach anywhere your user can — except the always-blocked credential and system directories.',
+  'settings.agentAccess.grantedFolders': 'Granted folders',
+  'settings.agentAccess.alwaysAllow': 'Always-allowed tools',
+  'settings.agentAccess.alwaysAllowDesc':
+    'Tools you marked "Always allow" in chat run without asking. Remove one to be prompted again.',
+  'settings.agentAccess.alwaysAllowNone': 'No always-allowed tools yet.',
+  'settings.agentAccess.grantedDesc':
+    'Folders the agent may read and write, in addition to the workspace. Credential stores (~/.ssh, ~/.gnupg, ~/.aws, keychains) and system directories (/etc, /System, C:\\Windows, …) are always blocked, even inside a granted folder.',
+  'settings.agentAccess.noneGranted': 'No folders granted.',
+  'settings.agentAccess.readWrite': 'read + write',
+  'settings.agentAccess.readOnly': 'read-only',
+  'settings.agentAccess.remove': 'Remove',
+  'settings.agentAccess.pathPlaceholder': 'Absolute folder path',
+  'settings.agentAccess.accessLevelLabel': 'Access level',
+  'settings.agentAccess.add': 'Add',
+  'settings.agentAccess.saving': 'Saving…',
+  'settings.agentAccess.changesApply': 'Changes apply on your next message.',
   'settings.appearance.title': 'Appearance',
   'settings.appearance.themeHeading': 'Theme',
   'settings.appearance.themeAria': 'Theme',
@@ -3019,8 +3297,10 @@ const en: TranslationMap = {
   'settings.mascot.colorHeading': 'Color',
   'settings.mascot.colorBlack': 'Black',
   'settings.mascot.colorBurgundy': 'Burgundy',
-  'settings.mascot.colorGreen': 'Green',
+  'settings.mascot.colorCustom': 'Custom',
   'settings.mascot.colorNavy': 'Navy',
+  'settings.mascot.primaryColor': 'Primary color',
+  'settings.mascot.secondaryColor': 'Secondary color',
   'settings.mascot.colorYellow': 'Yellow',
   'settings.mascot.libraryUnavailable': 'OpenHuman library unavailable',
   'settings.mascot.title': 'OpenHuman',
@@ -3097,6 +3377,30 @@ const en: TranslationMap = {
     'Smallest memory window. Cheapest, fastest, least continuity between runs.',
   'settings.memoryWindow.minimal.label': 'Minimal',
   'settings.memoryWindow.title': 'Long-term memory window',
+  'settings.modelHealth.title': 'Model Health',
+  'settings.modelHealth.desc':
+    'Per-model quality, hallucination rate, and cost comparison across active models',
+  'settings.modelHealth.allStatuses': 'All statuses',
+  'settings.modelHealth.models': 'models',
+  'settings.modelHealth.loading': 'Loading model data...',
+  'settings.modelHealth.empty': 'No models registered',
+  'settings.modelHealth.col.model': 'Model',
+  'settings.modelHealth.col.quality': 'Quality',
+  'settings.modelHealth.col.halluc': 'Halluc. Rate',
+  'settings.modelHealth.col.cost': 'Cost / 1M out',
+  'settings.modelHealth.col.agents': 'Agents',
+  'settings.modelHealth.col.status': 'Status',
+  'settings.modelHealth.badge.keep': 'Keep',
+  'settings.modelHealth.badge.replace': 'Replace',
+  'settings.modelHealth.badge.staging': 'Staging test',
+  'settings.modelHealth.badge.vision': 'Vision only',
+  'settings.modelHealth.swap': 'Swap?',
+  'settings.modelHealth.modal.title': 'Replace Model?',
+  'settings.modelHealth.modal.hallucRate': 'Hallucination rate',
+  'settings.modelHealth.modal.cancel': 'Cancel',
+  'settings.modelHealth.modal.apply': 'Apply Replacement',
+  'settings.modelHealth.tag.cheaper': 'CHEAPER',
+  'settings.modelHealth.tag.better': 'BETTER',
   'settings.screenIntel.permissions.accessibility': 'Accessibility',
   'settings.screenIntel.permissions.grantHint':
     'Grant these permissions in System Settings, then restart the core.',

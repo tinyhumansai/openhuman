@@ -130,6 +130,28 @@ pub fn default_root_openhuman_dir() -> Result<PathBuf> {
     Ok(home.join(default_root_dir_name()))
 }
 
+/// Environment override for the agent's default projects directory.
+pub const PROJECTS_DIR_ENV_VAR: &str = "OPENHUMAN_PROJECTS_DIR";
+
+/// The agent's default **projects home** — a visible, read-write directory
+/// (`~/OpenHuman/projects`) where the coding agent creates and saves projects,
+/// kept distinct from the hidden internal state dir (`~/.openhuman/workspace`,
+/// which also holds `memory_tree` etc.). Overridable via `OPENHUMAN_PROJECTS_DIR`;
+/// falls back to `./OpenHuman/projects` only when the home dir can't be resolved.
+pub fn default_projects_dir() -> PathBuf {
+    if let Ok(p) = std::env::var(PROJECTS_DIR_ENV_VAR) {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    UserDirs::new()
+        .map(|u| u.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("OpenHuman")
+        .join("projects")
+}
+
 fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
     default_dir.join(ACTIVE_WORKSPACE_STATE_FILE)
 }
@@ -376,11 +398,20 @@ fn decrypt_optional_secret(
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
         if crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
-            *value = Some(
-                store
-                    .decrypt(&raw)
-                    .with_context(|| format!("Failed to decrypt {field_name}"))?,
-            );
+            match store.decrypt(&raw) {
+                Ok(plaintext) => *value = Some(plaintext),
+                Err(e) => {
+                    // Decryption key is inaccessible (e.g. rotated, keyring reset, or
+                    // migrated across machines). Clear the field so config loads
+                    // successfully — the affected integration will be disabled until
+                    // the user re-enters the credential. A hard error here would block
+                    // every config load and make the app unusable.
+                    log::warn!(
+                        "[config] Failed to decrypt {field_name} — field cleared (key inaccessible): {e}"
+                    );
+                    *value = None;
+                }
+            }
         }
     }
     Ok(())
@@ -1089,28 +1120,73 @@ impl Config {
         if config_path.exists() {
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::{fs::Permissions, os::unix::fs::PermissionsExt};
                 if let Ok(meta) = fs::metadata(&config_path).await {
                     if meta.permissions().mode() & 0o004 != 0 {
                         let warned = WARNED_WORLD_READABLE_CONFIGS
                             .get_or_init(|| Mutex::new(HashSet::new()));
-                        let mut warned_guard = warned.lock().unwrap_or_else(|e| e.into_inner());
-                        if warned_guard.insert(config_path.clone()) {
+                        // Only attempt to fix paths not yet successfully chmod'd.
+                        // Cache is advanced only on success so a persistent
+                        // failure re-warns and re-attempts on every load.
+                        let already_fixed = warned
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .contains(&config_path);
+                        if !already_fixed {
                             tracing::warn!(
-                                "Config file {:?} is world-readable (mode {:o}). \
-                                 Consider restricting with: chmod 600 {:?}",
+                                "[config] Config file {:?} is world-readable (mode {:o}); \
+                                 auto-fixing to 600",
                                 config_path,
                                 meta.permissions().mode() & 0o777,
-                                config_path,
                             );
+                            match fs::set_permissions(&config_path, Permissions::from_mode(0o600))
+                                .await
+                            {
+                                Ok(()) => {
+                                    warned
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .insert(config_path.clone());
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        path = %config_path.display(),
+                                        error = %e,
+                                        "[config] failed to auto-fix config file permissions to 600",
+                                    );
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            let contents = fs::read_to_string(&config_path)
-                .await
-                .context("Failed to read config file")?;
+            // Sentry OPENHUMAN-TAURI-9R (~8k events, Windows): this read can
+            // race the atomic-replace in `Config::save` (temp file →
+            // `fs::rename` over `config_path`). On Windows the in-flight
+            // rename / a transient AV or indexer handle makes the read fail
+            // with ERROR_SHARING_VIOLATION (32) / ERROR_ACCESS_DENIED (5) /
+            // ERROR_DELETE_PENDING (303) even though `config_path.exists()`
+            // just returned true. `inference_status` polls `load_config`
+            // frequently, so each coincidence with a save produced one
+            // "Failed to read config file" event. Retry on the transient
+            // Windows locking codes (the same class `retry_with_backoff_async`
+            // already handles for the auth-profile + team_get_usage paths) so
+            // the read succeeds once the writer releases its handle.
+            // `is_transient_fs_error` is `false` for every non-Windows error
+            // (and for NotFound on Windows), so this is a no-op on
+            // macOS/Linux and never masks a genuinely-unreadable config.
+            let contents = crate::openhuman::util::retry_with_backoff_async(
+                "read config file",
+                5,
+                20,
+                || async {
+                    fs::read_to_string(&config_path).await.with_context(|| {
+                        format!("Failed to read config file: {}", config_path.display())
+                    })
+                },
+            )
+            .await?;
             let (mut config, config_was_corrupted) =
                 parse_config_with_recovery(&config_path, &contents).await;
             config.config_path = config_path.clone();
@@ -1355,6 +1431,19 @@ impl Config {
             if let Ok(temp) = temp_str.parse::<f64>() {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
+                }
+            }
+        }
+
+        if let Some(raw) = env.get("OPENHUMAN_MAX_ACTIONS_PER_HOUR") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u32>() {
+                    Ok(limit) => self.autonomy.max_actions_per_hour = limit,
+                    Err(_) => tracing::warn!(
+                        value = %raw,
+                        "invalid OPENHUMAN_MAX_ACTIONS_PER_HOUR ignored; expected an unsigned integer"
+                    ),
                 }
             }
         }

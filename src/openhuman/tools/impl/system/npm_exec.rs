@@ -19,8 +19,8 @@
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -136,6 +136,18 @@ impl Tool for NpmExecTool {
         })
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Execute
+    }
+
+    /// npm subcommands run arbitrary scripts (`run`/`exec`/lifecycle hooks) →
+    /// the `Write` bucket, so ask-before-edit routes through the human approval
+    /// gate and read-only `execute` refuses below. Previously `npm_exec`
+    /// bypassed the gate (only the rate limiter applied).
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let subcommand = match args.get("subcommand").and_then(|v| v.as_str()) {
             Some(s) => s.trim().to_string(),
@@ -180,6 +192,13 @@ impl Tool for NpmExecTool {
             .unwrap_or(NPM_TIMEOUT_SECS)
             .min(NPM_TIMEOUT_MAX_SECS);
 
+        // Read-only mode performs no acts. npm runs arbitrary scripts, so it
+        // must refuse here — it previously skipped the autonomy check entirely.
+        if !self.security.can_act() {
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: the agent is in read-only mode and cannot run npm.",
+            ));
+        }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: too many actions in the last hour",

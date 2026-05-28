@@ -8,8 +8,8 @@
  * names, categories, descriptions, and logos for rendering.
  *
  * Source of truth for the managed-auth list:
- * https://docs.composio.dev/toolkits/managed-auth (118 toolkits as of
- * May 1, 2026).
+ * https://docs.composio.dev/toolkits/managed-auth plus OpenHuman's
+ * compatibility aliases (119 toolkits as of May 21, 2026).
  */
 import { type ReactNode, useState } from 'react';
 
@@ -100,6 +100,7 @@ const MANAGED_COMPOSIO_TOOLKITS: readonly ManagedToolkitEntry[] = Object.freeze(
   { slug: 'intercom', name: 'Intercom' },
   { slug: 'jira', name: 'Jira' },
   { slug: 'kit', name: 'Kit' },
+  { slug: 'larksuite', name: 'Lark / Feishu' },
   { slug: 'linear', name: 'Linear' },
   { slug: 'linkedin', name: 'LinkedIn' },
   { slug: 'linkhut', name: 'Linkhut' },
@@ -163,7 +164,16 @@ const MANAGED_TOOLKIT_NAME_BY_SLUG = new Map(
   MANAGED_COMPOSIO_TOOLKITS.map(entry => [entry.slug, entry.name])
 );
 
-const CHAT_KEYWORDS = ['discord', 'slack', 'teams', 'webex', 'whatsapp', 'dialpad'];
+const CHAT_KEYWORDS = [
+  'discord',
+  'slack',
+  'teams',
+  'webex',
+  'whatsapp',
+  'dialpad',
+  'lark',
+  'feishu',
+];
 const SOCIAL_KEYWORDS = [
   'facebook',
   'instagram',

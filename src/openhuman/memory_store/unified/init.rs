@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use parking_lot::Mutex;
 use rusqlite::Connection;
 
@@ -43,6 +44,13 @@ impl UnifiedMemory {
         // - graph_global: cross-namespace graph edges used as fallback/shared memory.
         // - kv_namespace: namespace-scoped durable preferences, decisions, and state.
         // - kv_global: global durable key-value memories outside a namespace scope.
+        // Absorb concurrent write contention under cargo-llvm-cov and any other
+        // scenario where background workers hold the write lock while a second
+        // connection attempts a write. Without a timeout the driver returns
+        // SQLITE_BUSY immediately, which causes test flakes and runtime errors.
+        conn.busy_timeout(std::time::Duration::from_secs(15))
+            .context("configure unified memory busy_timeout")?;
+
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
@@ -337,6 +345,21 @@ mod tests {
                 .join("memory")
                 .join("namespaces")
                 .join("team_alpha/_1")
+        );
+    }
+
+    #[test]
+    fn connection_has_busy_timeout_set() {
+        let tmp = TempDir::new().unwrap();
+        let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        let conn = memory.conn.lock();
+        // SQLite reports busy_timeout as a PRAGMA; 0 means no timeout.
+        let timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            timeout > 0,
+            "busy_timeout must be non-zero to absorb write contention, got {timeout}"
         );
     }
 }

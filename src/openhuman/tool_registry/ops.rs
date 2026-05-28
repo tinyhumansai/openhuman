@@ -4,9 +4,11 @@ use serde_json::{json, Map, Value};
 
 use crate::core::all;
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
+use crate::openhuman::config::Config;
 use crate::openhuman::mcp_server::McpToolSpec;
 use crate::rpc::RpcOutcome;
 
+use super::providers::capability_provider_diagnostics;
 use super::types::{
     ToolPolicyDiagnostics, ToolRegistryEntry, ToolRegistryHealth, ToolRegistryList,
     ToolRegistryTransport,
@@ -34,7 +36,19 @@ pub fn list_tools() -> RpcOutcome<ToolRegistryList> {
 }
 
 /// Return redacted diagnostics for policy/tool visibility reviews.
-pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
+pub async fn diagnostics() -> Result<RpcOutcome<ToolPolicyDiagnostics>, String> {
+    log::debug!("[tool_registry] diagnostics loading_config");
+    let config = Config::load_or_init().await.map_err(|err| {
+        log::warn!("[tool_registry] diagnostics config_load_failed error={err}");
+        format!("failed to load config for tool registry diagnostics: {err}")
+    })?;
+    Ok(diagnostics_for_config(&config))
+}
+
+/// Return redacted diagnostics using a specific config snapshot.
+pub fn diagnostics_for_config(config: &Config) -> RpcOutcome<ToolPolicyDiagnostics> {
+    log::debug!("[tool_registry] diagnostics_for_config start");
+
     let tools = registry_entries();
     let total_tools = tools.len();
     let enabled_tools = tools.iter().filter(|entry| entry.enabled).count();
@@ -52,6 +66,17 @@ pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
         .map(|entry| entry.tool_id.clone())
         .collect::<Vec<_>>();
     let policy_surfaces = policy_surface_ids();
+    let capability_providers = capability_provider_diagnostics(config);
+
+    log::trace!(
+        "[tool_registry] diagnostics_for_config counted total_tools={} enabled_tools={} mcp_stdio_tools={} json_rpc_tools={} possible_write_surfaces={} policy_surfaces={}",
+        total_tools,
+        enabled_tools,
+        mcp_stdio_tools,
+        json_rpc_tools,
+        possible_write_surfaces.len(),
+        policy_surfaces.len()
+    );
 
     let diagnostics = ToolPolicyDiagnostics {
         total_tools,
@@ -60,7 +85,22 @@ pub fn diagnostics() -> RpcOutcome<ToolPolicyDiagnostics> {
         json_rpc_tools,
         possible_write_surfaces,
         policy_surfaces,
+        capability_providers,
     };
+    log::debug!(
+        "[tool_registry] diagnostics_for_config completed total_tools={} enabled_tools={} mcp_stdio_tools={} json_rpc_tools={} possible_write_surfaces={} policy_surfaces={} providers_total={} providers_enabled={} providers_trusted={} providers_trusted_enabled={} provider_errors={}",
+        diagnostics.total_tools,
+        diagnostics.enabled_tools,
+        diagnostics.mcp_stdio_tools,
+        diagnostics.json_rpc_tools,
+        diagnostics.possible_write_surfaces.len(),
+        diagnostics.policy_surfaces.len(),
+        diagnostics.capability_providers.total_providers,
+        diagnostics.capability_providers.enabled_providers,
+        diagnostics.capability_providers.trusted_providers,
+        diagnostics.capability_providers.trusted_enabled_providers,
+        diagnostics.capability_providers.registry_errors.len()
+    );
     RpcOutcome::new(diagnostics, vec![])
 }
 
@@ -382,160 +422,5 @@ fn title_from_function(function: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::{FieldSchema, TypeSchema};
-
-    #[test]
-    fn registry_entries_include_mcp_and_controller_tools() {
-        let entries = registry_entries();
-
-        let memory_search = entries
-            .iter()
-            .find(|entry| entry.tool_id == "memory.search")
-            .expect("memory.search mcp tool");
-        assert_eq!(memory_search.transport, ToolRegistryTransport::McpStdio);
-        assert_eq!(memory_search.route["method"], json!("tools/call"));
-        assert_eq!(memory_search.health, ToolRegistryHealth::Available);
-
-        let web_search = entries
-            .iter()
-            .find(|entry| entry.tool_id == "tools.web_search")
-            .expect("tools.web_search controller tool");
-        assert_eq!(web_search.transport, ToolRegistryTransport::JsonRpc);
-        assert_eq!(
-            web_search.route["method"],
-            json!("openhuman.tools_web_search")
-        );
-        assert_eq!(web_search.input_schema["type"], json!("object"));
-    }
-
-    #[test]
-    fn registry_entries_are_unique_and_sorted_by_tool_id() {
-        let entries = registry_entries();
-        let ids = entries
-            .iter()
-            .map(|entry| entry.tool_id.as_str())
-            .collect::<Vec<_>>();
-        let mut sorted = ids.clone();
-        sorted.sort_unstable();
-        sorted.dedup();
-
-        assert_eq!(ids, sorted);
-    }
-
-    #[test]
-    fn diagnostics_reports_inventory_and_policy_surfaces() {
-        let outcome = diagnostics();
-
-        assert!(outcome.value.total_tools > 0);
-        assert_eq!(outcome.value.total_tools, outcome.value.enabled_tools);
-        assert!(outcome.value.mcp_stdio_tools > 0);
-        assert!(outcome.value.json_rpc_tools > 0);
-        assert!(outcome
-            .value
-            .policy_surfaces
-            .iter()
-            .any(|tool_id| tool_id == "security.policy_info"));
-        assert!(outcome
-            .value
-            .possible_write_surfaces
-            .iter()
-            .any(|tool_id| tool_id == "tools.composio_execute"));
-    }
-
-    #[test]
-    fn looks_write_capable_detects_action_prefixes_and_suffixes() {
-        assert!(looks_write_capable("user.create"));
-        assert!(looks_write_capable("create.user"));
-        assert!(looks_write_capable("tools.composio_execute"));
-        assert!(!looks_write_capable("tools.search"));
-    }
-
-    #[test]
-    fn is_policy_surface_includes_policy_namespaces() {
-        assert!(is_policy_surface("security.audit_status"));
-        assert!(is_policy_surface("approval.request"));
-        assert!(is_policy_surface("tool_registry.diagnostics"));
-        assert!(!is_policy_surface("tools.web_search"));
-    }
-
-    #[test]
-    fn insert_registry_entry_skips_duplicate_tool_id() {
-        let mut entries = BTreeMap::new();
-        let first_entry = ToolRegistryEntry {
-            tool_id: "duplicate.tool".to_string(),
-            name: "duplicate.tool".to_string(),
-            title: "First Entry".to_string(),
-            description: "First description.".to_string(),
-            version: REGISTRY_ENTRY_VERSION.to_string(),
-            transport: ToolRegistryTransport::JsonRpc,
-            route: json!({}),
-            input_schema: json!({}),
-            output_schema: json!({}),
-            allowed_agents: vec!["*".to_string()],
-            tags: vec!["test".to_string()],
-            enabled: true,
-            health: ToolRegistryHealth::Available,
-        };
-        let second_entry = ToolRegistryEntry {
-            title: "Second Entry".to_string(),
-            description: "Second description.".to_string(),
-            ..first_entry.clone()
-        };
-
-        insert_registry_entry(&mut entries, first_entry, "first");
-        // Should not panic; first entry is kept, second is silently dropped.
-        insert_registry_entry(&mut entries, second_entry, "second");
-
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries["duplicate.tool"].title, "First Entry");
-    }
-
-    #[test]
-    fn get_tool_trims_and_returns_exact_entry() {
-        let outcome = get_tool("  memory.search  ").expect("registry lookup");
-        assert_eq!(outcome.value.tool_id, "memory.search");
-    }
-
-    #[test]
-    fn get_tool_rejects_blank_id() {
-        let err = get_tool("  ").expect_err("blank id should fail");
-        assert!(err.contains("non-empty"));
-    }
-
-    #[test]
-    fn get_tool_reports_unknown_id() {
-        let err = get_tool("missing.tool").expect_err("unknown id should fail");
-        assert!(err.contains("missing.tool"));
-    }
-
-    #[test]
-    fn controller_json_schema_marks_required_and_optional_fields() {
-        let schema = schema_fields_to_json_schema(&[
-            FieldSchema {
-                name: "query",
-                ty: TypeSchema::String,
-                comment: "Query text.",
-                required: true,
-            },
-            FieldSchema {
-                name: "max_results",
-                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                comment: "Optional cap.",
-                required: false,
-            },
-        ]);
-
-        assert_eq!(schema["required"], json!(["query"]));
-        assert_eq!(schema["properties"]["query"]["type"], json!("string"));
-        assert_eq!(
-            schema["properties"]["max_results"]["anyOf"][0]["type"],
-            json!("integer")
-        );
-        assert_eq!(
-            schema["properties"]["max_results"]["description"],
-            json!("Optional cap.")
-        );
-    }
-}
+#[path = "ops_test.rs"]
+mod tests;

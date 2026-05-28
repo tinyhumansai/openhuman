@@ -146,6 +146,8 @@ const fr4: TranslationMap = {
   'notifications.center.filterAll': 'Tout filtrer',
   'notifications.center.markAllRead': 'Tout marquer comme lu',
   'notifications.center.title': 'Notifications',
+  'oauth.button.loopbackTimeout':
+    "La connexion a expiré — le navigateur n'a pas complété la redirection OAuth. Veuillez réessayer.",
   'oauth.button.connecting': 'Connexion en cours…',
   'oauth.login.continueWith': 'Continuer avec',
   'onboarding.contextGathering.buildingDesc': 'Description de la construction',
@@ -294,7 +296,7 @@ const fr4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Effacer la clé stockée',
   'settings.ai.connectProvider': 'Connecter un fournisseur',
   'settings.ai.customRouting': 'Routage personnalisé',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Par défaut résolu en',
   'settings.ai.discard': 'Annuler',
   'settings.ai.editProvider': 'Modifier le fournisseur',
   'settings.ai.llmProviders': 'Fournisseurs LLM',

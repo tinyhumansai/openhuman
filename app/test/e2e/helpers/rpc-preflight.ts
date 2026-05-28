@@ -27,6 +27,7 @@ const REQUIRED_RPC_METHODS = [
   'openhuman.webhooks_clear_logs',
   'openhuman.webhooks_register_echo',
   'openhuman.webhooks_unregister_echo',
+  'openhuman.composio_list_tools',
   'openhuman.composio_list_available_triggers',
   'openhuman.composio_list_triggers',
   'openhuman.composio_enable_trigger',

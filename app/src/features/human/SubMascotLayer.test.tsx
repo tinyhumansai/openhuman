@@ -1,8 +1,16 @@
 import { render, screen, within } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolTimelineEntry } from '../../store/chatRuntimeSlice';
 import { SubMascotLayer, subMascotModelsFromTimeline } from './SubMascotLayer';
+
+vi.mock('./Mascot', async importOriginal => {
+  const actual = await importOriginal<typeof import('./Mascot')>();
+  return {
+    ...actual,
+    RiveMascot: ({ face }: { face?: string }) => <div data-testid="rive-mascot" data-face={face} />,
+  };
+});
 
 function subagentEntry(overrides: Partial<ToolTimelineEntry> = {}): ToolTimelineEntry {
   return {

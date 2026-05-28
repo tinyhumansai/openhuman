@@ -1,6 +1,6 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -33,6 +33,17 @@ impl Tool for CronRemoveTool {
             },
             "required": ["job_id"]
         })
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    fn external_effect(&self) -> bool {
+        // Removing a job is a persistent mutation; require approval so an
+        // inbound-channel message cannot silently cancel scheduled work
+        // (GHSA-f46p-6vf9-64mm).
+        true
     }
 
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
@@ -95,5 +106,38 @@ mod tests {
         let result = tool.execute(json!({})).await.unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("Missing 'job_id'"));
+    }
+
+    // ── GHSA-f46p-6vf9-64mm: approval gate must fire for cron_remove ─
+
+    #[test]
+    fn cron_remove_is_external_effect() {
+        let tmp = TempDir::new().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let cfg = Arc::new(config);
+        let tool = CronRemoveTool::new(cfg);
+        assert!(
+            tool.external_effect(),
+            "cron_remove must declare external_effect=true so ApprovalGate is consulted"
+        );
+    }
+
+    #[test]
+    fn cron_remove_permission_level_is_write() {
+        let tmp = TempDir::new().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let cfg = Arc::new(config);
+        let tool = CronRemoveTool::new(cfg);
+        assert_eq!(tool.permission_level(), PermissionLevel::Write);
     }
 }

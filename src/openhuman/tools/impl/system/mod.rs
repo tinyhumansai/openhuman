@@ -1,5 +1,7 @@
 mod current_time;
+mod detect_tools;
 mod insert_sql_record;
+mod install_tool;
 mod lsp;
 mod node_exec;
 mod npm_exec;
@@ -13,7 +15,9 @@ mod update_check;
 mod workspace_state;
 
 pub use current_time::CurrentTimeTool;
+pub use detect_tools::DetectToolsTool;
 pub use insert_sql_record::InsertSqlRecordTool;
+pub use install_tool::InstallToolTool;
 pub use lsp::{lsp_capability_enabled, LspTool, LSP_ENABLED_ENV};
 pub use node_exec::NodeExecTool;
 pub use npm_exec::NpmExecTool;

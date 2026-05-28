@@ -2,34 +2,21 @@
 /**
  * E2E test: Voice mode integration
  *
- * Covers:
- *   - Navigating to conversations page
- *   - Switching to voice input mode
- *   - Voice status check fires and displays availability message
- *   - Voice input/reply mode toggle buttons render
- *   - Voice recording button renders in voice mode
- *   - Switching back to text mode restores text input
- *   - Offline STT: local assets present → stt_available=true, no network needed
- *   - Offline STT: local assets missing → stt_available=false, no silent fallback
+ * Current desktop flow:
+ *   - Chat defaults to the text composer.
+ *   - The microphone button switches the composer into `MicComposer`.
+ *   - `MicComposer` exposes a "Switch to text" control to restore the text
+ *     textarea.
  *
- * The mock server runs on http://127.0.0.1:18473
- *
- * Offline STT gap note:
- *   There is no explicit "offline mode toggle" in the voice domain — the
- *   provider selection is via `stt_provider` ("whisper" | "cloud") in config.
- *   An offline mode that prevents cloud fallback when local assets are missing
- *   has not been implemented. The offline STT tests below use the
- *   `openhuman.voice_status` RPC to assert the contract, and include a
- *   `it.skip` for the "cloud fallback prevented" scenario that does not yet
- *   exist in code (tracked product gap).
+ * The older "Text / Voice" segmented toggle no longer exists. This spec
+ * covers the current desktop-only voice entry surface and keeps the
+ * `openhuman.voice_status` RPC contract assertions below.
  */
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { triggerAuthDeepLink } from '../helpers/deep-link-helpers';
 import {
-  waitForText as _waitForText,
-  clickNativeButton,
-  clickText,
+  clickButton,
   dumpAccessibilityTree,
   textExists,
   waitForWebView,
@@ -78,10 +65,8 @@ async function waitForAnyText(candidates, timeout = 20_000) {
   return null;
 }
 
-// #717: The Input/Text/Voice toggle buttons were removed from the regular chat
-// composer. Voice mode now exists only in the mascot tab (composer='mic-cloud'
-// → MicComposer). These tests targeted the removed toggle UI and will always
-// fail until rewritten against the mascot voice path.
+// Browser-media UI behavior now lives in Playwright (`test/playwright/specs/voice-mode.spec.ts`).
+// Keep WDIO/Appium focused on desktop/native-only coverage.
 describe.skip('Voice mode integration', () => {
   before(async () => {
     await startMockServer();
@@ -93,8 +78,7 @@ describe.skip('Voice mode integration', () => {
     await stopMockServer();
   });
 
-  it('can switch to voice input mode, see status message, and switch back to text', async () => {
-    // --- Authenticate and reach conversations ---
+  it('can switch into the mic composer and back to text mode', async () => {
     await triggerAuthDeepLink('e2e-voice-token');
     await waitForWindowVisible(25_000);
     await waitForWebView(15_000);
@@ -112,86 +96,38 @@ describe.skip('Voice mode integration', () => {
     }
     expect(onHome).toBe(true);
 
-    // --- Verify we see the text input area (default mode) ---
-    // Chat input placeholder is t('chat.typeMessage') = 'Type a message...'
     const hasTextInput = await waitForAnyText(['Type a message', 'Threads', 'New'], 10_000);
     expect(hasTextInput).not.toBeNull();
 
-    // --- Verify voice toggle buttons are visible ---
-    // The Input toggle group should show "Text" and "Voice" buttons
-    const hasInputLabel = await textExists('Input');
-    expect(hasInputLabel).toBe(true);
+    await clickButton('Start recording', 10_000);
 
-    // --- Switch to voice input mode ---
-    // There are two "Voice" buttons (Input toggle and Reply toggle).
-    // We click the first one which is the Input mode toggle.
-    await clickText('Voice', 10_000);
-    await browser.pause(2_000);
-
-    // --- Voice status check should fire ---
-    // Since whisper-cli is not installed in the E2E environment,
-    // we expect the unavailability message or the ready message.
     const voiceStatusMessage = await waitForAnyText(
       [
+        'Tap and speak',
+        'Tap to send',
         'Speech-to-text unavailable',
         'whisper-cli binary',
-        'STT model not found',
         'Ready',
         'Start Talking',
-        'Could not check voice availability',
+        'Voice input needs a speech model',
       ],
       15_000
     );
-
-    if (!voiceStatusMessage) {
-      const tree = await dumpAccessibilityTree();
-      console.log('[VoiceModeE2E] No voice status message seen. Tree:\n', tree.slice(0, 5000));
-    }
     expect(voiceStatusMessage).not.toBeNull();
 
-    // --- Verify the voice recording button or unavailability message is visible ---
-    const hasVoiceButton = await waitForAnyText(
-      ['Start Talking', 'Transcribing', 'Stop & Send'],
-      10_000
-    );
-    if (!hasVoiceButton) {
-      const hasStatus = await textExists('Speech-to-text unavailable');
-      expect(hasStatus).toBe(true);
-    }
-
-    // --- Switch back to text mode ---
-    // Click the "Text" button in the Input toggle group
-    await clickText('Text', 10_000);
-    await browser.pause(1_500);
-
-    // --- Verify text input is restored ---
+    await clickButton('Switch to text', 10_000);
     const textRestored = await waitForAnyText(['Type a message', 'Threads', 'New'], 10_000);
     expect(textRestored).not.toBeNull();
   });
 
-  it('shows reply mode toggle with text and voice options', async () => {
-    // Ensure conversations page is loaded (re-authenticate if state was lost).
-    const onConversations = await waitForAnyText(
-      ['Type a message', 'Reply', 'Threads', 'New'],
-      5_000
-    );
+  it('surfaces a mic entry button from the text composer', async () => {
+    const onConversations = await waitForAnyText(['Type a message', 'Threads', 'New'], 10_000);
     if (!onConversations) {
-      await triggerAuthDeepLink('e2e-voice-token');
-      await waitForWindowVisible(25_000);
-      await waitForWebView(15_000);
-      await waitForAppReady(15_000);
-      await completeOnboardingIfVisible('[VoiceModeE2E]');
-      await waitForHome(20_000);
+      const tree = await dumpAccessibilityTree();
+      console.log('[VoiceModeE2E] Conversations not ready. Tree:\n', tree.slice(0, 4000));
     }
-
-    // The Reply toggle should be visible on the conversations page
-    const hasReplyLabel = await textExists('Reply');
-    expect(hasReplyLabel).toBe(true);
-
-    // Verify both reply mode options exist
-    // (There are multiple "Text" and "Voice" buttons — Input + Reply groups)
-    const hasText = await textExists('Text');
-    expect(hasText).toBe(true);
+    expect(onConversations).not.toBeNull();
+    expect(await textExists('Start recording')).toBe(true);
   });
 });
 
@@ -302,7 +238,9 @@ describe('Voice mode — offline STT contract (voice_status RPC)', () => {
  *   browser.execute to set window.location.hash directly, which avoids
  *   element-visibility races on the tab bar.
  */
-describe('Voice mode — Human tab capture & error mapping (#1610)', () => {
+// These Human-tab getUserMedia / MediaRecorder behaviors are browser API paths,
+// not native-shell concerns. They are covered in Playwright now.
+describe.skip('Voice mode — Human tab capture & error mapping (#1610)', () => {
   before(async () => {
     await startMockServer();
     await waitForApp();

@@ -13,6 +13,7 @@ import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
 import InstalledServerList from './InstalledServerList';
 import McpCatalogBrowser from './McpCatalogBrowser';
+import McpInventoryPanel from './McpInventoryPanel';
 import type { ConnStatus, InstalledServer } from './types';
 
 const log = debug('mcp-clients:tab');
@@ -31,6 +32,9 @@ const McpServersTab = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rightPane, setRightPane] = useState<RightPane>({ mode: 'none' });
+  // Sharable Inventory modal toggle. Local state — the manifest UX is
+  // a one-off interaction, not a saved view.
+  const [inventoryOpen, setInventoryOpen] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadInstalled = useCallback(async () => {
@@ -145,13 +149,22 @@ const McpServersTab = () => {
 
   return (
     <div className="flex flex-col gap-3 h-full min-h-0">
-      <div
-        role="status"
-        className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-200/70 dark:bg-amber-500/30 text-amber-900 dark:text-amber-100 shrink-0 mt-0.5">
-          {t('mcp.alphaBadge')}
-        </span>
-        <span className="leading-relaxed">{t('mcp.alphaBannerText')}</span>
+      <div className="flex items-center gap-2">
+        <div
+          role="status"
+          className="flex-1 flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-amber-200/70 dark:bg-amber-500/30 text-amber-900 dark:text-amber-100 shrink-0 mt-0.5">
+            {t('mcp.alphaBadge')}
+          </span>
+          <span className="leading-relaxed">{t('mcp.alphaBannerText')}</span>
+        </div>
+        <button
+          type="button"
+          onClick={() => setInventoryOpen(true)}
+          aria-label={t('mcp.inventory.openAria')}
+          className="shrink-0 rounded-lg border border-stone-200 dark:border-neutral-700 px-3 py-2 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800">
+          {t('mcp.inventory.openButton')}
+        </button>
       </div>
       <div className="flex gap-4 flex-1 min-h-0">
         {/* Left pane: installed list */}
@@ -200,6 +213,18 @@ const McpServersTab = () => {
           )}
         </div>
       </div>
+      {inventoryOpen && (
+        <McpInventoryPanel
+          servers={servers}
+          onInstallServer={(qualifiedName, prefillEnv) => {
+            // Hand the entry off to the existing install-dialog flow.
+            // The panel closes itself; here we open the dialog with the
+            // env keys pre-populated so the user only has to fill values.
+            setRightPane({ mode: 'install', qualifiedName, prefillEnv });
+          }}
+          onClose={() => setInventoryOpen(false)}
+        />
+      )}
     </div>
   );
 };

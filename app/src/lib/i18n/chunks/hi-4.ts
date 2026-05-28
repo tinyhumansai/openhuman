@@ -146,6 +146,8 @@ const hi4: TranslationMap = {
   'notifications.center.filterAll': 'सभी फिल्टर',
   'notifications.center.markAllRead': 'सभी पढ़ा हुआ मार्क करें',
   'notifications.center.title': 'नोटिफिकेशन',
+  'oauth.button.loopbackTimeout':
+    'साइन-इन का समय समाप्त हो गया — ब्राउज़र ने OAuth पुनर्निर्देशन पूरा नहीं किया। कृपया पुनः प्रयास करें।',
   'oauth.button.connecting': 'कनेक्ट हो रहा है...',
   'oauth.login.continueWith': 'के साथ जारी रखें',
   'onboarding.contextGathering.buildingDesc': 'बिल्डिंग विवरण',
@@ -292,7 +294,7 @@ const hi4: TranslationMap = {
   'settings.ai.clearStoredKey': 'स्टोर्ड key क्लियर करें',
   'settings.ai.connectProvider': 'प्रदाता कनेक्ट करें',
   'settings.ai.customRouting': 'कस्टम रूटिंग',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'डिफ़ॉल्ट इसमें हल होता है',
   'settings.ai.discard': 'रद्द करें',
   'settings.ai.editProvider': 'प्रदाता संपादित करें',
   'settings.ai.llmProviders': 'LLM प्रोवाइडर',

@@ -1,4 +1,5 @@
 use super::url_guard::{normalize_allowed_domains, validate_url_with_dns_check};
+use crate::openhuman::config::HttpRequestConfig;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
@@ -22,6 +23,33 @@ impl HttpRequestTool {
         max_response_size: usize,
         timeout_secs: u64,
     ) -> Self {
+        // Treat `0` as "use default": a 0-byte cap or 0-second timeout is never
+        // a meaningful limit, only a footgun (see migration 5→6). Pull the
+        // fallbacks from `HttpRequestConfig::default()` so the tool, the schema
+        // default, and the migration share one source and can't drift. A `0`
+        // here means a stale/invalid config slipped past the migration, so
+        // surface it with a stable, grep-friendly, non-sensitive log line.
+        let defaults = HttpRequestConfig::default();
+        let max_response_size = if max_response_size == 0 {
+            log::warn!(
+                "[tool.http_request] coercing invalid limit field=max_response_size \
+                 from=0 to={} (stale/invalid config — see migration 5→6)",
+                defaults.max_response_size
+            );
+            defaults.max_response_size
+        } else {
+            max_response_size
+        };
+        let timeout_secs = if timeout_secs == 0 {
+            log::warn!(
+                "[tool.http_request] coercing invalid limit field=timeout_secs \
+                 from=0 to={} (stale/invalid config — see migration 5→6)",
+                defaults.timeout_secs
+            );
+            defaults.timeout_secs
+        } else {
+            timeout_secs
+        };
         Self {
             security,
             allowed_domains: normalize_allowed_domains(allowed_domains),
@@ -169,7 +197,9 @@ impl Tool for HttpRequestTool {
         let body = args.get("body").and_then(|v| v.as_str());
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
 
         if !self.security.record_action() {
