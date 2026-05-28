@@ -40,5 +40,9 @@ export function renderChannelIcon(icon: string, className = 'w-5 h-5'): ReactEle
     return <IconComponent className={className} />;
   }
   const emoji = ICON_EMOJI[icon];
-  return emoji ? <span className="text-base">{emoji}</span> : null;
+  return emoji ? (
+    <span aria-hidden="true" className="text-base">
+      {emoji}
+    </span>
+  ) : null;
 }

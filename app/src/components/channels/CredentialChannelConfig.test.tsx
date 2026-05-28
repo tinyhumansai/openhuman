@@ -54,6 +54,22 @@ describe('<CredentialChannelConfig />', () => {
     await waitFor(() => expect(restartCoreProcessMock).toHaveBeenCalledTimes(1));
   });
 
+  it('surfaces a connect failure as an error instead of staying stuck connecting', async () => {
+    connectChannelMock.mockRejectedValue(new Error('invalid app secret'));
+    renderWithProviders(<CredentialChannelConfig definition={larkDefinition} />);
+
+    fireEvent.change(screen.getByPlaceholderText('cli_xxxxxxxxxxxx'), {
+      target: { value: 'cli_abc123' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Your Lark app secret'), {
+      target: { value: 'wrong' },
+    });
+    fireEvent.click(screen.getByText('Connect'));
+
+    await waitFor(() => expect(screen.getByText('invalid app secret')).toBeInTheDocument());
+    expect(restartCoreProcessMock).not.toHaveBeenCalled();
+  });
+
   it('blocks connect and does not call the RPC when a required field is empty', async () => {
     renderWithProviders(<CredentialChannelConfig definition={larkDefinition} />);
     // Leave app_id / app_secret blank.

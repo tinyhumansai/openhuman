@@ -96,10 +96,25 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
           if (val) credentials[field.key] = val;
         }
 
-        const result = await channelConnectionsApi.connectChannel(channel, {
-          authMode: spec.mode,
-          credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
-        });
+        let result;
+        try {
+          result = await channelConnectionsApi.connectChannel(channel, {
+            authMode: spec.mode,
+            credentials: Object.keys(credentials).length > 0 ? credentials : undefined,
+          });
+        } catch (e) {
+          // Surface the failure on the connection itself so the badge leaves
+          // `connecting` — runBusy only updates the local banner otherwise.
+          dispatch(
+            setChannelConnectionStatus({
+              channel,
+              authMode: spec.mode,
+              status: 'error',
+              lastError: e instanceof Error ? e.message : String(e),
+            })
+          );
+          throw e;
+        }
         log('connect result: %o', result);
 
         if (result.restart_required) {
