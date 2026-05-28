@@ -14,6 +14,10 @@ mod core_rpc;
 mod deep_link_ipc;
 #[cfg(target_os = "windows")]
 mod deep_link_ipc_windows;
+// Cross-platform module: the registry-reading function is windows-only, but
+// the parsing helpers compile (and test) everywhere so `cargo test` on the
+// developer host covers them.
+mod deep_link_registration_check;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
@@ -2587,8 +2591,34 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(windows)]
             {
-                if let Err(err) = app.deep_link().register_all() {
-                    log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                // `register_all` writes HKCU\Software\Classes\openhuman so the
+                // browser can hand `openhuman://auth?...` callbacks back to
+                // the running instance. The plugin only returns an Err — and
+                // it only logs at `warn` — when its single internal write
+                // fails outright; it does not verify what's on disk. Issue
+                // #2699 reports OAuth callbacks silently disappearing on
+                // some Windows installs, which traced back to a missing or
+                // stale `command` value here. Read it back and log loudly
+                // (Sentry-level `error`) so the failure mode is observable
+                // in support logs; we deliberately do NOT auto-repair —
+                // writing the wrong exe path can brick a working install.
+                let register_err = app.deep_link().register_all().err();
+                let status = deep_link_registration_check::verify_protocol_registration();
+                let status_log = status.redacted();
+                if register_err.is_none() && status.is_healthy() {
+                    log::info!("[deep-link] openhuman:// scheme registered ({status_log})");
+                } else {
+                    // Use the redacted form so per-user install paths
+                    // (`C:\Users\<username>\...`) do not land in Sentry / user
+                    // logs — basenames are kept so the diagnostic still
+                    // identifies the registered exe.
+                    log::error!(
+                        "[deep-link] openhuman:// scheme registration unhealthy — \
+                         OAuth callbacks may never reach the app. \
+                         register_all_error={register_err:?}, hkcu_status={status_log}. \
+                         See gitbooks/overview/troubleshooting-sign-in.md \
+                         (\"Windows: openhuman:// handler not registered\") for the manual repair."
+                    );
                 }
                 deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }

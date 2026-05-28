@@ -58,6 +58,54 @@ OPENHUMAN_SEARXNG_DEFAULT_LANGUAGE=en
 OPENHUMAN_SEARXNG_TIMEOUT_SECONDS=10
 ```
 
+## 资源
+
+MCP 服务器将内置提示词资产作为静态资源暴露出来。支持 `resources/list` 和 `resources/read` 的客户端可以在不执行任何工具调用的情况下，直接查看完整的智能体个性定义和子智能体提示词模板。
+
+### 能力声明
+
+`initialize` 响应包含以下内容：
+
+```json
+{
+  "capabilities": {
+    "tools": {},
+    "resources": { "subscribe": false, "listChanged": false }
+  }
+}
+```
+
+### URI 方案
+
+| URI | 内容 |
+| --- | --- |
+| `openhuman://prompts/identity` | `IDENTITY.md` — 核心智能体身份定义 |
+| `openhuman://prompts/soul` | `SOUL.md` — 核心智能体个性与价值观 |
+| `openhuman://prompts/user` | `USER.md` — 用户档案上下文 |
+| `openhuman://prompts/agents/<id>` | 18 个内置子智能体各自的 `<id>/prompt.md` |
+
+所有资源的 `mimeType` 均为 `"text/markdown"`。
+
+### 目录一致性
+
+单元测试 `catalog_mirrors_builtins` 会将资源目录与 `loader.rs` 中的 `BUILTINS` 切片进行交叉验证。若新增内置子智能体而未在目录中添加对应条目，该测试将失败，从而阻断 CI。
+
+### 资源模板
+
+由于目录完全静态——所有 URI 均为具体地址，不存在模板化——`resources/templates/list` 始终返回空的 `resourceTemplates` 数组。该处理器是为了 MCP 规范合规性：当客户端在看到 `resources` 能力后探测 `resources/templates/list` 时，会获得格式良好的结果而非 `-32601 Method not found`。
+
+### 冒烟测试
+
+```bash
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
+  '{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
+  | openhuman-core mcp
+```
+
 ## 工具注册表
 
 HTTP JSON-RPC 服务器还暴露一个只读的全局工具注册表，供需要发现元数据而不打开 MCP stdio 会话的智能体和仪表板使用：
@@ -82,6 +130,6 @@ printf '%s\n' \
 响应应包含来自 `initialize` 的 `capabilities.tools` 和来自 `tools/list` 的精选工具名称。成功的运行向 stdout 写入恰好两行紧凑的 JSON 响应；`notifications/initialized` 消息是通知，没有响应。
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"openhuman-core","version":"<crate version>"},"instructions":"..."}}
 {"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"memory.search",...},{"name":"memory.recall",...},{"name":"tree.read_chunk",...},{"name":"tree.browse",...},{"name":"tree.top_entities",...},{"name":"tree.list_sources",...}]}}
 ```

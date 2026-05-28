@@ -183,6 +183,49 @@ const pt5: TranslationMap = {
   'settings.developerMenu.agentChat.title': 'Chat do agente',
   'settings.developerMenu.agentChat.desc':
     'Teste conversas do agente com substituições de modelo e temperatura',
+  'settings.developerMenu.devWorkflow.title': 'Dev Workflow',
+  'settings.developerMenu.devWorkflow.desc':
+    'Autonomous agent that picks your GitHub issues and raises PRs on a schedule',
+  'settings.developerMenu.devWorkflow.panelDesc':
+    'Configure an autonomous developer agent that picks GitHub issues assigned to you and raises pull requests automatically on a schedule.',
+  'settings.devWorkflow.githubRepository': 'GitHub Repository',
+  'settings.devWorkflow.loadingRepositories': 'Loading repositories...',
+  'settings.devWorkflow.selectRepository': 'Select a repository',
+  'settings.devWorkflow.privateTag': '(private)',
+  'settings.devWorkflow.detectingForkInfo': 'Detecting fork info...',
+  'settings.devWorkflow.forkDetected': 'Fork detected',
+  'settings.devWorkflow.upstream': 'Upstream:',
+  'settings.devWorkflow.forkPrNote': 'PRs will be raised against the upstream repository.',
+  'settings.devWorkflow.notForkNote':
+    'Not a fork. PRs will be raised against this repository directly.',
+  'settings.devWorkflow.targetBranch': 'Target Branch',
+  'settings.devWorkflow.targetBranchNote': 'PRs will be raised against this branch',
+  'settings.devWorkflow.loadingBranches': 'Loading branches...',
+  'settings.devWorkflow.runFrequency': 'Run Frequency',
+  'settings.devWorkflow.runFrequencyNote':
+    'How often the agent should check for issues and raise PRs.',
+  'settings.devWorkflow.updateConfiguration': 'Update Configuration',
+  'settings.devWorkflow.saveConfiguration': 'Save Configuration',
+  'settings.devWorkflow.remove': 'Remove',
+  'settings.devWorkflow.saved': 'Saved',
+  'settings.devWorkflow.activeConfiguration': 'Active Configuration',
+  'settings.devWorkflow.activeConfigRepository': 'Repository:',
+  'settings.devWorkflow.activeConfigUpstream': 'Upstream:',
+  'settings.devWorkflow.activeConfigTargetBranch': 'Target branch:',
+  'settings.devWorkflow.activeConfigSchedule': 'Schedule:',
+  'settings.devWorkflow.phase2Note':
+    'Phase 2: This will automatically create a cron job to pick issues and raise PRs.',
+  'settings.devWorkflow.errorNotConnected':
+    'GitHub is not connected. Please connect GitHub via Settings > Advanced > Composio first.',
+  'settings.devWorkflow.errorToolNotEnabled':
+    'GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER tool is not enabled on this backend. Please ask your admin to enable it in the Composio integration (backend#842).',
+  'settings.devWorkflow.errorNotAuthenticated': 'Not authenticated. Please sign in first.',
+  'settings.devWorkflow.errorNoRepositories': 'No repositories found for this GitHub account.',
+  'settings.devWorkflow.schedule.every30min': 'Every 30 minutes',
+  'settings.devWorkflow.schedule.everyHour': 'Every hour',
+  'settings.devWorkflow.schedule.every2hours': 'Every 2 hours',
+  'settings.devWorkflow.schedule.every6hours': 'Every 6 hours',
+  'settings.devWorkflow.schedule.onceDaily': 'Once daily (9 AM)',
   'settings.developerMenu.cronJobs.title': 'Tarefas cron',
   'settings.developerMenu.cronJobs.desc':
     'Veja e configure tarefas agendadas para habilidades em tempo de execução',

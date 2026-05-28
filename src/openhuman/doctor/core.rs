@@ -80,6 +80,7 @@ pub fn run(config: &Config) -> Result<DoctorReport> {
     check_environment(&mut items);
     check_memory_tree_db(config, &mut items);
     check_embedding_model_health(config, &mut items);
+    check_claude_agent_sdk(config, &mut items);
 
     let errors = items
         .iter()
@@ -988,6 +989,98 @@ fn check_embedding_model_health(config: &Config, items: &mut Vec<DiagnosticItem>
                  Run: ollama pull {model}"
             ),
         ));
+    }
+}
+
+// ── Claude Agent SDK check ───────────────────────────────────────
+
+fn check_claude_agent_sdk(config: &Config, items: &mut Vec<DiagnosticItem>) {
+    let sdk = &config.claude_agent_sdk;
+    if !sdk.enabled {
+        return;
+    }
+
+    tracing::debug!("probe:claude_agent_sdk:entry binary={}", sdk.binary);
+
+    // Probe the configured binary by running `<binary> --version`.
+    let mut cmd = std::process::Command::new(&sdk.binary);
+    cmd.arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+
+    tracing::debug!(
+        "probe:claude_agent_sdk:exec binary={} cmd=--version",
+        sdk.binary
+    );
+
+    match cmd.output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("(unknown version)")
+                .to_string();
+            tracing::info!(
+                "probe:claude_agent_sdk:ok binary={} version={}",
+                sdk.binary,
+                version
+            );
+            items.push(DiagnosticItem::ok(
+                "claude_agent_sdk",
+                format!("claude CLI found (binary='{}'): {version}", sdk.binary),
+            ));
+            tracing::debug!(
+                "probe:claude_agent_sdk:exit binary={} result=ok",
+                sdk.binary
+            );
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let preview = stderr.lines().next().unwrap_or("(no stderr)");
+            tracing::warn!(
+                "probe:claude_agent_sdk:warn binary={} status={:?} stderr={}",
+                sdk.binary,
+                output.status,
+                truncate_for_display(preview, COMMAND_VERSION_PREVIEW_CHARS)
+            );
+            items.push(DiagnosticItem::warn(
+                "claude_agent_sdk",
+                format!(
+                    "claude CLI execution failed (binary='{}', status={}). {}",
+                    sdk.binary,
+                    output.status,
+                    truncate_for_display(preview, COMMAND_VERSION_PREVIEW_CHARS)
+                ),
+            ));
+            tracing::debug!(
+                "probe:claude_agent_sdk:exit binary={} result=warn",
+                sdk.binary
+            );
+        }
+        Err(err) => {
+            tracing::warn!(
+                "probe:claude_agent_sdk:warn binary={} err={}",
+                sdk.binary,
+                err
+            );
+            items.push(DiagnosticItem::warn(
+                "claude_agent_sdk",
+                format!(
+                    "claude CLI not found or not executable (configured binary='{}'): {}. \
+                     Install from https://claude.ai/code or set claude_agent_sdk.binary in config.",
+                    sdk.binary, err
+                ),
+            ));
+            tracing::debug!(
+                "probe:claude_agent_sdk:exit binary={} result=warn",
+                sdk.binary
+            );
+        }
     }
 }
 
