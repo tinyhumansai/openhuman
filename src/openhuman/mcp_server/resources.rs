@@ -176,6 +176,18 @@ pub fn list_resources_result() -> Value {
     json!({ "resources": resources })
 }
 
+/// Returns the `resources/templates/list` result payload.
+///
+/// The catalog is fully static — every URI is concrete, none are templated —
+/// so the response is always an empty `resourceTemplates` array. The handler
+/// exists so MCP clients that probe `resources/templates/list` after seeing
+/// the `resources` capability get a well-formed result instead of
+/// `-32601 Method not found`.
+pub fn list_resource_templates_result() -> Value {
+    log::debug!("[mcp_server] resources/templates/list count=0 (catalog is static)");
+    json!({ "resourceTemplates": [] })
+}
+
 /// Returns the `resources/read` result payload for the given URI, or a JSON-RPC
 /// error value when the URI is unknown (`-32002`) or missing (`-32602`).
 pub fn read_resource_result(params: &Value) -> Result<Value, (i64, &'static str, String)> {
@@ -329,6 +341,18 @@ mod tests {
                 b.id
             );
         }
+    }
+
+    #[test]
+    fn list_resource_templates_returns_empty_array() {
+        let result = list_resource_templates_result();
+        let templates = result["resourceTemplates"]
+            .as_array()
+            .expect("resourceTemplates must be a JSON array");
+        assert!(
+            templates.is_empty(),
+            "resources/templates/list must return an empty array — the catalog is static"
+        );
     }
 
     #[test]

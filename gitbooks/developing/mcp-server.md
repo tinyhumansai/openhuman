@@ -112,6 +112,14 @@ A unit test (`catalog_mirrors_builtins`) cross-references the resource catalog
 against the `BUILTINS` slice in `loader.rs`. Adding a new built-in subagent
 without a matching catalog entry fails CI.
 
+### Resource templates
+
+The catalog is fully static — every URI is concrete, none are templated — so
+`resources/templates/list` always returns an empty `resourceTemplates` array.
+The handler exists for MCP-spec compliance: clients that probe
+`resources/templates/list` after seeing the `resources` capability get a
+well-formed result instead of `-32601 Method not found`.
+
 ### Smoke test
 
 ```bash
@@ -119,7 +127,8 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
   | openhuman-core mcp
 ```
 
