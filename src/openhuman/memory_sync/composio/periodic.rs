@@ -42,6 +42,7 @@
 //!     the process lifetime.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -163,21 +164,34 @@ async fn run_loop() {
 /// - [`PauseReason::SignedOut`] — no live session; periodic work would just
 ///   401-loop against the backend.
 ///
-/// Other [`PauseReason`] variants (battery / CPU pressure) are intentionally
-/// **not** treated as a global pause here — periodic Composio fetch is
-/// network-light enough that battery / CPU shouldn't gate it. Those signals
-/// already throttle LLM-bound work through the regular gate.
+/// Other [`PauseReason`] variants:
+/// - `OnBattery` / `CpuPressure` (future, per #1073) — intentionally **not**
+///   gated here; periodic Composio fetch is network-light, so battery / CPU
+///   pressure shouldn't stop the user's data flowing in. Those signals
+///   already throttle LLM-bound work through the regular gate.
+/// - `Unknown` — documented in `scheduler_gate::policy` as a safe fallback;
+///   `Policy::pause_reason()` returns it only when the gate state is in a
+///   transitional / not-yet-resolved condition. Letting the tick proceed
+///   here keeps periodic sync running through brief transitions instead of
+///   pausing on stale unresolved state.
 fn periodic_pause_reason() -> Option<PauseReason> {
-    match current_policy() {
-        Policy::Paused {
-            reason: PauseReason::UserDisabled,
-        } => Some(PauseReason::UserDisabled),
-        Policy::Paused {
-            reason: PauseReason::SignedOut,
-        } => Some(PauseReason::SignedOut),
-        _ => None,
-    }
+    // Delegate the `Policy::Paused { .. }` → `PauseReason` extraction to
+    // the existing `Policy::pause_reason()` helper (avoids re-implementing
+    // the same destructure twice). The allow-list below is the only thing
+    // this site has to own — future `PauseReason` variants stay opt-in.
+    let reason = current_policy().pause_reason()?;
+    matches!(reason, PauseReason::UserDisabled | PauseReason::SignedOut).then_some(reason)
 }
+
+/// Process-level "was the last tick paused?" tracker for transition logging.
+///
+/// We want `info!` *once* when the periodic loop crosses the pause boundary
+/// (so fleet operators investigating "why is Composio not syncing?" see a
+/// breadcrumb at default log level), without spamming `info` every 20 min
+/// while the user has the toggle off. `Relaxed` ordering is fine because
+/// the only consumer is the inside of `run_one_tick`, which is serialised
+/// by the singleton scheduler loop.
+static LAST_TICK_WAS_PAUSED: AtomicBool = AtomicBool::new(false);
 
 /// Run a single scheduler tick. Public-ish (`pub(crate)`) so the test
 /// module can drive ticks without spinning up the real `interval`.
@@ -187,12 +201,33 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
     // no-op — no `list_connections` call, no provider walk, no API budget
     // burn. The check runs **before** config load + auth-client build so
     // a paused session never even resolves the API token.
+    //
+    // Transition logging: emit `info!` once when the loop crosses the
+    // pause boundary in either direction; stay at `debug!` for the
+    // already-paused / already-running steady state. Without this, fleet
+    // operators investigating "why is Composio not syncing?" see nothing
+    // at default log level.
     if let Some(reason) = periodic_pause_reason() {
-        tracing::debug!(
-            reason = reason.as_str(),
-            "[composio:periodic] scheduler-gate paused — skipping tick"
-        );
+        let was_paused = LAST_TICK_WAS_PAUSED.swap(true, Ordering::Relaxed);
+        if was_paused {
+            tracing::debug!(
+                reason = reason.as_str(),
+                "[composio:periodic] scheduler-gate paused — skipping tick"
+            );
+        } else {
+            tracing::info!(
+                reason = reason.as_str(),
+                "[composio:periodic] scheduler-gate paused — pausing periodic Composio sync"
+            );
+        }
         return Ok(());
+    } else {
+        let was_paused = LAST_TICK_WAS_PAUSED.swap(false, Ordering::Relaxed);
+        if was_paused {
+            tracing::info!(
+                "[composio:periodic] scheduler-gate resumed — periodic Composio sync re-enabled"
+            );
+        }
     }
 
     // Step 1: load config (also gives us the auth token via the
@@ -439,6 +474,16 @@ mod tests {
     /// return `None` — i.e. the tick is allowed to proceed. This pins the
     /// happy-path wiring; an accidental "always pause" regression in the
     /// helper would break every `run_one_tick`-driven test that follows it.
+    ///
+    /// (The redundant "does-not-short-circuit" tick-level test that was
+    /// here in the first review pass was dropped per @oxoxDev's
+    /// [#2825 review](https://github.com/tinyhumansai/openhuman/pull/2825):
+    /// it duplicated `run_one_tick_returns_ok_when_no_client` because
+    /// both exited at the same `create_composio_client` no-client branch,
+    /// so neither actually proved the new gate-check arm fired in the
+    /// right direction. Asserting log-line absence via `tracing-test`
+    /// would prove it but adds a new dev-dependency for one assertion —
+    /// the helper-level test below already pins the wiring.)
     #[test]
     fn periodic_pause_reason_returns_none_when_gate_not_initialised() {
         // Calling without `scheduler_gate::init_global(...)` exercises the
@@ -450,42 +495,5 @@ mod tests {
              got {:?}",
             periodic_pause_reason()
         );
-    }
-
-    /// `run_one_tick` must short-circuit `Ok(())` quickly when the
-    /// pause-reason helper says skip. We can't easily force a paused state
-    /// without initialising the global gate (`OnceLock` won't accept
-    /// re-init across tests), so this test exercises the symmetric happy
-    /// path under the same `OPENHUMAN_WORKSPACE`-isolated setup as the
-    /// no-client test — and asserts the new early-return doesn't fire by
-    /// observing it took at least the config-load duration (i.e. it didn't
-    /// short-circuit at the very top).
-    ///
-    /// The branch coverage for the *paused* arm is intentionally deferred
-    /// to integration tests that own `scheduler_gate::init_global(...)`
-    /// because OnceLock makes per-test paused-state isolation brittle in
-    /// unit tests.
-    #[tokio::test]
-    async fn run_one_tick_does_not_short_circuit_when_not_paused() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let tmp = tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
-
-        // Sanity: confirm the helper still says "proceed" in this env.
-        assert!(periodic_pause_reason().is_none());
-
-        let inner = tokio::time::timeout(Duration::from_secs(5), run_one_tick())
-            .await
-            .expect("run_one_tick should not hang");
-        assert!(
-            inner.is_ok(),
-            "run_one_tick should return Ok when not paused: {inner:?}"
-        );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 }
