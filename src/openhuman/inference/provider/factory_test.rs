@@ -724,6 +724,7 @@ fn known_tiers_pass() {
         "agentic-v1",
         "coding-v1",
         "reasoning-quick-v1",
+        "summarization-v1",
     ] {
         assert!(
             is_known_openhuman_tier(tier),
@@ -738,6 +739,7 @@ fn known_hints_pass() {
     assert!(is_known_openhuman_tier("hint:chat"));
     assert!(is_known_openhuman_tier("hint:agentic"));
     assert!(is_known_openhuman_tier("hint:coding"));
+    assert!(is_known_openhuman_tier("hint:summarization"));
 }
 
 #[test]
@@ -748,7 +750,7 @@ fn invalid_models_fail() {
     assert!(!is_known_openhuman_tier(""));
     assert!(!is_known_openhuman_tier("reasoning-v2"));
     // Unrecognized `hint:*` values must NOT be accepted — the factory only
-    // translates the four hints above, so any other `hint:*` string would
+    // translates the known hints above, so any other `hint:*` string would
     // otherwise be forwarded to the backend and rejected with HTTP 400.
     assert!(!is_known_openhuman_tier("hint:garbage"));
     assert!(!is_known_openhuman_tier("hint:reasoning-quick"));
@@ -769,6 +771,14 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
         let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
         assert_eq!(model, hint, "hint '{hint}' should pass through unchanged");
     }
+}
+
+#[test]
+fn make_openhuman_backend_translates_summarization_hint() {
+    let mut config = Config::default();
+    config.default_model = Some("hint:summarization".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
 }
 
 #[test]

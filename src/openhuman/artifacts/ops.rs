@@ -61,12 +61,16 @@ pub async fn ai_get_artifact(
     let meta = store::get_artifact(&config.workspace_dir, artifact_id).await?;
 
     // Compute absolute path for the caller's convenience.
-    let absolute_path = config
-        .workspace_dir
-        .join("artifacts")
-        .join(&meta.path)
-        .to_string_lossy()
-        .into_owned();
+    // Guard against a corrupt or adversarial meta.path that escapes the artifacts root.
+    let artifacts_root = config.workspace_dir.join("artifacts");
+    let resolved = artifacts_root.join(&meta.path);
+    if !resolved.starts_with(&artifacts_root) {
+        return Err(format!(
+            "[artifacts] meta.path {:?} escapes artifacts root for id={artifact_id}",
+            meta.path
+        ));
+    }
+    let absolute_path = resolved.to_string_lossy().into_owned();
 
     let mut value =
         serde_json::to_value(&meta).map_err(|e| format!("[artifacts] serialization error: {e}"))?;

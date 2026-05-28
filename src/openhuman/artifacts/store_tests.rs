@@ -168,6 +168,13 @@ async fn list_skips_corrupt_meta() {
 }
 
 #[tokio::test]
+async fn validate_artifact_id_rejects_dot() {
+    let tmp = TempDir::new().unwrap();
+    let err = get_artifact(tmp.path(), ".").await.unwrap_err();
+    assert!(err.contains("must not be '.'"), "unexpected error: {err}");
+}
+
+#[tokio::test]
 async fn validate_artifact_id_rejects_slashes() {
     let tmp = TempDir::new().unwrap();
     let err = get_artifact(tmp.path(), "a/b").await.unwrap_err();
