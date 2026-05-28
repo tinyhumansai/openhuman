@@ -100,29 +100,51 @@ const PUBLIC_PATHS: &[&str] = &[
 /// (#1339) is the next planned addition.
 const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks"];
 
-/// The environment variable the Tauri shell sets before spawning the core.
+/// Operator-supplied environment variable that carries the RPC bearer in
+/// non-desktop deployments.
 ///
-/// When this variable is present the core uses its value as the RPC token
-/// (no file I/O needed).  When absent (standalone `openhuman core run`) the
-/// core generates a token and writes it to `{workspace_dir}/core.token` so
+/// **The Tauri desktop shell does NOT set this variable.** Since PR #1061
+/// the core runs in-process inside the Tauri host, and the shell hands the
+/// per-launch bearer to the embedded server via an internal in-memory handle
+/// (see [`init_rpc_token_with_value`]). The desktop boot flow never crosses
+/// a process-global env surface.
+///
+/// `OPENHUMAN_CORE_TOKEN` remains the canonical configuration surface for
+/// **standalone CLI / Docker / cloud** deployments only — where the bearer
+/// must come from `fly secrets set …`, `docker run -e …`, a systemd unit
+/// file, or a developer running `openhuman-core serve` from a shell with the
+/// env var pre-set. In those shapes there is no live host process to hand
+/// the token over in-memory, so env-as-config is the appropriate transport.
+///
+/// When this variable is present [`init_rpc_token`] uses its value (no file
+/// I/O). When absent and no in-memory token was seeded, `init_rpc_token`
+/// generates a fresh token and writes it to `{workspace_dir}/core.token` so
 /// CLI clients can authenticate.
 pub const CORE_TOKEN_ENV_VAR: &str = "OPENHUMAN_CORE_TOKEN";
 
-/// Initialize the per-process RPC token.
+/// Initialize the per-process RPC token from env-or-file (non-desktop path).
 ///
-/// **Preferred path — Tauri-spawned core**: reads the token from the
-/// `OPENHUMAN_CORE_TOKEN` environment variable set by the Tauri shell.  No
-/// file is written; the token is always available the instant the process
-/// starts.
+/// **Not the desktop path.** The Tauri shell passes the per-launch bearer
+/// to the embedded server via the internal in-memory handle (see
+/// [`init_rpc_token_with_value`]); it does **not** set
+/// `OPENHUMAN_CORE_TOKEN`. This function is the bootstrap path for
+/// standalone CLI / Docker / cloud deployments.
 ///
-/// **Fallback — standalone CLI**: generates a fresh 256-bit token, writes it
-/// to `{workspace_dir}/core.token` (owner-read-only on Unix) for external
-/// callers, and stores it in the process global.
+/// **Env-as-config (preferred for non-desktop)**: when
+/// `OPENHUMAN_CORE_TOKEN` is set in the process environment (typically by
+/// the container runtime, secrets manager, or systemd unit file), the core
+/// uses its value as the RPC token. No file is written; the token is
+/// available the instant the process starts.
+///
+/// **Standalone CLI fallback**: when no env var is supplied, the core
+/// generates a fresh 256-bit token, writes it to `{workspace_dir}/core.token`
+/// (owner-read-only on Unix) for external callers, and stores it in the
+/// process global.
 ///
 /// # Errors
 ///
-/// Returns an error only in the fallback path, if the token file cannot be
-/// written.
+/// Returns an error only in the standalone fallback path, if the token file
+/// cannot be written.
 pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
     // Idempotency guard: if the token is already set, do nothing.  A second
     // call must never write a new token to disk while the process still
@@ -133,12 +155,16 @@ pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Fast path: token pre-seeded by the Tauri shell via env var.
+    // Env-as-config path: bearer supplied by the operator via
+    // OPENHUMAN_CORE_TOKEN. Used by Docker / cloud / systemd / a developer
+    // running `openhuman-core serve` from a pre-configured shell. Desktop
+    // (Tauri) does NOT set this variable — it uses `init_rpc_token_with_value`
+    // for an in-memory handoff instead.
     if let Ok(env_token) = std::env::var(CORE_TOKEN_ENV_VAR) {
         let env_token = env_token.trim().to_string();
         if !env_token.is_empty() {
             let _ = RPC_TOKEN.set(env_token);
-            log::info!("[auth] core RPC token loaded from environment (Tauri-managed)");
+            log::info!("[auth] core RPC token loaded from environment (operator-supplied)");
             return Ok(());
         }
     }
