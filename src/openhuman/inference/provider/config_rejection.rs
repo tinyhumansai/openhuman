@@ -148,6 +148,14 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // this is the `type` field used by litellm/Anthropic-style
         // envelopes for the same class of user-state error.
         "not_found_error",
+        // TAURI-RUST-4NM — nvidia-nim (and some other providers) return
+        // `{"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}`
+        // when the `model` key is absent or empty in the request body.
+        // This is a user-configuration error (provider string has no model
+        // component, e.g. `nvidia-nim:` with empty model), not a product
+        // regression. Demote from Sentry; the factory now validates this
+        // up-front so in practice this phrase should no longer appear.
+        "model field is required",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -314,6 +322,19 @@ mod tests {
                 "broader classifier must continue to match: {body:?}"
             );
         }
+    }
+
+    #[test]
+    fn detects_nvidia_nim_missing_model_body() {
+        // TAURI-RUST-4NM — nvidia-nim rejects requests with model="" with
+        // `{"error":{"message":"model field is required",...}}`.
+        let body = r#"nvidia-nim API error (400 Bad Request): {"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}"#;
+        assert!(
+            is_provider_config_rejection_message(body),
+            "TAURI-RUST-4NM body must classify as provider config-rejection: {body:?}"
+        );
+        // Also verify the bare phrase on its own (defense-in-depth path).
+        assert!(is_provider_config_rejection_message("model field is required"));
     }
 
     #[test]

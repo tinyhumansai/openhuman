@@ -768,6 +768,21 @@ fn make_cloud_provider_by_slug(
         model.to_string()
     };
 
+    // Fail fast when there is still no model after resolution rather than sending
+    // an API request with model="" which some providers (e.g. nvidia-nim) reject
+    // with "model field is required" (TAURI-RUST-4NM). This surfaces a clear,
+    // actionable error at factory build time instead of a confusing provider 400.
+    if effective_model.trim().is_empty() {
+        anyhow::bail!(
+            "[chat-factory] cloud provider slug '{}' for role '{}' has no model configured. \
+             Provide a model in the provider string (e.g. '{}:<model-id>') or set \
+             default_model in the [[cloud_providers]] config entry for this slug.",
+            slug,
+            role,
+            slug
+        );
+    }
+
     if entry.auth_style != AuthStyle::OpenhumanJwt && is_abstract_tier_model(&effective_model) {
         if let Some(default_model) = entry
             .default_model
