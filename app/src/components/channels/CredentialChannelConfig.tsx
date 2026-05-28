@@ -78,7 +78,9 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
         for (const field of spec.fields) {
           const raw = fieldValues[compositeKey]?.[field.key] ?? '';
           const val = field.field_type === 'boolean' ? raw : raw.trim();
-          if (field.required && !val) {
+          // Booleans are always semantically set (checkbox is on or off), so an
+          // untouched required boolean must not fail the empty-value check.
+          if (field.required && field.field_type !== 'boolean' && !val) {
             const label = t(`channels.${channel}.fields.${field.key}.label`, field.label);
             dispatch(
               setChannelConnectionStatus({
@@ -121,9 +123,20 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
           try {
             await restartCoreProcess();
           } catch {
-            setError(
-              t('channels.savedRestartRequired', 'Channel saved. Restart the app to activate it.')
+            // Credentials were saved but the core didn't restart, so the channel
+            // is not live yet — don't mark it connected; reflect the pending state.
+            dispatch(
+              setChannelConnectionStatus({
+                channel,
+                authMode: spec.mode,
+                status: 'error',
+                lastError: t(
+                  'channels.savedRestartRequired',
+                  'Channel saved. Restart the app to activate it.'
+                ),
+              })
             );
+            return;
           }
         }
         dispatch(

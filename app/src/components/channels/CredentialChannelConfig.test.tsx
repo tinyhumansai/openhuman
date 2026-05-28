@@ -54,6 +54,27 @@ describe('<CredentialChannelConfig />', () => {
     await waitFor(() => expect(restartCoreProcessMock).toHaveBeenCalledTimes(1));
   });
 
+  it('does not mark the channel connected when the core restart fails', async () => {
+    connectChannelMock.mockResolvedValue({ status: 'connected', restart_required: true });
+    restartCoreProcessMock.mockRejectedValue(new Error('restart failed'));
+    renderWithProviders(<CredentialChannelConfig definition={larkDefinition} />);
+
+    fireEvent.change(screen.getByPlaceholderText('cli_xxxxxxxxxxxx'), {
+      target: { value: 'cli_abc123' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('Your Lark app secret'), {
+      target: { value: 'shh-secret' },
+    });
+    fireEvent.click(screen.getByText('Connect'));
+
+    // Restart failed → surfaces the saved-restart message and stays not-connected
+    // (Connect button still present), rather than falsely marking connected.
+    await waitFor(() =>
+      expect(screen.getByText(/Restart the app to activate it/i)).toBeInTheDocument()
+    );
+    expect(screen.getByText('Connect')).toBeInTheDocument();
+  });
+
   it('surfaces a connect failure as an error instead of staying stuck connecting', async () => {
     connectChannelMock.mockRejectedValue(new Error('invalid app secret'));
     renderWithProviders(<CredentialChannelConfig definition={larkDefinition} />);
