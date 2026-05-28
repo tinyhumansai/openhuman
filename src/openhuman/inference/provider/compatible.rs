@@ -1479,7 +1479,20 @@ impl Provider for OpenAiCompatibleProvider {
                 format!("{} API error ({status}): {sanitized}", self.name),
                 status,
             );
-            if super::is_budget_exhausted_http_400(status, &error) {
+            if super::is_backend_auth_failure(self.name.as_str(), status) {
+                // Backend rejected the app session JWT (401/403): expected
+                // session-expiry (token expired/revoked/rotated), not a code
+                // bug. Publish SessionExpired so the credentials subscriber
+                // drives reauth and the scheduler-gate halts downstream LLM
+                // work, and skip the Sentry report (TAURI-RUST-N). Mirrors the
+                // `is_backend_auth_failure` arm in `super::api_error`.
+                super::publish_backend_session_expired(
+                    "chat_completions",
+                    self.name.as_str(),
+                    status,
+                    &message,
+                );
+            } else if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "chat_completions",
                     self.name.as_str(),
