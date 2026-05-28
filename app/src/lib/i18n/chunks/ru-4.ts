@@ -293,7 +293,7 @@ const ru4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Очистить сохранённый ключ',
   'settings.ai.connectProvider': 'Подключить провайдера',
   'settings.ai.customRouting': 'Пользовательская маршрутизация',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'По умолчанию используется',
   'settings.ai.discard': 'Отменить',
   'settings.ai.editProvider': 'Изменить провайдера',
   'settings.ai.llmProviders': 'LLM-провайдеры',

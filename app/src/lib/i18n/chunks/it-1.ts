@@ -436,6 +436,7 @@ const it1: TranslationMap = {
   'migration.sourceLabel': 'Percorso dello spazio di lavoro di origine (facoltativo)',
   'migration.sourcePlaceholder':
     'Lascia vuoto per rilevamento automatico (es. ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'Vuoto usa la posizione predefinita del provider. Inserisci un percorso esplicito se hai spostato lo spazio di lavoro.',
   'migration.previewAction': 'Anteprima',
@@ -458,10 +459,6 @@ const it1: TranslationMap = {
     "Nessun dato è ancora stato importato. Premi Applica l'import per copiarlo.",
   'migration.report.appliedHint':
     'Le voci importate sono ora nella tua memoria. Riesegui Anteprima per confrontare di nuovo.',
-  'migration.hermesComingSoonPrefix': "L'importatore Hermes è nella roadmap — vedi ",
-  'migration.hermesComingSoonSuffix':
-    ' per il contesto. Usa OpenClaw per migrare oggi; Hermes arriverà in una release successiva.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     "Importare {count} voce nello spazio di lavoro attuale?\n\nOrigine: {source}\nDestinazione: {target}\n\nLa memoria esistente verrà salvata in backup prima dell'import.",
   'migration.confirmImport.plural':
@@ -673,7 +670,7 @@ const it1: TranslationMap = {
   'common.breadcrumb': 'Percorso di navigazione',
   'settings.betaBuild': 'Build beta - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (in arrivo)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'Usa ChatGPT Plus/Pro (abbonamento) oppure una chiave API OpenAI: non servono entrambi.',
   'onboarding.apiKeys.openaiOauthOpening': 'Apertura accesso…',

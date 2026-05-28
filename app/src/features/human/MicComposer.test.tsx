@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MicComposer } from './MicComposer';
+import { isLowConfidenceTranscript, MAX_RECORDING_MS, MicComposer } from './MicComposer';
 
 // transcribeWithFactory + encodeBlobToWav are the network/heavy boundaries —
 // mock them here so we can drive the state machine without touching real APIs.
@@ -84,6 +84,7 @@ describe('MicComposer', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (originalMediaDevicesDescriptor) {
       Object.defineProperty(globalThis.navigator, 'mediaDevices', originalMediaDevicesDescriptor);
     } else {
@@ -187,7 +188,11 @@ describe('MicComposer', () => {
   });
 
   it('falls back to wav re-encode when the native attempt fails', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Native path: all 3 attempts (initial + 2 retries) fail, then WAV succeeds.
     transcribeWithFactoryMock
+      .mockRejectedValueOnce(new Error('codec not accepted'))
+      .mockRejectedValueOnce(new Error('codec not accepted'))
       .mockRejectedValueOnce(new Error('codec not accepted'))
       .mockResolvedValueOnce('after fallback');
     encodeBlobToWavMock.mockResolvedValueOnce(
@@ -200,9 +205,14 @@ describe('MicComposer', () => {
       expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
     );
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('after fallback'));
     expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
-    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2);
+    // 3 native attempts + 1 WAV attempt
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(4);
   });
 
   it('reports an error when transcription returns empty text', async () => {
@@ -485,6 +495,47 @@ describe('MicComposer', () => {
     expect(screen.getByRole('menuitemradio', { name: /USB Headset/i })).toBeInTheDocument();
   });
 
+  // ── Recording timeout (#1206) ──────────────────────────────────────────────
+
+  it('auto-stops recording after MAX_RECORDING_MS', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    transcribeWithFactoryMock.mockResolvedValueOnce('timeout transcript');
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+
+    // Advance past MAX_RECORDING_MS — the timeout should auto-stop.
+    vi.advanceTimersByTime(MAX_RECORDING_MS + 100);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('timeout transcript'));
+  });
+
+  it('shows countdown label when remaining time <= 10s', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    transcribeWithFactoryMock.mockResolvedValueOnce('ok');
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+
+    // Initially shows "Tap to send" (not the countdown — remainingSecs=60 > 10).
+    expect(screen.getByText('Tap to send')).toBeInTheDocument();
+
+    // Advance 51 interval ticks (51s). The decrementing counter goes
+    // from 60 → 9, which is <= 10 so the countdown label appears.
+    vi.advanceTimersByTime(51_000);
+
+    // The label pattern: "Tap to send (9s)" — match the parenthesized digit+s.
+    await waitFor(() => expect(screen.getByText(/\d+s\)/)).toBeInTheDocument());
+  });
+
   it('handles enumerateDevices throwing gracefully (no crash, selector hidden)', async () => {
     const enumerateDevicesMock = vi.fn().mockRejectedValue(new Error('NotAllowed'));
     Object.defineProperty(globalThis.navigator, 'mediaDevices', {
@@ -500,5 +551,204 @@ describe('MicComposer', () => {
     expect(screen.queryByRole('combobox', { name: /microphone device/i })).not.toBeInTheDocument();
     // Composer still functional
     expect(screen.getByText('Tap and speak')).toBeInTheDocument();
+  });
+
+  // ── STT retry (#1206) ──────────────────────────────────────────────────────
+
+  it('retries transient STT failures before falling back to WAV', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Native path: fail twice (transient), then succeed
+    transcribeWithFactoryMock
+      .mockRejectedValueOnce(new Error('network timeout'))
+      .mockRejectedValueOnce(new Error('network timeout'))
+      .mockResolvedValueOnce('retry success');
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('retry success'));
+    // Should have called transcribe 3 times (initial + 2 retries), no WAV fallback
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(3);
+    expect(encodeBlobToWavMock).not.toHaveBeenCalled();
+  });
+
+  it('falls back to WAV after exhausting native retries', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Native path: all 3 attempts fail, then WAV path succeeds
+    transcribeWithFactoryMock
+      .mockRejectedValueOnce(new Error('server error'))
+      .mockRejectedValueOnce(new Error('server error'))
+      .mockRejectedValueOnce(new Error('server error'))
+      .mockResolvedValueOnce('wav retry ok');
+    encodeBlobToWavMock.mockResolvedValueOnce(
+      new Blob([new Uint8Array([0])], { type: 'audio/wav' })
+    );
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(500);
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('wav retry ok'));
+    // 3 native attempts + 1 WAV attempt
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(4);
+    expect(encodeBlobToWavMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not continue retrying after unmount during STT backoff', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    transcribeWithFactoryMock
+      .mockRejectedValueOnce(new Error('network timeout'))
+      .mockResolvedValueOnce('late transcript');
+    const onSubmit = vi.fn();
+    const onError = vi.fn();
+    const view = render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1));
+
+    view.unmount();
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('does not retry permanent errors (stale sidecar)', async () => {
+    transcribeWithFactoryMock.mockRejectedValueOnce(
+      new Error(
+        'Voice transcription is unavailable in this build. Restart the OpenHuman desktop app to pick up the latest core sidecar.'
+      )
+    );
+    const onError = vi.fn();
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(onError).toHaveBeenCalledWith(expect.stringMatching(/failed/i)));
+    // Only 1 attempt — no retries for permanent errors
+    expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(1);
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  // ── Low-confidence transcript detection (#1206) ────────────────────────────
+
+  it('rejects a single-character transcript as low confidence', async () => {
+    transcribeWithFactoryMock.mockResolvedValueOnce('I');
+    const onError = vi.fn();
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.stringMatching(/could not understand/i))
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('rejects a repeated-character transcript as low confidence', async () => {
+    transcribeWithFactoryMock.mockResolvedValueOnce('aaa');
+    const onError = vi.fn();
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} onError={onError} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.stringMatching(/could not understand/i))
+    );
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('accepts a normal transcript and submits it', async () => {
+    transcribeWithFactoryMock.mockResolvedValueOnce('Hello, how are you?');
+    const onSubmit = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('Hello, how are you?'));
+  });
+});
+
+// ── isLowConfidenceTranscript unit tests ──────────────────────────────────
+
+describe('isLowConfidenceTranscript', () => {
+  it('flags empty strings', () => {
+    expect(isLowConfidenceTranscript('')).toBe(true);
+    expect(isLowConfidenceTranscript('  ')).toBe(true);
+  });
+
+  it('flags single characters', () => {
+    expect(isLowConfidenceTranscript('I')).toBe(true);
+    expect(isLowConfidenceTranscript('A')).toBe(true);
+  });
+
+  it('flags repeated single characters', () => {
+    expect(isLowConfidenceTranscript('aaa')).toBe(true);
+    expect(isLowConfidenceTranscript('mmm')).toBe(true);
+    expect(isLowConfidenceTranscript('...')).toBe(true);
+  });
+
+  it('flags punctuation-only strings', () => {
+    expect(isLowConfidenceTranscript('...')).toBe(true);
+    expect(isLowConfidenceTranscript('!?')).toBe(true);
+    expect(isLowConfidenceTranscript('---')).toBe(true);
+  });
+
+  it('accepts normal text', () => {
+    expect(isLowConfidenceTranscript('Hello')).toBe(false);
+    expect(isLowConfidenceTranscript('Hi there')).toBe(false);
+    expect(isLowConfidenceTranscript('OK')).toBe(false);
+  });
+
+  it('accepts non-Latin scripts', () => {
+    expect(isLowConfidenceTranscript('Hola')).toBe(false);
+    expect(isLowConfidenceTranscript('Привет')).toBe(false);
+    expect(isLowConfidenceTranscript('こんにちは')).toBe(false);
+    expect(isLowConfidenceTranscript('안녕하세요')).toBe(false);
+    expect(isLowConfidenceTranscript('مرحبا')).toBe(false);
+    expect(isLowConfidenceTranscript('नमस्ते')).toBe(false);
+    expect(isLowConfidenceTranscript('বাংলা')).toBe(false);
   });
 });

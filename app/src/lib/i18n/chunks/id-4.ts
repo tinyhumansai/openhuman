@@ -295,7 +295,7 @@ const id4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Hapus key tersimpan',
   'settings.ai.connectProvider': 'Hubungkan penyedia',
   'settings.ai.customRouting': 'Routing kustom',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Default diarahkan ke',
   'settings.ai.discard': 'Buang',
   'settings.ai.editProvider': 'Edit penyedia',
   'settings.ai.llmProviders': 'Penyedia LLM',

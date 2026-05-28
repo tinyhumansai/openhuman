@@ -293,7 +293,7 @@ const bn4: TranslationMap = {
   'settings.ai.clearStoredKey': 'সংরক্ষিত কী মুছুন',
   'settings.ai.connectProvider': 'প্রোভাইডার সংযোগ করুন',
   'settings.ai.customRouting': 'কাস্টম রুটিং',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'ডিফল্ট এতে সমাধান হয়',
   'settings.ai.discard': 'বাতিল করুন',
   'settings.ai.editProvider': 'প্রোভাইডার সম্পাদনা করুন',
   'settings.ai.llmProviders': 'LLM প্রোভাইডার',

@@ -296,7 +296,7 @@ const pt4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Limpar chave armazenada',
   'settings.ai.connectProvider': 'Conectar provedor',
   'settings.ai.customRouting': 'Roteamento personalizado',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'O padrão resolve para',
   'settings.ai.discard': 'Descartar',
   'settings.ai.editProvider': 'Editar provedor',
   'settings.ai.llmProviders': 'Provedores LLM',

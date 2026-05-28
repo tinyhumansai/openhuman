@@ -431,6 +431,7 @@ const ru1: TranslationMap = {
   'migration.sourceLabel': 'Путь к исходному рабочему пространству (необязательно)',
   'migration.sourcePlaceholder':
     'Оставьте пустым для автоопределения (например, ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'Если пусто, используется стандартное расположение источника. Укажите явный путь, если вы перенесли рабочее пространство.',
   'migration.previewAction': 'Предпросмотр',
@@ -453,10 +454,6 @@ const ru1: TranslationMap = {
     'Данные ещё не импортированы. Нажмите «Применить импорт», чтобы скопировать.',
   'migration.report.appliedHint':
     'Импортированные записи теперь в вашей памяти. Запустите «Предпросмотр» снова для сравнения.',
-  'migration.hermesComingSoonPrefix': 'Импортёр Hermes в дорожной карте — см. ',
-  'migration.hermesComingSoonSuffix':
-    ' для контекста. Сегодня используйте OpenClaw для переноса; Hermes появится позже.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Импортировать {count} запись в текущее рабочее пространство?\n\nИсточник: {source}\nЦель: {target}\n\nПеред импортом будет сохранена резервная копия памяти.',
   'migration.confirmImport.plural':
@@ -668,7 +665,7 @@ const ru1: TranslationMap = {
   'common.breadcrumb': 'Навигационная цепочка',
   'settings.betaBuild': 'Бета-сборка — v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (скоро)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'Используйте ChatGPT Plus/Pro (подписка) или ключ API OpenAI — оба варианта не требуются одновременно.',
   'onboarding.apiKeys.openaiOauthOpening': 'Открывается вход…',

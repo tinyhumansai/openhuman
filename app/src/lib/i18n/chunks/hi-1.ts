@@ -427,6 +427,7 @@ const hi1: TranslationMap = {
   'migration.vendorLabel': 'सोर्स वेंडर',
   'migration.sourceLabel': 'सोर्स वर्कस्पेस पाथ (वैकल्पिक)',
   'migration.sourcePlaceholder': 'ऑटो-डिटेक्ट के लिए खाली छोड़ें (जैसे ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     'खाली होने पर वेंडर के डिफ़ॉल्ट लोकेशन का उपयोग होता है। अगर आपने वर्कस्पेस हटाया है तो स्पष्ट पाथ दें।',
   'migration.previewAction': 'प्रीव्यू',
@@ -449,9 +450,6 @@ const hi1: TranslationMap = {
     'अभी तक कोई डेटा इम्पोर्ट नहीं हुआ है। कॉपी करने के लिए Apply पर क्लिक करें।',
   'migration.report.appliedHint':
     'इम्पोर्ट की गई एंट्रीज़ अब आपकी मेमोरी में हैं। दोबारा तुलना के लिए Preview फिर से चलाएँ।',
-  'migration.hermesComingSoonPrefix': 'Hermes इम्पोर्टर रोडमैप पर है — देखें ',
-  'migration.hermesComingSoonSuffix': '। आज OpenClaw चुनें; Hermes अगले अपडेट में आएगा।',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     '{count} एंट्री को मौजूदा वर्कस्पेस में इम्पोर्ट करें?\n\nसोर्स: {source}\nटार्गेट: {target}\n\nइम्पोर्ट से पहले मौजूदा मेमोरी का बैकअप लिया जाएगा।',
   'migration.confirmImport.plural':
@@ -663,7 +661,7 @@ const hi1: TranslationMap = {
   'common.breadcrumb': 'ब्रेडक्रंब नेविगेशन',
   'settings.betaBuild': 'बीटा बिल्ड - v{version}',
   'migration.vendor.openclaw': 'OpenClaw',
-  'migration.vendor.hermes': 'Hermes Agent (जल्द आ रहा है)',
+  'migration.vendor.hermes': 'Hermes Agent',
   'onboarding.apiKeys.openaiOauthHint':
     'आप ChatGPT Plus/Pro सदस्यता या OpenAI API कुंजी में से किसी एक का उपयोग कर सकते हैं — दोनों आवश्यक नहीं हैं।',
   'onboarding.apiKeys.openaiOauthOpening': 'साइन-इन खोल रहा है…',

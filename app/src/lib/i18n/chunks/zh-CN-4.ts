@@ -286,7 +286,7 @@ const zhCN4: TranslationMap = {
   'settings.ai.clearStoredKey': '清除已存储的密钥',
   'settings.ai.connectProvider': '连接 {label}',
   'settings.ai.customRouting': '自定义路由',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': '默认解析为',
   'settings.ai.discard': '放弃',
   'settings.ai.editProvider': '编辑提供商',
   'settings.ai.llmProviders': 'LLM 提供商',

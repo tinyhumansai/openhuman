@@ -324,6 +324,7 @@ const en1: TranslationMap = {
   'migration.vendorLabel': 'Source vendor',
   'migration.sourceLabel': 'Source workspace path (optional)',
   'migration.sourcePlaceholder': 'Leave blank to auto-detect (e.g. ~/.openclaw/workspace)',
+  'migration.sourcePlaceholderHermes': 'Leave blank to auto-detect (e.g. ~/.hermes)',
   'migration.sourceHint':
     "Defaults to the vendor's standard location when blank. Set an explicit path if you've moved the workspace elsewhere.",
   'migration.previewAction': 'Preview',
@@ -346,10 +347,6 @@ const en1: TranslationMap = {
     'No data has been imported yet. Click Apply import to copy it over.',
   'migration.report.appliedHint':
     'Imported entries are now in your memory. Re-run Preview if you want to compare again.',
-  'migration.hermesComingSoonPrefix': 'Hermes importer is on the roadmap — see ',
-  'migration.hermesComingSoonSuffix':
-    ' for context. Pick OpenClaw to migrate today; Hermes lands in a follow-up.',
-  'migration.hermesLinkText': '#1440',
   'migration.confirmImport.singular':
     'Import {count} entry into the current workspace?\n\nSource: {source}\nTarget: {target}\n\nExisting memory will be backed up before the import runs.',
   'migration.confirmImport.plural':
