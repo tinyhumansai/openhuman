@@ -61,11 +61,25 @@ const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
 /// Message fragments observed from Tauri/core updater transient failures.
 /// Keep these updater-specific so unrelated GitHub or generic transport
 /// failures still reach Sentry.
+///
+/// The last entry is `tauri-plugin-updater`'s own non-success log line
+/// (`updater.rs`: `log::error!("update endpoint did not respond with a
+/// successful status code")`). The plugin emits it on *any* non-2xx
+/// response and **discards the status code**, so the Sentry event carries
+/// no `domain`/`status` tag and no actionable detail — it can only be
+/// matched by this message string. It is distinctive to the updater
+/// (literally names "update endpoint"), so matching it domain-agnostically
+/// is safe. A genuinely-broken update manifest still surfaces with full
+/// structured context (status + url) through the core's `domain=update`
+/// `check_releases` path, which keeps non-transient statuses visible — see
+/// `UPDATER_TRANSIENT_HTTP_STATUSES` (404 deliberately omitted there).
+/// Drops TAURI-RUST-CD (~151 events / 9 days, Windows background checks).
 const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
     "failed to check for updates: error sending request",
     "github api error: 403",
     "github api error: 5",
     "error sending request for url (https://github.com/tinyhumansai/openhuman/releases/",
+    "update endpoint did not respond with a successful status code",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,6 +156,24 @@ pub enum ExpectedErrorKind {
     /// ~56 events/hour, all from `openhuman.agent_chat` via
     /// `local_ai.ops.agent_chat`).
     PromptInjectionBlocked,
+    /// The request exceeded the model's context window — the
+    /// conversation/prompt is too long for the configured model. A
+    /// deterministic user-state / usage condition; the remediation is
+    /// "start a new chat, trim the conversation, or pick a larger-context
+    /// model", which the UI surfaces. Sentry has no signal to act on.
+    ///
+    /// The provider HTTP layer (`providers::ops::api_error`) suppresses its
+    /// own per-attempt event for this condition, and
+    /// `providers::reliable` marks it non-retryable. This arm catches the
+    /// **re-report** when the same error is raised again by
+    /// `agent.run_single` / `web_channel.run_chat_task` under a different
+    /// `domain` tag (same two-emit-site shape as the empty-response and
+    /// session-expired fixes). Delegates to the single-source matcher
+    /// [`crate::openhuman::inference::provider::is_context_window_exceeded_message`]
+    /// so the retry classifier, the api_error cascade, and this arm can't
+    /// drift. Drops Sentry TAURI-RUST-501
+    /// (`Context size has been exceeded`, custom-provider 500).
+    ContextWindowExceeded,
     /// The memory-store chunk DB's per-path circuit breaker is currently open
     /// because too many consecutive SQLite init attempts failed. This is the
     /// breaker doing its job — it opened *after* the underlying transient
@@ -180,6 +212,36 @@ pub enum ExpectedErrorKind {
     /// - `"kv key cannot contain personal identifiers"`
     /// - `"kv namespace/key cannot contain personal identifiers"`
     MemoryStorePiiRejection,
+    /// The provider/model completed a turn with a completely empty body
+    /// (`text_chars=0 thinking_chars=0 tool_calls=0`), so the agent harness
+    /// bailed with the user-facing `"The model returned an empty response.
+    /// Please try again."` string
+    /// (`agent::harness::session::turn`). This is a model/user-config
+    /// condition — a quirky or broken local fine-tune that returns nothing,
+    /// a provider that dropped the stream — not a code bug. The UI already
+    /// surfaces the typed error and the user can retry; Sentry has no
+    /// remediation path.
+    ///
+    /// `agent::run_single` already suppresses the **agent-layer** Sentry
+    /// event for this condition via the typed
+    /// `AgentError::EmptyProviderResponse` + `AgentError::skips_sentry()`
+    /// (PR #2790, TAURI-RUST-4JX). But `channels::providers::web::
+    /// run_chat_task` **re-reports** the same failure under
+    /// `domain=web_channel operation=run_chat_task` after the typed error
+    /// has been flattened to a `String` at the native-bus boundary — so the
+    /// typed suppression can't reach it and it escapes as a fresh Sentry
+    /// event (TAURI-RUST-4Z1). This string classifier closes that second
+    /// emit site, mirroring how `MaxIterationsExceeded` is handled at both
+    /// layers. See [`is_empty_provider_response_message`].
+    ///
+    /// Although the immediate trigger is the `web_channel.run_chat_task`
+    /// re-report, this classifier runs in the central `expected_error_kind`
+    /// dispatcher, so any caller of `report_error_or_expected`
+    /// (`channels/runtime/dispatch.rs`, `channels/runtime/supervision.rs`,
+    /// any future channel provider) whose error chain contains `"model
+    /// returned an empty response"` is also demoted — no per-channel typed
+    /// suppression needed.
+    EmptyProviderResponse,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -255,6 +317,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_prompt_injection_blocked_message(&lower) {
         return Some(ExpectedErrorKind::PromptInjectionBlocked);
     }
+    // Context-window-exceeded re-report from a higher layer (agent /
+    // web_channel). The provider api_error cascade suppresses its own
+    // emit; this catches the re-raise. Delegates to the single-source
+    // provider matcher so the phrasing can't drift. Runs last so a more
+    // specific matcher always wins.
+    if crate::openhuman::inference::provider::is_context_window_exceeded_message(message) {
+        return Some(ExpectedErrorKind::ContextWindowExceeded);
+    }
     if is_memory_store_breaker_open(&lower) {
         return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
     }
@@ -263,6 +333,15 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_memory_store_pii_rejection(&lower) {
         return Some(ExpectedErrorKind::MemoryStorePiiRejection);
+    }
+    // Empty-provider-response re-report from the web-channel layer. Runs
+    // last so an earlier, more specific matcher always wins. See the
+    // variant doc-comment and [`is_empty_provider_response_message`] for
+    // the two-emit-site rationale (agent layer is handled by the typed
+    // `AgentError::skips_sentry()` in PR #2790; this covers the
+    // web_channel re-report where the type was flattened to a String).
+    if is_empty_provider_response_message(&lower) {
+        return Some(ExpectedErrorKind::EmptyProviderResponse);
     }
     None
 }
@@ -859,6 +938,34 @@ fn is_memory_store_pii_rejection(lower: &str) -> bool {
     lower.contains("cannot contain personal identifiers")
 }
 
+/// Detect the agent harness's empty-provider-response bail.
+///
+/// Anchored on the literal user-facing string emitted at
+/// `agent::harness::session::turn` —
+/// `"The model returned an empty response. Please try again."` — which is
+/// preserved verbatim as the provider/model returns a body with
+/// `text_chars=0 thinking_chars=0 tool_calls=0`.
+///
+/// This catches the **web-channel re-report** (Sentry TAURI-RUST-4Z1):
+/// `channels::providers::web::run_chat_task` wraps the failure as
+/// `"run_chat_task failed client_id=… error=The model returned an empty
+/// response. Please try again."` and routes it through
+/// `report_error_or_expected` after the typed
+/// `AgentError::EmptyProviderResponse` was flattened to a `String` at the
+/// native-bus boundary (so the agent-layer `skips_sentry()` suppression
+/// from PR #2790 can't reach it).
+///
+/// Anchored on `"model returned an empty response"` (not the looser
+/// `"empty response"`) so the sibling phrases stay actionable:
+/// `"summarizer returned empty response, falling through"`
+/// (`payload_summarizer`) and `"provider returned an empty response;
+/// returning empty extraction"` (`subagent_runner::extract_tool`) are
+/// internal fall-through paths with different wording and are NOT
+/// silenced.
+fn is_empty_provider_response_message(lower: &str) -> bool {
+    lower.contains("model returned an empty response")
+}
+
 /// Capture an error to Sentry with structured tags.
 ///
 /// `domain` and `operation` are required and become tags `domain:<…>` and
@@ -1085,6 +1192,21 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected prompt-injection-blocked error"
             );
         }
+        ExpectedErrorKind::ContextWindowExceeded => {
+            // Request too long for the model's context window. The provider
+            // api_error cascade already demotes its own emit; this is the
+            // higher-layer re-report. Deterministic user-state — the UI
+            // shows the retry message and the user trims / starts a new
+            // chat. Demote to `warn!` (breadcrumb only) — same tier as the
+            // other usage-state conditions.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "context_window_exceeded",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected context-window-exceeded error: {message}"
+            );
+        }
         ExpectedErrorKind::DiskFull => {
             // Host filesystem out of space. The user must free space on
             // their machine — Sentry can't help. Demote at `warn!` so a
@@ -1118,6 +1240,24 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "memory_store_pii_rejection",
                 "[observability] {domain}.{operation} skipped expected memory-store PII rejection"
+            );
+        }
+        ExpectedErrorKind::EmptyProviderResponse => {
+            // Model/user-config condition — the provider returned a
+            // completely empty body and the agent harness bailed with the
+            // user-facing retry message. The agent layer already suppresses
+            // this via the typed `AgentError::skips_sentry()` (PR #2790);
+            // this arm covers the `web_channel.run_chat_task` re-report
+            // where the type was flattened to a String. Demote to `warn!`
+            // (breadcrumb only) — same tier as `MaxIterationsExceeded`,
+            // the other deterministic agent-state outcome surfaced to the
+            // user via the `chat_error` event.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "empty_provider_response",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected empty-provider-response error: {message}"
             );
         }
     }
@@ -1783,6 +1923,117 @@ mod tests {
             expected_error_kind("security review required for deploy"),
             None
         );
+    }
+
+    // ── ContextWindowExceeded (TAURI-RUST-501) ─────────────────────────────
+
+    #[test]
+    fn classifies_context_window_exceeded_rereport() {
+        // TAURI-RUST-501: the custom-provider 500 body that escapes the
+        // provider api_error cascade's own status-gated checks. When the
+        // error is re-raised by `agent.run_single` / `web_channel.
+        // run_chat_task`, `report_error_or_expected` runs the classifier on
+        // the full message — this arm must catch the new phrasing.
+        assert_eq!(
+            expected_error_kind(
+                "custom API error (500 Internal Server Error): \
+                 {\"error\":{\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}}"
+            ),
+            Some(ExpectedErrorKind::ContextWindowExceeded)
+        );
+
+        // The established phrasings the provider/reliable layer already
+        // recognized must classify here too (single-source matcher).
+        for raw in [
+            "OpenAI API error (400): This model's maximum context length is 8192 tokens",
+            "request exceeds the context window of this model",
+            "context length exceeded",
+            "prompt is too long",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::ContextWindowExceeded),
+                "should classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_messages_as_context_window_exceeded() {
+        // Anchors are context-overflow specific. A generic "window" or
+        // "context" mention, or an unrelated rate-limit "exceeded", must
+        // not classify.
+        for raw in [
+            "rate limit exceeded, retry after 30s",
+            "failed to open context menu window",
+            "tool call exceeded the allowed budget",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    // ── EmptyProviderResponse (TAURI-RUST-4Z1) ─────────────────────────────
+
+    #[test]
+    fn classifies_empty_provider_response_web_channel_rereport() {
+        // TAURI-RUST-4Z1: the web-channel re-report of the agent harness's
+        // empty-provider-response bail. `run_chat_task` wraps the flattened
+        // string and routes it through `report_error_or_expected` — the
+        // agent-layer typed suppression (PR #2790) can't reach it, so this
+        // string classifier must.
+        assert_eq!(
+            expected_error_kind(
+                "run_chat_task failed client_id=l1uxaLd20_1mAdhp \
+                 thread_id=thread-8f03e7f7-3477-42cd-9283-f0bacd4bfbca \
+                 request_id=a73716a3-a85a-4045-984b-315772c5b3b8 \
+                 error=The model returned an empty response. Please try again."
+            ),
+            Some(ExpectedErrorKind::EmptyProviderResponse)
+        );
+
+        // Bare user-facing string (the verbatim `turn.rs` emission), in case
+        // a different call site re-reports it without the run_chat_task wrap.
+        assert_eq!(
+            expected_error_kind("The model returned an empty response. Please try again."),
+            Some(ExpectedErrorKind::EmptyProviderResponse)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_empty_response_phrases() {
+        // Polarity contract: the anchor is `"model returned an empty
+        // response"`, NOT the looser `"empty response"`. The sibling paths
+        // below use different subjects or phrasings and are not user-facing
+        // failures — they must stay out of this bucket so a real regression
+        // in those paths still reaches Sentry.
+        for raw in [
+            // payload_summarizer.rs:261 — internal fall-through, not a failure.
+            "[payload_summarizer] summarizer returned empty response, falling through",
+            // subagent_runner/extract_tool.rs:379 — graceful empty extraction.
+            "[extract_from_result] provider returned an empty response; returning empty extraction",
+            // Generic mention without the model-subject anchor.
+            "warning: empty response body from health probe",
+            // channels/bus.rs:185 — channel-inbound graceful fallback (routes
+            // through report_error_or_expected; subject is "agent", not "model").
+            "[channel-inbound] agent returned empty response — finalizing draft with fallback",
+            // memory/query/walk.rs:292 — debug-level memory walk, not a failure.
+            "[memory_tree_walk] turn=3 LLM gave up (empty response)",
+            // learning/reflection.rs:576 — reflection skip, not a failure.
+            "[learning] reflection skipped (empty response — gate off or local AI unavailable)",
+            // agent/harness/session/turn.rs:811 — "provider returned an empty
+            // final response" uses subject "provider", not "model"; must not match.
+            "[agent_loop] provider returned an empty final response (i=2, no text, no tool calls)",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT classify as EmptyProviderResponse: {raw}"
+            );
+        }
     }
 
     #[test]
@@ -3470,6 +3721,48 @@ mod tests {
             !is_updater_transient_event(&event),
             "update-domain events without a transient updater shape must still reach Sentry"
         );
+    }
+
+    #[test]
+    fn updater_endpoint_non_success_message_is_dropped() {
+        // TAURI-RUST-CD (~151 events / 9 days, Windows): `tauri-plugin-updater`
+        // logs `update endpoint did not respond with a successful status code`
+        // (updater.rs) on any non-2xx response and discards the status, so the
+        // captured event has NO `domain`/`status` tag — only the bare message.
+        // It can therefore only be matched via the message fast-path.
+        assert!(is_updater_transient_message(
+            "update endpoint did not respond with a successful status code"
+        ));
+
+        let event = event_with_tags_and_message(
+            &[],
+            "update endpoint did not respond with a successful status code",
+        );
+        assert!(
+            is_updater_transient_event(&event),
+            "the plugin's status-blind, domain-less non-success log line is unactionable updater noise"
+        );
+    }
+
+    #[test]
+    fn updater_endpoint_non_success_anchor_does_not_silence_unrelated_errors() {
+        // The new anchor is the literal plugin string. Other updater failures
+        // that DO carry an actionable signal (signature/permission failures on
+        // apply, deserialize errors) and unrelated non-updater errors that
+        // merely mention a status code MUST NOT be dropped by it. Pin the
+        // rejection contract so a future refactor doesn't loosen the substring.
+        for msg in [
+            "failed to apply update: signature verification failed",
+            "failed to deserialize update response: missing field `version`",
+            "backend request to /agent-integrations failed with status code 500",
+            "tool exited with non-zero status code 1",
+        ] {
+            let event = event_with_tags_and_message(&[], msg);
+            assert!(
+                !is_updater_transient_event(&event),
+                "unrelated/actionable error must still reach Sentry: {msg}"
+            );
+        }
     }
 
     #[test]

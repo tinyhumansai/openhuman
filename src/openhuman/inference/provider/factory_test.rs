@@ -724,6 +724,7 @@ fn known_tiers_pass() {
         "agentic-v1",
         "coding-v1",
         "reasoning-quick-v1",
+        "summarization-v1",
     ] {
         assert!(
             is_known_openhuman_tier(tier),
@@ -738,6 +739,7 @@ fn known_hints_pass() {
     assert!(is_known_openhuman_tier("hint:chat"));
     assert!(is_known_openhuman_tier("hint:agentic"));
     assert!(is_known_openhuman_tier("hint:coding"));
+    assert!(is_known_openhuman_tier("hint:summarization"));
 }
 
 #[test]
@@ -748,7 +750,7 @@ fn invalid_models_fail() {
     assert!(!is_known_openhuman_tier(""));
     assert!(!is_known_openhuman_tier("reasoning-v2"));
     // Unrecognized `hint:*` values must NOT be accepted — the factory only
-    // translates the four hints above, so any other `hint:*` string would
+    // translates the known hints above, so any other `hint:*` string would
     // otherwise be forwarded to the backend and rejected with HTTP 400.
     assert!(!is_known_openhuman_tier("hint:garbage"));
     assert!(!is_known_openhuman_tier("hint:reasoning-quick"));
