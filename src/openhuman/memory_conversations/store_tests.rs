@@ -959,8 +959,16 @@ fn search_cold_rebuild_does_not_block_concurrent_append() {
     let append_result = rx
         .recv_timeout(Duration::from_secs(5))
         .expect("append_message did not complete within 5 s — likely blocked by cold rebuild");
-    assert!(append_result.is_ok(), "append failed: {:?}", append_result.err());
+    assert!(
+        append_result.is_ok(),
+        "append failed: {:?}",
+        append_result.err()
+    );
 
     let search_result = search_handle.join().expect("search thread panicked");
-    assert!(search_result.is_ok(), "search failed: {:?}", search_result.err());
+    assert!(
+        search_result.is_ok(),
+        "search failed: {:?}",
+        search_result.err()
+    );
 }
