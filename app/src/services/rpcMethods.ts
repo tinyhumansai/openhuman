@@ -67,7 +67,7 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.local_ai_presets': CORE_RPC_METHODS.inferencePresets,
   'openhuman.providers_list_models': CORE_RPC_METHODS.inferenceListModels,
   'openhuman.inference_embed': CORE_RPC_METHODS.embeddingsEmbed,
-  health_snapshot: CORE_RPC_METHODS.healthSnapshot,
+  'health_snapshot': CORE_RPC_METHODS.healthSnapshot,
 };
 
 export function normalizeRpcMethod(method: string): string {
