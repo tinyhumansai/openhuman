@@ -296,7 +296,7 @@ const fr4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Effacer la clé stockée',
   'settings.ai.connectProvider': 'Connecter un fournisseur',
   'settings.ai.customRouting': 'Routage personnalisé',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Par défaut résolu en',
   'settings.ai.discard': 'Annuler',
   'settings.ai.editProvider': 'Modifier le fournisseur',
   'settings.ai.llmProviders': 'Fournisseurs LLM',
