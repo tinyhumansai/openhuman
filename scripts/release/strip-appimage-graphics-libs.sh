@@ -402,7 +402,11 @@ patch_apprun_sharun_cwd() {
   fi
 
   # Idempotency guard: skip if we already patched this AppRun.
-  if grep -q 'cd.*"\$APPDIR"' "$apprun" 2>/dev/null; then
+  # Match only the exact patched line — a loose substring (e.g. 'cd.*"$APPDIR"')
+  # would false-positive on comments like '# cd "$APPDIR"' or unrelated lines
+  # and leave the real `exec "$@"` unpatched.
+  local patched_line_re='^[[:space:]]*cd[[:space:]]+"\$APPDIR"[[:space:]]*&&[[:space:]]*exec[[:space:]]+"\$@"[[:space:]]*$'
+  if grep -Eq "$patched_line_re" "$apprun" 2>/dev/null; then
     return 1
   fi
 
@@ -412,12 +416,16 @@ patch_apprun_sharun_cwd() {
   # Patch it to:
   #   cd "$APPDIR" && exec "$@"
   #
+  # The sed pattern is anchored to end-of-line ($) so trailing content (extra
+  # args, comments, redirections) doesn't get silently absorbed into the cd &&
+  # exec sequence.
+  #
   # Use a temp file + mv to avoid truncating AppRun mid-write on failure.
   local tmp_apprun
   tmp_apprun="$(mktemp)"
-  if sed 's|^\([[:space:]]*\)exec "\$@"|\1cd "$APPDIR" \&\& exec "$@"|' \
+  if sed 's|^\([[:space:]]*\)exec "\$@"[[:space:]]*$|\1cd "$APPDIR" \&\& exec "$@"|' \
        "$apprun" > "$tmp_apprun" \
-     && grep -q 'cd.*"\$APPDIR"' "$tmp_apprun"; then
+     && grep -Eq "$patched_line_re" "$tmp_apprun"; then
     chmod --reference="$apprun" "$tmp_apprun"
     mv "$tmp_apprun" "$apprun"
     echo "[strip-libs]   patched AppRun: added 'cd \"\$APPDIR\"' before exec to fix sharun CWD preload resolution (issue #2822)"
