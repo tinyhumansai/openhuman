@@ -391,6 +391,7 @@ impl Agent {
             Some(AgentError::ToolExecutionError { .. }) => Some("tool_execution_error"),
             Some(AgentError::CostBudgetExceeded { .. }) => Some("cost_budget_exceeded"),
             Some(AgentError::MaxIterationsExceeded { .. }) => Some("max_iterations_exceeded"),
+            Some(AgentError::EmptyProviderResponse { .. }) => Some("empty_provider_response"),
             Some(AgentError::CompactionFailed { .. }) => Some("compaction_failed"),
             Some(AgentError::PermissionDenied { .. }) => Some("permission_denied"),
             Some(AgentError::Other(_)) | None => None,
@@ -519,12 +520,16 @@ impl Agent {
             }
             Err(err) => {
                 let sanitized_message = Self::sanitize_event_error_message(&err);
-                // The max-tool-iterations cap is a deterministic agent-state
-                // outcome, not a bug — the UI already surfaces the failure
-                // to the user via the chat-rendered "Error: Agent exceeded
-                // maximum tool iterations" message. Skip the Sentry funnel
-                // for this variant entirely and emit a structured
-                // `log::info!` (OPENHUMAN-TAURI-99 / -98).
+                // Some typed `AgentError` variants represent agent / user /
+                // provider state that the UI already surfaces — the
+                // max-tool-iterations cap (OPENHUMAN-TAURI-99 / -98,
+                // chat-rendered "Error: Agent exceeded maximum tool
+                // iterations") and the empty-provider-response degeneracy
+                // (TAURI-RUST-4JX, "The model returned an empty response.
+                // Please try again."). Skip the Sentry funnel for both
+                // and emit a structured `log::info!` instead. The
+                // suppressed set is owned by `AgentError::skips_sentry()`
+                // so the policy stays in one place.
                 //
                 // Other agent errors go through `report_error_or_expected`
                 // so OPENHUMAN-TAURI-5Z and the budget-noise cluster —
@@ -534,14 +539,13 @@ impl Agent {
                 // warn/info-level breadcrumb without losing genuine bugs.
                 // `Err` propagation, the `AgentError` domain event, and
                 // downstream `recoverable=false` semantics are preserved.
-                let is_max_iter = matches!(
-                    err.downcast_ref::<AgentError>(),
-                    Some(AgentError::MaxIterationsExceeded { .. })
-                );
-                if is_max_iter {
+                let skips_sentry = err
+                    .downcast_ref::<AgentError>()
+                    .is_some_and(AgentError::skips_sentry);
+                if skips_sentry {
                     log::info!(
                         target: "agent",
-                        "[agent.run_single] suppressed Sentry emission for max-iteration cap \
+                        "[agent.run_single] suppressed Sentry emission for user-state agent error \
                          session_id={} channel={} error_kind={} message={}",
                         self.event_session_id(),
                         self.event_channel(),
