@@ -4,8 +4,11 @@
 //! Flow (issue #1339):
 //! 1. Agent harness calls [`ApprovalGate::intercept`] with the tool
 //!    name, a redacted JSON of the arguments, and a short summary.
-//! 2. Gate checks the session-scoped allowlist (built from prior
-//!    `ApproveAlwaysForTool` decisions). Hit → `Allow` immediately.
+//! 2. Gate checks the user's "Always allow" allowlist
+//!    (`autonomy.auto_approve`, read live via
+//!    [`crate::openhuman::security::live_policy`]). Hit → `Allow`
+//!    immediately. An `ApproveAlwaysForTool` decision adds the tool to
+//!    that list via `approval_decide` (config save + policy reload).
 //! 3. Otherwise: persist a row in `pending_approvals`, publish a
 //!    [`DomainEvent::ApprovalRequested`] event so the UI can pop a
 //!    toast, and park the call on a `oneshot::Sender` keyed by
@@ -24,7 +27,7 @@
 //! across processes — no side effect can fire across launches, so
 //! the security invariant is preserved without auto-purging.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -82,7 +85,6 @@ pub struct ApprovalGate {
     session_id: String,
     ttl: Duration,
     waiters: Mutex<HashMap<String, oneshot::Sender<ApprovalDecision>>>,
-    always_allowlist: Mutex<HashSet<String>>,
     /// thread_id → request_id for the approval currently parked on that chat
     /// thread, so the web channel can route a yes/no reply to `approval_decide`.
     /// In-memory only (session-scoped — a parked approval doesn't survive a
@@ -123,9 +125,22 @@ impl ApprovalGate {
             session_id,
             ttl,
             waiters: Mutex::new(HashMap::new()),
-            always_allowlist: Mutex::new(HashSet::new()),
             thread_to_request: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Whether `tool_name` is on the user's "Always allow" list. Prefers the
+    /// process-global live policy (so a grant made this session is seen
+    /// immediately) and falls back to the gate's boot-time config snapshot.
+    fn tool_is_auto_approved(&self, tool_name: &str) -> bool {
+        if let Some(policy) = crate::openhuman::security::live_policy::current() {
+            return policy.auto_approve.iter().any(|t| t == tool_name);
+        }
+        self.config
+            .autonomy
+            .auto_approve
+            .iter()
+            .any(|t| t == tool_name)
     }
 
     /// Intercept a tool call. Blocks until the user decides or the
@@ -167,17 +182,18 @@ impl ApprovalGate {
         action_summary: &str,
         args_redacted: serde_json::Value,
     ) -> (GateOutcome, Option<String>) {
-        // Session-scoped allowlist shortcut — set by prior
-        // ApproveAlwaysForTool decisions in this launch.
-        {
-            let list = self.always_allowlist.lock();
-            if list.contains(tool_name) {
-                tracing::debug!(
-                    tool = tool_name,
-                    "[approval::gate] session-allowlist hit, skipping prompt"
-                );
-                return (GateOutcome::Allow, None);
-            }
+        // "Always allow" allowlist shortcut — the user's persisted
+        // `autonomy.auto_approve` set. Read from the live policy first so a
+        // grant made earlier in this session (which writes config + reloads the
+        // live policy) takes effect on the very next tool call; fall back to the
+        // gate's boot-time config when no live policy is installed (e.g. a CLI
+        // invocation that never started a session runtime, or a unit test).
+        if self.tool_is_auto_approved(tool_name) {
+            tracing::debug!(
+                tool = tool_name,
+                "[approval::gate] auto_approve allowlist hit, skipping prompt"
+            );
+            return (GateOutcome::Allow, None);
         }
 
         // Chat context (thread/client id) for routing the yes/no reply — set by
@@ -414,10 +430,10 @@ impl ApprovalGate {
     ) -> anyhow::Result<Option<PendingApproval>> {
         let decided = store::decide(&self.config, request_id, decision)?;
         if let Some(row) = &decided {
-            if decision == ApprovalDecision::ApproveAlwaysForTool {
-                let mut list = self.always_allowlist.lock();
-                list.insert(row.tool_name.clone());
-            }
+            // `ApproveAlwaysForTool` persistence (append to `autonomy.auto_approve`
+            // + reload the live policy) is handled by the `approval_decide` RPC
+            // handler, which is async and owns the config save+reload path. The
+            // gate only resolves the parked future and emits the audit event.
             if let Some(tx) = self.take_waiter(request_id) {
                 let _ = tx.send(decision);
             }
@@ -573,34 +589,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn approve_always_for_tool_short_circuits_future_calls() {
-        let (gate, _dir) = test_gate();
-        let gate = Arc::new(gate);
+    async fn auto_approve_tool_skips_prompt() {
+        // The gate reads the "Always allow" allowlist from the process-global
+        // live policy. Serialize with the other tests that install/reload it
+        // (the `live_policy` module test + the autonomy `ops` tests, which all
+        // take this same lock) so a parallel install can't clobber ours mid-test.
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (gate, dir) = test_gate();
 
-        let g = gate.clone();
-        let first = tokio::spawn(async move {
-            APPROVAL_CHAT_CONTEXT
-                .scope(
-                    chat_ctx(),
-                    g.intercept("composio", "first", serde_json::json!({})),
-                )
-                .await
-        });
-        let pending = loop {
-            if let Some(p) = gate.list_pending().unwrap().into_iter().next() {
-                break p;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+        // A tool name unique to this test so leaving it in the global allowlist
+        // afterwards can't make a sibling gate test (which use "composio" /
+        // "pushover") skip its expected prompt.
+        let tool = "openhuman_test_always_allow_tool";
+        let policy = crate::openhuman::security::SecurityPolicy {
+            auto_approve: vec![tool.into()],
+            ..crate::openhuman::security::SecurityPolicy::default()
         };
-        gate.decide(&pending.request_id, ApprovalDecision::ApproveAlwaysForTool)
-            .unwrap();
-        assert!(matches!(first.await.unwrap(), GateOutcome::Allow));
+        crate::openhuman::security::live_policy::install(
+            Arc::new(policy),
+            dir.path().to_path_buf(),
+        );
 
-        // Second call to the same tool must NOT block — allowlist hit.
-        let outcome = gate
-            .intercept("composio", "second", serde_json::json!({}))
+        // An allow-listed tool short-circuits the gate to `Allow` immediately —
+        // before any parking — even with a live chat context present, and
+        // without persisting a pending row.
+        let outcome = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx(),
+                gate.intercept(tool, "noop", serde_json::json!({})),
+            )
             .await;
         assert!(matches!(outcome, GateOutcome::Allow));
+        assert!(
+            gate.list_pending().unwrap().is_empty(),
+            "an auto-approved call must not create a pending approval row"
+        );
     }
 
     #[tokio::test]
@@ -748,7 +773,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn intercept_audited_returns_none_id_for_denied_and_allowlisted() {
+    async fn intercept_audited_id_is_none_for_denied_some_for_approved() {
         let (gate, _dir) = test_gate();
         let gate = Arc::new(gate);
 
@@ -795,6 +820,11 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         };
+        // `ApproveAlwaysForTool` resolves the parked prompt to Allow and, because
+        // the prompt persisted a row, returns its id. (Persisting the tool onto
+        // the `auto_approve` allowlist for *future* calls is the RPC handler's
+        // job — see `approval::rpc::approval_decide` — and the gate's allowlist
+        // short-circuit is covered by `auto_approve_tool_skips_prompt`.)
         gate.decide(&pending.request_id, ApprovalDecision::ApproveAlwaysForTool)
             .unwrap();
         let (first_outcome, first_id) = first.await.unwrap();
@@ -802,18 +832,6 @@ mod tests {
         assert!(
             first_id.is_some(),
             "the prompting call still persists a row"
-        );
-
-        let (second_outcome, second_id) = APPROVAL_CHAT_CONTEXT
-            .scope(
-                chat_ctx(),
-                gate.intercept_audited("pushover", "second send", serde_json::json!({})),
-            )
-            .await;
-        assert!(matches!(second_outcome, GateOutcome::Allow));
-        assert!(
-            second_id.is_none(),
-            "session-allowlist shortcut must not persist a row, so no id to record against"
         );
     }
 }

@@ -182,6 +182,11 @@ pub struct SecurityPolicy {
     pub trusted_roots: Vec<TrustedRoot>,
     /// Whether the agent may install OS packages via the `install_tool` tool.
     pub allow_tool_install: bool,
+    /// Tool names the user has pre-approved ("Always allow"). The `ApprovalGate`
+    /// skips the interactive prompt for any tool in this set. Sourced from
+    /// `autonomy.auto_approve`; populated/cleared via `config.update_autonomy_settings`
+    /// (or an "Always allow" decision) and observed live via `live_policy`.
+    pub auto_approve: Vec<String>,
     pub tracker: ActionTracker,
 }
 
@@ -191,10 +196,24 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: PathBuf::from("."),
             workspace_only: true,
+            // When adding a new entry to this allowlist, re-audit
+            // `DANGEROUS_ENV_PREFIXES` (see below). Every newly-allowed binary
+            // may introduce its own env-driven subprocess hooks (pager, editor,
+            // loader override, SSH/diff helper, preprocessor) — those names
+            // must be added to the prefix denylist so that the
+            // `KEY=cmd <allowed-binary>` shape cannot bypass allowlisting via
+            // `skip_env_assignments` in `is_command_allowed`. Cross-ref #2636.
             allowed_commands: vec![
+                // Version control
                 "git".into(),
+                // Package managers / build systems
                 "npm".into(),
+                "pnpm".into(),
+                "yarn".into(),
                 "cargo".into(),
+                "make".into(),
+                "cmake".into(),
+                // Directory / file inspection (read-only, low-risk)
                 "ls".into(),
                 "cat".into(),
                 "grep".into(),
@@ -205,6 +224,25 @@ impl Default for SecurityPolicy {
                 "head".into(),
                 "tail".into(),
                 "date".into(),
+                "sort".into(),
+                "uniq".into(),
+                "diff".into(),
+                "which".into(),
+                "uname".into(),
+                "basename".into(),
+                "dirname".into(),
+                "tr".into(),
+                "cut".into(),
+                "realpath".into(),
+                "readlink".into(),
+                "stat".into(),
+                "file".into(),
+                // Filesystem mutations (medium-risk — require approval in Supervised mode)
+                "mkdir".into(),
+                "touch".into(),
+                "cp".into(),
+                "mv".into(),
+                "ln".into(),
                 // Windows read-only equivalents for the same basic
                 // inspection workflows as ls/cat/grep/which.
                 "dir".into(),
@@ -235,14 +273,110 @@ impl Default for SecurityPolicy {
                 "~/.aws".into(),
                 "~/.config".into(),
             ],
-            max_actions_per_hour: 20,
+            // Effectively unlimited — matches AutonomyConfig::default_max_actions_per_hour().
+            // The rate-limiter check is `count <= max`, so u32::MAX is functionally
+            // infinite without requiring an Option sentinel on the field type.
+            max_actions_per_hour: u32::MAX,
             max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
             trusted_roots: Vec::new(),
             allow_tool_install: false,
+            auto_approve: Vec::new(),
             tracker: ActionTracker::new(),
         }
+    }
+}
+
+/// Environment variable names that can trigger arbitrary command execution
+/// when supplied as a leading inline assignment on an otherwise-allowed
+/// command. Each name here is either a hook variable that a downstream tool
+/// will spawn as a subprocess (`GIT_PAGER`, `GIT_SSH_COMMAND`, `EDITOR`,
+/// `LESS`/`LESSOPEN`, `MANPAGER`, `BROWSER`, `BAT_PAGER`), a runtime
+/// configuration knob that affects how Python or the shell evaluate user
+/// input (`PYTHONSTARTUP`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`), or a loader
+/// override that lets an attacker inject a library into the next process
+/// (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES`,
+/// `DYLD_LIBRARY_PATH`, `DYLD_FORCE_FLAT_NAMESPACE`).
+///
+/// `PATH` and `SHELL` are listed so an inline override cannot redirect
+/// resolution of any allowed binary to an attacker-controlled path. `IFS`
+/// is listed because the shell uses it for word splitting and a malicious
+/// value can hide command boundaries from later parsers.
+const DANGEROUS_ENV_PREFIXES: &[&str] = &[
+    "BASH_ENV",
+    "BAT_PAGER",
+    "BROWSER",
+    "DYLD_FORCE_FLAT_NAMESPACE",
+    "DYLD_INSERT_LIBRARIES",
+    "DYLD_LIBRARY_PATH",
+    "EDITOR",
+    "ENV",
+    "GIT_EDITOR",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_EXTERNAL_FILTER",
+    "GIT_PAGER",
+    "GIT_SSH",
+    "GIT_SSH_COMMAND",
+    "IFS",
+    "LD_AUDIT",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LESS",
+    "LESSCLOSE",
+    "LESSOPEN",
+    "MANOPT",
+    "MANPAGER",
+    "PAGER",
+    "PATH",
+    "PROMPT_COMMAND",
+    "PS1",
+    "PS2",
+    "PS3",
+    "PS4",
+    "PYTHONPATH",
+    "PYTHONSTARTUP",
+    "SHELL",
+    "VISUAL",
+];
+
+/// Returns true if `s` starts with one or more inline env assignments and any
+/// of the assigned names are in [`DANGEROUS_ENV_PREFIXES`].
+///
+/// The allowlist validation in [`SecurityPolicy::is_command_allowed`] uses
+/// [`skip_env_assignments`] to look past the env prefix before matching the
+/// command name. That leaves a class of attacks where the bare command (e.g.
+/// `git log`) is allowlisted but the env prefix mutates how it executes (e.g.
+/// `GIT_PAGER=<cmd> git log` — `git` spawns `<cmd>` as its pager). Because
+/// the prefix is stripped before allowlisting and the shell evaluates the
+/// prefix at execution time, the bypass lands without ever touching a
+/// blocked command name.
+///
+/// Treating any dangerous prefix as a denial keeps the allowlist
+/// semantically meaningful without having to enumerate every shape of every
+/// downstream tool's hook surface.
+fn has_dangerous_env_prefix(s: &str) -> bool {
+    let mut rest = s.trim_start();
+    loop {
+        let Some(word) = rest.split_whitespace().next() else {
+            return false;
+        };
+        if !word.contains('=') {
+            return false;
+        }
+        if !word
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return false;
+        }
+        let (name, _) = word.split_once('=').unwrap_or((word, ""));
+        let upper = name.to_ascii_uppercase();
+        if DANGEROUS_ENV_PREFIXES.iter().any(|d| *d == upper.as_str()) {
+            return true;
+        }
+        rest = rest[word.len()..].trim_start();
     }
 }
 
@@ -814,6 +948,23 @@ const NODE_PKG_READ_VERBS: &[&str] = &[
 /// run build scripts, so they are fail-closed to `Write`.
 const CARGO_READ_VERBS: &[&str] = &["tree", "metadata", "search", "info", "version", "help"];
 
+/// Detect a pacman *install/upgrade* from its bundled operation flag.
+///
+/// pacman packs its operation and modifiers into a single flag (`-Syu`, `-Ss`),
+/// and `args` reach us already lowercased — so the `-S` (sync) operation is
+/// indistinguishable from a literal `-s` by case alone. We therefore key off
+/// the *modifier* letters instead of a blanket `starts_with("-s")`, which would
+/// over-match every read-only `-S` query: a `-S`-family flag mutates the host
+/// only when it carries none of pacman's read-only query modifiers — search
+/// (`s`), info (`i`), list (`l`), groups (`g`) or print (`p`). So `-S pkg`,
+/// `-Sy`, `-Syu` are installs while `-Ss`/`-Si`/`-Sl`/`-Sg`/`-Sp` are reads.
+fn is_pacman_install(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        a.strip_prefix("-s")
+            .is_some_and(|modifiers| !modifiers.contains(['s', 'i', 'l', 'g', 'p']))
+    })
+}
+
 /// Detect a package-manager *install* invocation. These mutate the host /
 /// global environment, so they are the always-ask `Install` bucket (even in
 /// Full) — the same gate the dedicated `install_tool` enforces, applied to the
@@ -826,7 +977,7 @@ fn is_install_command(base: &str, args: &[String]) -> bool {
     match base {
         // System package managers.
         "apt" | "apt-get" | "dnf" | "yum" | "zypper" => has("install"),
-        "pacman" => args.iter().any(|a| a.starts_with("-s")), // -S / -Sy / -Syu (lowercased)
+        "pacman" => is_pacman_install(args),
         "apk" => has("add"),
         "brew" | "snap" | "flatpak" | "winget" | "choco" | "scoop" => has("install"),
         // Language package managers — host/global-modifying installs only.
@@ -1284,6 +1435,15 @@ impl SecurityPolicy {
         // Split on unquoted command separators and validate each sub-command.
         let segments = split_unquoted_segments(command);
         for segment in &segments {
+            // Reject segments that prefix the command with a dangerous env
+            // assignment (e.g. `GIT_PAGER=<cmd> git log`). The bare command
+            // after the assignment is allowlisted, but the prefix mutates
+            // the downstream binary's execution to spawn `<cmd>` as a
+            // subprocess. See [`has_dangerous_env_prefix`].
+            if has_dangerous_env_prefix(segment) {
+                return false;
+            }
+
             // Strip leading env var assignments (e.g. FOO=bar cmd)
             let cmd_part = skip_env_assignments(segment);
 
@@ -1328,8 +1488,13 @@ impl SecurityPolicy {
 
         match base.as_str() {
             "find" => {
-                // find -exec and find -ok allow arbitrary command execution
-                !args.iter().any(|arg| arg == "-exec" || arg == "-ok")
+                // -exec / -ok run a command per match. -execdir / -okdir do
+                // the same with the working directory set to the match's
+                // parent — same code-execution semantics, just with a
+                // different cwd, so they must be blocked alongside.
+                !args.iter().any(|arg| {
+                    arg == "-exec" || arg == "-ok" || arg == "-execdir" || arg == "-okdir"
+                })
             }
             "git" => {
                 // git config, alias, and -c can be used to set dangerous options
@@ -1777,7 +1942,10 @@ impl SecurityPolicy {
                         "[openhuman:policy] Operation '{}' blocked: rate limit exceeded",
                         operation_name
                     );
-                    return Err("Rate limit exceeded: action budget exhausted".to_string());
+                    return Err(format!(
+                        "Rate limit exceeded: action budget exhausted ({} actions/hour). Increase the limit in Settings -> Advanced -> Agent autonomy or wait for the rolling one-hour window to refill.",
+                        self.max_actions_per_hour
+                    ));
                 }
 
                 log::debug!(
@@ -1816,11 +1984,12 @@ impl SecurityPolicy {
             autonomy_config.max_actions_per_hour
         );
 
-        // NOTE: `autonomy_config.auto_approve` / `always_ask` are loaded from
-        // config (with non-empty defaults) but are NOT consumed here — the
-        // ApprovalGate has no always-allow / always-ask allowlist wired to them
-        // yet, so approval is driven purely by tier + `CommandClass`. These
-        // fields pre-date this PR; wiring them into the gate is a follow-up.
+        // `auto_approve` is the user's "Always allow" allowlist: the
+        // `ApprovalGate` reads it via `live_policy::current()` and skips the
+        // interactive prompt for any tool named in it. Tier + `CommandClass`
+        // (and the unconditional read-only / forbidden-path / high-risk denials)
+        // still run *before* the gate, so the allowlist can only suppress the
+        // human prompt — it can never override a hard policy denial.
 
         // The default projects home (`~/OpenHuman/projects`) is always a
         // read-write trusted root so the coding agent can create/edit projects
@@ -1852,6 +2021,7 @@ impl SecurityPolicy {
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
             trusted_roots,
             allow_tool_install: autonomy_config.allow_tool_install,
+            auto_approve: autonomy_config.auto_approve.clone(),
             tracker: ActionTracker::new(),
         }
     }

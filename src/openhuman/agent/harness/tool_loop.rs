@@ -2,7 +2,6 @@ use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
-use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
 };
@@ -203,7 +202,6 @@ pub(crate) async fn agent_turn(
         model,
         temperature,
         silent,
-        None,
         "channel",
         multimodal_config,
         max_tool_iterations,
@@ -255,8 +253,10 @@ pub(crate) async fn run_tool_call_loop(
     model: &str,
     temperature: f64,
     silent: bool,
-    approval: Option<&ApprovalManager>,
-    channel_name: &str,
+    // Retained in the harness signature (callers pass their channel) but no
+    // longer consumed here since the legacy CLI approval prompt was removed —
+    // approval now flows through the process-global `ApprovalGate`.
+    _channel_name: &str,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
@@ -790,45 +790,6 @@ pub(crate) async fn run_tool_call_loop(
                     halt_reason = Some(halt);
                 }
                 continue;
-            }
-
-            // ── Approval hook ────────────────────────────────
-            if let Some(mgr) = approval {
-                if mgr.needs_approval(&call.name) {
-                    let request = ApprovalRequest {
-                        tool_name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    };
-
-                    // Only prompt interactively when approvals are supported; auto-approve on other channels.
-                    let decision = if channel_name == "cli" {
-                        mgr.prompt_cli(&request)
-                    } else {
-                        ApprovalResponse::Yes
-                    };
-
-                    mgr.record_decision(&call.name, &call.arguments, decision, channel_name);
-
-                    if decision == ApprovalResponse::No {
-                        let denied = "Denied by user.".to_string();
-                        emit_failed_completion(&denied).await;
-                        individual_results.push(denied.clone());
-                        let _ = writeln!(
-                            tool_results,
-                            "<tool_result name=\"{}\">\n{denied}\n</tool_result>",
-                            call.name
-                        );
-                        if let Some(halt) = failure_guard.record(
-                            &call.name,
-                            &call.arguments.to_string(),
-                            false,
-                            &denied,
-                        ) {
-                            halt_reason = Some(halt);
-                        }
-                        continue;
-                    }
-                }
             }
 
             // Look up the tool by name in the combined registry + extras,

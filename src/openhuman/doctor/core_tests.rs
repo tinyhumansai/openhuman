@@ -59,6 +59,21 @@ fn embedding_provider_validation_rejects_malformed_url() {
     assert!(err.contains("invalid custom provider URL"), "{err}");
 }
 
+#[test]
+fn model_matches_accepts_exact_and_tagged_variants() {
+    assert!(model_matches("bge-m3", "bge-m3"));
+    assert!(model_matches("bge-m3:latest", "bge-m3"));
+    assert!(model_matches("bge-m3", "bge-m3:latest"));
+    assert!(model_matches("bge-m3:v1.0", "bge-m3"));
+}
+
+#[test]
+fn model_matches_rejects_different_base_models() {
+    assert!(!model_matches("nomic-embed-text:latest", "bge-m3"));
+    assert!(!model_matches("bge-m3:latest", "nomic-embed-text"));
+    assert!(!model_matches("bge-m3:latest", "bge-m3:v1.0"));
+}
+
 // ── check_memory_tree_db tests (#2206) ───────────────────────────────────────
 
 /// When the workspace exists but the DB file has never been created,

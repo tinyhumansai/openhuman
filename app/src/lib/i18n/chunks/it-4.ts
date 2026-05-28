@@ -146,6 +146,8 @@ const it4: TranslationMap = {
   'notifications.center.filterAll': 'Filtra tutte',
   'notifications.center.markAllRead': 'Segna tutte come lette',
   'notifications.center.title': 'Notifiche',
+  'oauth.button.loopbackTimeout':
+    'Accesso scaduto — il browser non ha completato il reindirizzamento OAuth. Riprova.',
   'oauth.button.connecting': 'Connessione...',
   'oauth.login.continueWith': 'Continua con',
   'onboarding.contextGathering.buildingDesc': 'Descrizione costruzione',

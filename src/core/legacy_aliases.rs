@@ -44,6 +44,10 @@ const LEGACY_ALIASES: &[(&str, &str)] = &[
         "openhuman.config_update_analytics_settings",
     ),
     (
+        "openhuman.update_autonomy_settings",
+        "openhuman.config_update_autonomy_settings",
+    ),
+    (
         "openhuman.update_browser_settings",
         "openhuman.config_update_browser_settings",
     ),

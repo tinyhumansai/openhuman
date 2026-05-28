@@ -294,7 +294,10 @@ async fn run_connection(
     emit_state_change(shared);
 
     // 7. Main event loop
-    let timeout_duration = Duration::from_millis(ping_interval + ping_timeout_ms + 5000);
+    // Deadline = pingInterval + pingTimeout + 5 s grace so minor server-side
+    // jitter doesn't cause a spurious reconnect on a healthy connection.
+    let timeout_ms = ping_interval + ping_timeout_ms + 5_000;
+    let timeout_duration = Duration::from_millis(timeout_ms);
     let mut deadline = Instant::now() + timeout_duration;
 
     loop {
@@ -336,8 +339,10 @@ async fn run_connection(
             }
             _ = tokio::time::sleep_until(deadline) => {
                 log::warn!(
-                    "[socket] Ping timeout ({}ms)",
-                    ping_interval + ping_timeout_ms + 5000
+                    "[socket] No server ping received within {}ms (interval={}ms + timeout={}ms + 5s grace); reconnecting",
+                    timeout_ms,
+                    ping_interval,
+                    ping_timeout_ms,
                 );
                 return ConnectionOutcome::Lost("Ping timeout".into());
             }

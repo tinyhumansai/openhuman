@@ -47,6 +47,7 @@ export const LEGACY_METHOD_ALIASES: Record<string, CoreRpcMethod> = {
   'openhuman.ping': CORE_RPC_METHODS.corePing,
   'openhuman.set_browser_allow_all': CORE_RPC_METHODS.configSetBrowserAllowAll,
   'openhuman.update_analytics_settings': CORE_RPC_METHODS.configUpdateAnalyticsSettings,
+  'openhuman.update_autonomy_settings': CORE_RPC_METHODS.configUpdateAutonomySettings,
   'openhuman.update_browser_settings': CORE_RPC_METHODS.configUpdateBrowserSettings,
   'openhuman.update_composio_trigger_settings':
     CORE_RPC_METHODS.configUpdateComposioTriggerSettings,

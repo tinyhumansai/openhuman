@@ -146,6 +146,8 @@ const es4: TranslationMap = {
   'notifications.center.filterAll': 'Filtrar todo',
   'notifications.center.markAllRead': 'Marcar todo como leído',
   'notifications.center.title': 'Notificaciones',
+  'oauth.button.loopbackTimeout':
+    'El inicio de sesión expiró — el navegador no completó la redirección OAuth. Por favor, inténtalo de nuevo.',
   'oauth.button.connecting': 'Conectando...',
   'oauth.login.continueWith': 'Continuar con',
   'onboarding.contextGathering.buildingDesc': 'Descripción de construcción',
