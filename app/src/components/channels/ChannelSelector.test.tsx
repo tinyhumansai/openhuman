@@ -26,10 +26,13 @@ describe('<ChannelSelector /> channel logos (issue #2854)', () => {
   });
 
   it('still renders an icon for every channel definition', () => {
-    const { container } = renderSelector();
-    // Every card label is present, and no card is left without a visual icon.
+    const { getByText } = renderSelector();
+    // Every card label is present, and each card carries a visual icon node
+    // (img logo, inline svg, or emoji span) — not just label text.
     for (const def of FALLBACK_DEFINITIONS) {
-      expect(container).toHaveTextContent(def.display_name);
+      const card = getByText(def.display_name).closest('button');
+      expect(card).not.toBeNull();
+      expect(card?.querySelector('img, svg, span.text-base')).not.toBeNull();
     }
   });
 });
