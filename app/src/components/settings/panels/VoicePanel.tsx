@@ -539,7 +539,13 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                           ? `${t('voice.providers.chip.disableProvider')} ${t('voice.providers.chip.whisper')}`
                           : `${t('voice.providers.chip.enableProvider')} ${t('voice.providers.chip.whisper')}`
                       }
-                      disabled={isInstallingWhisper}
+                      // Stay disabled for the full install window: the
+                      // local RPC kickoff (`isInstallingWhisper`) ends as
+                      // soon as the start call returns, but the install
+                      // itself continues until `voice_install_status`
+                      // reports `installed` / `error`. Combining both
+                      // signals prevents routing edits mid-install.
+                      disabled={isInstallingWhisper || whisperInstall?.state === 'installing'}
                       onClick={() => {
                         if (enabled) {
                           onSttProviderChange('cloud');
@@ -577,7 +583,8 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                           ? `${t('voice.providers.chip.disableProvider')} ${t('voice.providers.chip.piper')}`
                           : `${t('voice.providers.chip.enableProvider')} ${t('voice.providers.chip.piper')}`
                       }
-                      disabled={isInstallingPiper}
+                      // Same install-window guard as the Whisper chip.
+                      disabled={isInstallingPiper || piperInstall?.state === 'installing'}
                       onClick={() => {
                         if (enabled) {
                           onTtsProviderChange('cloud');
