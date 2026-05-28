@@ -65,7 +65,7 @@ pub mod tim {
 }
 
 /// Fixed instance id reported in `AuthBindReq.DeviceInfo.instance_id` and
-/// the `X-Instance-Id` HTTP header. Mirrors `OPENCLAW_ID = 16` used by
+/// the `X-Instance-Id` HTTP header. Mirrors `OPENCLAW_ID = 20` used by
 /// `yuanbao-openclaw-plugin` (`src/access/ws/conn-codec.ts`) — the server
 /// keys some checks off this value, so it must match the value the sign
 /// endpoint sees when the token is minted.
