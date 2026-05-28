@@ -22,6 +22,8 @@
 //!   revoked API key into the provider config)
 //! - `"This request requires more credits"` (S5 — OpenRouter `402` when
 //!   the user's account is out of credits)
+//! - `"Insufficient Balance"` (4ZF — DeepSeek custom BYO-key `402` when
+//!   the user's DeepSeek account balance is exhausted)
 //! - `"Invalid model name passed in model="` (Y0 — litellm-style proxy
 //!   rejecting a model id pre-routing)
 //! - `"No active credentials for provider:"` (JN / KB — user hasn't
@@ -133,6 +135,18 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // OpenHuman-backend balance gate; this catches the third-party
         // OpenRouter shape that re-emits via `agent.run_single`.)
         "requires more credits",
+        // TAURI-RUST-4ZF — DeepSeek (custom BYO-key) 402 when the user's
+        // DeepSeek account balance is exhausted. Body carries the upstream
+        // `{"error":{"message":"Insufficient Balance",...}}` envelope.
+        // Same user-billing class as the OpenRouter S5 shape above.
+        // NOTE: `is_budget_exhausted_message` (billing_error.rs) also
+        // contains this phrase. In `expected_error_kind` (observability.rs)
+        // this classifier is checked first (line 199 vs 205), so a re-
+        // reported "Insufficient Balance" error routes to
+        // `ProviderConfigRejection` rather than `BudgetExhausted`. Both
+        // suppress Sentry at info-level — no event-volume regression — but
+        // the telemetry `kind` tag becomes "provider_config_rejection".
+        "insufficient balance",
         // OPENHUMAN-TAURI-Y0 — litellm-style proxy rejected the model
         // id pre-routing with `Invalid model name passed in model=…`.
         // Anchored on the `passed in model=` suffix so a stray "invalid
@@ -305,6 +319,36 @@ mod tests {
             assert!(
                 is_provider_config_rejection_message(body),
                 "OPENHUMAN-TAURI-{sentry_id} body must classify as provider config-rejection: {body:?}"
+            );
+        }
+    }
+
+    /// TAURI-RUST-4ZF — a user's custom BYO-key DeepSeek provider returns
+    /// HTTP 402 with `{"error":{"message":"… Insufficient Balance …"}}`
+    /// when their DeepSeek account is out of credits. Same user-billing
+    /// class as the OpenRouter S5 "requires more credits" 402 already in
+    /// the list — the remediation is "top up the provider account", which
+    /// Sentry cannot act on. The DeepSeek wire token is `Insufficient
+    /// Balance` (vs OpenRouter's `requires more credits`).
+    #[test]
+    fn detects_insufficient_balance_402_family() {
+        for (sentry_id, body) in [
+            // TAURI-RUST-4ZF — verbatim (truncated) from issue 5679,
+            // model=`ds/deepseek-v4-flash`, provider=custom, status=402.
+            (
+                "4ZF",
+                r#"custom API error (402 Payment Required): {"error":{"message":"[deepseek/deepseek-v4-flash] [402]: {\"error\":{\"message\":\"Insufficient Balance\",\"type\":\"unknown_error\",\"param\":null,\"code\":\"invali (reset after 57s)"}}"#,
+            ),
+            // Bare upstream envelope — what a future caller might re-emit
+            // after unwrapping one layer.
+            (
+                "bare",
+                r#"{"error":{"message":"Insufficient Balance","type":"unknown_error"}}"#,
+            ),
+        ] {
+            assert!(
+                is_provider_config_rejection_message(body),
+                "TAURI-RUST-{sentry_id} insufficient-balance 402 must classify as provider config-rejection: {body:?}"
             );
         }
     }

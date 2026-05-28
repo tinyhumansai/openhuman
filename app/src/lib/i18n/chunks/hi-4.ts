@@ -294,7 +294,7 @@ const hi4: TranslationMap = {
   'settings.ai.clearStoredKey': 'स्टोर्ड key क्लियर करें',
   'settings.ai.connectProvider': 'प्रदाता कनेक्ट करें',
   'settings.ai.customRouting': 'कस्टम रूटिंग',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'डिफ़ॉल्ट इसमें हल होता है',
   'settings.ai.discard': 'रद्द करें',
   'settings.ai.editProvider': 'प्रदाता संपादित करें',
   'settings.ai.llmProviders': 'LLM प्रोवाइडर',

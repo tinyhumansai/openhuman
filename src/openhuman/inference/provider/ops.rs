@@ -606,6 +606,145 @@ pub(super) fn log_provider_config_rejection(
     );
 }
 
+/// Whether a provider error body indicates the request exceeded the model's
+/// context window (the conversation/prompt is too long for the configured
+/// model). This is a deterministic user-state / usage condition — the
+/// remediation is "start a new chat, trim the conversation, or pick a
+/// larger-context model" — not a product bug. Sentry has no signal to act
+/// on.
+///
+/// Single source of truth for the context-overflow phrasing, shared by:
+/// - [`super::reliable`]'s non-retryable classifier (retrying the same
+///   oversized request can't help),
+/// - the [`api_error`] Sentry-suppression cascade (below), and
+/// - the `core::observability` `ContextWindowExceeded` classifier (which
+///   catches the higher-layer re-report under `domain=agent` /
+///   `web_channel`).
+///
+/// Status-agnostic on purpose: providers disagree on the HTTP code for this
+/// condition — OpenAI / most emit `400 context_length_exceeded`, but some
+/// custom / self-hosted gateways mis-report it as `500` (Sentry
+/// TAURI-RUST-501: `"custom API error (500 …): Context size has been
+/// exceeded."`). Matching on the body keeps all of them in one bucket.
+///
+/// Anchoring is deliberately two-tier because this matcher now also feeds
+/// `core::observability::expected_error_kind` (Sentry suppression) and the
+/// `reliable` non-retryable decision, so an over-broad match would both
+/// hide a real error from Sentry *and* wrongly mark a retryable error as
+/// permanent:
+///
+/// - **Length/context phrases** ([`CONTEXT_HINTS`]) are unambiguous —
+///   "context window", "context length", "prompt is too long" only describe
+///   request-size overflow — so they match alone.
+/// - **Token-count phrases** ([`TOKEN_HINTS`]) collide with per-minute token
+///   *rate* limits ("rate limit reached … too many tokens per min"), which
+///   are transient 429s that MUST stay retryable and keep reaching Sentry.
+///   They only count as context-overflow when no rate-limit marker is
+///   present.
+pub fn is_context_window_exceeded_message(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+
+    // Unambiguous request-size / context phrases — match on their own.
+    const CONTEXT_HINTS: &[&str] = &[
+        "exceeds the context window",
+        "context window of this model",
+        "maximum context length",
+        "context length exceeded",
+        "context size has been exceeded",
+        "prompt is too long",
+        "input is too long",
+    ];
+    if CONTEXT_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return true;
+    }
+
+    // Token-count phrases are ambiguous with token-per-minute RATE limits.
+    // Treat them as context-overflow only when the body carries no
+    // rate-limit marker — otherwise a transient TPM 429 would be silenced
+    // from Sentry and (via `reliable`) wrongly classified as non-retryable.
+    const TOKEN_HINTS: &[&str] = &["too many tokens", "token limit exceeded"];
+    if TOKEN_HINTS.iter().any(|hint| lower.contains(hint)) {
+        const RATE_LIMIT_MARKERS: &[&str] = &[
+            "per minute",
+            "per min",
+            "rate limit",
+            "rate_limit",
+            "tpm",
+            "requests per",
+            "retry after",
+            "try again in",
+        ];
+        return !RATE_LIMIT_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker));
+    }
+
+    false
+}
+
+pub(super) fn log_context_window_exceeded(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::warn!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "context_window_exceeded",
+        "[llm_provider] {operation} context-window exceeded ({status}) — \
+         request too long for the model, not reporting to Sentry"
+    );
+}
+
+/// Whether a provider non-2xx response is the OpenHuman **backend** rejecting
+/// the app session JWT (`401`/`403`). This is expected user-session state
+/// (token expired / revoked / rotated server-side), not a product bug — the
+/// auth domain owns recovery. `401`/`403` from **other** providers (OpenAI,
+/// Anthropic, …) mean a misconfigured BYO API key and stay Sentry-actionable,
+/// so the predicate is provider-scoped to [`openhuman_backend::PROVIDER_LABEL`].
+pub(super) fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 401 | 403) && provider == openhuman_backend::PROVIDER_LABEL
+}
+
+/// Handle a backend session-expiry auth failure: publish a
+/// [`crate::core::event_bus::DomainEvent::SessionExpired`] so the credentials
+/// subscriber clears the session and flips the scheduler-gate signed-out
+/// override (halting downstream LLM work — see OPENHUMAN-TAURI-1T), and skip
+/// the Sentry report. Mirrors the `is_auth_failure && is_backend` arm in
+/// [`api_error`], factored out for the hand-rolled provider HTTP-error chains
+/// in [`super::compatible::OpenAiCompatibleProvider`] which consume the
+/// response body inline and so can't delegate to `api_error`. The
+/// `chat_completions` chain lacked this branch and reported the backend
+/// `401 Invalid token` to Sentry — that drift was TAURI-RUST-N.
+///
+/// `message` is the already-formatted `"{provider} API error ({status}): …"`
+/// string; it embeds the sanitized body, but the prefix and caller-controlled
+/// provider name aren't scrubbed, so re-run [`sanitize_api_error`] on the final
+/// string before it reaches the SessionExpired subscriber's logs.
+pub(super) fn publish_backend_session_expired(
+    operation: &str,
+    provider: &str,
+    status: reqwest::StatusCode,
+    message: &str,
+) {
+    tracing::warn!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        status = status.as_u16(),
+        "[llm_provider] backend auth failure ({status}) — publishing SessionExpired"
+    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::SessionExpired {
+        source: "llm_provider.openhuman_backend".to_string(),
+        reason: sanitize_api_error(message),
+    });
+}
+
 /// Build a sanitized provider error from a failed HTTP response.
 ///
 /// Reports the failure to Sentry with `provider` and `status` tags so
@@ -647,26 +786,16 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         is_custom_openai_upstream_bad_request_http_400(provider, status, &body);
     let is_provider_access_policy_denied = is_provider_access_policy_denied_http_403(status, &body);
     let is_provider_config_rejection = is_provider_config_rejection_http(status, provider, &body);
+    // Context-overflow is status-agnostic: match the body directly (some
+    // custom gateways mis-report it as 500 — TAURI-RUST-501 — so a status
+    // gate would let those through to `should_report_provider_http_failure`).
+    let is_context_window_exceeded = is_context_window_exceeded_message(&body);
 
     if is_auth_failure && is_backend {
-        tracing::warn!(
-            domain = "llm_provider",
-            operation = "api_error",
-            provider = provider,
-            status = status_str.as_str(),
-            "[llm_provider] backend auth failure ({status}) — publishing SessionExpired"
-        );
-        // `message` already embeds the sanitized body via
-        // `sanitize_api_error(&body)`, but the leading `{provider} API
-        // error ({status})` prefix and any caller-controlled provider
-        // name aren't scrubbed — re-run sanitize on the final string so
-        // the SessionExpired subscriber's logs never persist secrets.
-        crate::core::event_bus::publish_global(
-            crate::core::event_bus::DomainEvent::SessionExpired {
-                source: "llm_provider.openhuman_backend".to_string(),
-                reason: sanitize_api_error(&message),
-            },
-        );
+        // Single source of truth for backend session-expiry handling (warn +
+        // SessionExpired publish + final-string sanitize) — shared with the
+        // hand-rolled `chat_completions` chain in `compatible.rs`.
+        publish_backend_session_expired("api_error", provider, status, &message);
     } else if is_budget_exhausted_user_state {
         log_budget_exhausted_http_400("api_error", provider, None, status);
     } else if is_custom_openai_upstream_bad_request {
@@ -675,6 +804,8 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_provider_access_policy_denied_http_403("api_error", provider, None, status);
     } else if is_provider_config_rejection {
         log_provider_config_rejection("api_error", provider, None, status);
+    } else if is_context_window_exceeded {
+        log_context_window_exceeded("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
         crate::core::observability::report_error(
             message.as_str(),
@@ -1528,6 +1659,92 @@ mod tests {
         }
     }
 
+    mod context_window_exceeded_suppression {
+        use super::*;
+
+        #[test]
+        fn classifies_tauri_rust_501_custom_provider_500_body() {
+            // TAURI-RUST-501: the custom-provider 500 wire body. The
+            // matcher is status-agnostic, so the 500 mis-report is caught
+            // (the provider api_error cascade routes it to
+            // `log_context_window_exceeded` instead of `report_error`).
+            assert!(is_context_window_exceeded_message(
+                "{\"error\":{\"code\":500,\"message\":\"Context size has been exceeded.\",\"type\":\"server_error\"}}"
+            ));
+        }
+
+        #[test]
+        fn classifies_established_context_overflow_phrasings() {
+            // The phrasings the reliable.rs non-retryable classifier
+            // recognized before this refactor must all still match through
+            // the shared single-source matcher.
+            for body in [
+                "This model's maximum context length is 8192 tokens",
+                "request exceeds the context window of this model",
+                "context length exceeded",
+                "too many tokens in the prompt",
+                "token limit exceeded",
+                "prompt is too long for the selected model",
+                "input is too long",
+            ] {
+                assert!(
+                    is_context_window_exceeded_message(body),
+                    "should match context-overflow body: {body}"
+                );
+            }
+        }
+
+        #[test]
+        fn does_not_match_unrelated_bodies() {
+            for body in [
+                "rate limit exceeded, retry after 30s",
+                "Invalid request: model not found",
+                "Insufficient budget",
+                "tool call exceeded the allowed budget",
+            ] {
+                assert!(
+                    !is_context_window_exceeded_message(body),
+                    "must NOT match unrelated body: {body}"
+                );
+            }
+        }
+
+        #[test]
+        fn token_rate_limits_are_not_context_overflow() {
+            // Token-count phrases collide with per-minute token RATE limits.
+            // Those are transient 429s that must stay retryable and keep
+            // reaching Sentry — they must NOT be classified as context
+            // overflow (CodeRabbit review of #2820). The rate-limit marker
+            // disambiguates.
+            for body in [
+                "Rate limit reached: too many tokens per minute (TPM) for this org",
+                "rate_limit_exceeded: token limit exceeded, retry after 12s",
+                "You have hit too many tokens per min; try again in 30s",
+            ] {
+                assert!(
+                    !is_context_window_exceeded_message(body),
+                    "TPM rate-limit must NOT match as context overflow: {body}"
+                );
+            }
+            // …but a token-count overflow with NO rate marker still matches.
+            assert!(is_context_window_exceeded_message(
+                "Request rejected: too many tokens in the input for this model"
+            ));
+        }
+
+        #[test]
+        fn log_helper_runs_without_panicking() {
+            // Smoke for the demotion path taken by `api_error` — no tracing
+            // subscriber in unit tests.
+            log_context_window_exceeded(
+                "api_error",
+                "custom_openai",
+                None,
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            );
+        }
+    }
+
     #[test]
     fn test_sanitize_api_error_utf8() {
         let input = "🦀".repeat(MAX_API_ERROR_CHARS + 10);
@@ -1631,5 +1848,189 @@ mod tests {
                 "non-object body error must be non-empty: {err}"
             );
         }
+    }
+
+    /// `is_backend_auth_failure` is the polarity guard that decides whether a
+    /// 401/403 is the OpenHuman backend's expired session (silence + drive
+    /// reauth) or a third-party BYO-key rejection (actionable, must reach
+    /// Sentry). Getting this wrong in either direction is a regression:
+    /// over-matching silences real misconfig; under-matching is TAURI-RUST-N.
+    #[test]
+    fn is_backend_auth_failure_only_matches_openhuman_backend_401_403() {
+        use reqwest::StatusCode;
+        let backend = crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL;
+
+        assert!(is_backend_auth_failure(backend, StatusCode::UNAUTHORIZED));
+        assert!(is_backend_auth_failure(backend, StatusCode::FORBIDDEN));
+
+        // Non-auth backend statuses stay reportable (real server bugs / transient).
+        for s in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_FOUND,
+        ] {
+            assert!(
+                !is_backend_auth_failure(backend, s),
+                "backend {s} must not be treated as session-expiry"
+            );
+        }
+
+        // Third-party BYO-key 401/403 (user's own key revoked) must NOT be
+        // silenced — that is actionable misconfiguration for Sentry.
+        for provider in ["custom_openai", "OpenAI", "Anthropic", "openrouter"] {
+            assert!(
+                !is_backend_auth_failure(provider, StatusCode::UNAUTHORIZED),
+                "{provider} 401 must reach Sentry as actionable BYO-key error"
+            );
+            assert!(
+                !is_backend_auth_failure(provider, StatusCode::FORBIDDEN),
+                "{provider} 403 must reach Sentry as actionable BYO-key error"
+            );
+        }
+    }
+
+    /// `publish_backend_session_expired` must emit a `SessionExpired` event on
+    /// the `auth` domain with the canonical source and a sanitized reason, so
+    /// the credentials subscriber can drive reauth.
+    #[tokio::test]
+    async fn publish_backend_session_expired_emits_sanitized_session_expired() {
+        use crate::core::event_bus::{global, init_global, DomainEvent};
+
+        init_global(1024);
+        let mut rx = global().expect("event bus initialized").raw_receiver();
+
+        // `TEST_MARKER_A` makes this event distinguishable from the sibling
+        // `chat_completions_backend_401_*` test's event on the shared global
+        // bus (both run in parallel against the same singleton). The `sk-`
+        // token probes that `sanitize_api_error` actually scrubs secrets out
+        // of the SessionExpired reason rather than just emitting the event.
+        let secret = "sk-LIVEA0123456789abcdefSECRET";
+        let msg = format!(
+            r#"OpenHuman API error (401 Unauthorized): {{"success":false,"error":"TEST_MARKER_A Invalid token {secret}"}}"#
+        );
+        publish_backend_session_expired(
+            "chat_completions",
+            crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL,
+            reqwest::StatusCode::UNAUTHORIZED,
+            &msg,
+        );
+
+        let mut reason_seen: Option<String> = None;
+        loop {
+            match rx.try_recv() {
+                Ok(DomainEvent::SessionExpired { source, reason }) => {
+                    if source == "llm_provider.openhuman_backend"
+                        && reason.contains("TEST_MARKER_A")
+                    {
+                        reason_seen = Some(reason);
+                        break;
+                    }
+                }
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        let reason = reason_seen.expect(
+            "publish_backend_session_expired must emit SessionExpired(source=llm_provider.openhuman_backend) carrying TEST_MARKER_A",
+        );
+        assert!(
+            reason.contains("[REDACTED]"),
+            "sanitize_api_error must redact the sk- token in the reason: {reason}"
+        );
+        assert!(
+            !reason.contains(secret),
+            "raw secret must not survive into the SessionExpired reason: {reason}"
+        );
+    }
+
+    /// End-to-end regression for TAURI-RUST-N: a backend `401 Invalid token`
+    /// on the hand-rolled `chat_completions` path must publish `SessionExpired`
+    /// (driving reauth) and surface the typed error — NOT spam Sentry. The
+    /// provider is labelled exactly like the OpenHuman backend provider, which
+    /// is what gates the backend-auth-failure branch.
+    #[tokio::test]
+    async fn chat_completions_backend_401_publishes_session_expired() {
+        use crate::core::event_bus::{global, init_global, DomainEvent};
+        use axum::routing::post;
+
+        init_global(1024);
+        let mut rx = global().expect("event bus initialized").raw_receiver();
+
+        async fn unauthorized_handler() -> Response {
+            // `TEST_MARKER_B` distinguishes this event from the sibling
+            // `publish_backend_session_expired_*` test on the shared global
+            // bus; the `sk-` token probes end-to-end redaction through
+            // `api_error` → `publish_backend_session_expired`.
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "success": false,
+                    "error": "TEST_MARKER_B Invalid token sk-LIVEB9876543210fedcbaSECRET"
+                })),
+            )
+                .into_response()
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let app = Router::new().route("/chat/completions", post(unauthorized_handler));
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("serve");
+        });
+
+        let provider =
+            crate::openhuman::inference::provider::compatible::OpenAiCompatibleProvider::new_no_responses_fallback(
+                crate::openhuman::inference::provider::openhuman_backend::PROVIDER_LABEL,
+                &format!("http://{addr}"),
+                Some("expired-jwt"),
+                crate::openhuman::inference::provider::compatible::AuthStyle::Bearer,
+            );
+
+        let err = crate::openhuman::inference::provider::traits::Provider::chat_with_system(
+            &provider,
+            None,
+            "hi",
+            "reasoning-quick-v1",
+            0.0,
+        )
+        .await
+        .expect_err("backend 401 must surface as an error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("OpenHuman API error (401") && msg.contains("Invalid token"),
+            "error must carry the backend 401 envelope: {msg}"
+        );
+
+        let mut reason_seen: Option<String> = None;
+        loop {
+            match rx.try_recv() {
+                Ok(DomainEvent::SessionExpired { source, reason }) => {
+                    if source == "llm_provider.openhuman_backend"
+                        && reason.contains("TEST_MARKER_B")
+                    {
+                        reason_seen = Some(reason);
+                        break;
+                    }
+                }
+                Ok(_) => continue,
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+        let reason = reason_seen.expect(
+            "backend 401 on chat_completions must publish SessionExpired carrying TEST_MARKER_B, not report to Sentry",
+        );
+        assert!(
+            reason.contains("[REDACTED]"),
+            "sanitize_api_error must redact the sk- token end-to-end: {reason}"
+        );
+        assert!(
+            !reason.contains("sk-LIVEB9876543210fedcbaSECRET"),
+            "raw secret must not survive into the SessionExpired reason: {reason}"
+        );
     }
 }

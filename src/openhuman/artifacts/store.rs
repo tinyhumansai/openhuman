@@ -27,6 +27,9 @@ fn validate_artifact_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
         return Err("[artifacts] artifact_id must not be empty".to_string());
     }
+    if id == "." {
+        return Err("[artifacts] artifact_id must not be '.'".to_string());
+    }
     if id.contains('/') {
         return Err(format!(
             "[artifacts] artifact_id must not contain '/': {id:?}"
