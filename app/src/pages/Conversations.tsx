@@ -30,6 +30,7 @@ import {
   beginInferenceTurn,
   clearRuntimeForThread,
   fetchAndHydrateTurnState,
+  type InferenceStatus,
   setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
@@ -283,6 +284,10 @@ const Conversations = ({
   // from `selectedThreadId` so switching threads mid-turn doesn't move the
   // timer's reference point.
   const sendingThreadIdRef = useRef<string | null>(null);
+  // Previous inference status for the sending thread; lets the rearm effect
+  // distinguish "status was just cleared (chat_done / chat_error)" from
+  // "status was never set yet (in-flight turn pre-status)".
+  const prevInferenceStatusRef = useRef<InferenceStatus | undefined>(undefined);
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -486,26 +491,46 @@ const Conversations = ({
   };
 
   // Rearm the silence timer on every inference signal for the sending
-  // thread. Tool / iteration / subagent events bump `inferenceStatusByThread`;
-  // pure-text streams (no tools) only bump `streamingAssistantByThread`, so
-  // both must be watched — otherwise a long text stream would trip the
-  // safety timer mid-reply. When the status is cleared (chat_done /
-  // chat_error), drop the timer — the completion handlers own UI cleanup.
+  // thread. Top-level tool / iteration events bump `inferenceStatusByThread`;
+  // pure-text streams (no tools) only bump `streamingAssistantByThread`;
+  // sub-agent activity (a delegated `Research`/`Tools Agent`/`Memory Tree`
+  // turn whose tools run in a child task) bumps `toolTimelineByThread` and
+  // `taskBoardByThread` without necessarily re-emitting a top-level status
+  // change, so all four must be watched — otherwise a long sub-agent loop
+  // would trip the safety timer mid-run even though the user can see the
+  // delegated tools firing in the timeline. When the status is cleared
+  // (chat_done / chat_error), drop the timer — the completion handlers
+  // own UI cleanup.
+  //
+  // `prevInferenceStatusRef` distinguishes "status was just cleared
+  // (chat_done / chat_error transition: defined → undefined)" from "status
+  // was never set yet (the Send handler also dispatches
+  // `setToolTimelineForThread({ entries: [] })` to reset the timeline,
+  // which fires this effect immediately after `armSilenceTimer` — at
+  // that instant the inference status hasn't been published yet)". Only
+  // the real transition should clear our timer.
   useEffect(() => {
     const threadId = sendingThreadIdRef.current;
     if (!threadId || !sendingTimeoutRef.current) return;
     const status = inferenceStatusByThread[threadId];
-    if (status === undefined) {
+    if (status === undefined && prevInferenceStatusRef.current !== undefined) {
       clearTimeout(sendingTimeoutRef.current);
       sendingTimeoutRef.current = null;
       sendingThreadIdRef.current = null;
+      prevInferenceStatusRef.current = undefined;
       return;
     }
+    prevInferenceStatusRef.current = status;
     armSilenceTimer(threadId);
     // armSilenceTimer is stable (refs + dispatch); depending on the
     // selector references is enough to rearm on every progress event.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inferenceStatusByThread, streamingAssistantByThread]);
+  }, [
+    inferenceStatusByThread,
+    streamingAssistantByThread,
+    toolTimelineByThread,
+    taskBoardByThread,
+  ]);
 
   useEffect(() => {
     if (
