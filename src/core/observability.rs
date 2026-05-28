@@ -198,6 +198,28 @@ pub enum ExpectedErrorKind {
     /// - `"kv key cannot contain personal identifiers"`
     /// - `"kv namespace/key cannot contain personal identifiers"`
     MemoryStorePiiRejection,
+    /// The provider/model completed a turn with a completely empty body
+    /// (`text_chars=0 thinking_chars=0 tool_calls=0`), so the agent harness
+    /// bailed with the user-facing `"The model returned an empty response.
+    /// Please try again."` string
+    /// (`agent::harness::session::turn`). This is a model/user-config
+    /// condition — a quirky or broken local fine-tune that returns nothing,
+    /// a provider that dropped the stream — not a code bug. The UI already
+    /// surfaces the typed error and the user can retry; Sentry has no
+    /// remediation path.
+    ///
+    /// `agent::run_single` already suppresses the **agent-layer** Sentry
+    /// event for this condition via the typed
+    /// `AgentError::EmptyProviderResponse` + `AgentError::skips_sentry()`
+    /// (PR #2790, TAURI-RUST-4JX). But `channels::providers::web::
+    /// run_chat_task` **re-reports** the same failure under
+    /// `domain=web_channel operation=run_chat_task` after the typed error
+    /// has been flattened to a `String` at the native-bus boundary — so the
+    /// typed suppression can't reach it and it escapes as a fresh Sentry
+    /// event (TAURI-RUST-4Z1). This string classifier closes that second
+    /// emit site, mirroring how `MaxIterationsExceeded` is handled at both
+    /// layers. See [`is_empty_provider_response_message`].
+    EmptyProviderResponse,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -289,6 +311,15 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     }
     if is_memory_store_pii_rejection(&lower) {
         return Some(ExpectedErrorKind::MemoryStorePiiRejection);
+    }
+    // Empty-provider-response re-report from the web-channel layer. Runs
+    // last so an earlier, more specific matcher always wins. See the
+    // variant doc-comment and [`is_empty_provider_response_message`] for
+    // the two-emit-site rationale (agent layer is handled by the typed
+    // `AgentError::skips_sentry()` in PR #2790; this covers the
+    // web_channel re-report where the type was flattened to a String).
+    if is_empty_provider_response_message(&lower) {
+        return Some(ExpectedErrorKind::EmptyProviderResponse);
     }
     None
 }
@@ -885,6 +916,34 @@ fn is_memory_store_pii_rejection(lower: &str) -> bool {
     lower.contains("cannot contain personal identifiers")
 }
 
+/// Detect the agent harness's empty-provider-response bail.
+///
+/// Anchored on the literal user-facing string emitted at
+/// `agent::harness::session::turn` —
+/// `"The model returned an empty response. Please try again."` — which is
+/// preserved verbatim as the provider/model returns a body with
+/// `text_chars=0 thinking_chars=0 tool_calls=0`.
+///
+/// This catches the **web-channel re-report** (Sentry TAURI-RUST-4Z1):
+/// `channels::providers::web::run_chat_task` wraps the failure as
+/// `"run_chat_task failed client_id=… error=The model returned an empty
+/// response. Please try again."` and routes it through
+/// `report_error_or_expected` after the typed
+/// `AgentError::EmptyProviderResponse` was flattened to a `String` at the
+/// native-bus boundary (so the agent-layer `skips_sentry()` suppression
+/// from PR #2790 can't reach it).
+///
+/// Anchored on `"model returned an empty response"` (not the looser
+/// `"empty response"`) so the sibling phrases stay actionable:
+/// `"summarizer returned empty response, falling through"`
+/// (`payload_summarizer`) and `"provider returned an empty response;
+/// returning empty extraction"` (`subagent_runner::extract_tool`) are
+/// internal fall-through paths with different wording and are NOT
+/// silenced.
+fn is_empty_provider_response_message(lower: &str) -> bool {
+    lower.contains("model returned an empty response")
+}
+
 /// Capture an error to Sentry with structured tags.
 ///
 /// `domain` and `operation` are required and become tags `domain:<…>` and
@@ -1159,6 +1218,24 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "memory_store_pii_rejection",
                 "[observability] {domain}.{operation} skipped expected memory-store PII rejection"
+            );
+        }
+        ExpectedErrorKind::EmptyProviderResponse => {
+            // Model/user-config condition — the provider returned a
+            // completely empty body and the agent harness bailed with the
+            // user-facing retry message. The agent layer already suppresses
+            // this via the typed `AgentError::skips_sentry()` (PR #2790);
+            // this arm covers the `web_channel.run_chat_task` re-report
+            // where the type was flattened to a String. Demote to `warn!`
+            // (breadcrumb only) — same tier as `MaxIterationsExceeded`,
+            // the other deterministic agent-state outcome surfaced to the
+            // user via the `chat_error` event.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "empty_provider_response",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected empty-provider-response error: {message}"
             );
         }
     }
@@ -1873,6 +1950,57 @@ mod tests {
                 expected_error_kind(raw),
                 None,
                 "must NOT classify as context-window-exceeded: {raw}"
+            );
+        }
+    }
+
+    // ── EmptyProviderResponse (TAURI-RUST-4Z1) ─────────────────────────────
+
+    #[test]
+    fn classifies_empty_provider_response_web_channel_rereport() {
+        // TAURI-RUST-4Z1: the web-channel re-report of the agent harness's
+        // empty-provider-response bail. `run_chat_task` wraps the flattened
+        // string and routes it through `report_error_or_expected` — the
+        // agent-layer typed suppression (PR #2790) can't reach it, so this
+        // string classifier must.
+        assert_eq!(
+            expected_error_kind(
+                "run_chat_task failed client_id=l1uxaLd20_1mAdhp \
+                 thread_id=thread-8f03e7f7-3477-42cd-9283-f0bacd4bfbca \
+                 request_id=a73716a3-a85a-4045-984b-315772c5b3b8 \
+                 error=The model returned an empty response. Please try again."
+            ),
+            Some(ExpectedErrorKind::EmptyProviderResponse)
+        );
+
+        // Bare user-facing string (the verbatim `turn.rs` emission), in case
+        // a different call site re-reports it without the run_chat_task wrap.
+        assert_eq!(
+            expected_error_kind("The model returned an empty response. Please try again."),
+            Some(ExpectedErrorKind::EmptyProviderResponse)
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_empty_response_phrases() {
+        // Polarity contract: the anchor is `"model returned an empty
+        // response"`, NOT the looser `"empty response"`. The two internal
+        // fall-through paths use different subjects ("summarizer" /
+        // "provider") and are not user-facing failures — they must stay
+        // out of this bucket so a real regression in those paths still
+        // reaches Sentry.
+        for raw in [
+            // payload_summarizer.rs:261 — internal fall-through, not a failure.
+            "[payload_summarizer] summarizer returned empty response, falling through",
+            // subagent_runner/extract_tool.rs:379 — graceful empty extraction.
+            "[extract_from_result] provider returned an empty response; returning empty extraction",
+            // Generic mention without the model-subject anchor.
+            "warning: empty response body from health probe",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "must NOT classify as EmptyProviderResponse: {raw}"
             );
         }
     }
