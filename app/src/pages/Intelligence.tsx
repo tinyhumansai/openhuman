@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
+import NamespaceOverviewTab from '../components/intelligence/NamespaceOverviewTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
@@ -19,7 +20,7 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'diagram' | 'centrality';
+type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'diagram' | 'centrality' | 'namespaces';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -94,6 +95,7 @@ export default function Intelligence() {
       { id: 'subconscious', label: t('memory.tab.subconscious') },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
+      { id: 'namespaces', label: t('memory.tab.namespaces') },
     ];
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
@@ -182,6 +184,8 @@ export default function Intelligence() {
             {activeTab === 'diagram' && <DiagramViewerTab />}
 
             {activeTab === 'centrality' && <GraphCentralityTab />}
+
+            {activeTab === 'namespaces' && <NamespaceOverviewTab />}
           </div>
         </div>
       </div>

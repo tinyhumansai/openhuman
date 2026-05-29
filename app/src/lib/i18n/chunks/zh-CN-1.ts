@@ -1596,6 +1596,25 @@ const zhCN1: TranslationMap = {
   'graphCentrality.bridgeBadge': 'connector',
   'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
   'graphCentrality.degreeTitle': '{in} in · {out} out',
+  'memory.tab.namespaces': 'Namespaces',
+  'namespaceOverview.title': 'Namespace Overview',
+  'namespaceOverview.intro':
+    'How your knowledge is distributed across contexts — the number of facts and distinct entities recorded in each namespace.',
+  'namespaceOverview.loading': 'Aggregating namespaces…',
+  'namespaceOverview.errorPrefix': 'Could not load the graph:',
+  'namespaceOverview.retry': 'Retry',
+  'namespaceOverview.empty': 'No knowledge graph yet.',
+  'namespaceOverview.emptyHint':
+    'As the assistant records facts across contexts, each namespace will appear here.',
+  'namespaceOverview.metricNamespaces': 'Namespaces',
+  'namespaceOverview.metricFacts': 'Facts',
+  'namespaceOverview.metricEntities': 'Entities',
+  'namespaceOverview.heading': 'By namespace',
+  'namespaceOverview.unnamespaced': '(un-namespaced)',
+  'namespaceOverview.factsLabel': '{count} facts',
+  'namespaceOverview.entitiesLabel': '{count} entities',
+  'namespaceOverview.entitiesShort': '{count} ent.',
+  'namespaceOverview.truncated': 'Showing the top {shown} of {total} namespaces.',
 };
 
 export default zhCN1;
