@@ -250,14 +250,28 @@ describe('AutocompletePanel (simplified)', () => {
     });
   });
 
-  it('clamps non-positive tuning values to safe minimums', async () => {
+  it('allows clearing a tuning field mid-edit and clamps to safe minimums at save', async () => {
     renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
 
     await screen.findByText('Autocomplete');
 
     const maxChars = (await screen.findByTestId('autocomplete-max-chars')) as HTMLInputElement;
-    // max_chars must stay >= 1 even when the user clears the field.
+    const debounce = screen.getByTestId('autocomplete-debounce-ms') as HTMLInputElement;
+
+    // Intermediate empty / zero states are preserved while typing (no snap).
+    fireEvent.change(maxChars, { target: { value: '' } });
+    expect(maxChars.value).toBe('');
     fireEvent.change(maxChars, { target: { value: '0' } });
-    expect(maxChars.value).toBe('1');
+    expect(maxChars.value).toBe('0');
+    fireEvent.change(debounce, { target: { value: '' } });
+    expect(debounce.value).toBe('');
+
+    // Clamping happens at save: max_chars -> >= 1, debounce -> >= 0.
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+    await waitFor(() => {
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({ max_chars: 384, debounce_ms: 0 })
+      );
+    });
   });
 });
