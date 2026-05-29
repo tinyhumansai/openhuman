@@ -354,6 +354,7 @@ const it2: TranslationMap = {
   'mic.permissionDenied': 'Permesso microfono negato',
   'mic.failedToStartRecorder': 'Avvio del registratore fallito',
   'mic.transcribing': 'Trascrizione...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Tocca per inviare',
   'mic.waitingForAgent': "In attesa dell'agente...",
   'mic.tapAndSpeak': 'Tocca e parla',

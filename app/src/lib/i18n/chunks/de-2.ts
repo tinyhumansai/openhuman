@@ -362,6 +362,7 @@ const de2: TranslationMap = {
   'mic.permissionDenied': 'Mikrofonberechtigung verweigert',
   'mic.failedToStartRecorder': 'Der Rekorder konnte nicht gestartet werden',
   'mic.transcribing': 'Transkribieren...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Zum Senden tippen',
   'mic.waitingForAgent': 'Warten auf Agent...',
   'mic.tapAndSpeak': 'Tippen und sprechen',

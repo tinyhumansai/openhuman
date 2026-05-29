@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isLowConfidenceTranscript, MAX_RECORDING_MS, MicComposer } from './MicComposer';
+import {
+  isLowConfidenceTranscript,
+  MAX_RECORDING_MS,
+  MicComposer,
+  STT_MAX_RETRIES,
+} from './MicComposer';
 
 // transcribeWithFactory + encodeBlobToWav are the network/heavy boundaries —
 // mock them here so we can drive the state machine without touching real APIs.
@@ -750,5 +755,12 @@ describe('isLowConfidenceTranscript', () => {
     expect(isLowConfidenceTranscript('مرحبا')).toBe(false);
     expect(isLowConfidenceTranscript('नमस्ते')).toBe(false);
     expect(isLowConfidenceTranscript('বাংলা')).toBe(false);
+  });
+});
+
+describe('STT_MAX_RETRIES export', () => {
+  it('is a positive integer', () => {
+    expect(Number.isInteger(STT_MAX_RETRIES)).toBe(true);
+    expect(STT_MAX_RETRIES).toBeGreaterThan(0);
   });
 });

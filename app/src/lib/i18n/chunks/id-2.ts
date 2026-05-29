@@ -352,6 +352,7 @@ const id2: TranslationMap = {
   'mic.permissionDenied': 'Izin mikrofon ditolak',
   'mic.failedToStartRecorder': 'Gagal memulai perekam',
   'mic.transcribing': 'Mentranskripsi...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Ketuk untuk mengirim',
   'mic.waitingForAgent': 'Menunggu agen...',
   'mic.tapAndSpeak': 'Ketuk dan bicara',

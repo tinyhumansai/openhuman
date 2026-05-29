@@ -360,6 +360,7 @@ const fr2: TranslationMap = {
   'mic.permissionDenied': 'Permission microphone refusée',
   'mic.failedToStartRecorder': "Échec du démarrage de l'enregistreur",
   'mic.transcribing': 'Transcription…',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Appuie pour envoyer',
   'mic.waitingForAgent': "En attente de l'agent…",
   'mic.tapAndSpeak': 'Appuie et parle',

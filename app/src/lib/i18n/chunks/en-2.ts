@@ -350,6 +350,7 @@ const en2: TranslationMap = {
   'mic.permissionDenied': 'Microphone permission denied',
   'mic.failedToStartRecorder': 'Failed to start recorder',
   'mic.transcribing': 'Transcribing...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Tap to send',
   'mic.waitingForAgent': 'Waiting for agent...',
   'mic.tapAndSpeak': 'Tap and speak',

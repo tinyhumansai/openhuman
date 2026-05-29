@@ -355,6 +355,7 @@ const bn2: TranslationMap = {
   'mic.permissionDenied': 'মাইক্রোফোন অনুমতি অস্বীকৃত',
   'mic.failedToStartRecorder': 'রেকর্ডার শুরু করতে ব্যর্থ',
   'mic.transcribing': 'ট্রান্সক্রাইব হচ্ছে...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'পাঠাতে ট্যাপ করুন',
   'mic.waitingForAgent': 'এজেন্টের জন্য অপেক্ষা করছে...',
   'mic.tapAndSpeak': 'ট্যাপ করুন ও কথা বলুন',

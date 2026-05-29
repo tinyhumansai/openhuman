@@ -354,6 +354,7 @@ const ru2: TranslationMap = {
   'mic.permissionDenied': 'Доступ к микрофону запрещён',
   'mic.failedToStartRecorder': 'Не удалось запустить запись',
   'mic.transcribing': 'Транскрипция...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Нажми для отправки',
   'mic.waitingForAgent': 'Ожидание агента...',
   'mic.tapAndSpeak': 'Нажми и говори',

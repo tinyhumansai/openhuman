@@ -336,6 +336,7 @@ const ko2: TranslationMap = {
   'mic.permissionDenied': '마이크 권한이 거부되었습니다',
   'mic.failedToStartRecorder': '녹음기를 시작하지 못했습니다',
   'mic.transcribing': '전사 중...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': '탭하여 보내기',
   'mic.waitingForAgent': '에이전트를 기다리는 중...',
   'mic.tapAndSpeak': '탭하고 말하기',
