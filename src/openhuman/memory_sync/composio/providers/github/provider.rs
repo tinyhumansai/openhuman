@@ -22,10 +22,9 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::ingest::ingest_issue_into_memory_tree;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    persist_single_item, SyncState,
-};
+use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
     pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
     SyncReason,
@@ -302,20 +301,25 @@ impl ComposioProvider for GitHubProvider {
 
                 let title_text = sync::extract_issue_title(issue)
                     .unwrap_or_else(|| format!("GitHub issue {issue_id}"));
-                let doc_id = format!("composio-github-issue-{issue_id}");
 
-                match persist_single_item(
-                    &memory,
-                    "github",
-                    &doc_id,
+                // Route into the memory-tree pipeline (#2885). The prior
+                // implementation called `persist_single_item` →
+                // `MemoryClient::store_skill_sync` → UnifiedMemory
+                // `memory_docs`, which the modern retrieval surfaces
+                // (`memory.search`, `tree.read_chunk`, `tree.browse`,
+                // summary trees, MCP tools) don't read from — the data
+                // was invisible to every agent recall path.
+                match ingest_issue_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &issue_id,
                     &title_text,
+                    updated.as_deref(),
                     issue,
-                    "github",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_chunks_written) => {
                         state.mark_synced(&sync_key);
                         total_persisted += 1;
                     }
@@ -323,7 +327,7 @@ impl ComposioProvider for GitHubProvider {
                         tracing::warn!(
                             issue_id = %issue_id,
                             error = %e,
-                            "[composio:github] failed to persist issue (continuing)"
+                            "[composio:github] failed to ingest issue into memory_tree (continuing)"
                         );
                     }
                 }
