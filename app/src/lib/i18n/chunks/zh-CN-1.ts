@@ -1596,6 +1596,32 @@ const zhCN1: TranslationMap = {
   'graphCentrality.bridgeBadge': 'connector',
   'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
   'graphCentrality.degreeTitle': '{in} in · {out} out',
+  'memory.tab.core': 'Core',
+  'graphCore.title': 'Graph Core',
+  'graphCore.intro':
+    'k-core decomposition separates the load-bearing core of your knowledge — entities mutually reinforced by many interlinked facts — from the periphery of leaves and bridges. A high-degree hub of one-off facts still has coreness 1; depth, not degree, marks the core.',
+  'graphCore.loading': 'Computing core structure…',
+  'graphCore.errorPrefix': 'Could not load the graph:',
+  'graphCore.retry': 'Retry',
+  'graphCore.empty': 'No knowledge graph yet.',
+  'graphCore.emptyHint':
+    'As the assistant records connected facts about you, the densely-linked core will surface here.',
+  'graphCore.namespaceLabel': 'Namespace',
+  'graphCore.namespaceAll': 'All namespaces',
+  'graphCore.metricEntities': 'Entities',
+  'graphCore.metricConnections': 'Connections',
+  'graphCore.metricDegeneracy': 'Degeneracy',
+  'graphCore.degeneracyCaption': 'Densest shell: {degeneracy}-core · {coreSize} entities',
+  'graphCore.shellsHeading': 'Shell decomposition',
+  'graphCore.shellLabel': '{k}-core',
+  'graphCore.rankedHeading': 'Deepest-core entities',
+  'graphCore.colRank': '#',
+  'graphCore.colEntity': 'Entity',
+  'graphCore.colCore': 'Core',
+  'graphCore.colLinks': 'Links',
+  'graphCore.coreBadge': 'core',
+  'graphCore.coreTitle':
+    'In the densest {degeneracy}-core — every member here keeps at least {degeneracy} links to other core members.',
 };
 
 export default zhCN1;
