@@ -44,7 +44,7 @@ use serde_json::Value;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::ingest_pipeline::{self, IngestResult};
-use crate::openhuman::memory_store::chunks::store::delete_chunks_by_source;
+use crate::openhuman::memory_store::chunks::store::{delete_chunks_by_source, is_source_ingested};
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_sync::canonicalize::document::DocumentInput;
 
@@ -108,16 +108,33 @@ pub async fn ingest_page_into_memory_tree(
     let source_id = notion_source_id(connection_id, page_id);
 
     // Re-sync of an edited page: drop prior chunks for the same source_id
-    // before re-ingest. `delete_chunks_by_source` is sync I/O so it has to
-    // hop through `spawn_blocking`.
+    // before re-ingest. Both calls are sync rusqlite I/O so they share one
+    // `spawn_blocking` hop.
+    //
+    // We gate `delete_chunks_by_source` behind `is_source_ingested` — the
+    // delete path uses a `source_kind = ?1` scan with Rust-side
+    // source-id filtering (see `store::delete_chunks_by_source_filter`),
+    // so on a first-time ingest of a never-seen page it would scan every
+    // Document-kind chunk just to find zero matches. `is_source_ingested`
+    // is an indexed PK lookup against `mem_tree_ingested_sources`, so it
+    // converts the common fresh-page case to one cheap `COUNT(*)` and only
+    // pays the scan cost on actual re-ingests of edited pages.
     let cfg_for_blocking = config.clone();
     let source_for_blocking = source_id.clone();
-    let removed = tokio::task::spawn_blocking(move || {
-        delete_chunks_by_source(
+    let removed = tokio::task::spawn_blocking(move || -> Result<usize> {
+        if is_source_ingested(
             &cfg_for_blocking,
             SourceKind::Document,
             &source_for_blocking,
-        )
+        )? {
+            delete_chunks_by_source(
+                &cfg_for_blocking,
+                SourceKind::Document,
+                &source_for_blocking,
+            )
+        } else {
+            Ok(0)
+        }
     })
     .await
     .map_err(|e| anyhow::anyhow!("delete-prior task join error: {e}"))??;
