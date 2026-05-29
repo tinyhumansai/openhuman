@@ -4350,6 +4350,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'لا يوجد رسم معرفي بعد.',
+  'relationshipTypes.emptyHint':
+    'كلما سجّل المساعد حقائق مترابطة، ستظهر هنا أنواع العلاقات التي يستخدمها.',
+  'relationshipTypes.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'relationshipTypes.heading': 'العلاقات الأكثر استخداماً',
+  'relationshipTypes.intro':
+    'ملف تعريف لمفردات العلاقات في رسم ذاكرتك — أي المسندات تربط الحقائق، وكم مرة، وكم مرة تكون العلاقة متبادلة.',
+  'relationshipTypes.loading': 'تحليل العلاقات…',
+  'relationshipTypes.metricEdges': 'الحواف',
+  'relationshipTypes.metricPredicates': 'المسندات',
+  'relationshipTypes.metricReciprocity': 'التبادلية',
+  'relationshipTypes.namespaceAll': 'كل مساحات الأسماء',
+  'relationshipTypes.namespaceLabel': 'مساحة الأسماء',
+  'relationshipTypes.reciprocalShort': '{rate}% متبادلة',
+  'relationshipTypes.reciprocalTitle': '{count} متبادلة',
+  'relationshipTypes.retry': 'إعادة المحاولة',
+  'relationshipTypes.title': 'أنواع العلاقات',
+  'relationshipTypes.truncated': 'عرض أفضل {shown} من أصل {total} مسند.',
 };
 
 export default messages;

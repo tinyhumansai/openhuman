@@ -4524,6 +4524,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'Pas encore de graphe de connaissances.',
+  'relationshipTypes.emptyHint':
+    "À mesure que l'assistant enregistre des faits liés, les types de relations qu'il utilise apparaîtront ici.",
+  'relationshipTypes.errorPrefix': 'Impossible de charger le graphe :',
+  'relationshipTypes.heading': 'Relations les plus utilisées',
+  'relationshipTypes.intro':
+    'Un profil du vocabulaire des relations dans votre graphe mémoire — quels prédicats relient les faits, à quelle fréquence, et combien de fois une relation est mutuelle.',
+  'relationshipTypes.loading': 'Profilage des relations…',
+  'relationshipTypes.metricEdges': 'Arêtes',
+  'relationshipTypes.metricPredicates': 'Prédicats',
+  'relationshipTypes.metricReciprocity': 'Réciprocité',
+  'relationshipTypes.namespaceAll': 'Tous les espaces de noms',
+  'relationshipTypes.namespaceLabel': 'Espace de noms',
+  'relationshipTypes.reciprocalShort': '{rate}% réciproques',
+  'relationshipTypes.reciprocalTitle': '{count} réciproques',
+  'relationshipTypes.retry': 'Réessayer',
+  'relationshipTypes.title': 'Types de relations',
+  'relationshipTypes.truncated': 'Affichage des {shown} premiers sur {total} prédicats.',
 };
 
 export default messages;

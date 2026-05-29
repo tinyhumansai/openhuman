@@ -4543,6 +4543,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'Noch kein Wissensgraph.',
+  'relationshipTypes.emptyHint':
+    'Während der Assistent verbundene Fakten erfasst, erscheinen hier die verwendeten Beziehungstypen.',
+  'relationshipTypes.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'relationshipTypes.heading': 'Am häufigsten verwendete Beziehungen',
+  'relationshipTypes.intro':
+    'Ein Profil des Beziehungsvokabulars in Ihrem Speichergraphen — welche Prädikate Fakten verbinden, wie oft, und wie oft eine Beziehung wechselseitig ist.',
+  'relationshipTypes.loading': 'Profiliere Beziehungen…',
+  'relationshipTypes.metricEdges': 'Kanten',
+  'relationshipTypes.metricPredicates': 'Prädikate',
+  'relationshipTypes.metricReciprocity': 'Reziprozität',
+  'relationshipTypes.namespaceAll': 'Alle Namensräume',
+  'relationshipTypes.namespaceLabel': 'Namensraum',
+  'relationshipTypes.reciprocalShort': '{rate}% wechselseitig',
+  'relationshipTypes.reciprocalTitle': '{count} wechselseitig',
+  'relationshipTypes.retry': 'Wiederholen',
+  'relationshipTypes.title': 'Beziehungstypen',
+  'relationshipTypes.truncated': 'Zeige die Top {shown} von {total} Prädikaten.',
 };
 
 export default messages;

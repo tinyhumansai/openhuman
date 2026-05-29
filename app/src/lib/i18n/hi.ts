@@ -4434,6 +4434,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'relationshipTypes.emptyHint':
+    'जैसे-जैसे सहायक संबंधित तथ्य दर्ज करता है, उपयोग किए जाने वाले संबंध प्रकार यहाँ दिखेंगे।',
+  'relationshipTypes.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'relationshipTypes.heading': 'सर्वाधिक उपयोग किए गए संबंध',
+  'relationshipTypes.intro':
+    'आपके मेमोरी ग्राफ में संबंध शब्दावली का प्रोफ़ाइल — कौन से विधेय तथ्यों को जोड़ते हैं, कितनी बार, और कितनी बार संबंध परस्पर है।',
+  'relationshipTypes.loading': 'संबंधों का प्रोफ़ाइलिंग…',
+  'relationshipTypes.metricEdges': 'किनारे',
+  'relationshipTypes.metricPredicates': 'विधेय',
+  'relationshipTypes.metricReciprocity': 'पारस्परिकता',
+  'relationshipTypes.namespaceAll': 'सभी नेमस्पेस',
+  'relationshipTypes.namespaceLabel': 'नेमस्पेस',
+  'relationshipTypes.reciprocalShort': '{rate}% पारस्परिक',
+  'relationshipTypes.reciprocalTitle': '{count} पारस्परिक',
+  'relationshipTypes.retry': 'पुनः प्रयास',
+  'relationshipTypes.title': 'संबंध प्रकार',
+  'relationshipTypes.truncated': '{total} विधेयों में से शीर्ष {shown} दिखा रहे हैं।',
 };
 
 export default messages;

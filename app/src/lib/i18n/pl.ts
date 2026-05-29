@@ -4501,6 +4501,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'Jeszcze brak grafu wiedzy.',
+  'relationshipTypes.emptyHint':
+    'Gdy asystent zapisuje powiązane fakty, używane typy relacji pojawią się tutaj.',
+  'relationshipTypes.errorPrefix': 'Nie udało się załadować grafu:',
+  'relationshipTypes.heading': 'Najczęściej używane relacje',
+  'relationshipTypes.intro':
+    'Profil słownika relacji w twoim grafie pamięci — które predykaty łączą fakty, jak często, i jak często relacja jest wzajemna.',
+  'relationshipTypes.loading': 'Profilowanie relacji…',
+  'relationshipTypes.metricEdges': 'Krawędzie',
+  'relationshipTypes.metricPredicates': 'Predykaty',
+  'relationshipTypes.metricReciprocity': 'Wzajemność',
+  'relationshipTypes.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'relationshipTypes.namespaceLabel': 'Przestrzeń nazw',
+  'relationshipTypes.reciprocalShort': '{rate}% wzajemnych',
+  'relationshipTypes.reciprocalTitle': '{count} odwzajemnionych',
+  'relationshipTypes.retry': 'Spróbuj ponownie',
+  'relationshipTypes.title': 'Typy relacji',
+  'relationshipTypes.truncated': 'Pokazuję {shown} najlepszych z {total} predykatów.',
 };
 
 export default messages;

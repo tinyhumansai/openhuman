@@ -4469,6 +4469,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'Пока нет графа знаний.',
+  'relationshipTypes.emptyHint':
+    'По мере того как ассистент фиксирует связанные факты, здесь появятся используемые типы отношений.',
+  'relationshipTypes.errorPrefix': 'Не удалось загрузить граф:',
+  'relationshipTypes.heading': 'Наиболее используемые отношения',
+  'relationshipTypes.intro':
+    'Профиль словаря отношений в вашем графе памяти — какие предикаты связывают факты, как часто, и как часто отношение взаимно.',
+  'relationshipTypes.loading': 'Профилирование отношений…',
+  'relationshipTypes.metricEdges': 'Рёбра',
+  'relationshipTypes.metricPredicates': 'Предикаты',
+  'relationshipTypes.metricReciprocity': 'Взаимность',
+  'relationshipTypes.namespaceAll': 'Все пространства имён',
+  'relationshipTypes.namespaceLabel': 'Пространство имён',
+  'relationshipTypes.reciprocalShort': '{rate}% взаимных',
+  'relationshipTypes.reciprocalTitle': '{count} взаимных',
+  'relationshipTypes.retry': 'Повторить',
+  'relationshipTypes.title': 'Типы отношений',
+  'relationshipTypes.truncated': 'Показано {shown} лучших из {total} предикатов.',
 };
 
 export default messages;

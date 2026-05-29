@@ -4501,6 +4501,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'Ancora nessun grafo della conoscenza.',
+  'relationshipTypes.emptyHint':
+    "Man mano che l'assistente registra fatti correlati, qui appariranno i tipi di relazione utilizzati.",
+  'relationshipTypes.errorPrefix': 'Impossibile caricare il grafo:',
+  'relationshipTypes.heading': 'Relazioni più usate',
+  'relationshipTypes.intro':
+    'Un profilo del vocabolario delle relazioni nel tuo grafo memoria — quali predicati collegano i fatti, con quale frequenza, e quanto spesso una relazione è reciproca.',
+  'relationshipTypes.loading': 'Profilazione relazioni…',
+  'relationshipTypes.metricEdges': 'Archi',
+  'relationshipTypes.metricPredicates': 'Predicati',
+  'relationshipTypes.metricReciprocity': 'Reciprocità',
+  'relationshipTypes.namespaceAll': 'Tutti gli spazi dei nomi',
+  'relationshipTypes.namespaceLabel': 'Spazio dei nomi',
+  'relationshipTypes.reciprocalShort': '{rate}% reciproche',
+  'relationshipTypes.reciprocalTitle': '{count} reciproche',
+  'relationshipTypes.retry': 'Riprova',
+  'relationshipTypes.title': 'Tipi di relazione',
+  'relationshipTypes.truncated': 'Mostrando i {shown} migliori di {total} predicati.',
 };
 
 export default messages;

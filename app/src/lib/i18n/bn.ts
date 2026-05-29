@@ -4427,6 +4427,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'relationshipTypes.emptyHint':
+    'সহকারী যখন সম্পর্কিত তথ্য রেকর্ড করে, এটি ব্যবহৃত সম্পর্কের প্রকারগুলি এখানে দেখা যাবে।',
+  'relationshipTypes.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'relationshipTypes.heading': 'সর্বাধিক ব্যবহৃত সম্পর্ক',
+  'relationshipTypes.intro':
+    'আপনার মেমরি গ্রাফে সম্পর্ক শব্দভাণ্ডারের একটি প্রোফাইল — কোন বিধেয় তথ্যগুলিকে সংযুক্ত করে, কত ঘন ঘন, এবং কত ঘন ঘন একটি সম্পর্ক পারস্পরিক।',
+  'relationshipTypes.loading': 'সম্পর্কের প্রোফাইলিং…',
+  'relationshipTypes.metricEdges': 'প্রান্ত',
+  'relationshipTypes.metricPredicates': 'বিধেয়',
+  'relationshipTypes.metricReciprocity': 'পারস্পরিকতা',
+  'relationshipTypes.namespaceAll': 'সমস্ত নেমস্পেস',
+  'relationshipTypes.namespaceLabel': 'নেমস্পেস',
+  'relationshipTypes.reciprocalShort': '{rate}% পারস্পরিক',
+  'relationshipTypes.reciprocalTitle': '{count} পারস্পরিক',
+  'relationshipTypes.retry': 'পুনরায় চেষ্টা',
+  'relationshipTypes.title': 'সম্পর্কের প্রকার',
+  'relationshipTypes.truncated': '{total} বিধেয়ের মধ্যে শীর্ষ {shown} দেখাচ্ছি।',
 };
 
 export default messages;

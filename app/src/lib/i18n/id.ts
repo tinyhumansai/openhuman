@@ -4443,6 +4443,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': 'Belum ada graf pengetahuan.',
+  'relationshipTypes.emptyHint':
+    'Saat asisten mencatat fakta terkait, jenis hubungan yang digunakan akan muncul di sini.',
+  'relationshipTypes.errorPrefix': 'Tidak dapat memuat graf:',
+  'relationshipTypes.heading': 'Hubungan yang paling banyak digunakan',
+  'relationshipTypes.intro':
+    'Profil kosakata hubungan di graf memori Anda — predikat mana yang menghubungkan fakta, seberapa sering, dan seberapa sering suatu hubungan timbal balik.',
+  'relationshipTypes.loading': 'Memprofilkan hubungan…',
+  'relationshipTypes.metricEdges': 'Tepi',
+  'relationshipTypes.metricPredicates': 'Predikat',
+  'relationshipTypes.metricReciprocity': 'Timbal balik',
+  'relationshipTypes.namespaceAll': 'Semua ruang nama',
+  'relationshipTypes.namespaceLabel': 'Ruang nama',
+  'relationshipTypes.reciprocalShort': '{rate}% timbal balik',
+  'relationshipTypes.reciprocalTitle': '{count} timbal balik',
+  'relationshipTypes.retry': 'Coba lagi',
+  'relationshipTypes.title': 'Jenis Hubungan',
+  'relationshipTypes.truncated': 'Menampilkan {shown} teratas dari {total} predikat.',
 };
 
 export default messages;

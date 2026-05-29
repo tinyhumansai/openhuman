@@ -4214,6 +4214,24 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': '暂无知识图。',
+  'relationshipTypes.emptyHint': '随着助手记录相关事实,它所使用的关系类型将在此显现。',
+  'relationshipTypes.errorPrefix': '无法加载图:',
+  'relationshipTypes.heading': '最常用的关系',
+  'relationshipTypes.intro':
+    '记忆图中关系词汇的画像——哪些谓词在连接事实、连接得多频繁、关系是相互的频率有多高。',
+  'relationshipTypes.loading': '正在分析关系…',
+  'relationshipTypes.metricEdges': '边',
+  'relationshipTypes.metricPredicates': '谓词',
+  'relationshipTypes.metricReciprocity': '互惠性',
+  'relationshipTypes.namespaceAll': '所有命名空间',
+  'relationshipTypes.namespaceLabel': '命名空间',
+  'relationshipTypes.reciprocalShort': '{rate}% 互惠',
+  'relationshipTypes.reciprocalTitle': '{count} 条互惠',
+  'relationshipTypes.retry': '重试',
+  'relationshipTypes.title': '关系类型',
+  'relationshipTypes.truncated': '显示 {total} 个谓词中的前 {shown} 个。',
 };
 
 export default messages;

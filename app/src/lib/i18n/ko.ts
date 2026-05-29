@@ -4393,6 +4393,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'memory.tab.relationships': 'Relationships',
+  'relationshipTypes.empty': '아직 지식 그래프가 없습니다.',
+  'relationshipTypes.emptyHint':
+    '어시스턴트가 관련 사실을 기록함에 따라, 사용하는 관계 유형이 여기에 나타납니다.',
+  'relationshipTypes.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'relationshipTypes.heading': '가장 많이 사용된 관계',
+  'relationshipTypes.intro':
+    '메모리 그래프의 관계 어휘 프로필 — 어떤 술어가 사실을 연결하는지, 얼마나 자주, 그리고 관계가 얼마나 자주 상호적인지.',
+  'relationshipTypes.loading': '관계 프로파일링 중…',
+  'relationshipTypes.metricEdges': '간선',
+  'relationshipTypes.metricPredicates': '술어',
+  'relationshipTypes.metricReciprocity': '상호성',
+  'relationshipTypes.namespaceAll': '모든 네임스페이스',
+  'relationshipTypes.namespaceLabel': '네임스페이스',
+  'relationshipTypes.reciprocalShort': '{rate}% 상호적',
+  'relationshipTypes.reciprocalTitle': '{count}개 상호적',
+  'relationshipTypes.retry': '다시 시도',
+  'relationshipTypes.title': '관계 유형',
+  'relationshipTypes.truncated': '{total}개 술어 중 상위 {shown}개 표시 중.',
 };
 
 export default messages;
