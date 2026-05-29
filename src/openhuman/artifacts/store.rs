@@ -233,6 +233,156 @@ pub(crate) async fn delete_artifact(workspace_dir: &Path, artifact_id: &str) -> 
 #[allow(dead_code)]
 fn _assert_status_used(_: ArtifactStatus) {}
 
+/// Maximum length of a sanitized artifact filename stem. Keeps the
+/// rendered filename short enough to round-trip on every filesystem
+/// (Windows MAX_PATH, ext4 NAME_MAX) without truncating the
+/// `.extension` suffix or the UUID-named parent directory.
+const MAX_SANITIZED_FILENAME_LEN: usize = 80;
+
+/// Convert a human-readable title into a filesystem-safe filename
+/// stem. Strips path-traversal characters, collapses whitespace to
+/// single dashes, lowercases, and caps the length. Falls back to
+/// `"artifact"` when the resulting stem is empty (e.g. title was
+/// `"///"` or only emoji that survive ASCII-only sanitisation).
+fn sanitize_filename_stem(title: &str) -> String {
+    let mut out = String::with_capacity(title.len().min(MAX_SANITIZED_FILENAME_LEN));
+    let mut prev_dash = false;
+    for ch in title.chars() {
+        let mapped = match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => ch.to_ascii_lowercase(),
+            ' ' | '\t' | '\n' | '\r' | '.' | '/' | '\\' | ':' => '-',
+            _ => continue,
+        };
+        if mapped == '-' {
+            if prev_dash {
+                continue;
+            }
+            prev_dash = true;
+        } else {
+            prev_dash = false;
+        }
+        out.push(mapped);
+        if out.chars().count() >= MAX_SANITIZED_FILENAME_LEN {
+            break;
+        }
+    }
+    let trimmed = out.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "artifact".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Allocate a fresh artifact directory and persist a pending
+/// [`ArtifactMeta`] record. Returns the metadata plus the absolute
+/// path where the producer should write the artifact bytes.
+///
+/// On success the caller MUST follow up with [`finalize_artifact`]
+/// once the bytes are on disk (or [`fail_artifact`] if generation
+/// failed) so the status flips off `Pending`. Leaving a record in
+/// `Pending` is harmless — the list RPC will still surface it — but
+/// downstream consumers (UI, download endpoints) treat `Pending` as
+/// "not yet ready", so a stuck record means a stuck spinner.
+///
+/// `extension` is the file extension WITHOUT the leading dot
+/// (e.g. `"pptx"`, `"pdf"`). Used to build the rendered filename
+/// under the artifact directory.
+pub async fn create_artifact(
+    workspace_dir: &Path,
+    kind: super::types::ArtifactKind,
+    title: &str,
+    extension: &str,
+) -> Result<(ArtifactMeta, PathBuf), String> {
+    let trimmed_title = title.trim();
+    if trimmed_title.is_empty() {
+        return Err("[artifacts] create_artifact: title must not be empty".to_string());
+    }
+    let trimmed_ext = extension.trim();
+    if trimmed_ext.is_empty() {
+        return Err("[artifacts] create_artifact: extension must not be empty".to_string());
+    }
+    if trimmed_ext.contains('/') || trimmed_ext.contains('\\') || trimmed_ext.contains('.') {
+        return Err(format!(
+            "[artifacts] create_artifact: extension must not contain '/', '\\', or '.': {trimmed_ext:?}"
+        ));
+    }
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let filename = format!("{}.{trimmed_ext}", sanitize_filename_stem(trimmed_title));
+    let relative_path = format!("{id}/{filename}");
+
+    let root = artifacts_root(workspace_dir).await?;
+    let artifact_dir = root.join(&id);
+    assert_within_root(&root, &artifact_dir)?;
+    tokio::fs::create_dir_all(&artifact_dir)
+        .await
+        .map_err(|e| {
+            format!(
+                "[artifacts] create_artifact: failed to mkdir {:?}: {e}",
+                artifact_dir
+            )
+        })?;
+    let absolute_path = artifact_dir.join(&filename);
+
+    let meta = ArtifactMeta {
+        id: id.clone(),
+        kind,
+        title: trimmed_title.to_string(),
+        path: relative_path,
+        size_bytes: 0,
+        status: ArtifactStatus::Pending,
+        created_at: chrono::Utc::now(),
+        error: None,
+    };
+    save_artifact_meta(workspace_dir, &meta).await?;
+
+    log::debug!(
+        "[artifacts] create_artifact: id={id} kind={} path={:?}",
+        meta.kind.as_str(),
+        absolute_path
+    );
+    Ok((meta, absolute_path))
+}
+
+/// Flip a pending artifact to [`ArtifactStatus::Ready`] and persist
+/// the final size. Idempotent on already-ready artifacts (no-op + log).
+/// Returns the updated metadata.
+pub async fn finalize_artifact(
+    workspace_dir: &Path,
+    artifact_id: &str,
+    size_bytes: u64,
+) -> Result<ArtifactMeta, String> {
+    let mut meta = get_artifact(workspace_dir, artifact_id).await?;
+    if matches!(meta.status, ArtifactStatus::Ready) && meta.size_bytes == size_bytes {
+        log::debug!("[artifacts] finalize_artifact: id={artifact_id} already Ready, no-op");
+        return Ok(meta);
+    }
+    meta.status = ArtifactStatus::Ready;
+    meta.size_bytes = size_bytes;
+    meta.error = None;
+    save_artifact_meta(workspace_dir, &meta).await?;
+    log::debug!("[artifacts] finalize_artifact: id={artifact_id} -> Ready size={size_bytes}");
+    Ok(meta)
+}
+
+/// Flip an artifact to [`ArtifactStatus::Failed`] and persist a
+/// failure reason. The producer should call this when generation
+/// fails so the UI / RPC consumer can surface a useful message
+/// instead of an indefinite spinner. Returns the updated metadata.
+pub async fn fail_artifact(
+    workspace_dir: &Path,
+    artifact_id: &str,
+    reason: &str,
+) -> Result<ArtifactMeta, String> {
+    let mut meta = get_artifact(workspace_dir, artifact_id).await?;
+    meta.status = ArtifactStatus::Failed;
+    meta.error = Some(reason.to_string());
+    save_artifact_meta(workspace_dir, &meta).await?;
+    log::warn!("[artifacts] fail_artifact: id={artifact_id} -> Failed reason={reason:?}");
+    Ok(meta)
+}
+
 #[cfg(test)]
 #[path = "store_tests.rs"]
 mod tests;
