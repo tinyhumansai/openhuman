@@ -648,6 +648,17 @@ const ko5: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     'ChatGPT Plus/Pro(구독) 또는 OpenAI API 키를 사용하세요. 둘 다 필수는 아닙니다.',
   'onboarding.apiKeys.openaiOauthOpening': '로그인 중…',
+  'onboarding.apiKeys.openaiOauthConnect': 'Sign in with ChatGPT',
+  'onboarding.apiKeys.openaiOauthConnected': 'Connected with ChatGPT',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+  'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'onboarding.apiKeys.oauthStartFailed':
+    'Could not start ChatGPT sign-in. Try again or use an API key.',
+  'onboarding.apiKeys.oauthPasteRedirect':
+    'Paste the redirect URL from your browser after signing in.',
+  'onboarding.apiKeys.oauthCompleteFailed':
+    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
   'onboarding.apiKeys.finishSignIn': 'ChatGPT 로그인 완료',
   'onboarding.apiKeys.orApiKey': '또는 API 키',
   'app.localAiDownload.expandAria': '다운로드 진행률 확장',

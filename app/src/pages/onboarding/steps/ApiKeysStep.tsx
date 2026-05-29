@@ -14,10 +14,6 @@ interface ApiKeysStepProps {
 
 type OpenAiOAuthStatus = { connected: boolean; authMethod?: string | null };
 
-const OPENAI_OAUTH_CONNECTED_LABEL = 'Connected with ChatGPT';
-const OPENAI_OAUTH_CONNECT_LABEL = 'Sign in with ChatGPT';
-const OPENAI_OAUTH_CALLBACK_HINT =
-  'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).';
 const OPENAI_OAUTH_CALLBACK_PLACEHOLDER = 'http://127.0.0.1:1455/auth/callback?code=...&state=...';
 
 const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
@@ -52,7 +48,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
 
   const handleOpenAiOAuthStart = async () => {
     if (!isTauri()) {
-      setError('ChatGPT sign-in is only available in the desktop app.');
+      setError(t('onboarding.apiKeys.oauthDesktopOnly'));
       return;
     }
     setOauthBusy(true);
@@ -70,7 +66,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
       await openUrl(authUrl);
     } catch (err) {
       console.warn('[onboarding:api-keys] oauth start failed', err);
-      setError('Could not start ChatGPT sign-in. Try again or use an API key.');
+      setError(t('onboarding.apiKeys.oauthStartFailed'));
     } finally {
       setOauthBusy(false);
     }
@@ -79,7 +75,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
   const handleOpenAiOAuthComplete = async () => {
     const callback = oauthCallbackUrl.trim();
     if (!callback) {
-      setError('Paste the redirect URL from your browser after signing in.');
+      setError(t('onboarding.apiKeys.oauthPasteRedirect'));
       return;
     }
     setOauthBusy(true);
@@ -94,7 +90,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
       setOauthConnected(true);
     } catch (err) {
       console.warn('[onboarding:api-keys] oauth complete failed', err);
-      setError('ChatGPT sign-in did not complete. Check the redirect URL and try again.');
+      setError(t('onboarding.apiKeys.oauthCompleteFailed'));
     } finally {
       setOauthBusy(false);
     }
@@ -149,7 +145,7 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
               <span
                 data-testid="onboarding-openai-oauth-connected"
                 className="text-xs font-medium text-sage-700 dark:text-sage-300">
-                {OPENAI_OAUTH_CONNECTED_LABEL}
+                {t('onboarding.apiKeys.openaiOauthConnected')}
               </span>
             ) : null}
           </div>
@@ -162,12 +158,14 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
             disabled={oauthBusy || oauthConnected || saving}
             onClick={() => void handleOpenAiOAuthStart()}
             className="rounded-lg border border-primary-500 bg-primary-50 dark:bg-primary-500/10 px-3 py-2 text-sm font-medium text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-500/20 disabled:opacity-50">
-            {oauthBusy ? t('onboarding.apiKeys.openaiOauthOpening') : OPENAI_OAUTH_CONNECT_LABEL}
+            {oauthBusy
+              ? t('onboarding.apiKeys.openaiOauthOpening')
+              : t('onboarding.apiKeys.openaiOauthConnect')}
           </button>
           {oauthAwaitingCallback && !oauthConnected ? (
             <div className="flex flex-col gap-1.5">
               <p className="text-[11px] text-stone-500 dark:text-neutral-400">
-                {OPENAI_OAUTH_CALLBACK_HINT}
+                {t('onboarding.apiKeys.openaiOauthCallbackHint')}
               </p>
               <input
                 data-testid="onboarding-openai-oauth-callback-input"

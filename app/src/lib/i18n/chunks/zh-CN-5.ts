@@ -623,6 +623,17 @@ const zhCN5: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     '使用 ChatGPT Plus/Pro（订阅）或 OpenAI API 密钥 — 并非两者都需要。',
   'onboarding.apiKeys.openaiOauthOpening': '正在打开登录...',
+  'onboarding.apiKeys.openaiOauthConnect': 'Sign in with ChatGPT',
+  'onboarding.apiKeys.openaiOauthConnected': 'Connected with ChatGPT',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+  'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'onboarding.apiKeys.oauthStartFailed':
+    'Could not start ChatGPT sign-in. Try again or use an API key.',
+  'onboarding.apiKeys.oauthPasteRedirect':
+    'Paste the redirect URL from your browser after signing in.',
+  'onboarding.apiKeys.oauthCompleteFailed':
+    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
   'onboarding.apiKeys.finishSignIn': '完成 ChatGPT 登录',
   'onboarding.apiKeys.orApiKey': '或 API 键',
   'app.localAiDownload.expandAria': '展开下载进度',

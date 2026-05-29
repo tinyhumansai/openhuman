@@ -666,6 +666,17 @@ const fr5: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     'Utilisez ChatGPT Plus/Pro (abonnement) ou une clé OpenAI API — les deux ne sont pas requis.',
   'onboarding.apiKeys.openaiOauthOpening': 'Ouverture de la connexion…',
+  'onboarding.apiKeys.openaiOauthConnect': 'Sign in with ChatGPT',
+  'onboarding.apiKeys.openaiOauthConnected': 'Connected with ChatGPT',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+  'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'onboarding.apiKeys.oauthStartFailed':
+    'Could not start ChatGPT sign-in. Try again or use an API key.',
+  'onboarding.apiKeys.oauthPasteRedirect':
+    'Paste the redirect URL from your browser after signing in.',
+  'onboarding.apiKeys.oauthCompleteFailed':
+    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
   'onboarding.apiKeys.finishSignIn': 'Terminer la connexion à ChatGPT',
   'onboarding.apiKeys.orApiKey': 'ou clé API',
   'app.localAiDownload.expandAria': 'Développer la progression du téléchargement',

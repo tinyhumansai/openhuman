@@ -715,6 +715,17 @@ const pl5: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     'Użyj ChatGPT Plus/Pro (subskrypcja) lub klucza API OpenAI — nie potrzeba obu.',
   'onboarding.apiKeys.openaiOauthOpening': 'Otwieranie logowania…',
+  'onboarding.apiKeys.openaiOauthConnect': 'Sign in with ChatGPT',
+  'onboarding.apiKeys.openaiOauthConnected': 'Connected with ChatGPT',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+  'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
+  'onboarding.apiKeys.oauthStartFailed':
+    'Could not start ChatGPT sign-in. Try again or use an API key.',
+  'onboarding.apiKeys.oauthPasteRedirect':
+    'Paste the redirect URL from your browser after signing in.',
+  'onboarding.apiKeys.oauthCompleteFailed':
+    'ChatGPT sign-in did not complete. Check the redirect URL and try again.',
   'onboarding.apiKeys.finishSignIn': 'Dokończ logowanie ChatGPT',
   'onboarding.apiKeys.orApiKey': 'lub klucz API',
   // app
