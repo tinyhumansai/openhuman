@@ -53,6 +53,12 @@ vi.mock('../../lib/composio/hooks', () => ({
     loading: false,
     error: null,
   }),
+  // Issue #2283: Skills.tsx also consumes useAgentReadyComposioToolkits.
+  useAgentReadyComposioToolkits: () => ({
+    agentReady: new Set<string>(),
+    loading: true,
+    error: null,
+  }),
 }));
 
 describe('Skills page — discovered skill cards', () => {
@@ -74,10 +80,10 @@ describe('Skills page — discovered skill cards', () => {
     expect(within(legacyRow as HTMLElement).getByText('Legacy').className).toMatch(/stone-600/);
 
     // Uninstall surfaces for user-scope, non-legacy only.
-    expect(screen.queryByTestId('uninstall-skill-user-skill')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('skill-uninstall-user-skill')).not.toBeInTheDocument();
     const userMore = within(userRow as HTMLElement).getByTitle('More actions');
     fireEvent.click(userMore);
-    expect(await screen.findByTestId('uninstall-skill-user-skill')).toBeInTheDocument();
+    expect(await screen.findByTestId('skill-uninstall-user-skill')).toBeInTheDocument();
   });
 
   it('opens the detail drawer when the View CTA is clicked', async () => {

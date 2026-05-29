@@ -2,16 +2,34 @@
 
 use chrono::Utc;
 use futures::FutureExt;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::ops::{clear_namespace, ClearNamespaceParams};
+use crate::openhuman::memory_store::chunks::store::delete_chunks_by_source_prefix;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 use super::state;
 use super::store;
 use super::sync;
 use super::types::{Vault, VaultFile, VaultSyncState, VaultSyncStatus};
+
+/// Derive a stable memory namespace for a vault without embedding the raw UUID.
+///
+/// Memory writes reject namespace/key values that resemble PII. Raw UUID hex can
+/// occasionally match strict alphanumeric identifier patterns, so vault
+/// namespaces use an alphabet-only digest suffix instead.
+pub(crate) fn vault_namespace_for_id(id: &str) -> String {
+    let digest = Sha256::digest(id.as_bytes());
+    let suffix: String = digest
+        .iter()
+        .take(24)
+        .map(|byte| char::from(b'a' + (byte % 26)))
+        .collect();
+    format!("vault-{suffix}")
+}
 
 /// Create a new vault pointing at a local folder.
 pub async fn vault_create(
@@ -44,7 +62,7 @@ pub async fn vault_create(
         include_globs.len(),
         exclude_globs.len(),
     );
-    let namespace = format!("vault:{id}");
+    let namespace = vault_namespace_for_id(&id);
     let vault = Vault {
         id: id.clone(),
         name: trimmed_name.to_string(),
@@ -52,6 +70,7 @@ pub async fn vault_create(
             .canonicalize()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| trimmed_root.to_string()),
+        host_os: Some(store::current_host_os().to_string()),
         namespace,
         include_globs,
         exclude_globs,
@@ -90,6 +109,9 @@ pub async fn vault_files(config: &Config, id: &str) -> Result<RpcOutcome<Vec<Vau
     if id.is_empty() {
         return Err("vault_id must not be empty".to_string());
     }
+    store::get_vault(config, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("vault not found: {id}"))?;
     let files = store::list_files(config, id).map_err(|e| e.to_string())?;
     log::debug!("[vault] files: id={id} count={}", files.len());
     Ok(RpcOutcome::single_log(files, "vault files listed"))
@@ -109,23 +131,68 @@ pub async fn vault_remove(
     log::debug!("[vault] remove: id={id} removed={removed} purge_memory={purge_memory}");
 
     let mut purged = false;
+    let mut memory_tree_chunks_deleted: usize = 0;
     if removed && purge_memory {
         if let Some(v) = vault {
+            // Memory-tree cleanup is the canonical path post-#2705: vault
+            // sync writes to `mem_tree_chunks` / `mem_tree_ingested_sources`
+            // keyed by `vault:{id}:{rel_path}`. A prefix delete with
+            // `vault:{id}:` catches every per-file row for this vault. The
+            // companion `clear_namespace` call below still drains any
+            // pre-#2705 ledger rows that landed in the legacy
+            // `memory_docs` table during the migration window.
+            let cfg_for_blocking = config.clone();
+            let prefix = format!("vault:{}:", v.id);
+            let tree_result = tokio::task::spawn_blocking(move || {
+                delete_chunks_by_source_prefix(&cfg_for_blocking, SourceKind::Document, &prefix)
+            })
+            .await;
+            match tree_result {
+                Ok(Ok(removed_chunks)) => {
+                    memory_tree_chunks_deleted = removed_chunks;
+                    log::debug!(
+                        "[vault] remove: id={id} memory_tree_chunks_deleted={removed_chunks}"
+                    );
+                }
+                Ok(Err(err)) => {
+                    log::warn!("[vault] remove: id={id} memory_tree_purge_failed err={err}");
+                    return Ok(RpcOutcome::single_log(
+                        serde_json::json!({
+                            "vault_id": id,
+                            "removed": removed,
+                            "purged": false,
+                            "purge_error": format!("memory_tree purge failed: {err}"),
+                        }),
+                        format!("vault removed with purge error: {id}"),
+                    ));
+                }
+                Err(join_err) => {
+                    log::warn!(
+                        "[vault] remove: id={id} memory_tree_purge_join_failed err={join_err}"
+                    );
+                    return Ok(RpcOutcome::single_log(
+                        serde_json::json!({
+                            "vault_id": id,
+                            "removed": removed,
+                            "purged": false,
+                            "purge_error": format!("memory_tree purge join error: {join_err}"),
+                        }),
+                        format!("vault removed with purge error: {id}"),
+                    ));
+                }
+            }
+
+            // Best-effort legacy UnifiedMemory purge for pre-#2705 ledger
+            // rows whose chunks still live in `memory_docs`. Failure here
+            // doesn't undo the canonical memory_tree cleanup above.
             if let Err(err) = clear_namespace(ClearNamespaceParams {
                 namespace: v.namespace.clone(),
             })
             .await
             {
-                log::warn!("[vault] remove: id={id} purge_namespace_failed err={err}");
-                return Ok(RpcOutcome::single_log(
-                    serde_json::json!({
-                        "vault_id": id,
-                        "removed": removed,
-                        "purged": false,
-                        "purge_error": err,
-                    }),
-                    format!("vault removed with purge error: {id}"),
-                ));
+                log::debug!(
+                    "[vault] remove: id={id} legacy_clear_namespace_failed (best-effort) err={err}"
+                );
             }
             purged = true;
         }
@@ -136,6 +203,7 @@ pub async fn vault_remove(
             "vault_id": id,
             "removed": removed,
             "purged": purged,
+            "memory_tree_chunks_deleted": memory_tree_chunks_deleted,
         }),
         format!("vault removed: {id}"),
     ))

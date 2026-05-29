@@ -19,8 +19,31 @@
 #
 set -euo pipefail
 
-SPEC_ARG="${1:-}"
-LOG_SUFFIX="${2:-session}"
+# Accept either:
+#   - Zero args             → run the entire `specs` glob from wdio.conf.ts
+#   - One spec path arg     → legacy single-spec mode (e2e-run-spec.sh shim)
+#   - One spec + log suffix → legacy two-arg mode used by debug runner / CI
+#   - N>1 spec paths        → multi-spec mode, one shared session
+#
+# To disambiguate "spec + suffix" from "two specs", we treat arg2 as a log
+# suffix only when it does NOT look like a spec path (i.e. doesn't end in
+# `.spec.ts` and doesn't start with `test/`).
+SPEC_ARGS=()
+LOG_SUFFIX="session"
+if [ "$#" -ge 1 ]; then
+  SPEC_ARGS+=("$1")
+  if [ "$#" -eq 2 ] && [[ "$2" != *.spec.ts && "$2" != test/* ]]; then
+    LOG_SUFFIX="$2"
+  else
+    shift
+    while [ "$#" -gt 0 ]; do
+      SPEC_ARGS+=("$1")
+      shift
+    done
+  fi
+fi
+# Back-compat: SPEC_ARG is the first spec (only used in stale log lines below).
+SPEC_ARG="${SPEC_ARGS[0]:-}"
 
 E2E_MOCK_PORT="${E2E_MOCK_PORT:-18473}"
 CEF_CDP_PORT="${CEF_CDP_PORT:-19222}"
@@ -50,6 +73,13 @@ if [ -z "${OPENHUMAN_WORKSPACE:-}" ]; then
 else
   echo "[runner] Using OPENHUMAN_WORKSPACE from environment: $OPENHUMAN_WORKSPACE"
 fi
+
+# Headless Linux CI does not always have a usable Secret Service/keychain.
+# Keep E2E credentials under OPENHUMAN_WORKSPACE so auth state is deterministic
+# and gets cleaned up with the rest of the test workspace.
+: "${OPENHUMAN_KEYRING_BACKEND:=file}"
+export OPENHUMAN_KEYRING_BACKEND
+echo "[runner] Using OPENHUMAN_KEYRING_BACKEND: $OPENHUMAN_KEYRING_BACKEND"
 
 # Place the CEF cache directory OUTSIDE the workspace. By default the Tauri
 # shell roots it under `$OPENHUMAN_WORKSPACE/users/<id>/cef`, but our
@@ -138,6 +168,11 @@ export BACKEND_URL="http://127.0.0.1:${E2E_MOCK_PORT}"
 export OPENHUMAN_E2E_MODE="1"
 export APPIUM_PORT
 export CEF_CDP_PORT
+# Redirect Telegram Bot API calls to the mock server during E2E runs.
+# The mock server (WS-A) serves /bot<token>/* routes on the same port as the
+# rest of the mock backend.  The core reads this at TelegramChannel::new() time,
+# which runs after the config is fully loaded.
+export OPENHUMAN_TELEGRAM_BOT_API_BASE="http://127.0.0.1:${E2E_MOCK_PORT}"
 
 echo "[runner] Killing any running OpenHuman instances..."
 case "$OS" in
@@ -199,6 +234,11 @@ fi
 cat > "$E2E_CONFIG_FILE" << TOMLEOF
 api_url = "http://127.0.0.1:${E2E_MOCK_PORT}"
 primary_cloud = "p_e2e_mock"
+default_model = "e2e-mock-model"
+chat_provider = "e2e:e2e-mock-model"
+reasoning_provider = "e2e:e2e-mock-model"
+agentic_provider = "e2e:e2e-mock-model"
+coding_provider = "e2e:e2e-mock-model"
 
 [[cloud_providers]]
 id = "p_e2e_mock"
@@ -206,6 +246,7 @@ slug = "e2e"
 label = "E2E Mock"
 endpoint = "http://127.0.0.1:${E2E_MOCK_PORT}/openai/v1"
 auth_style = "none"
+default_model = "e2e-mock-model"
 TOMLEOF
 echo "[runner] Wrote E2E config.toml routing inference to mock at http://127.0.0.1:${E2E_MOCK_PORT}"
 
@@ -587,9 +628,14 @@ done
 # ------------------------------------------------------------------------------
 # Run WDIO
 # ------------------------------------------------------------------------------
-if [ -n "$SPEC_ARG" ]; then
-  echo "[runner] Running single spec: $SPEC_ARG"
-  pnpm exec wdio run test/wdio.conf.ts --spec "$SPEC_ARG"
+if [ "${#SPEC_ARGS[@]}" -gt 0 ]; then
+  echo "[runner] Running ${#SPEC_ARGS[@]} spec(s) in a single shared session:"
+  printf '         %s\n' "${SPEC_ARGS[@]}"
+  WDIO_SPEC_ARGS=()
+  for s in "${SPEC_ARGS[@]}"; do
+    WDIO_SPEC_ARGS+=(--spec "$s")
+  done
+  pnpm exec wdio run test/wdio.conf.ts "${WDIO_SPEC_ARGS[@]}"
 else
   echo "[runner] Running full E2E suite (single shared session)..."
   pnpm exec wdio run test/wdio.conf.ts

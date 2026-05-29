@@ -28,12 +28,25 @@ struct HandshakeAuth {
 
 /// Origins the local core trusts at the Socket.IO handshake.
 ///
-/// `tauri://localhost` is the production app webview; `http://localhost:*`
-/// and `http://127.0.0.1:*` cover the Vite dev server (`pnpm dev:app`)
-/// and standalone CLI tooling that opens browser pages against the local
-/// listener. A missing `Origin` header is treated as a native (non-browser)
-/// client and accepted — only the cross-origin browser-page case is the
-/// targeted bad actor here.
+/// The document origin of the CEF-served app shell is platform-dependent:
+///
+/// | Platform | Scheme | Host |
+/// |----------|--------|------|
+/// | macOS / iOS (native scheme) | `tauri` | `localhost` |
+/// | Windows (CEF http custom protocol) | `http` | `tauri.localhost` |
+/// | Linux / older Windows builds | `https` | `tauri.localhost` |
+/// | Vite dev (`pnpm dev:app`, `pnpm dev`) | `http` | `localhost` / `127.0.0.1` / `[::1]` |
+///
+/// The handshake `Origin` header is stamped by the webview with whichever
+/// of these shapes loaded the page — it is **not** the destination URL the
+/// socket is connecting to. We match the parsed host against the allowlist
+/// so all four shapes pass regardless of scheme, while `starts_with` decoys
+/// like `http://localhost.attacker.example` are still rejected (parser
+/// returns a different `host_str`).
+///
+/// A missing `Origin` header is treated as a native (non-browser) client
+/// and accepted — only the cross-origin browser-page case is the targeted
+/// bad actor here.
 fn origin_is_allowed(origin: Option<&str>) -> bool {
     let Some(origin) = origin else {
         return true; // native clients (CLI, Tauri shell) — no Origin header
@@ -42,12 +55,12 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     if origin.is_empty() || origin == "null" {
         return false;
     }
-    if origin == "tauri://localhost" || origin == "https://tauri.localhost" {
-        return true;
-    }
-    // Parse the URL and compare the host EXACTLY against the loopback
-    // allowlist — `starts_with` matching accepted decoys like
-    // `http://localhost.attacker.example` and bypassed the gate.
+    // Parse the URL and compare the host EXACTLY against the loopback +
+    // tauri.localhost allowlist. The earlier scheme-literal short-circuit
+    // (`tauri://localhost` / `https://tauri.localhost`) missed
+    // `http://tauri.localhost`, which is the document origin CEF stamps
+    // on Windows — every flavour of the Tauri webview shell now goes
+    // through the same host check.
     let Ok(parsed) = url::Url::parse(origin) else {
         return false;
     };
@@ -55,7 +68,7 @@ fn origin_is_allowed(origin: Option<&str>) -> bool {
     // hostnames bare. Accept both shapes.
     matches!(
         parsed.host_str(),
-        Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
+        Some("localhost" | "127.0.0.1" | "::1" | "[::1]" | "tauri.localhost")
     )
 }
 
@@ -100,6 +113,37 @@ pub struct WebChannelEvent {
     /// Type of error, if the event represents a failure.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_type: Option<String>,
+    /// Structured rate-limit / error metadata produced by
+    /// `classify_inference_error` (issue #2606). All four fields are
+    /// additive — older FE clients that only read `message`/`error_type`
+    /// keep working; new clients can read these to render countdown,
+    /// retry-button, and fallback-CTA UI without regexing the message.
+    ///
+    /// Where the limit originated:
+    /// `"provider"` | `"openhuman_budget"` | `"agent_loop"`
+    /// | `"openhuman_billing"` | `"transport"` | `"config"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_source: Option<String>,
+    /// Whether the same prompt can be retried in this same thread.
+    /// `false` for non-retryable business 429s, auth, model_unavailable,
+    /// context_overflow, and billing exhaustion.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_retryable: Option<bool>,
+    /// Milliseconds to wait before retrying, as supplied by the upstream
+    /// `Retry-After:` / `retry_after:` header. `None` when the upstream
+    /// didn't supply one or the error class has no retry-after concept.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_retry_after_ms: Option<u64>,
+    /// Provider name extracted from `"<provider> API error (...)"`
+    /// envelopes. `None` for non-provider errors (OpenHuman budget cap,
+    /// agent loop) and for transport failures without a provider prefix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_provider: Option<String>,
+    /// `Some(false)` once the reliable-provider chain has exhausted
+    /// every configured `model_fallbacks` entry. `None` means "unknown
+    /// — FE should not promise a fallback".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_fallback_available: Option<bool>,
     /// Name of the tool being called.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_name: Option<String>,
@@ -235,6 +279,11 @@ struct ChatStartPayload {
 
 #[derive(Debug, Deserialize)]
 struct ChatCancelPayload {
+    thread_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ThreadSubscribePayload {
     thread_id: String,
 }
 
@@ -424,6 +473,31 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                     .await;
                 },
             );
+
+            // Handler for subscribing this socket to a thread's room.
+            //
+            // Chat-stream events are delivered to BOTH the initiating client's
+            // own room AND a per-thread room (`thread:<id>`). After a socket
+            // reconnects it has a NEW client_id, so it would miss an in-flight
+            // turn's remaining stream (delivered to the OLD client_id room). The
+            // frontend emits this on connect/reconnect for the active thread, so
+            // the new socket re-joins the thread room and keeps receiving the
+            // stream. Membership is dropped automatically on disconnect.
+            socket.on(
+                "thread:subscribe",
+                |socket: SocketRef, Data(payload): Data<ThreadSubscribePayload>| async move {
+                    if !socket_is_authed(&socket) {
+                        drop_unauthed(&socket, "thread:subscribe from unauthenticated socket");
+                        return;
+                    }
+                    let thread_id = payload.thread_id.trim();
+                    if thread_id.is_empty() {
+                        return;
+                    }
+                    let room = format!("thread:{thread_id}");
+                    join_room_logged(&socket, &room, &socket.id.to_string());
+                },
+            );
         },
     );
 
@@ -466,6 +540,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_transcription = io.clone();
     let io_auth = io.clone();
     let io_companion = io.clone();
+    let io_mcp_setup = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -616,6 +691,67 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
         log::debug!("[socketio] auth session_expired bridge stopped");
     });
 
+    // 6b. McpSetupSecretRequested → broadcast `mcp_setup:secret_requested`
+    //     so the UI can render a native input dialog. Only the opaque
+    //     ref + safe display fields are forwarded; raw secret values
+    //     are not part of the event payload.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — mcp_setup bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (mcp_setup bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            if let crate::core::event_bus::DomainEvent::McpSetupSecretRequested {
+                ref_id,
+                key_name,
+                prompt,
+            } = event
+            {
+                log::info!(
+                    "[socketio] broadcast mcp_setup:secret_requested ref={} key={}",
+                    ref_id,
+                    key_name
+                );
+                let payload = serde_json::json!({
+                    "ref_id": ref_id,
+                    "key_name": key_name,
+                    "prompt": prompt,
+                });
+                let _ = io_mcp_setup.emit("mcp_setup:secret_requested", &payload);
+                let _ = io_mcp_setup.emit("mcp_setup_secret_requested", &payload);
+            }
+        }
+        log::debug!("[socketio] mcp_setup secret_requested bridge stopped");
+    });
+
     // 5. Transcription results → broadcast to all connected clients.
     tokio::spawn(async move {
         let mut rx = crate::openhuman::voice::dictation_listener::subscribe_transcription_results();
@@ -691,13 +827,30 @@ fn join_room_logged(socket: &SocketRef, room: &str, client_id: &str) {
 }
 
 fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
-    let room = event.client_id.clone();
     let name = event.event.clone();
+    // Deliver to the initiating client's own room AND the per-thread room. The
+    // thread room lets a socket that reconnected with a new client_id (after
+    // re-subscribing via `thread:subscribe`) keep receiving an in-flight turn's
+    // stream.
+    //
+    // ⚠️ socketioxide (0.15.2) does NOT de-duplicate a socket present in
+    // multiple target rooms: `LocalAdapter::apply_opts` flattens each room's
+    // sid-set and collects WITHOUT a dedup pass, so `io.to([a, b]).emit()`
+    // delivers TWICE to a socket in both `a` and `b`. The initiating client is
+    // in both its `client_id` room and the `thread:<id>` room it subscribed to
+    // → every streamed frame doubled ("double thinking"). So we emit to the
+    // `client_id` room, then to the thread room EXCEPT the `client_id` room —
+    // each socket is reached exactly once regardless of room overlap.
+    // "system" broadcasts and events without a thread_id keep single-room delivery.
+    let primary = event.client_id.clone();
+    let thread_room = (event.client_id != "system" && !event.thread_id.is_empty())
+        .then(|| format!("thread:{}", event.thread_id));
     if let Ok(payload) = serde_json::to_value(event) {
         log::debug!(
-            "[socketio] send event={} room={} thread_id={} request_id={}",
+            "[socketio] send event={} primary={} thread_room={:?} thread_id={} request_id={}",
             name,
-            room,
+            primary,
+            thread_room,
             payload
                 .get("thread_id")
                 .and_then(|v| v.as_str())
@@ -707,11 +860,46 @@ fn emit_web_channel_event(io: &SocketIo, event: WebChannelEvent) {
                 .and_then(|v| v.as_str())
                 .unwrap_or_default()
         );
-        emit_room_with_aliases(io, &room, &name, &payload);
+        // Primary: the client_id room.
+        let _ = io.to(primary.clone()).emit(&name, &payload);
+        if let Some(alias) = event_alias(&name) {
+            let _ = io.to(primary.clone()).emit(alias, &payload);
+        }
+        // Thread room minus the client_id room (dedup — see note above).
+        if let Some(tr) = thread_room {
+            let _ = io
+                .to(tr.clone())
+                .except(primary.clone())
+                .emit(&name, &payload);
+            if let Some(alias) = event_alias(&name) {
+                let _ = io
+                    .to(tr.clone())
+                    .except(primary.clone())
+                    .emit(alias, &payload);
+            }
+        }
     }
 }
 
+/// Events that stream once per token (their payloads concatenate into the final
+/// text / thinking / tool-args). Emitting the legacy `:`-delimited alias for
+/// these doubles every frame on the wire — the "double thinking-token
+/// streaming" bug — and no client subscribes to the colon variant, so the alias
+/// is suppressed for exactly these. Enumerated explicitly rather than matched by
+/// a `*_delta` suffix, so a future *discrete* event whose name happens to end in
+/// `_delta` still gets its compat alias instead of being silently dropped.
+const STREAMING_DELTA_EVENTS: &[&str] = &["text_delta", "thinking_delta", "tool_args_delta"];
+
 fn event_alias(name: &str) -> Option<String> {
+    // Match against the canonical underscore form after stripping a `subagent_`
+    // prefix (subagent streaming mirrors the parent's deltas), so `text_delta`,
+    // `text:delta`, and `subagent_text_delta` all resolve to a listed event.
+    // Lower-frequency discrete events keep the compat alias.
+    let normalized = name.replace(':', "_");
+    let base = normalized.strip_prefix("subagent_").unwrap_or(&normalized);
+    if STREAMING_DELTA_EVENTS.contains(&base) {
+        return None;
+    }
     if name.contains('_') {
         return Some(name.replace('_', ":"));
     }
@@ -728,13 +916,6 @@ fn emit_with_aliases(socket: &SocketRef, name: &str, payload: &serde_json::Value
     }
 }
 
-fn emit_room_with_aliases(io: &SocketIo, room: &str, name: &str, payload: &serde_json::Value) {
-    let _ = io.to(room.to_string()).emit(name, payload);
-    if let Some(alias) = event_alias(name) {
-        let _ = io.to(room.to_string()).emit(alias, payload);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{event_alias, origin_is_allowed};
@@ -747,14 +928,40 @@ mod tests {
     }
 
     #[test]
+    fn event_alias_suppressed_for_streaming_deltas() {
+        // Streaming deltas must NOT be aliased — doubling every token frame is
+        // the "double thinking-token streaming" bug. Discrete events still alias.
+        assert_eq!(event_alias("thinking_delta"), None);
+        assert_eq!(event_alias("text_delta"), None);
+        assert_eq!(event_alias("tool_args_delta"), None);
+        assert_eq!(event_alias("subagent_tool_args_delta"), None);
+        // A *discrete* event that merely ends in `_delta` is NOT a streaming
+        // token event and must keep its compat alias — this is what the explicit
+        // STREAMING_DELTA_EVENTS set guarantees over the old `*_delta` suffix.
+        assert_eq!(
+            event_alias("inventory_delta").as_deref(),
+            Some("inventory:delta")
+        );
+        // Sanity: a non-delta event in the same family still aliases.
+        assert_eq!(event_alias("tool_call").as_deref(), Some("tool:call"));
+    }
+
+    #[test]
     fn origin_allowlist_accepts_native_clients() {
         assert!(origin_is_allowed(None));
     }
 
     #[test]
-    fn origin_allowlist_accepts_tauri_localhost() {
+    fn origin_allowlist_accepts_tauri_localhost_across_schemes() {
+        // The CEF-served app shell stamps a platform-dependent Origin:
+        //   - macOS / iOS use the native `tauri://localhost` scheme
+        //   - Windows uses the CEF custom HTTP protocol → `http://tauri.localhost`
+        //   - Linux / older Windows builds use `https://tauri.localhost`
+        // All three flavours are the same trust tier (the bundled webview),
+        // so each must pass the handshake gate.
         assert!(origin_is_allowed(Some("tauri://localhost")));
         assert!(origin_is_allowed(Some("https://tauri.localhost")));
+        assert!(origin_is_allowed(Some("http://tauri.localhost")));
     }
 
     #[test]
@@ -762,6 +969,9 @@ mod tests {
         assert!(origin_is_allowed(Some("http://localhost:1420")));
         assert!(origin_is_allowed(Some("http://127.0.0.1:1420")));
         assert!(origin_is_allowed(Some("http://[::1]:1420")));
+        // Loopback without an explicit port (some CEF builds stamp this
+        // shape when the shell runs on the default port).
+        assert!(origin_is_allowed(Some("http://localhost")));
     }
 
     #[test]
@@ -783,6 +993,11 @@ mod tests {
             "http://127.0.0.1.attacker.example"
         )));
         assert!(!origin_is_allowed(Some("https://localhost-evil")));
+        // Same rule applies to the tauri.localhost host — must be exact.
+        assert!(!origin_is_allowed(Some(
+            "http://tauri.localhost.attacker.example"
+        )));
+        assert!(!origin_is_allowed(Some("https://tauri.localhost.evil")));
     }
 
     #[test]

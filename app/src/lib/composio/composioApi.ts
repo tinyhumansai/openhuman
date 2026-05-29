@@ -13,6 +13,7 @@
 import { callCoreRpc } from '../../services/coreRpcClient';
 import type {
   ComposioActiveTriggersResponse,
+  ComposioAgentReadyToolkitsResponse,
   ComposioAuthorizeResponse,
   ComposioAvailableTriggersResponse,
   ComposioConnectionsResponse,
@@ -20,6 +21,7 @@ import type {
   ComposioDisableTriggerResponse,
   ComposioEnableTriggerResponse,
   ComposioExecuteResponse,
+  ComposioGithubReposResponse,
   ComposioToolkitsResponse,
   ComposioToolsResponse,
   ComposioUserScopePref,
@@ -52,6 +54,24 @@ function unwrapCliEnvelope<T>(value: unknown): T {
 export async function listToolkits(): Promise<ComposioToolkitsResponse> {
   const raw = await callCoreRpc<unknown>({ method: 'openhuman.composio_list_toolkits' });
   return unwrapCliEnvelope<ComposioToolkitsResponse>(raw);
+}
+
+/**
+ * Fetch the slugs of toolkits that have an agent-ready curated
+ * catalog on the core side. The response is sorted alphabetically
+ * and is safe to cache once per session — the set only changes
+ * with core releases.
+ *
+ * Used by the Skills grid (issue #2283) to label connected
+ * toolkits without a catalog as "preview / coming soon" so users
+ * don't trigger the max-iterations failure that uncurated
+ * connections cause.
+ */
+export async function listAgentReadyToolkits(): Promise<ComposioAgentReadyToolkitsResponse> {
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_agent_ready_toolkits',
+  });
+  return unwrapCliEnvelope<ComposioAgentReadyToolkitsResponse>(raw);
 }
 
 export async function listConnections(): Promise<ComposioConnectionsResponse> {
@@ -92,10 +112,17 @@ export async function authorize(
  * Delete an existing Composio connection. Backend verifies ownership
  * before forwarding to Composio.
  */
-export async function deleteConnection(connectionId: string): Promise<ComposioDeleteResponse> {
+export async function deleteConnection(
+  connectionId: string,
+  options?: { clearMemory?: boolean }
+): Promise<ComposioDeleteResponse> {
+  const params: { connection_id: string; clear_memory?: boolean } = { connection_id: connectionId };
+  if (options?.clearMemory) {
+    params.clear_memory = true;
+  }
   const raw = await callCoreRpc<unknown>({
     method: 'openhuman.composio_delete_connection',
-    params: { connection_id: connectionId },
+    params,
   });
   return unwrapCliEnvelope<ComposioDeleteResponse>(raw);
 }
@@ -161,6 +188,21 @@ export async function execute(
     params: { tool, arguments: args ?? {} },
   });
   return unwrapCliEnvelope<ComposioExecuteResponse>(raw);
+}
+
+/**
+ * List GitHub repositories available through the user's authorized
+ * Composio connection. Wraps `openhuman.composio_list_github_repos`
+ * which hits the dedicated backend endpoint (not `composio_execute`).
+ */
+export async function listGithubRepos(connectionId?: string): Promise<ComposioGithubReposResponse> {
+  const params: Record<string, unknown> = {};
+  if (connectionId) params.connection_id = connectionId;
+  const raw = await callCoreRpc<unknown>({
+    method: 'openhuman.composio_list_github_repos',
+    params,
+  });
+  return unwrapCliEnvelope<ComposioGithubReposResponse>(raw);
 }
 
 /**

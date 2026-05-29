@@ -1,4 +1,32 @@
 import crypto from "node:crypto";
+import { WebSocketServer } from "ws";
+
+const wsServer = new WebSocketServer({ noServer: true });
+
+function isWsLibrarySocket(socket) {
+  return socket && typeof socket.send === "function";
+}
+
+export function socketIsOpen(socket) {
+  if (!socket) return false;
+  if (isWsLibrarySocket(socket)) return socket.readyState === 1;
+  return !socket.destroyed;
+}
+
+export function closeWebSocket(socket) {
+  if (!socket) return;
+  try {
+    if (isWsLibrarySocket(socket)) {
+      socket.close();
+      socket.terminate?.();
+      return;
+    }
+    socket.end?.();
+    socket.destroy?.();
+  } catch {
+    // noop
+  }
+}
 
 export function sendWsFrame(socket, opcode, payload) {
   if (!socket || socket.destroyed) return;
@@ -30,11 +58,24 @@ export function sendWsFrame(socket, opcode, payload) {
 }
 
 export function sendWsText(socket, text) {
+  if (isWsLibrarySocket(socket)) {
+    if (socket.readyState === 1) socket.send(String(text));
+    return;
+  }
   sendWsFrame(socket, 0x01, Buffer.from(text, "utf-8"));
 }
 
+export function upgradeWebSocket(req, socket, head, onConnection) {
+  if (!Buffer.isBuffer(head)) return false;
+  wsServer.handleUpgrade(req, socket, head, (ws) => {
+    onConnection(ws);
+  });
+  return true;
+}
+
 export function acceptWebSocket(req, socket) {
-  const key = req.headers["sec-websocket-key"];
+  const rawKey = req.headers["sec-websocket-key"];
+  const key = Array.isArray(rawKey) ? rawKey[0]?.trim() : rawKey?.trim();
   if (!key) {
     socket.destroy();
     return false;
@@ -54,6 +95,13 @@ export function acceptWebSocket(req, socket) {
 }
 
 export function decodeWebSocketFrames(socket, onText) {
+  if (isWsLibrarySocket(socket)) {
+    socket.on("message", (data) => {
+      onText(Buffer.isBuffer(data) ? data.toString("utf-8") : String(data));
+    });
+    return;
+  }
+
   let buffer = Buffer.alloc(0);
 
   socket.on("data", (chunk) => {

@@ -1,8 +1,8 @@
 use serde_json::{json, Map, Value};
 
-use super::{session::McpSession, tools};
+use super::{resources, session::McpSession, tools};
 
-const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
 const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
     "2024-11-05",
     "2025-03-26",
@@ -165,6 +165,23 @@ async fn handle_request(id: Value, method: &str, params: Value, session: &mut Mc
         }
         "ping" => success_response(id, json!({})),
         "tools/list" => success_response(id, tools::list_tools_result().await),
+        "resources/list" => {
+            log::debug!("[mcp_server] resources/list request id={request_id}");
+            success_response(id, resources::list_resources_result())
+        }
+        "resources/templates/list" => {
+            log::debug!("[mcp_server] resources/templates/list request id={request_id}");
+            success_response(id, resources::list_resource_templates_result())
+        }
+        "resources/read" => {
+            log::debug!("[mcp_server] resources/read request id={request_id}");
+            match resources::read_resource_result(&params) {
+                Ok(result) => success_response(id, result),
+                Err((code, message, detail)) => {
+                    error_response(id, code, message, Some(json!(detail)))
+                }
+            }
+        }
         "tools/call" => match parse_tool_call_params(params) {
             Ok((name, arguments)) => {
                 log::debug!(
@@ -174,7 +191,7 @@ async fn handle_request(id: Value, method: &str, params: Value, session: &mut Mc
                     session.source_type(),
                     object_keys(&arguments)
                 );
-                match tools::call_tool(&name, arguments).await {
+                match tools::call_tool(&name, arguments, session.source_type()).await {
                     Ok(result) => {
                         log::debug!(
                             "[mcp_server] tools/call response id={} tool={} client_source_type={} is_error={}",
@@ -256,7 +273,11 @@ fn initialize_result(params: Value) -> Value {
     json!({
         "protocolVersion": protocol_version,
         "capabilities": {
-            "tools": {}
+            "tools": {},
+            "resources": {
+                "subscribe": false,
+                "listChanged": false
+            }
         },
         "serverInfo": {
             "name": "openhuman-core",
@@ -345,6 +366,9 @@ mod tests {
 
         assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
         assert!(response["result"]["capabilities"].get("tools").is_some());
+        let resources_cap = &response["result"]["capabilities"]["resources"];
+        assert_eq!(resources_cap["subscribe"], false);
+        assert_eq!(resources_cap["listChanged"], false);
         assert_eq!(response["result"]["serverInfo"]["name"], "openhuman-core");
     }
 
@@ -562,10 +586,13 @@ mod tests {
             "agent.run_subagent",
             "memory.search",
             "memory.recall",
+            "memory.store",
+            "memory.note",
             "tree.read_chunk",
             "tree.browse",
             "tree.top_entities",
             "tree.list_sources",
+            "tree.tag",
         ];
         base_names.sort_unstable();
         expected_base_names.sort_unstable();
@@ -633,5 +660,123 @@ mod tests {
         let response: Value = serde_json::from_str(&line).expect("json response");
         assert_eq!(response["id"], Value::Null);
         assert_eq!(response["error"]["code"], -32700);
+    }
+
+    #[tokio::test]
+    async fn resources_list_returns_catalog_with_mime_type() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "resources/list"
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        let resources = response["result"]["resources"]
+            .as_array()
+            .expect("resources array");
+        assert!(!resources.is_empty(), "catalog must not be empty");
+        for r in resources {
+            assert_eq!(r["mimeType"], "text/markdown");
+            assert!(r["uri"]
+                .as_str()
+                .unwrap()
+                .starts_with("openhuman://prompts/"));
+        }
+    }
+
+    #[tokio::test]
+    async fn resources_read_identity_returns_non_empty_text() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "resources/read",
+            "params": { "uri": "openhuman://prompts/identity" }
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        let text = response["result"]["contents"][0]["text"]
+            .as_str()
+            .expect("text");
+        assert!(!text.is_empty());
+        assert_eq!(
+            response["result"]["contents"][0]["mimeType"],
+            "text/markdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn resources_read_unknown_uri_returns_minus_32002() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "resources/read",
+            "params": { "uri": "openhuman://prompts/agents/does_not_exist" }
+        }))
+        .await;
+
+        assert_eq!(response["error"]["code"], -32002);
+    }
+
+    #[tokio::test]
+    async fn resources_read_missing_uri_param_returns_minus_32602() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "resources/read",
+            "params": {}
+        }))
+        .await;
+
+        assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_returns_empty_array() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "resources/templates/list"
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        let templates = response["result"]["resourceTemplates"]
+            .as_array()
+            .expect("resourceTemplates array");
+        assert!(
+            templates.is_empty(),
+            "resources/templates/list must return an empty array — catalog is static"
+        );
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_ignores_unknown_params() {
+        // Per the MCP spec, the server should tolerate extra/cursor params
+        // on resources/templates/list and still return the empty catalog
+        // instead of an `Invalid params` error.
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "resources/templates/list",
+            "params": { "cursor": "irrelevant" }
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        assert_eq!(response["result"]["resourceTemplates"], json!([]));
     }
 }

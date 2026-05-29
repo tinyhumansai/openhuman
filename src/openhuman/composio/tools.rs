@@ -504,7 +504,20 @@ impl Tool for ComposioListConnectionsTool {
             Ok(ComposioClientKind::Direct(direct)) => {
                 tracing::debug!("[composio-direct] list_connections.execute: direct variant");
                 direct_list_connections(&direct).await.map_err(|e| {
-                    anyhow::anyhow!("composio_list_connections (direct) failed: {e}")
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                    // routing with `ops.rs::composio_list_connections`.
+                    // The agent-tool path can also fire 401s when a
+                    // direct-mode user has a bad API key — without this
+                    // hook the failure escapes the classifier and lands
+                    // as an unclassified Sentry event. Render WITH the
+                    // `[composio-direct]` anchor BEFORE reporting so the
+                    // classifier arm in `is_provider_user_state_message`
+                    // (gated on that prefix) actually fires.
+                    let rendered = format!(
+                        "[composio-direct] composio_list_connections (direct) failed: {e:#}"
+                    );
+                    super::ops::report_composio_op_error("list_connections", &rendered);
+                    anyhow::anyhow!("{rendered}")
                 })?
             }
             Err(e) => {
@@ -690,6 +703,14 @@ impl Tool for ComposioListToolsTool {
                     "items": { "type": "string" },
                     "description": "Optional list of toolkit slugs to filter by."
                 },
+                "tags": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional Composio action tags to filter by \
+                                    (OR semantics — multiple tags broaden the result, \
+                                    e.g. [\"readOnlyHint\"] or [\"repos\", \"stars\"]). \
+                                    Case-insensitive."
+                },
                 "include_unconnected": {
                     "type": "boolean",
                     "description": "When true, include actions from toolkits the user \
@@ -721,12 +742,27 @@ impl Tool for ComposioListToolsTool {
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect::<Vec<_>>()
         });
+        // tags is only forwarded to the backend when the request is explicitly
+        // scoped to GitHub — it is the one toolkit where the backend honours the
+        // param (other toolkits ignore it and passing it could cause unintended
+        // filtering on future toolkit expansions).
+        let raw_tags = args.get("tags").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        });
+        let tags = if super::ops::should_forward_tags(toolkits.as_deref()) {
+            raw_tags
+        } else {
+            None
+        };
         let include_unconnected = args
             .get("include_unconnected")
             .and_then(Value::as_bool)
             .unwrap_or(false);
         tracing::debug!(
             ?toolkits,
+            ?tags,
             include_unconnected,
             prefer_markdown = options.prefer_markdown,
             "[composio] tool list_tools.execute"
@@ -783,7 +819,10 @@ impl Tool for ComposioListToolsTool {
             }
         };
 
-        match client.list_tools(toolkits.as_deref()).await {
+        match client
+            .list_tools(toolkits.as_deref(), tags.as_deref())
+            .await
+        {
             Ok(mut resp) => {
                 filter_list_tools_response(&mut resp).await;
                 let mut connected_toolkits: Option<HashSet<String>> = None;

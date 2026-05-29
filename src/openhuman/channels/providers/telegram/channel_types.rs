@@ -36,6 +36,10 @@ pub(crate) struct TelegramReactionEvent {
 /// Telegram channel — long-polls the Bot API for updates
 pub struct TelegramChannel {
     pub(crate) bot_token: String,
+    /// Base URL for the Telegram Bot API. Defaults to `https://api.telegram.org`.
+    /// Override via `OPENHUMAN_TELEGRAM_BOT_API_BASE` for E2E testing against a
+    /// mock server. The legacy `OPENHUMAN_TELEGRAM_API_BASE` alias is still accepted.
+    pub(crate) api_base: String,
     pub(crate) allowed_users: Arc<RwLock<Vec<String>>>,
     pub(crate) pairing: Option<PairingGuard>,
     pub(crate) client: reqwest::Client,

@@ -55,6 +55,7 @@ impl Provider for MockCalendarProvider {
                     .to_string(),
                 }],
                 usage: None,
+                reasoning_content: None,
             })
         } else {
             // End the loop
@@ -62,6 +63,7 @@ impl Provider for MockCalendarProvider {
                 text: Some("You have no events this week.".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             })
         }
     }

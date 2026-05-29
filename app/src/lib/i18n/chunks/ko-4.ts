@@ -94,6 +94,19 @@ const ko4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': '제외됨',
   'intelligence.memoryChunk.scoreBars.heading': '유지된 이유',
   'intelligence.memoryChunk.scoreBars.kept': '유지됨',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': '엔터티 유형',
   'intelligence.screenDebug.active': '활성',
   'intelligence.screenDebug.app': '앱',
@@ -137,6 +150,8 @@ const ko4: TranslationMap = {
   'notifications.center.filterAll': '전체 필터',
   'notifications.center.markAllRead': '모두 읽음으로 표시',
   'notifications.center.title': '알림',
+  'oauth.button.loopbackTimeout':
+    '로그인 시간 초과 — 브라우저가 OAuth 리디렉션을 완료하지 못했습니다. 다시 시도해 주세요.',
   'oauth.button.connecting': '연결 중...',
   'oauth.login.continueWith': '다음으로 계속:',
   'onboarding.contextGathering.buildingDesc': '작성 설명',
@@ -165,6 +180,8 @@ const ko4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'LLM 설명',
   'pages.settings.ai.voice': '음성',
   'pages.settings.ai.voiceDesc': '음성 설명',
+  'pages.settings.ai.embeddings': '임베딩',
+  'pages.settings.ai.embeddingsDesc': '메모리 검색을 위한 벡터 인코딩 모델',
   'pages.settings.aiSection.description': '언어 모델 제공업체, 로컬 Ollama 및 음성(STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
   'pages.settings.features.messagingChannels': '메시징 채널',
@@ -266,7 +283,7 @@ const ko4: TranslationMap = {
   'settings.ai.clearStoredKey': '저장된 키 지우기',
   'settings.ai.connectProvider': '제공업체 연결',
   'settings.ai.customRouting': '사용자 지정 라우팅',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': '기본값은 다음으로 확인됨',
   'settings.ai.discard': '취소',
   'settings.ai.editProvider': '제공업체 편집',
   'settings.ai.llmProviders': 'LLM 제공업체',
@@ -365,6 +382,58 @@ const ko4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': '결제 확인됨',
   'settings.billing.subscription.perMonth': '월별',
   'settings.billing.subscription.popular': '인기',
+  'composio.connect.scope.read': '읽기',
+  'composio.connect.scope.readHint': '에이전트가 이 연결에서 데이터를 읽을 수 있도록 허용합니다.',
+  'composio.connect.scope.write': '쓰기',
+  'composio.connect.scope.writeHint':
+    '에이전트가 이 연결을 통해 데이터를 생성하거나 수정할 수 있도록 허용합니다.',
+  'composio.connect.scope.admin': '관리자',
+  'composio.connect.scope.adminHint':
+    '에이전트가 설정, 권한 또는 파괴적인 작업을 관리하도록 허용합니다.',
+  'composio.connect.dynamicsOrgNameLabel': 'Dynamics 365 조직 이름',
+  'composio.connect.dynamicsOrgNameHint':
+    '예를 들어 myorg.crm.dynamics.com의 경우 "myorg"입니다. 전체 URL이 아닌 짧은 조직 이름만 입력하세요.',
+  'composio.connect.needsFieldsPrefix': '연결하려면',
+  'composio.connect.needsFieldsSuffix':
+    '좀 더 많은 정보가 필요합니다. 아래의 누락된 필드를 입력하고 다시 시도하세요.',
+  'composio.connect.requiredFieldEmpty': '이 필드는 필수입니다.',
+  'composio.connect.wabaIdHint':
+    'GET /me/businesses를 통해 찾은 다음 Meta 액세스 토큰을 사용하여 /{business_id}/owned_whatsapp_business_accounts를 GET하세요.',
+  'onboarding.contextGathering.coreAlive':
+    'Core에 접근 가능합니다. 처음 실행하는 데 1분 정도 걸릴 수 있습니다.',
+  'onboarding.contextGathering.coreAliveProbing': '코어 연결 확인 중…',
+  'onboarding.contextGathering.coreUnreachable':
+    '코어가 응답하지 않습니다. 계속해서 나중에 다시 시도할 수 있습니다.',
+  'onboarding.contextGathering.stillWorkingDesc':
+    '로컬 모델과 도구를 준비하는 동안 처음 실행하는 데 30~60초 정도 걸릴 수 있습니다. 언제든지 계속 채팅할 수 있습니다. 프로필 빌드는 백그라운드에서 계속 실행됩니다.',
+  'onboarding.contextGathering.stillWorkingTitle': '아직 프로필 작업 중입니다…',
+  'overlay.ariaCompanion': '컴패니언 활성',
+  'overlay.companion.error': '오류',
+  'overlay.companion.listening': '듣는 중…',
+  'overlay.companion.pointing': '가리키는 중…',
+  'overlay.companion.speaking': '말하는 중…',
+  'overlay.companion.thinking': '생각 중...',
+  'pages.settings.account.migration': '다른 어시스턴트에서 가져오기',
+  'pages.settings.account.migrationDesc':
+    'OpenClaw(또는 곧 Hermes)의 메모리와 메모를 이 작업 공간으로 마이그레이션합니다.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Composio에서 제공하는 통합에 대한 라우팅, 트리거 및 기록입니다.',
+  'pages.settings.features.desktopCompanion': '데스크탑 동반자',
+  'pages.settings.features.desktopCompanionDesc':
+    '화면 인식 기능이 있는 음성 도우미 — 듣고, 보고, 말하고, 가리킵니다.',
+  'settings.ai.openAiCompat.authHeaderExample': '권한 부여: Bearer <your key>',
+  'settings.ai.openAiCompat.authHeaderLabel': '인증 헤더',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Base URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': '사용할 수 없음',
+  'settings.ai.openAiCompat.clearKey': '키 지우기',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': '키 구성됨',
+  'settings.ai.openAiCompat.keyRequired': '키 필요',
+  'settings.ai.openAiCompat.rotateKey': '키 회전',
+  'settings.ai.openAiCompat.setKey': '키 설정',
+  'settings.ai.openAiCompat.title': 'OpenAI 호환 엔드포인트',
 };
 
 export default ko4;

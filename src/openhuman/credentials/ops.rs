@@ -7,9 +7,10 @@ use crate::api::jwt::get_session_token;
 use crate::api::rest::{user_id_from_profile_payload, BackendOAuthClient};
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::session_support::{
-    build_session_state, parse_fields_value, profile_name_or_default, summarize_auth_profile,
+    build_session_state, is_local_session_token, local_session_user_id, parse_fields_value,
+    profile_name_or_default, summarize_auth_profile, LOCAL_SESSION_USER_ID,
 };
-use crate::openhuman::security::SecretStore;
+use crate::openhuman::keyring::SecretStore;
 use crate::rpc::RpcOutcome;
 
 use super::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
@@ -17,7 +18,7 @@ use crate::openhuman::config::{
     default_root_openhuman_dir, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
     write_active_user_id,
 };
-use crate::openhuman::memory::conversations;
+use crate::openhuman::memory_conversations as conversations;
 
 /// Start all login-gated background services (local AI, voice, screen
 /// intelligence, autocomplete).  Called both from the initial boot path
@@ -128,24 +129,43 @@ pub async fn store_session(
     }
 
     let api_url = effective_backend_api_url(&config.api_url);
-
-    let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
-    let settings = client
-        .fetch_current_user(trimmed_token)
-        .await
-        .map_err(|e| format!("Session validation failed (GET /auth/me): {e:#}"))?;
+    let local_session = is_local_session_token(trimmed_token);
+    let local_user_id = local_session.then(local_session_user_id);
+    let settings = if local_session {
+        sanitize_stored_session_user(user.clone())
+            .map(|value| {
+                normalize_local_session_user(
+                    value,
+                    local_user_id.as_deref().unwrap_or(LOCAL_SESSION_USER_ID),
+                )
+            })
+            .ok_or_else(|| "local session requires a user payload".to_string())?
+    } else {
+        let client = BackendOAuthClient::new(&api_url).map_err(|e| e.to_string())?;
+        client
+            .fetch_current_user(trimmed_token)
+            .await
+            .map_err(|e| format!("Session validation failed (GET /auth/me): {e:#}"))?
+    };
 
     let mut metadata = std::collections::HashMap::new();
-    if let Some(uid) = user_id
-        .and_then(|v| {
-            let t = v.trim().to_string();
-            (!t.is_empty()).then_some(t)
-        })
-        .or_else(|| user_id_from_profile_payload(&settings))
-    {
+    if let Some(uid) = if local_session {
+        local_user_id.clone()
+    } else {
+        user_id
+            .and_then(|v| {
+                let t = v.trim().to_string();
+                (!t.is_empty()).then_some(t)
+            })
+            .or_else(|| user_id_from_profile_payload(&settings))
+    } {
         metadata.insert("user_id".to_string(), uid);
     }
-    let user_for_store = sanitize_stored_session_user(user).unwrap_or(settings);
+    let user_for_store = if local_session {
+        settings.clone()
+    } else {
+        sanitize_stored_session_user(user).unwrap_or(settings)
+    };
     metadata.insert("user_json".to_string(), user_for_store.to_string());
 
     // Determine user_id so we can scope the openhuman directory to this user.
@@ -153,10 +173,14 @@ pub async fn store_session(
 
     // If we know the user_id, activate the user-scoped directory BEFORE storing
     // the auth profile so that credentials land in the correct place.
-    let mut logs = vec![format!(
-        "session JWT verified via GET /auth/me on {}",
-        api_url.trim_end_matches('/')
-    )];
+    let mut logs = if local_session {
+        vec!["local session accepted without backend validation".to_string()]
+    } else {
+        vec![format!(
+            "session JWT verified via GET /auth/me on {}",
+            api_url.trim_end_matches('/')
+        )]
+    };
 
     if let Some(ref uid) = resolved_user_id {
         if let Ok(root_dir) = default_root_openhuman_dir() {
@@ -233,6 +257,15 @@ pub async fn store_session(
         config.clone()
     };
 
+    if local_session {
+        match crate::openhuman::config::ops::set_onboarding_completed(false).await {
+            Ok(_) => logs.push("onboarding left incomplete for local session setup".to_string()),
+            Err(error) => logs.push(format!(
+                "onboarding setup warning for local session: {error}"
+            )),
+        }
+    }
+
     let auth = AuthService::from_config(&effective_config);
     let profile = auth
         .store_provider_token(
@@ -245,6 +278,21 @@ pub async fn store_session(
         .map_err(|e| e.to_string())?;
 
     logs.push("session stored".to_string());
+
+    match crate::openhuman::memory::global::init(effective_config.workspace_dir.clone()) {
+        Ok(_) => logs.push(format!(
+            "memory client bound to workspace {}",
+            effective_config.workspace_dir.display()
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "[credentials] failed to bind memory client after login");
+            logs.push(format!("memory client bind warning: {e}"));
+        }
+    }
+    crate::openhuman::memory_conversations::register_conversation_persistence_subscriber(
+        effective_config.workspace_dir.clone(),
+    );
+    logs.push("conversation persistence bound to active workspace".to_string());
 
     // Now that active_user.toml exists and config.workspace_dir resolves to
     // the per-user path, seed the subconscious defaults and spawn the
@@ -278,6 +326,22 @@ fn sanitize_stored_session_user(user: Option<serde_json::Value>) -> Option<serde
         Some(serde_json::Value::Null) => None,
         other => other,
     }
+}
+
+fn normalize_local_session_user(user: serde_json::Value, local_user_id: &str) -> serde_json::Value {
+    let mut map = match user {
+        serde_json::Value::Object(map) => map,
+        other => return other,
+    };
+    map.insert(
+        "id".to_string(),
+        serde_json::Value::String(local_user_id.to_string()),
+    );
+    map.insert(
+        "_id".to_string(),
+        serde_json::Value::String(local_user_id.to_string()),
+    );
+    serde_json::Value::Object(map)
 }
 
 pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Value>, String> {

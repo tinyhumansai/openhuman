@@ -271,7 +271,7 @@ mod tests {
     use crate::openhuman::agent_experience::types::{
         AgentExperience, ExperienceOutcome, ExperienceSource,
     };
-    use crate::openhuman::memory::tool_memory::test_helpers::MockMemory;
+    use crate::openhuman::memory_tools::test_helpers::MockMemory;
     use std::sync::Arc;
 
     fn sample_experience(

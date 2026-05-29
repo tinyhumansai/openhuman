@@ -1,9 +1,12 @@
-import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { isTauri } from '../../../utils/tauriCommands/common';
+// `safeInvoke` (aliased to `invoke`) converts the CEF
+// `window.ipc.postMessage` synchronous throw — Sentry TAURI-REACT-7 /
+// TAURI-REACT-6 — into a rejected Promise that the existing try/catch sees
+// as a regular IPC failure.
+import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -87,7 +90,14 @@ function buildSnippet(client: McpClient, binaryPath: string): string {
 // McpServerPanel component
 // ---------------------------------------------------------------------------
 
-const McpServerPanel = () => {
+interface McpServerPanelProps {
+  /** When true, skips the SettingsHeader/back-button affordances so the
+   *  panel can be embedded in non-settings surfaces (e.g. the Connections
+   *  page MCP Clients tab). */
+  embedded?: boolean;
+}
+
+const McpServerPanel = ({ embedded = false }: McpServerPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
 
@@ -157,12 +167,14 @@ const McpServerPanel = () => {
 
   return (
     <div className="z-10 relative">
-      <SettingsHeader
-        title={t('settings.mcpServer.title')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.mcpServer.title')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
       {/* ----------------------------------------------------------------- */}
       {/* Section 1 — Available Tools                                        */}

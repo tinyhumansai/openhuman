@@ -16,13 +16,16 @@ TARGET="aarch64-unknown-linux-gnu"
 UPLOAD_REPO="${UPLOAD_REPO:-tinyhumansai/openhuman}"
 
 echo "[linux-arm64] Building openhuman-core for $TARGET ..."
-cargo build --release --bin openhuman-core
+if command -v rustup >/dev/null 2>&1; then
+  rustup target add "$TARGET"
+fi
+cargo build --release --bin openhuman-core --target "$TARGET"
 
 TARBALL="openhuman-core-${VERSION}-${TARGET}.tar.gz"
 
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
-cp target/release/openhuman-core "$WORK/"
+cp "target/${TARGET}/release/openhuman-core" "$WORK/"
 chmod +x "$WORK/openhuman-core"
 tar -czf "$TARBALL" -C "$WORK" openhuman-core
 openssl dgst -sha256 -r "$TARBALL" | awk '{print $1}' > "${TARBALL}.sha256"

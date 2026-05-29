@@ -275,6 +275,25 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
     );
     expect(latestSocket.once).not.toHaveBeenCalledWith('queued-on-event', expect.any(Function));
   });
+
+  it('reconnects when a stale disconnected socket exists for the same token', async () => {
+    const { io } = await import('socket.io-client');
+    const ioMock = vi.mocked(io);
+    ioMock.mockClear();
+
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+
+    socketService.connect('mock-jwt-stale-socket');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(1));
+
+    // Same token, previous socket is disconnected=true in our mock.
+    // We should still create a fresh socket instead of returning early.
+    socketService.connect('mock-jwt-stale-socket');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(2));
+  });
 });
 
 describe('socketService — connectivity dispatch on socket events (lines 164, 212, 230, 237, 240)', () => {
@@ -299,6 +318,46 @@ describe('socketService — connectivity dispatch on socket events (lines 164, 2
       ([arg]) => (arg as { value: string }).value === 'disconnected'
     );
     expect(disconnectedCall).toBeDefined();
+  });
+
+  it('clears stale disconnected socket when reconnecting with the same token', async () => {
+    const { io } = await import('socket.io-client');
+    const ioMock = vi.mocked(io);
+    ioMock.mockClear();
+
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    // Create a mock socket that reports as disconnected (stale).
+    const staleSocket = {
+      connected: false,
+      disconnected: true,
+      on: vi.fn(),
+      onAny: vi.fn(),
+      once: vi.fn(),
+      off: vi.fn(),
+      emit: vi.fn(),
+      disconnect: vi.fn(),
+      connect: vi.fn(),
+      id: 'stale-socket-id',
+      io: { opts: { extraHeaders: { Authorization: 'Bearer same-token' } } },
+    };
+    ioMock.mockReturnValueOnce(staleSocket as never);
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+
+    // First connect creates the stale socket.
+    socketService.connect('same-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(1));
+
+    // Second connect with the same token should detect the stale disconnected
+    // socket, null it out, and create a fresh one.
+    ioMock.mockClear();
+    socketService.connect('same-token');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalled());
+
+    // A new io() call proves the stale socket was cleared and replaced.
+    expect(ioMock).toHaveBeenCalled();
   });
 
   // Socket event handler tests (connect, disconnect, connect_error) are covered

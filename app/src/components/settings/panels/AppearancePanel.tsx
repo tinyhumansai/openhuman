@@ -2,7 +2,12 @@ import type { ReactElement } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useAppDispatch, useAppSelector } from '../../../store/hooks';
-import { setThemeMode, type ThemeMode } from '../../../store/themeSlice';
+import {
+  setTabBarLabels,
+  setThemeMode,
+  type TabBarLabels,
+  type ThemeMode,
+} from '../../../store/themeSlice';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -51,6 +56,12 @@ const AppearancePanel = () => {
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const dispatch = useAppDispatch();
   const mode = useAppSelector(state => state.theme.mode);
+  const tabBarLabels = useAppSelector(state => state.theme.tabBarLabels);
+  const labelsAlwaysVisible = tabBarLabels === 'always';
+  const toggleTabBarLabels = () => {
+    const next: TabBarLabels = labelsAlwaysVisible ? 'hover' : 'always';
+    dispatch(setTabBarLabels(next));
+  };
 
   // Build at render time so the labels follow the active locale; `t()` itself
   // memoises on locale change, so this stays stable across re-renders within a
@@ -148,6 +159,40 @@ const AppearancePanel = () => {
           <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed px-1 mt-2">
             {t('settings.appearance.helperText')}
           </p>
+        </div>
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-2 px-1">
+            {t('settings.appearance.tabBarHeading')}
+          </h3>
+          <div className="bg-white dark:bg-neutral-900 rounded-xl border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={labelsAlwaysVisible}
+              onClick={toggleTabBarLabels}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-neutral-50 dark:hover:bg-neutral-800/60 focus:outline-none focus-visible:bg-primary-50 dark:focus-visible:bg-primary-900/30">
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm font-medium text-neutral-900 dark:text-neutral-100">
+                  {t('settings.appearance.tabBarAlwaysShowLabels')}
+                </span>
+                <span className="block text-xs text-neutral-500 dark:text-neutral-400">
+                  {t('settings.appearance.tabBarAlwaysShowLabelsDesc')}
+                </span>
+              </span>
+              <span
+                aria-hidden
+                className={`relative inline-flex w-10 h-6 rounded-full transition-colors flex-shrink-0 ${
+                  labelsAlwaysVisible ? 'bg-primary-500' : 'bg-neutral-300 dark:bg-neutral-700'
+                }`}>
+                <span
+                  className={`absolute top-0.5 inline-block w-5 h-5 rounded-full bg-white shadow transition-transform ${
+                    labelsAlwaysVisible ? 'translate-x-[18px]' : 'translate-x-0.5'
+                  }`}
+                />
+              </span>
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -33,14 +33,26 @@ const ru3: TranslationMap = {
   'workspace.building': 'Построение...',
   'workspace.buildSummaryTrees': 'Построить деревья суммаризации',
   'workspace.viewVault': 'Открыть хранилище',
-  'workspace.openingVaultTitle': 'Opening vault in Obsidian',
+  'workspace.openingVaultTitle': 'Открытие хранилища в Obsidian',
   'workspace.openingVaultMessage':
     "If Obsidian doesn't open, install it from obsidian.md or use Reveal Folder. Vault path:",
   'workspace.openVaultFailedTitle': "Couldn't open vault in Obsidian",
   'workspace.openVaultFailedMessage':
-    'Use Reveal Folder to open the vault directory directly. Vault path:',
+    'Используйте Reveal Folder, чтобы напрямую открыть каталог хранилища. Путь к хранилищу:',
   'workspace.revealVaultFailed': "Couldn't reveal vault folder",
-  'workspace.revealFolder': 'Reveal Folder',
+  'workspace.revealFolder': 'Показать папку',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Не удалось загрузить граф памяти',
   'workspace.loadingGraph': 'Загрузка графа памяти...',
   'workspace.graphViewMode': 'Режим просмотра графа памяти',
@@ -190,6 +202,13 @@ const ru3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Перезапустить / обновить среду',
   'bootCheck.unexpectedError': 'Неожиданная ошибка при загрузке',
   'bootCheck.actionFailed': 'Что-то пошло не так. Попробуй ещё раз.',
+  'bootCheck.portConflictTitle': 'Не удалось запустить движок приложения',
+  'bootCheck.portConflictBody':
+    'Другой процесс использует сетевой порт, необходимый OpenHuman. Попробуем устранить это автоматически.',
+  'bootCheck.portConflictFixButton': 'Исправить автоматически',
+  'bootCheck.portConflictFixing': 'Исправление…',
+  'bootCheck.portConflictFixFailed':
+    'Автоматическое исправление не сработало. Перезагрузите компьютер и попробуйте снова.',
   'notifications.justNow': 'только что',
   'notifications.minAgo': '{n} мин назад',
   'notifications.hrAgo': '{n} ч назад',
@@ -215,6 +234,10 @@ const ru3: TranslationMap = {
   'about.update.status.default': 'Проверить обновления',
   'welcome.connectionFailed': 'Ошибка подключения: {status} {statusText}',
   'welcome.connectionFailedMsg': 'Ошибка подключения: {message}',
+  'welcome.continueLocally': 'Продолжить локально',
+  'welcome.localSessionStarting': 'Запуск локального сеанса...',
+  'welcome.localSessionDesc':
+    'Использует автономный локальный профиль и пропускает TinyHumans OAuth.',
   'chat.agentChatDesc': 'Открыть прямой чат с агентом.',
   'channels.activeRouteValue': '{channel} через {authMode}',
   'privacy.dataKind.messages': 'Сообщения',
@@ -244,6 +267,7 @@ const ru3: TranslationMap = {
   'memory.ingestingTitle': 'Загрузка {title}',
   'mic.noAudioCaptured': 'Аудио не захвачено',
   'mic.noSpeechDetected': 'Речь не обнаружена',
+  'mic.lowConfidenceResult': 'Не удалось чётко распознать аудио — попробуйте ещё раз',
   'mic.failedToStopRecording': 'Не удалось остановить запись: {message}',
   'mic.transcriptionFailed': 'Ошибка транскрипции: {message}',
   'reflections.kind.retrospective': 'Ретроспектива',
@@ -378,6 +402,49 @@ const ru3: TranslationMap = {
   'channels.telegram.reconnect': 'Переподключить',
   'channels.telegram.savedRestartRequired': 'Канал сохранён. Перезапусти приложение для активации.',
   'channels.web.alwaysAvailable': 'Всегда доступно',
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': 'Отправляйте и получайте сообщения через Discord.',
+  'channels.discord.authMode.bot_token.description':
+    'Предоставьте свой собственный токен бота Discord.',
+  'channels.discord.authMode.oauth.description':
+    'Установите бот OpenHuman на свой сервер Discord через OAuth.',
+  'channels.discord.authMode.managed_dm.description':
+    'Свяжите свою личную учетную запись Discord с ботом OpenHuman.',
+  'channels.discord.fields.bot_token.label': 'Токен бота',
+  'channels.discord.fields.bot_token.placeholder': 'Ваш токен бота Discord',
+  'channels.discord.fields.guild_id.label': 'Идентификатор сервера (гильдии)',
+  'channels.discord.fields.guild_id.placeholder': 'Необязательно: ограничить конкретным сервером',
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': 'Отправка и получение сообщений через Telegram.',
+  'channels.telegram.authMode.managed_dm.description':
+    'Отправьте сообщение боту OpenHuman Telegram напрямую.',
+  'channels.telegram.authMode.bot_token.description':
+    'Предоставьте свой собственный токен бота Telegram от @BotFather.',
+  'channels.telegram.fields.bot_token.label': 'Токен бота',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': 'Разрешенные пользователи',
+  'channels.telegram.fields.allowed_users.placeholder':
+    'Имена пользователей Telegram, разделенные запятыми',
+  'channels.web.displayName': 'Интернет',
+  'channels.web.description': 'Общайтесь через встроенный веб-интерфейс.',
+  'channels.web.authMode.managed_dm.description':
+    'Используйте встроенный веб-чат — настройка не требуется.',
+  'welcome.continueLocallyExperimental': 'Продолжить локально (экспериментально)',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': 'Connecting…',
+  'channels.yuanbao.fieldRequired': '{field} is required',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default ru3;

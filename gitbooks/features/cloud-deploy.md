@@ -31,6 +31,52 @@ in `app/.env.local` and launch.
 
 ---
 
+## Remote UI choices
+
+OpenHuman's supported remote deployment is **core remote, UI local**: run
+`openhuman-core` on a Linux server and point a desktop client at that RPC URL.
+The deployed core does not serve the full React/Tauri UI as a production web
+app yet. Desktop-only features still need the Tauri shell, including tray
+controls, native deep links, CEF account scanners, OS keychain integration, and
+window/screen affordances.
+
+For a browser-accessible UI on a private server today, use the Vite web build as
+a development/preview surface against the remote core:
+
+```bash
+# On the server, run the core with an explicit token.
+export OPENHUMAN_CORE_HOST=0.0.0.0
+export OPENHUMAN_CORE_PORT=7788
+export OPENHUMAN_CORE_TOKEN="$(openssl rand -hex 32)"
+openhuman-core serve
+
+# In another shell on the server, serve the UI only on loopback.
+pnpm --dir app dev -- --host 127.0.0.1 --port 1420
+```
+
+Then tunnel both ports from your workstation:
+
+```bash
+ssh -L 1420:127.0.0.1:1420 -L 7788:127.0.0.1:7788 user@server
+```
+
+Open `http://127.0.0.1:1420`, choose the remote/core option on the first-run
+screen, and enter `http://127.0.0.1:7788/rpc` plus the
+`OPENHUMAN_CORE_TOKEN` value from the server.
+
+If you serve the browser UI from a non-loopback origin, add that exact origin to
+the core's CORS allowlist:
+
+```bash
+export OPENHUMAN_CORE_ALLOWED_ORIGINS="https://openhuman-ui.example.com"
+```
+
+Loopback Vite origins such as `http://127.0.0.1:1420` and
+`http://localhost:1420` are allowed automatically. Public `http://` origins are
+not recommended because every RPC call carries the bearer token.
+
+---
+
 ## Single source of truth for the bearer token
 
 Every `/rpc` call carries `Authorization: Bearer <token>`. The core has two
@@ -602,6 +648,10 @@ To run the same check locally:
 
 ```bash
 docker build -t openhuman-core:smoke .
+
+# Optional: tune build profile and Cargo parallelism.
+# Keep CARGO_BUILD_JOBS=1 on constrained builders; raise it on larger machines.
+docker build --build-arg CARGO_PROFILE=release --build-arg CARGO_BUILD_JOBS=4 -t openhuman-core:release .
 
 # Token-set path (App Platform):
 docker run -d --name oh-smoke -p 7788:7788 \

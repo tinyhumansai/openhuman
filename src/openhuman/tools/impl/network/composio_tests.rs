@@ -5,6 +5,18 @@ fn test_security() -> Arc<SecurityPolicy> {
     Arc::new(SecurityPolicy::default())
 }
 
+/// Spawn a throwaway axum mock bound to an ephemeral port and return its base
+/// URL. Mirrors `start_mock_backend` in `client_tests.rs` so both HTTP-level
+/// direct-mode tests share one setup model.
+async fn start_mock_backend(app: axum::Router) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://127.0.0.1:{}", addr.port())
+}
+
 // ── Constructor ───────────────────────────────────────────
 
 #[test]
@@ -334,6 +346,146 @@ fn build_execute_action_v3_request_drops_blank_optional_fields() {
     assert_eq!(body["arguments"], json!({}));
     assert!(body.get("connected_account_id").is_none());
     assert!(body.get("user_id").is_none());
+}
+
+// ── list_tool_schemas_v3 query builder (direct-mode tags) ──────────────────
+
+#[test]
+fn build_list_tool_schemas_v3_query_always_includes_limit() {
+    let params = ComposioTool::build_list_tool_schemas_v3_query(&[], None);
+    assert_eq!(params, vec![("limit", "200".to_string())]);
+}
+
+#[test]
+fn build_list_tool_schemas_v3_query_joins_toolkits_as_csv() {
+    let params = ComposioTool::build_list_tool_schemas_v3_query(&["github", "gmail"], None);
+    assert_eq!(
+        params,
+        vec![
+            ("limit", "200".to_string()),
+            ("toolkits", "github,gmail".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn build_list_tool_schemas_v3_query_emits_repeated_tags_params() {
+    // Composio v3 `/tools` takes tags as repeated `tags=` params
+    // (tags=stars&tags=repos), NOT comma-joined like the backend proxy.
+    // A Vec of duplicate ("tags", _) keys is exactly what reqwest's
+    // `.query(&params)` serializes into repeated query params.
+    let params =
+        ComposioTool::build_list_tool_schemas_v3_query(&["github"], Some(&["stars", "repos"]));
+    assert_eq!(
+        params,
+        vec![
+            ("limit", "200".to_string()),
+            ("toolkits", "github".to_string()),
+            ("tags", "stars".to_string()),
+            ("tags", "repos".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn build_list_tool_schemas_v3_query_tags_without_toolkit_filter() {
+    let params = ComposioTool::build_list_tool_schemas_v3_query(&[], Some(&["readOnlyHint"]));
+    assert_eq!(
+        params,
+        vec![
+            ("limit", "200".to_string()),
+            ("tags", "readOnlyHint".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn build_list_tool_schemas_v3_query_trims_and_drops_blank_entries() {
+    let params = ComposioTool::build_list_tool_schemas_v3_query(
+        &["  github  ", "   "],
+        Some(&["  stars  ", "", "   "]),
+    );
+    assert_eq!(
+        params,
+        vec![
+            ("limit", "200".to_string()),
+            ("toolkits", "github".to_string()),
+            ("tags", "stars".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn build_list_tool_schemas_v3_query_empty_tags_slice_is_no_filter() {
+    // `Some(&[])` and an all-blank slice must both behave like "no tags".
+    let empty = ComposioTool::build_list_tool_schemas_v3_query(&["gmail"], Some(&[]));
+    let blank = ComposioTool::build_list_tool_schemas_v3_query(&["gmail"], Some(&["  "]));
+    let expected = vec![
+        ("limit", "200".to_string()),
+        ("toolkits", "gmail".to_string()),
+    ];
+    assert_eq!(empty, expected);
+    assert_eq!(blank, expected);
+}
+
+// ── list_tool_schemas_v3 over HTTP (direct-mode tags reach the wire) ───────
+
+#[tokio::test]
+async fn list_tool_schemas_v3_sends_repeated_tags_to_v3_tools_endpoint() {
+    use axum::{extract::RawQuery, routing::get, Json, Router};
+    use std::sync::Mutex;
+
+    // Capture the raw query string the server sees. `RawQuery` (not
+    // `Query<HashMap>`) is required because a HashMap would collapse the
+    // repeated `tags=` params we specifically need to assert on.
+    let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+    let app = Router::new().route(
+        "/tools",
+        get(move |RawQuery(q): RawQuery| {
+            let sink = sink.clone();
+            async move {
+                *sink.lock().unwrap() = q;
+                Json(json!({
+                    "items": [{
+                        "slug": "GITHUB_STAR_A_REPOSITORY",
+                        "description": "Star a repository",
+                        "input_parameters": { "type": "object" },
+                        "toolkit": { "slug": "github" }
+                    }]
+                }))
+            }
+        }),
+    );
+    let base = start_mock_backend(app).await;
+
+    let tool = ComposioTool::new_with_v3_base("ck_test_direct", None, test_security(), base);
+    let items = tool
+        .list_tool_schemas_v3(&["github"], Some(&["stars", "repos"]))
+        .await
+        .expect("direct v3 /tools should succeed against the mock");
+
+    let query = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("mock server should have observed a query string");
+
+    // tags must be REPEATED params (tags=stars&tags=repos) — the Composio v3
+    // contract — NOT the comma-joined form the backend proxy uses.
+    assert!(query.contains("tags=stars"), "query was: {query}");
+    assert!(query.contains("tags=repos"), "query was: {query}");
+    assert!(
+        !query.contains("stars%2Crepos") && !query.contains("stars,repos"),
+        "tags must not be comma-joined; query was: {query}"
+    );
+    assert!(query.contains("toolkits=github"), "query was: {query}");
+    assert!(query.contains("limit=200"), "query was: {query}");
+
+    // And the v3 envelope reshapes back into schema items.
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].slug, "GITHUB_STAR_A_REPOSITORY");
+    assert_eq!(items[0].toolkit_slug.as_deref(), Some("github"));
 }
 
 // ── ensure_https ──────────────────────────────────────────────────────────

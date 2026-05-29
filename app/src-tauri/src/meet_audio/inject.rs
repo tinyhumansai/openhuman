@@ -274,3 +274,31 @@ pub async fn feed_pcm_chunk(cdp: &mut CdpConn, session: &str, pcm_b64: &str) -> 
     }
     Ok(())
 }
+
+/// Stop any in-flight audio playback inside the page bridge and reset
+/// its schedule cursor. Called when the brain cancels outbound (user
+/// re-asks during a long reply) so the previous reply's tail doesn't
+/// keep playing while the new turn is dispatched. Returns the count
+/// of sources that were stopped, useful for diagnostic logging.
+pub async fn flush_audio_bridge(cdp: &mut CdpConn, session: &str) -> Result<i64, String> {
+    let res = cdp
+        .call(
+            "Runtime.evaluate",
+            json!({
+                "expression": "(typeof window.__openhumanFlushAudio === 'function') ? window.__openhumanFlushAudio() : -1",
+                "returnByValue": true,
+            }),
+            Some(session),
+        )
+        .await
+        .map_err(|e| format!("Runtime.evaluate flush: {e}"))?;
+    if let Some(exception) = res.get("exceptionDetails") {
+        return Err(format!("page exception: {exception}"));
+    }
+    let stopped = res
+        .get("result")
+        .and_then(|r| r.get("value"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    Ok(stopped)
+}

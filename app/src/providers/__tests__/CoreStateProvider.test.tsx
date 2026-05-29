@@ -476,6 +476,63 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     expect(screen.getByTestId('token').textContent).toBe(token);
   });
 
+  it('storeSessionToken skips refreshTeams for a local session token', async () => {
+    const localToken = `eyJhbGciOiJub25lIn0.${window.btoa(JSON.stringify({ sub: 'local' }))}.local`;
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'local', sessionToken: localToken }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.storeSession).mockReset();
+    vi.mocked(tauriCommands.storeSession).mockResolvedValue(undefined as never);
+
+    let ctx: CoreStateContextValue | undefined;
+    render(
+      <CoreStateProvider>
+        <Consumer
+          captureCtx={next => {
+            ctx = next;
+          }}
+        />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      await ctx!.storeSessionToken(localToken, { id: 'local' });
+    });
+
+    expect(vi.mocked(tauriCommands.storeSession)).toHaveBeenCalledWith(localToken, { id: 'local' });
+    expect(listTeams).not.toHaveBeenCalled();
+  });
+
+  it('ignores auth-expired events when the current session is a local token', async () => {
+    const localToken = `eyJhbGciOiJub25lIn0.${window.btoa(JSON.stringify({ sub: 'local' }))}.local`;
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'local', sessionToken: localToken }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.team_get_usage', source: 'rpc' },
+        })
+      );
+    });
+
+    // Wait a tick to ensure any async handler had a chance to run.
+    await act(async () => {});
+
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
   it('setMeetAutoOrchestratorHandoff(true) calls update RPC + flips snapshot optimistically (#1299)', async () => {
     fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
     listTeams.mockResolvedValue([]);
@@ -522,11 +579,13 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
 
     await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
 
-    // First dispatch should clear the session.
+    // First dispatch should clear the session. `reason: 'confirmed'` (a real
+    // 401 / explicit expiry) skips the disk-token corroboration and clears
+    // immediately.
     await act(async () => {
       window.dispatchEvent(
         new CustomEvent('core-rpc-auth-expired', {
-          detail: { method: 'openhuman.team_get_usage', source: 'rpc' },
+          detail: { method: 'openhuman.team_get_usage', source: 'rpc', reason: 'confirmed' },
         })
       );
     });
@@ -548,6 +607,178 @@ describe('CoreStateProvider — identity-change cache clearing', () => {
     });
 
     expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT clear the session on an unconfirmed auth-expired when the token is still on disk (restart boot-race guard)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+    // The cheap disk-only token read still finds the persisted token — this is
+    // the transient "session jwt required" right after the identity-flip
+    // restart (token on disk, just not loaded by the racing RPC), not a real
+    // expiry. The destructive clearSession MUST be skipped.
+    vi.mocked(tauriCommands.getSessionToken).mockReset();
+    vi.mocked(tauriCommands.getSessionToken).mockResolvedValue('tok1');
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.auth_get_me', source: 'rpc', reason: 'unconfirmed' },
+        })
+      );
+    });
+    // Flush the corroboration microtasks.
+    await act(async () => {});
+
+    expect(vi.mocked(tauriCommands.getSessionToken)).toHaveBeenCalled();
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
+  it('clears the session on an unconfirmed auth-expired only after corroborating the token is gone', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+    // Disk read confirms the token is genuinely gone → a real sign-out, so the
+    // destructive clearSession is allowed to proceed.
+    vi.mocked(tauriCommands.getSessionToken).mockReset();
+    vi.mocked(tauriCommands.getSessionToken).mockResolvedValue(null);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.auth_get_me', source: 'rpc', reason: 'unconfirmed' },
+        })
+      );
+    });
+
+    await waitFor(() => expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1), {
+      timeout: 3000,
+    });
+  });
+
+  it('lets a confirmed expiry break through a debounce slot claimed by an unconfirmed probe', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+    // Unconfirmed probe still finds the token → bails (keeps session) but would
+    // otherwise hold the 10s debounce slot.
+    vi.mocked(tauriCommands.getSessionToken).mockReset();
+    vi.mocked(tauriCommands.getSessionToken).mockResolvedValue('tok1');
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    // 1) Transient unconfirmed signal — must NOT clear, but claims the slot.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.auth_get_me', source: 'rpc', reason: 'unconfirmed' },
+        })
+      );
+    });
+    await act(async () => {});
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+
+    // 2) A real 401 within the debounce window MUST still sign out.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.team_get_usage', source: 'rpc', reason: 'confirmed' },
+        })
+      );
+    });
+
+    await waitFor(() => expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1));
+  });
+
+  it('core-state:suppress-reauth suppresses auth-expired clearSession during deep-link delivery (#2377)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    // Arm the suppress window so core-rpc-auth-expired is silenced.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 30_000 } })
+      );
+    });
+
+    // auth-expired during the suppress window must not call logout.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.auth_store_session', source: 'rpc' },
+        })
+      );
+    });
+
+    expect(vi.mocked(tauriCommands.logout)).not.toHaveBeenCalled();
+  });
+
+  it('core-state:suppress-reauth with until=0 re-enables auth-expired handling after deep-link delivery (#2377)', async () => {
+    fetchSnapshot.mockResolvedValue(makeSnapshot({ userId: 'u1', sessionToken: 'tok1' }));
+    listTeams.mockResolvedValue([]);
+    vi.mocked(tauriCommands.logout).mockReset();
+    vi.mocked(tauriCommands.logout).mockResolvedValue(undefined as never);
+
+    render(
+      <CoreStateProvider>
+        <Consumer />
+      </CoreStateProvider>
+    );
+
+    await waitFor(() => expect(screen.getByTestId('ready').textContent).toBe('ready'));
+
+    // Arm then immediately disarm so clearSession is allowed again.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-state:suppress-reauth', { detail: { until: Date.now() + 30_000 } })
+      );
+    });
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('core-state:suppress-reauth', { detail: { until: 0 } }));
+    });
+
+    // auth-expired after suppress cleared must call logout.
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent('core-rpc-auth-expired', {
+          detail: { method: 'openhuman.team_get_usage', source: 'rpc', reason: 'confirmed' },
+        })
+      );
+    });
+
+    await waitFor(() => expect(vi.mocked(tauriCommands.logout)).toHaveBeenCalledTimes(1));
   });
 
   it('ignores forged session-token-updated events that do not match the core snapshot (#1937)', async () => {

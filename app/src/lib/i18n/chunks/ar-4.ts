@@ -102,6 +102,19 @@ const ar4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'مُسقَط',
   'intelligence.memoryChunk.scoreBars.heading': 'س ب ب   ا ل ح ف ظ',
   'intelligence.memoryChunk.scoreBars.kept': 'محفوظ',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'نوع الكيان',
   'intelligence.screenDebug.active': 'نشط',
   'intelligence.screenDebug.app': 'التطبيق',
@@ -145,6 +158,8 @@ const ar4: TranslationMap = {
   'notifications.center.filterAll': 'تصفية الكل',
   'notifications.center.markAllRead': 'تحديد الكل كمقروء',
   'notifications.center.title': 'الإشعارات',
+  'oauth.button.loopbackTimeout':
+    'انتهت مهلة تسجيل الدخول — لم يكتمل المتصفح إعادة توجيه OAuth. يرجى المحاولة مرة أخرى.',
   'oauth.button.connecting': 'جارٍ الاتصال...',
   'oauth.login.continueWith': 'المتابعة مع',
   'onboarding.contextGathering.buildingDesc': 'وصف البناء',
@@ -186,6 +201,8 @@ const ar4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'وصف LLM',
   'pages.settings.ai.voice': 'الصوت',
   'pages.settings.ai.voiceDesc': 'وصف الصوت',
+  'pages.settings.ai.embeddings': 'التضمينات',
+  'pages.settings.ai.embeddingsDesc': 'نموذج ترميز المتجهات لاسترجاع الذاكرة',
   'pages.settings.aiSection.description': 'مزودو نماذج اللغة وOllama المحلي والصوت (STT / TTS).',
   'pages.settings.aiSection.title': 'الذكاء الاصطناعي',
   'pages.settings.features.desktopCompanion': 'الرفيق المكتبي',
@@ -287,7 +304,7 @@ const ar4: TranslationMap = {
   'settings.ai.clearStoredKey': 'مسح المفتاح المحفوظ',
   'settings.ai.connectProvider': 'ربط مزود',
   'settings.ai.customRouting': 'توجيه مخصص',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'الافتراضي يُحل إلى',
   'settings.ai.discard': 'تجاهل',
   'settings.ai.editProvider': 'تعديل المزود',
   'settings.ai.llmProviders': 'مزودو LLM',
@@ -295,6 +312,18 @@ const ar4: TranslationMap = {
   'settings.ai.localOllama': 'محلي (Ollama)',
   'settings.ai.modelLabel': 'النموذج',
   'settings.ai.noCustomProviders': 'لا يوجد مزودون مخصصون',
+  'settings.ai.openAiCompat.authHeaderExample': 'التفويض: الحامل <مفتاحك>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'رأس المصادقة',
+  'settings.ai.openAiCompat.baseUrlLabel': 'القاعدة URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'غير متاح',
+  'settings.ai.openAiCompat.clearKey': 'مسح المفتاح',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'تم تكوين المفتاح',
+  'settings.ai.openAiCompat.keyRequired': 'المفتاح مطلوب',
+  'settings.ai.openAiCompat.rotateKey': 'مفتاح التدوير',
+  'settings.ai.openAiCompat.setKey': 'مفتاح التعيين',
+  'settings.ai.openAiCompat.title': 'OpenAI نقطة النهاية المتوافقة',
   'settings.ai.providerLabel': 'المزود',
   'settings.ai.routing': 'التوجيه',
   'settings.ai.routingCustom': 'توجيه مخصص',
@@ -389,6 +418,16 @@ const ar4: TranslationMap = {
   'pages.settings.account.migration': 'استيراد من مساعد آخر',
   'pages.settings.account.migrationDesc':
     'انقل الذاكرة والملاحظات من OpenClaw (وقريبًا Hermes) إلى مساحة العمل هذه.',
+  'composio.connect.scope.read': 'قراءة',
+  'composio.connect.scope.readHint': 'اسمح للوكيل بقراءة البيانات من هذا الاتصال.',
+  'composio.connect.scope.write': 'اكتب',
+  'composio.connect.scope.writeHint': 'اسمح للوكيل بإنشاء البيانات أو تعديلها من خلال هذا الاتصال.',
+  'composio.connect.scope.admin': 'المسؤول',
+  'composio.connect.scope.adminHint':
+    'السماح للوكيل بإدارة الإعدادات أو الأذونات أو الإجراءات المدمرة.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'التوجيه والمشغلات وسجل عمليات التكامل المدعومة بواسطة Composio.',
 };
 
 export default ar4;

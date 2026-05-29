@@ -64,7 +64,13 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      const result = await joinMeetCall({ meetUrl, displayName });
+      // ownerDisplayName left empty here because this tab's UI is hidden
+      // behind a "Coming Soon" gate (see render branch below) — the call
+      // is dead-code-reachable only. When the tab is revived it must
+      // collect an owner-name input the same way `MeetingBotsCard` does
+      // (privacy lock for the in-call wake gate). Empty fails closed in
+      // core, so we're safe in the meantime.
+      const result = await joinMeetCall({ meetUrl, displayName, ownerDisplayName: '' });
       setActiveCalls(prev => [
         ...prev.filter(call => call.requestId !== result.requestId),
         { requestId: result.requestId, meetUrl: result.meetUrl, displayName: result.displayName },
@@ -128,12 +134,14 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
           />
         </svg>
       </div>
-      <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">Calls</h2>
+      <h2 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+        {t('memory.tab.calls')}
+      </h2>
       <p className="mt-2 text-sm text-stone-500 dark:text-neutral-400 max-w-xs">
-        AI-assisted calls are coming soon. Stay tuned.
+        {t('calls.comingSoonDescription')}
       </p>
       <span className="mt-4 inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-500/10 px-3 py-1 text-xs font-medium text-primary-600 dark:text-primary-400">
-        Coming Soon
+        {t('common.comingSoon')}
       </span>
     </div>
   );

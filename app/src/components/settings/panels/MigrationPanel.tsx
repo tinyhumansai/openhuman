@@ -2,15 +2,17 @@ import debug from 'debug';
 import { useCallback, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { type MigrationReport, openhumanMigrateOpenclaw } from '../../../utils/tauriCommands/core';
+import {
+  type MigrationReport,
+  openhumanMigrateHermes,
+  openhumanMigrateOpenclaw,
+} from '../../../utils/tauriCommands/core';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
 const log = debug('migration-panel');
 
 type Vendor = 'openclaw' | 'hermes';
-
-const HERMES_TRACKING_URL = 'https://github.com/tinyhumansai/openhuman/issues/1440';
 
 interface MigrationPanelProps {
   /** When true, render without the SettingsHeader chrome (used when embedded
@@ -41,6 +43,17 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
 
   const normalizedSource = sourcePath.trim() || undefined;
 
+  const runMigrationRpc = useCallback(
+    (dryRun: boolean) => {
+      const source = normalizedSource;
+      if (vendor === 'hermes') {
+        return openhumanMigrateHermes(source, dryRun);
+      }
+      return openhumanMigrateOpenclaw(source, dryRun);
+    },
+    [vendor, normalizedSource]
+  );
+
   // Apply is only enabled after a successful Preview *of the same input*.
   // Without that gate the user can mutate their workspace without ever
   // seeing what would change for the currently-typed path — exactly the
@@ -60,8 +73,8 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
     setAppliedReport(null);
     try {
       log('[migration] preview start vendor=%s source=%s', vendor, normalizedSource ?? '<default>');
-      const response = await openhumanMigrateOpenclaw(normalizedSource, true);
-      // `openhumanMigrateOpenclaw` returns `CommandResponse<MigrationReport>`
+      const response = await runMigrationRpc(true);
+      // `runMigrationRpc` returns `CommandResponse<MigrationReport>`
       // — `.result` is the actual report.
       setPreviewReport(response.result);
       setPreviewInput({ vendor, source: normalizedSource });
@@ -79,7 +92,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
     } finally {
       setIsPreviewing(false);
     }
-  }, [vendor, normalizedSource]);
+  }, [runMigrationRpc]);
 
   const runApply = useCallback(async () => {
     if (!canApply || previewReport == null) return;
@@ -100,7 +113,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
     setIsApplying(true);
     try {
       log('[migration] apply start vendor=%s source=%s', vendor, normalizedSource ?? '<default>');
-      const response = await openhumanMigrateOpenclaw(normalizedSource, false);
+      const response = await runMigrationRpc(false);
       setAppliedReport(response.result);
       // Clear preview so the operator can't accidentally re-apply the same
       // dry-run a second time without re-previewing the new on-disk state.
@@ -114,7 +127,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
     } finally {
       setIsApplying(false);
     }
-  }, [vendor, normalizedSource, previewReport, canApply, t]);
+  }, [runMigrationRpc, previewReport, canApply, t]);
 
   const reportToRender = appliedReport ?? previewReport;
 
@@ -145,28 +158,10 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
               value={vendor}
               onChange={e => setVendor(e.target.value as Vendor)}
               className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:outline-none focus:ring-1 focus:ring-primary-400">
-              <option value="openclaw">OpenClaw</option>
-              <option value="hermes" disabled>
-                Hermes Agent (coming soon)
-              </option>
+              <option value="openclaw">{t('migration.vendor.openclaw')}</option>
+              <option value="hermes">{t('migration.vendor.hermes')}</option>
             </select>
           </label>
-
-          {vendor === 'hermes' && (
-            <p
-              className="text-xs text-stone-500 dark:text-neutral-400"
-              data-testid="migration-hermes-coming-soon">
-              {t('migration.hermesComingSoonPrefix')}
-              <a
-                href={HERMES_TRACKING_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary-600 dark:text-primary-300 underline">
-                {t('migration.hermesLinkText')}
-              </a>
-              {t('migration.hermesComingSoonSuffix')}
-            </p>
-          )}
 
           <label className="block space-y-1">
             <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
@@ -177,7 +172,11 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
               data-testid="migration-source-input"
               value={sourcePath}
               onChange={e => setSourcePath(e.target.value)}
-              placeholder={t('migration.sourcePlaceholder')}
+              placeholder={
+                vendor === 'hermes'
+                  ? t('migration.sourcePlaceholderHermes')
+                  : t('migration.sourcePlaceholder')
+              }
               className="w-full rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:outline-none focus:ring-1 focus:ring-primary-400"
             />
             <p className="text-[11px] text-stone-500 dark:text-neutral-400">
@@ -190,7 +189,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
               type="button"
               data-testid="migration-preview-button"
               onClick={runPreview}
-              disabled={vendor !== 'openclaw' || isPreviewing}
+              disabled={isPreviewing || isApplying}
               className="px-3 py-1.5 text-xs rounded-md bg-primary-600 hover:bg-primary-700 disabled:opacity-60 text-white">
               {isPreviewing ? t('migration.previewRunning') : t('migration.previewAction')}
             </button>
@@ -198,7 +197,7 @@ const MigrationPanel = ({ embedded = false }: MigrationPanelProps = {}) => {
               type="button"
               data-testid="migration-apply-button"
               onClick={runApply}
-              disabled={!canApply || vendor !== 'openclaw'}
+              disabled={!canApply}
               className="px-3 py-1.5 text-xs rounded-md bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white">
               {isApplying ? t('migration.applyRunning') : t('migration.applyAction')}
             </button>

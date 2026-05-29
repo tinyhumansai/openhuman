@@ -17,7 +17,7 @@ const hi4: TranslationMap = {
   'commandPalette.shortcutHint': 'सभी शॉर्टकट के लिए ? दबाएँ',
   'commandPalette.title': 'कमांड पैलेट',
   'composio.connect.additionalConfigRequired': 'अतिरिक्त कॉन्फिग ज़रूरी है',
-  'composio.connect.atlassianSubdomainHint': 'acme',
+  'composio.connect.atlassianSubdomainHint': 'एक्मे',
   'composio.connect.atlassianSubdomainLabel': 'Atlassian सबडोमेन लेबल',
   'composio.connect.connect': 'कनेक्ट करें',
   'composio.connect.connectionFailed': 'कनेक्शन विफल (स्थिति: {status})।',
@@ -91,7 +91,7 @@ const hi4: TranslationMap = {
   'home.banners.promoCreditsUsage': 'प्रोमो क्रेडिट उपयोग',
   'intelligence.memoryChunk.detail.chunk': 'चंक',
   'intelligence.memoryChunk.detail.copyChunkId': 'Chunk ID कॉपी करें',
-  'intelligence.memoryChunk.detail.embeddingInfo': 'bge-m3 1024dim',
+  'intelligence.memoryChunk.detail.embeddingInfo': 'बीजीई-एम3 1024डिम',
   'intelligence.memoryChunk.detail.noEmbedding': 'कोई एम्बेडिंग नहीं',
   'intelligence.memoryChunk.letterhead.from': 'से',
   'intelligence.memoryChunk.letterhead.to': 'को',
@@ -103,6 +103,19 @@ const hi4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'हटाया गया',
   'intelligence.memoryChunk.scoreBars.heading': 'क्यों रखा',
   'intelligence.memoryChunk.scoreBars.kept': 'रखा गया',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'इकाई प्रकार',
   'intelligence.screenDebug.active': 'एक्टिव',
   'intelligence.screenDebug.app': 'ऐप',
@@ -146,6 +159,8 @@ const hi4: TranslationMap = {
   'notifications.center.filterAll': 'सभी फिल्टर',
   'notifications.center.markAllRead': 'सभी पढ़ा हुआ मार्क करें',
   'notifications.center.title': 'नोटिफिकेशन',
+  'oauth.button.loopbackTimeout':
+    'साइन-इन का समय समाप्त हो गया — ब्राउज़र ने OAuth पुनर्निर्देशन पूरा नहीं किया। कृपया पुनः प्रयास करें।',
   'oauth.button.connecting': 'कनेक्ट हो रहा है...',
   'oauth.login.continueWith': 'के साथ जारी रखें',
   'onboarding.contextGathering.buildingDesc': 'बिल्डिंग विवरण',
@@ -187,6 +202,8 @@ const hi4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'LLM विवरण',
   'pages.settings.ai.voice': 'वॉइस',
   'pages.settings.ai.voiceDesc': 'वॉइस विवरण',
+  'pages.settings.ai.embeddings': 'एम्बेडिंग्स',
+  'pages.settings.ai.embeddingsDesc': 'मेमोरी पुनर्प्राप्ति के लिए वेक्टर एन्कोडिंग मॉडल',
   'pages.settings.aiSection.description':
     'लैंग्वेज मॉडल प्रोवाइडर, लोकल Ollama और वॉइस (STT / TTS)।',
   'pages.settings.aiSection.title': 'AI',
@@ -290,7 +307,7 @@ const hi4: TranslationMap = {
   'settings.ai.clearStoredKey': 'स्टोर्ड key क्लियर करें',
   'settings.ai.connectProvider': 'प्रदाता कनेक्ट करें',
   'settings.ai.customRouting': 'कस्टम रूटिंग',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'डिफ़ॉल्ट इसमें हल होता है',
   'settings.ai.discard': 'रद्द करें',
   'settings.ai.editProvider': 'प्रदाता संपादित करें',
   'settings.ai.llmProviders': 'LLM प्रोवाइडर',
@@ -298,6 +315,18 @@ const hi4: TranslationMap = {
   'settings.ai.localOllama': 'लोकल (Ollama)',
   'settings.ai.modelLabel': 'मॉडल',
   'settings.ai.noCustomProviders': 'कोई कस्टम प्रोवाइडर नहीं',
+  'settings.ai.openAiCompat.authHeaderExample': 'Authorization: Bearer <आपकी कुंजी>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'प्रामाणिक शीर्षलेख',
+  'settings.ai.openAiCompat.baseUrlLabel': 'आधार URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'अनुपलब्ध',
+  'settings.ai.openAiCompat.clearKey': 'साफ़ कुंजी',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'कुंजी कॉन्फ़िगर की गई',
+  'settings.ai.openAiCompat.keyRequired': 'कुंजी आवश्यक है',
+  'settings.ai.openAiCompat.rotateKey': 'कुंजी घुमाएँ',
+  'settings.ai.openAiCompat.setKey': 'कुंजी सेट करें',
+  'settings.ai.openAiCompat.title': 'OpenAI-संगत समापन बिंदु',
   'settings.ai.providerLabel': 'प्रोवाइडर',
   'settings.ai.routing': 'रूटिंग',
   'settings.ai.routingCustom': 'कस्टम रूटिंग',
@@ -392,6 +421,17 @@ const hi4: TranslationMap = {
   'pages.settings.account.migration': 'किसी अन्य असिस्टेंट से इम्पोर्ट करें',
   'pages.settings.account.migrationDesc':
     'OpenClaw (और जल्द ही Hermes) से मेमोरी और नोट्स इस वर्कस्पेस में माइग्रेट करें।',
+  'composio.connect.scope.read': 'पढ़ें',
+  'composio.connect.scope.readHint': 'एजेंट को इस कनेक्शन से डेटा पढ़ने की अनुमति दें।',
+  'composio.connect.scope.write': 'लिखो',
+  'composio.connect.scope.writeHint':
+    'एजेंट को इस कनेक्शन के माध्यम से डेटा बनाने या संशोधित करने की अनुमति दें।',
+  'composio.connect.scope.admin': 'व्यवस्थापक',
+  'composio.connect.scope.adminHint':
+    'एजेंट को सेटिंग्स, अनुमतियाँ, या विनाशकारी कार्रवाइयां प्रबंधित करने की अनुमति दें।',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Composio द्वारा संचालित एकीकरण के लिए रूटिंग, ट्रिगर और इतिहास।',
 };
 
 export default hi4;

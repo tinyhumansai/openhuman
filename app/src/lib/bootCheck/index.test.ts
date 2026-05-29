@@ -143,6 +143,11 @@ describe('runBootCheck — local mode', () => {
     vi.useRealTimers();
 
     expect(result.kind).toBe('unreachable');
+    // start_core_process succeeded (invokeCmd resolves) so portConflict must NOT be set —
+    // the timeout alone is not evidence of a port conflict.
+    if (result.kind === 'unreachable') {
+      expect(result.portConflict).toBeFalsy();
+    }
   });
 });
 
@@ -211,6 +216,87 @@ describe('runBootCheck — unset mode', () => {
     const transport = makeTransport();
     const result: BootCheckResult = await runBootCheck({ kind: 'unset' }, transport);
     expect(result.kind).toBe('unreachable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Port conflict auto-recovery tests
+// ---------------------------------------------------------------------------
+
+describe('runBootCheck — port conflict auto-recovery', () => {
+  it('auto-recovery succeeds: start fails, recovery succeeds, second start succeeds', async () => {
+    const appVersion = (await import('../../utils/config')).APP_VERSION;
+
+    let startCallCount = 0;
+    const transport: BootCheckTransport = {
+      callRpc: rpcResponder({
+        'core.ping': {},
+        'openhuman.service_status': { installed: false, running: false },
+        'openhuman.update_version': { result: { version: appVersion } },
+      }),
+      invokeCmd: vi.fn(async (cmd: string) => {
+        if (cmd === 'start_core_process') {
+          startCallCount += 1;
+          if (startCallCount === 1) throw new Error('port in use');
+          return undefined;
+        }
+        return undefined;
+      }) as BootCheckTransport['invokeCmd'],
+      recoverPortConflict: vi
+        .fn()
+        .mockResolvedValue({ success: true, message: 'recovered', new_port: 7789 }),
+    };
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('match');
+    expect(transport.recoverPortConflict).toHaveBeenCalled();
+  });
+
+  it('returns unreachable with portConflict=true when both start and recovery fail', async () => {
+    const transport: BootCheckTransport = {
+      callRpc: vi.fn(),
+      invokeCmd: vi.fn().mockRejectedValue(new Error('port in use')),
+      recoverPortConflict: vi
+        .fn()
+        .mockResolvedValue({ success: false, message: 'port still busy', new_port: undefined }),
+    };
+
+    const result = await runBootCheck({ kind: 'local' }, transport);
+    expect(result.kind).toBe('unreachable');
+    if (result.kind === 'unreachable') {
+      expect(result.portConflict).toBe(true);
+    }
+  });
+
+  it('clears RPC URL cache and retries waitForCore on timeout', async () => {
+    const appVersion = (await import('../../utils/config')).APP_VERSION;
+
+    let pingCallCount = 0;
+    const transport: BootCheckTransport = {
+      invokeCmd: vi.fn().mockResolvedValue(undefined),
+      callRpc: vi.fn(async (method: string) => {
+        if (method === 'core.ping') {
+          pingCallCount += 1;
+          // waitForCore(10_000) makes ~12 attempts with 200→1000ms exponential backoff.
+          // Fail exactly those 12 so the initial call times out; ping 13 succeeds so
+          // the cache-clear retry waitForCore(5_000) returns true on its first attempt.
+          if (pingCallCount <= 12) throw new Error('timeout');
+          return {};
+        }
+        if (method === 'openhuman.service_status') return { installed: false, running: false };
+        if (method === 'openhuman.update_version') return { result: { version: appVersion } };
+        throw new Error(`Unexpected RPC: ${method}`);
+      }) as BootCheckTransport['callRpc'],
+    };
+
+    vi.useFakeTimers();
+    const promise = runBootCheck({ kind: 'local' }, transport);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    vi.useRealTimers();
+
+    // Initial waitForCore timed out → cache cleared → second waitForCore succeeded.
+    expect(result.kind).toBe('match');
   });
 });
 

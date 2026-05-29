@@ -4,7 +4,11 @@ import { getCoreStateSnapshot } from '../../lib/coreState/store';
 import { bootCheckTransport } from '../../services/bootCheckService';
 import { getCoreRpcUrl, testCoreRpcConnection } from '../../services/coreRpcClient';
 import { isTauri } from '../../services/webviewAccountService';
-import { getStoredCoreMode } from '../../utils/configPersistence';
+import {
+  getStoredCoreMode,
+  getStoredCoreToken,
+  storeCoreMode,
+} from '../../utils/configPersistence';
 
 const logPrefix = '[oauth-auth-readiness]';
 const log = debug('oauth:auth-readiness');
@@ -27,7 +31,17 @@ const delay = (ms: number): Promise<void> =>
 async function pingCoreRpc(): Promise<boolean> {
   try {
     const rpcUrl = await getCoreRpcUrl();
-    const response = await testCoreRpcConnection(rpcUrl);
+    // In cloud mode, pass the stored cloud token explicitly to avoid
+    // getCoreRpcToken() resolving to a stale local-core token. See issue #2377.
+    const cloudToken = getStoredCoreMode() === 'cloud' ? getStoredCoreToken() : null;
+    log(`${logPrefix} core.ping probe`, {
+      rpcUrl,
+      mode: getStoredCoreMode(),
+      hasCloudToken: Boolean(cloudToken),
+    });
+    const response = cloudToken
+      ? await testCoreRpcConnection(rpcUrl, cloudToken)
+      : await testCoreRpcConnection(rpcUrl);
     return response.ok;
   } catch (err) {
     log(`${logPrefix} core.ping probe failed`, err);
@@ -73,6 +87,15 @@ export async function waitForOAuthAuthReadiness(
       sawCoreMode = true;
       break;
     }
+    // In the Tauri desktop app the core is always embedded locally. If the
+    // picker hasn't run yet (e.g. first launch before BootCheckGate finishes,
+    // or core mode was just cleared), default to 'local' so OAuth can proceed
+    // without forcing the user to navigate back through the runtime picker.
+    if (isTauri()) {
+      storeCoreMode('local');
+      sawCoreMode = true;
+      break;
+    }
     await delay(POLL_MS);
   }
 
@@ -112,11 +135,19 @@ export function oauthAuthReadinessUserMessage(reason: OAuthAuthReadinessFailure)
         'Finish choosing how OpenHuman runs (tap Continue on the setup screen), ' +
         'then try signing in again.'
       );
-    case 'core_unreachable':
+    case 'core_unreachable': {
+      const mode = getStoredCoreMode();
+      if (mode === 'cloud') {
+        return (
+          'OpenHuman could not reach its remote (cloud) runtime. ' +
+          'Check your RPC URL and token in Settings, then try signing in again.'
+        );
+      }
       return (
         'OpenHuman could not reach its local runtime. Quit and reopen the app, ' +
         'then try signing in again.'
       );
+    }
     default:
       return 'Sign-in is still starting up. Wait a few seconds and try again.';
   }

@@ -86,6 +86,45 @@ pub enum GateOutcome {
     Deny { reason: String },
 }
 
+/// Terminal status of a tool action that the gate previously allowed.
+///
+/// Recorded after the tool finishes so the audit row in
+/// `pending_approvals` carries a full before-and-after trail per the
+/// issue #2135 acceptance criterion. The variant set is intentionally
+/// small — anything richer belongs in the structured tool result,
+/// not the approval audit row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionOutcome {
+    /// Tool ran and returned a non-error [`ToolResult`].
+    Success,
+    /// Tool ran and returned an error [`ToolResult`] (or panicked).
+    Failure,
+    /// Tool did not run because the runtime aborted (timeout,
+    /// cancellation, supervisor shutdown).
+    Aborted,
+}
+
+impl ExecutionOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Aborted => "aborted",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "success" => Some(Self::Success),
+            "failure" => Some(Self::Failure),
+            "aborted" => Some(Self::Aborted),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +156,29 @@ mod tests {
     fn approval_decision_serializes_as_snake_case() {
         let s = serde_json::to_string(&ApprovalDecision::ApproveAlwaysForTool).unwrap();
         assert_eq!(s, "\"approve_always_for_tool\"");
+    }
+
+    #[test]
+    fn execution_outcome_round_trips() {
+        for o in [
+            ExecutionOutcome::Success,
+            ExecutionOutcome::Failure,
+            ExecutionOutcome::Aborted,
+        ] {
+            assert_eq!(ExecutionOutcome::from_str(o.as_str()), Some(o));
+        }
+        assert!(ExecutionOutcome::from_str("partial").is_none());
+    }
+
+    #[test]
+    fn execution_outcome_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ExecutionOutcome::Success).unwrap(),
+            "\"success\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ExecutionOutcome::Aborted).unwrap(),
+            "\"aborted\""
+        );
     }
 }

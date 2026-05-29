@@ -113,7 +113,7 @@ async fn composio_authorize_errors_without_session() {
 async fn composio_delete_connection_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_delete_connection(&config, "c-1")
+    let err = composio_delete_connection(&config, "c-1", false)
         .await
         .unwrap_err();
     assert!(err.contains("composio unavailable"));
@@ -123,7 +123,7 @@ async fn composio_delete_connection_errors_without_session() {
 async fn composio_list_tools_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_list_tools(&config, None).await.unwrap_err();
+    let err = composio_list_tools(&config, None, None).await.unwrap_err();
     // Same tolerance as `composio_list_toolkits_errors_without_session`.
     assert!(
         err.to_lowercase().contains("composio")
@@ -231,11 +231,16 @@ fn invalidate_connected_integrations_cache_is_safe_without_prior_insert() {
 
 // ── Mock-backend integration tests for ops ─────────────────────
 
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::{
+    chunk_id, Chunk, Metadata, SourceKind, SourceRef,
+};
 use axum::{
     extract::{Path, Query},
     routing::{get, post},
     Json, Router,
 };
+use chrono::{TimeZone, Utc};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
@@ -310,6 +315,39 @@ fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
     c
 }
 
+fn sample_memory_chunk(source_kind: SourceKind, source_id: &str, seq: u32) -> Chunk {
+    sample_memory_chunk_with_owner(source_kind, source_id, "alice@example.com", seq)
+}
+
+fn sample_memory_chunk_with_owner(
+    source_kind: SourceKind,
+    source_id: &str,
+    owner: &str,
+    seq: u32,
+) -> Chunk {
+    let ts = Utc
+        .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
+        .unwrap();
+    let content = format!("composio memory {source_id} {owner} {seq}");
+    Chunk {
+        id: chunk_id(source_kind, source_id, seq, &content),
+        content,
+        metadata: Metadata {
+            source_kind,
+            source_id: source_id.to_string(),
+            owner: owner.to_string(),
+            timestamp: ts,
+            time_range: (ts, ts),
+            tags: vec!["composio".to_string()],
+            source_ref: Some(SourceRef::new(format!("composio://{source_id}/{seq}"))),
+        },
+        token_count: 12,
+        seq_in_source: seq,
+        created_at: ts,
+        partial_message: false,
+    }
+}
+
 #[tokio::test]
 async fn composio_list_toolkits_via_mock() {
     let app = Router::new().route(
@@ -350,6 +388,60 @@ async fn composio_list_connections_via_mock_counts_active() {
 }
 
 #[tokio::test]
+async fn composio_authorize_clears_pending_meta_connection_before_handoff() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let deletes_for_delete = Arc::clone(&deletes);
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"ig-pending","toolkit":"instagram","status":"PENDING"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(move |Path(id): Path<String>| {
+                let deletes = Arc::clone(&deletes_for_delete);
+                async move {
+                    if id == "ig-pending" {
+                        deletes.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Json(json!({"success": true, "data": {"deleted": true}}))
+                }
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/authorize",
+            post(|Json(body): Json<Value>| async move {
+                assert_eq!(body["toolkit"], "instagram");
+                Json(json!({
+                    "success": true,
+                    "data": {
+                        "connectUrl": "https://meta.example/oauth",
+                        "connectionId": "c-new"
+                    }
+                }))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let outcome = composio_authorize(&config, "instagram", None)
+        .await
+        .unwrap();
+    assert_eq!(outcome.value.connection_id, "c-new");
+    assert_eq!(deletes.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn composio_authorize_via_mock_publishes_event_and_returns_url() {
     let app = Router::new().route(
         "/agent-integrations/composio/authorize",
@@ -379,8 +471,205 @@ async fn composio_delete_connection_via_mock() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_delete_connection(&config, "c1").await.unwrap();
+    let outcome = composio_delete_connection(&config, "c1", false)
+        .await
+        .unwrap();
     assert!(outcome.value.deleted);
+}
+
+#[tokio::test]
+async fn composio_delete_connection_clear_memory_deletes_slack_source() {
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c1","toolkit":"slack","status":"ACTIVE"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(|Path(_id): Path<String>| async move {
+                Json(json!({"success": true, "data": {"deleted": true}}))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let target = sample_memory_chunk(SourceKind::Chat, "slack:c1", 0);
+    let unrelated = sample_memory_chunk(SourceKind::Chat, "slack:c2", 0);
+    memory_tree_store::upsert_chunks(&config, &[target, unrelated]).expect("chunks should seed");
+
+    let outcome = composio_delete_connection(&config, "c1", true)
+        .await
+        .unwrap();
+
+    assert!(outcome.value.deleted);
+    assert_eq!(outcome.value.memory_chunks_deleted, 1);
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Chat),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].metadata.source_id, "slack:c2");
+}
+
+#[tokio::test]
+async fn composio_delete_connection_clear_memory_keeps_other_gmail_connections() {
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c1","toolkit":"gmail","status":"ACTIVE"},
+                        {"id":"c2","toolkit":"gmail","status":"ACTIVE"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(|Path(_id): Path<String>| async move {
+                Json(json!({"success": true, "data": {"deleted": true}}))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let c1_account = sample_memory_chunk_with_owner(
+        SourceKind::Email,
+        "gmail:pilot-at-example-dot-com",
+        "gmail-sync:c1",
+        0,
+    );
+    let c2_account = sample_memory_chunk_with_owner(
+        SourceKind::Email,
+        "gmail:pilot-at-example-dot-com",
+        "gmail-sync:c2",
+        1,
+    );
+    let c1_connection_scoped =
+        sample_memory_chunk_with_owner(SourceKind::Email, "gmail:c1:thread-a", "gmail-sync:c1", 2);
+    let c2_connection_scoped =
+        sample_memory_chunk_with_owner(SourceKind::Email, "gmail:c2:thread-b", "gmail-sync:c2", 3);
+    memory_tree_store::upsert_chunks(
+        &config,
+        &[
+            c1_account,
+            c2_account.clone(),
+            c1_connection_scoped,
+            c2_connection_scoped.clone(),
+        ],
+    )
+    .expect("chunks should seed");
+
+    let outcome = composio_delete_connection(&config, "c1", true)
+        .await
+        .unwrap();
+
+    assert!(outcome.value.deleted);
+    assert_eq!(outcome.value.memory_chunks_deleted, 2);
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Email),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.iter().any(|chunk| chunk.id == c2_account.id));
+    assert!(remaining
+        .iter()
+        .any(|chunk| chunk.id == c2_connection_scoped.id));
+}
+
+#[tokio::test]
+async fn notion_cleanup_targets_include_synced_page_sources() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    let memory = std::sync::Arc::new(
+        MemoryClient::from_workspace_dir(config.workspace_dir.clone())
+            .expect("memory client should initialise"),
+    );
+    let mut state = SyncState::new("notion", "conn-1");
+    state.mark_synced("page-a@2026-01-01T00:00:00Z");
+    state.mark_synced("page-b");
+    state.save(&memory).await.expect("sync state should save");
+
+    let targets = composio_memory_targets_for_connection(&config, Some("notion"), "conn-1")
+        .await
+        .expect("notion cleanup targets should resolve");
+
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "notion:page-a".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "notion:page-b".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "composio-notion-page-page-a".to_string()
+    )));
+}
+
+#[tokio::test]
+async fn notion_cleanup_targets_surface_corrupt_sync_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+    let memory = std::sync::Arc::new(
+        MemoryClient::from_workspace_dir(config.workspace_dir.clone())
+            .expect("memory client should initialise"),
+    );
+    memory
+        .kv_set(
+            Some(super::super::providers::sync_state::KV_NAMESPACE),
+            "notion:conn-1",
+            &serde_json::json!({ "toolkit": 42 }),
+        )
+        .await
+        .expect("corrupt sync state should be written");
+
+    let err = composio_memory_targets_for_connection(&config, Some("notion"), "conn-1")
+        .await
+        .expect_err("corrupt sync state should surface");
+
+    assert!(err.to_string().contains("failed to load notion sync state"));
+}
+
+#[tokio::test]
+async fn drive_cleanup_targets_are_connection_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = test_config(&tmp);
+
+    let targets = composio_memory_targets_for_connection(&config, Some("google_drive"), "conn-1")
+        .await
+        .expect("drive cleanup targets should resolve");
+
+    assert!(targets.contains(&MemoryCleanupTarget::Exact(
+        SourceKind::Document,
+        "drive:conn-1".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Prefix(
+        SourceKind::Document,
+        "googledrive:conn-1:".to_string()
+    )));
+    assert!(targets.contains(&MemoryCleanupTarget::Prefix(
+        SourceKind::Document,
+        "google_drive:conn-1/".to_string()
+    )));
 }
 
 #[tokio::test]
@@ -461,7 +750,7 @@ async fn composio_list_tools_via_mock_with_filter() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]))
+    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]), None)
         .await
         .unwrap();
     assert_eq!(outcome.value.tools.len(), 2);
@@ -521,9 +810,12 @@ async fn composio_execute_via_mock_propagates_backend_error() {
 
 #[tokio::test]
 async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
+    let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
     use crate::openhuman::config::TEST_ENV_LOCK;
-    use crate::openhuman::memory::tree::content_store::raw::{raw_rel_path, RawKind};
-    use crate::openhuman::memory::tree::rpc::{list_chunks_rpc, ListChunksRequest};
+    use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
+    use crate::openhuman::memory_tree::tree::rpc::{list_chunks_rpc, ListChunksRequest};
     let _cache_guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -872,6 +1164,7 @@ fn integration(toolkit: &str, connected: bool) -> ConnectedIntegration {
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected,
+        non_active_status: None,
     }
 }
 
@@ -1325,7 +1618,7 @@ async fn composio_list_connections_routes_through_direct_mode() {
 async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
-    let result = composio_list_tools(&config, None).await;
+    let result = composio_list_tools(&config, None, None).await;
     match result {
         Ok(outcome) => {
             // If the prefetch returns empty connections (test env may
@@ -1562,5 +1855,87 @@ fn composio_transport_timeout_is_dropped_by_before_send() {
     assert!(
         crate::core::observability::is_transient_integrations_failure(&event),
         "composio transport timeout must be dropped by integrations filter (#1608)"
+    );
+}
+
+// ── TAURI-RUST-X9 (#1166): direct-mode auth-rejection routing ───────────
+//
+// Pins the contract that direct-mode 401 / Invalid API key shapes are
+// classified by the observability matcher AND their failure-tag stays
+// `non_2xx` so the `before_send` integrations filter has consistent
+// inputs. Together with the classifier-arm tests in
+// `core::observability` these tests prove the leak path (~15.7 k events
+// in ~22h before #1166) is closed end-to-end.
+
+#[test]
+fn composio_direct_invalid_api_key_classifies_as_provider_user_state() {
+    // The verbatim Sentry TAURI-RUST-X9 wire shape — emitted by
+    // `ops.rs::composio_list_connections` direct branch via the
+    // `report_composio_op_error` hook restored in #1166. Routing this
+    // through `expected_error_kind` is what demotes it to
+    // `ProviderUserState` (info breadcrumb) instead of firing a Sentry
+    // event.
+    let msg = "[composio-direct] list_connections failed: \
+               Composio v3 connected_accounts failed: \
+               HTTP 401: Invalid API key: ak_VsUvq*****";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+        "the canonical TAURI-RUST-X9 wire shape must demote via the composio-direct arm"
+    );
+}
+
+#[test]
+fn composio_direct_invalid_api_key_failure_tag_is_non_2xx() {
+    // Belt-and-suspenders: even if `expected_error_kind` ever stops
+    // matching the body (regression in the classifier arm), the
+    // failure tag must STILL be `non_2xx`. Combined with the
+    // `before_send` filter's transient-status handling and a
+    // future-added `status="401"` tag (Patch 1 doesn't extract status
+    // from the `HTTP 401` shape — only the `Backend returned <status>`
+    // shape — so this just pins the safe default), this is the
+    // backstop drop path.
+    let rendered = "[composio-direct] list_connections failed: \
+                    Composio v3 connected_accounts failed: \
+                    HTTP 401: Invalid API key: ak_VsUvq*****";
+    assert_eq!(
+        classify_composio_failure_tag(rendered),
+        "non_2xx",
+        "direct-mode auth-rejection must tag as non_2xx (not transport)"
+    );
+}
+
+#[test]
+fn composio_direct_invalid_api_key_extract_status_returns_none() {
+    // Pins the contract: `extract_backend_returned_status` only parses
+    // the integrations-layer `Backend returned <status>` rendering, NOT
+    // the direct-mode `HTTP 401` shape. The direct-mode arm relies on
+    // the classifier demotion + the failure-tag drop path instead of
+    // status extraction; if this ever changes (e.g. we extend the
+    // status extractor to cover both shapes), the new behaviour should
+    // come with an explicit test, not be inferred.
+    let rendered = "[composio-direct] list_connections failed: \
+                    Composio v3 connected_accounts failed: \
+                    HTTP 401: Invalid API key: ak_…";
+    assert_eq!(
+        extract_backend_returned_status(rendered),
+        None,
+        "direct-mode HTTP 401 must not parse via extract_backend_returned_status"
+    );
+}
+
+#[test]
+fn composio_direct_500_does_not_demote() {
+    // Discrimination test from the composio side — a real bug shape
+    // (500 with no auth body) MUST escape the classifier and reach
+    // `report_error_message`. Without this guard the matcher in
+    // `observability.rs` could be tightened too far and silence
+    // genuine backend faults.
+    let msg = "[composio-direct] list_connections failed: \
+               Composio v3 connected_accounts failed: HTTP 500";
+    assert_eq!(
+        crate::core::observability::expected_error_kind(msg),
+        None,
+        "composio-direct 500 with no auth body must remain an unclassified bug shape"
     );
 }

@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import type { IconType } from 'react-icons';
 import { FaDiscord, FaGlobe, FaTelegramPlane } from 'react-icons/fa';
 import { IoChatbubble } from 'react-icons/io5';
+
+import YuanbaoIcon from '../channels/YuanbaoIcon';
 import {
   LuBlocks,
   LuBot,
@@ -48,40 +50,52 @@ export function SkillIconBadge({
   );
 }
 
-export const CHANNEL_ICONS: Record<string, ReactNode> = {
-  telegram: (
+export function getChannelIcons(
+  t: (key: string, fallback?: string) => string
+): Record<string, ReactNode> {
+  return {
+    telegram: (
     <SkillIconBadge
       icon={FaTelegramPlane}
-      label="Telegram"
+      label={t('skills.channelIcon.telegram')}
       bgClassName="bg-[#E7F4FB]"
       iconClassName="text-[#249CD8]"
     />
   ),
-  discord: (
+    discord: (
     <SkillIconBadge
       icon={FaDiscord}
-      label="Discord"
+      label={t('skills.channelIcon.discord')}
       bgClassName="bg-[#EEF2FF]"
       iconClassName="text-[#5865F2]"
     />
   ),
-  web: (
+    web: (
     <SkillIconBadge
       icon={FaGlobe}
-      label="Web"
+      label={t('skills.channelIcon.web')}
       bgClassName="bg-stone-100 dark:bg-neutral-800"
       iconClassName="text-stone-600 dark:text-neutral-300"
     />
   ),
-  imessage: (
+    imessage: (
     <SkillIconBadge
       icon={IoChatbubble}
-      label="iMessage"
+      label={t('skills.channelIcon.imessage')}
       bgClassName="bg-[#E8F8EE]"
       iconClassName="text-[#34C759]"
     />
   ),
-};
+    yuanbao: (
+      <span
+        role="img"
+        aria-label={t('skills.channelIcon.yuanbao')}
+        className="flex h-8 w-8 items-center justify-center rounded-xl shadow-sm ring-1 ring-black/5 bg-white">
+        <YuanbaoIcon className="h-[18px] w-[18px]" />
+      </span>
+    ),
+  };
+}
 
 const CATEGORY_META: Record<
   SkillCategory,

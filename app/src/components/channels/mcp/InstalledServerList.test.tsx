@@ -183,8 +183,9 @@ describe('InstalledServerList', () => {
         onBrowseCatalog={() => {}}
       />
     );
-    // The status dot has title="error"
-    expect(screen.getByTitle('error')).toBeInTheDocument();
+    // The status dot title is the i18n'd label ('Error' in English) —
+    // sourced from `channels.status.error` per `STATUS_I18N_KEYS`.
+    expect(screen.getByTitle('Error')).toBeInTheDocument();
   });
 
   it('falls back to disconnected status when no matching status entry', () => {
@@ -197,7 +198,26 @@ describe('InstalledServerList', () => {
         onBrowseCatalog={() => {}}
       />
     );
-    expect(screen.getByTitle('disconnected')).toBeInTheDocument();
+    expect(screen.getByTitle('Disconnected')).toBeInTheDocument();
+  });
+
+  // -----------------------------------------------------------------------
+  // Defensive rendering with malformed props
+  // -----------------------------------------------------------------------
+
+  it('does not crash when statuses is undefined', () => {
+    // Guard: passing undefined instead of [] should not throw
+    render(
+      <InstalledServerList
+        servers={[SERVER_1]}
+        statuses={undefined as unknown as ConnStatus[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    // Server name still renders; status falls back to disconnected
+    expect(screen.getByText('File Server')).toBeInTheDocument();
   });
 
   it('calls onBrowseCatalog from the header link', () => {
@@ -214,5 +234,288 @@ describe('InstalledServerList', () => {
     // Only the header link button is present when servers are non-empty.
     fireEvent.click(screen.getByRole('button', { name: 'Browse catalog' }));
     expect(onBrowse).toHaveBeenCalledTimes(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // Filter behaviour (the new search/filter feature)
+  // -----------------------------------------------------------------------
+
+  it('shows all servers when filter is the empty string', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter=""
+      />
+    );
+    expect(screen.getByText('File Server')).toBeInTheDocument();
+    expect(screen.getByText('DB Server')).toBeInTheDocument();
+  });
+
+  it('filters by display_name case-insensitively', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="FILE"
+      />
+    );
+    expect(screen.getByText('File Server')).toBeInTheDocument();
+    expect(screen.queryByText('DB Server')).not.toBeInTheDocument();
+  });
+
+  it('filters by qualified_name', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="db-server"
+      />
+    );
+    // SERVER_2 has qualified_name 'acme/db-server' — matched
+    expect(screen.getByText('DB Server')).toBeInTheDocument();
+    expect(screen.queryByText('File Server')).not.toBeInTheDocument();
+  });
+
+  it('filters by description', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="reads files"
+      />
+    );
+    // SERVER_1 has description 'Reads files' — matched
+    expect(screen.getByText('File Server')).toBeInTheDocument();
+    expect(screen.queryByText('DB Server')).not.toBeInTheDocument();
+  });
+
+  it('treats undefined description as empty (no false match) without crashing', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_2]} // description: undefined
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="undefined"
+      />
+    );
+    // 'undefined' must not match the absent description literally — assertion
+    // here is that the filter logic doesn't blow up and the no-match path runs.
+    expect(screen.queryByText('DB Server')).not.toBeInTheDocument();
+  });
+
+  it('trims surrounding whitespace from the filter', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="   File   "
+      />
+    );
+    expect(screen.getByText('File Server')).toBeInTheDocument();
+    expect(screen.queryByText('DB Server')).not.toBeInTheDocument();
+  });
+
+  it('shows "no matches" message including the query when filter matches nothing', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="zzz-nope"
+      />
+    );
+    expect(screen.getByText('No servers match "zzz-nope".')).toBeInTheDocument();
+  });
+
+  it('shows "X of Y servers" count via an aria-live region when filtering', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="File"
+      />
+    );
+    // `status` is NOT a "name from content" role per WAI-ARIA, so the
+    // accessible name doesn't come from text. Query by text and then
+    // verify the live-region attributes on the same element.
+    const status = screen.getByText('1 of 2 servers');
+    expect(status).toHaveAttribute('role', 'status');
+    expect(status).toHaveAttribute('aria-live', 'polite');
+  });
+
+  it('hides the count when filter is empty', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter=""
+      />
+    );
+    expect(screen.queryByText(/of \d+ servers/)).not.toBeInTheDocument();
+  });
+
+  it('hides the count when filter is only whitespace', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="   "
+      />
+    );
+    expect(screen.queryByText(/of \d+ servers/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the original empty state (not the filtered no-match) when there are zero servers', () => {
+    render(
+      <InstalledServerList
+        servers={[]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="anything"
+      />
+    );
+    expect(screen.getByText('No MCP servers installed yet.')).toBeInTheDocument();
+    expect(screen.queryByText(/No servers match/)).not.toBeInTheDocument();
+  });
+
+  // -----------------------------------------------------------------------
+  // Keyboard navigation (ArrowUp / ArrowDown across server buttons)
+  // -----------------------------------------------------------------------
+
+  it('moves focus to the next server on ArrowDown', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    const first = screen.getByRole('button', { name: /File Server/i });
+    const second = screen.getByRole('button', { name: /DB Server/i });
+    first.focus();
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: 'ArrowDown' });
+    expect(second).toHaveFocus();
+  });
+
+  it('moves focus to the previous server on ArrowUp', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    const first = screen.getByRole('button', { name: /File Server/i });
+    const second = screen.getByRole('button', { name: /DB Server/i });
+    second.focus();
+    fireEvent.keyDown(second, { key: 'ArrowUp' });
+    expect(first).toHaveFocus();
+  });
+
+  it('clamps focus at the last server on ArrowDown', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    const second = screen.getByRole('button', { name: /DB Server/i });
+    second.focus();
+    fireEvent.keyDown(second, { key: 'ArrowDown' });
+    // No wrap-around.
+    expect(second).toHaveFocus();
+  });
+
+  it('clamps focus at the first server on ArrowUp', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    const first = screen.getByRole('button', { name: /File Server/i });
+    first.focus();
+    fireEvent.keyDown(first, { key: 'ArrowUp' });
+    expect(first).toHaveFocus();
+  });
+
+  it('does not move focus or preventDefault for unrelated keys', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+      />
+    );
+    const first = screen.getByRole('button', { name: /File Server/i });
+    first.focus();
+    const event = fireEvent.keyDown(first, { key: 'a' });
+    // The listener should ignore unrelated keys; focus stays put.
+    expect(first).toHaveFocus();
+    // fireEvent returns false if preventDefault was called — verify it wasn't.
+    expect(event).toBe(true);
+  });
+
+  it('arrow keys traverse only the visible (filtered) items', () => {
+    render(
+      <InstalledServerList
+        servers={[SERVER_1, SERVER_2]}
+        statuses={[]}
+        selectedId={null}
+        onSelect={() => {}}
+        onBrowseCatalog={() => {}}
+        filter="File"
+      />
+    );
+    const visible = screen.getByRole('button', { name: /File Server/i });
+    visible.focus();
+    // Only one filtered item → ArrowDown should clamp (single visible)
+    fireEvent.keyDown(visible, { key: 'ArrowDown' });
+    expect(visible).toHaveFocus();
+    expect(screen.queryByRole('button', { name: /DB Server/i })).not.toBeInTheDocument();
   });
 });

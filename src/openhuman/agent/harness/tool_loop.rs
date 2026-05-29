@@ -2,10 +2,10 @@ use crate::openhuman::agent::cost::TurnCost;
 use crate::openhuman::agent::multimodal;
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::stop_hooks::{current_stop_hooks, StopDecision, TurnState};
-use crate::openhuman::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, Provider, ProviderCapabilityError, ProviderDelta,
 };
+use crate::openhuman::tools::policy::{DefaultToolPolicy, PolicyDecision, ToolPolicy};
 use crate::openhuman::tools::traits::ToolScope;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
@@ -28,6 +28,150 @@ const STREAM_CHUNK_MIN_CHARS: usize = 80;
 /// Used as a safe fallback when `max_tool_iterations` is unset or configured as zero.
 pub(crate) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 
+/// Repeated-failure circuit breaker. The plain iteration cap lets an agent grind
+/// the same dead-end (e.g. re-running `pip install` when there is no pip) until
+/// `max_iterations`, then return an opaque `MaxIterationsExceeded` that the caller
+/// just re-spawns — losing the failure context. These thresholds let the loop bail
+/// EARLY with a root-cause summary instead.
+///
+/// If the SAME `(tool, args)` call fails this many times, the agent is repeating a
+/// known-failed action verbatim — stop.
+pub(crate) const REPEAT_FAILURE_THRESHOLD: u32 = 3;
+/// If this many tool calls fail back-to-back with no success in between (even with
+/// varied args), the agent is making no progress — stop.
+pub(crate) const NO_PROGRESS_FAILURE_THRESHOLD: u32 = 6;
+/// Hard policy rejections (a security block or a gate denial) are deterministic:
+/// the identical `(tool, args)` call provably cannot succeed. Halt on the FIRST
+/// verbatim repeat — i.e. the second identical attempt — rather than letting the
+/// agent burn the generic [`REPEAT_FAILURE_THRESHOLD`] on a doomed call. The first
+/// occurrence is allowed through so the model can read the "do not retry" reason
+/// and pivot to a different, allowed approach.
+pub(crate) const HARD_REJECT_REPEAT_THRESHOLD: u32 = 2;
+
+/// Classification of a deterministic, recognizable policy rejection, detected via
+/// the stable markers the security/approval layers emit
+/// ([`crate::openhuman::security::POLICY_BLOCKED_MARKER`] /
+/// [`POLICY_DENIED_MARKER`](crate::openhuman::security::POLICY_DENIED_MARKER)).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum HardReject {
+    /// Permanent for this tier (read-only write, forbidden/credential path,
+    /// disallowed command) — never succeeds on retry.
+    Blocked,
+    /// User denied / approval timed out this turn — re-asking the identical call
+    /// only re-prompts.
+    Denied,
+}
+
+/// Recognize a hard policy rejection from a tool result. Matches anywhere in the
+/// string (not just the prefix) so it survives the `Error: …` wrapping the tool
+/// layer adds. `Blocked` takes precedence over `Denied` if both somehow appear.
+pub(crate) fn hard_reject_kind(result: &str) -> Option<HardReject> {
+    if result.contains(crate::openhuman::security::POLICY_BLOCKED_MARKER) {
+        Some(HardReject::Blocked)
+    } else if result.contains(crate::openhuman::security::POLICY_DENIED_MARKER) {
+        Some(HardReject::Denied)
+    } else {
+        None
+    }
+}
+
+/// Shared repeated-failure circuit breaker, used by BOTH agent loops
+/// (`run_tool_call_loop` here and `run_inner_loop` in `subagent_runner`) so they
+/// can't drift. Tracks per-`(tool,args)`-signature failure counts and a
+/// consecutive-failure run within a single agent turn; [`Self::record`] returns
+/// a root-cause halt summary once a threshold trips.
+#[derive(Default)]
+pub(crate) struct RepeatFailureGuard {
+    sig_counts: std::collections::HashMap<String, u32>,
+    consecutive: u32,
+}
+
+impl RepeatFailureGuard {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one tool-call outcome. `args_sig` is a stable string form of the
+    /// arguments (e.g. the command). Returns `Some(summary)` when the breaker
+    /// trips — the caller should stop the loop and return that summary as the
+    /// agent's result instead of grinding to `max_iterations`.
+    pub(crate) fn record(
+        &mut self,
+        tool: &str,
+        args_sig: &str,
+        success: bool,
+        result: &str,
+    ) -> Option<String> {
+        if success {
+            self.consecutive = 0;
+            return None;
+        }
+        self.consecutive += 1;
+        let count = {
+            let c = self
+                .sig_counts
+                .entry(format!("{tool}|{args_sig}"))
+                .or_insert(0);
+            *c += 1;
+            *c
+        };
+        // Hard policy rejections trip on the first verbatim repeat; everything
+        // else uses the generic identical-retry threshold.
+        let hard = hard_reject_kind(result);
+        let repeat_threshold = if hard.is_some() {
+            HARD_REJECT_REPEAT_THRESHOLD
+        } else {
+            REPEAT_FAILURE_THRESHOLD
+        };
+        if count >= repeat_threshold {
+            return Some(match hard {
+                Some(HardReject::Blocked) => format!(
+                    "Stopping: the `{tool}` call is blocked by the security policy and was \
+                     re-issued with identical arguments — it can never succeed this way. \
+                     Reason:\n{}\n\nDo not repeat this call; use an allowed alternative or report \
+                     that it can't be done here.",
+                    truncate_for_halt(result),
+                ),
+                Some(HardReject::Denied) => format!(
+                    "Stopping: the `{tool}` call was denied and re-issued unchanged — re-asking \
+                     will not change the answer. Reason:\n{}\n\nDo not repeat this call; take a \
+                     different approach or report that it can't be done here.",
+                    truncate_for_halt(result),
+                ),
+                None => format!(
+                    "Stopping: the `{tool}` call was retried {count} times with identical \
+                     arguments and kept failing — repeating it will not help. Last error:\n{}\n\n\
+                     This looks unrecoverable in the current environment (e.g. a missing \
+                     tool/dependency that cannot be installed here). Report this back instead of \
+                     retrying.",
+                    truncate_for_halt(result),
+                ),
+            });
+        }
+        if self.consecutive >= NO_PROGRESS_FAILURE_THRESHOLD {
+            return Some(format!(
+                "Stopping: {} tool calls in a row failed with no progress. Last error (from \
+                 `{tool}`):\n{}\n\nDifferent commands are all failing — the goal looks unreachable \
+                 in this environment. Report this back instead of retrying.",
+                self.consecutive,
+                truncate_for_halt(result),
+            ));
+        }
+        None
+    }
+}
+
+/// Clamp the last-error text embedded in a circuit-breaker halt summary so a huge
+/// tool error (already capped at 1MB upstream) can't blow up the agent's result.
+pub(crate) fn truncate_for_halt(s: &str) -> String {
+    const MAX: usize = 600;
+    if s.chars().count() <= MAX {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(MAX).collect();
+    format!("{head}\n… [truncated]")
+}
+
 /// Execute a single turn of the agent loop: send messages, parse tool calls,
 /// execute tools, and loop until the LLM produces a final text response.
 /// When `silent` is true, suppresses stdout (for channel use).
@@ -49,6 +193,7 @@ pub(crate) async fn agent_turn(
     max_tool_iterations: usize,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
+    let default_policy = DefaultToolPolicy;
     run_tool_call_loop(
         provider,
         history,
@@ -57,7 +202,6 @@ pub(crate) async fn agent_turn(
         model,
         temperature,
         silent,
-        None,
         "channel",
         multimodal_config,
         max_tool_iterations,
@@ -66,6 +210,7 @@ pub(crate) async fn agent_turn(
         &[],
         None,
         payload_summarizer,
+        &default_policy,
     )
     .await
 }
@@ -108,8 +253,10 @@ pub(crate) async fn run_tool_call_loop(
     model: &str,
     temperature: f64,
     silent: bool,
-    approval: Option<&ApprovalManager>,
-    channel_name: &str,
+    // Retained in the harness signature (callers pass their channel) but no
+    // longer consumed here since the legacy CLI approval prompt was removed —
+    // approval now flows through the process-global `ApprovalGate`.
+    _channel_name: &str,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
@@ -117,6 +264,7 @@ pub(crate) async fn run_tool_call_loop(
     extra_tools: &[Box<dyn Tool>],
     on_progress: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
+    tool_policy: &dyn ToolPolicy,
 ) -> Result<String> {
     let max_iterations = if max_tool_iterations == 0 {
         DEFAULT_MAX_TOOL_ITERATIONS
@@ -133,12 +281,20 @@ pub(crate) async fn run_tool_call_loop(
         }
     };
 
-    let tool_specs: Vec<crate::openhuman::tools::ToolSpec> = tools_registry
+    // Filter to visible tools, then dedup by name before sending to the
+    // provider. Registry tools may collide with per-turn synthesised
+    // extra_tools (e.g. an `ArchetypeDelegationTool` whose
+    // `delegate_name = "research"` shadowing a same-named skill). Some
+    // providers (Anthropic, OpenHuman cloud after the uniqueness-enforcement
+    // rollout) 400 on duplicate tool names — see TAURI-RUST-4.
+    let filtered_specs: Vec<crate::openhuman::tools::ToolSpec> = tools_registry
         .iter()
         .chain(extra_tools.iter())
         .filter(|tool| is_visible(tool.name()))
         .map(|tool| tool.spec())
         .collect();
+    let tool_specs =
+        crate::openhuman::agent::harness::session::dedup_visible_tool_specs(filtered_specs);
     let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
 
     log::debug!(
@@ -173,6 +329,10 @@ pub(crate) async fn run_tool_call_loop(
     }
 
     let stop_hooks = current_stop_hooks();
+    // Repeated-failure circuit breaker — halts with a root cause rather than
+    // grinding to `max_iterations` (shared with the subagent loop).
+    let mut failure_guard = RepeatFailureGuard::new();
+    let mut halt_reason: Option<String> = None;
     for iteration in 0..max_iterations {
         if let Some(ref sink) = on_progress {
             if let Err(e) = sink
@@ -423,7 +583,11 @@ pub(crate) async fn run_tool_call_loop(
                     let assistant_history_content = if resp.tool_calls.is_empty() {
                         response_text.clone()
                     } else {
-                        build_native_assistant_history(&response_text, &resp.tool_calls)
+                        build_native_assistant_history(
+                            &response_text,
+                            resp.reasoning_content.as_deref(),
+                            &resp.tool_calls,
+                        )
                     };
 
                     let native_calls = resp.tool_calls;
@@ -601,35 +765,35 @@ pub(crate) async fn run_tool_call_loop(
                 }
             };
 
-            // ── Approval hook ────────────────────────────────
-            if let Some(mgr) = approval {
-                if mgr.needs_approval(&call.name) {
-                    let request = ApprovalRequest {
-                        tool_name: call.name.clone(),
-                        arguments: call.arguments.clone(),
-                    };
-
-                    // Only prompt interactively when approvals are supported; auto-approve on other channels.
-                    let decision = if channel_name == "cli" {
-                        mgr.prompt_cli(&request)
-                    } else {
-                        ApprovalResponse::Yes
-                    };
-
-                    mgr.record_decision(&call.name, &call.arguments, decision, channel_name);
-
-                    if decision == ApprovalResponse::No {
-                        let denied = "Denied by user.".to_string();
-                        emit_failed_completion(&denied).await;
-                        individual_results.push(denied.clone());
-                        let _ = writeln!(
-                            tool_results,
-                            "<tool_result name=\"{}\">\n{denied}\n</tool_result>",
-                            call.name
-                        );
-                        continue;
-                    }
+            // ── Tool policy check (#2131) ─────────────────
+            // Evaluate the pluggable ToolPolicy before any approval or
+            // execution. If the policy denies the call, skip everything
+            // (including approval side-effects) and return the denial
+            // reason as a tool error to the model.
+            if let PolicyDecision::Deny(reason) = tool_policy.evaluate(&call.name, &call.arguments)
+            {
+                tracing::debug!(
+                    iteration,
+                    tool = call.name.as_str(),
+                    reason = %reason,
+                    "[agent_loop] tool policy denied tool call"
+                );
+                let denied = format!("Tool '{}' denied by policy: {reason}", call.name);
+                emit_failed_completion(&denied).await;
+                individual_results.push(denied.clone());
+                let _ = writeln!(
+                    tool_results,
+                    "<tool_result name=\"{}\">\n{denied}\n</tool_result>",
+                    call.name
+                );
+                // Record so a re-issued identical call halts the turn rather than
+                // repeating a deterministic policy denial to max_iterations.
+                if let Some(halt) =
+                    failure_guard.record(&call.name, &call.arguments.to_string(), false, &denied)
+                {
+                    halt_reason = Some(halt);
                 }
+                continue;
             }
 
             // Look up the tool by name in the combined registry + extras,
@@ -668,16 +832,37 @@ pub(crate) async fn run_tool_call_loop(
                         "<tool_result name=\"{}\">\n{denied}\n</tool_result>",
                         call.name
                     );
+                    if let Some(halt) = failure_guard.record(
+                        &call.name,
+                        &call.arguments.to_string(),
+                        false,
+                        &denied,
+                    ) {
+                        halt_reason = Some(halt);
+                    }
                     continue;
                 }
             }
 
-            // ── External-effect approval gate (#1339) ─────────
+            // ── External-effect approval gate (#1339, #2135) ──
             // Tools whose `external_effect()` returns true route
             // through the process-global `ApprovalGate` so the UI
             // can prompt the user before `execute()` runs. The gate
             // is `None` when supervised mode is disabled or in test
             // envs — behavior matches the pre-#1339 path.
+            //
+            // `approval_request_id` carries the persisted row id
+            // forward so we can stamp the terminal execution
+            // outcome onto the same `pending_approvals` row after
+            // the tool finishes (issue #2135). `None` means the
+            // tool was either not gated (no supervised gate, not
+            // external-effect), was session-allowlist-shortcutted,
+            // or was denied — none of which produce an audit row
+            // that needs an "after" entry.
+            let mut approval_request_id: Option<String> = None;
+            let mut approval_gate_for_audit: Option<
+                std::sync::Arc<crate::openhuman::approval::ApprovalGate>,
+            > = None;
             if let Some(tool) = tool_opt {
                 if tool.external_effect_with_args(&call.arguments) {
                     if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
@@ -686,8 +871,15 @@ pub(crate) async fn run_tool_call_loop(
                             &call.arguments,
                         );
                         let redacted = crate::openhuman::approval::redact_args(&call.arguments);
-                        match gate.intercept(&call.name, &summary, redacted).await {
-                            crate::openhuman::approval::GateOutcome::Allow => {}
+                        let (outcome, request_id) =
+                            gate.intercept_audited(&call.name, &summary, redacted).await;
+                        match outcome {
+                            crate::openhuman::approval::GateOutcome::Allow => {
+                                approval_request_id = request_id;
+                                if approval_request_id.is_some() {
+                                    approval_gate_for_audit = Some(gate);
+                                }
+                            }
                             crate::openhuman::approval::GateOutcome::Deny { reason } => {
                                 tracing::warn!(
                                     iteration,
@@ -702,6 +894,20 @@ pub(crate) async fn run_tool_call_loop(
                                     "<tool_result name=\"{}\">\n{reason}\n</tool_result>",
                                     call.name
                                 );
+                                // Record the denial in the shared breaker (the
+                                // gate's `[policy-denied]` marker makes it a
+                                // hard reject) so a re-issued identical call
+                                // halts the turn instead of re-prompting
+                                // forever — the normal record path below is
+                                // skipped by this `continue`.
+                                if let Some(halt) = failure_guard.record(
+                                    &call.name,
+                                    &call.arguments.to_string(),
+                                    false,
+                                    &reason,
+                                ) {
+                                    halt_reason = Some(halt);
+                                }
                                 continue;
                             }
                         }
@@ -709,7 +915,7 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
 
-            let result = if let Some(tool) = tool_opt {
+            let (result, call_succeeded) = if let Some(tool) = tool_opt {
                 let tool_deadline =
                     crate::openhuman::tool_timeout::tool_execution_timeout_duration();
                 let timeout_secs = crate::openhuman::tool_timeout::tool_execution_timeout_secs();
@@ -882,7 +1088,30 @@ pub(crate) async fn run_tool_call_loop(
                         log::warn!("[agent_loop] progress sink closed while emitting ToolCallCompleted: {e}");
                     }
                 }
-                result_text
+                // ── Approval audit after-action row (#2135) ────
+                // Stamp the terminal status onto the same
+                // `pending_approvals` row the gate created before
+                // execution, so the audit trail carries both the
+                // before (approval) and after (executed_at +
+                // outcome). Best-effort: a write failure here is
+                // logged but not propagated to the agent.
+                if let (Some(gate), Some(req_id)) = (
+                    approval_gate_for_audit.as_ref(),
+                    approval_request_id.as_ref(),
+                ) {
+                    let exec_outcome = if success {
+                        crate::openhuman::approval::ExecutionOutcome::Success
+                    } else {
+                        crate::openhuman::approval::ExecutionOutcome::Failure
+                    };
+                    let err_text = if success {
+                        None
+                    } else {
+                        Some(result_text.as_str())
+                    };
+                    gate.record_execution(req_id, exec_outcome, err_text);
+                }
+                (result_text, success)
             } else {
                 tracing::warn!(
                     iteration,
@@ -891,7 +1120,7 @@ pub(crate) async fn run_tool_call_loop(
                 );
                 let msg = format!("Unknown tool: {}", call.name);
                 emit_failed_completion(&msg).await;
-                msg
+                (msg, false)
             };
 
             individual_results.push(result.clone());
@@ -900,6 +1129,22 @@ pub(crate) async fn run_tool_call_loop(
                 "<tool_result name=\"{}\">\n{}\n</tool_result>",
                 call.name, result
             );
+
+            // Repeated-failure circuit breaker (shared guard) — halt with a root
+            // cause instead of grinding to `max_iterations` on a doomed action.
+            if let Some(reason) = failure_guard.record(
+                &call.name,
+                &call.arguments.to_string(),
+                call_succeeded,
+                &result,
+            ) {
+                tracing::warn!(
+                    iteration,
+                    tool = call.name.as_str(),
+                    "[agent_loop] circuit breaker tripped — halting with root cause"
+                );
+                halt_reason = Some(reason);
+            }
         }
 
         // Add assistant message with tool calls + tool results to history.
@@ -917,6 +1162,27 @@ pub(crate) async fn run_tool_call_loop(
                 });
                 history.push(ChatMessage::tool(tool_msg.to_string()));
             }
+        }
+
+        // Circuit breaker tripped this iteration: return the root-cause summary
+        // as the agent's result instead of looping to `max_iterations`. The
+        // tool results are already in `history` above, so the caller still has
+        // full context if it wants it.
+        if let Some(reason) = halt_reason.take() {
+            // Mirror the normal-completion path: emit TurnCompleted before the
+            // early return, otherwise progress consumers stay "in-flight"
+            // indefinitely when the circuit breaker trips.
+            if let Some(ref sink) = on_progress {
+                if let Err(e) = sink
+                    .send(AgentProgress::TurnCompleted {
+                        iterations: (iteration + 1) as u32,
+                    })
+                    .await
+                {
+                    log::warn!("[agent_loop] progress sink closed at TurnCompleted: {e}");
+                }
+            }
+            return Ok(reason);
         }
     }
 

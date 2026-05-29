@@ -10,6 +10,8 @@ import {
 } from '../../store/deepLinkAuthState';
 import type { OAuthProviderConfig } from '../../types/oauth';
 import { IS_DEV } from '../../utils/config';
+import { handleDeepLinkUrls } from '../../utils/desktopDeepLinkListener';
+import { startLoopbackOauthListener } from '../../utils/loopbackOauthListener';
 import { prepareOAuthLoginLaunch } from '../../utils/oauthAppVersionGate';
 import { openUrl } from '../../utils/openUrl';
 import { isTauri } from '../../utils/tauriCommands';
@@ -229,7 +231,45 @@ const OAuthProviderButton = ({
       // hit a Tauri IPC round-trip and the result hasn't changed within a
       // single click handler.
       const backendUrl = preflight.backendUrl;
-      const loginUrl = `${backendUrl}/auth/${provider.id}/login${IS_DEV ? '?responseType=json' : ''}`;
+      // Prefer a loopback HTTP redirect (RFC 8252) over the openhuman:// deep
+      // link: deep links are unpredictable on Linux/Windows and rely on
+      // single-instance forwarding through a named pipe (#1130). If bind
+      // fails (port in use, not in Tauri, etc.) we fall back to the legacy
+      // deep-link path the backend already supports.
+      const loopback = isTauri() ? await startLoopbackOauthListener() : null;
+      const loginUrlBase = `${backendUrl}/auth/${provider.id}/login`;
+      const params = new URLSearchParams();
+      // `responseType=json` makes the backend return JSON in the browser tab
+      // instead of redirecting — useful as a pre-loopback dev workaround, but
+      // it shortcircuits the redirect so the loopback listener never fires.
+      // Only set it when we have no loopback handle (web build, or bind failed).
+      if (IS_DEV && !loopback) params.set('responseType', 'json');
+      if (loopback) params.set('redirectUri', loopback.redirectUri);
+      const loginUrl = params.toString() ? `${loginUrlBase}?${params}` : loginUrlBase;
+
+      if (loopback) {
+        // Race the loopback callback against the existing focus/timeout reset
+        // path. Browser hits 127.0.0.1 -> shell emits event -> we feed the URL
+        // through the same handler the openhuman:// path uses, so token
+        // exchange and CoreStateProvider commit logic stays in one place.
+        void loopback
+          .awaitCallback()
+          .then(callbackUrl => {
+            const synthetic = callbackUrl.replace(
+              /^https?:\/\/127\.0\.0\.1:\d+\/auth/,
+              'openhuman://auth'
+            );
+            void handleDeepLinkUrls([synthetic]);
+          })
+          .catch(err => {
+            warnLog('[%s] loopback callback failed', provider.id, err);
+            const isTimeout = err instanceof Error && err.message.includes('timed out');
+            if (isTimeout) {
+              setIsLoading(false);
+              setStartupError(t('oauth.button.loopbackTimeout'));
+            }
+          });
+      }
 
       if (IS_DEV) {
         console.log(`[dev] OAuth debug mode enabled. OAuth URL: ${loginUrl}`);

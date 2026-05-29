@@ -40,6 +40,18 @@ const zhCN3: TranslationMap = {
   'workspace.openVaultFailedMessage': '使用"显示文件夹"直接打开存储库目录。存储库路径：',
   'workspace.revealVaultFailed': '无法显示存储库文件夹',
   'workspace.revealFolder': '显示文件夹',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': '无法加载记忆图谱',
   'workspace.loadingGraph': '正在加载记忆图谱...',
   'workspace.graphViewMode': '记忆图谱视图模式',
@@ -181,6 +193,12 @@ const zhCN3: TranslationMap = {
   'bootCheck.restartUpdateCore': '重启 / 更新核心',
   'bootCheck.unexpectedError': '意外的启动检查错误',
   'bootCheck.actionFailed': '操作失败 — 请重试。',
+  'bootCheck.portConflictTitle': '无法启动应用引擎',
+  'bootCheck.portConflictBody':
+    '另一个进程正在占用 OpenHuman 所需的网络端口。我们将尝试自动修复此问题。',
+  'bootCheck.portConflictFixButton': '自动修复',
+  'bootCheck.portConflictFixing': '修复中…',
+  'bootCheck.portConflictFixFailed': '自动修复未成功。请重启您的计算机后重试。',
   'notifications.justNow': '刚刚',
   'notifications.minAgo': '{n} 分钟前',
   'notifications.hrAgo': '{n} 小时前',
@@ -205,6 +223,9 @@ const zhCN3: TranslationMap = {
   'about.update.status.default': '检查更新',
   'welcome.connectionFailed': '连接失败: {status} {statusText}',
   'welcome.connectionFailedMsg': '连接失败: {message}',
+  'welcome.continueLocally': '本地继续',
+  'welcome.localSessionStarting': '正在启动本地会话...',
+  'welcome.localSessionDesc': '使用离线本地配置文件，跳过 TinyHumans OAuth。',
   'chat.agentChatDesc': '与智能体进行直接对话。',
   'channels.activeRouteValue': '{channel} 通过 {authMode}',
   'privacy.dataKind.messages': '消息',
@@ -234,6 +255,7 @@ const zhCN3: TranslationMap = {
   'memory.ingestingTitle': '正在摄取 {title}',
   'mic.noAudioCaptured': '未捕获到音频',
   'mic.noSpeechDetected': '未检测到语音',
+  'mic.lowConfidenceResult': '无法清楚地理解音频 — 请重试',
   'mic.failedToStopRecording': '停止录音失败: {message}',
   'mic.transcriptionFailed': '转录失败: {message}',
   'reflections.kind.retrospective': '回顾',
@@ -367,6 +389,51 @@ const zhCN3: TranslationMap = {
   'channels.telegram.reconnect': '重新连接',
   'channels.telegram.savedRestartRequired': '频道已保存。重启应用以激活。',
   'channels.web.alwaysAvailable': '始终可用',
+
+  // Discord
+  'channels.discord.displayName': 'Discord',
+  'channels.discord.description': '通过 Discord 发送和接收消息。',
+  'channels.discord.authMode.bot_token.description': '提供你自己的 Discord bot token。',
+  'channels.discord.authMode.oauth.description':
+    '通过 OAuth 将 OpenHuman 机器人安装到你的 Discord 服务器。',
+  'channels.discord.authMode.managed_dm.description':
+    '将你的个人 Discord 账户关联到 OpenHuman 机器人。',
+  'channels.discord.fields.bot_token.label': '机器人代币',
+  'channels.discord.fields.bot_token.placeholder': '你的 Discord bot token',
+  'channels.discord.fields.guild_id.label': '服务器 (Guild) ID',
+  'channels.discord.fields.guild_id.placeholder': '可选：限制到特定服务器',
+
+  // Telegram
+  'channels.telegram.displayName': 'Telegram',
+  'channels.telegram.description': '通过 Telegram 发送和接收消息。',
+  'channels.telegram.authMode.managed_dm.description': '直接向 OpenHuman Telegram 机器人发送消息。',
+  'channels.telegram.authMode.bot_token.description':
+    '从 @BotFather 获取你自己的 Telegram Bot token。',
+  'channels.telegram.fields.bot_token.label': '机器人代币',
+  'channels.telegram.fields.bot_token.placeholder': '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11',
+  'channels.telegram.fields.allowed_users.label': '允许的用户',
+  'channels.telegram.fields.allowed_users.placeholder': '逗号分隔的 Telegram 用户名',
+
+  // Web
+  'channels.web.displayName': '网络',
+  'channels.web.description': '通过内置的 Web UI 聊天。',
+  'channels.web.authMode.managed_dm.description': '使用嵌入式 Web 聊天 — 无需设置。',
+  'welcome.continueLocallyExperimental': '在本地继续（实验性）',
+  'channels.yuanbao.connect': 'Connect',
+  'channels.yuanbao.connecting': '连接中…',
+  'channels.yuanbao.fieldRequired': '{field} 不能为空',
+  'channels.yuanbao.reconnect': 'Reconnect',
+  'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
+  'channels.yuanbao.unexpectedStatus': '意外的连接状态：{status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default zhCN3;

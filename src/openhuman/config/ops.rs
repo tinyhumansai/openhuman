@@ -71,23 +71,12 @@ pub async fn reload_config_snapshot_with_timeout(snapshot: &Config) -> Result<Co
     }
 }
 
-async fn normalize_loaded_config(config: &mut Config) {
-    // [#1123] Normalize legacy configs at load time: existing users who
-    // completed onboarding before the Joyride migration may have
-    // onboarding_completed=true but chat_onboarding_completed=false.
-    // Without this, pick_target_agent_id() still routes them to the
-    // welcome agent on every chat message.
-    if config.onboarding_completed && !config.chat_onboarding_completed {
-        tracing::info!(
-            "[config] normalizing legacy onboarding state: setting \
-             chat_onboarding_completed=true (Joyride migration)"
-        );
-        config.chat_onboarding_completed = true;
-        // Best-effort persist — don't fail the load if save errors.
-        if let Err(e) = config.save().await {
-            tracing::warn!("[config] failed to persist onboarding normalization: {e}");
-        }
-    }
+async fn normalize_loaded_config(_config: &mut Config) {
+    // No-op: welcome-agent routing normalization removed. The welcome agent
+    // has been deleted; all chat turns route directly to the orchestrator.
+    // The `chat_onboarding_completed` field in Config is retained for
+    // backward-compatible deserialization of existing config.toml files
+    // but is no longer read by routing logic.
 }
 
 /// Returns the default workspace directory fallback (~/.openhuman/workspace).
@@ -286,6 +275,22 @@ pub fn client_config_json(config: &Config) -> serde_json::Value {
         "heartbeat_provider": config.heartbeat_provider,
         "learning_provider": config.learning_provider,
         "subconscious_provider": config.subconscious_provider,
+        "voice_providers": config.voice_providers.iter().map(|v| {
+            serde_json::json!({
+                "id": v.id,
+                "slug": v.slug,
+                "label": v.label,
+                "endpoint": v.endpoint,
+                "auth_style": v.auth_style.as_str(),
+                "capability": v.capability.as_str(),
+                "stt_api_style": v.stt_api_style,
+                "tts_api_style": v.tts_api_style,
+                "default_stt_model": v.default_stt_model,
+                "default_tts_voice": v.default_tts_voice,
+            })
+        }).collect::<Vec<_>>(),
+        "stt_provider": config.stt_provider,
+        "tts_provider": config.tts_provider,
     })
 }
 
@@ -356,6 +361,24 @@ pub struct RuntimeSettingsPatch {
     pub reasoning_enabled: Option<bool>,
 }
 
+/// Partial update for the `[autonomy]` block — the agent's filesystem access
+/// mode. Each `None` field is left unchanged. `trusted_roots`, `allowed_commands`,
+/// `forbidden_paths`, and `auto_approve`, when `Some`, REPLACE the corresponding
+/// array wholesale.
+#[derive(Debug, Clone, Default)]
+pub struct AutonomySettingsPatch {
+    /// `"readonly" | "supervised" | "full"` (case-insensitive).
+    pub level: Option<String>,
+    pub workspace_only: Option<bool>,
+    pub allowed_commands: Option<Vec<String>>,
+    pub forbidden_paths: Option<Vec<String>>,
+    pub trusted_roots: Option<Vec<crate::openhuman::security::TrustedRoot>>,
+    pub allow_tool_install: Option<bool>,
+    pub max_actions_per_hour: Option<u32>,
+    /// "Always allow" allowlist — tool names the gate skips prompting for.
+    pub auto_approve: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BrowserSettingsPatch {
     pub enabled: Option<bool>,
@@ -383,6 +406,30 @@ pub struct AnalyticsSettingsPatch {
 #[derive(Debug, Clone, Default)]
 pub struct MeetSettingsPatch {
     pub auto_orchestrator_handoff: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SearchSettingsPatch {
+    /// One of `managed` | `parallel` | `brave`. Empty string / unknown values
+    /// fall back to `managed` at registration time.
+    pub engine: Option<String>,
+    /// 1..=20. Clamped silently at apply time.
+    pub max_results: Option<usize>,
+    /// Per-request timeout in seconds (default 15).
+    pub timeout_secs: Option<u64>,
+    /// Parallel API key. An empty string clears the stored key.
+    pub parallel_api_key: Option<String>,
+    /// Brave Search API key. An empty string clears the stored key.
+    pub brave_api_key: Option<String>,
+    /// Websites the assistant may open/read (`web_fetch` / `curl`), as a
+    /// host allowlist. Entries are exact hosts (`reuters.com`), which also
+    /// match their subdomains, or `"*"` for all public sites. Empty list
+    /// blocks all web access. Mirrors `[http_request].allowed_domains`.
+    pub allowed_domains: Option<Vec<String>>,
+    /// Convenience toggle for the "Allow all sites" switch. `Some(true)`
+    /// sets the allowlist to `["*"]`; `Some(false)` drops the wildcard while
+    /// keeping any explicit hosts. Applied after `allowed_domains`.
+    pub allow_all: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -487,7 +534,44 @@ pub async fn apply_model_settings(
         config.model_routes = routes;
     }
     if let Some(providers) = update.cloud_providers {
+        // The schema handlers strip reserved-slug entries (e.g. the built-in
+        // "openhuman" provider seeded by `migrations::unify_ai_provider_settings`)
+        // from the user's payload. Preserve any reserved-slug entries that
+        // already live in the stored config so a routine settings save
+        // doesn't accidentally delete them — `primary_cloud` and the
+        // per-workload routing fields can reference these built-ins, and
+        // losing them would break inference routing.
+        use crate::openhuman::config::schema::cloud_providers::is_slug_reserved;
+        let preserved: Vec<_> = config
+            .cloud_providers
+            .iter()
+            .filter(|e| is_slug_reserved(e.slug.trim()))
+            .cloned()
+            .collect();
+        log::debug!(
+            "[config] apply_model_settings: preserving {} reserved cloud provider(s) before overwrite",
+            preserved.len()
+        );
         config.cloud_providers = providers;
+        let before_reinject = config.cloud_providers.len();
+        for entry in preserved {
+            // Defensive: don't double-add if the payload (somehow) already
+            // contained an entry with this reserved slug — the schema-handler
+            // filter is the canonical guard, but apply_model_settings is also
+            // reachable from tests and CLI paths that bypass that filter.
+            let preserved_slug = entry.slug.trim();
+            if !config
+                .cloud_providers
+                .iter()
+                .any(|e| e.slug.trim() == preserved_slug)
+            {
+                config.cloud_providers.push(entry);
+            }
+        }
+        log::debug!(
+            "[config] apply_model_settings: reinjected {} reserved cloud provider(s)",
+            config.cloud_providers.len() - before_reinject
+        );
     }
     if let Some(primary) = update.primary_cloud {
         let trimmed = primary.trim();
@@ -542,7 +626,7 @@ pub async fn apply_model_settings(
     // so a UI embedder switch recovers prior memory under the new
     // signature. Coverage-gated + non-fatal: if the active signature did
     // not actually change, this enqueues nothing.
-    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
+    crate::openhuman::memory_queue::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -592,7 +676,7 @@ pub async fn apply_memory_settings(
     // dark. Idempotent + non-fatal (covered space enqueues nothing; errors
     // are logged, never fail the settings save). §7's migration is
     // one-shot so it does not cover a later switch — this does.
-    crate::openhuman::memory::tree::jobs::ensure_reembed_backfill(config);
+    crate::openhuman::memory_queue::ensure_reembed_backfill(config);
     let snapshot = snapshot_config_json(config)?;
     Ok(RpcOutcome::new(
         snapshot,
@@ -733,6 +817,130 @@ pub async fn load_and_apply_runtime_settings(
     apply_runtime_settings(&mut config, update).await
 }
 
+/// Updates the `[autonomy]` (agent access mode) settings in the configuration.
+///
+/// After saving, publishes a `DomainEvent::System(AutonomyConfigChanged)` so that
+/// live agent sessions can rebuild their `SecurityPolicy` without a core restart
+/// (see `channels::runtime`). Returns the updated config snapshot.
+pub async fn apply_autonomy_settings(
+    config: &mut Config,
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    use crate::openhuman::security::AutonomyLevel;
+
+    if let Some(level) = update.level {
+        config.autonomy.level = match level.trim().to_ascii_lowercase().as_str() {
+            "readonly" | "read_only" | "read-only" => AutonomyLevel::ReadOnly,
+            "supervised" => AutonomyLevel::Supervised,
+            "full" => AutonomyLevel::Full,
+            other => {
+                return Err(format!(
+                    "invalid autonomy level '{other}' (expected readonly | supervised | full)"
+                ))
+            }
+        };
+    }
+    if let Some(workspace_only) = update.workspace_only {
+        config.autonomy.workspace_only = workspace_only;
+    }
+    if let Some(allowed_commands) = update.allowed_commands {
+        config.autonomy.allowed_commands = allowed_commands;
+    }
+    if let Some(forbidden_paths) = update.forbidden_paths {
+        config.autonomy.forbidden_paths = forbidden_paths;
+    }
+    if let Some(trusted_roots) = update.trusted_roots {
+        config.autonomy.trusted_roots = trusted_roots;
+    }
+    if let Some(allow_tool_install) = update.allow_tool_install {
+        config.autonomy.allow_tool_install = allow_tool_install;
+    }
+    if let Some(max_actions_per_hour) = update.max_actions_per_hour {
+        if max_actions_per_hour == 0 {
+            return Err(format!(
+                "max_actions_per_hour must be at least 1 (got {max_actions_per_hour})"
+            ));
+        }
+        config.autonomy.max_actions_per_hour = max_actions_per_hour;
+    }
+    if let Some(auto_approve) = update.auto_approve {
+        config.autonomy.auto_approve = auto_approve;
+    }
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    // Swap the process-global live SecurityPolicy so `current()` reflects the new
+    // access mode immediately, then broadcast for any other interested listeners.
+    crate::openhuman::security::live_policy::reload_from(&config.autonomy);
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::AutonomyConfigChanged,
+    );
+
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "autonomy settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies autonomy settings updates, and saves it.
+pub async fn load_and_apply_autonomy_settings(
+    update: AutonomySettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_autonomy_settings(&mut config, update).await
+}
+
+/// Serializes the load-modify-save in [`add_auto_approve_tool`] so two
+/// concurrent "Always allow" appends (different tools) can't read the same
+/// `auto_approve`, each push their own, and clobber the other on save
+/// (last-write-wins lost-update). Holding it across load→save makes the second
+/// caller observe the first's write and union the entries. Process-local; the
+/// allowlist lives in a single per-launch config file. (CodeRabbit, PR #2706.)
+fn auto_approve_write_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Append `tool_name` to `autonomy.auto_approve` ("Always allow") and persist +
+/// reload the live policy. Idempotent — a no-op (no disk write) when the tool is
+/// already allow-listed. Backs the `ApproveAlwaysForTool` approval decision.
+pub async fn add_auto_approve_tool(tool_name: &str) -> Result<(), String> {
+    // Serialize the read-modify-write against concurrent appends (see lock doc).
+    let _guard = auto_approve_write_lock().lock().await;
+    let mut config = load_config_with_timeout().await?;
+    if config.autonomy.auto_approve.iter().any(|t| t == tool_name) {
+        tracing::debug!(
+            tool = tool_name,
+            "[config:auto_approve] tool already allow-listed; nothing to persist"
+        );
+        return Ok(());
+    }
+    let mut next = config.autonomy.auto_approve.clone();
+    next.push(tool_name.to_string());
+    let patch = AutonomySettingsPatch {
+        auto_approve: Some(next),
+        ..AutonomySettingsPatch::default()
+    };
+    apply_autonomy_settings(&mut config, patch)
+        .await
+        .map(|_| ())
+}
+
+/// Returns the current `[autonomy]` settings block as JSON (no secrets).
+///
+/// Emits a log line so `into_cli_compatible_json` wraps the payload under
+/// `result` — the shape every consumer reads (`AgentAccessPanel` /
+/// `AutonomyPanel` use `res.result.*`, and `json_rpc_e2e` strips the wrapper).
+pub async fn get_autonomy_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let value = serde_json::to_value(&config.autonomy).map_err(|e| e.to_string())?;
+    Ok(RpcOutcome::single_log(value, "autonomy settings read"))
+}
+
 /// Updates the analytics-related settings in the configuration.
 pub async fn apply_analytics_settings(
     config: &mut Config,
@@ -785,6 +993,197 @@ pub async fn load_and_apply_meet_settings(
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
     let mut config = load_config_with_timeout().await?;
     apply_meet_settings(&mut config, update).await
+}
+
+/// Updates the search engine configuration. Empty API-key strings clear the
+/// stored value rather than treat empty-string as "credential present".
+pub async fn apply_search_settings(
+    config: &mut Config,
+    update: SearchSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    if let Some(engine) = update.engine {
+        let trimmed = engine.trim();
+        // Reject blatantly bogus values so the panel can show a friendly
+        // error. Unknown values still resolve to managed at registration
+        // time via `effective_engine()`, but failing fast in the writer keeps
+        // the TOML clean.
+        match trimmed {
+            "managed" | "parallel" | "brave" => {
+                config.search.engine = trimmed.to_string();
+            }
+            other => {
+                return Err(format!(
+                    "engine must be one of managed/parallel/brave (got {other:?})"
+                ));
+            }
+        }
+    }
+    if let Some(n) = update.max_results {
+        if !(1..=20).contains(&n) {
+            return Err(format!("max_results must be between 1 and 20 (got {n})"));
+        }
+        config.search.max_results = n;
+    }
+    if let Some(secs) = update.timeout_secs {
+        if !(1..=120).contains(&secs) {
+            return Err(format!(
+                "timeout_secs must be between 1 and 120 (got {secs})"
+            ));
+        }
+        config.search.timeout_secs = secs;
+    }
+    if let Some(raw) = update.parallel_api_key {
+        let trimmed = raw.trim();
+        config.search.parallel.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    if let Some(raw) = update.brave_api_key {
+        let trimmed = raw.trim();
+        config.search.brave.api_key = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+    }
+    // Allowed websites (web_fetch / curl host allowlist). Trim + drop blanks
+    // + dedupe so the saved TOML stays clean; `"*"` is preserved as the
+    // allow-all wildcard.
+    let allowlist_touched = update.allowed_domains.is_some() || update.allow_all.is_some();
+    let before_count = config.http_request.allowed_domains.len();
+    let before_allow_all = config.http_request.allowed_domains.iter().any(|d| d == "*");
+    if let Some(domains) = update.allowed_domains {
+        let mut cleaned: Vec<String> = domains
+            .into_iter()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty())
+            .collect();
+        cleaned.sort();
+        cleaned.dedup();
+        config.http_request.allowed_domains = cleaned;
+    }
+    if let Some(allow_all) = update.allow_all {
+        if allow_all {
+            config.http_request.allowed_domains = vec!["*".to_string()];
+        } else {
+            config.http_request.allowed_domains.retain(|d| d != "*");
+        }
+    }
+    if allowlist_touched {
+        // Grep-friendly state-transition log for a security-sensitive surface.
+        // Record only host counts + the allow-all wildcard flag — never the raw
+        // hosts (redaction rule). Lets us trace "who widened/narrowed web reach"
+        // without leaking the allowlist contents.
+        let after_count = config.http_request.allowed_domains.len();
+        let after_allow_all = config.http_request.allowed_domains.iter().any(|d| d == "*");
+        tracing::info!(
+            before_count,
+            after_count,
+            before_allow_all,
+            after_allow_all,
+            "[config] http_request.allowed_domains updated"
+        );
+    }
+    config.save().await.map_err(|e| e.to_string())?;
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "search settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+pub async fn load_and_apply_search_settings(
+    update: SearchSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_search_settings(&mut config, update).await
+}
+
+/// Read the current search engine settings (with API keys redacted to a
+/// presence boolean so the UI can show "configured" without ever rendering
+/// the raw secret).
+pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let result = serde_json::json!({
+        "engine": config.search.requested_engine_str(),
+        "effective_engine": match config.search.effective_engine() {
+            crate::openhuman::config::SearchEngine::Managed => "managed",
+            crate::openhuman::config::SearchEngine::Parallel => "parallel",
+            crate::openhuman::config::SearchEngine::Brave => "brave",
+        },
+        "max_results": config.search.max_results,
+        "timeout_secs": config.search.timeout_secs,
+        "parallel_configured": config.search.parallel.has_key(),
+        "brave_configured": config.search.brave.has_key(),
+        "allowed_domains": config.http_request.allowed_domains,
+        "allow_all": config.http_request.allowed_domains.iter().any(|d| d == "*"),
+    });
+    Ok(RpcOutcome::new(
+        result,
+        vec!["search settings read".to_string()],
+    ))
+}
+
+/// Reads dashboard settings exposed to the desktop UI.
+pub async fn get_dashboard_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings entry"
+    );
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings loading config"
+    );
+
+    let config = load_config_with_timeout().await.map_err(|error| {
+        tracing::warn!(
+            target: "openhuman_core::config",
+            request_id = %request_id,
+            method = "openhuman.config_get_dashboard_settings",
+            error = %error,
+            "OPENHUMAN: get_dashboard_settings config load failed"
+        );
+        error
+    })?;
+
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings serializing dashboard settings"
+    );
+    let result = serde_json::to_value(&config.dashboard).map_err(|error| {
+        let message = error.to_string();
+        tracing::warn!(
+            target: "openhuman_core::config",
+            request_id = %request_id,
+            method = "openhuman.config_get_dashboard_settings",
+            error = %message,
+            "OPENHUMAN: get_dashboard_settings serialization failed"
+        );
+        message
+    })?;
+
+    tracing::debug!(
+        target: "openhuman_core::config",
+        request_id = %request_id,
+        method = "openhuman.config_get_dashboard_settings",
+        "OPENHUMAN: get_dashboard_settings exit"
+    );
+    Ok(RpcOutcome::new(
+        result,
+        vec!["dashboard settings read".to_string()],
+    ))
 }
 
 /// Loads the configuration, applies browser settings updates, and saves it.
@@ -1074,36 +1473,11 @@ pub async fn get_onboarding_completed() -> Result<RpcOutcome<bool>, String> {
 ///
 /// On a false→true transition, seeds the recurring morning-briefing
 /// cron job via [`crate::openhuman::cron::seed::seed_proactive_agents`].
-/// The welcome agent is **no longer auto-fired here** — the renderer
-/// fires a hidden `chat_send` trigger through the normal dispatch path
-/// (see `OnboardingLayout.completeAndExit`) so the welcome runs in a
-/// real thread session and subsequent user messages continue the same
-/// conversation with full prior context.
-///
-/// **[#1123] `chat_onboarding_completed` IS now flipped here** on the
-/// false→true transition. The welcome-agent onboarding flow was replaced
-/// by a Joyride walkthrough in the frontend, so the chat flag no longer
-/// needs the welcome agent to set it via `complete_onboarding`.
 pub async fn set_onboarding_completed(value: bool) -> Result<RpcOutcome<bool>, String> {
     tracing::debug!(value, "[onboarding] set_onboarding_completed called");
     let mut config = load_config_with_timeout().await?;
     let was_completed = config.onboarding_completed;
     config.onboarding_completed = value;
-
-    // [#1123] On a false→true transition, also flip chat_onboarding_completed=true
-    // so the UI never enters the old welcome-lock state. The Joyride walkthrough
-    // replaced the welcome-agent flow; chat_onboarding_completed no longer needs
-    // to be driven by the welcome agent calling complete_onboarding.
-    if value && !was_completed {
-        tracing::debug!(
-            "[onboarding] false→true transition: setting chat_onboarding_completed=true \
-             (welcome-agent replaced by Joyride walkthrough — skipping lockdown)"
-        );
-        config.chat_onboarding_completed = true;
-    }
-
-    // [#1123] Legacy normalization moved to load_config_with_timeout() so it
-    // catches ALL code paths (routing, snapshots, etc.), not just this function.
 
     config.save().await.map_err(|e| e.to_string())?;
 

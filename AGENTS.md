@@ -27,7 +27,7 @@ Commands in documentation assume the **repo root** unless noted: `pnpm dev` runs
 
 - **Shipped product**: desktop — Windows, macOS, Linux (see [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) "Platform reach").
 - **Tauri host** (`app/src-tauri`): **desktop-only**. Do not add Android/iOS branches.
-- **Core runs in-process** as a tokio task inside the Tauri host (sidecar removed in PR #1061). The host owns its lifetime via `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`. Frontend RPC still goes over HTTP to `http://127.0.0.1:<port>/rpc` authenticated with a per-launch hex bearer in `OPENHUMAN_CORE_TOKEN`; the Tauri command `core_rpc_token` exposes it to the renderer. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process for debugging.
+- **Core runs in-process** as a tokio task inside the Tauri host (sidecar removed in PR #1061). The host owns its lifetime via `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`. Frontend RPC still goes over HTTP to `http://127.0.0.1:<port>/rpc` authenticated with a per-launch hex bearer; the Tauri shell generates it in `CoreProcessHandle::new()` and hands it to the embedded server in-memory via `run_server_embedded_with_ready(rpc_token: Some(_))` — `OPENHUMAN_CORE_TOKEN` is no longer set on the process env by the desktop shell (CLI / docker / cloud env-as-config is preserved). The Tauri command `core_rpc_token` exposes the bearer to the renderer. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process for debugging.
 
 **Where logic lives**
 
@@ -70,6 +70,11 @@ pnpm rust:check         # same as above
 # whisper-rs / llama.cpp on macOS Tahoe (Apple Silicon) fail with `-mcpu=native`.
 # Workaround for `cargo check`/`cargo test`:
 GGML_NATIVE=OFF cargo check --manifest-path Cargo.toml
+
+# PR maintenance
+pnpm pr:sync-main --help        # inspect options
+pnpm pr:sync-main               # dry-run: scan open PRs targeting main
+pnpm pr:sync-main --execute     # merge latest main into each matching PR branch and push
 ```
 
 **Tests**: Vitest in `app/` (`pnpm test`, `pnpm test:coverage`); Rust via `pnpm test:rust` (runs `scripts/test-rust-with-mock.sh`).
@@ -296,7 +301,7 @@ Bundled prompts live under **`src/openhuman/agent/prompts/`** at the **repositor
 
 Thin desktop host. Top-level modules: `core_process`, `core_rpc`, `cdp`, `cef_preflight`, `cef_profile`, `dictation_hotkeys`, `file_logging`, `mascot_native_window`, `native_notifications`, `notification_settings`, `process_kill`, `process_recovery`, `screen_capture`, `window_state`, plus per-provider scanners (`discord_scanner`, `gmessages_scanner`, `imessage_scanner`, `meet_scanner`, `slack_scanner`, `telegram_scanner`, `whatsapp_scanner`), `meet_audio` / `meet_call` / `meet_video`, `fake_camera`, `webview_accounts`, `webview_apis`.
 
-**Core lifecycle**: `core_process::CoreProcessHandle` spawns the in-process JSON-RPC server and authenticates inbound RPC with a hex bearer (`OPENHUMAN_CORE_TOKEN`). Stale-listener policy (#1130): on conflict the handle probes `GET /`, decides if the listener is an OpenHuman core, then `kill_pid_term` → `kill_pid_force` with PID revalidation guarding against PID reuse. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
+**Core lifecycle**: `core_process::CoreProcessHandle` spawns the in-process JSON-RPC server and authenticates inbound RPC with a hex bearer that the shell hands the embedded server in-memory via `run_server_embedded_with_ready(rpc_token: Some(_))` (no env-var crossing). Stale-listener policy (#1130): on conflict the handle probes `GET /`, decides if the listener is an OpenHuman core, then `kill_pid_term` → `kill_pid_force` with PID revalidation guarding against PID reuse. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
 
 Registered IPC commands (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)) include `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, `core_rpc_token`, `start_core_process`, `restart_core_process`, window commands, and `openhuman_*` daemon helpers.
 
@@ -525,6 +530,8 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 - **Pre-merge checks** (when touching code): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust (`Cargo.toml` at root and/or `app/src-tauri/Cargo.toml` as appropriate).
 - **No dynamic imports** in production **`app/src`** code — use **static** `import` / `import type` at the top of the module. Do **not** use `import()` (async dynamic import), `React.lazy(() => import(...))`, or `await import('…')` to load app modules, Tauri APIs, or RPC clients. **Why:** predictable chunk graph, simpler static analysis, fewer surprises in Tauri + Vite, and easier code review. **If a module must not run at load time** (e.g. heavy optional path), use a static import and **guard the call site** with `try/catch` or an explicit runtime check instead of deferring module load via dynamic import. **Exceptions:** Vitest harness patterns (`vi.importActual`, dynamic imports **only** inside `*.test.ts` / `__tests__` / `test/setup.ts` when required by the runner); ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).- **Type-only imports**: `import type` where appropriate.
 - **Dual socket / tool sync**: If you change realtime protocol, keep **frontend** (`socketService` / MCP transport) and **core** socket behavior aligned (see [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) dual-socket section).
+- **i18n for all UI text**: Every user-visible string in `app/src/**` (headings, labels, button text, placeholders, status chips, toasts, dialog copy, `aria-label`, etc.) must go through `useT()` from `app/src/lib/i18n/I18nContext`. Hard-coded literals in JSX or `label=`/`placeholder=`/`aria-label=` props are not allowed. Add the new key to [`app/src/lib/i18n/en.ts`](app/src/lib/i18n/en.ts) in the same PR — other locales fall back to English. **Exceptions:** developer-only debug logs, code identifiers, and non-display data (URLs, slugs, technical sentinel values).
+- **i18n chunk files — update ALL locales**: The source-of-truth translation files are the **chunk files** under `app/src/lib/i18n/chunks/` (`en-{1..5}.ts` plus `<locale>-{1..5}.ts` for each locale). When adding or changing keys in `en.ts`, you **must also** add them to the corresponding English chunk file (`en-N.ts`) **and** to the same chunk number for every non-English locale (use the English value as a placeholder — translators fill in later). CI enforces parity via `pnpm i18n:check`; missing keys in any locale chunk will fail the i18n coverage gate. Locales: `ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pt`, `ru`, `zh-CN`.
 
 ---
 
@@ -532,7 +539,7 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 
 - **macOS deep links**: Often require a built **`.app`** bundle; not only `tauri dev`.
 - **`window.__TAURI__`**: Not assumed at module load; use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`.
-- **Core is in-process**: `core_rpc` reaches `http://127.0.0.1:<port>/rpc` (default port `7788`) authenticated with `OPENHUMAN_CORE_TOKEN`. `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo (sidecar removed in PR #1061). For standalone debugging: `./target/debug/openhuman-core serve` writes its token to `{workspace}/core.token` (default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`); public endpoints `GET /health`, `GET /schema`, `GET /events` need no auth.
+- **Core is in-process**: `core_rpc` reaches `http://127.0.0.1:<port>/rpc` (default port `7788`) authenticated with a per-launch hex bearer. The desktop shell hands the bearer to the embedded server in-memory (no `OPENHUMAN_CORE_TOKEN` on the process env); docker / cloud / VPS operators still supply the bearer via `OPENHUMAN_CORE_TOKEN` (env-as-config). `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo (sidecar removed in PR #1061). For standalone debugging: `./target/debug/openhuman-core serve` writes its token to `{workspace}/core.token` (default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`); public endpoints `GET /health`, `GET /schema`, `GET /events` need no auth.
 
 ---
 

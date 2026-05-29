@@ -103,6 +103,19 @@ const bn4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'বাদ দেওয়া হয়েছে',
   'intelligence.memoryChunk.scoreBars.heading': 'কে ন   রা খা',
   'intelligence.memoryChunk.scoreBars.kept': 'রাখা হয়েছে',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'এনটিটি ধরন',
   'intelligence.screenDebug.active': 'সক্রিয়',
   'intelligence.screenDebug.app': 'অ্যাপ',
@@ -146,6 +159,8 @@ const bn4: TranslationMap = {
   'notifications.center.filterAll': 'সব ফিল্টার',
   'notifications.center.markAllRead': 'সব পঠিত চিহ্নিত করুন',
   'notifications.center.title': 'বিজ্ঞপ্তি',
+  'oauth.button.loopbackTimeout':
+    'সাইন-ইন টাইম আউট হয়েছে — ব্রাউজার OAuth পুনর্নির্দেশনা সম্পন্ন করেনি। অনুগ্রহ করে আবার চেষ্টা করুন।',
   'oauth.button.connecting': 'সংযোগ হচ্ছে...',
   'oauth.login.continueWith': 'দিয়ে চালিয়ে যান',
   'onboarding.contextGathering.buildingDesc': 'বিল্ডিং বিবরণ',
@@ -186,6 +201,8 @@ const bn4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'LLM বিবরণ',
   'pages.settings.ai.voice': 'ভয়েস',
   'pages.settings.ai.voiceDesc': 'ভয়েস বিবরণ',
+  'pages.settings.ai.embeddings': 'এমবেডিংস',
+  'pages.settings.ai.embeddingsDesc': 'মেমরি পুনরুদ্ধারের জন্য ভেক্টর এনকোডিং মডেল',
   'pages.settings.aiSection.description':
     'ল্যাঙ্গুয়েজ মডেল প্রোভাইডার, লোকাল Ollama, এবং ভয়েস (STT / TTS)।',
   'pages.settings.aiSection.title': 'AI',
@@ -289,7 +306,7 @@ const bn4: TranslationMap = {
   'settings.ai.clearStoredKey': 'সংরক্ষিত কী মুছুন',
   'settings.ai.connectProvider': 'প্রোভাইডার সংযোগ করুন',
   'settings.ai.customRouting': 'কাস্টম রুটিং',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'ডিফল্ট এতে সমাধান হয়',
   'settings.ai.discard': 'বাতিল করুন',
   'settings.ai.editProvider': 'প্রোভাইডার সম্পাদনা করুন',
   'settings.ai.llmProviders': 'LLM প্রোভাইডার',
@@ -297,6 +314,18 @@ const bn4: TranslationMap = {
   'settings.ai.localOllama': 'লোকাল (Ollama)',
   'settings.ai.modelLabel': 'মডেল',
   'settings.ai.noCustomProviders': 'কোনো কাস্টম প্রোভাইডার নেই',
+  'settings.ai.openAiCompat.authHeaderExample': 'অনুমোদন: বহনকারী <আপনার কী>',
+  'settings.ai.openAiCompat.authHeaderLabel': '2th head]9',
+  'settings.ai.openAiCompat.baseUrlLabel': 'বেস URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'অনুপলব্ধ',
+  'settings.ai.openAiCompat.clearKey': 'ক্লিয়ার কী',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'কী কনফিগার করা',
+  'settings.ai.openAiCompat.keyRequired': 'কী প্রয়োজন',
+  'settings.ai.openAiCompat.rotateKey': 'ঘোরান কী',
+  'settings.ai.openAiCompat.setKey': 'সেট কী',
+  'settings.ai.openAiCompat.title': 'OpenAI-সামঞ্জস্যপূর্ণ এন্ডপয়েন্ট',
   'settings.ai.providerLabel': 'প্রোভাইডার',
   'settings.ai.routing': 'রুটিং',
   'settings.ai.routingCustom': 'কাস্টম রুটিং',
@@ -391,6 +420,17 @@ const bn4: TranslationMap = {
   'pages.settings.account.migration': 'অন্য সহকারী থেকে আমদানি করুন',
   'pages.settings.account.migrationDesc':
     'OpenClaw (এবং শীঘ্রই Hermes) থেকে মেমরি ও নোট এই ওয়ার্কস্পেসে স্থানান্তর করুন।',
+  'composio.connect.scope.read': 'পড়ুন',
+  'composio.connect.scope.readHint': 'এজেন্টকে এই সংযোগ থেকে ডেটা পড়ার অনুমতি দিন।',
+  'composio.connect.scope.write': 'লিখুন',
+  'composio.connect.scope.writeHint':
+    'এজেন্টকে এই সংযোগের মাধ্যমে ডেটা তৈরি বা পরিবর্তন করার অনুমতি দিন।',
+  'composio.connect.scope.admin': 'প্রশাসক',
+  'composio.connect.scope.adminHint':
+    'এজেন্টকে সেটিংস, অনুমতি বা ধ্বংসাত্মক ক্রিয়াকলাপ পরিচালনা করার অনুমতি দিন।',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Composio দ্বারা চালিত ইন্টিগ্রেশনের জন্য রাউটিং, ট্রিগার এবং ইতিহাস।',
 };
 
 export default bn4;

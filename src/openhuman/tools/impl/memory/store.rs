@@ -1,5 +1,5 @@
-use crate::openhuman::memory::safety;
 use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::memory_store::safety;
 use crate::openhuman::security::policy::ToolOperation;
 use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
@@ -26,7 +26,10 @@ impl Tool for MemoryStoreTool {
     }
 
     fn description(&self) -> &str {
-        "Store a fact, preference, or note in a namespace. Requires explicit namespace (e.g. global, background, autocomplete, skill-telegram)."
+        "Store a general fact or note in a namespace (e.g. global, background, autocomplete, skill-{id}). \
+         Do NOT use this for user preferences — for any preference (how the user wants you to behave, \
+         their tastes, settings, standing instructions) call `save_preference` instead, which routes it \
+         to the preference store the assistant actually reads. Requires an explicit namespace."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -120,7 +123,7 @@ impl Tool for MemoryStoreTool {
 mod tests {
     use super::*;
     use crate::openhuman::embeddings::NoopEmbedding;
-    use crate::openhuman::memory::UnifiedMemory;
+    use crate::openhuman::memory_store::UnifiedMemory;
     use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
     use tempfile::TempDir;
 

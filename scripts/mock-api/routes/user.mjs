@@ -1,5 +1,5 @@
 import { json } from "../http.mjs";
-import { behavior, getMockTeam } from "../state.mjs";
+import { behavior, getMockTeam, getDelayMs, sleep } from "../state.mjs";
 
 export function handleUser(ctx) {
   const { method, url, res, origin } = ctx;
@@ -105,6 +105,20 @@ export function handleUser(ctx) {
   }
 
   if (method === "GET" && /^\/rewards\/me\/?(\?.*)?$/.test(url)) {
+    const rewardsDelayMs = getDelayMs("rewardsDelayMs");
+    if (rewardsDelayMs > 0) {
+      sleep(rewardsDelayMs).then(() => {
+        if (mockBehavior.rewardsServiceError === "true") {
+          json(res, 503, {
+            success: false,
+            error: "Rewards service unavailable",
+          });
+        } else {
+          json(res, 200, { success: true, data: buildRewardsSnapshot(mockBehavior) });
+        }
+      });
+      return true;
+    }
     if (mockBehavior.rewardsServiceError === "true") {
       json(res, 503, {
         success: false,

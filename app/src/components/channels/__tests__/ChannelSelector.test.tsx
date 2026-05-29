@@ -72,4 +72,53 @@ describe('ChannelSelector', () => {
     expect(within(telegramTab).getByText('Error')).toBeInTheDocument();
     expect(within(telegramTab).queryByText('Disconnected')).not.toBeInTheDocument();
   });
+
+  it('renders the MCP virtual tab', () => {
+    renderWithProviders(
+      <ChannelSelector
+        definitions={FALLBACK_DEFINITIONS}
+        selectedChannel="telegram"
+        onSelectChannel={onSelect}
+      />
+    );
+    expect(screen.getByRole('button', { name: /mcp servers/i })).toBeInTheDocument();
+  });
+
+  it('calls onSelectChannel with "mcp" when MCP tab is clicked', () => {
+    const handleSelect = vi.fn();
+    renderWithProviders(
+      <ChannelSelector
+        definitions={FALLBACK_DEFINITIONS}
+        selectedChannel="telegram"
+        onSelectChannel={handleSelect}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /mcp servers/i }));
+    expect(handleSelect).toHaveBeenCalledWith('mcp');
+  });
+
+  it('applies selected styling to MCP tab when it is the active channel', () => {
+    renderWithProviders(
+      <ChannelSelector
+        definitions={FALLBACK_DEFINITIONS}
+        selectedChannel="mcp"
+        onSelectChannel={onSelect}
+      />
+    );
+    const mcpBtn = screen.getByRole('button', { name: /mcp servers/i });
+    expect(mcpBtn.className).toContain('bg-primary-50');
+  });
+
+  it('applies unselected styling to MCP tab when another channel is active', () => {
+    renderWithProviders(
+      <ChannelSelector
+        definitions={FALLBACK_DEFINITIONS}
+        selectedChannel="telegram"
+        onSelectChannel={onSelect}
+      />
+    );
+    const mcpBtn = screen.getByRole('button', { name: /mcp servers/i });
+    expect(mcpBtn.className).not.toContain('bg-primary-50');
+    expect(mcpBtn.className).toContain('bg-stone-50');
+  });
 });

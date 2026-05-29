@@ -2,7 +2,7 @@
 //!
 //! The Tauri shell hosts CEF-backed webviews for third-party accounts
 //! (Gmail, WhatsApp, Telegram, Slack, Discord, LinkedIn, Zoom, Google
-//! Messages). Their HTTP cookies live in a single shared Chromium
+//! Messages, WeChat). Their HTTP cookies live in a single shared Chromium
 //! cookie store at `{CEF_USER_DATA_DIR}/Default/Cookies` — a SQLite
 //! database. The core runs as a child sidecar and has no direct handle
 //! to CEF, so the Tauri shell exports `OPENHUMAN_CEF_COOKIES_DB`
@@ -15,12 +15,22 @@
 //! env var is missing, the DB can't be opened (locked, corrupt,
 //! nonexistent), or no matching rows exist, we report
 //! `logged_in: false` for every provider — never return an error, the
-//! welcome-agent snapshot must always build.
+//! snapshot must always build.
 //!
 //! This is a heuristic. Chromium prunes expired cookies at startup, so
 //! any row with a known session-cookie name is a strong signal the
 //! user has an active session for that provider.
 
 mod ops;
+pub mod wechat_ingest;
+
+#[cfg(test)]
+#[path = "wechat_ingest_test.rs"]
+mod tests;
 
 pub use ops::detect_webview_logins;
+pub use wechat_ingest::{
+    list_ingest_envelope, list_ingest_payload, memory_doc_ingest_list_snapshot,
+    memory_doc_ingest_peer_transcript, validate_scan, WechatChatRow, WechatMessageRow,
+    WechatScanPayload,
+};

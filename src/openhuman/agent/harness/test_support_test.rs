@@ -38,6 +38,7 @@ async fn keyword_provider_records_forced_then_fallback_turns() {
         text: Some("forced reply".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let messages = vec![ChatMessage::user("nothing should match here")];
@@ -393,7 +394,6 @@ async fn keyword_provider_drives_prompt_guided_tool_loop_to_completion() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -402,6 +402,7 @@ async fn keyword_provider_drives_prompt_guided_tool_loop_to_completion() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -442,7 +443,6 @@ async fn keyword_provider_drives_native_tool_calls_path() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -451,6 +451,7 @@ async fn keyword_provider_drives_native_tool_calls_path() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -497,7 +498,6 @@ async fn keyword_provider_chains_multiple_tools_across_iterations() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         10,
@@ -506,6 +506,7 @@ async fn keyword_provider_chains_multiple_tools_across_iterations() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -614,7 +615,6 @@ async fn crypto_wallet_send_flow_sequences_wallet_tools_and_confirmation_gate() 
         "test-model",
         0.0,
         true,
-        None,
         "web",
         &mm(),
         10,
@@ -623,6 +623,7 @@ async fn crypto_wallet_send_flow_sequences_wallet_tools_and_confirmation_gate() 
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("crypto wallet flow should complete");
@@ -726,7 +727,6 @@ async fn crypto_wallet_send_flow_does_not_execute_when_confirmation_is_not_grant
         "test-model",
         0.0,
         true,
-        None,
         "telegram",
         &mm(),
         8,
@@ -735,6 +735,7 @@ async fn crypto_wallet_send_flow_does_not_execute_when_confirmation_is_not_grant
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("declined flow should still complete");
@@ -786,7 +787,6 @@ async fn keyword_provider_uses_latest_tool_result_to_drive_the_next_tool_call() 
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         10,
@@ -795,6 +795,7 @@ async fn keyword_provider_uses_latest_tool_result_to_drive_the_next_tool_call() 
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -859,7 +860,6 @@ async fn keyword_provider_executes_multiple_native_tool_calls_from_one_turn() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         10,
@@ -868,6 +868,7 @@ async fn keyword_provider_executes_multiple_native_tool_calls_from_one_turn() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("loop should complete");
@@ -907,7 +908,6 @@ async fn keyword_provider_unknown_tool_surfaces_error_and_loop_continues() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -916,6 +916,7 @@ async fn keyword_provider_unknown_tool_surfaces_error_and_loop_continues() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -942,6 +943,7 @@ async fn run_tool_call_loop_returns_max_iterations_error() {
         text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (echo_tool, _) = RecordingTool::echo("echo");
@@ -956,7 +958,6 @@ async fn run_tool_call_loop_returns_max_iterations_error() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         3,
@@ -965,6 +966,7 @@ async fn run_tool_call_loop_returns_max_iterations_error() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect_err("should hit max iterations");
@@ -1025,7 +1027,6 @@ async fn agent_loop_refuses_clirpconly_tools() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1034,6 +1035,7 @@ async fn agent_loop_refuses_clirpconly_tools() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1084,7 +1086,6 @@ async fn tool_error_result_is_surfaced_to_next_iteration() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1093,6 +1094,7 @@ async fn tool_error_result_is_surfaced_to_next_iteration() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1139,7 +1141,6 @@ async fn tool_anyhow_error_surfaces_in_history() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1148,6 +1149,7 @@ async fn tool_anyhow_error_surfaces_in_history() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1183,7 +1185,6 @@ async fn visible_tool_names_whitelist_rejects_filtered_out_tools() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1192,6 +1193,7 @@ async fn visible_tool_names_whitelist_rejects_filtered_out_tools() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1228,7 +1230,6 @@ async fn extra_tools_are_invokable_alongside_registry() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1237,6 +1238,7 @@ async fn extra_tools_are_invokable_alongside_registry() {
         &extras,
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1382,7 +1384,6 @@ async fn harness_invokes_composio_action_tool_against_fake_backend() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1391,6 +1392,7 @@ async fn harness_invokes_composio_action_tool_against_fake_backend() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .unwrap();
@@ -1528,7 +1530,6 @@ impl Tool for TestDelegationTool {
             "test-model",
             0.0,
             true,
-            None,
             "channel",
             &mm(),
             5,
@@ -1537,6 +1538,7 @@ impl Tool for TestDelegationTool {
             &[],
             None,
             None,
+            &crate::openhuman::tools::policy::DefaultToolPolicy,
         )
         .await?;
 
@@ -1564,6 +1566,7 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
         tools: Vec::new(),
         gated_tools: Vec::new(),
         connected: true,
+        non_active_status: None,
     }];
     let ctx = {
         use crate::openhuman::context::prompt::{LearnedContextData, ToolCallFormat};
@@ -1669,7 +1672,6 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
         "test-model",
         0.0,
         true,
-        None,
         "channel",
         &mm(),
         5,
@@ -1678,6 +1680,7 @@ async fn orchestrator_prompt_drives_composio_call_via_delegation_chain() {
         &[],
         None,
         None,
+        &crate::openhuman::tools::policy::DefaultToolPolicy,
     )
     .await
     .expect("orchestrator loop should complete");

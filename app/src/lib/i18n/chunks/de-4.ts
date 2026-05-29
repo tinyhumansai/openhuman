@@ -103,6 +103,19 @@ const de4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'fallen gelassen',
   'intelligence.memoryChunk.scoreBars.heading': 'Warum hast du es behalten?',
   'intelligence.memoryChunk.scoreBars.kept': 'gehalten',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'Entitätstyp',
   'intelligence.screenDebug.active': 'Aktiv',
   'intelligence.screenDebug.app': 'App',
@@ -146,6 +159,8 @@ const de4: TranslationMap = {
   'notifications.center.filterAll': 'Alles filtern',
   'notifications.center.markAllRead': 'Alles als gelesen markieren',
   'notifications.center.title': 'Benachrichtigungen',
+  'oauth.button.loopbackTimeout':
+    'Anmeldung abgelaufen — der Browser hat die OAuth-Weiterleitung nicht abgeschlossen. Bitte versuche es erneut.',
   'oauth.button.connecting': 'Verbinden...',
   'oauth.login.continueWith': 'Weiter mit',
   'onboarding.contextGathering.buildingDesc': 'Gebäudebeschreibung',
@@ -193,6 +208,8 @@ const de4: TranslationMap = {
   'pages.settings.ai.llmDesc': 'Llm absch',
   'pages.settings.ai.voice': 'Stimme',
   'pages.settings.ai.voiceDesc': 'Sprachbeschreibung',
+  'pages.settings.ai.embeddings': 'Einbettungen',
+  'pages.settings.ai.embeddingsDesc': 'Vektorkodierungsmodell für den Speicherabruf',
   'pages.settings.aiSection.description':
     'Sprachmodellanbieter, lokal Ollama und Sprache (STT / TTS).',
   'pages.settings.aiSection.title': 'AI',
@@ -297,7 +314,7 @@ const de4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Gespeicherten Schlüssel löschen',
   'settings.ai.connectProvider': 'Anbieter verbinden',
   'settings.ai.customRouting': 'Benutzerdefiniertes Routing',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Standard wird aufgelöst zu',
   'settings.ai.discard': 'Verwerfen',
   'settings.ai.editProvider': 'Anbieter bearbeiten',
   'settings.ai.llmProviders': 'LLM Anbieter',
@@ -305,6 +322,18 @@ const de4: TranslationMap = {
   'settings.ai.localOllama': 'Lokal (Ollama)',
   'settings.ai.modelLabel': 'Modell',
   'settings.ai.noCustomProviders': 'Keine benutzerdefinierten Anbieter',
+  'settings.ai.openAiCompat.authHeaderExample': 'Autorisierung: Bearer <Ihr Schlüssel>',
+  'settings.ai.openAiCompat.authHeaderLabel': 'Auth-Header',
+  'settings.ai.openAiCompat.baseUrlLabel': 'Basis URL',
+  'settings.ai.openAiCompat.baseUrlUnavailable': 'Nicht verfügbar',
+  'settings.ai.openAiCompat.clearKey': 'Schlüssel löschen',
+  'settings.ai.openAiCompat.description':
+    "Point local harnesses at this /v1 server to route through the providers configured below. Authentication uses a stable key you set here, not the app's internal core bearer.",
+  'settings.ai.openAiCompat.keyConfigured': 'Schlüssel konfiguriert',
+  'settings.ai.openAiCompat.keyRequired': 'Schlüssel erforderlich',
+  'settings.ai.openAiCompat.rotateKey': 'Schlüssel drehen',
+  'settings.ai.openAiCompat.setKey': 'Schlüssel einstellen',
+  'settings.ai.openAiCompat.title': 'OpenAI-kompatibler Endpunkt',
   'settings.ai.providerLabel': 'Anbieter',
   'settings.ai.routing': 'Routenführung',
   'settings.ai.routingCustom': 'Routing benutzerdefiniert',
@@ -334,10 +363,10 @@ const de4: TranslationMap = {
   'settings.autocomplete.completionStyle.clearing': 'Löschen…',
   'settings.autocomplete.completionStyle.debounce': 'Entprellung (ms)',
   'settings.autocomplete.completionStyle.enabled': 'Aktiviert',
-  'settings.autocomplete.completionStyle.maxChars': 'Max Chars',
+  'settings.autocomplete.completionStyle.maxChars': 'Max. Zeichen',
   'settings.autocomplete.completionStyle.noHistory':
     'Noch keine akzeptierten Abschlüsse. Akzeptiere Vorschläge mit der Tabulatortaste, um mit der Personalisierung zu beginnen.',
-  'settings.autocomplete.completionStyle.overlayTtl': 'Overlay TTL (ms)',
+  'settings.autocomplete.completionStyle.overlayTtl': 'Overlay-TTL (ms)',
   'settings.autocomplete.completionStyle.personalizationHistory': 'Personalisierungsverlauf',
   'settings.autocomplete.completionStyle.styleExamples': 'Stilbeispiele (eines pro Zeile)',
   'settings.autocomplete.completionStyle.styleInstructions': 'Stilanweisungen',
@@ -396,6 +425,18 @@ const de4: TranslationMap = {
   'settings.billing.subscription.paymentConfirmed': 'Zahlung bestätigt',
   'settings.billing.subscription.perMonth': 'Pro Monat',
   'settings.billing.subscription.popular': 'Beliebt',
+  'composio.connect.scope.read': 'Lesen',
+  'composio.connect.scope.readHint':
+    'Ermöglichen Sie dem Agenten, Daten von dieser Verbindung zu lesen.',
+  'composio.connect.scope.write': 'Schreiben',
+  'composio.connect.scope.writeHint':
+    'Erlauben Sie dem Agenten, Daten über diese Verbindung zu erstellen oder zu ändern.',
+  'composio.connect.scope.admin': 'Admin',
+  'composio.connect.scope.adminHint':
+    'Erlauben Sie dem Agenten, Einstellungen, Berechtigungen oder destruktive Aktionen zu verwalten.',
+  'pages.settings.composioSection.title': 'Composio',
+  'pages.settings.composioSection.description':
+    'Routing, Trigger und Verlauf für Integrationen, die von Composio unterstützt werden.',
 };
 
 export default de4;

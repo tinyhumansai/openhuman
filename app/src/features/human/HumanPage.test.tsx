@@ -11,9 +11,9 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import chatRuntimeReducer, { setToolTimelineForThread } from '../../store/chatRuntimeSlice';
-import mascotReducer from '../../store/mascotSlice';
-import threadReducer, { setSelectedThread } from '../../store/threadSlice';
+import chatRuntimeReducer from '../../store/chatRuntimeSlice';
+import mascotReducer, { setCustomMascotGifUrl } from '../../store/mascotSlice';
+import threadReducer from '../../store/threadSlice';
 // ── Static import (after mocks are hoisted) ──────────────────────────────
 import HumanPage from './HumanPage';
 
@@ -23,12 +23,29 @@ vi.mock('../../pages/Conversations', () => ({
   default: () => <div data-testid="conversations-stub" />,
 }));
 
-vi.mock('./Mascot', () => ({
-  YellowMascot: () => <div data-testid="mascot-stub" />,
-  Ghosty: ({ face, bodyColor }: { face?: string; bodyColor?: string }) => (
-    <div data-testid="ghosty-submascot" data-face={face} data-body-color={bodyColor} />
+vi.mock('../../components/skills/MeetingBotsCard', () => ({
+  MeetingBotsModal: ({ onClose }: { onClose: () => void }) => (
+    <div role="dialog" aria-label="meeting-bots-modal">
+      <button type="button" onClick={onClose}>
+        Close modal
+      </button>
+    </div>
   ),
 }));
+
+vi.mock('./Mascot', async importOriginal => {
+  const actual = await importOriginal<typeof import('./Mascot')>();
+  return {
+    ...actual,
+    RiveMascot: () => <div data-testid="mascot-stub" />,
+    CustomGifMascot: ({ src, face }: { src: string; face?: string }) => (
+      <img data-testid="custom-gif-mascot" data-face={face} src={src} alt="" />
+    ),
+    Ghosty: ({ face, bodyColor }: { face?: string; bodyColor?: string }) => (
+      <div data-testid="ghosty-submascot" data-face={face} data-body-color={bodyColor} />
+    ),
+  };
+});
 
 vi.mock('./useHumanMascot', () => ({ useHumanMascot: () => ({ face: 'idle', visemes: [] }) }));
 
@@ -102,38 +119,49 @@ describe('HumanPage — speak-replies localStorage persistence', () => {
     expect(checkbox).toBeChecked();
   });
 
-  it('renders sub-mascots for the selected thread subagent timeline', () => {
+  it('renders a custom GIF mascot when one is configured', () => {
     const store = buildMinimalStore();
-    store.dispatch(setSelectedThread('thread-subagents'));
-    store.dispatch(
-      setToolTimelineForThread({
-        threadId: 'thread-subagents',
-        entries: [
-          {
-            id: 'thread-subagents:subagent:sub-1:researcher',
-            name: 'subagent:researcher',
-            round: 1,
-            status: 'running',
-            detail: 'Research the latest docs and report back.',
-            subagent: {
-              taskId: 'sub-1',
-              agentId: 'researcher',
-              childIteration: 1,
-              childMaxIterations: 3,
-              toolCalls: [],
-            },
-          },
-        ],
-      })
-    );
+    store.dispatch(setCustomMascotGifUrl('https://example.com/avatar.gif'));
 
     renderHumanPage(store);
 
-    expect(screen.getByTestId('sub-mascot-layer')).toBeInTheDocument();
-    expect(
-      screen.getByRole('status', { name: /researcher subagent running/i })
-    ).toBeInTheDocument();
-    expect(screen.getByText('Researcher')).toBeInTheDocument();
-    expect(screen.getByText('Iteration 1/3')).toBeInTheDocument();
+    expect(screen.getByTestId('custom-gif-mascot')).toHaveAttribute(
+      'src',
+      'https://example.com/avatar.gif'
+    );
+    expect(screen.queryByTestId('mascot-stub')).not.toBeInTheDocument();
+  });
+});
+
+describe('HumanPage — join meeting pill', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it('renders the join-meeting pill button', () => {
+    renderHumanPage();
+    expect(screen.getByTestId('human-join-meeting-pill')).toBeInTheDocument();
+  });
+
+  it('opens the MeetingBotsModal when the join-meeting pill is clicked', async () => {
+    renderHumanPage();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('human-join-meeting-pill'));
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('closes the MeetingBotsModal when onClose is called', async () => {
+    renderHumanPage();
+    fireEvent.click(screen.getByTestId('human-join-meeting-pill'));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /close modal/i }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

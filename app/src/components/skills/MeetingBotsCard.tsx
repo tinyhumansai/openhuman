@@ -1,20 +1,20 @@
 // Meeting bots entry point on the Skills "Integrations" section.
 //
-// Surfaces as a compact, fun banner: clicking opens a modal that wraps
-// the backend mascot bot (PR tinyhumansai/backend#773). Joining a
-// Google Meet kicks off the Camoufox-driven mascot in the backend,
-// which streams the mascot's WebRTC video into the call as an
-// anonymous guest. Zoom and Teams are shown as "coming soon" — the
-// backend already routes them but returns 400 "not yet supported".
+// Surfaces as a compact, fun banner: clicking opens a modal that opens
+// a dedicated CEF webview pointed at the Meet URL. The bot's outbound
+// camera is the mascot canvas (`meet_video::camera_bridge`) and its
+// outbound audio is the synthesized speech pump (`meet_audio`). Zoom
+// and Teams are shown as "coming soon" — only Google Meet has the CEF
+// bridge pipeline today.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
-  joinMeetingViaMascotBot,
-  SERVER_OVERLOADED_MESSAGE,
-  type MascotJoinMeetingError,
+  joinMeetCall,
+  listMeetCalls,
   type MascotMeetPlatform,
+  type MeetCallRecord,
 } from '../../services/meetCallService';
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
@@ -25,25 +25,30 @@ interface Props {
 
 interface PlatformDef {
   platform: MascotMeetPlatform;
-  label: string;
-  domainHint: string;
+  labelKey: string;
+  domainHintKey: string;
   comingSoon?: boolean;
 }
 
 const PLATFORMS: PlatformDef[] = [
-  { platform: 'gmeet', label: 'Google Meet', domainHint: 'meet.google.com/abc-defg-hij' },
-  { platform: 'zoom', label: 'Zoom', domainHint: 'zoom.us/j/…', comingSoon: true },
+  {
+    platform: 'gmeet',
+    labelKey: 'skills.meetingBots.platforms.gmeet',
+    domainHintKey: 'skills.meetingBots.platformHints.gmeet',
+  },
+  {
+    platform: 'zoom',
+    labelKey: 'skills.meetingBots.platforms.zoom',
+    domainHintKey: 'skills.meetingBots.platformHints.zoom',
+    comingSoon: true,
+  },
   {
     platform: 'teams',
-    label: 'Microsoft Teams',
-    domainHint: 'teams.microsoft.com/…',
+    labelKey: 'skills.meetingBots.platforms.teams',
+    domainHintKey: 'skills.meetingBots.platformHints.teams',
     comingSoon: true,
   },
 ];
-
-function isMascotJoinMeetingError(err: unknown): err is MascotJoinMeetingError {
-  return !!err && typeof err === 'object' && 'isCapacityGated' in err && 'message' in err;
-}
 
 export default function MeetingBotsCard({ onToast }: Props) {
   const [open, setOpen] = useState(false);
@@ -115,16 +120,48 @@ interface ModalProps {
   onToast?: (toast: Toast) => void;
 }
 
-function MeetingBotsModal({ onClose, onToast }: ModalProps) {
+export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
   const { t } = useT();
   const [platform, setPlatform] = useState<MascotMeetPlatform>('gmeet');
   const [meetUrl, setMeetUrl] = useState('');
   const [displayName, setDisplayName] = useState('OpenHuman');
+  // Privacy lock: the bot will only react to the wake word when this
+  // exact name is the speaker in Meet's captions. Anyone else who
+  // says "hey openhuman …" is silently ignored — preventing a
+  // remote participant from issuing tool calls in the owner's
+  // name. Empty fails closed; the submit handler will surface an
+  // explicit error before opening the CEF window.
+  const [ownerDisplayName, setOwnerDisplayName] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [capacityGated, setCapacityGated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Recent-calls history loaded from core when the modal opens.
+  // `null` means "not yet fetched"; `[]` means "fetched, no rows".
+  // Separating the two lets the UI render a "Loading…" hint on
+  // first open without flashing a misleading empty state.
+  const [recentCalls, setRecentCalls] = useState<MeetCallRecord[] | null>(null);
+  const [recentError, setRecentError] = useState<string | null>(null);
+
+  const refreshRecentCalls = useCallback(async () => {
+    setRecentError(null);
+    try {
+      const rows = await listMeetCalls(20);
+      setRecentCalls(rows);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load recent calls.';
+      console.warn('[meeting-bots] listMeetCalls failed:', err);
+      setRecentError(message);
+      setRecentCalls([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Fire-and-forget on mount; the modal is short-lived (closes on
+    // submit or Cancel) so a slow RPC here can't pile up.
+    void refreshRecentCalls();
+  }, [refreshRecentCalls]);
 
   const selected = PLATFORMS.find(p => p.platform === platform) ?? PLATFORMS[0];
+  const selectedLabel = t(selected.labelKey);
   const isComingSoon = !!selected.comingSoon;
 
   // Esc closes the modal — matches the OpenhumanLinkModal pattern.
@@ -139,14 +176,24 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
-    setCapacityGated(false);
     if (isComingSoon) {
-      setError(`${selected.label} support is coming soon.`);
+      setError(t('skills.meetingBots.platformComingSoon').replace('{label}', selectedLabel));
       return;
     }
     setSubmitting(true);
     try {
-      await joinMeetingViaMascotBot({ platform, meetUrl, displayName });
+      // Flow A: local CEF webview with mascot canvas + synthesized audio.
+      // joinMeetCall opens an off-screen CEF window per request_id,
+      // installs the audio/video bridges via CDP, then meet_scanner
+      // drives the join automatically. Returns once the window has
+      // been created — meet_audio + meet_scanner take it from there.
+      //
+      // ownerDisplayName is the privacy lock: the wake-word gate in
+      // the core only accepts captions whose speaker matches this
+      // value (case-insensitive, "(host)" / "(you)" suffix stripped).
+      // Anyone else in the room saying the wake phrase is dropped
+      // without dispatching a tool turn.
+      await joinMeetCall({ meetUrl, displayName, ownerDisplayName });
       onToast?.({
         type: 'success',
         title: t('skills.meetingBots.joiningTitle'),
@@ -155,20 +202,9 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
       setMeetUrl('');
       onClose();
     } catch (err) {
-      if (isMascotJoinMeetingError(err)) {
-        setCapacityGated(err.isCapacityGated);
-        const message = err.isCapacityGated ? SERVER_OVERLOADED_MESSAGE : err.message;
-        setError(message);
-        onToast?.({
-          type: 'error',
-          title: err.isCapacityGated ? t('skills.meetingBots.busyTitle') : t('skills.meetingBots.couldNotStartTitle'),
-          message,
-        });
-      } else {
-        const message = err instanceof Error ? err.message : t('skills.meetingBots.failedToStart');
-        setError(message);
-        onToast?.({ type: 'error', title: t('skills.meetingBots.couldNotStartTitle'), message });
-      }
+      const message = err instanceof Error ? err.message : t('skills.meetingBots.failedToStart');
+      setError(message);
+      onToast?.({ type: 'error', title: t('skills.meetingBots.couldNotStartTitle'), message });
     } finally {
       setSubmitting(false);
     }
@@ -190,7 +226,7 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t('common.close')}
             className="absolute right-3 top-3 rounded-full p-1 text-stone-500 dark:text-neutral-400 hover:bg-white/80 dark:hover:bg-neutral-800/60 hover:text-stone-800 dark:hover:text-neutral-100">
             ✕
           </button>
@@ -217,8 +253,12 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
                       ? 'bg-primary-500 text-white'
                       : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300 hover:bg-stone-200 dark:hover:bg-neutral-700'
                   }`}>
-                  {p.label}
-                  {p.comingSoon && <span className="ml-1 opacity-70">· soon</span>}
+                  {t(p.labelKey)}
+                  {p.comingSoon && (
+                    <span className="ml-1 opacity-70">
+                      · {t('skills.meetingBots.soonSuffix')}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -236,7 +276,7 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
                 spellCheck={false}
                 value={meetUrl}
                 onChange={e => setMeetUrl(e.target.value)}
-                placeholder={selected.domainHint}
+                placeholder={t(selected.domainHintKey)}
                 disabled={isComingSoon || submitting}
                 autoFocus
                 className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-stone-50 dark:disabled:bg-neutral-800/60"
@@ -258,14 +298,33 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
               />
             </label>
 
+            <label className="block">
+              <span className="text-[10px] font-medium uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+                Your name in the call
+              </span>
+              <input
+                type="text"
+                value={ownerDisplayName}
+                onChange={e => setOwnerDisplayName(e.target.value)}
+                maxLength={64}
+                placeholder="As shown in Google Meet (e.g. Nikhil Bajaj)"
+                disabled={isComingSoon || submitting}
+                aria-describedby="meeting-bots-owner-hint"
+                required
+                className="mt-1 w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:cursor-not-allowed disabled:bg-stone-50 dark:disabled:bg-neutral-800/60"
+              />
+              <p
+                id="meeting-bots-owner-hint"
+                className="mt-1 text-[10px] leading-relaxed text-stone-500 dark:text-neutral-400">
+                Privacy lock. OpenHuman will only respond to the wake word when this exact name
+                is speaking — anyone else in the call cannot trigger tool calls in your name.
+              </p>
+            </label>
+
             {error && (
               <div
                 role="alert"
-                className={`rounded-xl border px-3 py-2 text-xs ${
-                  capacityGated
-                    ? 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300'
-                    : 'border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 text-coral-700 dark:text-coral-300'
-                }`}>
+                className="rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
                 {error}
               </div>
             )}
@@ -279,18 +338,137 @@ function MeetingBotsModal({ onClose, onToast }: ModalProps) {
               </button>
               <button
                 type="submit"
-                disabled={submitting || isComingSoon || !meetUrl.trim()}
+                disabled={
+                  submitting || isComingSoon || !meetUrl.trim() || !ownerDisplayName.trim()
+                }
                 className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white hover:bg-primary-600 disabled:cursor-not-allowed disabled:bg-stone-200 dark:disabled:bg-neutral-700 disabled:text-stone-400 dark:disabled:text-neutral-500">
                 {isComingSoon
-                  ? `${selected.label} ${t('skills.meetingBots.comingSoon')}`
+                  ? t('skills.meetingBots.comingSoon').replace('{label}', selectedLabel)
                   : submitting
                     ? t('skills.meetingBots.starting')
-                    : `${t('skills.meetingBots.sendTo')} ${selected.label}`}
+                    : t('skills.meetingBots.sendTo').replace('{label}', selectedLabel)}
               </button>
             </div>
           </form>
+
+          <RecentCallsSection rows={recentCalls} error={recentError} />
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Recent calls list rendered below the join form inside the same
+ * modal — same surface where the user launches a call, so they see
+ * their history without navigating away. Three states:
+ *   - `rows === null`     → still loading (small spinner-y hint).
+ *   - `rows === []`       → no calls yet (gentle empty state).
+ *   - `rows.length > 0`   → render a compact list, newest first.
+ *
+ * `error` is shown inline above the list when the fetch failed but
+ * doesn't block the form — the join path is independent.
+ */
+function RecentCallsSection({
+  rows,
+  error,
+}: {
+  rows: MeetCallRecord[] | null;
+  error: string | null;
+}) {
+  return (
+    <section
+      aria-label="Recent meeting calls"
+      className="mt-4 border-t border-stone-200 dark:border-neutral-800 pt-4">
+      <div className="flex items-baseline justify-between">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+          Recent calls
+          {rows && rows.length > 0 && (
+            <span className="ml-1 text-stone-400 dark:text-neutral-500 normal-case font-normal">
+              ({rows.length})
+            </span>
+          )}
+        </h3>
+      </div>
+
+      {error && (
+        // Plain status text rather than role="alert" — the join form
+        // already owns the alert role for the modal's primary error
+        // surface. A failure to fetch history is informational, not
+        // actionable, and shouldn't collide with the form's a11y
+        // announcement.
+        <p className="mt-2 text-[11px] text-coral-600 dark:text-coral-400">{error}</p>
+      )}
+
+      {rows === null ? (
+        <p className="mt-2 text-[11px] text-stone-400 dark:text-neutral-500">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-2 text-[11px] text-stone-400 dark:text-neutral-500">
+          No previous calls yet — your meeting history will appear here.
+        </p>
+      ) : (
+        <ul className="mt-2 max-h-48 space-y-1 overflow-y-auto pr-1">
+          {rows.map(call => (
+            <RecentCallRow key={call.request_id} call={call} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function RecentCallRow({ call }: { call: MeetCallRecord }) {
+  // Show the trailing meeting code (`abc-defg-hij`) rather than the
+  // full URL — the URL prefix is always `https://meet.google.com/`
+  // and would just waste row width.
+  const meetingCode = (() => {
+    try {
+      const parsed = new URL(call.meet_url);
+      const tail = parsed.pathname.replace(/^\/+/, '');
+      return tail || call.meet_url;
+    } catch {
+      return call.meet_url || '(unknown URL)';
+    }
+  })();
+  const duration = Math.max(0, Math.round(call.spoken_seconds + call.listened_seconds));
+  return (
+    <li className="rounded-lg px-2 py-1.5 text-[11px] text-stone-700 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800/40">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-mono text-stone-800 dark:text-neutral-200">{meetingCode}</span>
+        <span className="shrink-0 text-stone-400 dark:text-neutral-500">
+          {formatRelativeTime(call.started_at_ms)}
+        </span>
+      </div>
+      <div className="mt-0.5 flex items-center gap-3 text-[10px] text-stone-500 dark:text-neutral-400">
+        <span>{call.turn_count} turn{call.turn_count === 1 ? '' : 's'}</span>
+        <span>{duration}s on call</span>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Compact "12 min ago" / "yesterday" / "May 14" style stamp. Browser
+ * `Intl.RelativeTimeFormat` would be nicer but pulls a much larger
+ * locale data path; the targets here are short labels in a single
+ * surface, not a full i18n investment.
+ */
+function formatRelativeTime(ms: number): string {
+  if (!ms) return '—';
+  const diff = Date.now() - ms;
+  if (diff < 0) return 'just now';
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return 'yesterday';
+  if (days < 7) return `${days}d ago`;
+  try {
+    return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  } catch {
+    return '—';
+  }
 }

@@ -262,6 +262,7 @@ const zhCN2: TranslationMap = {
   'chat.deleteThread': '删除对话',
   'chat.deleteThreadConfirm': '确定要删除"{title}"吗？',
   'chat.untitledThread': '未命名对话',
+  'chat.editThreadTitle': 'Edit thread title',
   'chat.hideSidebar': '隐藏侧边栏',
   'chat.showSidebar': '显示侧边栏',
   'chat.newThreadShortcut': '新建对话',
@@ -292,6 +293,12 @@ const zhCN2: TranslationMap = {
   'chat.turn': '轮',
   'chat.turns': '轮',
   'chat.openWorkerThread': '打开工作线程',
+  'chat.attachment.attach': 'Attach image',
+  'chat.attachment.remove': 'Remove {name}',
+  'chat.attachment.tooMany': 'Maximum {max} images per message',
+  'chat.attachment.tooLarge': 'Image exceeds {max} size limit',
+  'chat.attachment.unsupportedType': 'Unsupported file type. Use PNG, JPEG, WebP, GIF, or BMP.',
+  'chat.attachment.readFailed': 'Could not read file',
   'memory.searchAria': '搜索记忆',
   'memory.searchPlaceholder': '搜索记忆条目...',
   'memory.sourceFilter.all': '所有来源',
@@ -384,7 +391,7 @@ const zhCN2: TranslationMap = {
   'devOptions.menuCronJobsDesc': '查看和配置运行时技能的定时任务',
   'devOptions.menuLocalModelDebug': '本地模型调试',
   'devOptions.menuLocalModelDebugDesc': 'Ollama 配置、资源下载、模型测试与诊断',
-  'devOptions.menuWebhooksDebug': 'Webhooks',
+  'devOptions.menuWebhooksDebug': '网络钩子',
   'devOptions.menuWebhooksDebugDesc': '查看运行时 webhook 注册和已捕获的请求日志',
   'devOptions.menuIntelligence': '智能',
   'devOptions.menuIntelligenceDesc': '记忆工作区、潜意识引擎、梦境与设置',
@@ -397,6 +404,8 @@ const zhCN2: TranslationMap = {
     '使用你自己的 Composio API 密钥，将调用直接路由到 backend.composio.dev',
   'devOptions.menuComposioTriggers': '集成触发器',
   'devOptions.menuComposioTriggersDesc': '为 Composio 集成触发器配置 AI 分级设置',
+  'mic.deviceSelector': '麦克风装置',
+  'mic.tapToSendCountdown': '点击发送 ({seconds}秒)',
 };
 
 export default zhCN2;

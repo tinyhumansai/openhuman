@@ -223,6 +223,47 @@ describe('<ComposioConnectModal>', () => {
     expect(screen.queryByText('(oxox)')).not.toBeInTheDocument();
   });
 
+  it('passes clearMemory only when the disconnect memory checkbox is selected', async () => {
+    const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
+    vi.mocked(composioApi.deleteConnection).mockResolvedValue({
+      deleted: true,
+      memory_chunks_deleted: 1,
+    });
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+    );
+
+    fireEvent.click(screen.getByLabelText(/also delete memory/i));
+    fireEvent.click(screen.getByRole('button', { name: /^Disconnect$/i }));
+
+    await waitFor(() => {
+      expect(composioApi.deleteConnection).toHaveBeenCalledWith('ca_xyz', { clearMemory: true });
+    });
+  });
+
+  it('resets the clear-memory checkbox after a failed disconnect is dismissed', async () => {
+    const connection: ComposioConnection = { id: 'ca_xyz', toolkit: 'gmail', status: 'ACTIVE' };
+    vi.mocked(composioApi.deleteConnection).mockRejectedValueOnce(new Error('backend down'));
+
+    render(
+      <ComposioConnectModal toolkit={mockToolkit} connection={connection} onClose={() => {}} />
+    );
+
+    const checkbox = screen.getByLabelText(/also delete memory/i);
+    fireEvent.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Disconnect$/i }));
+
+    expect(await screen.findByText(/backend down/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/also delete memory/i)).not.toBeChecked();
+    });
+  });
+
   it('shows an expired-auth recovery state with a reconnect CTA', () => {
     const connection: ComposioConnection = {
       id: 'ca_expired',
@@ -291,6 +332,23 @@ describe('<ComposioConnectModal>', () => {
           'https://hosted.composio.dev/test-token'
         );
       });
+    });
+
+    it('shows the waiting state even when the OS browser opener rejects', async () => {
+      vi.mocked(composioApi.authorize).mockResolvedValue({
+        connectUrl: 'https://hosted.composio.dev/test-token',
+        connectionId: '',
+      });
+      vi.mocked(composioApi.listConnections).mockResolvedValue({ connections: [] });
+      vi.mocked(openUrlModule.openUrl).mockRejectedValueOnce(new Error('opener unavailable'));
+
+      render(<ComposioConnectModal toolkit={mockToolkit} onClose={() => {}} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /Connect Gmail/ }));
+
+      expect(await screen.findByRole('button', { name: /Reopen browser/i })).toBeInTheDocument();
+      expect(screen.getByText(/Waiting for Gmail/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Something went wrong/i)).not.toBeInTheDocument();
     });
   });
 });
@@ -443,6 +501,22 @@ describe('<ComposioConnectModal> — needs-subdomain recovery phase', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Connect Jira/i })).toBeInTheDocument();
+    });
+  });
+
+  it('surfaces Meta rate-limit guidance for Instagram authorize failures', async () => {
+    const instagramToolkit = composioToolkitMeta('instagram');
+    vi.mocked(authorize).mockRejectedValueOnce(
+      new Error('Authorization failed: Backend returned 429 Too Many Requests')
+    );
+
+    render(<ComposioConnectModal toolkit={instagramToolkit} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole('button', { name: /Connect Instagram/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Business or Creator account/i)).toBeInTheDocument();
+      expect(screen.getByText(/HTTP 429/i)).toBeInTheDocument();
+      expect(screen.queryByText(/api.tinyhumans.ai/i)).not.toBeInTheDocument();
     });
   });
 

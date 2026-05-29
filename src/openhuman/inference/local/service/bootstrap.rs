@@ -8,7 +8,7 @@ use crate::openhuman::inference::types::LocalAiStatus;
 use super::LocalAiService;
 
 impl LocalAiService {
-    pub(crate) fn new(config: &Config) -> Self {
+    pub fn new(config: &Config) -> Self {
         let model_id = model_ids::effective_chat_model_id(config);
         let vision_model_id = model_ids::effective_vision_model_id(config);
         let embedding_model_id = model_ids::effective_embedding_model_id(config);

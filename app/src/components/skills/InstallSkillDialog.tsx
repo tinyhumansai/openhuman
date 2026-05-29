@@ -85,60 +85,63 @@ interface CategorizedError {
  * short human-readable title + hint. See
  * `src/openhuman/skills/ops.rs::install_skill_from_url` for the full list.
  */
-function categorizeInstallError(raw: string): CategorizedError {
+function categorizeInstallError(
+  t: (key: string, fallback?: string) => string,
+  raw: string
+): CategorizedError {
   const msg = raw.trim();
   const lower = msg.toLowerCase();
   if (lower.startsWith('invalid url:')) {
     return {
-      title: 'URL rejected',
-      hint: 'Only public HTTPS URLs are allowed. Private, loopback, and metadata hosts are blocked.',
+      title: t('skills.install.errors.invalidUrlTitle'),
+      hint: t('skills.install.errors.invalidUrlHint'),
     };
   }
   if (lower.startsWith('unsupported url form:')) {
     return {
-      title: 'URL form not supported',
-      hint: 'Only direct `.md` links work. For GitHub, link to a file (github.com/owner/repo/blob/…/SKILL.md) — tree and repo roots are not installed.',
+      title: t('skills.install.errors.unsupportedUrlTitle'),
+      hint: t('skills.install.errors.unsupportedUrlHint'),
     };
   }
   if (lower.startsWith('fetch too large:')) {
     return {
-      title: 'SKILL.md too large',
-      hint: 'The SKILL.md must be under 1 MiB. Split bundled resources into `references/` or `scripts/` files instead of inlining them.',
+      title: t('skills.install.errors.fetchTooLargeTitle'),
+      hint: t('skills.install.errors.fetchTooLargeHint'),
     };
   }
   if (lower.startsWith('fetch timed out')) {
     return {
-      title: 'Fetch timed out',
-      hint: 'The remote host did not respond in time. Try again or raise the timeout (1–600 s).',
+      title: t('skills.install.errors.fetchTimedOutTitle'),
+      hint: t('skills.install.errors.fetchTimedOutHint'),
     };
   }
   if (lower.startsWith('fetch failed:')) {
     return {
-      title: 'Fetch failed',
-      hint: 'The request did not complete successfully. Check the URL points at a reachable public file, and that the host returned a 2xx response.',
+      title: t('skills.install.errors.fetchFailedTitle'),
+      hint: t('skills.install.errors.fetchFailedHint'),
     };
   }
   if (lower.startsWith('invalid skill.md:')) {
     return {
-      title: 'SKILL.md did not parse',
-      hint: 'The frontmatter must be valid YAML with non-empty `name` and `description` fields, terminated by `---`.',
+      title: t('skills.install.errors.invalidSkillTitle'),
+      hint: t('skills.install.errors.invalidSkillHint'),
     };
   }
   if (lower.startsWith('skill already installed')) {
     return {
-      title: 'Skill already installed',
-      hint: 'A skill with this slug already exists in the workspace. Remove it first or change the frontmatter `metadata.id` / `name`.',
+      title: t('skills.install.errors.alreadyInstalledTitle'),
+      hint: t('skills.install.errors.alreadyInstalledHint'),
     };
   }
   if (lower.startsWith('write failed:')) {
     return {
-      title: 'Could not write SKILL.md',
-      hint: 'The workspace skills directory was not writable. Check filesystem permissions for `<workspace>/.openhuman/skills/`.',
+      title: t('skills.install.errors.writeFailedTitle'),
+      hint: t('skills.install.errors.writeFailedHint'),
     };
   }
   return {
-    title: 'Could not install skill',
-    hint: 'The backend returned an error. The raw message is shown below.',
+    title: t('skills.install.errors.genericTitle'),
+    hint: t('skills.install.errors.genericHint'),
   };
 }
 
@@ -256,9 +259,10 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 {t('skills.install.title')}
               </h2>
               <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
-                Fetches a single <code className="font-mono">SKILL.md</code> over HTTPS and installs
-                it under <code className="font-mono">.openhuman/skills/</code>. HTTPS only; private
-                and loopback hosts are blocked.
+                {t('skills.install.subtitlePrefix')}{' '}
+                <code className="font-mono">SKILL.md</code> {t('skills.install.subtitleMiddle')}{' '}
+                <code className="font-mono">.openhuman/skills/</code>.{' '}
+                {t('skills.install.subtitleSuffix')}
               </p>
             </div>
             <button
@@ -270,7 +274,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 }
               }}
               disabled={submitting}
-              aria-label="Close"
+              aria-label={t('common.close')}
               className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -304,16 +308,19 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 required
                 maxLength={2048}
                 className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 font-mono text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-stone-50 dark:disabled:bg-neutral-800/60 disabled:text-stone-500 dark:text-neutral-400"
-                placeholder="https://raw.githubusercontent.com/owner/repo/main/SKILL.md"
+                placeholder={t('skills.install.urlPlaceholder')}
               />
               {url.trim() && !urlValid ? (
                 <p className="mt-1 text-[11px] text-coral-600">
-                  URL must be a well-formed <code className="font-mono">https://</code> link.
+                  {t('skills.install.urlInvalidPrefix')}{' '}
+                  <code className="font-mono">https://</code> {t('skills.install.urlInvalidSuffix')}
                 </p>
               ) : (
                 <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                  Direct link to a <code className="font-mono">.md</code> file.{' '}
-                  <code className="font-mono">github.com/…/blob/…</code> URLs auto-rewrite to
+                  {t('skills.install.urlHelpPrefix')}{' '}
+                  <code className="font-mono">.md</code> {t('skills.install.urlHelpMiddle')}{' '}
+                  <code className="font-mono">github.com/…/blob/…</code>{' '}
+                  {t('skills.install.urlHelpSuffix')}
                   <code className="font-mono"> raw.githubusercontent.com</code>.
                 </p>
               )}
@@ -337,13 +344,15 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 onChange={e => setTimeoutSecs(e.target.value)}
                 disabled={submitting || result !== null}
                 className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:bg-stone-50 dark:disabled:bg-neutral-800/60 disabled:text-stone-500 dark:text-neutral-400"
-                placeholder="60"
+                placeholder={t('skills.install.timeoutPlaceholder')}
               />
               {!timeoutValid ? (
-                <p className="mt-1 text-[11px] text-coral-600">Must be an integer between 1 and 600.</p>
+                <p className="mt-1 text-[11px] text-coral-600">
+                  {t('skills.install.timeoutInvalid')}
+                </p>
               ) : (
                 <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                  Defaults to 60 seconds. Values outside 1–600 are clamped server-side.
+                  {t('skills.install.timeoutHelp')}
                 </p>
               )}
             </div>
@@ -359,8 +368,8 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                   className="h-3 w-3 flex-shrink-0 animate-spin rounded-full border-2 border-primary-300 border-t-primary-600"
                 />
                 <span>
-                  Fetching <code className="font-mono">SKILL.md</code>… this can take up to the
-                  timeout you configured.
+                  {t('skills.install.fetchingPrefix')}{' '}
+                  <code className="font-mono">SKILL.md</code>… {t('skills.install.fetchingSuffix')}
                 </span>
               </div>
             ) : null}
@@ -375,8 +384,11 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                   <p className="font-semibold">{t('skills.install.installComplete')}</p>
                   <p className="mt-1">
                     {result.newSkills.length > 0
-                      ? `Discovered ${result.newSkills.length} new skill${result.newSkills.length === 1 ? '' : 's'}.`
-                      : 'Skill installed, but no new skill ids appeared — the catalog may already contain a skill with the same slug.'}
+                      ? t('skills.install.successDiscovered').replace(
+                          '{count}',
+                          String(result.newSkills.length)
+                        )
+                      : t('skills.install.successNoNewIds')}
                   </p>
                   {result.newSkills.length > 0 ? (
                     <ul className="mt-1 list-disc pl-5 font-mono">
@@ -411,7 +423,7 @@ export default function InstallSkillDialog({ onClose, onInstalled }: Props) {
                 role="alert"
                 className="space-y-2 rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-900">
                 {(() => {
-                  const cat = categorizeInstallError(error);
+                  const cat = categorizeInstallError(t, error);
                   return (
                     <>
                       <p className="font-semibold">{cat.title}</p>
