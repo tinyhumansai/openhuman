@@ -29,8 +29,11 @@
  *   - Entity identity is the raw string AS-IS: NO trimming, NO case-folding —
  *     matching the sibling lenses, so "Alice" / "alice" stay distinct nodes.
  *   - The graph is UNDIRECTED and SIMPLE: direction is dropped, parallel edges
- *     (same unordered pair) collapse to one, and self-loops (subject === object)
- *     are dropped — a self-loop is not a neighbour and cannot deepen a core.
+ *     (same unordered pair) collapse to one, and self-loop EDGES (subject ===
+ *     object) are dropped — a self-loop is not a neighbour and cannot deepen a
+ *     core. The endpoint of a self-loop is still REGISTERED as a node, so a
+ *     user whose only recorded fact is "A→A" still appears with coreness 0
+ *     rather than vanishing into an empty result.
  */
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
 
@@ -57,7 +60,10 @@ function isRelation(relation: GraphRelation): boolean {
   return typeof relation.subject === 'string' && typeof relation.object === 'string';
 }
 
-/** Undirected simple-graph adjacency (self-loops and parallel edges removed). */
+/** Undirected simple-graph adjacency: self-loop EDGES and parallel edges are
+ * removed, but a self-loop's endpoint is still registered as a (neighbour-less)
+ * NODE so a user whose only recorded fact is "A→A" still appears in the graph
+ * with degree 0 and coreness 0, rather than vanishing into an empty result. */
 function buildAdjacency(relations: GraphRelation[]): Map<string, Set<string>> {
   const adjacency = new Map<string, Set<string>>();
   const neighbours = (id: string): Set<string> => {
@@ -71,7 +77,11 @@ function buildAdjacency(relations: GraphRelation[]): Map<string, Set<string>> {
   for (const relation of relations) {
     if (!isRelation(relation)) continue;
     const { subject, object } = relation;
-    if (subject === object) continue;
+    if (subject === object) {
+      // Self-loop: register the endpoint as a node but add no self-edge.
+      neighbours(subject);
+      continue;
+    }
     neighbours(subject).add(object);
     neighbours(object).add(subject);
   }

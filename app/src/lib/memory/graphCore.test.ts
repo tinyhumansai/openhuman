@@ -116,11 +116,22 @@ describe('kCoreSize', () => {
 });
 
 describe('computeGraphCore — normalization & determinism', () => {
-  it('drops self-loops entirely', () => {
+  it('drops the self-loop EDGE but keeps the endpoint as a node', () => {
     const r = computeGraphCore([rel('A', 'A'), rel('A', 'B'), rel('B', 'C'), rel('C', 'A')]);
     expect(r.nodeCount).toBe(3);
     expect(r.edgeCount).toBe(3);
-    expect(r.degeneracy).toBe(2); // self-loop ignored -> plain triangle
+    expect(r.degeneracy).toBe(2); // self-loop edge ignored -> plain triangle
+  });
+
+  it('preserves an entity whose only relation is a self-loop (no empty result)', () => {
+    // A user with the single fact "Alice→Alice" must still see Alice in the
+    // graph (degree 0, coreness 0), not vanish into the empty state.
+    const r = computeGraphCore([rel('Alice', 'Alice')]);
+    expect(r.nodeCount).toBe(1);
+    expect(r.edgeCount).toBe(0);
+    expect(r.degeneracy).toBe(0);
+    expect(r.nodes).toEqual([{ id: 'Alice', degree: 0, coreness: 0 }]);
+    expect(r.shells).toEqual([{ k: 0, count: 1 }]);
   });
 
   it('collapses parallel edges and ignores direction', () => {

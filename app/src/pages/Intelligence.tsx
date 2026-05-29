@@ -21,7 +21,14 @@ import type {
 } from '../types/intelligence';
 import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'diagram' | 'centrality' | 'core';
+type IntelligenceTab =
+  | 'memory'
+  | 'subconscious'
+  | 'tasks'
+  | 'workflows'
+  | 'diagram'
+  | 'centrality'
+  | 'core';
 
 export default function Intelligence() {
   const { t } = useT();
