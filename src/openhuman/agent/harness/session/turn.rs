@@ -700,6 +700,29 @@ impl Agent {
                 .await?;
                 let mut messages = prepared.messages;
 
+                // Re-run the context-window trim now that multimodal
+                // expansion may have inlined up to
+                // `max_extracted_text_chars` per file (default 50k chars
+                // ≈ 12k tokens) into the user message body. Without this
+                // second pass the provider can receive payloads past the
+                // model's context window — the pre-multimodal trim was
+                // sized for the *original* marker text, not the rendered
+                // [FILE-EXTRACTED]/[FILE-ATTACHED]/[IMAGE:data:…] blocks.
+                if let Some(context_window) = context_window_for_model(&effective_model) {
+                    let budget_outcome =
+                        trim_chat_messages_to_budget(&mut messages, context_window);
+                    if budget_outcome.trimmed {
+                        log::warn!(
+                            "[agent_loop] post-multimodal provider messages trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                            effective_model,
+                            context_window,
+                            budget_outcome.original_tokens,
+                            budget_outcome.final_tokens,
+                            budget_outcome.messages_removed
+                        );
+                    }
+                }
+
                 last_provider_messages = Some(messages.clone());
 
                 log::info!(
