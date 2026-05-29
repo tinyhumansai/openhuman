@@ -100,6 +100,19 @@ const zhCN4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': '已丢弃',
   'intelligence.memoryChunk.scoreBars.heading': '保留原因',
   'intelligence.memoryChunk.scoreBars.kept': '已保留',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': '实体类型',
   'intelligence.screenDebug.active': '活跃',
   'intelligence.screenDebug.app': '应用',
@@ -286,7 +299,7 @@ const zhCN4: TranslationMap = {
   'settings.ai.clearStoredKey': '清除已存储的密钥',
   'settings.ai.connectProvider': '连接 {label}',
   'settings.ai.customRouting': '自定义路由',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': '默认解析为',
   'settings.ai.discard': '放弃',
   'settings.ai.editProvider': '编辑提供商',
   'settings.ai.llmProviders': 'LLM 提供商',

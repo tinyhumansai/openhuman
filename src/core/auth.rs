@@ -1,20 +1,31 @@
 //! Per-process RPC bearer-token authentication.
 //!
-//! At server startup, [`init_rpc_token`] either reads the token from the
-//! `OPENHUMAN_CORE_TOKEN` environment variable (Tauri-spawned path) or
-//! generates a 256-bit cryptographically-random token and writes it to
-//! `{workspace_dir}/core.token` (owner-read-only on Unix, standalone CLI path),
-//! then stores it in a process-global [`OnceLock`].
+//! Three initialization paths feed the process-global [`OnceLock`] that holds
+//! the active bearer token:
 //!
-//! **Tauri path**: the Tauri shell generates the token in
-//! `CoreProcessHandle::new()`, injects it as `OPENHUMAN_CORE_TOKEN` before
-//! spawning the core process, and holds it in memory via
-//! `CoreProcessHandle.rpc_token`.  The shell includes the token in every
-//! request as `Authorization: Bearer <token>`.  The `core.token` file is
-//! never written in this path.
+//! 1. **In-memory handoff (preferred for the in-process core)** —
+//!    [`init_rpc_token_with_value`] sets the token directly from a value the
+//!    Tauri shell already holds in `CoreProcessHandle.rpc_token`. No env var
+//!    is read or set; the token never crosses a process-global env surface.
+//!    This is the path the Tauri host uses now that the core runs in-process
+//!    (PR #1061) — same-process handoff makes the env crossing unnecessary,
+//!    and avoiding it keeps the token off `/proc/<pid>/environ` (Linux) and
+//!    out of `sysctl KERN_PROCARGS2` / `ps eww -p <pid>` (macOS) where any
+//!    same-UID process could read it without entitlement.
+//! 2. **Env-as-config fallback** — when no in-memory token is supplied,
+//!    [`init_rpc_token`] reads `OPENHUMAN_CORE_TOKEN` from the environment.
+//!    This is the legitimate operator-supplied transport for Docker / cloud /
+//!    VPS deployments where the bearer must come from `fly secrets set …`,
+//!    `docker run -e …`, or a systemd unit file — there is no live shell
+//!    handing it to the binary in-memory.
+//! 3. **Standalone CLI fallback** — when neither path supplies a token, the
+//!    core generates a fresh 256-bit token and writes it to
+//!    `{workspace_dir}/core.token` (owner-read-only on Unix) so external CLI
+//!    clients can authenticate.
 //!
-//! **Standalone CLI path**: the core generates a fresh token and writes it to
-//! `{workspace_dir}/core.token` so that CLI clients can read and use it.
+//! Once set, the in-memory `OnceLock` is the single source of truth — all
+//! transports ([`rpc_auth_middleware`], Socket.IO, SSE query-token fallback,
+//! the approval-gate session id) read via [`get_rpc_token`].
 //!
 //! Endpoints exempt from auth (checked by [`rpc_auth_middleware`]):
 //! - `GET /`              — public info page
@@ -89,29 +100,51 @@ const PUBLIC_PATHS: &[&str] = &[
 /// (#1339) is the next planned addition.
 const QUERY_TOKEN_PATHS: &[&str] = &["/events/webhooks"];
 
-/// The environment variable the Tauri shell sets before spawning the core.
+/// Operator-supplied environment variable that carries the RPC bearer in
+/// non-desktop deployments.
 ///
-/// When this variable is present the core uses its value as the RPC token
-/// (no file I/O needed).  When absent (standalone `openhuman core run`) the
-/// core generates a token and writes it to `{workspace_dir}/core.token` so
+/// **The Tauri desktop shell does NOT set this variable.** Since PR #1061
+/// the core runs in-process inside the Tauri host, and the shell hands the
+/// per-launch bearer to the embedded server via an internal in-memory handle
+/// (see [`init_rpc_token_with_value`]). The desktop boot flow never crosses
+/// a process-global env surface.
+///
+/// `OPENHUMAN_CORE_TOKEN` remains the canonical configuration surface for
+/// **standalone CLI / Docker / cloud** deployments only — where the bearer
+/// must come from `fly secrets set …`, `docker run -e …`, a systemd unit
+/// file, or a developer running `openhuman-core serve` from a shell with the
+/// env var pre-set. In those shapes there is no live host process to hand
+/// the token over in-memory, so env-as-config is the appropriate transport.
+///
+/// When this variable is present [`init_rpc_token`] uses its value (no file
+/// I/O). When absent and no in-memory token was seeded, `init_rpc_token`
+/// generates a fresh token and writes it to `{workspace_dir}/core.token` so
 /// CLI clients can authenticate.
 pub const CORE_TOKEN_ENV_VAR: &str = "OPENHUMAN_CORE_TOKEN";
 
-/// Initialize the per-process RPC token.
+/// Initialize the per-process RPC token from env-or-file (non-desktop path).
 ///
-/// **Preferred path — Tauri-spawned core**: reads the token from the
-/// `OPENHUMAN_CORE_TOKEN` environment variable set by the Tauri shell.  No
-/// file is written; the token is always available the instant the process
-/// starts.
+/// **Not the desktop path.** The Tauri shell passes the per-launch bearer
+/// to the embedded server via the internal in-memory handle (see
+/// [`init_rpc_token_with_value`]); it does **not** set
+/// `OPENHUMAN_CORE_TOKEN`. This function is the bootstrap path for
+/// standalone CLI / Docker / cloud deployments.
 ///
-/// **Fallback — standalone CLI**: generates a fresh 256-bit token, writes it
-/// to `{workspace_dir}/core.token` (owner-read-only on Unix) for external
-/// callers, and stores it in the process global.
+/// **Env-as-config (preferred for non-desktop)**: when
+/// `OPENHUMAN_CORE_TOKEN` is set in the process environment (typically by
+/// the container runtime, secrets manager, or systemd unit file), the core
+/// uses its value as the RPC token. No file is written; the token is
+/// available the instant the process starts.
+///
+/// **Standalone CLI fallback**: when no env var is supplied, the core
+/// generates a fresh 256-bit token, writes it to `{workspace_dir}/core.token`
+/// (owner-read-only on Unix) for external callers, and stores it in the
+/// process global.
 ///
 /// # Errors
 ///
-/// Returns an error only in the fallback path, if the token file cannot be
-/// written.
+/// Returns an error only in the standalone fallback path, if the token file
+/// cannot be written.
 pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
     // Idempotency guard: if the token is already set, do nothing.  A second
     // call must never write a new token to disk while the process still
@@ -122,12 +155,16 @@ pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Fast path: token pre-seeded by the Tauri shell via env var.
+    // Env-as-config path: bearer supplied by the operator via
+    // OPENHUMAN_CORE_TOKEN. Used by Docker / cloud / systemd / a developer
+    // running `openhuman-core serve` from a pre-configured shell. Desktop
+    // (Tauri) does NOT set this variable — it uses `init_rpc_token_with_value`
+    // for an in-memory handoff instead.
     if let Ok(env_token) = std::env::var(CORE_TOKEN_ENV_VAR) {
         let env_token = env_token.trim().to_string();
         if !env_token.is_empty() {
             let _ = RPC_TOKEN.set(env_token);
-            log::info!("[auth] core RPC token loaded from environment (Tauri-managed)");
+            log::info!("[auth] core RPC token loaded from environment (operator-supplied)");
             return Ok(());
         }
     }
@@ -141,6 +178,38 @@ pub fn init_rpc_token(workspace_dir: &Path) -> anyhow::Result<()> {
         "[auth] core RPC token generated and written to {}",
         token_path.display()
     );
+    Ok(())
+}
+
+/// Seed the per-process RPC token directly from a caller-supplied value.
+///
+/// **In-memory handoff path** — used by the Tauri shell to inject the bearer
+/// the host generated in `CoreProcessHandle::new()` into the in-process core
+/// without round-tripping through `OPENHUMAN_CORE_TOKEN` in the process
+/// environment. The token never lands on a process-global env surface, which
+/// keeps it off `/proc/<pid>/environ` (Linux) and out of `sysctl
+/// KERN_PROCARGS2` / `ps eww -p <pid>` (macOS) where any same-UID process
+/// could otherwise read it without entitlement.
+///
+/// Idempotent: a second call is a no-op (matches [`init_rpc_token`] — flipping
+/// the in-memory bearer mid-life would 401 every in-flight client).
+///
+/// # Errors
+///
+/// Returns an error only if `token` is empty after trimming. A non-empty
+/// token is accepted as-is — callers are expected to have generated a
+/// CSPRNG hex string (see `CoreProcessHandle::generate_rpc_token`).
+pub fn init_rpc_token_with_value(token: &str) -> anyhow::Result<()> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("init_rpc_token_with_value: supplied token is empty");
+    }
+    if RPC_TOKEN.get().is_some() {
+        log::debug!("[auth] init_rpc_token_with_value: already initialized, skipping");
+        return Ok(());
+    }
+    let _ = RPC_TOKEN.set(trimmed.to_string());
+    log::info!("[auth] core RPC token loaded via in-memory handoff (no env crossing)");
     Ok(())
 }
 
@@ -413,6 +482,43 @@ mod tests {
         // We can however confirm that an empty supplied value is always
         // rejected, which exercises the second-leg invariant.
         assert!(!verify_bearer_token(""));
+    }
+
+    #[test]
+    fn init_rpc_token_with_value_rejects_empty() {
+        // Trimmed-empty values must error rather than seed an empty bearer.
+        assert!(init_rpc_token_with_value("").is_err());
+        assert!(init_rpc_token_with_value("   ").is_err());
+    }
+
+    /// `init_rpc_token_with_value` populates the same `RPC_TOKEN` OnceLock
+    /// that `get_rpc_token` reads — i.e. the in-memory handoff path produces
+    /// the bearer everyone else (HTTP middleware, Socket.IO verifier,
+    /// approval-gate session_id) reads from. We can't deterministically
+    /// assert the *value* set here (the OnceLock may already be seeded by a
+    /// sibling test that ran first in the same binary), but we can assert
+    /// the OnceLock is initialised after this call returns Ok, and that the
+    /// helper is idempotent.
+    #[test]
+    fn init_rpc_token_with_value_seeds_and_is_idempotent() {
+        // First call: either we seed, or a sibling test already did. Either
+        // way the helper must return Ok and leave `get_rpc_token` populated.
+        let token = "cafebabe1234567890abcdef0123456789abcdef0123456789abcdef01234567";
+        init_rpc_token_with_value(token).expect("seed succeeds");
+        assert!(
+            get_rpc_token().is_some(),
+            "after init_rpc_token_with_value, get_rpc_token must return Some"
+        );
+        // Second call is a no-op (matching init_rpc_token semantics) — must
+        // not error, must not flip the in-memory value.
+        let before = get_rpc_token().map(str::to_string);
+        init_rpc_token_with_value("a-different-value-that-must-be-ignored")
+            .expect("idempotent re-init succeeds");
+        let after = get_rpc_token().map(str::to_string);
+        assert_eq!(
+            before, after,
+            "second init_rpc_token_with_value must not flip the in-memory bearer"
+        );
     }
 
     #[test]

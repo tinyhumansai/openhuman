@@ -1,12 +1,10 @@
 /**
- * Tests for the OpenClaw migration panel (#1440).
+ * Tests for the migration panel (#1440).
  *
  * Pins the dry-run-then-apply contract the issue calls out:
  *   - Apply is disabled until a successful Preview lands.
  *   - Apply requires an explicit window.confirm.
- *   - The Hermes branch is visibly "coming soon" with a tracker link
- *     (acceptance criterion in #1440 — "do not leave Hermes unmentioned
- *     in UX").
+ *   - Hermes vendor is selectable and routes to the correct RPC.
  *   - RPC errors render inline without nuking the form state.
  */
 import { fireEvent, screen, waitFor } from '@testing-library/react';
@@ -15,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/test-utils';
 import {
   type MigrationReport,
+  openhumanMigrateHermes,
   openhumanMigrateOpenclaw,
 } from '../../../../utils/tauriCommands/core';
 import MigrationPanel from '../MigrationPanel';
@@ -23,7 +22,7 @@ vi.mock('../../../../utils/tauriCommands/core', async () => {
   const actual = await vi.importActual<typeof import('../../../../utils/tauriCommands/core')>(
     '../../../../utils/tauriCommands/core'
   );
-  return { ...actual, openhumanMigrateOpenclaw: vi.fn() };
+  return { ...actual, openhumanMigrateOpenclaw: vi.fn(), openhumanMigrateHermes: vi.fn() };
 });
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -54,28 +53,36 @@ function makeReport(
 describe('MigrationPanel (#1440)', () => {
   beforeEach(() => {
     vi.mocked(openhumanMigrateOpenclaw).mockReset();
+    vi.mocked(openhumanMigrateHermes).mockReset();
   });
 
-  it('renders OpenClaw as the active vendor and Hermes as coming-soon with the tracker link', () => {
+  it('renders OpenClaw as the default vendor and Hermes as selectable', () => {
     renderWithProviders(<MigrationPanel />);
     const select = screen.getByTestId('migration-vendor-select') as HTMLSelectElement;
     expect(select.value).toBe('openclaw');
     const hermesOption = Array.from(select.options).find(o => o.value === 'hermes');
     expect(hermesOption).toBeDefined();
-    expect(hermesOption?.disabled).toBe(true);
-    // Apply must start disabled — the issue (#1440) is explicit that dry-run
-    // vs apply must be visually obvious.
+    expect(hermesOption?.disabled).toBe(false);
     expect(screen.getByTestId('migration-apply-button')).toBeDisabled();
   });
 
-  it('surfaces the Hermes "coming soon" callout (with tracking link) when the user picks Hermes', () => {
+  it('selecting Hermes and clicking Preview calls the Hermes RPC', async () => {
+    vi.mocked(openhumanMigrateHermes).mockResolvedValueOnce({
+      result: makeReport(
+        { source_workspace: '/home/u/.hermes' },
+        { from_sqlite: 0, from_markdown: 1 }
+      ),
+      logs: [],
+    });
+
     renderWithProviders(<MigrationPanel />);
     const select = screen.getByTestId('migration-vendor-select') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'hermes' } });
-    const callout = screen.getByTestId('migration-hermes-coming-soon');
-    expect(callout).toBeInTheDocument();
-    const link = callout.querySelector('a');
-    expect(link?.getAttribute('href')).toContain('issues/1440');
+    fireEvent.click(screen.getByTestId('migration-preview-button'));
+
+    await waitFor(() => expect(screen.getByTestId('migration-report-preview')).toBeInTheDocument());
+    expect(openhumanMigrateHermes).toHaveBeenCalledWith(undefined, true);
+    expect(openhumanMigrateOpenclaw).not.toHaveBeenCalled();
   });
 
   it('calls the RPC with dry_run=true on Preview and renders the report', async () => {
@@ -163,6 +170,19 @@ describe('MigrationPanel (#1440)', () => {
     // User edits the path after previewing — Apply must re-lock until
     // they preview the new value.
     fireEvent.change(input, { target: { value: '/opt/legacy/openclaw' } });
+    expect(apply).toBeDisabled();
+  });
+
+  it('re-disables Apply when vendor is switched after a preview', async () => {
+    vi.mocked(openhumanMigrateOpenclaw).mockResolvedValueOnce({ result: makeReport(), logs: [] });
+    renderWithProviders(<MigrationPanel />);
+    const apply = screen.getByTestId('migration-apply-button');
+
+    fireEvent.click(screen.getByTestId('migration-preview-button'));
+    await waitFor(() => expect(apply).not.toBeDisabled());
+
+    const select = screen.getByTestId('migration-vendor-select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'hermes' } });
     expect(apply).toBeDisabled();
   });
 

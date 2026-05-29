@@ -39,6 +39,7 @@ import {
 } from '../../utils/tauriCommands';
 import { MemoryGraph } from './MemoryGraph';
 import { MemorySources } from './MemorySources';
+import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
 import { ObsidianVaultSection } from './ObsidianVaultSection';
 import { VaultPanel } from './VaultPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
@@ -54,11 +55,17 @@ interface MemoryWorkspaceProps {
  * adding chunks to the memory tree.
  *
  * Source of truth: providers under
- * `src/openhuman/composio/providers/<toolkit>/` that call
- * `ingest_page_into_memory_tree`. Today that's gmail. Add a slug here
- * when a new provider lands a memory-tree ingest path.
+ * `src/openhuman/memory_sync/composio/providers/<toolkit>/` that
+ * persist items via `store_skill_sync` into the memory tree.
  */
-const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set(['gmail']);
+const SYNCABLE_TOOLKITS: ReadonlySet<string> = new Set([
+  'clickup',
+  'github',
+  'gmail',
+  'linear',
+  'notion',
+  'slack',
+]);
 
 export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const { t } = useT();
@@ -214,6 +221,7 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
 
   return (
     <div className="space-y-4" data-testid="memory-workspace">
+      <MemoryTreeStatusPanel onToast={onToast} />
       <MemorySources syncableToolkits={SYNCABLE_TOOLKITS} pollIntervalMs={5000} onToast={onToast} />
       <VaultPanel onToast={onToast} />
       <WhatsAppMemorySection />

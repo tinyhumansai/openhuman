@@ -103,6 +103,19 @@ const it4: TranslationMap = {
   'intelligence.memoryChunk.scoreBars.dropped': 'scartati',
   'intelligence.memoryChunk.scoreBars.heading': 'p e r c h é   t e n u t i',
   'intelligence.memoryChunk.scoreBars.kept': 'tenuti',
+  'intelligence.diagram.title': 'Architecture Diagram',
+  'intelligence.diagram.description':
+    'Latest local architecture output from the configured diagram endpoint.',
+  'intelligence.diagram.refresh': 'Refresh',
+  'intelligence.diagram.refreshAria': 'Refresh diagram',
+  'intelligence.diagram.emptyTitle': 'No diagram available yet',
+  'intelligence.diagram.emptyDescription':
+    'Generate an architecture diagram from the orchestrator and this panel will refresh from the configured local endpoint.',
+  'intelligence.diagram.skillInstallCommand': 'npx skills add yizhiyanhua-ai/fireworks-tech-graph',
+  'intelligence.diagram.promptExample':
+    'Generate an architecture diagram of the current swarm in dark terminal style',
+  'intelligence.diagram.imageAlt': 'Latest generated OpenHuman architecture diagram',
+  'intelligence.diagram.refreshesEvery': 'Refreshes every {seconds}s',
   'intelligence.memoryText.entityTypePrefix': 'Tipo di entità',
   'intelligence.screenDebug.active': 'Attivo',
   'intelligence.screenDebug.app': 'App',
@@ -297,7 +310,7 @@ const it4: TranslationMap = {
   'settings.ai.clearStoredKey': 'Cancella chiave memorizzata',
   'settings.ai.connectProvider': 'Connetti provider',
   'settings.ai.customRouting': 'Instradamento personalizzato',
-  'settings.ai.defaultResolvesTo': 'OpenHuman',
+  'settings.ai.defaultResolvesTo': 'Il valore predefinito si risolve in',
   'settings.ai.discard': 'Scarta',
   'settings.ai.editProvider': 'Modifica provider',
   'settings.ai.llmProviders': 'Provider LLM',

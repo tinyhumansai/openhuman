@@ -98,6 +98,64 @@ fn action_budget_error_mentions_limit_and_settings() {
 // -- is_command_allowed -------------------------------------------
 
 #[test]
+fn default_policy_allowed_commands_expanded() {
+    // Issue #2486: verify all newly added safe commands are present in the
+    // default allowlist so agents can use them without manual configuration.
+    let p = default_policy();
+
+    // Build tools
+    for cmd in ["make", "cmake", "pnpm", "yarn"] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow build tool: {cmd}"
+        );
+    }
+
+    // Read-only inspection tools (low-risk)
+    for cmd in [
+        "sort file.txt",
+        "uniq file.txt",
+        "diff a.txt b.txt",
+        "which git",
+        "uname -a",
+        "basename /foo/bar.rs",
+        "dirname /foo/bar.rs",
+        "tr 'a' 'b'",
+        "cut -d: -f1 /dev/stdin",
+        "realpath .",
+        "readlink file",
+        "stat file.txt",
+        "file README.md",
+    ] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow read-only tool: {cmd}"
+        );
+    }
+
+    // Filesystem mutation tools (medium-risk — allowed on allowlist,
+    // but require approval in Supervised mode)
+    for cmd in [
+        "mkdir src/new",
+        "touch Makefile",
+        "cp src/a.rs src/b.rs",
+        "mv old.txt new.txt",
+        "ln -s src/a.rs link.rs",
+    ] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow medium-risk tool: {cmd}"
+        );
+        // Confirm they are actually medium-risk so the approval gate applies
+        assert_eq!(
+            p.command_risk_level(cmd),
+            CommandRiskLevel::Medium,
+            "{cmd} should be classified as medium-risk"
+        );
+    }
+}
+
+#[test]
 fn allowed_commands_basic() {
     let p = default_policy();
     assert!(p.is_command_allowed("ls"));
@@ -883,6 +941,45 @@ fn write_to_not_yet_existing_path_in_workspace_still_allowed() {
     // back to the string-level checks (which would pass for a
     // workspace-relative non-traversal path).
     assert!(p.is_path_string_allowed("not-yet-existing/subdir/file.txt"));
+}
+
+// -- auto_approve defaults ----------------------------------------
+
+#[test]
+fn config_default_auto_approve_includes_expanded_tools() {
+    // Issue #2486: verify read-only tools are auto-approved by default,
+    // and write tools are NOT (Supervised mode must prompt for edits).
+    let cfg = crate::openhuman::config::AutonomyConfig::default();
+
+    // Pre-existing auto-approved tools must still be present
+    for tool in [
+        "file_read",
+        "memory_search",
+        "memory_list",
+        "get_time",
+        "list_dir",
+    ] {
+        assert!(
+            cfg.auto_approve.iter().any(|t| t == tool),
+            "default auto_approve must still include pre-existing tool: {tool}"
+        );
+    }
+
+    // Newly added read-only workspace-scoped tools
+    for tool in ["glob", "grep"] {
+        assert!(
+            cfg.auto_approve.iter().any(|t| t == tool),
+            "default auto_approve must include newly added tool: {tool}"
+        );
+    }
+
+    // Write tools must NOT be auto-approved (v4→v5 migration strips these)
+    for tool in ["file_write", "edit_file"] {
+        assert!(
+            !cfg.auto_approve.iter().any(|t| t == tool),
+            "write tool {tool} must NOT be auto-approved by default"
+        );
+    }
 }
 
 // -- from_config --------------------------------------------------
@@ -2137,7 +2234,7 @@ fn full_access_bypasses_command_allowlist() {
 #[test]
 fn supervised_still_enforces_command_allowlist() {
     let p = default_policy(); // Supervised
-    assert!(!p.is_command_allowed("mkdir -p foo/bar")); // not allow-listed
+    assert!(p.is_command_allowed("mkdir -p foo/bar")); // allow-listed (expanded in #2486)
     assert!(!p.is_command_allowed("ls 2>/dev/null")); // redirect blocked
     assert!(p.is_command_allowed("ls -la")); // allow-listed, no redirect
 }

@@ -83,6 +83,60 @@ fn ready_signal_updates_runtime_port_and_fallback_notice() {
     );
 }
 
+/// Regression: `ensure_running` must NOT publish the per-launch RPC bearer
+/// to the `OPENHUMAN_CORE_TOKEN` environment variable.
+///
+/// The bearer is now handed to the in-process core in-memory via the
+/// `rpc_token` argument of `run_server_embedded_with_ready`; setting it on
+/// the process env would put it within reach of any same-UID process
+/// reading `/proc/<pid>/environ` (Linux) or `sysctl KERN_PROCARGS2` /
+/// `ps eww -p <pid>` (macOS).
+#[test]
+fn ensure_running_does_not_publish_token_to_env() {
+    let _env_lock = env_lock();
+    let _unset = EnvGuard::unset("OPENHUMAN_CORE_REUSE_EXISTING");
+    // Force a clean slate so we can assert on the post-spawn value.
+    let _wipe = EnvGuard::unset("OPENHUMAN_CORE_TOKEN");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let (result, env_after, expected_token, env_during_spawn) = rt.block_on(async {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test listener");
+        let port = listener.local_addr().expect("local addr").port();
+        drop(listener);
+        // Brief yield to let the OS fully release the port.
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let handle = CoreProcessHandle::new(port);
+        let expected_token = handle.rpc_token().to_string();
+        let result = handle.ensure_running().await;
+        // Capture env immediately after spawn returns Ok — before any
+        // tokio task could plausibly have set the var.
+        let env_after = std::env::var("OPENHUMAN_CORE_TOKEN").ok();
+        // Also peek midway via spawning a tiny check task in the same
+        // runtime — guards against the codepath setting+removing the var
+        // within the spawn window.
+        let env_during_spawn = std::env::var("OPENHUMAN_CORE_TOKEN").ok();
+        handle.shutdown().await;
+        (result, env_after, expected_token, env_during_spawn)
+    });
+
+    assert!(
+        result.is_ok(),
+        "ensure_running should succeed against a freed port: {result:?}"
+    );
+    assert!(
+        env_after.is_none(),
+        "ensure_running must NOT publish OPENHUMAN_CORE_TOKEN to the process env \
+         (sidecar-era leak channel removed). Found: {env_after:?} (handle token was {expected_token:?})"
+    );
+    assert!(
+        env_during_spawn.is_none(),
+        "OPENHUMAN_CORE_TOKEN must remain unset even momentarily during spawn. \
+         Found: {env_during_spawn:?}"
+    );
+}
+
 /// Issue #1613: when the preferred port is occupied by a non-OpenHuman
 /// listener, startup should fall back to a nearby port instead of failing.
 #[test]

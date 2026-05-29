@@ -77,6 +77,12 @@ pub(crate) struct NativeMessage {
     pub(crate) tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) tool_calls: Option<Vec<ToolCall>>,
+    /// Chain-of-thought reasoning returned by thinking models (DeepSeek-R1,
+    /// Qwen3, GLM-4, etc.) in the previous assistant turn. Per the API
+    /// contract it **must** be echoed back verbatim in the next request's
+    /// assistant message, or the provider returns HTTP 400.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reasoning_content: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

@@ -78,6 +78,28 @@ pub enum DomainEvent {
     },
 
     // ── Memory ──────────────────────────────────────────────────────────
+    /// The configured embedding provider is unreachable or the requested model
+    /// is not installed, so the memory pipeline fell back to an alternative.
+    ///
+    /// Published by `memory_store::factories` (once per process via the
+    /// `OLLAMA_HEALTH_REPORTED` latch) so the UI can surface a user-visible
+    /// warning with an actionable fix hint. The `message` field is a
+    /// pre-formatted human-readable string safe to show in a notification.
+    EmbeddingModelUnhealthy {
+        /// Short provider slug, e.g. `"ollama"`.
+        provider: String,
+        /// The model that was intended but could not be reached / found,
+        /// e.g. `"bge-m3"`.
+        model: String,
+        /// The provider that will serve embeddings for this session instead,
+        /// e.g. `"cloud"`.
+        fallback_provider: String,
+        /// Human-readable explanation with an actionable fix,
+        /// e.g. `"Local embedding model unreachable — falling back to cloud
+        /// embeddings. Run \`ollama pull bge-m3\` to fix."`.
+        message: String,
+    },
+
     /// A memory entry was stored.
     MemoryStored {
         key: String,
@@ -623,7 +645,8 @@ impl DomainEvent {
             | Self::SubagentCompleted { .. }
             | Self::SubagentFailed { .. } => "agent",
 
-            Self::MemoryStored { .. }
+            Self::EmbeddingModelUnhealthy { .. }
+            | Self::MemoryStored { .. }
             | Self::MemoryRecalled { .. }
             | Self::MemorySyncRequested { .. }
             | Self::MemorySyncStageChanged { .. }
@@ -703,6 +726,104 @@ impl DomainEvent {
             | Self::McpServerDisconnected { .. }
             | Self::McpClientToolExecuted { .. }
             | Self::McpSetupSecretRequested { .. } => "mcp_client",
+        }
+    }
+
+    /// Stable variant name without payload (avoids Debug format coupling).
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::AgentTurnStarted { .. } => "AgentTurnStarted",
+            Self::AgentTurnCompleted { .. } => "AgentTurnCompleted",
+            Self::AgentError { .. } => "AgentError",
+            Self::SubagentSpawned { .. } => "SubagentSpawned",
+            Self::SubagentCompleted { .. } => "SubagentCompleted",
+            Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::MemoryStored { .. } => "MemoryStored",
+            Self::MemoryRecalled { .. } => "MemoryRecalled",
+            Self::MemorySyncRequested { .. } => "MemorySyncRequested",
+            Self::MemorySyncStageChanged { .. } => "MemorySyncStageChanged",
+            Self::MemoryIngestionStarted { .. } => "MemoryIngestionStarted",
+            Self::MemoryIngestionCompleted { .. } => "MemoryIngestionCompleted",
+            Self::DocumentCanonicalized { .. } => "DocumentCanonicalized",
+            Self::CacheRebuilt { .. } => "CacheRebuilt",
+            Self::ChannelInboundMessage { .. } => "ChannelInboundMessage",
+            Self::ChannelMessageReceived { .. } => "ChannelMessageReceived",
+            Self::ChannelMessageProcessed { .. } => "ChannelMessageProcessed",
+            Self::ChannelReactionReceived { .. } => "ChannelReactionReceived",
+            Self::ChannelReactionSent { .. } => "ChannelReactionSent",
+            Self::ChannelConnected { .. } => "ChannelConnected",
+            Self::ChannelDisconnected { .. } => "ChannelDisconnected",
+            Self::CronJobTriggered { .. } => "CronJobTriggered",
+            Self::CronJobCompleted { .. } => "CronJobCompleted",
+            Self::CronDeliveryRequested { .. } => "CronDeliveryRequested",
+            Self::ProactiveMessageRequested { .. } => "ProactiveMessageRequested",
+            Self::SkillLoaded { .. } => "SkillLoaded",
+            Self::SkillStopped { .. } => "SkillStopped",
+            Self::SkillStartFailed { .. } => "SkillStartFailed",
+            Self::SkillExecuted { .. } => "SkillExecuted",
+            Self::ToolExecutionStarted { .. } => "ToolExecutionStarted",
+            Self::ToolExecutionCompleted { .. } => "ToolExecutionCompleted",
+            Self::WebhookIncomingRequest { .. } => "WebhookIncomingRequest",
+            Self::WebhookReceived { .. } => "WebhookReceived",
+            Self::WebhookRegistered { .. } => "WebhookRegistered",
+            Self::WebhookUnregistered { .. } => "WebhookUnregistered",
+            Self::WebhookProcessed { .. } => "WebhookProcessed",
+            Self::ComposioTriggerReceived { .. } => "ComposioTriggerReceived",
+            Self::ComposioConnectionCreated { .. } => "ComposioConnectionCreated",
+            Self::ComposioConnectionDeleted { .. } => "ComposioConnectionDeleted",
+            Self::ComposioActionExecuted { .. } => "ComposioActionExecuted",
+            Self::ComposioConfigChanged { .. } => "ComposioConfigChanged",
+            Self::TriggerEvaluated { .. } => "TriggerEvaluated",
+            Self::TriggerEscalated { .. } => "TriggerEscalated",
+            Self::TriggerEscalationFailed { .. } => "TriggerEscalationFailed",
+            Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
+            Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
+            Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
+            Self::NotificationIngested { .. } => "NotificationIngested",
+            Self::NotificationTriaged { .. } => "NotificationTriaged",
+            Self::DevicePaired { .. } => "DevicePaired",
+            Self::DeviceRevoked { .. } => "DeviceRevoked",
+            Self::DevicePeerOnline { .. } => "DevicePeerOnline",
+            Self::DevicePeerOffline { .. } => "DevicePeerOffline",
+            Self::DeviceTunnelFrame { .. } => "DeviceTunnelFrame",
+            Self::DeviceTunnelRegistered { .. } => "DeviceTunnelRegistered",
+            Self::CompanionSessionStarted { .. } => "CompanionSessionStarted",
+            Self::CompanionStateChanged { .. } => "CompanionStateChanged",
+            Self::CompanionSessionEnded { .. } => "CompanionSessionEnded",
+            Self::SystemStartup { .. } => "SystemStartup",
+            Self::SystemShutdown { .. } => "SystemShutdown",
+            Self::SystemRestartRequested { .. } => "SystemRestartRequested",
+            Self::SystemShutdownRequested { .. } => "SystemShutdownRequested",
+            Self::AutonomyConfigChanged => "AutonomyConfigChanged",
+            Self::HealthChanged { .. } => "HealthChanged",
+            Self::HealthRestarted { .. } => "HealthRestarted",
+            Self::SessionExpired { .. } => "SessionExpired",
+            Self::ApprovalRequested { .. } => "ApprovalRequested",
+            Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::McpServerInstalled { .. } => "McpServerInstalled",
+            Self::McpServerConnected { .. } => "McpServerConnected",
+            Self::McpServerDisconnected { .. } => "McpServerDisconnected",
+            Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
+            Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
+            Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+        }
+    }
+
+    /// Best-effort agent/session hint for display (not all events carry one).
+    pub fn agent_hint(&self) -> Option<&str> {
+        match self {
+            Self::AgentTurnStarted { session_id, .. }
+            | Self::AgentTurnCompleted { session_id, .. }
+            | Self::AgentError { session_id, .. } => Some(session_id.as_str()),
+            Self::SubagentSpawned { agent_id, .. }
+            | Self::SubagentCompleted { agent_id, .. }
+            | Self::SubagentFailed { agent_id, .. } => Some(agent_id.as_str()),
+            Self::ChannelMessageReceived { channel, .. }
+            | Self::ChannelConnected { channel, .. }
+            | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
+            Self::ToolExecutionStarted { tool_name, .. }
+            | Self::ToolExecutionCompleted { tool_name, .. } => Some(tool_name.as_str()),
+            _ => None,
         }
     }
 }

@@ -196,10 +196,24 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: PathBuf::from("."),
             workspace_only: true,
+            // When adding a new entry to this allowlist, re-audit
+            // `DANGEROUS_ENV_PREFIXES` (see below). Every newly-allowed binary
+            // may introduce its own env-driven subprocess hooks (pager, editor,
+            // loader override, SSH/diff helper, preprocessor) — those names
+            // must be added to the prefix denylist so that the
+            // `KEY=cmd <allowed-binary>` shape cannot bypass allowlisting via
+            // `skip_env_assignments` in `is_command_allowed`. Cross-ref #2636.
             allowed_commands: vec![
+                // Version control
                 "git".into(),
+                // Package managers / build systems
                 "npm".into(),
+                "pnpm".into(),
+                "yarn".into(),
                 "cargo".into(),
+                "make".into(),
+                "cmake".into(),
+                // Directory / file inspection (read-only, low-risk)
                 "ls".into(),
                 "cat".into(),
                 "grep".into(),
@@ -210,6 +224,25 @@ impl Default for SecurityPolicy {
                 "head".into(),
                 "tail".into(),
                 "date".into(),
+                "sort".into(),
+                "uniq".into(),
+                "diff".into(),
+                "which".into(),
+                "uname".into(),
+                "basename".into(),
+                "dirname".into(),
+                "tr".into(),
+                "cut".into(),
+                "realpath".into(),
+                "readlink".into(),
+                "stat".into(),
+                "file".into(),
+                // Filesystem mutations (medium-risk — require approval in Supervised mode)
+                "mkdir".into(),
+                "touch".into(),
+                "cp".into(),
+                "mv".into(),
+                "ln".into(),
                 // Windows read-only equivalents for the same basic
                 // inspection workflows as ls/cat/grep/which.
                 "dir".into(),
@@ -240,7 +273,10 @@ impl Default for SecurityPolicy {
                 "~/.aws".into(),
                 "~/.config".into(),
             ],
-            max_actions_per_hour: 20,
+            // Effectively unlimited — matches AutonomyConfig::default_max_actions_per_hour().
+            // The rate-limiter check is `count <= max`, so u32::MAX is functionally
+            // infinite without requiring an Option sentinel on the field type.
+            max_actions_per_hour: u32::MAX,
             max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
