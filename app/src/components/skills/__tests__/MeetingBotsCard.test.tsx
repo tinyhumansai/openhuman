@@ -1,9 +1,11 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import MeetingBotsCard from '../MeetingBotsCard';
+import type { MeetCallRecord } from '../../../services/meetCallService';
+import MeetingBotsCard, { MeetingBotsModal } from '../MeetingBotsCard';
 
 const joinMock = vi.fn();
+const listMock = vi.fn();
 
 vi.mock('../../../services/meetCallService', async () => {
   const actual = await vi.importActual<typeof import('../../../services/meetCallService')>(
@@ -16,11 +18,17 @@ vi.mock('../../../services/meetCallService', async () => {
     // mascot-meet-flowA revival commits — kept the mock variable name
     // `joinMock` to keep the diff focused on the call site swap.
     joinMeetCall: (...args: unknown[]) => joinMock(...args),
+    listMeetCalls: (...args: unknown[]) => listMock(...args),
   };
 });
 
 describe('MeetingBotsCard', () => {
-  beforeEach(() => joinMock.mockReset());
+  beforeEach(() => {
+    joinMock.mockReset();
+    listMock.mockReset();
+    // Default: resolve with empty list so modal renders without flashing errors.
+    listMock.mockResolvedValue([]);
+  });
   afterEach(() => cleanup());
 
   it('renders the banner and hides the modal by default', () => {
@@ -123,5 +131,137 @@ describe('MeetingBotsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: /Zoom/ }));
     const submit = screen.getByRole('button', { name: /coming soon/i });
     expect(submit).toBeDisabled();
+  });
+});
+
+// ── RecentCallsSection / RecentCallRow tests ──────────────────────────────────
+// These exercise the listMeetCalls integration inside MeetingBotsModal:
+// loading state, empty state, error state, and populated list.
+
+function makeCallRecord(overrides: Partial<MeetCallRecord> = {}): MeetCallRecord {
+  return {
+    request_id: 'req-1',
+    meet_url: 'https://meet.google.com/abc-defg-hij',
+    bot_display_name: 'OpenHuman',
+    owner_display_name: 'Alice',
+    started_at_ms: Date.now() - 5 * 60 * 1000, // 5 minutes ago
+    ended_at_ms: Date.now() - 4 * 60 * 1000,
+    listened_seconds: 30,
+    spoken_seconds: 30,
+    turn_count: 3,
+    ...overrides,
+  };
+}
+
+describe('MeetingBotsModal — recent calls section', () => {
+  afterEach(() => cleanup());
+
+  it('shows a loading hint while listMeetCalls is pending', () => {
+    // Never resolves during this test — simulates a slow fetch.
+    listMock.mockReturnValue(new Promise(() => {}));
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    expect(screen.getByText(/loading…/i)).toBeInTheDocument();
+  });
+
+  it('shows an empty-state message when listMeetCalls returns an empty array', async () => {
+    listMock.mockResolvedValueOnce([]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/no previous calls yet/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders a row for each returned call record', async () => {
+    const records = [
+      makeCallRecord({ request_id: 'req-1', meet_url: 'https://meet.google.com/aaa-bbbb-ccc', turn_count: 2 }),
+      makeCallRecord({ request_id: 'req-2', meet_url: 'https://meet.google.com/ddd-eeee-fff', turn_count: 5 }),
+    ];
+    listMock.mockResolvedValueOnce(records);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('aaa-bbbb-ccc')).toBeInTheDocument();
+      expect(screen.getByText('ddd-eeee-fff')).toBeInTheDocument();
+    });
+    // turn counts shown in the row detail line
+    expect(screen.getByText(/2 turns/i)).toBeInTheDocument();
+    expect(screen.getByText(/5 turns/i)).toBeInTheDocument();
+  });
+
+  it('shows the count badge when there is at least one record', async () => {
+    listMock.mockResolvedValueOnce([makeCallRecord()]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      // The "(1)" count badge next to the "Recent calls" heading.
+      expect(screen.getByText('(1)')).toBeInTheDocument();
+    });
+  });
+
+  it('shows an error hint and an empty list when listMeetCalls rejects', async () => {
+    listMock.mockRejectedValueOnce(new Error('Network timeout'));
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/network timeout/i)).toBeInTheDocument();
+    });
+    // After the error the rows state falls back to [] — no loading hint.
+    expect(screen.queryByText(/loading…/i)).not.toBeInTheDocument();
+  });
+
+  it('strips the https://meet.google.com/ prefix and shows only the meeting code', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ meet_url: 'https://meet.google.com/xyz-1234-abc' }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('xyz-1234-abc')).toBeInTheDocument();
+    });
+    // Full URL should NOT be visible — only the code portion.
+    expect(screen.queryByText('https://meet.google.com/xyz-1234-abc')).not.toBeInTheDocument();
+  });
+
+  it('shows duration as combined spoken + listened seconds', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ spoken_seconds: 40, listened_seconds: 20 }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/60s on call/i)).toBeInTheDocument();
+    });
+  });
+
+  it('shows a relative timestamp for recent calls', async () => {
+    // started 5 minutes ago
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ started_at_ms: Date.now() - 5 * 60 * 1000 }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/\dm ago/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows "—" for a zero started_at_ms timestamp', async () => {
+    listMock.mockResolvedValueOnce([makeCallRecord({ started_at_ms: 0 })]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('—')).toBeInTheDocument();
+    });
   });
 });

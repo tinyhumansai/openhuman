@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../coreRpcClient';
-import { closeMeetCall, joinMeetCall } from '../meetCallService';
+import { closeMeetCall, joinMeetCall, listMeetCalls } from '../meetCallService';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 
@@ -113,6 +113,91 @@ describe('joinMeetCall', () => {
     ).rejects.toThrow(/your own name/i);
     expect(callCoreRpc).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('listMeetCalls', () => {
+  beforeEach(() => {
+    // Use mockReset (not just clearAllMocks) to drain any once-queues
+    // left over from the joinMeetCall describe block above, ensuring
+    // each test below starts with a fresh callCoreRpc mock.
+    vi.mocked(callCoreRpc).mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the calls array from a successful core response', async () => {
+    const mockCalls = [
+      {
+        request_id: 'req-1',
+        meet_url: 'https://meet.google.com/abc-defg-hij',
+        bot_display_name: 'OpenHuman',
+        owner_display_name: 'Alice',
+        started_at_ms: 1700000000000,
+        ended_at_ms: 1700000060000,
+        listened_seconds: 30,
+        spoken_seconds: 30,
+        turn_count: 3,
+      },
+    ];
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      calls: mockCalls,
+      count: 1,
+    } as never);
+
+    const result = await listMeetCalls(20);
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_agent_list_calls',
+      params: { limit: 20 },
+    });
+    expect(result).toEqual(mockCalls);
+  });
+
+  it('returns an empty array when the core response has no calls field', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      calls: undefined,
+      count: 0,
+    } as never);
+
+    const result = await listMeetCalls(10);
+
+    expect(result).toEqual([]);
+  });
+
+  it('throws when the core responds with ok: false', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
+
+    await expect(listMeetCalls(20)).rejects.toThrow(
+      /meet_agent_list_calls/
+    );
+  });
+
+  it('throws when the core responds with a falsy result', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce(null as never);
+
+    await expect(listMeetCalls(20)).rejects.toThrow(
+      /meet_agent_list_calls/
+    );
+  });
+
+  it('uses the default limit of 20 when no argument is provided', async () => {
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({
+      ok: true,
+      calls: [],
+      count: 0,
+    } as never);
+
+    await listMeetCalls();
+
+    expect(callCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.meet_agent_list_calls',
+      params: { limit: 20 },
+    });
   });
 });
 
