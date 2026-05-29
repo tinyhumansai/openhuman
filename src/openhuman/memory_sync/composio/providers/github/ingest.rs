@@ -164,11 +164,11 @@ pub async fn ingest_issue_into_memory_tree(
     .await
     .map_err(|e| anyhow::anyhow!("delete-prior task join error: {e}"))??;
     if removed > 0 {
-        log::debug!(
-            "[composio:github] ingest: re-ingest cleanup connection_id={} issue_id={} removed_chunks={}",
-            connection_id,
-            issue_id,
-            removed
+        tracing::debug!(
+            connection_id = %connection_id,
+            issue_id = %issue_id,
+            removed_chunks = removed,
+            "[composio:github] ingest: re-ingest cleanup"
         );
     }
 
@@ -196,12 +196,12 @@ pub async fn ingest_issue_into_memory_tree(
             // the normal update path. Seeing it here means the prior
             // chunks were already absent (fresh ingest into a primed
             // memory_tree) — fine, just log at debug.
-            log::debug!(
-                "[composio:github] ingest: issue connection_id={} issue_id={} chunks_written={} already_ingested={}",
-                connection_id,
-                issue_id,
+            tracing::debug!(
+                connection_id = %connection_id,
+                issue_id = %issue_id,
                 chunks_written,
                 already_ingested,
+                "[composio:github] ingest: issue persisted"
             );
             Ok(chunks_written)
         }
