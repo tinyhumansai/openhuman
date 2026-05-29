@@ -14,6 +14,11 @@ use crate::openhuman::embeddings::EmbeddingProvider;
 /// modules (`documents`, `kv`, `graph`, `query`, …) via `impl` blocks.
 pub struct UnifiedMemory {
     pub(crate) workspace_dir: PathBuf,
+    /// Resolved memory subdirectory (e.g. `workspace_dir/memory` or a custom
+    /// per-personality path). Drives `db_path`, `vectors_dir`, and
+    /// `namespace_dir()` so that multiple stores rooted in the same workspace
+    /// don't collide.
+    pub(crate) memory_dir: PathBuf,
     pub(crate) db_path: PathBuf,
     pub(crate) vectors_dir: PathBuf,
     pub(crate) conn: Arc<Mutex<Connection>>,

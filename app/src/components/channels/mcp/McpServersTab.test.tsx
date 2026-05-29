@@ -66,6 +66,16 @@ const STATUSES_CONNECTED = [
   },
 ];
 
+const STATUSES_ERROR = [
+  {
+    server_id: 'srv-1',
+    qualified_name: 'acme/fs-server',
+    display_name: 'File Server',
+    status: 'error' as const,
+    tool_count: 0,
+  },
+];
+
 describe('McpServersTab', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -435,6 +445,53 @@ describe('McpServersTab', () => {
 
     await waitFor(() => {
       expect(mockInstall).toHaveBeenCalled();
+    });
+  });
+
+  it('surfaces a partial-failure alert when bulk Retry All has rejections', async () => {
+    mockInstalledList.mockResolvedValue(SERVERS);
+    mockStatus.mockResolvedValue(STATUSES_ERROR);
+    // The single errored server fails to reconnect.
+    mockConnect.mockRejectedValue(new Error('connect refused'));
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    const retryBtn = await screen.findByRole('button', { name: 'Retry all 1 errored MCP servers' });
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+
+    // allSettled never rejects, so the connect was attempted...
+    await waitFor(() => expect(mockConnect).toHaveBeenCalledWith('srv-1'));
+    // ...and the failure is surfaced through the alert region, not swallowed.
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('1 of 1 servers failed. See logs.');
+    });
+  });
+
+  it('surfaces a partial-failure alert when bulk Disconnect All has rejections', async () => {
+    mockInstalledList.mockResolvedValue(SERVERS);
+    mockStatus.mockResolvedValue(STATUSES_CONNECTED);
+    mockDisconnect.mockRejectedValue(new Error('disconnect failed'));
+
+    render(<McpServersTab />);
+    vi.useRealTimers();
+
+    const disconnectBtn = await screen.findByRole('button', {
+      name: 'Disconnect all 1 connected MCP servers',
+    });
+    fireEvent.click(disconnectBtn);
+
+    // Confirm dialog gates the bulk RPC; confirm it.
+    const confirmBtn = await screen.findByRole('button', { name: 'Disconnect all' });
+    await act(async () => {
+      fireEvent.click(confirmBtn);
+    });
+
+    await waitFor(() => expect(mockDisconnect).toHaveBeenCalledWith('srv-1'));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('1 of 1 servers failed. See logs.');
     });
   });
 });

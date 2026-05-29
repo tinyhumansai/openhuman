@@ -171,17 +171,44 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // this is the `type` field used by litellm/Anthropic-style
         // envelopes for the same class of user-state error.
         "not_found_error",
-        // TAURI-RUST-4K7 — Ollama models that don't support tool calling
-        // (e.g. gemma3:1b-it-qat, huihui_ai/deepseek-r1-abliterated:8b)
-        // return HTTP 400 with one of these phrases. The compatible
-        // provider (`compatible.rs`) detects the error and retries
-        // without tools, so the 400 is expected capability-discovery
-        // rather than a product bug. Suppress Sentry to avoid noise from
-        // the first-attempt rejection that precedes the successful retry.
+        // TAURI-RUST-4NM — nvidia-nim (and some other providers) return
+        // `{"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}`
+        // when the `model` key is absent or empty in the request body.
+        // This is a user-configuration error (provider string has no model
+        // component, e.g. `nvidia-nim:` with empty model), not a product
+        // regression. Demote from Sentry; the factory now validates this
+        // up-front so in practice this phrase should no longer appear.
+        "model field is required",
+        // TAURI-RUST-4XK — Ollama 403 when the requested model requires a
+        // paid Ollama subscription. Body carries the upgrade URL. User must
+        // switch to a free model or upgrade their Ollama account.
+        "requires a subscription",
+        // TAURI-RUST-2G / TAURI-RUST-2F — DeepSeek / compatible providers
+        // that use extended thinking reject tool-call turns when the
+        // `reasoning_content` block from a prior assistant turn is not
+        // threaded back. This is user-config state (model requires the
+        // caller to replay the thinking block; the frontend replay logic in
+        // `turn.rs` handles it for subsequent turns, so the first-turn 400
+        // is expected capability-discovery, not a regression).
+        "in the thinking mode must be passed back",
+        // TAURI-RUST-35 / TAURI-RUST-4K7 / TAURI-RUST-4Z0 — Ollama models
+        // (e.g. gemma3, phi3, deepseek-r1) that do not support function
+        // calling return HTTP 400 with this phrase. The compatible provider
+        // retries without tools on 400, so the initial rejection is expected
+        // capability-discovery. Sentry noise suppressed here.
         "does not support tools",
+        // TAURI-RUST-4K7-d — alternative phrasing used by some Ollama model
+        // versions for the same tool-unsupported condition.
         "function calling is not supported",
+        // TAURI-RUST-4K7-e — litellm / OpenAI-compatible proxies reject the
+        // `tools` key in the request body when the backing model does not
+        // support tool use (e.g. local Ollama via LiteLLM gateway).
         "unknown parameter: tools",
+        // TAURI-RUST-4K7-f — Ollama native API surface rejects the field
+        // outright when the model has no function-calling capability.
         "unrecognized field `tools`",
+        // TAURI-RUST-4K7-g — another litellm / proxy variant of the same
+        // tool-unsupported condition.
         "unsupported parameter: tools",
         // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
         // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
@@ -193,6 +220,37 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         "thinking mode must be passed back",
         // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
         "requires a subscription, upgrade for access",
+        // TAURI-RUST-1V / OPENHUMAN-TAURI-4JS —
+        // `reliable.rs::format_failure_aggregate` (no-configured-fallbacks
+        // branch) wraps every exhausted `reliable_chat_with_system` turn
+        // with:
+        //
+        //   "The model `<name>` may not be available on your provider.
+        //    Configure a fallback chain via `reliability.model_fallbacks`
+        //    in your OpenHuman config, or change your default model in
+        //    Settings → AI.\n\nAll providers/models failed. Attempts:\n…"
+        //
+        // The aggregate fires once per turn regardless of the underlying
+        // per-attempt cause (auth wall, unknown model, region block,
+        // rate-limit cliff). All of those are user-actionable: pick a
+        // different model, fix the credential, or configure fallbacks —
+        // the message body literally tells the user how. Sentry has no
+        // remediation path the per-attempt classifiers haven't already
+        // covered at the lower layer (provider/ops.rs:486 publishes
+        // SessionExpired, billing_error covers credit walls, etc.).
+        //
+        // Two anchors, both unique to this single emit site (verified via
+        // grep across `src/`) and both present only in the no-configured-
+        // fallbacks branch — the configured-fallbacks branch emits only
+        // the bare "All providers/models failed. Attempts:\n…" dump, so
+        // neither phrase fires on it (see the
+        // `does_not_classify_reliable_aggregate_with_configured_fallbacks`
+        // test). `may not be available on your provider` is the canonical
+        // remediation-sentence phrase (TAURI-RUST-1V); the
+        // `reliability.model_fallbacks` config path (OPENHUMAN-TAURI-4JS)
+        // is kept as a redundant belt-and-braces anchor for the same line.
+        "may not be available on your provider",
+        "reliability.model_fallbacks",
         // TAURI-RUST-35 family — user picked a model that doesn't
         // implement tool calling, agent harness sent a tool spec
         // anyway, upstream rejected with `{"error":{"message":
@@ -203,18 +261,11 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // fragmented by model id (TAURI-RUST-35, -DF, -123, -4K7,
         // -4FS, -4F6, -2YA, -4KR, -4KH, -4KY — ~458 events). The user
         // must pick a tool-capable model; Sentry has no remediation.
+        // NOTE: also pinned in the TAURI-RUST-4K7 capability-discovery
+        // block above; both match the same phrase — the duplicate is
+        // harmless (`.any()` short-circuits) and kept so each Sentry
+        // family stays self-documenting.
         "does not support tools",
-        // TAURI-RUST-1V — reliable-provider chain rolls up exhausted
-        // fallbacks into `All providers/models failed. Attempts:\n…\nThe
-        // model `<id>` may not be available on your provider. Configure
-        // a fallback chain via `reliability.model_fallbacks` in …`.
-        // Emitted at `src/openhuman/inference/provider/reliable.rs:332`.
-        // The remediation is "fix your `model_fallbacks` config" — pure
-        // user-config, nothing Sentry can act on. Anchor on the canonical
-        // remediation phrase so this doesn't collide with unrelated
-        // mentions of model availability (`reliable.rs:332` is the sole
-        // producer in-tree).
-        "may not be available on your provider",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -473,6 +524,78 @@ mod tests {
     }
 
     #[test]
+    fn detects_reliable_aggregate_no_fallbacks_envelope() {
+        // OPENHUMAN-TAURI-4JS — `reliable::format_failure_aggregate`
+        // (no-configured-fallbacks branch) wraps every exhausted turn.
+        // Pin a few realistic shapes:
+        //
+        //   1. Verbatim Sentry 4JS payload (auth wall as the per-attempt cause).
+        //   2. Same aggregate, unknown-model upstream body (proves the matcher
+        //      is per-emit-site, not per-underlying-cause).
+        //   3. Same aggregate, region-block per-attempt body (R1-sibling cause).
+        //   4. Bare two-line aggregate (only the literal prefix + an empty
+        //      attempts dump).
+        //
+        // All four must classify; the unique anchor is the
+        // `reliability.model_fallbacks` config path the message literally
+        // tells the user to set.
+        for raw in [
+            // 1) Verbatim 4JS payload.
+            "The model `reasoning-quick-v1` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n\
+             provider=openhuman model=reasoning-quick-v1 attempt 1/3: non_retryable; \
+             error=OpenHuman API error (401 Unauthorized): {\"success\":false,\"error\":\"Invalid token\"}",
+            // 2) Unknown-model upstream cause.
+            "The model `gpt-5.5` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n\
+             provider=custom_openai model=gpt-5.5 attempt 1/3: non_retryable; \
+             error=custom_openai API error (404 Not Found): {\"error\":\"model not found\"}",
+            // 3) Region-block (R1-sibling) per-attempt cause.
+            "The model `gpt-4o` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n\
+             provider=custom_openai model=gpt-4o attempt 1/3: non_retryable; \
+             error=custom_openai API error (403 Forbidden): {\"error\":{\"message\":\"This model is not available in your region.\"}}",
+            // 4) Bare aggregate — minimal anchor surface.
+            "The model `x` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n",
+        ] {
+            assert!(
+                is_provider_config_rejection_message(raw),
+                "OPENHUMAN-TAURI-4JS aggregate must classify as provider config-rejection: {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_reliable_aggregate_with_configured_fallbacks() {
+        // The configured-fallbacks branch of `format_failure_aggregate`
+        // emits ONLY the attempts dump (`"All providers/models failed.
+        // Attempts:\n…"`), with no `reliability.model_fallbacks`
+        // remediation hint — the user has already engaged with the knob,
+        // so the aggregate is closer to a real diagnostic surface than a
+        // user-config nudge. Without the anchor phrase, this matcher
+        // must NOT fire on its own — only the per-attempt body
+        // classifiers (#2786 SessionExpired, config_rejection siblings,
+        // …) can demote it on a per-shape basis.
+        let aggregate_with_fallbacks = "All providers/models failed. Attempts:\n\
+             provider=openhuman model=gpt-5.5 attempt 1/3: non_retryable; \
+             error=OpenHuman API error (404 Not Found): {\"error\":\"unknown model\"}";
+        assert!(
+            !is_provider_config_rejection_message(aggregate_with_fallbacks),
+            "configured-fallbacks aggregate (no `reliability.model_fallbacks` anchor) \
+             must NOT classify on the aggregate phrase alone"
+        );
+    }
+
+    #[test]
     fn detection_is_case_insensitive() {
         assert!(is_provider_config_rejection_message(
             "INVALID TEMPERATURE: ONLY 1 IS ALLOWED FOR THIS MODEL"
@@ -563,6 +686,21 @@ mod tests {
                 "broader classifier must continue to match: {body:?}"
             );
         }
+    }
+
+    #[test]
+    fn detects_nvidia_nim_missing_model_body() {
+        // TAURI-RUST-4NM — nvidia-nim rejects requests with model="" with
+        // `{"error":{"message":"model field is required",...}}`.
+        let body = r#"nvidia-nim API error (400 Bad Request): {"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}"#;
+        assert!(
+            is_provider_config_rejection_message(body),
+            "TAURI-RUST-4NM body must classify as provider config-rejection: {body:?}"
+        );
+        // Also verify the bare phrase on its own (defense-in-depth path).
+        assert!(is_provider_config_rejection_message(
+            "model field is required"
+        ));
     }
 
     #[test]

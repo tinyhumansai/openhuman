@@ -1187,6 +1187,18 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "automation.task_sources",
+        name: "Task Sources",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Pull work items from GitHub, Notion, Linear, and ClickUp using per-source \
+                      filters, then enrich them onto the agent's todo board and (for proactive \
+                      sources) start an agent working on them.",
+        how_to: "Settings > Task Sources",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "automation.view_cron_jobs",
         name: "View Cron Jobs",
         domain: "automation",

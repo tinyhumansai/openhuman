@@ -114,6 +114,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::composio::all_composio_registered_controllers());
     // Scheduled job management
     controllers.extend(crate::openhuman::cron::all_cron_registered_controllers());
+    // Proactive task ingestion from external tools (github/notion/linear/clickup)
+    controllers.extend(crate::openhuman::task_sources::all_task_sources_registered_controllers());
     controllers.extend(crate::openhuman::dashboard::all_dashboard_registered_controllers());
     // MCP client subsystem: Smithery registry browser, local server install/connect, tool dispatch
     controllers.extend(crate::openhuman::mcp_registry::all_mcp_registry_registered_controllers());
@@ -204,6 +206,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::memory_sync::sync_status::all_memory_sync_status_registered_controllers(),
     );
+    // Memory sources — user-configured data connectors registry
+    controllers
+        .extend(crate::openhuman::memory_sources::all_memory_sources_registered_controllers());
     // Link shortener for long tracking URLs — saves LLM tokens
     controllers
         .extend(crate::openhuman::redirect_links::all_redirect_links_registered_controllers());
@@ -291,6 +296,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::audio_toolkit::all_audio_toolkit_controller_schemas());
     schemas.extend(crate::openhuman::composio::all_composio_controller_schemas());
     schemas.extend(crate::openhuman::cron::all_cron_controller_schemas());
+    schemas.extend(crate::openhuman::task_sources::all_task_sources_controller_schemas());
     schemas.extend(crate::openhuman::dashboard::all_dashboard_controller_schemas());
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
@@ -338,6 +344,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(
         crate::openhuman::memory_sync::sync_status::all_memory_sync_status_controller_schemas(),
     );
+    schemas.extend(crate::openhuman::memory_sources::all_memory_sources_controller_schemas());
     schemas.extend(crate::openhuman::redirect_links::all_redirect_links_controller_schemas());
     schemas.extend(crate::openhuman::referral::all_referral_controller_schemas());
     schemas.extend(crate::openhuman::billing::all_billing_controller_schemas());
@@ -440,6 +447,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         ),
         "memory_sync" => Some(
             "Per-connection memory sync status, user enable toggle, and live progress for the desktop UI.",
+        ),
+        "memory_sources" => Some(
+            "User-configured data connectors (Composio, folders, GitHub repos, RSS, web pages) that feed memory.",
         ),
         "redirect_links" => Some(
             "Shorten long tracking URLs to `openhuman://link/<id>` placeholders (SQLite-backed) to save tokens in prompts, with round-trip rewrite helpers.",

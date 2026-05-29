@@ -50,6 +50,7 @@ const AgentAccessPanel = () => {
 
   const [level, setLevel] = useState<AutonomyLevel>('supervised');
   const [workspaceOnly, setWorkspaceOnly] = useState(false);
+  const [requireTaskPlanApproval, setRequireTaskPlanApproval] = useState(true);
   const [trustedRoots, setTrustedRoots] = useState<TrustedRoot[]>([]);
   // "Always allow" allowlist — populated by the in-chat "Always allow" button;
   // shown here read-only with a Remove action (the re-protect path).
@@ -78,6 +79,7 @@ const AgentAccessPanel = () => {
         if (cancelled) return;
         setLevel(resp.result.level);
         setWorkspaceOnly(resp.result.workspace_only);
+        setRequireTaskPlanApproval(resp.result.require_task_plan_approval ?? true);
         setTrustedRoots(resp.result.trusted_roots ?? []);
         setAutoApprove(resp.result.auto_approve ?? []);
       } catch (e) {
@@ -100,6 +102,7 @@ const AgentAccessPanel = () => {
   const persist = async (next: {
     level: AutonomyLevel;
     workspaceOnly: boolean;
+    requireTaskPlanApproval: boolean;
     trustedRoots: TrustedRoot[];
     // Only sent when the allowlist itself is being changed. Omitting it leaves
     // the server's `auto_approve` untouched (partial patch) — important so a
@@ -118,6 +121,7 @@ const AgentAccessPanel = () => {
         workspace_only: next.workspaceOnly,
         trusted_roots: next.trustedRoots,
         allow_tool_install: ALLOW_TOOL_INSTALL,
+        require_task_plan_approval: next.requireTaskPlanApproval,
         ...(next.autoApprove !== undefined ? { auto_approve: next.autoApprove } : {}),
       });
       // Only the most recent persist may write UI state back.
@@ -137,12 +141,17 @@ const AgentAccessPanel = () => {
 
   const selectTier = (next: AutonomyLevel) => {
     setLevel(next);
-    void persist({ level: next, workspaceOnly, trustedRoots });
+    void persist({ level: next, workspaceOnly, requireTaskPlanApproval, trustedRoots });
   };
 
   const toggleWorkspaceOnly = (next: boolean) => {
     setWorkspaceOnly(next);
-    void persist({ level, workspaceOnly: next, trustedRoots });
+    void persist({ level, workspaceOnly: next, requireTaskPlanApproval, trustedRoots });
+  };
+
+  const toggleTaskPlanApproval = (next: boolean) => {
+    setRequireTaskPlanApproval(next);
+    void persist({ level, workspaceOnly, requireTaskPlanApproval: next, trustedRoots });
   };
 
   const addRoot = () => {
@@ -156,19 +165,25 @@ const AgentAccessPanel = () => {
     setTrustedRoots(nextRoots);
     setNewRootPath('');
     setNewRootAccess('read');
-    void persist({ level, workspaceOnly, trustedRoots: nextRoots });
+    void persist({ level, workspaceOnly, requireTaskPlanApproval, trustedRoots: nextRoots });
   };
 
   const removeRoot = (path: string) => {
     const nextRoots = trustedRoots.filter(r => r.path !== path);
     setTrustedRoots(nextRoots);
-    void persist({ level, workspaceOnly, trustedRoots: nextRoots });
+    void persist({ level, workspaceOnly, requireTaskPlanApproval, trustedRoots: nextRoots });
   };
 
   const removeAutoApprove = (tool: string) => {
     const nextList = autoApprove.filter(name => name !== tool);
     setAutoApprove(nextList);
-    void persist({ level, workspaceOnly, trustedRoots, autoApprove: nextList });
+    void persist({
+      level,
+      workspaceOnly,
+      requireTaskPlanApproval,
+      trustedRoots,
+      autoApprove: nextList,
+    });
   };
 
   return (
@@ -243,6 +258,25 @@ const AgentAccessPanel = () => {
                   </span>
                   <span className="block text-xs text-ink-soft">
                     {t('settings.agentAccess.confine.desc')}
+                  </span>
+                </span>
+              </label>
+            </section>
+
+            <section className="space-y-1">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 cursor-pointer"
+                  checked={requireTaskPlanApproval}
+                  onChange={e => toggleTaskPlanApproval(e.target.checked)}
+                />
+                <span>
+                  <span className="text-sm font-medium text-ink">
+                    {t('settings.agentAccess.requireTaskPlanApproval.label')}
+                  </span>
+                  <span className="block text-xs text-ink-soft">
+                    {t('settings.agentAccess.requireTaskPlanApproval.desc')}
                   </span>
                 </span>
               </label>

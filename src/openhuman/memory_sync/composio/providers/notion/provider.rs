@@ -23,12 +23,13 @@ use crate::openhuman::memory_sync::composio::providers::sync_state::{
     extract_item_id, persist_single_item, SyncState,
 };
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
+    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
 };
 
 pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
 pub(crate) const ACTION_FETCH_DATA: &str = "NOTION_FETCH_DATA";
+pub(crate) const ACTION_QUERY_DATABASE: &str = "NOTION_QUERY_DATABASE";
 
 /// Page size per API call.
 const PAGE_SIZE: u32 = 25;
@@ -361,6 +362,92 @@ impl ComposioProvider for NotionProvider {
         })
     }
 
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let max = filter.effective_max();
+        let database_id = filter
+            .database_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            max,
+            has_database = database_id.is_some(),
+            "[composio:notion] fetch_tasks"
+        );
+
+        // A configured board (database) uses NOTION_QUERY_DATABASE;
+        // otherwise fall back to NOTION_FETCH_DATA (recent pages), the
+        // same action the periodic sync uses.
+        let (action, mut args) = match database_id {
+            Some(db) => (
+                ACTION_QUERY_DATABASE,
+                json!({
+                    "database_id": db,
+                    "page_size": max.min(100) as u32,
+                    "sorts": [ { "timestamp": "last_edited_time", "direction": "descending" } ],
+                }),
+            ),
+            None => (
+                ACTION_FETCH_DATA,
+                json!({
+                    "page_size": max.min(100) as u32,
+                    "filter": { "value": "page", "property": "object" },
+                    "sort": { "direction": "descending", "timestamp": "last_edited_time" },
+                }),
+            ),
+        };
+        merge_extra(&mut args, &filter.extra);
+
+        let resp = ctx
+            .execute(action, Some(args))
+            .await
+            .map_err(|e| format!("[composio:notion] {action}: {e:#}"))?;
+        if !resp.successful {
+            return Err(format!(
+                "[composio:notion] {action}: {}",
+                resp.error.unwrap_or_else(|| "provider failure".into())
+            ));
+        }
+
+        // Optional client-side status filter — Notion status properties
+        // are user-defined, so we match on the normalized status rather
+        // than building a server-side property filter.
+        let want_status = filter
+            .status
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+
+        let mut out: Vec<NormalizedTask> = Vec::new();
+        for page in sync::extract_results(&resp.data) {
+            if out.len() >= max {
+                break;
+            }
+            let Some(nt) = normalize_notion_page(&page) else {
+                continue;
+            };
+            if let Some(ref want) = want_status {
+                let matches = nt
+                    .status
+                    .as_deref()
+                    .map(|s| s.to_ascii_lowercase() == *want)
+                    .unwrap_or(false);
+                if !matches {
+                    continue;
+                }
+            }
+            out.push(nt);
+        }
+        tracing::debug!(count = out.len(), "[composio:notion] fetch_tasks complete");
+        Ok(out)
+    }
+
     async fn on_trigger(
         &self,
         ctx: &ProviderContext,
@@ -380,4 +467,57 @@ impl ComposioProvider for NotionProvider {
         }
         Ok(())
     }
+}
+
+/// Map a raw Notion page payload into a [`NormalizedTask`].
+///
+/// Notion databases are user-defined, so property extraction is
+/// best-effort against common property names (`Status`, `Assignee`,
+/// `Due`). Anything unmatched is simply left `None` — the raw payload is
+/// preserved for enrichment.
+fn normalize_notion_page(page: &serde_json::Value) -> Option<NormalizedTask> {
+    let external_id = extract_item_id(page, PAGE_ID_PATHS)?;
+    let title =
+        sync::extract_page_title(page).unwrap_or_else(|| format!("Notion page {external_id}"));
+    Some(NormalizedTask {
+        external_id,
+        source_id: String::new(),
+        provider: "notion".to_string(),
+        title,
+        body: None,
+        url: pick_str(page, &["url", "data.url"]),
+        status: pick_str(
+            page,
+            &[
+                "properties.Status.status.name",
+                "properties.Status.select.name",
+                "data.properties.Status.status.name",
+            ],
+        ),
+        assignee: first_array_str(
+            page,
+            &[
+                "properties.Assignee.people",
+                "data.properties.Assignee.people",
+            ],
+            &["name"],
+        ),
+        due: pick_str(
+            page,
+            &[
+                "properties.Due.date.start",
+                "data.properties.Due.date.start",
+            ],
+        ),
+        labels: Vec::new(),
+        priority: pick_str(
+            page,
+            &[
+                "properties.Priority.select.name",
+                "data.properties.Priority.select.name",
+            ],
+        ),
+        updated_at: extract_item_id(page, PAGE_EDITED_PATHS),
+        raw: page.clone(),
+    })
 }

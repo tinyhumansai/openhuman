@@ -391,6 +391,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
                 name: "shell".into(),
                 arguments: "{}".into(),
             }],
+            reasoning_content: None,
         },
         // ...orphaning this result at the head of the kept window.
         ConversationMessage::ToolResults(vec![ToolResultMessage {
@@ -799,7 +800,9 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
     assert!(agent.last_memory_context.as_deref() == Some("[Injected]\n"));
     assert!(agent.history.iter().any(|message| matches!(
         message,
-        ConversationMessage::AssistantToolCalls { text, tool_calls }
+        ConversationMessage::AssistantToolCalls {
+            text, tool_calls, ..
+        }
             if text.as_deref().is_some_and(|value| value.contains("preface")) && tool_calls.len() == 1
     )));
     assert!(agent.history.iter().any(|message| matches!(

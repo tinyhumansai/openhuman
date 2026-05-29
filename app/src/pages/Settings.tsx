@@ -37,6 +37,8 @@ import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePan
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
+import SkillsRunnerPanel from '../components/settings/panels/SkillsRunnerPanel';
+import TaskSourcesPanel from '../components/settings/panels/TaskSourcesPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -338,6 +340,13 @@ const Settings = () => {
 
   const composioSettingsItems = [
     {
+      id: 'task-sources',
+      title: t('settings.taskSources.title'),
+      description: t('settings.taskSources.subtitle'),
+      route: 'task-sources',
+      icon: ToolsIcon,
+    },
+    {
       id: 'composio-routing',
       title: t('settings.developerMenu.composioRouting.title'),
       description: t('settings.developerMenu.composioRouting.desc'),
@@ -459,7 +468,9 @@ const Settings = () => {
         <Route path="search" element={wrapSettingsPage(<SearchPanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
+        <Route path="task-sources" element={wrapSettingsPage(<TaskSourcesPanel />)} />
         <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
+        <Route path="skills-runner" element={wrapSettingsPage(<SkillsRunnerPanel />)} />
         <Route
           path="screen-awareness-debug"
           element={wrapSettingsPage(<ScreenAwarenessDebugPanel />)}

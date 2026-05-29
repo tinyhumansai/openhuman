@@ -12,11 +12,19 @@ export type PersistedTurnPhase = 'thinking' | 'tool_use' | 'subagent';
 export type PersistedToolStatus = 'running' | 'success' | 'error';
 
 export type TaskBoardCardStatus = 'todo' | 'in_progress' | 'blocked' | 'done';
+export type TaskApprovalMode = 'required' | 'not_required';
 
 export interface TaskBoardCard {
   id: string;
   title: string;
   status: TaskBoardCardStatus;
+  objective?: string | null;
+  plan?: string[];
+  assignedAgent?: string | null;
+  allowedTools?: string[];
+  approvalMode?: TaskApprovalMode | null;
+  acceptanceCriteria?: string[];
+  evidence?: string[];
   notes?: string | null;
   blocker?: string | null;
   order: number;

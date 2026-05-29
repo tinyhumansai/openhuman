@@ -1488,6 +1488,10 @@ async fn run_server_inner(
                     ),
                     Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
                 }
+                // Seed bundled default skills into <workspace>/skills/ so they
+                // ship with the system — discoverable (skills_list) and runnable
+                // — without a manual drop. Idempotent; never clobbers user edits.
+                crate::openhuman::skills::registry::seed_default_skills(&cfg.workspace_dir);
             }
             Err(e) => {
                 log::error!(
@@ -1839,6 +1843,15 @@ fn register_domain_subscribers(
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Task-sources proactive ingestion: connection-created hook + poll.
+        crate::openhuman::task_sources::bus::register_task_sources_subscriber();
+        crate::openhuman::task_sources::start_periodic_poll();
+        // Seed memory_sources with active Composio connections so the
+        // user sees their connected integrations as memory sources by
+        // default. Best-effort: failure is logged but does not block startup.
+        tokio::spawn(async {
+            crate::openhuman::memory_sources::reconcile::ensure_composio_sources().await;
+        });
         // Initialise the scheduler gate before any background AI workers
         // start so they observe a real policy on their first iteration
         // (otherwise they fall back to `Policy::Normal` and miss the

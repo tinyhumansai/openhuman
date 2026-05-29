@@ -698,6 +698,9 @@ fn make_ollama_provider(
         redact_endpoint(&endpoint),
         temperature_override
     );
+    // Ollama does not expose the Responses API (/v1/responses) — passing
+    // `false` prevents a guaranteed-404 fallback attempt and the Sentry
+    // noise it would generate (TAURI-RUST-59Y).
     let p = make_openai_compatible_provider_with_config(
         "ollama",
         &endpoint,
@@ -705,6 +708,7 @@ fn make_ollama_provider(
         CompatAuthStyle::None,
         &config.temperature_unsupported_models,
         temperature_override,
+        false,
     )?;
     Ok((p, model.to_string()))
 }
@@ -723,6 +727,7 @@ fn make_lm_studio_provider(
         redact_endpoint(&endpoint),
         temperature_override
     );
+    // LM Studio does not expose the Responses API — same rationale as Ollama.
     let p = make_openai_compatible_provider_with_config(
         "lmstudio",
         &endpoint,
@@ -734,6 +739,7 @@ fn make_lm_studio_provider(
         },
         &config.temperature_unsupported_models,
         temperature_override,
+        false,
     )?;
     Ok((p, model.to_string()))
 }
@@ -792,7 +798,7 @@ fn make_cloud_provider_by_slug(
             slug,
         );
         anyhow::bail!(
-            "[chat-factory] role '{}' resolved to an empty model id for slug '{}'. \
+            "[chat-factory] no model configured: role '{}' resolved to an empty model id for slug '{}'. \
              Include a model in the provider string (e.g. '{slug}:<model-id>') or \
              set default_model on the cloud_providers entry for slug '{slug}'.",
             role,
@@ -849,6 +855,7 @@ fn make_cloud_provider_by_slug(
                 CompatAuthStyle::Anthropic,
                 unsupported,
                 temperature_override,
+                true,
             )?;
             Ok((p, effective_model))
         }
@@ -869,6 +876,7 @@ fn make_cloud_provider_by_slug(
                 CompatAuthStyle::None,
                 unsupported,
                 temperature_override,
+                true,
             )?;
             Ok((p, effective_model))
         }
@@ -978,12 +986,26 @@ fn make_openai_compatible_provider(
     api_key: &str,
     auth_style: CompatAuthStyle,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    make_openai_compatible_provider_with_config("cloud", endpoint, api_key, auth_style, &[], None)
+    make_openai_compatible_provider_with_config(
+        "cloud",
+        endpoint,
+        api_key,
+        auth_style,
+        &[],
+        None,
+        true,
+    )
 }
 
 /// Build an `OpenAiCompatibleProvider` with auth style, temperature
 /// suppression list from config, and an optional per-workload temperature
 /// override (extracted from the provider string's `@<temp>` suffix).
+///
+/// `supports_responses_fallback` controls whether a 404 on the chat
+/// completions endpoint triggers an automatic retry against `/v1/responses`.
+/// Local providers (Ollama, LM Studio) do not expose the Responses API, so
+/// passing `false` for them prevents a guaranteed-404 secondary request and
+/// the Sentry noise it would generate (TAURI-RUST-59Y).
 fn make_openai_compatible_provider_with_config(
     provider_name: &str,
     endpoint: &str,
@@ -991,14 +1013,32 @@ fn make_openai_compatible_provider_with_config(
     auth_style: CompatAuthStyle,
     temperature_unsupported_models: &[String],
     temperature_override: Option<f64>,
+    supports_responses_fallback: bool,
 ) -> anyhow::Result<Box<dyn Provider>> {
     let key = if api_key.trim().is_empty() {
         None
     } else {
         Some(api_key)
     };
-    Ok(Box::new(
+    log::debug!(
+        "[providers][chat-factory] building compatible provider name={} endpoint_host={} responses_fallback={} temp_override={:?}",
+        provider_name,
+        redact_endpoint(endpoint),
+        supports_responses_fallback,
+        temperature_override
+    );
+    let provider = if supports_responses_fallback {
         OpenAiCompatibleProvider::new(provider_name, endpoint, key, auth_style)
+    } else {
+        OpenAiCompatibleProvider::new_no_responses_fallback(
+            provider_name,
+            endpoint,
+            key,
+            auth_style,
+        )
+    };
+    Ok(Box::new(
+        provider
             .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
             .with_temperature_override(temperature_override),
     ))

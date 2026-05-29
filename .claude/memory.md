@@ -208,7 +208,11 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Core port** — `7788` (default; in-process inside Tauri host). Check with `lsof -i :7788`.
 - **`pnpm core:stage`** — no-op (sidecar removed in PR #1061). Use `pnpm dev:app` for full Tauri+core dev.
 - **Kill stuck processes** — `lsof -i :7788` then `kill <PID>`. Useful when `dev:app` reports a stale listener and you want to force a fresh boot rather than relying on the handle's auto-recovery.
-- **Skills runtime removed** — the QuickJS / `rquickjs` runtime is gone; `src/openhuman/skills/` is metadata-only ("Legacy skill metadata helpers retained after QuickJS runtime removal"). Skill execution surfaces are being rebuilt; don't assume a `.skill` can run end-to-end without checking the current code.
+- **Skills runtime rebuilt (PR #2707)** — QuickJS is gone, but skills now run as orchestrator-focused agents via `skills_run` RPC. Default skills live in `src/openhuman/skills/defaults/<id>/` with `skill.toml` + `SKILL.md`, registered in `registry.rs` `DEFAULT_SKILLS` const. Seeded into `<workspace>/skills/` on boot (idempotent, non-destructive). Bundled defaults: `github-issue-crusher`, `dev-workflow`. Skills run with 200 iteration cap and full web access.
+- **Codegraph tools (PR #2707)** — `codegraph_index` and `codegraph_search` registered in `src/openhuman/tools/ops.rs`. Implementation in `src/openhuman/codegraph/` — tree-sitter extraction, SQLite FTS5, dense embeddings, RRF fusion. Auto-indexes on first search.
+- **Tool names are exact** — Always check `src/openhuman/tools/ops.rs` for authoritative names. Key ones: `edit` (not `edit_file`), `composio` (not `composio_execute`), `codegraph_index`, `codegraph_search`.
+- **`cron_add` RPC** — Was missing from `schemas.rs` (only existed as agent tool). Now exposed as `openhuman.cron_add`. Frontend wrapper: `openhumanCronAdd()` in `app/src/utils/tauriCommands/cron.ts`.
+- **Worktree `pnpm build` rolldown fix** — Worktrees can miss `@rolldown/binding-darwin-arm64`. Fix: `pnpm install --force`.
 
 ## Artifacts Domain (Issue #2776)
 

@@ -62,6 +62,9 @@ mod tests {
             include_memory_md: false,
             curated_snapshot: None,
             user_identity: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            personality_roster: vec![],
         };
         let body = build(&ctx).unwrap();
         assert!(!body.is_empty());

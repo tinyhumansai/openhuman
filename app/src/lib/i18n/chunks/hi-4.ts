@@ -436,6 +436,28 @@ const hi4: TranslationMap = {
   'pages.settings.composioSection.title': 'Composio',
   'pages.settings.composioSection.description':
     'Composio द्वारा संचालित एकीकरण के लिए रूटिंग, ट्रिगर और इतिहास।',
+  'conversations.taskKanban.approval.default': 'Default',
+  'conversations.taskKanban.approval.notRequired': 'Not required',
+  'conversations.taskKanban.approval.notRequiredBadge': 'no approval',
+  'conversations.taskKanban.approval.required': 'Required',
+  'conversations.taskKanban.approval.requiredBadge': 'approval',
+  'conversations.taskKanban.approval.requiredBeforeExecution': 'Required before execution',
+  'conversations.taskKanban.briefButton': 'Task brief',
+  'conversations.taskKanban.briefTitle': 'Task brief',
+  'conversations.taskKanban.closeBrief': 'Close task brief',
+  'conversations.taskKanban.field.acceptanceCriteria': 'Acceptance criteria',
+  'conversations.taskKanban.field.allowedTools': 'Allowed tools',
+  'conversations.taskKanban.field.approval': 'Approval',
+  'conversations.taskKanban.field.assignedAgent': 'Assigned agent',
+  'conversations.taskKanban.field.blocker': 'Blocker',
+  'conversations.taskKanban.field.evidence': 'Evidence',
+  'conversations.taskKanban.field.notes': 'Notes',
+  'conversations.taskKanban.field.objective': 'Objective',
+  'conversations.taskKanban.field.plan': 'Plan',
+  'conversations.taskKanban.field.status': 'Status',
+  'conversations.taskKanban.field.title': 'Title',
+  'conversations.taskKanban.saveChanges': 'Save changes',
+  'conversations.taskKanban.updateFailed': 'Could not update task; changes were not saved.',
 };
 
 export default hi4;

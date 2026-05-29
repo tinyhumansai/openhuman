@@ -20,6 +20,8 @@ pub struct ConversationThread {
     pub parent_thread_id: Option<String>,
     #[serde(default)]
     pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub personality_id: Option<String>,
 }
 
 /// A single message appended to a thread's JSONL log.
@@ -47,6 +49,8 @@ pub struct CreateConversationThread {
     pub parent_thread_id: Option<String>,
     #[serde(default)]
     pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub personality_id: Option<String>,
 }
 
 /// Partial update to apply to a stored message (e.g. rewriting `extraMetadata`).
@@ -122,6 +126,7 @@ mod tests {
             created_at: "2026-05-24T08:00:00Z".into(),
             parent_thread_id: None,
             labels: Some(vec!["important".into(), "memory".into()]),
+            personality_id: None,
         };
 
         let encoded = serde_json::to_value(&create).unwrap();

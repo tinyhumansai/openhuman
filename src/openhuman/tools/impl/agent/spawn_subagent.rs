@@ -570,6 +570,7 @@ fn persist_worker_thread(
             created_at: now.clone(),
             parent_thread_id: None,
             labels: Some(vec!["worker".to_string()]),
+            personality_id: None,
         },
     )
     .map_err(|err| format!("ensure_thread: {err}"))?;

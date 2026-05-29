@@ -2023,10 +2023,25 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
     #[cfg(target_os = "linux")]
     {
         let uid = nix::unistd::getuid().as_raw();
-        if os == "linux" && linux_is_root_uid(uid) {
+        // Dev-only: also honor OPENHUMAN_CEF_NO_SANDBOX=1 so a non-root headless
+        // box (no sudo to chown chrome-sandbox root:4755) can launch over RDP.
+        //
+        // SECURITY: gated to debug builds only. Disabling Chromium's process
+        // sandbox in a release binary would let anyone with env-write access
+        // on the host silently turn off a meaningful defense-in-depth layer
+        // (graycyrus review on PR #2875). In release builds `forced` stays
+        // false so only the `linux_is_root_uid` path can opt in (uid=0
+        // already implies root-equivalent trust).
+        #[cfg(debug_assertions)]
+        let forced = std::env::var("OPENHUMAN_CEF_NO_SANDBOX")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        #[cfg(not(debug_assertions))]
+        let forced = false;
+        if os == "linux" && (linux_is_root_uid(uid) || forced) {
             args.push(("--no-sandbox", None));
             log::info!(
-                "[cef-startup] running as root (uid=0) on Linux: adding --no-sandbox \
+                "[cef-startup] Linux: adding --no-sandbox (root uid or OPENHUMAN_CEF_NO_SANDBOX) \
                  (OPENHUMAN-TAURI-K1)"
             );
         }

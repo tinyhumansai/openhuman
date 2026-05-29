@@ -573,6 +573,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
                 created_at: now_iso.clone(),
                 parent_thread_id: None,
                 labels: Some(vec!["from_reflection".to_string()]),
+                personality_id: None,
             },
         )
         .map_err(|e| format!("ensure_thread (reflection-spawned) failed: {e}"))?;

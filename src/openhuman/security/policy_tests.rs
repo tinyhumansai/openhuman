@@ -2335,3 +2335,108 @@ fn from_config_does_not_duplicate_user_granted_projects_root() {
         "must preserve the user-granted access level"
     );
 }
+
+// -- canonical_workspace cache ------------------------------------
+
+/// `validate_path` previously called `tokio::fs::canonicalize(&workspace_dir)`
+/// inline on every invocation. The `canonical_workspace` OnceCell now memoizes
+/// that result. This test pins the contract: the cell starts empty, is
+/// populated after the first `validate_path` call, and stays populated (same
+/// value) across subsequent calls — i.e. only one canonicalize per policy.
+#[tokio::test]
+async fn validate_path_caches_canonical_workspace_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().to_path_buf();
+    let file = workspace.join("hello.txt");
+    std::fs::write(&file, "hi").unwrap();
+
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        // Disable workspace_only so we can refer to the temp workspace via
+        // its absolute path (the default policy blocks any absolute path
+        // when workspace_only=true). Clear forbidden_paths for the same
+        // reason — macOS tempdirs live under `/var/folders/…`.
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    // Empty before first use.
+    assert!(
+        policy.canonical_workspace.get().is_none(),
+        "OnceCell must start empty so the first call hydrates it"
+    );
+
+    // First call hydrates the cache.
+    let r1 = policy
+        .validate_path(file.to_str().unwrap())
+        .await
+        .expect("first validate_path call succeeds");
+    let cached_after_first = policy
+        .canonical_workspace
+        .get()
+        .expect("first validate_path call must hydrate the OnceCell")
+        .clone();
+
+    // Subsequent calls reuse the cached value without re-canonicalizing.
+    for _ in 0..5 {
+        let r = policy
+            .validate_path(file.to_str().unwrap())
+            .await
+            .expect("repeated validate_path calls succeed");
+        assert_eq!(r, r1, "validate_path result must be stable across calls");
+        let cached_now = policy
+            .canonical_workspace
+            .get()
+            .expect("OnceCell stays populated after first hydration");
+        assert_eq!(
+            cached_now, &cached_after_first,
+            "cached workspace root must not change across calls"
+        );
+    }
+}
+
+/// `validate_parent_path` shares the same cache as `validate_path` — both go
+/// through `workspace_root()`. Hydrating via either entry point must be
+/// observable from the other.
+#[tokio::test]
+async fn validate_parent_path_uses_same_cache_as_validate_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().to_path_buf();
+
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        // Disable workspace_only so we can refer to the temp workspace via
+        // its absolute path (the default policy blocks any absolute path
+        // when workspace_only=true). Clear forbidden_paths for the same
+        // reason — macOS tempdirs live under `/var/folders/…`.
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    // Empty before first use.
+    assert!(policy.canonical_workspace.get().is_none());
+
+    // Hydrate via validate_parent_path (target file does not exist yet).
+    let target = workspace.join("not-yet-written.txt");
+    let _ = policy
+        .validate_parent_path(target.to_str().unwrap())
+        .await
+        .expect("validate_parent_path succeeds against an extant parent");
+    let cached = policy
+        .canonical_workspace
+        .get()
+        .expect("validate_parent_path must also hydrate the OnceCell")
+        .clone();
+
+    // A subsequent validate_path call must see the same cached root.
+    let other = workspace.join("hi.txt");
+    std::fs::write(&other, "x").unwrap();
+    let _ = policy.validate_path(other.to_str().unwrap()).await.unwrap();
+    assert_eq!(
+        policy.canonical_workspace.get(),
+        Some(&cached),
+        "validate_path must reuse the cache hydrated by validate_parent_path"
+    );
+}

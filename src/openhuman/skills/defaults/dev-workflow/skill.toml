@@ -1,0 +1,49 @@
+# dev-workflow — a DEFAULT skill shipped with OpenHuman.
+# Bundled into the binary and seeded into <workspace>/skills/ on first load
+# (idempotent — never clobbers user edits). Parsed as a SkillDefinition:
+# AgentDefinition fields are flattened in, plus the declared [[inputs]]. At
+# skills_run time it runs as the `orchestrator` agent, focused by SKILL.md,
+# with these inputs rendered into the task prompt.
+#
+# Autonomous developer: picks GitHub issues assigned to the user on an upstream
+# repo, implements fixes using codegraph-accelerated code navigation, and opens
+# cross-repo PRs from a fork.
+id = "dev-workflow"
+when_to_use = "Autonomous developer — picks GitHub issues assigned to the user and raises pull requests. Runs on a schedule via cron."
+
+# Preflight gate (see src/openhuman/skills/preflight.rs). dev-workflow
+# touches GitHub via Composio AND uses local git for the working tree,
+# so both subsystems must be ready before the orchestrator boots:
+#
+#   * Composio GitHub connection is active
+#   * local `git` is on PATH
+#   * `git config --global user.{name,email}` are both set
+#   * (strict) Composio username == local git user.name (case-insensitive)
+#
+# Strict identity match is the default — if Composio is signed in as
+# `alice` but local git claims to be `bob`, the PR you push will be
+# authored by `bob` while the OAuth-driven Composio call comes from
+# `alice`. That mismatch produces broken commits no fix-up can recover.
+[github]
+required = true
+identity_match = "strict"
+
+[[inputs]]
+name = "repo"
+description = "The UPSTREAM repo to pick issues from and target PRs against, as owner/name (e.g. acme/web)."
+required = true
+
+[[inputs]]
+name = "upstream"
+description = "Alias for the upstream repo full name. Same as repo if this IS the upstream."
+required = true
+
+[[inputs]]
+name = "target_branch"
+description = "Branch on the upstream to base PRs against (e.g. main)."
+required = true
+
+[[inputs]]
+name = "fork_owner"
+description = "GitHub username of the fork owner — the fix branch is pushed to fork_owner/repo."
+required = true

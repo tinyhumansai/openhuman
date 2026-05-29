@@ -4,6 +4,8 @@ use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
 use crate::openhuman::inference::provider::traits::{ChatMessage, ChatRequest, ProviderDelta};
 use tempfile::TempDir;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn config_with_providers(providers: Vec<CloudProviderCreds>) -> Config {
     let mut c = Config::default();
@@ -367,6 +369,57 @@ fn empty_model_in_ollama_rejected() {
         .err()
         .expect("empty model must fail");
     assert!(err.to_string().contains("empty model"), "{err}");
+}
+
+#[test]
+fn cloud_provider_with_no_model_and_no_default_rejected() {
+    // TAURI-RUST-4NM — nvidia-nim (and others) reject `model=""` with
+    // "model field is required". The factory must catch this up-front with
+    // a clear, actionable message instead of leaking an empty model to the API.
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_nim".to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: None, // no fallback model configured
+        ..Default::default()
+    });
+
+    let err = match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
+        Ok(_) => panic!("empty model must fail"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no model configured"),
+        "expected 'no model configured' in error, got: {msg}"
+    );
+    assert!(
+        msg.contains("nvidia-nim"),
+        "error must name the slug; got: {msg}"
+    );
+}
+
+#[test]
+fn cloud_provider_default_model_used_when_model_part_is_empty() {
+    // When provider string is "nvidia-nim:" (empty model) but the entry
+    // has a default_model, the factory must use the default — not error.
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_nim".to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("meta/llama-3.1-8b-instruct".to_string()),
+        ..Default::default()
+    });
+
+    let (_, model) = create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
+        .expect("empty model with default_model must succeed");
+    assert_eq!(model, "meta/llama-3.1-8b-instruct");
 }
 
 #[test]
@@ -1198,6 +1251,156 @@ fn byok_fallback_background_workloads_never_inherit() {
             role
         );
     }
+}
+
+/// Regression guard for TAURI-RUST-59Y: when Ollama returns 404 on
+/// `/chat/completions` (e.g. model not found), the provider must NOT
+/// attempt a fallback request to `/responses`. The Ollama API has no
+/// Responses endpoint, so the fallback produces a second guaranteed-404
+/// that previously generated Sentry noise at scale (1,598 events).
+///
+/// This test mounts a mock server that returns 404 for chat/completions
+/// and an empty 200 for the responses endpoint (so we can detect if it
+/// was called). After the provider call fails, we assert the responses
+/// endpoint received zero requests.
+#[tokio::test]
+async fn ollama_provider_does_not_fall_back_to_responses_on_404() {
+    let mock_server = MockServer::start().await;
+
+    // chat/completions always returns 404 (model not found).
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_string(
+            r#"{"error":{"message":"model 'gemma3:1b-it-qat' not found","code":404}}"#,
+        ))
+        .expect(1) // exactly one attempt — no retry
+        .mount(&mock_server)
+        .await;
+
+    // /v1/responses should NOT be called — mount with expect(0).
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"output_text":"should not reach here"}"#),
+        )
+        .expect(0) // must not be called
+        .mount(&mock_server)
+        .await;
+
+    let mut config = Config::default();
+    // Point the Ollama base URL at the mock server.
+    config.local_ai.base_url = Some(mock_server.uri());
+    let (provider, model) =
+        create_chat_provider_from_string("chat", "ollama:gemma3:1b-it-qat", &config)
+            .expect("ollama provider must build");
+
+    // The call should fail (404), but must not trigger the /v1/responses path.
+    let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
+    assert!(
+        result.is_err(),
+        "provider should fail with 404, got success"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("404") || err_msg.contains("not found"),
+        "error should reference 404/not-found, got: {err_msg}"
+    );
+
+    // wiremock verifies expect(0) on the responses mock when the server is dropped.
+}
+
+/// Same regression guard as above but for LM Studio — it also lacks the
+/// Responses API and must not trigger the fallback on 404.
+#[tokio::test]
+async fn lmstudio_provider_does_not_fall_back_to_responses_on_404() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_string(r#"{"error":"model not found"}"#))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"output_text":"should not reach here"}"#),
+        )
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    let mut config = Config::default();
+    config.local_ai.base_url = Some(mock_server.uri());
+    let (provider, model) =
+        create_chat_provider_from_string("chat", "lmstudio:google/gemma-4-e4b", &config)
+            .expect("lmstudio provider must build");
+
+    let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
+    assert!(
+        result.is_err(),
+        "provider should fail with 404, got success"
+    );
+}
+
+/// Counterpart to the no-fallback tests: a cloud provider (responses_fallback=true)
+/// MUST retry against `/v1/responses` when chat/completions returns 404.
+/// This guards against an accidental inversion of the supports_responses_fallback flag.
+#[tokio::test]
+async fn cloud_provider_falls_back_to_responses_on_404() {
+    let mock_server = MockServer::start().await;
+
+    // chat/completions returns 404 → should trigger fallback.
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(404)
+                .set_body_string(r#"{"error":{"message":"model not found","code":404}}"#),
+        )
+        .expect(1) // exactly one attempt
+        .mount(&mock_server)
+        .await;
+
+    // /v1/responses MUST be called — the provider should fall back to it.
+    Mock::given(method("POST"))
+        .and(path("/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(
+                r#"{"output":[{"content":[{"type":"output_text","text":"ok"}]}]}"#,
+            ),
+        )
+        .expect(1) // must be called exactly once
+        .mount(&mock_server)
+        .await;
+
+    // Use AuthStyle::None so no API key lookup is needed.
+    // The endpoint must include /v1 so that chat_completions_url() resolves to
+    // /v1/chat/completions and responses_url() resolves to /v1/responses.
+    let config = config_with_providers(vec![CloudProviderCreds {
+        id: "p_test".to_string(),
+        slug: "test-cloud".to_string(),
+        label: "Test Cloud".to_string(),
+        endpoint: format!("{}/v1", mock_server.uri()),
+        auth_style: AuthStyle::None,
+        default_model: Some("test-model".to_string()),
+        ..Default::default()
+    }]);
+
+    let (provider, model) =
+        create_chat_provider_from_string("chat", "test-cloud:test-model", &config)
+            .expect("cloud provider must build");
+
+    // The call should succeed via the responses fallback.
+    let result = provider.chat_with_system(None, "hello", &model, 0.0).await;
+
+    // wiremock verifies expect(1) on the responses mock when the server is dropped.
+    // We don't assert Ok here because the provider may return an error even after a
+    // successful fallback call (e.g. if the response body doesn't fully satisfy parsing).
+    // The important invariant is that /v1/responses was called — verified by wiremock.
+    drop(result);
 }
 
 #[tokio::test]

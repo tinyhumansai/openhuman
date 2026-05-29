@@ -632,6 +632,30 @@ pub enum DomainEvent {
     /// detection (already redacted by the call site) — surfaced to logs,
     /// never to Sentry or the UI verbatim.
     SessionExpired { source: String, reason: String },
+
+    // ── Task sources ─────────────────────────────────────────────────────
+    /// A task source completed a fetch pass.
+    TaskSourceFetched {
+        source_id: String,
+        provider: String,
+        fetched: usize,
+        routed: usize,
+        skipped: usize,
+    },
+    /// A single external task was ingested and routed onto the board.
+    TaskSourceTaskIngested {
+        source_id: String,
+        provider: String,
+        external_id: String,
+        title: String,
+        urgency: f32,
+    },
+    /// A task source fetch pass failed.
+    TaskSourceFetchFailed {
+        source_id: String,
+        provider: String,
+        error: String,
+    },
 }
 
 impl DomainEvent {
@@ -718,6 +742,10 @@ impl DomainEvent {
             | Self::HealthRestarted { .. } => "system",
 
             Self::SessionExpired { .. } => "auth",
+
+            Self::TaskSourceFetched { .. }
+            | Self::TaskSourceTaskIngested { .. }
+            | Self::TaskSourceFetchFailed { .. } => "task_sources",
 
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
 
@@ -806,6 +834,9 @@ impl DomainEvent {
             Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+            Self::TaskSourceFetched { .. } => "TaskSourceFetched",
+            Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
+            Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
         }
     }
 

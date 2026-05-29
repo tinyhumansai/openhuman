@@ -3,13 +3,11 @@
 use super::*;
 use crate::openhuman::desktop_companion::types::*;
 
-use std::sync::Mutex as StdMutex;
-
-/// Serialize tests that mutate the process-global session state.
-static TEST_MUTEX: StdMutex<()> = StdMutex::new(());
-
+/// Serialize tests that mutate the process-global session state. Shared with
+/// `pipeline_tests` via `lock_test_state()` (defined in `session`) so a
+/// reset/transition here can't race a transition in the pipeline tests.
 fn with_clean_session<F: FnOnce()>(f: F) {
-    let _lock = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+    let _lock = lock_test_state();
     reset_for_test();
     f();
     reset_for_test();

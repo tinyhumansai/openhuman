@@ -4,13 +4,31 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { renderWithProviders } from '../../../../test/test-utils';
 
 // [dev-workflow] Unit tests for DevWorkflowPanel.tsx — covers repo loading,
-// not-connected error, fork detection, branch population, and save/clear wiring.
+// not-connected error, fork detection, branch population, and cron job wiring.
 
-const hoisted = vi.hoisted(() => ({ composioExecute: vi.fn(), listConnections: vi.fn() }));
+const hoisted = vi.hoisted(() => ({
+  composioExecute: vi.fn(),
+  listConnections: vi.fn(),
+  cronAdd: vi.fn(),
+  cronList: vi.fn(),
+  cronRemove: vi.fn(),
+  cronUpdate: vi.fn(),
+  cronRun: vi.fn(),
+  cronRuns: vi.fn(),
+}));
 
 vi.mock('../../../../lib/composio/composioApi', () => ({
   execute: hoisted.composioExecute,
   listConnections: hoisted.listConnections,
+}));
+
+vi.mock('../../../../utils/tauriCommands/cron', () => ({
+  openhumanCronAdd: hoisted.cronAdd,
+  openhumanCronList: hoisted.cronList,
+  openhumanCronRemove: hoisted.cronRemove,
+  openhumanCronUpdate: hoisted.cronUpdate,
+  openhumanCronRun: hoisted.cronRun,
+  openhumanCronRuns: hoisted.cronRuns,
 }));
 
 // Stable t function — creating a new function object on every render
@@ -32,7 +50,7 @@ vi.mock('../../components/SettingsHeader', () => ({
 }));
 
 // Import once — DevWorkflowPanel state is managed via API mocks and
-// localStorage, not module-level vars, so a single import is sufficient.
+// cron RPC, not module-level vars, so a single import is sufficient.
 async function importPanel() {
   const mod = await import('../DevWorkflowPanel');
   return mod.default;
@@ -82,9 +100,15 @@ const branchesResponse = {
 describe('DevWorkflowPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    localStorage.clear();
     hoisted.listConnections.mockResolvedValue(githubConnection);
     hoisted.composioExecute.mockResolvedValue(reposResponse);
+    hoisted.cronList.mockResolvedValue({ result: [], logs: [] });
+    hoisted.cronAdd.mockResolvedValue({
+      result: { id: 'cron-1', name: 'dev-workflow-user-repo1' },
+      logs: [],
+    });
+    hoisted.cronRemove.mockResolvedValue({ result: { job_id: 'cron-1', removed: true }, logs: [] });
+    hoisted.cronRuns.mockResolvedValue({ result: { runs: [] }, logs: [] });
   });
 
   test('renders header immediately and populates repo dropdown on successful fetch', async () => {
@@ -183,7 +207,7 @@ describe('DevWorkflowPanel', () => {
     });
   });
 
-  test('save button stores config in localStorage', async () => {
+  test('save button creates a cron job via openhumanCronAdd', async () => {
     // Call sequence: LIST_REPOS → GET_A_REPO (non-fork) → LIST_BRANCHES
     hoisted.composioExecute
       .mockResolvedValueOnce(reposResponse)
@@ -209,50 +233,57 @@ describe('DevWorkflowPanel', () => {
 
     // Click save
     const saveBtn = screen.getByRole('button', {
-      name: /settings\.devWorkflow\.(save|update)Configuration/,
+      name: /settings\.devWorkflow\.saveConfiguration/,
     });
     fireEvent.click(saveBtn);
 
-    // Verify localStorage was written
-    const raw = localStorage.getItem('openhuman:dev-workflow-config');
-    expect(raw).not.toBeNull();
-    const stored = JSON.parse(raw!);
-    expect(stored.repoFullName).toBe('user/repo1');
-    expect(stored.repoOwner).toBe('user');
-    expect(stored.repoName).toBe('repo1');
-    expect(stored.targetBranch).toBe('main');
-    expect(typeof stored.schedule).toBe('string');
-
-    // Saved status indicator
-    expect(screen.getByText('settings.devWorkflow.saved')).toBeInTheDocument();
+    // Verify cron_add was called
+    await waitFor(() => {
+      expect(hoisted.cronAdd).toHaveBeenCalledTimes(1);
+    });
+    const addCall = hoisted.cronAdd.mock.calls[0][0];
+    expect(addCall.name).toBe('dev-workflow-user-repo1');
+    expect(addCall.schedule).toEqual({ kind: 'cron', expr: '*/30 * * * *' });
+    expect(addCall.job_type).toBe('agent');
+    expect(addCall.prompt).toContain('dev-workflow');
+    expect(addCall.prompt).toContain('user/repo1');
   });
 
-  test('remove button clears localStorage config', async () => {
-    // Pre-populate localStorage so savedConfig is non-null on mount
-    const existingConfig = {
-      repoFullName: 'user/repo1',
-      repoOwner: 'user',
-      repoName: 'repo1',
-      forkInfo: null,
-      targetBranch: 'main',
-      schedule: '*/30 * * * *',
+  test('remove button deletes cron job via openhumanCronRemove', async () => {
+    // Pre-populate cron list so existingJob is set on mount
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
     };
-    localStorage.setItem('openhuman:dev-workflow-config', JSON.stringify(existingConfig));
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
 
     const Panel = await importPanel();
     renderWithProviders(<Panel />);
 
-    // Active config summary is shown immediately (initialised from localStorage)
-    expect(screen.getByText('settings.devWorkflow.activeConfiguration')).toBeInTheDocument();
+    // Active config card shows at top regardless of repo loading
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.activeConfiguration')).toBeInTheDocument();
+    });
 
-    // Remove button is visible because savedConfig is set
+    // Remove button is in the active config card
     const removeBtn = screen.getByRole('button', { name: 'settings.devWorkflow.remove' });
     fireEvent.click(removeBtn);
 
-    // localStorage should be cleared
-    expect(localStorage.getItem('openhuman:dev-workflow-config')).toBeNull();
-    // Active config summary gone
-    expect(screen.queryByText('settings.devWorkflow.activeConfiguration')).toBeNull();
+    // Verify cron_remove was called
+    await waitFor(() => {
+      expect(hoisted.cronRemove).toHaveBeenCalledWith('cron-1');
+    });
   });
 
   test('shows branches fetched from upstream when fork is detected', async () => {
@@ -296,5 +327,658 @@ describe('DevWorkflowPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('network error')).toBeInTheDocument();
     });
+  });
+
+  test('toggle button calls openhumanCronUpdate with enabled flag', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronUpdate.mockResolvedValue({ data: { ...existingCronJob, enabled: false } });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Wait for active config with toggle
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.enabled')).toBeInTheDocument();
+    });
+
+    // Click the toggle button (the switch element)
+    const toggleBtn = screen.getByText('settings.devWorkflow.enabled').previousElementSibling;
+    if (toggleBtn) fireEvent.click(toggleBtn);
+
+    await waitFor(() => {
+      expect(hoisted.cronUpdate).toHaveBeenCalledWith('cron-1', { enabled: false });
+    });
+  });
+
+  test('run now button calls openhumanCronRun', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronRun.mockResolvedValue({
+      data: { job_id: 'cron-1', status: 'ok', duration_ms: 100, output: 'done' },
+    });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.runNow')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('settings.devWorkflow.runNow'));
+
+    await waitFor(() => {
+      expect(hoisted.cronRun).toHaveBeenCalledWith('cron-1');
+    });
+  });
+
+  test('shows run history when cron runs are available', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+      last_run: '2026-01-01T00:30:00Z',
+      last_status: 'ok',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronRuns.mockResolvedValue({
+      result: {
+        runs: [
+          {
+            id: 1,
+            job_id: 'cron-1',
+            started_at: '2026-01-01T00:30:00Z',
+            finished_at: '2026-01-01T00:31:00Z',
+            status: 'ok',
+            duration_ms: 60000,
+          },
+        ],
+      },
+      logs: [],
+    });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Wait for the recent runs toggle to appear
+    await waitFor(() => {
+      expect(screen.getByText(/settings\.devWorkflow\.recentRuns/)).toBeInTheDocument();
+    });
+
+    // Expand history
+    fireEvent.click(screen.getByText(/settings\.devWorkflow\.recentRuns/));
+
+    // Run entry should be visible
+    await waitFor(() => {
+      expect(screen.getByText('60.0s')).toBeInTheDocument();
+    });
+  });
+
+  test('shows last run status badge when job has last_status', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+      last_run: '2026-01-01T00:30:00Z',
+      last_status: 'error',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('error')).toBeInTheDocument();
+    });
+  });
+
+  test('handles save error gracefully', async () => {
+    hoisted.composioExecute
+      .mockResolvedValueOnce(reposResponse)
+      .mockResolvedValueOnce(repoMetaNonFork)
+      .mockResolvedValueOnce(branchesResponse);
+    hoisted.cronAdd.mockRejectedValue(new Error('save failed'));
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /user\/repo1/ })).toBeInTheDocument();
+    });
+
+    const repoSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.change(repoSelect, { target: { value: 'user/repo1' } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'main' })).toBeInTheDocument();
+    });
+
+    const saveBtn = screen.getByRole('button', {
+      name: /settings\.devWorkflow\.saveConfiguration/,
+    });
+    fireEvent.click(saveBtn);
+
+    // Error status should appear
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.cronSaveError')).toBeInTheDocument();
+    });
+  });
+
+  test('loadExistingJob handles cronList error gracefully', async () => {
+    hoisted.cronList.mockRejectedValue(new Error('cron list failed'));
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Panel should still render despite cronList failure
+    expect(screen.getByTestId('settings-header')).toBeInTheDocument();
+
+    // Repos should still load
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /user\/repo1/ })).toBeInTheDocument();
+    });
+  });
+
+  // ── Run Now simulation tests ──────────────────────────────────────────
+
+  test('run now shows running indicator then refreshes on completion', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+
+    // cronRun resolves after a tick (simulates async execution)
+    let resolveRun: (v: unknown) => void = () => {};
+    hoisted.cronRun.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveRun = resolve;
+        })
+    );
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.runNow')).toBeInTheDocument();
+    });
+
+    // Click Run Now
+    fireEvent.click(screen.getByText('settings.devWorkflow.runNow'));
+
+    // Running indicator should appear
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.running')).toBeInTheDocument();
+      expect(screen.getByText('settings.devWorkflow.runningStatus')).toBeInTheDocument();
+    });
+
+    // Button should be disabled while running
+    const btn = screen.getByText('settings.devWorkflow.running');
+    expect(btn.closest('button')).toHaveAttribute('disabled');
+
+    // Simulate run completion
+    resolveRun({
+      result: { job_id: 'cron-1', status: 'ok', duration_ms: 5000, output: 'Fixed issue #42' },
+    });
+
+    // After completion, button should return to normal
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.runNow')).toBeInTheDocument();
+    });
+
+    // cronRun was called
+    expect(hoisted.cronRun).toHaveBeenCalledWith('cron-1');
+    // loadExistingJob should have been called to refresh
+    expect(hoisted.cronList).toHaveBeenCalledTimes(2); // initial + refresh
+  });
+
+  test('run now handles error and resets running state', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronRun.mockRejectedValue(new Error('agent crashed'));
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.runNow')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText('settings.devWorkflow.runNow'));
+
+    // After error, button should return to normal (not stuck in running)
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.runNow')).toBeInTheDocument();
+    });
+  });
+
+  test('shows last_output in active config when present', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+      last_run: '2026-01-01T00:30:00Z',
+      last_status: 'ok',
+      last_output: 'No open issues assigned. Exiting cleanly.',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.lastOutput')).toBeInTheDocument();
+    });
+    expect(screen.getByText('No open issues assigned. Exiting cleanly.')).toBeInTheDocument();
+  });
+
+  test('expandable run history shows output when clicked', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronRuns.mockResolvedValue({
+      result: {
+        runs: [
+          {
+            id: 1,
+            job_id: 'cron-1',
+            started_at: '2026-01-01T00:30:00Z',
+            finished_at: '2026-01-01T00:31:00Z',
+            status: 'ok',
+            duration_ms: 60000,
+            output: 'Picked issue #42. Opened PR #99.',
+          },
+        ],
+      },
+      logs: [],
+    });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Expand history
+    await waitFor(() => {
+      expect(screen.getByText(/settings\.devWorkflow\.recentRuns/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/settings\.devWorkflow\.recentRuns/));
+
+    // Click on the run entry to expand output
+    await waitFor(() => {
+      expect(screen.getByText('60.0s')).toBeInTheDocument();
+    });
+
+    // Find the run row button and click it
+    const runRow = screen.getByText('60.0s').closest('button');
+    if (runRow) fireEvent.click(runRow);
+
+    // Output should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Picked issue #42. Opened PR #99.')).toBeInTheDocument();
+    });
+  });
+
+  test('expandable run history shows no-output message when run has no output', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronRuns.mockResolvedValue({
+      result: {
+        runs: [
+          {
+            id: 1,
+            job_id: 'cron-1',
+            started_at: '2026-01-01T00:30:00Z',
+            finished_at: '2026-01-01T00:31:00Z',
+            status: 'error',
+            duration_ms: 1000,
+            output: null,
+          },
+        ],
+      },
+      logs: [],
+    });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/settings\.devWorkflow\.recentRuns/)).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText(/settings\.devWorkflow\.recentRuns/));
+
+    await waitFor(() => {
+      expect(screen.getByText('1.0s')).toBeInTheDocument();
+    });
+
+    const runRow = screen.getByText('1.0s').closest('button');
+    if (runRow) fireEvent.click(runRow);
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.noOutput')).toBeInTheDocument();
+    });
+  });
+
+  test('setup form is hidden when existing job is present', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Active config shows
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.activeConfiguration')).toBeInTheDocument();
+    });
+
+    // Repo selector should NOT be visible
+    expect(screen.queryByText('settings.devWorkflow.githubRepository')).not.toBeInTheDocument();
+    expect(screen.queryByText('settings.devWorkflow.selectRepository')).not.toBeInTheDocument();
+  });
+
+  test('setup form shows when no existing job', async () => {
+    hoisted.cronList.mockResolvedValue({ result: [], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Repo selector should be visible
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /user\/repo1/ })).toBeInTheDocument();
+    });
+
+    // No active config card
+    expect(screen.queryByText('settings.devWorkflow.activeConfiguration')).not.toBeInTheDocument();
+  });
+
+  test('schedule preset label shows in active config', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      // Schedule preset matches — should show the label key
+      expect(screen.getByText('settings.devWorkflow.schedule.every30min')).toBeInTheDocument();
+    });
+  });
+
+  test('paused state shows when job is disabled', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: false,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.paused')).toBeInTheDocument();
+    });
+  });
+
+  test('save with fork detected includes upstream in prompt', async () => {
+    hoisted.composioExecute
+      .mockResolvedValueOnce(reposResponse)
+      .mockResolvedValueOnce(repoMetaFork)
+      .mockResolvedValueOnce(branchesResponse);
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: /user\/repo1/ })).toBeInTheDocument();
+    });
+
+    const repoSelect = screen.getAllByRole('combobox')[0];
+    fireEvent.change(repoSelect, { target: { value: 'user/repo1' } });
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'main' })).toBeInTheDocument();
+    });
+
+    const saveBtn = screen.getByRole('button', {
+      name: /settings\.devWorkflow\.saveConfiguration/,
+    });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(hoisted.cronAdd).toHaveBeenCalledTimes(1);
+    });
+    const addCall = hoisted.cronAdd.mock.calls[0][0];
+    // Fork detected — prompt should reference upstream repo
+    expect(addCall.prompt).toContain('upstream/repo');
+    expect(addCall.prompt).toContain('Self-assign');
+    expect(addCall.prompt).toContain('unassigned');
+  });
+
+  test('remove on existing job calls cronRemove (not cronUpdate/cronAdd)', async () => {
+    const existingCronJob = {
+      id: 'cron-1',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    // First call returns existing job, second call (after remove+re-render) returns empty
+    hoisted.cronList
+      .mockResolvedValueOnce({ result: [existingCronJob], logs: [] })
+      .mockResolvedValue({ result: [], logs: [] });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Wait for active config to show
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.activeConfiguration')).toBeInTheDocument();
+    });
+
+    // Remove the existing job so setup form appears
+    const removeBtn = screen.getByRole('button', { name: 'settings.devWorkflow.remove' });
+    fireEvent.click(removeBtn);
+
+    await waitFor(() => {
+      expect(hoisted.cronRemove).toHaveBeenCalledWith('cron-1');
+    });
+    // Remove must not persist via the add/update RPCs.
+    expect(hoisted.cronAdd).not.toHaveBeenCalled();
+    expect(hoisted.cronUpdate).not.toHaveBeenCalled();
+  });
+
+  test('toggling an existing job persists via cronUpdate and never cronAdd', async () => {
+    const existingCronJob = {
+      id: 'cron-42',
+      name: 'dev-workflow-user-repo1',
+      expression: '*/30 * * * *',
+      schedule: { kind: 'cron', expr: '*/30 * * * *' },
+      command: '',
+      prompt: 'Run the dev-workflow skill.',
+      job_type: 'agent',
+      session_target: 'isolated',
+      enabled: true,
+      delivery: { mode: 'proactive', best_effort: true },
+      delete_after_run: false,
+      created_at: '2026-01-01T00:00:00Z',
+      next_run: '2026-01-01T01:00:00Z',
+    };
+    hoisted.cronList.mockResolvedValue({ result: [existingCronJob], logs: [] });
+    hoisted.cronUpdate.mockResolvedValue({ data: { ...existingCronJob, enabled: false } });
+
+    const Panel = await importPanel();
+    renderWithProviders(<Panel />);
+
+    // Wait for the active config card (existing-job UI) to render.
+    await waitFor(() => {
+      expect(screen.getByText('settings.devWorkflow.activeConfiguration')).toBeInTheDocument();
+    });
+
+    // Trigger the persist-on-existing-job action (the enable/disable switch).
+    const toggleBtn = screen.getByText('settings.devWorkflow.enabled').previousElementSibling;
+    if (toggleBtn) fireEvent.click(toggleBtn);
+
+    // cronUpdate is called with the existing job id and the toggled payload.
+    await waitFor(() => {
+      expect(hoisted.cronUpdate).toHaveBeenCalledWith('cron-42', { enabled: false });
+    });
+    // The update path must never fall through to cronAdd.
+    expect(hoisted.cronAdd).not.toHaveBeenCalled();
   });
 });

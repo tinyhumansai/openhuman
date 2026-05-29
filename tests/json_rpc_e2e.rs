@@ -1727,6 +1727,215 @@ async fn json_rpc_thread_turn_state_lifecycle() {
 }
 
 #[tokio::test]
+async fn json_rpc_task_board_brief_roundtrips_across_todos_and_threads_rpc() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+    let thread_id = "thread-task-brief-e2e";
+
+    let added = post_json_rpc(
+        &rpc_base,
+        9201,
+        "openhuman.todos_add",
+        json!({
+            "thread_id": thread_id,
+            "content": " Draft implementation plan ",
+            "status": "todo",
+            "objective": " Ship richer task briefs ",
+            "plan": [" Inspect board store ", " Patch RPC shape ", ""],
+            "assignedAgent": " planner ",
+            "allowedTools": [" todo ", "spawn_subagent", ""],
+            "approvalMode": "required",
+            "acceptanceCriteria": [" Brief survives JSON-RPC ", " UI can save edits "],
+            "evidence": [" cargo test --test json_rpc_e2e task_board "],
+            "notes": "initial note"
+        }),
+    )
+    .await;
+    let added_result = assert_no_jsonrpc_error(&added, "todos_add task brief");
+    let added_cards = added_result
+        .get("cards")
+        .and_then(Value::as_array)
+        .expect("todos_add cards");
+    assert_eq!(added_cards.len(), 1);
+    let task_id = added_cards[0]
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("generated task id")
+        .to_string();
+    assert_eq!(added_cards[0]["title"], "Draft implementation plan");
+    assert_eq!(added_cards[0]["objective"], "Ship richer task briefs");
+    assert_eq!(added_cards[0]["assignedAgent"], "planner");
+    assert_eq!(
+        added_cards[0]["allowedTools"],
+        json!(["todo", "spawn_subagent"])
+    );
+    assert_eq!(added_cards[0]["approvalMode"], "required");
+    assert!(
+        added_result
+            .get("markdown")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("approval: required"),
+        "markdown should include task approval metadata: {added_result}"
+    );
+
+    let edited = post_json_rpc(
+        &rpc_base,
+        9202,
+        "openhuman.todos_edit",
+        json!({
+            "thread_id": thread_id,
+            "id": task_id,
+            "content": "Implement editable task briefs",
+            "status": "in_progress",
+            "objective": "Let users refine agent handoff data",
+            "plan": ["Open the brief", "Edit fields", "Persist through core"],
+            "assignedAgent": "code_executor",
+            "allowedTools": ["todo", "file_read", "edit_file"],
+            "approvalMode": "not_required",
+            "acceptanceCriteria": ["Saved board contains edited fields"],
+            "evidence": ["focused vitest passed"],
+            "notes": "",
+            "blocker": ""
+        }),
+    )
+    .await;
+    let edited_result = assert_no_jsonrpc_error(&edited, "todos_edit task brief");
+    let edited_card = &edited_result["cards"][0];
+    assert_eq!(edited_card["title"], "Implement editable task briefs");
+    assert_eq!(edited_card["status"], "in_progress");
+    assert_eq!(edited_card["assignedAgent"], "code_executor");
+    assert_eq!(edited_card["approvalMode"], "not_required");
+    assert_eq!(
+        edited_card["plan"],
+        json!(["Open the brief", "Edit fields", "Persist through core"])
+    );
+    assert!(
+        edited_card.get("notes").is_none(),
+        "empty notes should clear"
+    );
+
+    let cleared_approval = post_json_rpc(
+        &rpc_base,
+        9207,
+        "openhuman.todos_edit",
+        json!({
+            "thread_id": thread_id,
+            "id": task_id,
+            "approvalMode": null
+        }),
+    )
+    .await;
+    let cleared_result =
+        assert_no_jsonrpc_error(&cleared_approval, "todos_edit clears approvalMode");
+    assert!(
+        cleared_result["cards"][0].get("approvalMode").is_none(),
+        "null approvalMode should clear the optional field: {cleared_result}"
+    );
+
+    let thread_get = post_json_rpc(
+        &rpc_base,
+        9203,
+        "openhuman.threads_task_board_get",
+        json!({ "thread_id": thread_id }),
+    )
+    .await;
+    let thread_get_result = assert_no_jsonrpc_error(&thread_get, "threads_task_board_get");
+    let board = thread_get_result
+        .get("taskBoard")
+        .expect("taskBoard in threads get");
+    assert_eq!(board["threadId"], thread_id);
+    assert_eq!(board["cards"][0]["title"], "Implement editable task briefs");
+    assert!(
+        board["cards"][0].get("approvalMode").is_none(),
+        "cleared approvalMode should persist through threads get: {board}"
+    );
+
+    let mut cards = board
+        .get("cards")
+        .and_then(Value::as_array)
+        .expect("cards in board")
+        .clone();
+    cards[0]["evidence"] = json!(["focused vitest passed", "json_rpc_e2e persisted UI edit"]);
+    cards[0]["acceptanceCriteria"] = json!(["Core and UI save paths agree"]);
+    let replaced = post_json_rpc(
+        &rpc_base,
+        9204,
+        "openhuman.threads_task_board_put",
+        json!({
+            "thread_id": thread_id,
+            "cards": cards
+        }),
+    )
+    .await;
+    let replaced_result = assert_no_jsonrpc_error(&replaced, "threads_task_board_put rich board");
+    assert_eq!(
+        replaced_result["taskBoard"]["cards"][0]["evidence"],
+        json!(["focused vitest passed", "json_rpc_e2e persisted UI edit"])
+    );
+
+    let listed = post_json_rpc(
+        &rpc_base,
+        9205,
+        "openhuman.todos_list",
+        json!({ "thread_id": thread_id }),
+    )
+    .await;
+    let listed_result = assert_no_jsonrpc_error(&listed, "todos_list after threads put");
+    assert_eq!(
+        listed_result["cards"][0]["acceptanceCriteria"],
+        json!(["Core and UI save paths agree"])
+    );
+    assert!(
+        listed_result
+            .get("markdown")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("json_rpc_e2e persisted UI edit"),
+        "todos markdown should render evidence after threads put: {listed_result}"
+    );
+
+    let invalid_approval = post_json_rpc(
+        &rpc_base,
+        9206,
+        "openhuman.todos_add",
+        json!({
+            "thread_id": thread_id,
+            "content": "Invalid approval",
+            "approvalMode": "sometimes"
+        }),
+    )
+    .await;
+    let invalid_err = assert_jsonrpc_error(&invalid_approval, "todos_add invalid approvalMode");
+    let invalid_msg = invalid_err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        invalid_msg.contains("approval_mode") && invalid_msg.contains("required|not_required"),
+        "expected approvalMode validation error, got: {invalid_err}"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_memory_sync_and_learn() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
@@ -7645,6 +7854,10 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         .get("result")
         .and_then(|r| r.get("max_actions_per_hour"))
         .and_then(Value::as_u64);
+    let initial_task_approval = initial_outer
+        .get("result")
+        .and_then(|r| r.get("require_task_plan_approval"))
+        .and_then(Value::as_bool);
     // Default is `u32::MAX` (functionally unlimited) — fresh installs should
     // not be rate-limited until the user opts into a ceiling. See the
     // autonomy schema for the rationale.
@@ -7653,18 +7866,23 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         Some(u32::MAX as u64),
         "expected default u32::MAX (unlimited), got envelope: {initial_outer}"
     );
+    assert_eq!(
+        initial_task_approval,
+        Some(true),
+        "task plan approval should default on, got envelope: {initial_outer}"
+    );
 
-    // UPDATE → 250.
+    // UPDATE → 250, and disable task-plan approval.
     let update = post_json_rpc(
         &rpc_base,
         7002,
         "openhuman.config_update_autonomy_settings",
-        json!({ "max_actions_per_hour": 250 }),
+        json!({ "max_actions_per_hour": 250, "require_task_plan_approval": false }),
     )
     .await;
     assert_no_jsonrpc_error(&update, "update_autonomy_settings");
 
-    // GET again → expect 250.
+    // GET again → expect 250 and disabled task-plan approval.
     let after = post_json_rpc(
         &rpc_base,
         7003,
@@ -7677,10 +7895,19 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
         .get("result")
         .and_then(|r| r.get("max_actions_per_hour"))
         .and_then(Value::as_u64);
+    let after_task_approval = after_outer
+        .get("result")
+        .and_then(|r| r.get("require_task_plan_approval"))
+        .and_then(Value::as_bool);
     assert_eq!(
         after_value,
         Some(250),
         "expected 250 after update, got envelope: {after_outer}"
+    );
+    assert_eq!(
+        after_task_approval,
+        Some(false),
+        "expected task plan approval to persist as disabled, got envelope: {after_outer}"
     );
 
     // Invalid value rejected — server returns JSON-RPC error envelope, not a result.
@@ -7840,4 +8067,361 @@ async fn port_conflict_recovery_core_starts_on_fallback_port_e2e() {
     );
     // Release the listener so the port is not held across tests.
     drop(after_drop.listener);
+}
+
+/// Task-sources CRUD + status + dry-run over JSON-RPC.
+///
+/// Exercises `openhuman.task_sources_{add,list,get,update,remove,status,
+/// list_tasks,preview_filter}` against an isolated HOME workspace. The
+/// fetch/preview paths require no network here: with no signed-in
+/// Composio session, `preview_filter` returns a clean JSON-RPC error
+/// rather than hanging.
+#[tokio::test]
+async fn json_rpc_task_sources_crud_and_status() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:1");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // ── add ──────────────────────────────────────────────────────────
+    let add = post_json_rpc(
+        &rpc_base,
+        7301,
+        "openhuman.task_sources_add",
+        json!({
+            "provider": "github",
+            "name": "My issues",
+            "filter": {
+                "provider": "github",
+                "repo": "tinyhumansai/openhuman",
+                "labels": ["bug"],
+                "assignee_is_me": true
+            }
+        }),
+    )
+    .await;
+    let source = assert_no_jsonrpc_error(&add, "task_sources_add");
+    let id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("add returns source id")
+        .to_string();
+    assert_eq!(
+        source.get("provider").and_then(Value::as_str),
+        Some("github")
+    );
+    assert_eq!(source.get("enabled"), Some(&json!(true)));
+    // Default target follows config.auto_proactive (true → proactive).
+    assert_eq!(
+        source.get("target").and_then(Value::as_str),
+        Some("agent_todo_proactive")
+    );
+
+    // ── add with mismatched provider/filter is rejected ──────────────
+    let bad = post_json_rpc(
+        &rpc_base,
+        7302,
+        "openhuman.task_sources_add",
+        json!({
+            "provider": "notion",
+            "filter": { "provider": "github", "assignee_is_me": true }
+        }),
+    )
+    .await;
+    assert_jsonrpc_error(&bad, "task_sources_add mismatch");
+
+    // ── list contains the new source ─────────────────────────────────
+    let list = post_json_rpc(&rpc_base, 7303, "openhuman.task_sources_list", json!({})).await;
+    let sources = assert_no_jsonrpc_error(&list, "task_sources_list")
+        .as_array()
+        .expect("list returns array")
+        .clone();
+    assert!(sources
+        .iter()
+        .any(|s| s.get("id").and_then(Value::as_str) == Some(id.as_str())));
+
+    // ── get roundtrips ───────────────────────────────────────────────
+    let get = post_json_rpc(
+        &rpc_base,
+        7304,
+        "openhuman.task_sources_get",
+        json!({ "id": id }),
+    )
+    .await;
+    let got = assert_no_jsonrpc_error(&get, "task_sources_get");
+    assert_eq!(got.get("id").and_then(Value::as_str), Some(id.as_str()));
+
+    // ── update (disable + change interval) ───────────────────────────
+    let update = post_json_rpc(
+        &rpc_base,
+        7305,
+        "openhuman.task_sources_update",
+        json!({ "id": id, "patch": { "enabled": false, "intervalSecs": 600 } }),
+    )
+    .await;
+    let updated = assert_no_jsonrpc_error(&update, "task_sources_update");
+    assert_eq!(updated.get("enabled"), Some(&json!(false)));
+    assert_eq!(updated.get("intervalSecs"), Some(&json!(600)));
+
+    // ── status reflects the configured source ────────────────────────
+    let status = post_json_rpc(&rpc_base, 7306, "openhuman.task_sources_status", json!({})).await;
+    let status_result = assert_no_jsonrpc_error(&status, "task_sources_status");
+    assert_eq!(status_result.get("enabled"), Some(&json!(true)));
+    assert!(
+        status_result
+            .get("sourceCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            >= 1
+    );
+
+    // ── list_tasks is empty (nothing ingested yet) ───────────────────
+    let tasks = post_json_rpc(
+        &rpc_base,
+        7307,
+        "openhuman.task_sources_list_tasks",
+        json!({ "id": id }),
+    )
+    .await;
+    let tasks_result = assert_no_jsonrpc_error(&tasks, "task_sources_list_tasks");
+    assert_eq!(tasks_result.as_array().map(|a| a.len()), Some(0));
+
+    // (preview_filter is covered end to end by
+    // json_rpc_task_sources_fetch_pipeline_e2e with a stub provider; we
+    // do not assert on it here because the provider registry is global
+    // and shared across tests in this binary.)
+
+    // ── remove, then get is not found ────────────────────────────────
+    let remove = post_json_rpc(
+        &rpc_base,
+        7309,
+        "openhuman.task_sources_remove",
+        json!({ "id": id }),
+    )
+    .await;
+    let removed = assert_no_jsonrpc_error(&remove, "task_sources_remove");
+    assert_eq!(removed.get("removed"), Some(&json!(true)));
+
+    let get_after = post_json_rpc(
+        &rpc_base,
+        7310,
+        "openhuman.task_sources_get",
+        json!({ "id": id }),
+    )
+    .await;
+    assert_jsonrpc_error(&get_after, "task_sources_get after remove");
+
+    rpc_join.abort();
+}
+
+/// Stub Composio provider used by the task-sources fetch E2E. Returns a
+/// canned set of tasks from `fetch_tasks` so the full
+/// fetch → enrich → route → ingest pipeline can be exercised over RPC
+/// without a live Composio connection.
+mod task_sources_stub {
+    use async_trait::async_trait;
+    use openhuman_core::openhuman::memory_sync::composio::providers::{
+        ComposioProvider, NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome,
+        SyncReason, TaskFetchFilter,
+    };
+
+    pub struct StubGithubProvider {
+        pub tasks: Vec<NormalizedTask>,
+    }
+
+    pub fn task(external_id: &str, title: &str, updated: &str) -> NormalizedTask {
+        NormalizedTask {
+            external_id: external_id.to_string(),
+            provider: "github".to_string(),
+            title: title.to_string(),
+            url: Some(format!("https://example.com/{external_id}")),
+            updated_at: Some(updated.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[async_trait]
+    impl ComposioProvider for StubGithubProvider {
+        fn toolkit_slug(&self) -> &'static str {
+            "github"
+        }
+        async fn fetch_user_profile(
+            &self,
+            _ctx: &ProviderContext,
+        ) -> Result<ProviderUserProfile, String> {
+            Ok(ProviderUserProfile::default())
+        }
+        async fn sync(
+            &self,
+            _ctx: &ProviderContext,
+            _reason: SyncReason,
+        ) -> Result<SyncOutcome, String> {
+            Ok(SyncOutcome::default())
+        }
+        async fn fetch_tasks(
+            &self,
+            _ctx: &ProviderContext,
+            _filter: &TaskFetchFilter,
+        ) -> Result<Vec<NormalizedTask>, String> {
+            Ok(self.tasks.clone())
+        }
+    }
+}
+
+/// Full task-sources fetch pipeline over JSON-RPC: a stub provider feeds
+/// `fetch_tasks`, then `task_sources_fetch` routes the tasks onto the
+/// board, `list_tasks` surfaces them, a re-fetch dedups, and
+/// `preview_filter` returns matches without ingesting.
+#[tokio::test]
+async fn json_rpc_task_sources_fetch_pipeline_e2e() {
+    use std::sync::Arc;
+
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:1");
+
+    // Register the stub github provider BEFORE serving so the fetch RPC
+    // resolves it from the global registry.
+    openhuman_core::openhuman::memory_sync::composio::providers::register_provider(Arc::new(
+        task_sources_stub::StubGithubProvider {
+            tasks: vec![
+                task_sources_stub::task("101", "Fix flaky test", "2025-01-01T00:00:00Z"),
+                task_sources_stub::task("102", "Update docs", "2025-01-02T00:00:00Z"),
+            ],
+        },
+    ));
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // Add a TODO-only source (no triage LLM turn) so the pipeline runs
+    // deterministically end to end.
+    let add = post_json_rpc(
+        &rpc_base,
+        7401,
+        "openhuman.task_sources_add",
+        json!({
+            "provider": "github",
+            "name": "Pipeline source",
+            "target": "todo_only",
+            "filter": { "provider": "github", "assignee_is_me": true }
+        }),
+    )
+    .await;
+    let source = assert_no_jsonrpc_error(&add, "task_sources_add pipeline");
+    let id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("source id")
+        .to_string();
+
+    // First fetch: both stub tasks routed.
+    let fetch1 = post_json_rpc(
+        &rpc_base,
+        7402,
+        "openhuman.task_sources_fetch",
+        json!({ "id": id }),
+    )
+    .await;
+    let outcome1 = assert_no_jsonrpc_error(&fetch1, "task_sources_fetch first");
+    assert_eq!(
+        outcome1.get("error"),
+        None,
+        "fetch should not error: {outcome1}"
+    );
+    assert_eq!(outcome1.get("fetched").and_then(Value::as_u64), Some(2));
+    assert_eq!(outcome1.get("routed").and_then(Value::as_u64), Some(2));
+    assert_eq!(outcome1.get("skippedDupe").and_then(Value::as_u64), Some(0));
+
+    // list_tasks surfaces the two ingested tasks.
+    let tasks = post_json_rpc(
+        &rpc_base,
+        7403,
+        "openhuman.task_sources_list_tasks",
+        json!({ "id": id }),
+    )
+    .await;
+    let tasks_arr = assert_no_jsonrpc_error(&tasks, "task_sources_list_tasks pipeline")
+        .as_array()
+        .expect("tasks array")
+        .clone();
+    assert_eq!(tasks_arr.len(), 2);
+    let ids: Vec<&str> = tasks_arr
+        .iter()
+        .filter_map(|t| t.get("externalId").and_then(Value::as_str))
+        .collect();
+    assert!(ids.contains(&"101"));
+    assert!(ids.contains(&"102"));
+
+    // Second fetch: identical tasks → all deduped, none re-routed.
+    let fetch2 = post_json_rpc(
+        &rpc_base,
+        7404,
+        "openhuman.task_sources_fetch",
+        json!({ "id": id }),
+    )
+    .await;
+    let outcome2 = assert_no_jsonrpc_error(&fetch2, "task_sources_fetch second");
+    assert_eq!(outcome2.get("fetched").and_then(Value::as_u64), Some(2));
+    assert_eq!(outcome2.get("routed").and_then(Value::as_u64), Some(0));
+    assert_eq!(outcome2.get("skippedDupe").and_then(Value::as_u64), Some(2));
+
+    // preview_filter returns matches WITHOUT ingesting (count unchanged).
+    let preview = post_json_rpc(
+        &rpc_base,
+        7405,
+        "openhuman.task_sources_preview_filter",
+        json!({
+            "provider": "github",
+            "filter": { "provider": "github", "assignee_is_me": true }
+        }),
+    )
+    .await;
+    let preview_arr = assert_no_jsonrpc_error(&preview, "task_sources_preview_filter pipeline")
+        .as_array()
+        .expect("preview array")
+        .clone();
+    assert_eq!(preview_arr.len(), 2);
+
+    let tasks_after = post_json_rpc(
+        &rpc_base,
+        7406,
+        "openhuman.task_sources_list_tasks",
+        json!({ "id": id }),
+    )
+    .await;
+    let tasks_after_arr = assert_no_jsonrpc_error(&tasks_after, "list_tasks after preview")
+        .as_array()
+        .expect("tasks array")
+        .clone();
+    assert_eq!(
+        tasks_after_arr.len(),
+        2,
+        "preview_filter must not ingest tasks"
+    );
+
+    // Restore the global provider registry so the stub "github" provider
+    // does not leak into other tests in this binary (re-registers the
+    // real built-in providers).
+    openhuman_core::openhuman::memory_sync::composio::providers::init_default_providers();
+
+    rpc_join.abort();
 }

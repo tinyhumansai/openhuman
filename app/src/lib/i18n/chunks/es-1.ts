@@ -604,6 +604,9 @@ const es1: TranslationMap = {
     'Direct Parallel API: search, extract, chat, research, enrich, dataset tools.',
   'settings.search.engineBraveLabel': 'Brave Buscar',
   'settings.search.engineBraveDesc': 'Direct Brave Search API: web, news, image, and video tools.',
+  'settings.search.engineQueritLabel': 'Querit',
+  'settings.search.engineQueritDesc':
+    'Direct Querit API: web search with site, time range, country, and language filters.',
   'settings.search.statusConfigured': 'Configurado',
   'settings.search.statusNeedsKey': 'Necesita la clave API',
   'settings.search.fallbackToManaged':
@@ -618,9 +621,11 @@ const es1: TranslationMap = {
   'settings.search.statusError': 'Fallido',
   'settings.search.parallelKeyLabel': 'Parallel API clave',
   'settings.search.braveKeyLabel': 'Brave Buscar clave API',
+  'settings.search.queritKeyLabel': 'Querit API key',
   'settings.search.placeholderStored': '•••••••• (almacenado)',
   'settings.search.placeholderParallel': 'pk_...',
   'settings.search.placeholderBrave': 'BSA...',
+  'settings.search.placeholderQuerit': 'Querit API key',
   'settings.embeddings.title': 'Incrustaciones',
   'settings.embeddings.description':
     'Elige qué proveedor de embeddings convierte la memoria en vectores para la búsqueda semántica. Cambiar el proveedor, modelo o dimensiones invalida los vectores almacenados y requiere un reinicio completo de la memoria.',
@@ -701,7 +706,7 @@ const es1: TranslationMap = {
   'rewards.localUnavailableCta': 'Abrir configuración de cuenta',
   'channels.localManagedUnavailable': 'Managed channels are not available for local users.',
   'settings.search.localManagedUnavailable':
-    'OpenHuman Managed search is not available for local users. Add your own Parallel or Brave API key to enable web search.',
+    'OpenHuman Managed search is not available for local users. Add your own Parallel, Brave, or Querit API key to enable web search.',
   'devices.comingSoonDescription':
     'Device pairing is coming soon. This page will be the home for pairing iPhones and managing connected devices.',
   'common.breadcrumb': 'Ruta de navegación',
@@ -1366,6 +1371,23 @@ const es1: TranslationMap = {
   'mcp.installed.empty': 'Aún no hay servidores MCP instalados.',
   'mcp.installed.toolSingular': 'herramienta {count}',
   'mcp.installed.toolPlural': '{count} herramientas',
+  'mcp.health.title': 'Health',
+  'mcp.health.summaryAria': 'MCP connection health summary',
+  'mcp.health.connectedCount': '{count} connected',
+  'mcp.health.connectingCount': '{count} connecting',
+  'mcp.health.errorCount': '{count} error',
+  'mcp.health.disconnectedCount': '{count} idle',
+  'mcp.health.retryAll': 'Retry all ({count})',
+  'mcp.health.retryAllAria': 'Retry all {count} errored MCP servers',
+  'mcp.health.disconnectAll': 'Disconnect all ({count})',
+  'mcp.health.disconnectAllAria': 'Disconnect all {count} connected MCP servers',
+  'mcp.health.disconnectConfirm.title': 'Disconnect all MCP servers?',
+  'mcp.health.disconnectConfirm.body':
+    'This will disconnect {count} currently-connected MCP servers. Installed configurations and secrets are kept; you can reconnect any server later.',
+  'mcp.health.disconnectConfirm.cancel': 'Cancel',
+  'mcp.health.disconnectConfirm.confirm': 'Disconnect all',
+  'mcp.health.opErrorGeneric': 'Bulk operation failed. See logs.',
+  'mcp.health.bulkPartialFailure': '{failed} of {total} servers failed. See logs.',
   'mcp.installed.search.landmarkAria': 'Search installed MCP servers',
   'mcp.installed.search.inputAria': 'Filter installed MCP servers by name',
   'mcp.installed.search.placeholder': 'Filter servers…',
@@ -1584,6 +1606,32 @@ const es1: TranslationMap = {
   'settings.search.accessBlockAll': 'Block all',
   'settings.search.accessBlockAllHint':
     'All web access is blocked — the assistant cannot open or read any website.',
+  'memory.tab.centrality': 'Centrality',
+  'graphCentrality.title': 'Knowledge Graph Centrality',
+  'graphCentrality.intro':
+    'PageRank over your memory graph surfaces the load-bearing hubs — and the connector entities that link otherwise-separate clusters, which a raw frequency count cannot reveal.',
+  'graphCentrality.loading': 'Computing centrality…',
+  'graphCentrality.errorPrefix': 'Could not load the graph:',
+  'graphCentrality.retry': 'Retry',
+  'graphCentrality.empty': 'No knowledge graph yet.',
+  'graphCentrality.emptyHint':
+    'As the assistant records facts about you, the most connected entities will surface here.',
+  'graphCentrality.namespaceLabel': 'Namespace',
+  'graphCentrality.namespaceAll': 'All namespaces',
+  'graphCentrality.metricEntities': 'Entities',
+  'graphCentrality.metricConnections': 'Connections',
+  'graphCentrality.metricClusters': 'Clusters',
+  'graphCentrality.clustersCaption': '{components} clusters · largest holds {largest}',
+  'graphCentrality.approximateBadge': 'approximate',
+  'graphCentrality.approximateTitle': 'Stopped at the iteration cap before fully converging',
+  'graphCentrality.rankedHeading': 'Top entities by influence',
+  'graphCentrality.colRank': '#',
+  'graphCentrality.colEntity': 'Entity',
+  'graphCentrality.colInfluence': 'Influence',
+  'graphCentrality.colLinks': 'Links',
+  'graphCentrality.bridgeBadge': 'connector',
+  'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
+  'graphCentrality.degreeTitle': '{in} in · {out} out',
 };
 
 export default es1;

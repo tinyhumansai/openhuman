@@ -318,6 +318,8 @@ export interface AutonomySettings {
   max_actions_per_hour: number;
   /** "Always allow" allowlist — tool names the agent runs without a prompt. */
   auto_approve: string[];
+  /** Require approval before an agent executes a task-board plan. */
+  require_task_plan_approval?: boolean;
 }
 
 /** Partial update — omitted fields are left unchanged. */
@@ -331,6 +333,7 @@ export interface AutonomySettingsUpdate {
   max_actions_per_hour?: number;
   /** Replaces the "Always allow" allowlist wholesale. */
   auto_approve?: string[];
+  require_task_plan_approval?: boolean;
 }
 
 export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
@@ -412,7 +415,7 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
-export type SearchEngineId = 'managed' | 'parallel' | 'brave';
+export type SearchEngineId = 'managed' | 'parallel' | 'brave' | 'querit';
 
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;
@@ -422,6 +425,8 @@ export interface SearchSettingsUpdate {
   parallel_api_key?: string;
   /** Empty string clears the stored key. */
   brave_api_key?: string;
+  /** Empty string clears the stored key. */
+  querit_api_key?: string;
   /**
    * Websites the assistant may open/read (web_fetch / curl). Exact hosts
    * match their subdomains; `"*"` allows all public sites; an empty list
@@ -444,6 +449,7 @@ export interface SearchSettings {
   timeout_secs: number;
   parallel_configured: boolean;
   brave_configured: boolean;
+  querit_configured: boolean;
   /** Current allowed-websites host list (may contain `"*"`). */
   allowed_domains: string[];
   /** True when the allowlist contains the `"*"` wildcard. */

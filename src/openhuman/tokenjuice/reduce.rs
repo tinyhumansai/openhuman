@@ -5,6 +5,9 @@
 
 use std::collections::HashMap;
 
+use once_cell::sync::Lazy;
+use regex::Regex;
+
 use crate::openhuman::tokenjuice::{
     classify::classify_execution,
     text::{
@@ -241,14 +244,22 @@ fn compact_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Splits a `gh` tabular row on runs of 2+ whitespace or one-or-more tabs.
+///
+/// Compiled once at first use; previously `Regex::new` ran per line, which is
+/// a textbook regex-in-a-loop hot-path bug: a `gh pr list` with N rows paid
+/// for N compilations of the same trivial pattern. Matches the project
+/// convention (see `tokenjuice::text::ansi`).
+static GH_TABLE_SPLIT_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\s{2,}|\t+").expect("gh table split regex"));
+
 fn format_gh_table_line(line: &str) -> String {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return String::new();
     }
     // Split on 2+ spaces or tabs
-    let columns: Vec<String> = regex::Regex::new(r"\s{2,}|\t+")
-        .unwrap()
+    let columns: Vec<String> = GH_TABLE_SPLIT_RE
         .split(trimmed)
         .map(compact_whitespace)
         .filter(|s| !s.is_empty())

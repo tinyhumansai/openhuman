@@ -64,6 +64,11 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     // is intentionally cheap and the loop body no-ops when there are
     // no connections.
     crate::openhuman::composio::start_periodic_sync();
+    // Task-sources: subscribe to Composio connection-created events for
+    // one-shot fetches, and spawn the periodic poll that pulls work from
+    // configured external sources onto the agent's todo board.
+    crate::openhuman::task_sources::bus::register_task_sources_subscriber();
+    crate::openhuman::task_sources::start_periodic_poll();
     // Native request handlers. Re-registering is safe (latest wins) so
     // this is idempotent even if `bootstrap_core_runtime` also runs.
     // Must happen before `run_message_dispatch_loop` begins, because
