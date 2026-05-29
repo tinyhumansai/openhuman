@@ -358,6 +358,17 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                         )
                       : t('vault.neverSynced')}
                   </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={writeStateBadgeClass(v.write_state)}
+                      title={v.write_state_reason ?? undefined}
+                      data-testid={`vault-write-state-${v.id}`}>
+                      {t(`vault.writeState.${v.write_state}`)}
+                    </span>
+                    <span className="text-[11px] text-stone-400 dark:text-neutral-500">
+                      {v.write_state_reason ?? t('vault.writeState.unknownReason')}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button
@@ -392,6 +403,19 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
       )}
     </div>
   );
+}
+
+function writeStateBadgeClass(state: CoreVault['write_state']): string {
+  const base = 'inline-flex h-5 items-center rounded px-1.5 text-[10px] font-semibold';
+  switch (state) {
+    case 'writable':
+      return `${base} bg-sage-50 text-sage-700 dark:bg-sage-500/10 dark:text-sage-300`;
+    case 'read_only':
+      return `${base} bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300`;
+    case 'unavailable':
+    default:
+      return `${base} bg-coral-50 text-coral-700 dark:bg-coral-500/10 dark:text-coral-300`;
+  }
 }
 
 function formatRelative(iso: string, translate: (key: string) => string): string {

@@ -9,7 +9,10 @@ const TOOL_ID_TO_RUST_NAMES: &[(&str, &[&str])] = &[
     ("install_tool", &["install_tool"]),
     ("git_operations", &["git_operations"]),
     ("file_read", &["file_read", "read_diff", "csv_export"]),
-    ("file_write", &["file_write", "update_memory_md"]),
+    (
+        "file_write",
+        &["file_write", "update_memory_md", "vault_write_markdown"],
+    ),
     ("screenshot", &["screenshot"]),
     ("image_info", &["image_info"]),
     ("browser_open", &["browser_open"]),

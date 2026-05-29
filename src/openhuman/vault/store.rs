@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::openhuman::config::Config;
 
-use super::types::{Vault, VaultFile, VaultFileStatus};
+use super::types::{Vault, VaultFile, VaultFileStatus, VaultWriteState};
 
 static MIGRATED_VAULT_DBS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
@@ -225,10 +225,12 @@ fn row_to_vault(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vault> {
     let created_raw: String = row.get(7)?;
     let last_raw: Option<String> = row.get(8)?;
     let file_count: i64 = row.get(9)?;
+    let root_path: String = row.get(2)?;
+    let (write_state, write_state_reason) = vault_write_state_for_root_path(&root_path);
     Ok(Vault {
         id: row.get(0)?,
         name: row.get(1)?,
-        root_path: row.get(2)?,
+        root_path,
         host_os: row.get(3)?,
         namespace: row.get(4)?,
         include_globs: serde_json::from_str(&include_raw).unwrap_or_default(),
@@ -236,6 +238,8 @@ fn row_to_vault(row: &rusqlite::Row<'_>) -> rusqlite::Result<Vault> {
         created_at: parse_dt(&created_raw),
         last_synced_at: last_raw.as_deref().map(parse_dt),
         file_count: file_count.max(0) as u64,
+        write_state,
+        write_state_reason,
     })
 }
 
@@ -280,6 +284,50 @@ fn ensure_host_os_column(conn: &Connection) -> Result<()> {
 
 pub(crate) fn current_host_os() -> &'static str {
     std::env::consts::OS
+}
+
+pub(crate) fn vault_write_state_for_root_path(
+    root_path: &str,
+) -> (VaultWriteState, Option<String>) {
+    let trimmed = root_path.trim();
+    if trimmed.is_empty() {
+        return (
+            VaultWriteState::Unavailable,
+            Some("Vault folder path is empty.".to_string()),
+        );
+    }
+
+    let path = std::path::Path::new(trimmed);
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) => {
+            return (
+                VaultWriteState::Unavailable,
+                Some(format!(
+                    "Vault folder is not available on this device: {err}"
+                )),
+            );
+        }
+    };
+
+    if !metadata.is_dir() {
+        return (
+            VaultWriteState::Unavailable,
+            Some("Vault path is not a directory.".to_string()),
+        );
+    }
+
+    if metadata.permissions().readonly() {
+        return (
+            VaultWriteState::ReadOnly,
+            Some("Vault folder is read-only on this device.".to_string()),
+        );
+    }
+
+    (
+        VaultWriteState::Writable,
+        Some("Approved markdown/wiki writes can be saved in this vault.".to_string()),
+    )
 }
 
 pub(crate) fn path_looks_compatible_with_host_os(raw_path: &str, host_os: &str) -> bool {
