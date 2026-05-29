@@ -8,7 +8,16 @@ use serde::{Deserialize, Serialize};
 /// A tool call that has been intercepted and is awaiting a user
 /// decision. Persisted in `pending_approvals` and surfaced to the UI
 /// via `approval_list_pending`.
+///
+/// Note: this type intentionally does not expose a `session_id`. Session
+/// provenance is an internal correlation token owned by `ApprovalGate`
+/// and the persistence layer; surfacing it on the public type made it
+/// too easy for callers to log or serialize a value that historically
+/// derived from credential material (the JSON-RPC bearer token). The
+/// underlying column is retained in SQLite for downgrade safety but no
+/// longer carries any credential-shaped value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PendingApproval {
     pub request_id: String,
     pub tool_name: String,
@@ -18,19 +27,21 @@ pub struct PendingApproval {
     /// Redacted JSON arguments — counts/shape only, no raw message
     /// bodies, per `feedback_pr_no_chat_content.md`.
     pub args_redacted: serde_json::Value,
-    pub session_id: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Durable audit row for an approval request after a decision.
+///
+/// See [`PendingApproval`] for the rationale behind omitting
+/// `session_id` from the public shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ApprovalAuditEntry {
     pub request_id: String,
     pub tool_name: String,
     pub action_summary: String,
     pub args_redacted: serde_json::Value,
-    pub session_id: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: DateTime<Utc>,

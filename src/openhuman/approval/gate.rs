@@ -18,14 +18,17 @@
 //! 5. The parked future wakes with the decision and translates it
 //!    into [`GateOutcome::Allow`] / `Deny`.
 //!
-//! Sessions: the gate is keyed by a per-launch `session_id` (the
-//! per-launch hex bearer the core hands out) for audit grouping.
-//! Rows from prior launches are intentionally preserved on init —
-//! the issue #1339 acceptance criterion requires they survive
-//! restart so the UI can show / dismiss orphans. Decisions on
-//! orphan rows update the DB but cannot resume a parked future
-//! across processes — no side effect can fire across launches, so
-//! the security invariant is preserved without auto-purging.
+//! Sessions: the gate is keyed by an internal per-launch UUID
+//! (`session-<uuid>`) used purely for audit grouping. This value is
+//! generated unconditionally by the caller (see
+//! `bootstrap_core_runtime`) and is never derived from the JSON-RPC
+//! bearer token or any other credential material — it is safe to
+//! persist and to log. Rows from prior launches are intentionally
+//! preserved on init — the issue #1339 acceptance criterion requires
+//! they survive restart so the UI can show / dismiss orphans.
+//! Decisions on orphan rows update the DB but cannot resume a parked
+//! future across processes — no side effect can fire across launches,
+//! so the security invariant is preserved without auto-purging.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -224,7 +227,6 @@ impl ApprovalGate {
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted: args_redacted.clone(),
-            session_id: self.session_id.clone(),
             created_at: now,
             expires_at,
         };
@@ -247,7 +249,7 @@ impl ApprovalGate {
                 .insert(thread_id.clone(), request_id.clone());
         }
 
-        if let Err(err) = store::insert_pending(&self.config, &pending) {
+        if let Err(err) = store::insert_pending(&self.config, &pending, &self.session_id) {
             self.evict_waiter(&request_id);
             self.clear_thread(&chat_thread_id);
             tracing::error!(
@@ -278,7 +280,6 @@ impl ApprovalGate {
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted,
-            session_id: self.session_id.clone(),
             thread_id: chat_thread_id.clone(),
             client_id: chat_client_id.clone(),
         });

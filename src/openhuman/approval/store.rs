@@ -1,8 +1,11 @@
 //! SQLite persistence for pending approval requests.
 //!
 //! Pending rows survive core restart so a queued approval is not lost
-//! when the user quits before deciding. Each row carries the
-//! `session_id` of the launch that queued it (informational only).
+//! when the user quits before deciding. Each row carries a per-launch
+//! UUID in the internal `session_id` column for correlation only; the
+//! value is never re-exposed through [`PendingApproval`] /
+//! [`ApprovalAuditEntry`] (a previous schema stored a credential-shaped
+//! value here, see the migration in [`with_connection`]).
 //! `list_pending` returns every undecided row regardless of session so
 //! the UI can audit or dismiss orphans after restart, per the issue
 //! #1339 acceptance criterion.
@@ -134,7 +137,15 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     f(&conn)
 }
 
-pub fn insert_pending(config: &Config, pending: &PendingApproval) -> Result<()> {
+/// Insert a pending approval row. `session_id` is the per-launch UUID
+/// the gate hands in — it is written into the durable column for
+/// internal correlation only and is never re-exposed on
+/// [`PendingApproval`] (see that type's doc-comment).
+pub fn insert_pending(
+    config: &Config,
+    pending: &PendingApproval,
+    session_id: &str,
+) -> Result<()> {
     with_connection(config, |conn| {
         let args = serde_json::to_string(&pending.args_redacted)
             .context("[approval::store] serialize args_redacted")?;
@@ -150,7 +161,7 @@ pub fn insert_pending(config: &Config, pending: &PendingApproval) -> Result<()> 
                 pending.tool_name,
                 pending.action_summary,
                 args,
-                pending.session_id,
+                session_id,
                 created,
                 expires,
             ],
@@ -399,12 +410,13 @@ fn row_to_audit_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApprovalAudit
     let decision = ApprovalDecision::from_str(&decision_str).ok_or_else(|| {
         invalid_text_column(8, format!("unknown approval decision `{decision_str}`"))
     })?;
+    // Note: column index 4 (`session_id`) is read on the SELECT but
+    // intentionally not surfaced — see `ApprovalAuditEntry` doc-comment.
     Ok(ApprovalAuditEntry {
         request_id: row.get(0)?,
         tool_name: row.get(1)?,
         action_summary: row.get(2)?,
         args_redacted,
-        session_id: row.get(4)?,
         created_at: parse_audit_rfc3339(5, &created_str)?,
         expires_at: expires_opt
             .as_deref()
@@ -438,12 +450,13 @@ fn row_to_pending(row: &rusqlite::Row<'_>) -> rusqlite::Result<PendingApproval> 
     let created_str: String = row.get(5)?;
     let expires_opt: Option<String> = row.get(6)?;
 
+    // Note: column index 4 (`session_id`) is read on the SELECT but
+    // intentionally not surfaced — see `PendingApproval` doc-comment.
     Ok(PendingApproval {
         request_id: row.get(0)?,
         tool_name: row.get(1)?,
         action_summary: row.get(2)?,
         args_redacted,
-        session_id: row.get(4)?,
         created_at: parse_rfc3339(&created_str),
         expires_at: expires_opt.as_deref().map(parse_rfc3339),
     })
@@ -472,17 +485,22 @@ mod tests {
         (config, dir)
     }
 
-    fn sample(request_id: &str, session_id: &str) -> PendingApproval {
+    /// Build a sample `PendingApproval`. The `_session_id` parameter
+    /// is preserved as a positional argument for call-site readability
+    /// (so a reader can see "this row belongs to sess-A") even though
+    /// it is no longer stamped onto [`PendingApproval`]; the call site
+    /// passes it through to [`insert_pending`] as the third argument.
+    fn sample(request_id: &str, _session_id: &str) -> PendingApproval {
         sample_with_expiry(
             request_id,
-            session_id,
+            _session_id,
             Some(Utc::now() + Duration::minutes(10)),
         )
     }
 
     fn sample_with_expiry(
         request_id: &str,
-        session_id: &str,
+        _session_id: &str,
         expires_at: Option<DateTime<Utc>>,
     ) -> PendingApproval {
         PendingApproval {
@@ -490,7 +508,6 @@ mod tests {
             tool_name: "composio".to_string(),
             action_summary: "send slack message (12 chars)".to_string(),
             args_redacted: json!({ "action": "execute", "tool_slug": "SLACK_SEND" }),
-            session_id: session_id.to_string(),
             created_at: Utc::now(),
             expires_at,
         }
@@ -521,7 +538,7 @@ mod tests {
     #[test]
     fn insert_then_list_returns_pending_row() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-1", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-1", "sess-A"), "sess-A").unwrap();
         let rows = list_pending(&config).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].request_id, "req-1");
@@ -531,8 +548,8 @@ mod tests {
     #[test]
     fn list_pending_returns_rows_from_every_session() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("a", "sess-A")).unwrap();
-        insert_pending(&config, &sample("b", "sess-B")).unwrap();
+        insert_pending(&config, &sample("a", "sess-A"), "sess-A").unwrap();
+        insert_pending(&config, &sample("b", "sess-B"), "sess-B").unwrap();
         let rows = list_pending(&config).unwrap();
         assert_eq!(
             rows.len(),
@@ -544,7 +561,7 @@ mod tests {
     #[test]
     fn decide_marks_row_and_excludes_from_pending_list() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-9", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-9", "sess-A"), "sess-A").unwrap();
         let decided = decide(&config, "req-9", ApprovalDecision::ApproveOnce)
             .unwrap()
             .expect("decided row");
@@ -556,7 +573,7 @@ mod tests {
     #[test]
     fn decide_second_time_returns_none() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("dupe", "sess-A")).unwrap();
+        insert_pending(&config, &sample("dupe", "sess-A"), "sess-A").unwrap();
         decide(&config, "dupe", ApprovalDecision::Deny).unwrap();
         let again = decide(&config, "dupe", ApprovalDecision::ApproveOnce).unwrap();
         assert!(again.is_none(), "second decide should be a no-op");
@@ -572,9 +589,9 @@ mod tests {
     #[test]
     fn purge_session_removes_only_undecided_rows_for_session() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("p1", "sess-A")).unwrap();
-        insert_pending(&config, &sample("p2", "sess-A")).unwrap();
-        insert_pending(&config, &sample("p3", "sess-B")).unwrap();
+        insert_pending(&config, &sample("p1", "sess-A"), "sess-A").unwrap();
+        insert_pending(&config, &sample("p2", "sess-A"), "sess-A").unwrap();
+        insert_pending(&config, &sample("p3", "sess-B"), "sess-B").unwrap();
         decide(&config, "p2", ApprovalDecision::ApproveOnce).unwrap();
         let removed = purge_session(&config, "sess-A").unwrap();
         assert_eq!(removed, 1, "only undecided sess-A row should be purged");
@@ -591,7 +608,7 @@ mod tests {
         // and decided rows must round-trip the persisted decision.
         let (config, _dir) = test_config();
         assert!(get_decision(&config, "missing").unwrap().is_none());
-        insert_pending(&config, &sample("race", "sess-A")).unwrap();
+        insert_pending(&config, &sample("race", "sess-A"), "sess-A").unwrap();
         assert!(
             get_decision(&config, "race").unwrap().is_none(),
             "undecided row reports no decision"
@@ -606,7 +623,7 @@ mod tests {
     #[test]
     fn pending_row_survives_connection_close() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("survives", "sess-A")).unwrap();
+        insert_pending(&config, &sample("survives", "sess-A"), "sess-A").unwrap();
         let rows = list_pending(&config).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].request_id, "survives");
@@ -639,7 +656,7 @@ mod tests {
     #[test]
     fn record_execution_writes_terminal_audit_row_after_decide() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-exec", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-exec", "sess-A"), "sess-A").unwrap();
         // Before decide, record_execution must not patch the row —
         // a decided_at IS NOT NULL guard keeps the audit trail
         // monotonic (no "executed before approved").
@@ -660,7 +677,7 @@ mod tests {
     #[test]
     fn record_execution_persists_outcome_and_redacted_error() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-fail", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-fail", "sess-A"), "sess-A").unwrap();
         decide(&config, "req-fail", ApprovalDecision::ApproveOnce).unwrap();
 
         record_execution(
@@ -679,7 +696,7 @@ mod tests {
     #[test]
     fn record_execution_caps_long_error_messages() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-long", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-long", "sess-A"), "sess-A").unwrap();
         decide(&config, "req-long", ApprovalDecision::ApproveOnce).unwrap();
 
         let huge = "x".repeat(2_000);
@@ -706,7 +723,7 @@ mod tests {
         // row must persist the sanitized form so a leaked bearer
         // or API key never lands in the durable log.
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-secret", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-secret", "sess-A"), "sess-A").unwrap();
         decide(&config, "req-secret", ApprovalDecision::ApproveOnce).unwrap();
 
         let raw = "upstream 401: Authorization: Bearer sk-live-abcdef1234567890abcdef1234567890 \
@@ -736,7 +753,7 @@ mod tests {
         // `record_execution` call wins; subsequent calls return
         // `false` and leave the row unchanged.
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("req-idem", "sess-A")).unwrap();
+        insert_pending(&config, &sample("req-idem", "sess-A"), "sess-A").unwrap();
         decide(&config, "req-idem", ApprovalDecision::ApproveOnce).unwrap();
 
         // First report: succeeds, row gets stamped.
@@ -838,11 +855,13 @@ mod tests {
         insert_pending(
             &config,
             &sample_with_expiry("expired", "sess-A", Some(Utc::now() - Duration::minutes(5))),
+            "sess-A",
         )
         .unwrap();
         insert_pending(
             &config,
             &sample_with_expiry("active", "sess-A", Some(Utc::now() + Duration::minutes(5))),
+            "sess-A",
         )
         .unwrap();
 
@@ -864,6 +883,7 @@ mod tests {
         insert_pending(
             &config,
             &sample_with_expiry("late", "sess-A", Some(Utc::now() - Duration::minutes(1))),
+            "sess-A",
         )
         .unwrap();
 
@@ -884,16 +904,19 @@ mod tests {
         insert_pending(
             &config,
             &sample_with_expiry("old-1", "sess-A", Some(Utc::now() - Duration::minutes(2))),
+            "sess-A",
         )
         .unwrap();
         insert_pending(
             &config,
             &sample_with_expiry("old-2", "sess-B", Some(Utc::now() - Duration::minutes(1))),
+            "sess-B",
         )
         .unwrap();
         insert_pending(
             &config,
             &sample_with_expiry("fresh", "sess-B", Some(Utc::now() + Duration::minutes(30))),
+            "sess-B",
         )
         .unwrap();
 
@@ -911,6 +934,7 @@ mod tests {
         insert_pending(
             &config,
             &sample_with_expiry("once", "sess-A", Some(Utc::now() - Duration::minutes(3))),
+            "sess-A",
         )
         .unwrap();
 
@@ -925,7 +949,7 @@ mod tests {
     #[test]
     fn expire_stale_leaves_non_expiring_rows_pending() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample_with_expiry("no-ttl", "sess-A", None)).unwrap();
+        insert_pending(&config, &sample_with_expiry("no-ttl", "sess-A", None), "sess-A").unwrap();
 
         assert_eq!(expire_stale(&config).unwrap(), 0);
         let rows = list_pending(&config).unwrap();
@@ -940,8 +964,8 @@ mod tests {
     #[test]
     fn list_recent_decisions_returns_durable_audit_rows() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("approved", "sess-A")).unwrap();
-        insert_pending(&config, &sample("denied", "sess-B")).unwrap();
+        insert_pending(&config, &sample("approved", "sess-A"), "sess-A").unwrap();
+        insert_pending(&config, &sample("denied", "sess-B"), "sess-B").unwrap();
         decide(&config, "approved", ApprovalDecision::ApproveOnce).unwrap();
         decide(&config, "denied", ApprovalDecision::Deny).unwrap();
 
@@ -963,8 +987,8 @@ mod tests {
     #[test]
     fn list_recent_decisions_clamps_zero_limit_to_one() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("one", "sess-A")).unwrap();
-        insert_pending(&config, &sample("two", "sess-A")).unwrap();
+        insert_pending(&config, &sample("one", "sess-A"), "sess-A").unwrap();
+        insert_pending(&config, &sample("two", "sess-A"), "sess-A").unwrap();
         decide(&config, "one", ApprovalDecision::ApproveOnce).unwrap();
         decide(&config, "two", ApprovalDecision::Deny).unwrap();
 
@@ -976,7 +1000,7 @@ mod tests {
     #[test]
     fn list_recent_decisions_rejects_unknown_decision_values() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("corrupt-decision", "sess-A")).unwrap();
+        insert_pending(&config, &sample("corrupt-decision", "sess-A"), "sess-A").unwrap();
         with_connection(&config, |conn| {
             conn.execute(
                 "UPDATE pending_approvals
@@ -1000,7 +1024,7 @@ mod tests {
     #[test]
     fn list_recent_decisions_rejects_invalid_audit_timestamps() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample("corrupt-time", "sess-A")).unwrap();
+        insert_pending(&config, &sample("corrupt-time", "sess-A"), "sess-A").unwrap();
         with_connection(&config, |conn| {
             conn.execute(
                 "UPDATE pending_approvals
