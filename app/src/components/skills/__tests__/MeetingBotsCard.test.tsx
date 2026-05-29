@@ -264,4 +264,77 @@ describe('MeetingBotsModal — recent calls section', () => {
       expect(screen.getByText('—')).toBeInTheDocument();
     });
   });
+
+  // ── Extra coverage for RecentCallRow / formatRelativeTime branches ──────────
+
+  it('shows singular "turn" (not "turns") when turn_count is 1', async () => {
+    listMock.mockResolvedValueOnce([makeCallRecord({ turn_count: 1 })]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 turn$/)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/1 turns/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the raw URL when it cannot be parsed', async () => {
+    listMock.mockResolvedValueOnce([makeCallRecord({ meet_url: 'not-a-valid-url' })]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('not-a-valid-url')).toBeInTheDocument();
+    });
+  });
+
+  it('shows hours-ago label for a timestamp a few hours old', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ started_at_ms: Date.now() - 3 * 60 * 60 * 1000 }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/3h ago/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows "yesterday" for a timestamp ~24 hours ago', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ started_at_ms: Date.now() - 25 * 60 * 60 * 1000 }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('yesterday')).toBeInTheDocument();
+    });
+  });
+
+  it('shows Nd-ago label for a timestamp a few days old (< 7)', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ started_at_ms: Date.now() - 3 * 24 * 60 * 60 * 1000 }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/3d ago/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows a locale date string for a timestamp older than 7 days', async () => {
+    listMock.mockResolvedValueOnce([
+      makeCallRecord({ started_at_ms: Date.now() - 10 * 24 * 60 * 60 * 1000 }),
+    ]);
+
+    render(<MeetingBotsModal onClose={() => {}} />);
+
+    await waitFor(() => {
+      // toLocaleDateString returns "Month Day" — just check it's not a relative label.
+      const timestamp = screen.queryByText(/ago|yesterday|\dm|\dh/);
+      expect(timestamp).not.toBeInTheDocument();
+    });
+  });
 });
