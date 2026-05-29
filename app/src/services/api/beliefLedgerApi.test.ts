@@ -87,6 +87,20 @@ describe('buildExplanationPrompt', () => {
     // Deterministic ISO date derived from the fixed timestamp.
     expect(prompt).toContain('evidence x');
   });
+
+  it('adds no language directive for English / no locale', () => {
+    expect(buildExplanationPrompt(contestedHistory)).not.toMatch(/Respond in /);
+    expect(buildExplanationPrompt(contestedHistory, 'en')).not.toMatch(/Respond in /);
+  });
+
+  it('asks the model to respond in the active UI language', () => {
+    expect(buildExplanationPrompt(contestedHistory, 'es')).toContain('Respond in Spanish.');
+    expect(buildExplanationPrompt(contestedHistory, 'zh-CN')).toContain('Respond in Chinese.');
+  });
+
+  it('ignores an unknown locale (no directive, no raw code leaked)', () => {
+    expect(buildExplanationPrompt(contestedHistory, 'xx')).not.toMatch(/Respond in /);
+  });
 });
 
 describe('beliefLedgerApi.explainConflict', () => {
@@ -100,6 +114,13 @@ describe('beliefLedgerApi.explainConflict', () => {
     expect(mockAgentChat).toHaveBeenCalledTimes(1);
     expect(mockAgentChat).toHaveBeenCalledWith(buildExplanationPrompt(contestedHistory));
     expect(out).toBe('They moved from Berlin to Lisbon.');
+  });
+
+  it('threads the UI locale into the prompt sent to the agent', async () => {
+    mockAgentChat.mockResolvedValueOnce({ result: 'Se mudaram de Berlim para Lisboa.', logs: [] });
+    await explainConflict(contestedHistory, 'pt');
+    expect(mockAgentChat).toHaveBeenCalledWith(buildExplanationPrompt(contestedHistory, 'pt'));
+    expect(mockAgentChat.mock.calls[0][0]).toContain('Respond in Portuguese.');
   });
 
   it('propagates errors from the agent call', async () => {

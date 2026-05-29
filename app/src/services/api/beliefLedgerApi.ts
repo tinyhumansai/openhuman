@@ -32,11 +32,34 @@ export async function loadRelations(namespace?: string): Promise<GraphRelation[]
 }
 
 /**
+ * English language names for the supported UI locales, used to add a
+ * "respond in X" directive so the explanation comes back in the user's
+ * language. An explicit map (rather than Intl.DisplayNames) keeps the prompt
+ * deterministic across Node/ICU versions, so it can be asserted exactly.
+ */
+const LANGUAGE_NAMES: Record<string, string> = {
+  ko: 'Korean',
+  'zh-CN': 'Chinese',
+  hi: 'Hindi',
+  es: 'Spanish',
+  ar: 'Arabic',
+  fr: 'French',
+  bn: 'Bengali',
+  pt: 'Portuguese',
+  de: 'German',
+  ru: 'Russian',
+  id: 'Indonesian',
+  it: 'Italian',
+  pl: 'Polish',
+};
+
+/**
  * Build the deterministic prompt the chair model answers when the user asks
  * to explain a contradiction. Pure (no I/O, no clock) so it can be asserted
- * exactly in tests.
+ * exactly in tests. When `locale` names a non-English UI language, a directive
+ * asks the model to reply in that language (the English default adds nothing).
  */
-export function buildExplanationPrompt(history: BeliefHistory): string {
+export function buildExplanationPrompt(history: BeliefHistory, locale?: string): string {
   const lines: string[] = [];
   lines.push(
     `The knowledge graph recorded conflicting values over time for the claim "${history.subject} ${history.predicate} …".`
@@ -52,13 +75,15 @@ export function buildExplanationPrompt(history: BeliefHistory): string {
   lines.push(
     'In 2-3 sentences, explain to the user why these differ over time and which value is most likely true now. Do not invent facts beyond what is listed.'
   );
+  const language = locale ? LANGUAGE_NAMES[locale] : undefined;
+  if (language) lines.push(`Respond in ${language}.`);
   return lines.join('\n');
 }
 
 /** Ask the agent for a natural-language explanation of a contested claim. */
-export async function explainConflict(history: BeliefHistory): Promise<string> {
-  const prompt = buildExplanationPrompt(history);
-  log('explainConflict claim=%s', history.claimKey);
+export async function explainConflict(history: BeliefHistory, locale?: string): Promise<string> {
+  const prompt = buildExplanationPrompt(history, locale);
+  log('explainConflict claim=%s locale=%s', history.claimKey, locale ?? 'en');
   const response = await openhumanAgentChat(prompt);
   return response.result;
 }

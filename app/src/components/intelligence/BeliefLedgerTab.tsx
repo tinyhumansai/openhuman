@@ -30,7 +30,7 @@ const CLOSED_MODAL: ConfirmationModalType = {
 };
 
 const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [relations, setRelations] = useState<GraphRelation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -60,7 +60,7 @@ const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
       if (explainingKey) return;
       setExplainingKey(history.claimKey);
       try {
-        const text = await explainConflict(history);
+        const text = await explainConflict(history, locale);
         setExplanationByKey(prev => ({ ...prev, [history.claimKey]: text }));
       } catch (err) {
         onToast({
@@ -72,7 +72,7 @@ const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
         setExplainingKey(null);
       }
     },
-    [explainingKey, onToast, t]
+    [explainingKey, locale, onToast, t]
   );
 
   const runCorrection = useCallback(
@@ -137,7 +137,7 @@ const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
         loading={loading}
         explanationByKey={explanationByKey}
         explainingKey={explainingKey}
-        onExplain={key => void handleExplain(key)}
+        onExplain={handleExplain}
         onCorrect={handleCorrect}
       />
 
