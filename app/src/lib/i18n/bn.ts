@@ -4427,6 +4427,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'documentProvenance.colDocument': 'নথি',
+  'documentProvenance.colEntities': 'সত্তা',
+  'documentProvenance.colExclusive': 'শুধুমাত্র',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'সম্প.',
+  'documentProvenance.corroboratesWith': 'সাথে সমর্থন করে',
+  'documentProvenance.docsHeading': 'প্রতি-নথি পদচিহ্ন',
+  'documentProvenance.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'documentProvenance.emptyHint':
+    'সহকারী যখন আপনার নথি থেকে আসা সম্পর্ক রেকর্ড করে, তাদের উৎস পদচিহ্ন এখানে উঠে আসবে।',
+  'documentProvenance.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'documentProvenance.intro':
+    'প্রতিটি অন্য লেন্স গ্রাফের (বিষয়, বিধেয়, বস্তু) ত্রয়ী পক্ষ বিশ্লেষণ করে। এটি অন্য দিকে ঘোরে — প্রতিটি সম্পর্কের উৎস নথি — কোন নথি ভার-বহনকারী (অন্য কোন উৎস সাক্ষ্য দেয় না এমন জ্ঞান বহন করে) তা প্রকাশ করতে, কোনগুলি একে অপরকে সমর্থন করে, এবং আপনার মেমরির কতটা একক-উৎস।',
+  'documentProvenance.loadBearingBadge': 'ভার-বহনকারী',
+  'documentProvenance.loadBearingTitle':
+    'এই নথিটি অন্তত একটি সম্পর্ক প্রমাণ করে যা অন্য কোনো উৎসও প্রমাণ করে না — এর অপসারণ সেই জ্ঞান হারাবে।',
+  'documentProvenance.loading': 'উৎস পদচিহ্ন গণনা করা হচ্ছে…',
+  'documentProvenance.metricCoverage': 'উৎস কভারেজ',
+  'documentProvenance.metricDocuments': 'নথি',
+  'documentProvenance.metricSingleSource': 'একক-উৎস ভাগ',
+  'documentProvenance.namespaceAll': 'সমস্ত নেমস্পেস',
+  'documentProvenance.namespaceLabel': 'নেমস্পেস',
+  'documentProvenance.noDocuments': 'এখনও কোনো নথি কোনো সম্পর্কের সাথে যুক্ত নয়।',
+  'documentProvenance.noOverlap':
+    'এখনও কোনো নথি একে অপরকে সমর্থন করে না — প্রতিটি উৎস সত্তার অসংলগ্ন সেট বহন করে।',
+  'documentProvenance.pairsHeading': 'শীর্ষ ওভারল্যাপ জোড়া',
+  'documentProvenance.retry': 'পুনরায় চেষ্টা',
+  'documentProvenance.title': 'নথি উৎস',
+  'documentProvenance.unsourcedCaption': '{count} টি সম্পর্ক উৎস ছাড়া',
+  'documentProvenance.unsourcedCaptionOne': '১টি সম্পর্ক উৎস ছাড়া',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

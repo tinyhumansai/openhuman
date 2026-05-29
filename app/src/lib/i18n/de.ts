@@ -4543,6 +4543,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'documentProvenance.colDocument': 'Dokument',
+  'documentProvenance.colEntities': 'Ent.',
+  'documentProvenance.colExclusive': 'Nur',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'Rel.',
+  'documentProvenance.corroboratesWith': 'bestätigt mit',
+  'documentProvenance.docsHeading': 'Fußabdruck pro Dokument',
+  'documentProvenance.empty': 'Noch kein Wissensgraph.',
+  'documentProvenance.emptyHint':
+    'Während der Assistent Relationen aus Ihren Dokumenten erfasst, erscheint hier ihr Provenienz-Fußabdruck.',
+  'documentProvenance.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'documentProvenance.intro':
+    'Jede andere Linse analysiert die (Subjekt, Prädikat, Objekt)-Tripel-Seite des Graphen. Diese dreht sich auf die ANDERE Seite — die Quelldokumente jeder Relation — und deckt auf, welche Dokumente tragend sind (Wissen tragen, das keine andere Quelle bezeugt), welche einander bestätigen und wie viel Ihrer Erinnerung aus einer einzigen Quelle stammt.',
+  'documentProvenance.loadBearingBadge': 'tragend',
+  'documentProvenance.loadBearingTitle':
+    'Dieses Dokument bezeugt mindestens eine Relation, die keine andere Quelle ebenfalls bezeugt — sein Entfernen würde dieses Wissen verlieren.',
+  'documentProvenance.loading': 'Berechne Provenienz-Fußabdruck…',
+  'documentProvenance.metricCoverage': 'Provenienz-Abdeckung',
+  'documentProvenance.metricDocuments': 'Dokumente',
+  'documentProvenance.metricSingleSource': 'Einquellen-Anteil',
+  'documentProvenance.namespaceAll': 'Alle Namensräume',
+  'documentProvenance.namespaceLabel': 'Namensraum',
+  'documentProvenance.noDocuments': 'Noch sind keine Dokumente mit einer Relation verknüpft.',
+  'documentProvenance.noOverlap':
+    'Noch bestätigen sich keine Dokumente gegenseitig — jede Quelle trägt eine disjunkte Entitätsmenge.',
+  'documentProvenance.pairsHeading': 'Top-Überlappungspaare',
+  'documentProvenance.retry': 'Wiederholen',
+  'documentProvenance.title': 'Dokument-Provenienz',
+  'documentProvenance.unsourcedCaption': '{count} Relationen ohne Provenienz',
+  'documentProvenance.unsourcedCaptionOne': '1 Relation ohne Provenienz',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

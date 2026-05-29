@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.provenance': 'Provenance',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,37 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+
+  'documentProvenance.title': 'Document Provenance',
+  'documentProvenance.intro':
+    "Every other lens analyses the (subject, predicate, object) triple side of the graph. This one pivots on the OTHER side — each relation's source documents — to surface which documents are load-bearing (carry knowledge no other source attests), which corroborate each other, and how much of your memory is single-sourced.",
+  'documentProvenance.loading': 'Computing provenance footprint…',
+  'documentProvenance.errorPrefix': 'Could not load the graph:',
+  'documentProvenance.retry': 'Retry',
+  'documentProvenance.empty': 'No knowledge graph yet.',
+  'documentProvenance.emptyHint':
+    'As the assistant records relations sourced from your documents, their provenance footprint will surface here.',
+  'documentProvenance.namespaceLabel': 'Namespace',
+  'documentProvenance.namespaceAll': 'All namespaces',
+  'documentProvenance.metricDocuments': 'Documents',
+  'documentProvenance.metricCoverage': 'Provenance coverage',
+  'documentProvenance.metricSingleSource': 'Single-source share',
+  'documentProvenance.unsourcedCaption': '{count} relations without provenance',
+  'documentProvenance.unsourcedCaptionOne': '1 relation without provenance',
+  'documentProvenance.docsHeading': 'Per-document footprint',
+  'documentProvenance.noDocuments': 'No documents are linked to any relation yet.',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colDocument': 'Document',
+  'documentProvenance.colRelations': 'Rels',
+  'documentProvenance.colEntities': 'Ents',
+  'documentProvenance.colExclusive': 'Only',
+  'documentProvenance.loadBearingBadge': 'load-bearing',
+  'documentProvenance.loadBearingTitle':
+    'This document attests at least one relation no other source also attests — its removal would drop that knowledge.',
+  'documentProvenance.pairsHeading': 'Top overlap pairs',
+  'documentProvenance.corroboratesWith': 'corroborates with',
+  'documentProvenance.noOverlap':
+    'No documents corroborate each other yet — every source carries a disjoint set of entities.',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -2500,7 +2532,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',

@@ -4350,6 +4350,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'documentProvenance.colDocument': 'المستند',
+  'documentProvenance.colEntities': 'كيانات',
+  'documentProvenance.colExclusive': 'فقط',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'علاقات',
+  'documentProvenance.corroboratesWith': 'يدعم مع',
+  'documentProvenance.docsHeading': 'بصمة لكل مستند',
+  'documentProvenance.empty': 'لا يوجد رسم معرفي بعد.',
+  'documentProvenance.emptyHint':
+    'كلما سجّل المساعد علاقات مستمدة من مستنداتك، ستظهر هنا بصمة مصدرها.',
+  'documentProvenance.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'documentProvenance.intro':
+    'كل العدسات الأخرى تحلل جانب الثلاثيات (الفاعل، المسند، المفعول) للرسم البياني. هذه تدور إلى الجانب الآخر — المستندات المصدر لكل علاقة — لكشف أي المستندات حاملة (تحمل معرفة لا تشهد بها أي مصدر آخر)، وأيها يدعم بعضها بعضاً، وكم من ذاكرتك يأتي من مصدر واحد.',
+  'documentProvenance.loadBearingBadge': 'حامل',
+  'documentProvenance.loadBearingTitle':
+    'يشهد هذا المستند على علاقة واحدة على الأقل لا يشهد عليها أي مصدر آخر — إزالته تُفقد تلك المعرفة.',
+  'documentProvenance.loading': 'حساب بصمة المصدر…',
+  'documentProvenance.metricCoverage': 'تغطية المصدر',
+  'documentProvenance.metricDocuments': 'المستندات',
+  'documentProvenance.metricSingleSource': 'حصة المصدر الواحد',
+  'documentProvenance.namespaceAll': 'كل مساحات الأسماء',
+  'documentProvenance.namespaceLabel': 'مساحة الأسماء',
+  'documentProvenance.noDocuments': 'لا توجد مستندات مرتبطة بأي علاقة بعد.',
+  'documentProvenance.noOverlap':
+    'لا توجد مستندات تدعم بعضها بعضاً بعد — كل مصدر يحمل مجموعة منفصلة من الكيانات.',
+  'documentProvenance.pairsHeading': 'أعلى أزواج التداخل',
+  'documentProvenance.retry': 'إعادة المحاولة',
+  'documentProvenance.title': 'مصدر المستندات',
+  'documentProvenance.unsourcedCaption': '{count} علاقة بدون مصدر',
+  'documentProvenance.unsourcedCaptionOne': 'علاقة واحدة بدون مصدر',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

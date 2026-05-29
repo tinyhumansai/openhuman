@@ -4498,6 +4498,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
+  'documentProvenance.colDocument': 'Documento',
+  'documentProvenance.colEntities': 'Ent.',
+  'documentProvenance.colExclusive': 'Apenas',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'Rel.',
+  'documentProvenance.corroboratesWith': 'corrobora com',
+  'documentProvenance.docsHeading': 'Pegada por documento',
+  'documentProvenance.empty': 'Ainda sem grafo de conhecimento.',
+  'documentProvenance.emptyHint':
+    'À medida que o assistente registra relações vindas dos seus documentos, sua pegada de procedência aparecerá aqui.',
+  'documentProvenance.errorPrefix': 'Não foi possível carregar o grafo:',
+  'documentProvenance.intro':
+    'Cada outra lente analisa o lado das triplas (sujeito, predicado, objeto) do grafo. Esta gira para o OUTRO lado — os documentos de origem de cada relação — para revelar quais documentos são portantes (carregam conhecimento que nenhuma outra fonte atesta), quais se corroboram mutuamente, e quanto da sua memória vem de uma única fonte.',
+  'documentProvenance.loadBearingBadge': 'portante',
+  'documentProvenance.loadBearingTitle':
+    'Este documento atesta pelo menos uma relação que nenhuma outra fonte também atesta — sua remoção faria perder esse conhecimento.',
+  'documentProvenance.loading': 'Calculando pegada de procedência…',
+  'documentProvenance.metricCoverage': 'Cobertura de procedência',
+  'documentProvenance.metricDocuments': 'Documentos',
+  'documentProvenance.metricSingleSource': 'Parcela de fonte única',
+  'documentProvenance.namespaceAll': 'Todos os espaços de nomes',
+  'documentProvenance.namespaceLabel': 'Espaço de nomes',
+  'documentProvenance.noDocuments': 'Ainda não há documentos vinculados a nenhuma relação.',
+  'documentProvenance.noOverlap':
+    'Ainda nenhum documento se corrobora mutuamente — cada fonte carrega um conjunto disjunto de entidades.',
+  'documentProvenance.pairsHeading': 'Principais pares de sobreposição',
+  'documentProvenance.retry': 'Tentar novamente',
+  'documentProvenance.title': 'Procedência de documentos',
+  'documentProvenance.unsourcedCaption': '{count} relações sem procedência',
+  'documentProvenance.unsourcedCaptionOne': '1 relação sem procedência',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

@@ -4501,6 +4501,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'documentProvenance.colDocument': 'Dokument',
+  'documentProvenance.colEntities': 'Enc.',
+  'documentProvenance.colExclusive': 'Tylko',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'Rel.',
+  'documentProvenance.corroboratesWith': 'potwierdza z',
+  'documentProvenance.docsHeading': 'Ślad na dokument',
+  'documentProvenance.empty': 'Jeszcze brak grafu wiedzy.',
+  'documentProvenance.emptyHint':
+    'Gdy asystent zapisuje relacje pochodzące z twoich dokumentów, ich ślad pochodzenia pojawi się tutaj.',
+  'documentProvenance.errorPrefix': 'Nie udało się załadować grafu:',
+  'documentProvenance.intro':
+    'Każda inna soczewka analizuje stronę trójek (podmiot, predykat, obiekt) grafu. Ta obraca się na DRUGĄ stronę — dokumenty źródłowe każdej relacji — aby ujawnić, które dokumenty są nośne (niosą wiedzę, której nie potwierdza żadne inne źródło), które się wzajemnie potwierdzają, i ile twojej pamięci pochodzi z pojedynczego źródła.',
+  'documentProvenance.loadBearingBadge': 'nośne',
+  'documentProvenance.loadBearingTitle':
+    'Ten dokument poświadcza co najmniej jedną relację, której nie poświadcza żadne inne źródło — jego usunięcie spowodowałoby utratę tej wiedzy.',
+  'documentProvenance.loading': 'Obliczanie śladu pochodzenia…',
+  'documentProvenance.metricCoverage': 'Pokrycie pochodzenia',
+  'documentProvenance.metricDocuments': 'Dokumenty',
+  'documentProvenance.metricSingleSource': 'Udział pojedynczego źródła',
+  'documentProvenance.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'documentProvenance.namespaceLabel': 'Przestrzeń nazw',
+  'documentProvenance.noDocuments': 'Żadne dokumenty nie są jeszcze powiązane z relacją.',
+  'documentProvenance.noOverlap':
+    'Żadne dokumenty jeszcze się wzajemnie nie potwierdzają — każde źródło niesie rozłączny zbiór encji.',
+  'documentProvenance.pairsHeading': 'Najlepsze pary nakładania',
+  'documentProvenance.retry': 'Spróbuj ponownie',
+  'documentProvenance.title': 'Pochodzenie dokumentów',
+  'documentProvenance.unsourcedCaption': '{count} relacji bez pochodzenia',
+  'documentProvenance.unsourcedCaptionOne': '1 relacja bez pochodzenia',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

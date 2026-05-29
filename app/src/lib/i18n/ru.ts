@@ -4469,6 +4469,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'documentProvenance.colDocument': 'Документ',
+  'documentProvenance.colEntities': 'Сущ.',
+  'documentProvenance.colExclusive': 'Только',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'Отн.',
+  'documentProvenance.corroboratesWith': 'подтверждает с',
+  'documentProvenance.docsHeading': 'След на документ',
+  'documentProvenance.empty': 'Пока нет графа знаний.',
+  'documentProvenance.emptyHint':
+    'По мере того как ассистент фиксирует отношения из ваших документов, здесь появится их след происхождения.',
+  'documentProvenance.errorPrefix': 'Не удалось загрузить граф:',
+  'documentProvenance.intro':
+    'Все остальные линзы анализируют сторону триплетов (субъект, предикат, объект) графа. Эта поворачивается на ДРУГУЮ сторону — исходные документы каждого отношения — чтобы вскрыть, какие документы являются несущими (несут знание, которое не подтверждается никаким другим источником), какие подтверждают друг друга, и какая часть вашей памяти происходит из единственного источника.',
+  'documentProvenance.loadBearingBadge': 'несущий',
+  'documentProvenance.loadBearingTitle':
+    'Этот документ свидетельствует хотя бы об одном отношении, которое не свидетельствует ни один другой источник — его удаление потеряет это знание.',
+  'documentProvenance.loading': 'Вычисление следа происхождения…',
+  'documentProvenance.metricCoverage': 'Покрытие происхождения',
+  'documentProvenance.metricDocuments': 'Документы',
+  'documentProvenance.metricSingleSource': 'Доля единственного источника',
+  'documentProvenance.namespaceAll': 'Все пространства имён',
+  'documentProvenance.namespaceLabel': 'Пространство имён',
+  'documentProvenance.noDocuments': 'Пока ни один документ не связан ни с одним отношением.',
+  'documentProvenance.noOverlap':
+    'Пока никакие документы не подтверждают друг друга — каждый источник несёт непересекающийся набор сущностей.',
+  'documentProvenance.pairsHeading': 'Топ-пары пересечения',
+  'documentProvenance.retry': 'Повторить',
+  'documentProvenance.title': 'Происхождение документов',
+  'documentProvenance.unsourcedCaption': '{count} отношений без происхождения',
+  'documentProvenance.unsourcedCaptionOne': '1 связь без происхождения',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

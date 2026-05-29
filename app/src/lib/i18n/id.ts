@@ -4443,6 +4443,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'documentProvenance.colDocument': 'Dokumen',
+  'documentProvenance.colEntities': 'Ent.',
+  'documentProvenance.colExclusive': 'Hanya',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'Rel.',
+  'documentProvenance.corroboratesWith': 'mendukung dengan',
+  'documentProvenance.docsHeading': 'Jejak per dokumen',
+  'documentProvenance.empty': 'Belum ada graf pengetahuan.',
+  'documentProvenance.emptyHint':
+    'Saat asisten mencatat relasi dari dokumen Anda, jejak asal-usulnya akan muncul di sini.',
+  'documentProvenance.errorPrefix': 'Tidak dapat memuat graf:',
+  'documentProvenance.intro':
+    'Setiap lensa lain menganalisis sisi tripel (subjek, predikat, objek) dari graf. Yang satu ini berputar ke sisi LAIN — dokumen sumber dari setiap relasi — untuk mengungkap dokumen mana yang menjadi penopang (membawa pengetahuan yang tidak disaksikan oleh sumber lain), mana yang saling mendukung, dan seberapa banyak memori Anda yang bersumber tunggal.',
+  'documentProvenance.loadBearingBadge': 'penopang',
+  'documentProvenance.loadBearingTitle':
+    'Dokumen ini menyatakan setidaknya satu relasi yang tidak dinyatakan oleh sumber lain — penghapusannya akan menghilangkan pengetahuan itu.',
+  'documentProvenance.loading': 'Menghitung jejak asal-usul…',
+  'documentProvenance.metricCoverage': 'Cakupan asal-usul',
+  'documentProvenance.metricDocuments': 'Dokumen',
+  'documentProvenance.metricSingleSource': 'Pangsa sumber tunggal',
+  'documentProvenance.namespaceAll': 'Semua ruang nama',
+  'documentProvenance.namespaceLabel': 'Ruang nama',
+  'documentProvenance.noDocuments': 'Belum ada dokumen yang terhubung ke relasi mana pun.',
+  'documentProvenance.noOverlap':
+    'Belum ada dokumen yang saling mendukung — setiap sumber membawa set entitas yang berbeda.',
+  'documentProvenance.pairsHeading': 'Pasangan tumpang tindih teratas',
+  'documentProvenance.retry': 'Coba lagi',
+  'documentProvenance.title': 'Asal-usul Dokumen',
+  'documentProvenance.unsourcedCaption': '{count} relasi tanpa asal-usul',
+  'documentProvenance.unsourcedCaptionOne': '1 relasi tanpa asal-usul',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

@@ -4393,6 +4393,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'documentProvenance.colDocument': '문서',
+  'documentProvenance.colEntities': '엔티티',
+  'documentProvenance.colExclusive': '오직',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': '관계',
+  'documentProvenance.corroboratesWith': '와 입증',
+  'documentProvenance.docsHeading': '문서별 흔적',
+  'documentProvenance.empty': '아직 지식 그래프가 없습니다.',
+  'documentProvenance.emptyHint':
+    '어시스턴트가 문서에서 가져온 관계를 기록함에 따라, 그 출처 흔적이 여기에 나타납니다.',
+  'documentProvenance.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'documentProvenance.intro':
+    '다른 모든 렌즈는 그래프의 (주어, 술어, 목적어) 트리플 측면을 분석합니다. 이 렌즈는 다른 쪽 — 각 관계의 출처 문서 — 으로 회전하여, 어떤 문서가 하중을 떠받치는지(다른 어떤 출처도 증언하지 않는 지식을 담는지), 어떤 문서가 서로를 입증하는지, 그리고 메모리의 얼마나 많은 부분이 단일 출처인지를 드러냅니다.',
+  'documentProvenance.loadBearingBadge': '하중 지지',
+  'documentProvenance.loadBearingTitle':
+    '이 문서는 다른 어떤 출처도 증언하지 않는 적어도 하나의 관계를 증언합니다 — 제거하면 그 지식이 사라집니다.',
+  'documentProvenance.loading': '출처 흔적 계산 중…',
+  'documentProvenance.metricCoverage': '출처 범위',
+  'documentProvenance.metricDocuments': '문서',
+  'documentProvenance.metricSingleSource': '단일 출처 비율',
+  'documentProvenance.namespaceAll': '모든 네임스페이스',
+  'documentProvenance.namespaceLabel': '네임스페이스',
+  'documentProvenance.noDocuments': '아직 어떤 관계에도 연결된 문서가 없습니다.',
+  'documentProvenance.noOverlap':
+    '아직 서로 입증하는 문서가 없습니다 — 모든 출처가 서로소인 엔티티 집합을 가집니다.',
+  'documentProvenance.pairsHeading': '상위 중첩 쌍',
+  'documentProvenance.retry': '다시 시도',
+  'documentProvenance.title': '문서 출처',
+  'documentProvenance.unsourcedCaption': '출처 없는 관계 {count}건',
+  'documentProvenance.unsourcedCaptionOne': '출처 없는 관계 1건',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

@@ -4434,6 +4434,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'documentProvenance.colDocument': 'दस्तावेज़',
+  'documentProvenance.colEntities': 'इका.',
+  'documentProvenance.colExclusive': 'केवल',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'सं.',
+  'documentProvenance.corroboratesWith': 'के साथ पुष्टि करता है',
+  'documentProvenance.docsHeading': 'प्रति-दस्तावेज़ पदचिह्न',
+  'documentProvenance.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'documentProvenance.emptyHint':
+    'जैसे-जैसे सहायक आपके दस्तावेज़ों से प्राप्त संबंध दर्ज करता है, उनकी उद्भव पदचिह्न यहाँ उभरेगा।',
+  'documentProvenance.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'documentProvenance.intro':
+    'हर अन्य लेंस ग्राफ के (विषय, विधेय, वस्तु) त्रिकोणीय पक्ष का विश्लेषण करती है। यह दूसरी ओर मुड़ती है — प्रत्येक संबंध के स्रोत दस्तावेज़ — यह उजागर करने के लिए कि कौन से दस्तावेज़ भार-वहनकर्ता हैं (जो ऐसा ज्ञान रखते हैं जिसका कोई अन्य स्रोत साक्ष्य नहीं देता), कौन से एक-दूसरे की पुष्टि करते हैं, और आपकी कितनी मेमोरी एकल-स्रोत वाली है।',
+  'documentProvenance.loadBearingBadge': 'भार-वहनकर्ता',
+  'documentProvenance.loadBearingTitle':
+    'यह दस्तावेज़ कम-से-कम एक ऐसे संबंध को साक्ष्य देता है जिसे कोई अन्य स्रोत भी साक्ष्य नहीं देता — इसके हटने से वह ज्ञान खो जाएगा।',
+  'documentProvenance.loading': 'उद्भव पदचिह्न गणना हो रही है…',
+  'documentProvenance.metricCoverage': 'उद्भव कवरेज',
+  'documentProvenance.metricDocuments': 'दस्तावेज़',
+  'documentProvenance.metricSingleSource': 'एकल-स्रोत हिस्सा',
+  'documentProvenance.namespaceAll': 'सभी नेमस्पेस',
+  'documentProvenance.namespaceLabel': 'नेमस्पेस',
+  'documentProvenance.noDocuments': 'अभी कोई दस्तावेज़ किसी संबंध से लिंक नहीं है।',
+  'documentProvenance.noOverlap':
+    'अभी कोई दस्तावेज़ एक-दूसरे की पुष्टि नहीं करते — हर स्रोत इकाइयों का असंयुक्त सेट रखता है।',
+  'documentProvenance.pairsHeading': 'शीर्ष ओवरलैप जोड़ियाँ',
+  'documentProvenance.retry': 'पुनः प्रयास',
+  'documentProvenance.title': 'दस्तावेज़ उद्भव',
+  'documentProvenance.unsourcedCaption': '{count} संबंध बिना उद्भव के',
+  'documentProvenance.unsourcedCaptionOne': '1 संबंध बिना उद्भव के',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;

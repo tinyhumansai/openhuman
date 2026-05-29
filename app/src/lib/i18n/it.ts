@@ -4501,6 +4501,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'documentProvenance.colDocument': 'Documento',
+  'documentProvenance.colEntities': 'Ent.',
+  'documentProvenance.colExclusive': 'Solo',
+  'documentProvenance.colRank': '#',
+  'documentProvenance.colRelations': 'Rel.',
+  'documentProvenance.corroboratesWith': 'corrobora con',
+  'documentProvenance.docsHeading': 'Impronta per documento',
+  'documentProvenance.empty': 'Ancora nessun grafo della conoscenza.',
+  'documentProvenance.emptyHint':
+    "Man mano che l'assistente registra relazioni provenienti dai tuoi documenti, qui apparirà la loro impronta di provenienza.",
+  'documentProvenance.errorPrefix': 'Impossibile caricare il grafo:',
+  'documentProvenance.intro':
+    "Ogni altra lente analizza il lato delle triple (soggetto, predicato, oggetto) del grafo. Questa si sposta sull'ALTRO lato — i documenti di origine di ogni relazione — per rivelare quali documenti sono portanti (portano conoscenza che nessun'altra fonte attesta), quali si corroborano a vicenda, e quanto della tua memoria proviene da una singola fonte.",
+  'documentProvenance.loadBearingBadge': 'portante',
+  'documentProvenance.loadBearingTitle':
+    "Questo documento attesta almeno una relazione che nessun'altra fonte attesta — la sua rimozione farebbe perdere quella conoscenza.",
+  'documentProvenance.loading': 'Calcolo impronta di provenienza…',
+  'documentProvenance.metricCoverage': 'Copertura di provenienza',
+  'documentProvenance.metricDocuments': 'Documenti',
+  'documentProvenance.metricSingleSource': 'Quota a fonte singola',
+  'documentProvenance.namespaceAll': 'Tutti gli spazi dei nomi',
+  'documentProvenance.namespaceLabel': 'Spazio dei nomi',
+  'documentProvenance.noDocuments': 'Ancora nessun documento è collegato a una relazione.',
+  'documentProvenance.noOverlap':
+    'Ancora nessun documento si corrobora a vicenda — ogni fonte porta un insieme disgiunto di entità.',
+  'documentProvenance.pairsHeading': 'Coppie principali di sovrapposizione',
+  'documentProvenance.retry': 'Riprova',
+  'documentProvenance.title': 'Provenienza dei documenti',
+  'documentProvenance.unsourcedCaption': '{count} relazioni senza provenienza',
+  'documentProvenance.unsourcedCaptionOne': '1 relazione senza provenienza',
+  'memory.tab.provenance': 'Provenance',
 };
 
 export default messages;
