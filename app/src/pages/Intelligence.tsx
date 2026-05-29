@@ -7,6 +7,7 @@ import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreams
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
+import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
 import {
@@ -20,7 +21,14 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams' | 'tasks' | 'diagram';
+type IntelligenceTab =
+  | 'memory'
+  | 'subconscious'
+  | 'calls'
+  | 'dreams'
+  | 'tasks'
+  | 'diagram'
+  | 'council';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -95,6 +103,7 @@ export default function Intelligence() {
     { id: 'diagram', label: t('memory.tab.diagram') },
     { id: 'calls', label: t('memory.tab.calls') },
     { id: 'dreams', label: t('memory.tab.dreams') },
+    { id: 'council', label: t('memory.tab.council') },
   ];
 
   return (
@@ -177,6 +186,8 @@ export default function Intelligence() {
             {activeTab === 'calls' && <IntelligenceCallsTab onToast={addToast} />}
 
             {activeTab === 'dreams' && <IntelligenceDreamsTab />}
+
+            {activeTab === 'council' && <ModelCouncilTab />}
           </div>
         </div>
       </div>

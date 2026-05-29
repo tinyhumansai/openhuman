@@ -1526,6 +1526,30 @@ const ar1: TranslationMap = {
   'settings.search.accessBlockAll': 'Block all',
   'settings.search.accessBlockAllHint':
     'All web access is blocked — the assistant cannot open or read any website.',
+  'memory.tab.council': 'Council',
+  'modelCouncil.title': 'Model Council',
+  'modelCouncil.intro':
+    'Ask one question, get independent answers from several models in parallel, then a chair model synthesizes where they agree, where they disagree, and what each uniquely adds.',
+  'modelCouncil.questionLabel': 'Question',
+  'modelCouncil.questionPlaceholder': 'Ask the council a question…',
+  'modelCouncil.membersLabel': 'Member models',
+  'modelCouncil.maxMembersNote': 'up to {max}',
+  'modelCouncil.memberPlaceholder': 'e.g. gpt-5.2',
+  'modelCouncil.memberAria': 'Member model {n}',
+  'modelCouncil.removeMemberAria': 'Remove member model {n}',
+  'modelCouncil.addMember': '+ Add model',
+  'modelCouncil.chairLabel': 'Chair model',
+  'modelCouncil.chairPlaceholder': 'e.g. claude-opus-4-8',
+  'modelCouncil.chairHelp': 'The chair reads every member answer and writes the synthesis.',
+  'modelCouncil.run': 'Convene council',
+  'modelCouncil.running': 'Convening…',
+  'modelCouncil.runningHint': 'Querying members in parallel, then synthesizing…',
+  'modelCouncil.errorPrefix': 'Council failed:',
+  'modelCouncil.resultsHeading': 'Council results',
+  'modelCouncil.memberAnswered': 'Answered',
+  'modelCouncil.memberFailed': 'Failed',
+  'modelCouncil.synthesisHeading': 'Synthesis',
+  'modelCouncil.synthesisBy': 'by {model}',
 };
 
 export default ar1;
