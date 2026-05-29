@@ -208,7 +208,18 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Core port** — `7788` (default; in-process inside Tauri host). Check with `lsof -i :7788`.
 - **`pnpm core:stage`** — no-op (sidecar removed in PR #1061). Use `pnpm dev:app` for full Tauri+core dev.
 - **Kill stuck processes** — `lsof -i :7788` then `kill <PID>`. Useful when `dev:app` reports a stale listener and you want to force a fresh boot rather than relying on the handle's auto-recovery.
-- **Skills runtime removed** — the QuickJS / `rquickjs` runtime is gone; `src/openhuman/skills/` is metadata-only ("Legacy skill metadata helpers retained after QuickJS runtime removal"). Skill execution surfaces are being rebuilt; don't assume a `.skill` can run end-to-end without checking the current code.
+- **Skills runtime rebuilt (PR #2707)** — QuickJS is gone, but skills now run as orchestrator-focused agents via `skills_run` RPC. Default skills live in `src/openhuman/skills/defaults/<id>/` with `skill.toml` + `SKILL.md`, registered in `registry.rs` `DEFAULT_SKILLS` const. Seeded into `<workspace>/skills/` on boot (idempotent, non-destructive). Bundled defaults: `github-issue-crusher`, `dev-workflow`. Skills run with 200 iteration cap and full web access.
+- **Codegraph tools (PR #2707)** — `codegraph_index` and `codegraph_search` registered in `src/openhuman/tools/ops.rs`. Implementation in `src/openhuman/codegraph/` — tree-sitter extraction, SQLite FTS5, dense embeddings, RRF fusion. Auto-indexes on first search.
+- **Tool names are exact** — Always check `src/openhuman/tools/ops.rs` for authoritative names. Key ones: `edit` (not `edit_file`), `composio` (not `composio_execute`), `codegraph_index`, `codegraph_search`.
+- **`cron_add` RPC** — Was missing from `schemas.rs` (only existed as agent tool). Now exposed as `openhuman.cron_add`. Frontend wrapper: `openhumanCronAdd()` in `app/src/utils/tauriCommands/cron.ts`.
+- **Worktree `pnpm build` rolldown fix** — Worktrees can miss `@rolldown/binding-darwin-arm64`. Fix: `pnpm install --force`.
+
+## Artifacts Domain (Issue #2776)
+
+- **Filesystem-backed persistence, no SQLite** — `src/openhuman/artifacts/` stores JSON metadata (`meta.json`) + binary blobs under `<workspace_dir>/artifacts/<uuid>/`. Pattern mirrors `memory/ops/files.rs` but simpler.
+- **`"ai"` namespace in controller registry** — RPC methods are `openhuman.ai_list_artifacts`, `openhuman.ai_get_artifact`, `openhuman.ai_delete_artifact`. Future `ai_*` methods should use this same namespace.
+- **Two-layer path validation required** — (1) `validate_artifact_id` rejects empty strings, `/`, `\`, `..`, absolute Unix paths, Windows `C:` and UNC `\\` paths; (2) `assert_within_root` canonicalizes and checks containment. Replicate this pattern for any new filesystem-backed domain.
+- **`cargo test --lib` required for lib crate tests** — `cargo test -p openhuman -- "artifacts"` lists tests but filters to 0. Must use `cargo test -p openhuman --lib -- "artifacts"` because tests are in the lib crate, not integration test binaries.
 
 ## Rust Testing Patterns
 
@@ -219,6 +230,10 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 - **Global static cache tests need a reset guard** — When testing code that reads/writes a `Lazy<Mutex<Option<...>>>` global cache, use a `struct CacheResetGuard; impl Drop for CacheResetGuard { fn drop(&mut self) { *CACHE.lock() = None; } }` pattern so each test starts clean. See `SnapshotCacheResetGuard` / `CacheResetGuard` in `ops_tests.rs`.
 - **Test assertions must match the actual dummy value** — When a builder (e.g. `build_dummy_runtime_snapshot()`) wraps `degraded_runtime_snapshot()`, assert against `dummy.field` rather than a hardcoded string (e.g. `"idle"` vs the actual `"degraded"`) to verify round-trip correctness without false mismatches.
 - **`composio::action_tool::tests::mode_toggle_between_calls_is_observed` is flaky in full suite** — Fails intermittently due to shared global composio session state; passes in isolation. Pre-existing; not caused by snapshot perf work.
+- **`GLOBAL_MEMORY_TEST_LOCK` only serializes test bodies, not background workers** — Background ingestion spawned by a prior test can still be running when the next test acquires the lock. Call `state.reset_for_test()` at test start (after acquiring the lock) to clear accumulated `queue_depth`/`running` state; do not rely on delta assertions alone.
+- **`IngestionState::reset_for_test()` is `#[cfg(test)]`-gated** — Lives in `src/openhuman/memory/ingestion/state.rs`. Zeroes `queue_depth` (AtomicUsize) and clears running/current fields in the snapshot while preserving completion history. This is the canonical reset for any test asserting exact queue or running state.
+- **cargo-llvm-cov widens SQLITE_BUSY window** — Flakes that only appear under coverage (`cargo-llvm-cov`) but not plain `cargo test` are usually (a) a SQLite connection missing `busy_timeout`, or (b) shared global state not reset between tests. Always set `busy_timeout` on new SQLite connections (see pattern below).
+- **All new SQLite connections must set `busy_timeout = 15s`** — Call `conn.busy_timeout(Duration::from_secs(15))` immediately after `Connection::open()`, before any `execute_batch()`. Pattern set by `chunks/store.rs` (`SQLITE_BUSY_TIMEOUT`) and now also used by `memory_store/unified/init.rs` (fixed in issue #2722). Without it, concurrent ingestion + test writes produce `SQLITE_BUSY` under cargo-llvm-cov.
 
 ## App State Snapshot (Issue #2155 — first-launch perf)
 
@@ -257,3 +272,31 @@ Quick reference for anyone starting with Claude on this project. Updated by the 
 ## Pre-existing Flaky Tests
 
 - **`composio::action_tool` and `agent::harness::session::turn` intermittent failures** — These tests fail randomly when run as part of the full suite (likely shared state or timing), but pass individually. Not related to security/policy changes. Do not treat as blockers for security-module PRs.
+
+## Windows OAuth Deep Link (Issue #2562)
+
+- **Three-layer fix**: (1) named-pipe IPC in `deep_link_ipc_windows.rs` — secondary process forwards `openhuman://` URL to primary via `\\.\pipe\com.openhuman.app-deeplink`, 40 retries × 50ms; (2) loopback OAuth server in `loopback_oauth.rs` — RFC 8252 one-shot `127.0.0.1:53824`, preferred path that eliminates deep link dispatch entirely; (3) Linux analog in `deep_link_ipc.rs` — Unix domain socket at `$XDG_RUNTIME_DIR/com.openhuman.app-deeplink.sock`.
+- **`OAuthProviderButton.tsx` loopback flow** — tries loopback first, sets `redirectUri` for backend, awaits callback, rewrites `http://127.0.0.1:PORT/auth?...` → `openhuman://auth?...` → `handleDeepLinkUrls`. Falls back to deep link if bind fails.
+- **Pipe binding location** — primary binds the named pipe in `lib.rs` right after the mutex guard (line 2269); `drain_pending_urls()` wired in `setup()` at line 2578.
+- **Issue was already fixed before we picked it up** — PRs #2469, #2511, #2550 had already merged the fix. Our contribution was extracting `classify_request` as a pure function and adding 11 Rust unit tests.
+- **Pure-function extraction pattern** — when async/AppHandle-gated Tauri code is untestable, extract a `classify_request(head, expected_state, bound_port) -> RequestOutcome` pure function returning an enum. Enables comprehensive unit tests with zero Tauri context. `RequestOutcome` has 4 variants: `AuthCallback`, `StateMismatch`, `NotFound`, `MethodNotAllowed`.
+
+## Port Conflict Recovery (Issue #2617)
+
+- **Port fallback already in `pick_listen_port`** — `src/openhuman/connectivity/rpc.rs` tries ports 7789–7798 when 7788 is busy. Gap was: frontend `getCoreRpcUrl()` cached the URL on first resolution so it never picked up the fallback port, and stale-process reaping was macOS-only.
+- **`process_recovery.rs` is platform-gated** — `reap_stale_openhuman_processes` had only a macOS impl. Linux uses `/proc/<pid>/cmdline`; Windows uses `wmic process get`. Tests for each platform's parsing logic live in the same file, following the existing macOS test pattern.
+- **`recover_port_conflict` is a Tauri IPC command, not JSON-RPC** — Rust E2E test for port fallback lives in `tests/json_rpc_e2e.rs` and calls `pick_listen_port` directly: bind port 7788 with a `std::net::TcpListener` (std, not tokio) to simulate conflict, confirm fallback, then serve via `tokio::net::TcpListener::from_std(pick_result.listener.into_std())`.
+- **`BootCheckTransport` is the right hook for frontend recovery** — `app/src/lib/bootCheck/index.ts` is the injection point for new recovery capabilities; don't add them directly to the BootCheck component.
+- **i18n bootCheck keys live in `-3.ts` chunks** — New keys must be added to all 13 language files simultaneously (the `-3.ts` chunk for each language).
+- **Workflow folder** — `workflow/` at repo root has 5 markdown files (00–05) defining the full PR workflow: pick issue → architectobot plan → user approval → codecrusher → architectobot verify → checks → memory-keeper → commit → push/PR.
+
+## Channel Event Workspace Routing (Issue #2602)
+
+- **Workspace identity is `PathBuf`** — Represented as the workspace directory path on `ChannelRuntimeContext` as `ctx.workspace_dir: Arc<PathBuf>`. Use `ctx.workspace_dir.as_ref().clone()` at publish sites. There is no abstract `WorkspaceId` type.
+- **`DomainEvent` workspace routing contract** — Publisher populates workspace field from context; subscriber compares against `self.workspace_dir` and early-returns with `log::debug!` on mismatch. Follow this pattern for any workspace-scoped `DomainEvent` variant.
+- **`ChannelMessageReceived` and `ChannelMessageProcessed` carry `workspace_dir`** — Added in PR for issue #2602. Guards in `ConversationPersistenceSubscriber` (memory_conversations/bus.rs) and `TelegramRemoteSubscriber` (telegram/bus.rs) prevent cross-workspace persistence during login/workspace-change races.
+
+## Pre-existing Upstream Failures (from issue #2602 session)
+
+- **Upstream `main` has 5 Vitest failures and 4 TypeScript compile errors** — Caused by missing iOS experimental dependencies: `@noble/ciphers/chacha`, `@noble/ciphers/webcrypto`, `qrcode.react`, `@tauri-apps/plugin-barcode-scanner`. Breaks `pnpm compile`, `pnpm build`, `pnpm test:coverage` on a clean checkout. Always verify by stashing changes and running checks on the base branch before blaming your PR.
+- **`cargo fmt` must run after codecrusher** — codecrusher does not reliably produce `cargo fmt`-clean Rust. Always run `cargo fmt --manifest-path Cargo.toml` after codecrusher finishes and before committing.

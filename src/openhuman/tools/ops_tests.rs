@@ -498,6 +498,32 @@ fn all_tools_excludes_browser_when_disabled() {
 }
 
 #[test]
+fn browser_allowed_domains_shares_fetch_list_minus_wildcard() {
+    // Unified web-access firewall: the browser tool derives its host allowlist
+    // from `http_request.allowed_domains`, but the `"*"` allow-all wildcard is
+    // stripped so a fetch-side "Allow all" never silently opens the browser.
+
+    // Explicit hosts pass straight through (shared with fetch).
+    assert_eq!(
+        browser_allowed_domains(&["reuters.com".into(), "github.com".into()]),
+        vec!["reuters.com".to_string(), "github.com".to_string()],
+    );
+
+    // `"*"` (fetch allow-all, and the http_request default) yields an EMPTY
+    // browser list — browser stays closed unless OPENHUMAN_BROWSER_ALLOW_ALL.
+    assert!(browser_allowed_domains(&["*".into()]).is_empty());
+
+    // Mixed: wildcard dropped, explicit hosts kept.
+    assert_eq!(
+        browser_allowed_domains(&["*".into(), "intranet.corp".into()]),
+        vec!["intranet.corp".to_string()],
+    );
+
+    // Block-all (empty fetch list) -> empty browser list.
+    assert!(browser_allowed_domains(&[]).is_empty());
+}
+
+#[test]
 fn all_tools_includes_browser_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
@@ -967,6 +993,32 @@ fn all_tools_registers_brave_engine_lsp_and_tool_stats_when_enabled() {
     }
 }
 
+#[test]
+fn all_tools_registers_querit_engine_when_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_QUERIT.into();
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert_contains_all(&names, &["web_search_tool", "querit_search"]);
+}
+
 #[tokio::test]
 async fn all_tools_executes_apify_family_against_fake_backend() {
     let backend = integration_test_support::spawn_fake_integration_backend().await;
@@ -1322,4 +1374,58 @@ async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
     );
     assert_eq!(requests[2].body["requireGreeks"], serde_json::json!(true));
     assert_eq!(requests[5].body["to"], serde_json::json!("+14155551234"));
+}
+
+/// Every acting tool gates on `can_act()` and returns its own read-only refusal
+/// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
+/// harness recognizes the block as a hard reject and halts on a verbatim repeat
+/// (see `agent::harness::tool_loop::hard_reject_kind`). This pins every tool's
+/// literal to the marker const — drift between them fails here rather than
+/// silently letting the agent grind on a doomed call. Args are the minimum
+/// needed to reach the `can_act()` check in each tool.
+#[tokio::test]
+async fn readonly_acting_tools_carry_policy_blocked_marker() {
+    use crate::openhuman::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
+
+    let tmp = TempDir::new().unwrap();
+    let sec = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        workspace_dir: tmp.path().to_path_buf(),
+        ..SecurityPolicy::default()
+    });
+
+    let cases: Vec<(Box<dyn Tool>, serde_json::Value)> = vec![
+        (
+            Box::new(ApplyPatchTool::new(sec.clone())),
+            serde_json::json!({ "edits": [{ "path": "a.txt", "old_string": "x", "new_string": "y" }] }),
+        ),
+        (
+            Box::new(CsvExportTool::new(sec.clone())),
+            serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
+        ),
+        (
+            Box::new(KeyboardTool::new(sec.clone())),
+            serde_json::json!({}),
+        ),
+        (Box::new(MouseTool::new(sec.clone())), serde_json::json!({})),
+        (
+            Box::new(BrowserOpenTool::new(sec.clone(), vec![])),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+        (
+            Box::new(HttpRequestTool::new(sec.clone(), vec![], 0, 0)),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+    ];
+
+    for (tool, args) in cases {
+        let name = tool.name().to_string();
+        let out = tool.execute(args).await.unwrap();
+        assert!(out.is_error, "{name} should error under read-only autonomy");
+        assert!(
+            out.output().contains(POLICY_BLOCKED_MARKER),
+            "{name} read-only block must carry {POLICY_BLOCKED_MARKER}, got: {}",
+            out.output()
+        );
+    }
 }

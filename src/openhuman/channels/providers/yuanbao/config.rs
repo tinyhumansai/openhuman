@@ -9,6 +9,22 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::YuanbaoError;
 
+/// Default value for `DeviceInfo.app_version` (server-side `plugin_version`).
+///
+/// In `yuanbao-openclaw-plugin`'s wire mapping, `plugin_version` represents
+/// the *plugin-layer* (npm package) version while `bot_version` represents
+/// the *framework runtime* version. OpenHuman has no separate plugin layer;
+/// we reuse this slot for the **yuanbao channel provider's** own iteration
+/// version. Bump it when the provider's protocol adapter changes in a way
+/// the server might care about. The framework runtime version is reported
+/// separately via `CARGO_PKG_VERSION` in `DeviceInfo.bot_version`.
+pub(crate) const DEFAULT_PLUGIN_VERSION: &str = "0.1.0";
+
+/// Strip legacy `openhuman/` prefix from version strings in config/TOML.
+pub(crate) fn strip_version_prefix(version: &str) -> &str {
+    version.strip_prefix("openhuman/").unwrap_or(version)
+}
+
 /// Production environment endpoints (default).
 const PROD_API_DOMAIN: &str = "https://bot.yuanbao.tencent.com";
 const PROD_WS_URL: &str = "wss://bot-wss.yuanbao.tencent.com/wss/connection";
@@ -46,8 +62,18 @@ pub struct YuanbaoConfig {
     /// `api_domain/api/token/sign` with `(app_key, app_secret)` to fetch one.
     #[serde(default)]
     pub token: String,
-    /// Plugin/bot version reported in `AuthBindReq.DeviceInfo.bot_version`.
-    #[serde(default = "default_bot_version")]
+    /// Yuanbao channel-provider iteration version, reported in
+    /// `AuthBindReq.DeviceInfo.app_version` (server-side `plugin_version`).
+    ///
+    /// **NOTE:** Despite the legacy `bot_version` TOML key name, this value
+    /// fills the *plugin*-version slot on the wire — see
+    /// [`DEFAULT_PLUGIN_VERSION`] for the semantic mapping. The framework
+    /// runtime version (`DeviceInfo.bot_version` / server `bot_version`)
+    /// is sourced from `CARGO_PKG_VERSION` and is **not** user-configurable;
+    /// operators who previously set this key intending to override the
+    /// framework version should drop it. New configs may use the clearer
+    /// `plugin_version` alias.
+    #[serde(default = "default_bot_version", alias = "plugin_version")]
     pub bot_version: String,
     /// Optional bot display name — used by the `@bot` mention guard.
     #[serde(default)]
@@ -161,8 +187,11 @@ impl YuanbaoConfig {
     }
 }
 
+/// Default value for [`YuanbaoConfig::bot_version`] — populates
+/// `DeviceInfo.app_version` (server `plugin_version`) when the user config
+/// omits the field.
 fn default_bot_version() -> String {
-    "openhuman/0.1.0".into()
+    DEFAULT_PLUGIN_VERSION.into()
 }
 
 fn default_env() -> String {

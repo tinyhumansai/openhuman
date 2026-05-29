@@ -4,7 +4,11 @@ import { getCoreStateSnapshot } from '../../lib/coreState/store';
 import { bootCheckTransport } from '../../services/bootCheckService';
 import { getCoreRpcUrl, testCoreRpcConnection } from '../../services/coreRpcClient';
 import { isTauri } from '../../services/webviewAccountService';
-import { getStoredCoreMode, getStoredCoreToken } from '../../utils/configPersistence';
+import {
+  getStoredCoreMode,
+  getStoredCoreToken,
+  storeCoreMode,
+} from '../../utils/configPersistence';
 
 const logPrefix = '[oauth-auth-readiness]';
 const log = debug('oauth:auth-readiness');
@@ -80,6 +84,15 @@ export async function waitForOAuthAuthReadiness(
   while (Date.now() < deadline) {
     const mode = getStoredCoreMode();
     if (mode) {
+      sawCoreMode = true;
+      break;
+    }
+    // In the Tauri desktop app the core is always embedded locally. If the
+    // picker hasn't run yet (e.g. first launch before BootCheckGate finishes,
+    // or core mode was just cleared), default to 'local' so OAuth can proceed
+    // without forcing the user to navigate back through the runtime picker.
+    if (isTauri()) {
+      storeCoreMode('local');
       sawCoreMode = true;
       break;
     }

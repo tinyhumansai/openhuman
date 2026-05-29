@@ -258,3 +258,132 @@ async fn inference_openai_oauth_disconnect_returns_removed_flag() {
     assert_eq!(outcome.value["disconnected"], true);
     assert_eq!(outcome.logs, vec!["openai oauth disconnected"]);
 }
+
+// ── is_unknown_provider_user_config (TAURI-RUST-X) ───────────────────────
+//
+// `inference_list_models` calls `providers::ops::list_configured_models`,
+// which surfaces a `String` error when the user-selected provider id isn't
+// registered in the cloud-provider list (e.g. picking "ollama" — a local
+// runtime — as a cloud provider). The error string is emitted at
+// `src/openhuman/inference/provider/ops.rs:54`. Before this fix the emit
+// site at `inference/ops.rs:248` escalated every such error to `error!`,
+// which sentry-tracing ships to Sentry as `"[inference::ops]
+// list_models:error"` — 5740+ events with the underlying error hidden in
+// a tracing field where no Sentry classifier can reach it. The helper
+// gate keeps the demote anchored so unrelated failures (HTTP / JSON / IO)
+// still escalate.
+
+#[test]
+fn is_unknown_provider_user_config_matches_canonical_emit_site_string() {
+    // Verbatim shape from `provider/ops.rs:54`:
+    //   format!("no cloud provider with id or slug '{}' found", provider_id)
+    // Latest TAURI-RUST-X event (Sentry id 95) carried provider_id="ollama";
+    // every well-formed provider id slug must trigger the demote.
+    assert!(is_unknown_provider_user_config(
+        "no cloud provider with id or slug 'ollama' found"
+    ));
+    assert!(is_unknown_provider_user_config(
+        "no cloud provider with id or slug 'made-up-custom-id' found"
+    ));
+    assert!(is_unknown_provider_user_config(
+        "no cloud provider with id or slug '' found"
+    ));
+}
+
+#[test]
+fn is_unknown_provider_user_config_rejects_other_list_models_failures() {
+    // Defense in depth: the sibling list_models Sentry issues
+    // (TAURI-RUST-12 JSON parse, TAURI-RUST-2W HTTP builder, etc.) are
+    // real bugs that MUST still escalate to Sentry. The matcher must stay
+    // strictly anchored on the "no cloud provider with id or slug" phrase
+    // so it can't accidentally silence them.
+    for raw in [
+        // TAURI-RUST-12 (362 events) — provider/ops.rs JSON decode failure
+        "[providers][list_models] failed to parse JSON: error decoding response",
+        // TAURI-RUST-2W (100 events) — provider/ops.rs reqwest builder failure
+        "[providers][list_models] HTTP request failed: builder error",
+        // TAURI-RUST-JP (8 events) — local_ai ollama_admin transport failure
+        "[local_ai:ollama_admin] list_models: request send failed",
+        // Generic shapes from elsewhere in the call chain
+        "request timed out after 30s",
+        "permission denied accessing config",
+        "no cloud provider configured for slug 'openai' (role 'chat')",
+        "",
+    ] {
+        assert!(
+            !is_unknown_provider_user_config(raw),
+            "must NOT demote real error: {raw:?}"
+        );
+    }
+}
+
+// ── is_expected_chat_failure (TAURI-RUST-68) ─────────────────────────────
+//
+// `inference_test_provider_model` calls `simple_chat` which can fail with
+// known provider-state or user-config conditions (401, 429, model not
+// found). Before this fix every failure escalated to `error!`, which
+// sentry-tracing shipped to Sentry as `"[inference::ops]
+// test_provider_model:error"` — 1,309 events — while the same underlying
+// errors already had their own report or were classified as expected by
+// `expected_error_kind`. The gate demotes them to `warn!` so they stay in
+// local logs but don't generate duplicate Sentry noise.
+//
+// Anchored on the shared `expected_error_kind` classifier so both the unit
+// tests here and the production gate stay in sync with the central
+// suppression logic in `core::observability`.
+
+#[test]
+fn is_expected_chat_failure_matches_api_key_missing() {
+    // Provider layer emits this phrase when no API key is configured.
+    assert!(is_expected_chat_failure("api key not set for openai"));
+    assert!(is_expected_chat_failure(
+        "missing api key: openai_api_key is not configured"
+    ));
+}
+
+#[test]
+fn is_expected_chat_failure_matches_rate_limit() {
+    // 429-style rate-limit phrases emitted by the provider / OpenHuman backend.
+    assert!(is_expected_chat_failure(
+        "openai API error (429 Too Many Requests): You exceeded your current quota"
+    ));
+    assert!(is_expected_chat_failure(
+        "openai API error (500): 429 rate limit exceeded"
+    ));
+}
+
+#[test]
+fn is_expected_chat_failure_matches_provider_config_rejection() {
+    // OpenAI-style model-not-found code in error body.
+    assert!(is_expected_chat_failure(
+        r#"custom_openai API error (404 Not Found): {"error":{"message":"The model does not exist or you do not have access","code":"model_not_found"}}"#
+    ));
+    // Temperature-unsupported model (e.g. o1/o3/o4 reasoning models).
+    assert!(is_expected_chat_failure(
+        "custom_openai API error (400 Bad Request): invalid temperature: only 1 is allowed"
+    ));
+    // litellm-style not_found_error envelope.
+    assert!(is_expected_chat_failure(
+        r#"custom_openai API error (404 Not Found): {"error":{"message":"model 'gpt-99' not found","type":"not_found_error"}}"#
+    ));
+}
+
+#[test]
+fn is_expected_chat_failure_does_not_match_real_errors() {
+    // Real errors that must still reach Sentry must NOT be demoted.
+    for raw in [
+        // Genuine 500 server error — actionable, must escalate
+        "openai API error (500 Internal Server Error): Something went wrong",
+        // Unexpected JSON from provider — potential provider bug
+        "openai API returned an unexpected chat-completions payload: missing field",
+        // Local I/O error — real infrastructure problem
+        "failed to open config file: permission denied",
+        // Completely empty string — fallthrough
+        "",
+    ] {
+        assert!(
+            !is_expected_chat_failure(raw),
+            "must NOT demote real error: {raw:?}"
+        );
+    }
+}

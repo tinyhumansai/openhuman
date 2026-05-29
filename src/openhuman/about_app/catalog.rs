@@ -74,6 +74,25 @@ const POLYMARKET_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivac
     destinations: &["Polymarket CLOB API"],
 });
 
+// "Test Connection" on the Embeddings settings panel routes a small probe
+// payload to *whichever provider the user has selected* — not just the
+// managed cloud default. `DERIVED_TO_BACKEND` only enumerates the managed
+// path (OpenHuman backend / Neocortex), which under-reports the actual
+// privacy surface when the user has switched to OpenAI / Cohere / a
+// self-hosted endpoint. The catalog needs to list every reachable
+// destination so the Privacy surface can render the full set instead of
+// implying probes always stay on the managed path.
+const EMBEDDING_PROBE_TO_CONFIGURED_PROVIDER: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Derived,
+    destinations: &[
+        "OpenHuman backend / TinyHumans Neocortex (managed cloud default)",
+        "OpenAI API (api.openai.com)",
+        "Cohere API (api.cohere.com)",
+        "User-configured OpenAI-compatible endpoint (custom:<url>)",
+    ],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -293,6 +312,50 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Chat > ask the assistant about people, conversations, or windows",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.embedding_provider_config",
+        name: "Configure Embedding Provider",
+        domain: "embeddings",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Pick which embedding provider drives semantic search across your memory: \
+             managed cloud (default, Voyage-backed via api.tinyhumans.ai), OpenAI, \
+             Cohere, local Ollama, or a custom OpenAI-compatible endpoint. API keys \
+             are stored encrypted via the local keyring under `embeddings:<slug>`; \
+             model name and embedding dimensions are tunable per provider. The \
+             legacy `inference_embed` RPC is aliased to `embeddings_embed` so \
+             existing callers continue to work.",
+        how_to: "Settings > AI > Embeddings",
+        status: CapabilityStatus::Beta,
+        // Privacy depends on the selected provider — see
+        // `intelligence.embedding_provider_test` for the per-provider data
+        // destinations. The configuration surface itself only writes to the
+        // local keyring and config, so leaving this `None` (treat-as-unknown)
+        // would under-report; we annotate the credential side here and the
+        // network side on the test action.
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
+        id: "intelligence.embedding_provider_test",
+        name: "Test Embedding Provider",
+        domain: "embeddings",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Verify a configured embedding provider before committing it to \
+             memory ingestion. Sends a small one-shot embed request and reports \
+             the model, dimensions, and any auth/error surface so a \
+             misconfigured key doesn't get discovered halfway through a 50k \
+             chunk backfill.",
+        how_to: "Settings > AI > Embeddings > Test Connection",
+        // The probe payload routes to whichever provider the user has
+        // selected — managed cloud (default), OpenAI, Cohere, or a custom
+        // OpenAI-compatible endpoint. Using `DERIVED_TO_BACKEND` here would
+        // under-report by only listing the managed path; the dedicated
+        // constant enumerates every reachable destination so the Privacy
+        // surface renders the full set.
+        status: CapabilityStatus::Beta,
+        privacy: EMBEDDING_PROBE_TO_CONFIGURED_PROVIDER,
     },
     Capability {
         id: "intelligence.mcp_server",
@@ -1137,6 +1200,18 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "automation.task_sources",
+        name: "Task Sources",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Pull work items from GitHub, Notion, Linear, and ClickUp using per-source \
+                      filters, then enrich them onto the agent's todo board and (for proactive \
+                      sources) start an agent working on them.",
+        how_to: "Settings > Task Sources",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
+    },
+    Capability {
         id: "automation.view_cron_jobs",
         name: "View Cron Jobs",
         domain: "automation",
@@ -1319,6 +1394,53 @@ const CAPABILITIES: &[Capability] = &[
         description: "The companion LLM can embed [POINT:x,y:label:screenN] tags to \
                       visually point at UI elements on screen via the overlay.",
         how_to: "Automatic during companion sessions when the LLM identifies a UI target.",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "filesystem.access_mode",
+        name: "Agent OS Access Mode",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Choose how much filesystem and shell access the agent has: Read-Only, \
+                      Workspace, Trusted Roots (grant specific folders outside the workspace), \
+                      or Full Access. Credential stores stay blocked in every mode.",
+        how_to: "Settings → Agent OS access",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "security.always_allow_tool",
+        name: "Always Allow a Tool",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "On an approval prompt, choose \"Always allow\" to stop being asked for that \
+                      tool. The choice is saved to your allow-list and persists across restarts; \
+                      remove it any time under Settings → Agent OS access to be prompted again. \
+                      Policy still blocks forbidden paths and high-risk commands regardless.",
+        how_to: "Click \"Always allow\" on an approval prompt; manage the list in Settings → Agent OS access.",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "tool.detect_tools",
+        name: "Detect Installed Tools",
+        domain: "tools",
+        category: CapabilityCategory::Settings,
+        description: "Probe the host PATH to report which developer tools and language \
+                      runtimes are installed (node, python, cargo, docker, git, …).",
+        how_to: "Used by the agent automatically; gated by the tool toggle list.",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "tool.install_tool",
+        name: "Install OS Packages",
+        domain: "tools",
+        category: CapabilityCategory::Settings,
+        description: "Install OS or language packages (apt/dnf/brew/winget/pipx/npm/cargo). \
+                      High impact: only available when Full access / tool installation is enabled.",
+        how_to: "Enable in Settings → Agent OS access (Full access mode).",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

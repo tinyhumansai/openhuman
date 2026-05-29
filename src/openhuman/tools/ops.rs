@@ -8,6 +8,26 @@ use crate::openhuman::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Derive the browser tool's host allowlist from the unified web-access list
+/// (`http_request.allowed_domains`).
+///
+/// The browser tool shares the single fetch allowlist rather than the
+/// deprecated `[browser].allowed_domains`, but the `"*"` allow-all wildcard is
+/// stripped on purpose: `web_fetch`/`curl` treat `"*"` as "open to all public
+/// sites", whereas the browser (a real Chromium with JS, cookies, and
+/// logged-in sessions) must NOT inherit blanket access from a fetch-side
+/// toggle. Browser allow-all stays gated by `OPENHUMAN_BROWSER_ALLOW_ALL`
+/// (`allow_all_browser_domains()`), and the tool itself stays behind
+/// `browser.enabled`. Net effect is fail-safe: unifying can only ever narrow
+/// the browser's reach, never widen it.
+pub(crate) fn browser_allowed_domains(http_allowed_domains: &[String]) -> Vec<String> {
+    http_allowed_domains
+        .iter()
+        .filter(|domain| domain.as_str() != "*")
+        .cloned()
+        .collect()
+}
+
 /// Create the default tool registry
 pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
     default_tools_with_runtime(security, Arc::new(NativeRuntime::new()))
@@ -130,6 +150,7 @@ pub fn all_tools_with_runtime(
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
+        Box::new(DelegateToPersonalityTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a
@@ -137,7 +158,25 @@ pub fn all_tools_with_runtime(
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
         Box::new(PlanExitTool::new()),
+        // Skill chaining: let an in-flight autonomous skill (e.g.
+        // `github-issue-crusher`) kick off another bundled skill_run as a
+        // fresh background job (e.g. `pr-review-shepherd` against the PR it
+        // just opened) so each skill stays narrow + composable. Thin
+        // wrapper over `skills::schemas::spawn_skill_run_background` — the
+        // same helper `openhuman.skills_run` JSON-RPC uses, so RPC callers
+        // and tool callers share one spawn path.
+        Box::new(RunSkillTool::new()),
         Box::new(CurrentTimeTool::new()),
+        Box::new(CodegraphIndexTool::new(
+            config.clone(),
+            workspace_dir.to_path_buf(),
+        )),
+        Box::new(CodegraphSearchTool::new(
+            config.clone(),
+            workspace_dir.to_path_buf(),
+        )),
+        Box::new(DetectToolsTool::new()),
+        Box::new(InstallToolTool::new(security.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),
@@ -199,15 +238,20 @@ pub fn all_tools_with_runtime(
     ];
 
     if browser_config.enabled {
+        // Unified web-access allowlist (merge fetch + browser firewalls): the
+        // browser tool shares the single `http_request.allowed_domains` host
+        // list rather than the now-deprecated `[browser].allowed_domains`. See
+        // `browser_allowed_domains` for why the `"*"` wildcard is stripped.
+        let browser_allowed_domains = browser_allowed_domains(&http_config.allowed_domains);
         // Add legacy browser_open tool for simple URL opening
         tools.push(Box::new(BrowserOpenTool::new(
             security.clone(),
-            browser_config.allowed_domains.clone(),
+            browser_allowed_domains.clone(),
         )));
         // Add full browser automation tool (pluggable backend)
         tools.push(Box::new(BrowserTool::new_with_backend(
             security.clone(),
-            browser_config.allowed_domains.clone(),
+            browser_allowed_domains.clone(),
             browser_config.session_name.clone(),
             browser_config.backend.clone(),
             browser_config.native_headless,
@@ -311,13 +355,14 @@ pub fn all_tools_with_runtime(
     //
     // Exactly one engine drives `web_search_tool` plus any
     // engine-specific tools (Parallel research/extract/etc., Brave
-    // news/image/video). Mirrors the LLM-provider API-key model: a
-    // single switch, BYO credentials, layered tool surface.
+    // news/image/video, Querit advanced filters). Mirrors the
+    // LLM-provider API-key model: a single switch, BYO credentials,
+    // layered tool surface.
     //
     // Legacy `seltz` / `searxng` config blocks are still parsed but
     // no longer register tools — they were superseded by this
-    // selector. Use `search.engine = "managed" | "parallel" | "brave"`
-    // instead.
+    // selector. Use `search.engine = "managed" | "parallel" | "brave"
+    // | "querit"` instead.
     {
         use crate::openhuman::config::SearchEngine;
         let search = &root_config.search;
@@ -416,6 +461,25 @@ pub fn all_tools_with_runtime(
                 tools.push(Box::new(
                     crate::openhuman::integrations::BraveVideoSearchTool::new(
                         api_key,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+            }
+            SearchEngine::Querit => {
+                tracing::debug!("[search] active engine = querit (BYO direct API)");
+                tools.push(Box::new(
+                    crate::openhuman::integrations::QueritSearchTool::new_web_search_tool(
+                        search.querit.api_key.clone(),
+                        None,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+                tools.push(Box::new(
+                    crate::openhuman::integrations::QueritSearchTool::new(
+                        search.querit.api_key.clone(),
+                        None,
                         max_results,
                         timeout_secs,
                     ),

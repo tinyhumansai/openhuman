@@ -207,9 +207,14 @@ class SocketService {
       coreToken,
       authExtras: { session: token },
       overrides: {
-        reconnectionDelay: 1000,
-        reconnectionAttempts: 5,
-        timeout: 2000,
+        // A remote / tunnelled core (e.g. ~0.8s RTT) needs the socket.io
+        // handshake (~2.4s) to outlast the connect timeout — the prior 2s
+        // tripped first, flapping the socket and dropping streamed/approval
+        // events. 10s gives headroom while still surfacing a genuinely dead
+        // core reasonably fast; keep retrying rather than giving up after 5.
+        reconnectionDelay: 2000,
+        reconnectionAttempts: Infinity,
+        timeout: 10000,
         upgrade: true,
         query: {},
       },

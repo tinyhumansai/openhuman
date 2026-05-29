@@ -275,6 +275,25 @@ describe('socketService — resolveCoreSocketBaseUrl uses getCoreRpcUrl', () => 
     );
     expect(latestSocket.once).not.toHaveBeenCalledWith('queued-on-event', expect.any(Function));
   });
+
+  it('reconnects when a stale disconnected socket exists for the same token', async () => {
+    const { io } = await import('socket.io-client');
+    const ioMock = vi.mocked(io);
+    ioMock.mockClear();
+
+    hoisted.getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.disconnect();
+
+    socketService.connect('mock-jwt-stale-socket');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(1));
+
+    // Same token, previous socket is disconnected=true in our mock.
+    // We should still create a fresh socket instead of returning early.
+    socketService.connect('mock-jwt-stale-socket');
+    await pollUntil(() => expect(ioMock).toHaveBeenCalledTimes(2));
+  });
 });
 
 describe('socketService — connectivity dispatch on socket events (lines 164, 212, 230, 237, 240)', () => {

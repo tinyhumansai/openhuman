@@ -91,6 +91,11 @@ impl Default for BrowserComputerUseConfig {
 pub struct BrowserConfig {
     #[serde(default)]
     pub enabled: bool,
+    /// DEPRECATED: the browser tool now shares the unified web-access host list
+    /// in `[http_request].allowed_domains` (see `tools::ops::all_tools_with_runtime`).
+    /// Still parsed for backward compatibility but no longer gates browser
+    /// navigation. Manage allowed hosts via Settings → Search → Allowed websites;
+    /// browser allow-all remains gated by `OPENHUMAN_BROWSER_ALLOW_ALL`.
     #[serde(default)]
     pub allowed_domains: Vec<String>,
     #[serde(default)]
@@ -134,15 +139,34 @@ impl Default for BrowserConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct HttpRequestConfig {
-    #[serde(default)]
+    /// Hosts the assistant may open/read via `web_fetch` / `curl`. An exact
+    /// host also matches its subdomains; `"*"` allows all public sites; an
+    /// empty list blocks all web access. Defaults to `["*"]` so web research
+    /// works out of the box — the SSRF guard still blocks local/private hosts
+    /// regardless. Narrow this via Settings → Search → Allowed websites.
+    #[serde(default = "default_http_allowed_domains")]
     pub allowed_domains: Vec<String>,
     #[serde(default = "default_http_max_response_size")]
     pub max_response_size: usize,
     #[serde(default = "default_http_timeout_secs")]
     pub timeout_secs: u64,
+}
+
+impl Default for HttpRequestConfig {
+    fn default() -> Self {
+        Self {
+            allowed_domains: default_http_allowed_domains(),
+            max_response_size: default_http_max_response_size(),
+            timeout_secs: default_http_timeout_secs(),
+        }
+    }
+}
+
+fn default_http_allowed_domains() -> Vec<String> {
+    vec!["*".to_string()]
 }
 
 fn default_http_max_response_size() -> usize {
@@ -498,11 +522,12 @@ impl Default for WebSearchConfig {
 // which tools are registered: `managed` → backend-proxied `web_search`;
 // `parallel` → direct Parallel API tools (search/extract/chat/research/
 // enrich/dataset); `brave` → direct Brave Search tools (web/news/
-// images/videos).
+// images/videos); `querit` → direct Querit web search.
 
 pub const SEARCH_ENGINE_MANAGED: &str = "managed";
 pub const SEARCH_ENGINE_PARALLEL: &str = "parallel";
 pub const SEARCH_ENGINE_BRAVE: &str = "brave";
+pub const SEARCH_ENGINE_QUERIT: &str = "querit";
 
 fn default_search_engine() -> String {
     SEARCH_ENGINE_MANAGED.into()
@@ -548,14 +573,15 @@ impl SearchEngineCredentials {
 
 /// Unified search-engine configuration. Exactly one engine drives tool
 /// registration at a time. `managed` is the backend-proxied default and
-/// requires no key; `parallel` and `brave` are BYO and require their
+/// requires no key; `parallel`, `brave`, and `querit` are BYO and require their
 /// own API key in the matching sub-block.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
     /// Active search engine. One of [`SEARCH_ENGINE_MANAGED`],
-    /// [`SEARCH_ENGINE_PARALLEL`], [`SEARCH_ENGINE_BRAVE`]. Unknown
-    /// values fall back to managed at registration time.
+    /// [`SEARCH_ENGINE_PARALLEL`], [`SEARCH_ENGINE_BRAVE`], or
+    /// [`SEARCH_ENGINE_QUERIT`]. Unknown values fall back to managed at
+    /// registration time.
     #[serde(default = "default_search_engine")]
     pub engine: String,
 
@@ -574,6 +600,10 @@ pub struct SearchConfig {
     /// Brave Search credentials (used when `engine = "brave"`).
     #[serde(default)]
     pub brave: SearchEngineCredentials,
+
+    /// Querit credentials (used when `engine = "querit"`).
+    #[serde(default)]
+    pub querit: SearchEngineCredentials,
 }
 
 impl Default for SearchConfig {
@@ -584,6 +614,7 @@ impl Default for SearchConfig {
             timeout_secs: default_search_timeout_secs(),
             parallel: SearchEngineCredentials::default(),
             brave: SearchEngineCredentials::default(),
+            querit: SearchEngineCredentials::default(),
         }
     }
 }
@@ -596,6 +627,7 @@ pub enum SearchEngine {
     Managed,
     Parallel,
     Brave,
+    Querit,
 }
 
 impl SearchConfig {
@@ -607,6 +639,7 @@ impl SearchConfig {
         match self.engine.trim().to_ascii_lowercase().as_str() {
             SEARCH_ENGINE_PARALLEL if self.parallel.has_key() => SearchEngine::Parallel,
             SEARCH_ENGINE_BRAVE if self.brave.has_key() => SearchEngine::Brave,
+            SEARCH_ENGINE_QUERIT if self.querit.has_key() => SearchEngine::Querit,
             _ => SearchEngine::Managed,
         }
     }
@@ -653,6 +686,28 @@ mod search_config_tests {
         assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
         cfg.brave.api_key = Some("real".into());
         assert_eq!(cfg.effective_engine(), SearchEngine::Brave);
+    }
+
+    #[test]
+    fn querit_requires_key() {
+        let mut cfg = SearchConfig {
+            engine: SEARCH_ENGINE_QUERIT.into(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.querit.api_key = Some("real".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Querit);
+    }
+
+    #[test]
+    fn http_request_defaults_to_allow_all() {
+        // Web research works out of the box: the default allowlist is the
+        // wildcard. The SSRF guard (url_guard) still blocks local/private
+        // hosts regardless, so this only opens public sites.
+        let cfg = HttpRequestConfig::default();
+        assert_eq!(cfg.allowed_domains, vec!["*".to_string()]);
+        assert_eq!(cfg.max_response_size, 1_000_000);
+        assert_eq!(cfg.timeout_secs, 30);
     }
 
     #[test]

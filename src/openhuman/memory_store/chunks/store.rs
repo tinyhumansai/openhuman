@@ -26,7 +26,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use parking_lot::Mutex as PMutex;
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 #[cfg(test)]
@@ -35,7 +35,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::util::redact;
+use crate::openhuman::memory::util::redact::{self, redact as redact_value};
 use crate::openhuman::memory_store::chunks::types::{Chunk, Metadata, SourceKind, SourceRef};
 use crate::openhuman::memory_store::content::StagedChunk;
 
@@ -730,7 +730,13 @@ pub fn delete_chunks_by_source(
     source_kind: SourceKind,
     source_id: &str,
 ) -> Result<usize> {
-    delete_chunks_by_source_filter(config, source_kind, |candidate| candidate == source_id)
+    delete_chunks_by_source_filter(
+        "delete_chunks_by_source",
+        config,
+        source_kind,
+        |candidate, _owner| candidate == source_id,
+        |candidate| candidate == source_id,
+    )
 }
 
 /// Delete all chunk rows whose source id starts with `source_id_prefix`.
@@ -742,15 +748,37 @@ pub fn delete_chunks_by_source_prefix(
     source_kind: SourceKind,
     source_id_prefix: &str,
 ) -> Result<usize> {
-    delete_chunks_by_source_filter(config, source_kind, |candidate| {
-        candidate.starts_with(source_id_prefix)
-    })
+    delete_chunks_by_source_filter(
+        "delete_chunks_by_source_prefix",
+        config,
+        source_kind,
+        |candidate, _owner| candidate.starts_with(source_id_prefix),
+        |candidate| candidate.starts_with(source_id_prefix),
+    )
+}
+
+/// Delete all chunk rows for one exact `(source_kind, owner)` while preserving
+/// source ingest gates that still have chunks owned by another connection.
+pub fn delete_chunks_by_owner(
+    config: &Config,
+    source_kind: SourceKind,
+    owner: &str,
+) -> Result<usize> {
+    delete_chunks_by_source_filter(
+        "delete_chunks_by_owner",
+        config,
+        source_kind,
+        |_source_id, candidate_owner| candidate_owner == owner,
+        |_source_id| false,
+    )
 }
 
 fn delete_chunks_by_source_filter(
+    op: &str,
     config: &Config,
     source_kind: SourceKind,
-    matches_source: impl Fn(&str) -> bool,
+    matches_chunk: impl Fn(&str, &str) -> bool,
+    matches_ingested_source: impl Fn(&str) -> bool,
 ) -> Result<usize> {
     let mut content_paths = Vec::new();
     let deleted = with_connection(config, |conn| {
@@ -758,7 +786,7 @@ fn delete_chunks_by_source_filter(
 
         let chunks = {
             let mut stmt = tx.prepare(
-                "SELECT id, source_id, content_path
+                "SELECT id, source_id, owner, content_path
                    FROM mem_tree_chunks
                   WHERE source_kind = ?1",
             )?;
@@ -766,12 +794,13 @@ fn delete_chunks_by_source_filter(
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
                 ))
             })?;
             rows.filter_map(|row| match row {
-                Ok((id, source_id, content_path)) if matches_source(&source_id) => {
-                    Some(Ok((id, content_path)))
+                Ok((id, source_id, owner, content_path)) if matches_chunk(&source_id, &owner) => {
+                    Some(Ok((id, source_id, content_path)))
                 }
                 Ok(_) => None,
                 Err(error) => Some(Err(error)),
@@ -780,7 +809,12 @@ fn delete_chunks_by_source_filter(
             .context("Failed to collect memory_tree chunks by source")?
         };
 
-        for (chunk_id, content_path) in &chunks {
+        let deleted_source_ids: HashSet<String> = chunks
+            .iter()
+            .map(|(_, source_id, _)| source_id.clone())
+            .collect();
+
+        for (chunk_id, _source_id, content_path) in &chunks {
             tx.execute(
                 "DELETE FROM mem_tree_score WHERE chunk_id = ?1",
                 params![chunk_id],
@@ -806,6 +840,29 @@ fn delete_chunks_by_source_filter(
             }
         }
 
+        let mut orphaned_deleted_sources = HashSet::new();
+        for source_id in &deleted_source_ids {
+            let remaining: i64 = tx.query_row(
+                "SELECT COUNT(*)
+                   FROM mem_tree_chunks
+                  WHERE source_kind = ?1 AND source_id = ?2",
+                params![source_kind.as_str(), source_id],
+                |row| row.get(0),
+            )?;
+            if remaining == 0 {
+                log::debug!(
+                    "[memory::chunk_store] {op}: source_id_hash={} orphaned; removing ingest gate",
+                    redact_value(source_id),
+                );
+                orphaned_deleted_sources.insert(source_id.clone());
+            } else {
+                log::debug!(
+                    "[memory::chunk_store] {op}: source_id_hash={} remaining_chunks={remaining}; preserving ingest gate",
+                    redact_value(source_id),
+                );
+            }
+        }
+
         let ingested_sources = {
             let mut stmt = tx.prepare(
                 "SELECT source_id
@@ -815,7 +872,12 @@ fn delete_chunks_by_source_filter(
             let rows =
                 stmt.query_map(params![source_kind.as_str()], |row| row.get::<_, String>(0))?;
             rows.filter_map(|row| match row {
-                Ok(source_id) if matches_source(&source_id) => Some(Ok(source_id)),
+                Ok(source_id)
+                    if matches_ingested_source(&source_id)
+                        || orphaned_deleted_sources.contains(&source_id) =>
+                {
+                    Some(Ok(source_id))
+                }
                 Ok(_) => None,
                 Err(error) => Some(Err(error)),
             })

@@ -310,6 +310,13 @@ const id2: TranslationMap = {
   'chat.turn': 'giliran',
   'chat.turns': 'giliran',
   'chat.openWorkerThread': 'Buka thread worker',
+  'chat.attachment.attach': 'Lampirkan gambar',
+  'chat.attachment.remove': 'Hapus {name}',
+  'chat.attachment.tooMany': 'Maksimal {max} gambar per pesan',
+  'chat.attachment.tooLarge': 'Gambar melebihi batas ukuran {max}',
+  'chat.attachment.unsupportedType':
+    'Jenis file tidak didukung. Gunakan PNG, JPEG, WebP, GIF, atau BMP.',
+  'chat.attachment.readFailed': 'Tidak dapat membaca file',
   'memory.searchAria': 'Cari memori',
   'memory.searchPlaceholder': 'Cari entri memori...',
   'memory.sourceFilter.all': 'Semua sumber',
@@ -423,6 +430,7 @@ const id2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Konfigurasikan pengaturan triase AI untuk pemicu integrasi Composio',
   'mic.deviceSelector': 'Perangkat mikrofon',
+  'mic.tapToSendCountdown': 'Ketuk untuk mengirim ({seconds}d)',
 };
 
 export default id2;

@@ -318,6 +318,13 @@ const fr2: TranslationMap = {
   'chat.turn': 'tour',
   'chat.turns': 'tours',
   'chat.openWorkerThread': 'Ouvrir le fil worker',
+  'chat.attachment.attach': 'Joindre une image',
+  'chat.attachment.remove': 'Supprimer {name}',
+  'chat.attachment.tooMany': 'Maximum {max} images par message',
+  'chat.attachment.tooLarge': "L'image dépasse la taille limite de {max}",
+  'chat.attachment.unsupportedType':
+    'Type de fichier non pris en charge. Utilisez PNG, JPEG, WebP, GIF ou BMP.',
+  'chat.attachment.readFailed': 'Impossible de lire le fichier',
   'memory.searchAria': 'Rechercher dans la mémoire',
   'memory.searchPlaceholder': 'Rechercher des entrées de mémoire…',
   'memory.sourceFilter.all': 'Toutes les sources',
@@ -437,6 +444,7 @@ const fr2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     "Configurez les paramètres de triage IA pour les déclencheurs d'intégration Composio",
   'mic.deviceSelector': 'Dispositif de microphone',
+  'mic.tapToSendCountdown': 'Appuie pour envoyer ({seconds}s)',
 };
 
 export default fr2;

@@ -303,6 +303,12 @@ const ar2: TranslationMap = {
   'chat.turn': 'دورة',
   'chat.turns': 'دورات',
   'chat.openWorkerThread': 'فتح محادثة العامل',
+  'chat.attachment.attach': 'إرفاق صورة',
+  'chat.attachment.remove': 'إزالة {name}',
+  'chat.attachment.tooMany': 'الحد الأقصى {max} صور لكل رسالة',
+  'chat.attachment.tooLarge': 'حجم الصورة يتجاوز الحد المسموح {max}',
+  'chat.attachment.unsupportedType': 'نوع ملف غير مدعوم. استخدم PNG أو JPEG أو WebP أو GIF أو BMP.',
+  'chat.attachment.readFailed': 'تعذر قراءة الملف',
   'memory.searchAria': 'البحث في الذاكرة',
   'memory.searchPlaceholder': 'البحث في إدخالات الذاكرة...',
   'memory.sourceFilter.all': 'جميع المصادر',
@@ -413,6 +419,7 @@ const ar2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'تكوين إعدادات فرز الذكاء الاصطناعي لمشغلات التكامل Composio',
   'mic.deviceSelector': 'جهاز الميكروفون',
+  'mic.tapToSendCountdown': 'انقر للإرسال ({seconds} ث)',
 };
 
 export default ar2;

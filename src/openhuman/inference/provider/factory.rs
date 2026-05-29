@@ -24,6 +24,7 @@
 use crate::openhuman::config::schema::cloud_providers::AuthStyle;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
+use crate::openhuman::inference::provider::claude_agent_sdk::subprocess::ClaudeAgentSdkProvider;
 use crate::openhuman::inference::provider::compatible::{
     AuthStyle as CompatAuthStyle, OpenAiCompatibleProvider,
 };
@@ -37,6 +38,10 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 /// Prefix for LM Studio-local providers: `"lmstudio:<model>"`.
 pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
+/// Prefix for the Claude Agent SDK subprocess provider: `"claude_agent_sdk:<model>"`.
+pub const CLAUDE_AGENT_SDK_PREFIX: &str = "claude_agent_sdk:";
+/// Sentinel for the Claude Agent SDK provider without a model suffix.
+pub const CLAUDE_AGENT_SDK_PROVIDER: &str = "claude_agent_sdk";
 /// Sentinel returned when a user has expressed custom/BYOK inference intent
 /// (via a non-openhuman `inference_url`) but no matching `cloud_providers`
 /// entry was found. Passed through `provider_for_role` and caught early in
@@ -79,7 +84,7 @@ pub fn auth_key_for_slug(slug: &str) -> String {
 pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
     use crate::openhuman::config::{
         MODEL_AGENTIC_V1, MODEL_CHAT_V1, MODEL_CODING_V1, MODEL_REASONING_QUICK_V1,
-        MODEL_REASONING_V1,
+        MODEL_REASONING_V1, MODEL_SUMMARIZATION_V1,
     };
     matches!(
         model,
@@ -88,20 +93,32 @@ pub(crate) fn is_known_openhuman_tier(model: &str) -> bool {
             | MODEL_AGENTIC_V1
             | MODEL_CODING_V1
             | MODEL_REASONING_QUICK_V1
+            | MODEL_SUMMARIZATION_V1
             | "hint:reasoning"
             | "hint:chat"
             | "hint:agentic"
             | "hint:coding"
+            | "hint:summarization"
     )
 }
 
 /// Return the configured provider string for a named workload role.
 ///
-/// Empty / `"cloud"` resolves through `primary_cloud`. For backwards
-/// compatibility, a legacy external `inference_url` takes precedence when
-/// `primary_cloud` still points at OpenHuman because migration 1→2 preserved
-/// the URL as a custom provider entry but older configs did not explicitly set
-/// per-workload routes.
+/// Empty / `"cloud"` resolves through BYOK fallback first for the three
+/// chat-tier roles (`chat`, `reasoning`, `coding`), then `primary_cloud`.
+/// When a BYOK cloud provider is detected on any workload, unset chat-tier
+/// routes inherit it rather than silently falling back to the managed backend.
+///
+/// Only `chat`, `reasoning`, and `coding` participate in BYOK inheritance.
+/// Background workloads (`memory`, `embeddings`, `heartbeat`, `learning`,
+/// `subconscious`) and the `agentic` workload always fall through to
+/// `primary_cloud` — they use tier-specific models that BYOK providers don't
+/// understand, and their providers are configured independently.
+///
+/// For backwards compatibility, a legacy external `inference_url` takes
+/// precedence when `primary_cloud` still points at OpenHuman because
+/// migration 1→2 preserved the URL as a custom provider entry but older
+/// configs did not explicitly set per-workload routes.
 pub fn provider_for_role(role: &str, config: &Config) -> String {
     let opt = match role {
         "chat" => config.chat_provider.as_deref(),
@@ -122,10 +139,63 @@ pub fn provider_for_role(role: &str, config: &Config) -> String {
     };
     let s = opt.unwrap_or("").trim();
     if s.is_empty() || s == "cloud" {
+        // BYOK inheritance is scoped to the three chat-tier roles only.
+        // Background workloads (memory, embeddings, heartbeat, learning,
+        // subconscious) and the agentic workload must stay on the managed
+        // backend — they use tier-specific models that BYOK providers don't
+        // understand, and their providers are configured separately.
+        if matches!(role, "chat" | "reasoning" | "coding") {
+            if let Some(byok) = resolve_byok_fallback_provider_string(config) {
+                log::debug!(
+                    "[providers][byok-fallback] role={} inheriting BYOK provider string={}",
+                    role,
+                    byok
+                );
+                return byok;
+            }
+        }
         resolve_primary_cloud_provider_string(config)
     } else {
         s.to_string()
     }
+}
+
+/// Find the first BYOK cloud provider string configured across all workload
+/// routes, skipping local providers (ollama, lmstudio) and managed-backend
+/// sentinels ("openhuman", "cloud", empty).
+///
+/// Returns `None` when no BYOK cloud provider is configured, in which case
+/// the caller should fall through to `resolve_primary_cloud_provider_string`.
+///
+/// Priority order: chat → reasoning → agentic → coding (user-facing workloads
+/// first so the most prominent setting wins for unset background workloads).
+pub(crate) fn resolve_byok_fallback_provider_string(config: &Config) -> Option<String> {
+    let candidates = [
+        config.chat_provider.as_deref(),
+        config.reasoning_provider.as_deref(),
+        config.agentic_provider.as_deref(),
+        config.coding_provider.as_deref(),
+    ];
+    for candidate in candidates.iter().flatten() {
+        let s = candidate.trim();
+        if s.is_empty() || s == "cloud" || s == PROVIDER_OPENHUMAN {
+            continue;
+        }
+        // Skip local providers — they are not suitable fallbacks for agentic
+        // or background workloads that run on the managed backend.
+        if s.starts_with(OLLAMA_PROVIDER_PREFIX) || s.starts_with(LM_STUDIO_PROVIDER_PREFIX) {
+            continue;
+        }
+        // Any remaining non-empty string with a colon is a BYOK cloud slug.
+        if s.contains(':') {
+            log::debug!(
+                "[providers][byok-fallback] resolve_byok_fallback found candidate={}",
+                s
+            );
+            return Some(s.to_string());
+        }
+    }
+    None
 }
 
 /// Build a `(Provider, model)` for the given workload role.
@@ -226,6 +296,20 @@ pub fn create_chat_provider_from_string(
         return make_lm_studio_provider(&model, temperature_override, config);
     }
 
+    if p == CLAUDE_AGENT_SDK_PROVIDER || p.starts_with(CLAUDE_AGENT_SDK_PREFIX) {
+        let model = if let Some(m) = p.strip_prefix(CLAUDE_AGENT_SDK_PREFIX) {
+            m.trim().to_string()
+        } else {
+            config.claude_agent_sdk.default_model.clone()
+        };
+        tracing::debug!(
+            "[providers][chat-factory] creating claude_agent_sdk provider model={}",
+            model
+        );
+        let provider = ClaudeAgentSdkProvider::new(config.claude_agent_sdk.clone());
+        return Ok((Box::new(provider), model));
+    }
+
     // New grammar: "<slug>:<model>[@<temp>]"
     if let Some(colon_pos) = p.find(':') {
         let slug = p[..colon_pos].trim();
@@ -247,7 +331,8 @@ pub fn create_chat_provider_from_string(
     // than an opaque parse failure.
     anyhow::bail!(
         "[chat-factory] unrecognised provider string '{}' for role '{}'. \
-         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, <slug>:<model>. \
+         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, claude_agent_sdk, \
+         claude_agent_sdk:<model>, <slug>:<model>. \
          Configured slugs: [{}]",
         p,
         role,
@@ -353,6 +438,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
         Some("chat") => crate::openhuman::config::MODEL_REASONING_QUICK_V1.to_string(),
         Some("agentic") => crate::openhuman::config::MODEL_AGENTIC_V1.to_string(),
         Some("coding") => crate::openhuman::config::MODEL_CODING_V1.to_string(),
+        Some("summarization") => crate::openhuman::config::MODEL_SUMMARIZATION_V1.to_string(),
         Some(_) => {
             // Unrecognised hint — forward verbatim; the backend decides validity.
             model
@@ -364,7 +450,7 @@ fn make_openhuman_backend(config: &Config) -> anyhow::Result<(Box<dyn Provider>,
                 log::warn!(
                     "[providers][chat-factory] model '{}' is not a recognized OpenHuman \
                      backend tier (valid: reasoning-v1, chat-v1, agentic-v1, coding-v1, \
-                     reasoning-quick-v1); falling back to '{}'",
+                     reasoning-quick-v1, summarization-v1); falling back to '{}'",
                     model,
                     crate::openhuman::config::MODEL_REASONING_V1,
                 );
@@ -522,6 +608,36 @@ fn legacy_custom_inference_provider_string(config: &Config) -> Option<String> {
         .map(|entry| cloud_entry_provider_string(entry, config))
 }
 
+/// Resolve the slug of the cloud-provider entry that represents the legacy
+/// direct-inference route — the entry whose endpoint matches the configured
+/// custom `inference_url`.
+///
+/// Top-level `config.api_key` was historically paired with `inference_url`
+/// for direct endpoint routing, so it is scoped to this single provider. The
+/// `lookup_key_for_slug` fallback uses this to avoid leaking the global key to
+/// any other provider slug whose auth-profile lookup returned empty.
+fn legacy_inference_slug(config: &Config) -> Option<&str> {
+    let inference_url = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())?;
+
+    if looks_like_openhuman_backend(inference_url) {
+        return None;
+    }
+
+    let normalized_inference = normalize_endpoint_for_compare(inference_url);
+    config
+        .cloud_providers
+        .iter()
+        .find(|entry| {
+            !is_openhuman_cloud_entry(entry)
+                && normalize_endpoint_for_compare(&entry.endpoint) == normalized_inference
+        })
+        .map(|entry| entry.slug.as_str())
+}
+
 fn cloud_entry_provider_string(
     entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
     config: &Config,
@@ -608,6 +724,9 @@ fn make_ollama_provider(
         redact_endpoint(&endpoint),
         temperature_override
     );
+    // Ollama does not expose the Responses API (/v1/responses) — passing
+    // `false` prevents a guaranteed-404 fallback attempt and the Sentry
+    // noise it would generate (TAURI-RUST-59Y).
     let p = make_openai_compatible_provider_with_config(
         "ollama",
         &endpoint,
@@ -615,6 +734,7 @@ fn make_ollama_provider(
         CompatAuthStyle::None,
         &config.temperature_unsupported_models,
         temperature_override,
+        false,
     )?;
     Ok((p, model.to_string()))
 }
@@ -633,6 +753,7 @@ fn make_lm_studio_provider(
         redact_endpoint(&endpoint),
         temperature_override
     );
+    // LM Studio does not expose the Responses API — same rationale as Ollama.
     let p = make_openai_compatible_provider_with_config(
         "lmstudio",
         &endpoint,
@@ -644,6 +765,7 @@ fn make_lm_studio_provider(
         },
         &config.temperature_unsupported_models,
         temperature_override,
+        false,
     )?;
     Ok((p, model.to_string()))
 }
@@ -681,6 +803,34 @@ fn make_cloud_provider_by_slug(
     } else {
         model.to_string()
     };
+
+    // Guard: if effective_model is still empty after fallback, bail with an
+    // actionable error. Sending an empty model string to providers like
+    // nvidia-nim causes a 400 "model field is required" — a confusing error
+    // that obscures the real cause (missing model in the provider string or
+    // unset default_model on the config entry).
+    // See https://github.com/tinyhumansai/openhuman/issues/2784.
+    //
+    // OpenhumanJwt entries are exempt: they always delegate to
+    // make_openhuman_backend which derives the model from config.default_model,
+    // ignoring whatever effective_model we computed here.
+    if entry.auth_style != AuthStyle::OpenhumanJwt && effective_model.trim().is_empty() {
+        log::warn!(
+            "[nvidia-nim][chat-factory] role={} slug={} resolved to empty model — \
+             provider string must include a model id (e.g. '{}:<model-id>') or \
+             set default_model on the cloud_providers entry",
+            role,
+            slug,
+            slug,
+        );
+        anyhow::bail!(
+            "[chat-factory] no model configured: role '{}' resolved to an empty model id for slug '{}'. \
+             Include a model in the provider string (e.g. '{slug}:<model-id>') or \
+             set default_model on the cloud_providers entry for slug '{slug}'.",
+            role,
+            slug,
+        );
+    }
 
     if entry.auth_style != AuthStyle::OpenhumanJwt && is_abstract_tier_model(&effective_model) {
         if let Some(default_model) = entry
@@ -729,6 +879,7 @@ fn make_cloud_provider_by_slug(
                 CompatAuthStyle::Anthropic,
                 unsupported,
                 temperature_override,
+                true,
             )?;
             Ok((p, effective_model))
         }
@@ -749,6 +900,7 @@ fn make_cloud_provider_by_slug(
                 CompatAuthStyle::None,
                 unsupported,
                 temperature_override,
+                true,
             )?;
             Ok((p, effective_model))
         }
@@ -760,6 +912,7 @@ fn make_cloud_provider_by_slug(
                 CompatAuthStyle::Bearer,
                 unsupported,
                 temperature_override,
+                true,
             )?;
             Ok((p, effective_model))
         }
@@ -826,6 +979,28 @@ pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String
         }
     }
 
+    // Fallback: read from top-level config.api_key (direct config.toml api_key).
+    // This handles the case where a key was set in config.toml but not saved
+    // through the UI into auth-profiles.json.
+    //
+    // Scoped to the legacy direct-inference provider only — the cloud-provider
+    // slug whose endpoint matches `config.inference_url`. `config.api_key` was
+    // historically paired with `inference_url` for direct endpoint routing, so
+    // an unscoped fallback would leak this global key to any other provider
+    // whose auth-profile lookup returned empty (cross-provider credential leak
+    // flagged by CodeRabbit + maintainers on #2724).
+    if legacy_inference_slug(config) == Some(slug) {
+        if let Some(config_key) = config.api_key.as_ref() {
+            if !config_key.trim().is_empty() {
+                log::debug!(
+                    "[providers][chat-factory] auth lookup slug={} key_present=true (config.toml fallback for legacy inference_url)",
+                    slug
+                );
+                return Ok(config_key.trim().to_string());
+            }
+        }
+    }
+
     log::debug!(
         "[providers][chat-factory] auth lookup slug={} key_present=false",
         slug
@@ -839,12 +1014,26 @@ fn make_openai_compatible_provider(
     api_key: &str,
     auth_style: CompatAuthStyle,
 ) -> anyhow::Result<Box<dyn Provider>> {
-    make_openai_compatible_provider_with_config("cloud", endpoint, api_key, auth_style, &[], None)
+    make_openai_compatible_provider_with_config(
+        "cloud",
+        endpoint,
+        api_key,
+        auth_style,
+        &[],
+        None,
+        true,
+    )
 }
 
 /// Build an `OpenAiCompatibleProvider` with auth style, temperature
 /// suppression list from config, and an optional per-workload temperature
 /// override (extracted from the provider string's `@<temp>` suffix).
+///
+/// `supports_responses_fallback` controls whether a 404 on the chat
+/// completions endpoint triggers an automatic retry against `/v1/responses`.
+/// Local providers (Ollama, LM Studio) do not expose the Responses API, so
+/// passing `false` for them prevents a guaranteed-404 secondary request and
+/// the Sentry noise it would generate (TAURI-RUST-59Y).
 fn make_openai_compatible_provider_with_config(
     provider_name: &str,
     endpoint: &str,
@@ -852,14 +1041,32 @@ fn make_openai_compatible_provider_with_config(
     auth_style: CompatAuthStyle,
     temperature_unsupported_models: &[String],
     temperature_override: Option<f64>,
+    supports_responses_fallback: bool,
 ) -> anyhow::Result<Box<dyn Provider>> {
     let key = if api_key.trim().is_empty() {
         None
     } else {
         Some(api_key)
     };
-    Ok(Box::new(
+    log::debug!(
+        "[providers][chat-factory] building compatible provider name={} endpoint_host={} responses_fallback={} temp_override={:?}",
+        provider_name,
+        redact_endpoint(endpoint),
+        supports_responses_fallback,
+        temperature_override
+    );
+    let provider = if supports_responses_fallback {
         OpenAiCompatibleProvider::new(provider_name, endpoint, key, auth_style)
+    } else {
+        OpenAiCompatibleProvider::new_no_responses_fallback(
+            provider_name,
+            endpoint,
+            key,
+            auth_style,
+        )
+    };
+    Ok(Box::new(
+        provider
             .with_temperature_unsupported_models(temperature_unsupported_models.to_vec())
             .with_temperature_override(temperature_override),
     ))

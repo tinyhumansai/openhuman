@@ -9,7 +9,7 @@
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::task_board::{
-    normalise_board, TaskBoard, TaskBoardCard, TaskBoardStore, TaskCardStatus,
+    normalise_board, TaskApprovalMode, TaskBoard, TaskBoardCard, TaskBoardStore, TaskCardStatus,
 };
 use chrono::Utc;
 use parking_lot::{Mutex, MutexGuard};
@@ -59,6 +59,13 @@ pub struct TodosSnapshot {
 pub struct CardPatch {
     pub content: Option<String>,
     pub status: Option<TaskCardStatus>,
+    pub objective: Option<String>,
+    pub plan: Option<Vec<String>>,
+    pub assigned_agent: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval_mode: Option<Option<TaskApprovalMode>>,
+    pub acceptance_criteria: Option<Vec<String>>,
+    pub evidence: Option<Vec<String>>,
     pub notes: Option<String>,
     pub blocker: Option<String>,
 }
@@ -163,6 +170,51 @@ pub fn render_markdown(cards: &[TaskBoardCard]) -> String {
         out.push_str(&format!("  `({})`", card.id));
         out.push('\n');
 
+        if let Some(objective) = card.objective.as_deref() {
+            out.push_str("  - objective: ");
+            out.push_str(objective);
+            out.push('\n');
+        }
+        if let Some(agent) = card.assigned_agent.as_deref() {
+            out.push_str("  - agent: ");
+            out.push_str(agent);
+            out.push('\n');
+        }
+        if !card.allowed_tools.is_empty() {
+            out.push_str("  - tools: ");
+            out.push_str(&card.allowed_tools.join(", "));
+            out.push('\n');
+        }
+        if let Some(mode) = card.approval_mode.as_ref() {
+            out.push_str("  - approval: ");
+            out.push_str(mode.as_str());
+            out.push('\n');
+        }
+        if !card.plan.is_empty() {
+            out.push_str("  - plan:\n");
+            for step in &card.plan {
+                out.push_str("    - ");
+                out.push_str(step);
+                out.push('\n');
+            }
+        }
+        if !card.acceptance_criteria.is_empty() {
+            out.push_str("  - acceptance criteria:\n");
+            for criterion in &card.acceptance_criteria {
+                out.push_str("    - ");
+                out.push_str(criterion);
+                out.push('\n');
+            }
+        }
+        if !card.evidence.is_empty() {
+            out.push_str("  - evidence:\n");
+            for item in &card.evidence {
+                out.push_str("    - ");
+                out.push_str(item);
+                out.push('\n');
+            }
+        }
+
         if matches!(card.status, TaskCardStatus::Blocked) {
             if let Some(reason) = card.blocker.as_deref().or(card.notes.as_deref()) {
                 out.push_str("  - _blocked:_ ");
@@ -200,6 +252,13 @@ pub fn add(
         id: format!("task-{}", Uuid::new_v4()),
         title: content.to_string(),
         status: patch.status.unwrap_or(TaskCardStatus::Todo),
+        objective: patch.objective.and_then(non_empty),
+        plan: patch.plan.unwrap_or_default(),
+        assigned_agent: patch.assigned_agent.and_then(non_empty),
+        allowed_tools: patch.allowed_tools.unwrap_or_default(),
+        approval_mode: patch.approval_mode.flatten(),
+        acceptance_criteria: patch.acceptance_criteria.unwrap_or_default(),
+        evidence: patch.evidence.unwrap_or_default(),
         notes: patch.notes.and_then(non_empty),
         blocker: patch.blocker.and_then(non_empty),
         order: cards.len() as u32,
@@ -235,6 +294,27 @@ pub fn edit(location: &BoardLocation, id: &str, patch: CardPatch) -> Result<Todo
     }
     if let Some(status) = patch.status {
         card.status = status;
+    }
+    if let Some(objective) = patch.objective {
+        card.objective = non_empty(objective);
+    }
+    if let Some(plan) = patch.plan {
+        card.plan = plan;
+    }
+    if let Some(assigned_agent) = patch.assigned_agent {
+        card.assigned_agent = non_empty(assigned_agent);
+    }
+    if let Some(allowed_tools) = patch.allowed_tools {
+        card.allowed_tools = allowed_tools;
+    }
+    if let Some(approval_mode) = patch.approval_mode {
+        card.approval_mode = approval_mode;
+    }
+    if let Some(acceptance_criteria) = patch.acceptance_criteria {
+        card.acceptance_criteria = acceptance_criteria;
+    }
+    if let Some(evidence) = patch.evidence {
+        card.evidence = evidence;
     }
     if let Some(notes) = patch.notes {
         card.notes = non_empty(notes);
@@ -405,9 +485,33 @@ mod tests {
     fn add_appends_and_returns_markdown() {
         let dir = tempdir().unwrap();
         let loc = thread_loc(dir.path(), "t1");
-        let snap = add(&loc, "First task", CardPatch::default()).unwrap();
+        let snap = add(
+            &loc,
+            "First task",
+            CardPatch {
+                objective: Some("Ship a richer handoff".into()),
+                plan: Some(vec![
+                    "Inspect existing board".into(),
+                    "Update schema".into(),
+                ]),
+                assigned_agent: Some("planner".into()),
+                allowed_tools: Some(vec!["todo".into(), "spawn_subagent".into()]),
+                approval_mode: Some(Some(TaskApprovalMode::Required)),
+                acceptance_criteria: Some(vec!["Tests pass".into()]),
+                evidence: Some(vec!["cargo test".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(snap.cards.len(), 1);
         assert!(snap.markdown.contains("[ ] First task"));
+        assert!(snap.markdown.contains("objective: Ship a richer handoff"));
+        assert!(snap.markdown.contains("agent: planner"));
+        assert!(snap.markdown.contains("tools: todo, spawn_subagent"));
+        assert!(snap.markdown.contains("approval: required"));
+        assert!(snap.markdown.contains("Inspect existing board"));
+        assert!(snap.markdown.contains("Tests pass"));
+        assert!(snap.markdown.contains("cargo test"));
         assert!(snap.markdown.contains(&snap.cards[0].id));
     }
 
@@ -427,6 +531,34 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snap.cards[0].title, "Refined plan");
+    }
+
+    #[test]
+    fn edit_can_clear_approval_mode() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "t1");
+        let added = add(
+            &loc,
+            "Draft plan",
+            CardPatch {
+                approval_mode: Some(Some(TaskApprovalMode::Required)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let id = added.cards[0].id.clone();
+
+        let snap = edit(
+            &loc,
+            &id,
+            CardPatch {
+                approval_mode: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(snap.cards[0].approval_mode, None);
     }
 
     #[test]
@@ -468,6 +600,13 @@ mod tests {
                 id: "a".into(),
                 title: "A".into(),
                 status: TaskCardStatus::InProgress,
+                objective: None,
+                plan: Vec::new(),
+                assigned_agent: None,
+                allowed_tools: Vec::new(),
+                approval_mode: None,
+                acceptance_criteria: Vec::new(),
+                evidence: Vec::new(),
                 notes: None,
                 blocker: None,
                 order: 0,
@@ -477,6 +616,13 @@ mod tests {
                 id: "b".into(),
                 title: "B".into(),
                 status: TaskCardStatus::InProgress,
+                objective: None,
+                plan: Vec::new(),
+                assigned_agent: None,
+                allowed_tools: Vec::new(),
+                approval_mode: None,
+                acceptance_criteria: Vec::new(),
+                evidence: Vec::new(),
                 notes: None,
                 blocker: None,
                 order: 1,

@@ -77,6 +77,112 @@ impl SyncOutcome {
     }
 }
 
+/// A provider-agnostic, structured work item produced by
+/// [`super::ComposioProvider::fetch_tasks`].
+///
+/// Unlike the `sync()` path — which persists upstream items into the
+/// memory store as passive context — `fetch_tasks` *returns* normalized
+/// tasks so the `task_sources` domain can enrich them and route them
+/// onto the agent's todo board. Every native task provider (github,
+/// notion, linear, clickup) maps its upstream payload shape into this
+/// common envelope.
+///
+/// `source_id` is left empty by providers and stamped by the
+/// `task_sources` pipeline with the originating `TaskSource.id` — a
+/// provider has no knowledge of which configured source asked for the
+/// fetch.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NormalizedTask {
+    /// Upstream provider's stable id for the item (issue/task/page id).
+    pub external_id: String,
+    /// The `TaskSource.id` that produced this task. Empty until the
+    /// pipeline stamps it.
+    #[serde(default)]
+    pub source_id: String,
+    /// Toolkit slug, e.g. `"github"`.
+    pub provider: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    /// Due date as an ISO-8601 string, when the provider exposes one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Last-updated ISO-8601 timestamp — used for cursor advancement and
+    /// edit-aware dedup (`{external_id}@{updated_at}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    /// The raw upstream payload, retained for enrichment / debugging.
+    #[serde(default)]
+    pub raw: serde_json::Value,
+}
+
+/// Provider-agnostic filter passed into
+/// [`super::ComposioProvider::fetch_tasks`].
+///
+/// The `task_sources` domain builds this from a user-configured,
+/// per-provider `FilterSpec`. Each provider reads only the fields that
+/// apply to it (github reads `repo`/`labels`; notion reads
+/// `database_id`; linear/clickup read `team_id`; …) and ignores the
+/// rest. `extra` is a free-form escape hatch surfaced in the UI for
+/// advanced provider-native query fragments.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskFetchFilter {
+    /// Scope to items assigned to (or involving) the authenticated user.
+    #[serde(default)]
+    pub assignee_is_me: bool,
+    /// GitHub `owner/name` repository scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    /// GitHub label filter.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Issue/task state filter (e.g. `"open"`, `"todo"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    /// Notion database (board) id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database_id: Option<String>,
+    /// Notion status property filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// Linear / ClickUp team (workspace) id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<String>,
+    /// ClickUp list id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list_id: Option<String>,
+    /// Free-form provider-native filter fragment (advanced).
+    #[serde(default)]
+    pub extra: serde_json::Value,
+    /// Hard cap on how many tasks a single fetch returns.
+    #[serde(default)]
+    pub max: u32,
+}
+
+impl TaskFetchFilter {
+    /// Effective per-fetch item cap, defaulting to a safe bound when the
+    /// caller leaves `max` unset (0).
+    pub fn effective_max(&self) -> usize {
+        if self.max == 0 {
+            25
+        } else {
+            self.max as usize
+        }
+    }
+}
+
 /// Per-call context handed to provider methods.
 ///
 /// `connection_id` is `None` when a method runs in a "no specific

@@ -147,7 +147,9 @@ impl Tool for KeyboardTool {
                 tool = "keyboard",
                 "[computer] blocked: autonomy is read-only"
             );
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
         if !self.security.record_action() {
             debug!(tool = "keyboard", "[computer] blocked: rate limit exceeded");

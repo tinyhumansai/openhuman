@@ -312,6 +312,13 @@ const ru2: TranslationMap = {
   'chat.turn': 'ход',
   'chat.turns': 'ходов',
   'chat.openWorkerThread': 'Открыть чат воркера',
+  'chat.attachment.attach': 'Прикрепить изображение',
+  'chat.attachment.remove': 'Удалить {name}',
+  'chat.attachment.tooMany': 'Максимум {max} изображений на сообщение',
+  'chat.attachment.tooLarge': 'Изображение превышает ограничение размера {max}',
+  'chat.attachment.unsupportedType':
+    'Неподдерживаемый тип файла. Используйте PNG, JPEG, WebP, GIF или BMP.',
+  'chat.attachment.readFailed': 'Не удалось прочитать файл',
   'memory.searchAria': 'Поиск в памяти',
   'memory.searchPlaceholder': 'Поиск записей памяти...',
   'memory.sourceFilter.all': 'Все источники',
@@ -430,6 +437,7 @@ const ru2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Настройка параметров сортировки AI для триггеров интеграции Composio',
   'mic.deviceSelector': 'Микрофонное устройство',
+  'mic.tapToSendCountdown': 'Нажми для отправки ({seconds}с)',
 };
 
 export default ru2;

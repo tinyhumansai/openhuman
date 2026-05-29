@@ -313,6 +313,13 @@ const bn2: TranslationMap = {
   'chat.turn': 'টার্ন',
   'chat.turns': 'টার্ন',
   'chat.openWorkerThread': 'ওয়ার্কার থ্রেড খুলুন',
+  'chat.attachment.attach': 'ছবি সংযুক্ত করুন',
+  'chat.attachment.remove': '{name} সরান',
+  'chat.attachment.tooMany': 'প্রতি বার্তায় সর্বোচ্চ {max}টি ছবি',
+  'chat.attachment.tooLarge': 'ছবি {max} আকারের সীমা অতিক্রম করেছে',
+  'chat.attachment.unsupportedType':
+    'অসমর্থিত ফাইল প্রকার। PNG, JPEG, WebP, GIF, বা BMP ব্যবহার করুন।',
+  'chat.attachment.readFailed': 'ফাইল পড়া যায়নি',
   'memory.searchAria': 'মেমোরি খুঁজুন',
   'memory.searchPlaceholder': 'মেমোরি এন্ট্রি খুঁজুন...',
   'memory.sourceFilter.all': 'সব উৎস',
@@ -425,6 +432,7 @@ const bn2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Composio ইন্টিগ্রেশন ট্রিগারের জন্য AI ট্রাইজ সেটিংস কনফিগার করুন',
   'mic.deviceSelector': 'মাইক্রোফোন ডিভাইস',
+  'mic.tapToSendCountdown': 'পাঠাতে ট্যাপ করুন ({seconds}স)',
 };
 
 export default bn2;

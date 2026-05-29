@@ -3,7 +3,9 @@
 use async_trait::async_trait;
 
 use super::tool_scope::CuratedTool;
-use super::types::{ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason};
+use super::types::{
+    NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+};
 
 /// Native provider implementation for a specific Composio toolkit.
 ///
@@ -51,6 +53,36 @@ pub trait ComposioProvider: Send + Sync {
     /// are responsible for persisting whatever they fetch (typically into
     /// the memory layer via [`ProviderContext::memory_client`]).
     async fn sync(&self, ctx: &ProviderContext, reason: SyncReason) -> Result<SyncOutcome, String>;
+
+    /// Fetch a filtered set of work items as structured
+    /// [`NormalizedTask`]s — the read path that powers the
+    /// `task_sources` domain.
+    ///
+    /// Unlike [`Self::sync`], this does **not** persist anything into
+    /// the memory store; it *returns* normalized tasks so the caller can
+    /// enrich them and route them onto the agent's todo board. `filter`
+    /// is provider-agnostic — implementations read only the fields that
+    /// apply to their toolkit and translate them into their own action
+    /// slug + arguments, then map the upstream payload back into
+    /// `NormalizedTask`. Implementations must honour
+    /// [`TaskFetchFilter::effective_max`] as an upper bound on the
+    /// number of tasks returned.
+    ///
+    /// Default impl: `Err` — providers without a task surface (e.g.
+    /// gmail, slack) opt out, exactly as
+    /// [`Self::sync_interval_secs`] returning `None` opts out of the
+    /// periodic scheduler.
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let _ = (ctx, filter);
+        Err(format!(
+            "[composio:{}] provider has no task-fetch surface",
+            self.toolkit_slug()
+        ))
+    }
 
     /// Standardized identity callback for provider implementations.
     ///

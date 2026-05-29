@@ -40,9 +40,12 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("chunk_score"),
         schemas("delete_chunk"),
         schemas("graph_export"),
+        schemas("obsidian_vault_status"),
         schemas("flush_now"),
         schemas("wipe_all"),
         schemas("reset_tree"),
+        schemas("pipeline_status"),
+        schemas("set_enabled"),
     ]
 }
 
@@ -107,6 +110,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_graph_export,
         },
         RegisteredController {
+            schema: schemas("obsidian_vault_status"),
+            handler: handle_obsidian_vault_status,
+        },
+        RegisteredController {
             schema: schemas("flush_now"),
             handler: handle_flush_now,
         },
@@ -117,6 +124,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("reset_tree"),
             handler: handle_reset_tree,
+        },
+        RegisteredController {
+            schema: schemas("pipeline_status"),
+            handler: handle_pipeline_status,
+        },
+        RegisteredController {
+            schema: schemas("set_enabled"),
+            handler: handle_set_enabled,
         },
     ]
 }
@@ -603,6 +618,49 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "obsidian_vault_status" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "obsidian_vault_status",
+            description: "Best-effort check of whether the memory-tree content root is \
+                          already a registered Obsidian vault. `obsidian://open?path=` only \
+                          resolves vaults present in Obsidian's obsidian.json registry — it \
+                          cannot register a new one — so the Memory tab calls this before \
+                          firing the deep link and guides the user to 'Open folder as vault' \
+                          when it isn't registered. Never errors; a probe miss reports \
+                          registered=false.",
+            inputs: vec![FieldSchema {
+                name: "obsidian_config_dir",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Optional override for Obsidian's config directory (where \
+                          obsidian.json lives), for non-standard installs \
+                          (Flatpak / Snap / portable). Omitted ⇒ probe the standard per-OS \
+                          location plus known sandbox paths.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "registered",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the content root (or an ancestor) is a registered \
+                              Obsidian vault, so the deep link will resolve.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "config_found",
+                    ty: TypeSchema::Bool,
+                    comment: "True when an obsidian.json was found and parsed (Obsidian is \
+                              set up). Lets the UI offer add-as-vault vs. install.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "content_root_abs",
+                    ty: TypeSchema::String,
+                    comment: "Absolute path to <workspace>/memory_tree/content/ — the folder \
+                              to add to Obsidian and the deep-link target.",
+                    required: true,
+                },
+            ],
+        },
         "trigger_digest" => ControllerSchema {
             namespace: NAMESPACE,
             function: "trigger_digest",
@@ -637,6 +695,112 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::String,
                     comment: "The date the digest will cover, echoed back \
                         as `YYYY-MM-DD`.",
+                    required: true,
+                },
+            ],
+        },
+        "pipeline_status" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "pipeline_status",
+            description: "Aggregated Memory Tree health snapshot (#1856 Part 1). \
+                Returns a coarse `status` string (running/paused/syncing/error/idle), \
+                an optional human-readable reason, the most-recent chunk timestamp, \
+                the total chunk count, the on-disk wiki size in bytes, and per-state \
+                job counters from `mem_tree_jobs`. Polled by the Memory Tree status \
+                panel; cheap enough to call every couple of seconds.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "status",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["running", "paused", "syncing", "error", "idle"],
+                    },
+                    comment: "Coarse, UI-shaped status. paused wins over error wins \
+                              over syncing wins over running wins over idle.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "reason",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Human-readable reason for the current status — present \
+                              for `paused` (gate mode) and `error` (failed-job count).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "last_sync_ms",
+                    ty: TypeSchema::I64,
+                    comment: "Epoch ms of the newest chunk timestamp across all \
+                              sources; 0 when the store is empty.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "total_chunks",
+                    ty: TypeSchema::U64,
+                    comment: "Total rows in `mem_tree_chunks`.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "wiki_size_bytes",
+                    ty: TypeSchema::U64,
+                    comment: "Recursive on-disk size of the `wiki/` sub-tree under the \
+                              memory_tree content root. 0 when the directory does not exist yet.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "pipeline_jobs",
+                    ty: TypeSchema::Json,
+                    comment: "Object with `ready` / `running` / `failed` counters \
+                              from `mem_tree_jobs`.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "is_syncing",
+                    ty: TypeSchema::Bool,
+                    comment: "True when at least one job is in `running` state.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "is_paused",
+                    ty: TypeSchema::Bool,
+                    comment: "True when scheduler-gate mode is `off`.",
+                    required: true,
+                },
+            ],
+        },
+        "set_enabled" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "set_enabled",
+            description: "Toggle Memory Tree auto-sync (#1856 Part 1). \
+                Flips `config.scheduler_gate.mode` between `auto` (enabled=true) \
+                and `off` (enabled=false), persists the change, and hot-reloads \
+                the live scheduler-gate so in-flight workers observe the new \
+                policy at their next `wait_for_capacity` await. The 20-min \
+                Composio fetch loop is NOT paused by this toggle yet — that \
+                lands in #1856 Part 2.",
+            inputs: vec![FieldSchema {
+                name: "enabled",
+                ty: TypeSchema::Bool,
+                comment: "True ⇒ scheduler-gate mode = auto. False ⇒ mode = off.",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "enabled",
+                    ty: TypeSchema::Bool,
+                    comment: "Echo of the requested enabled state.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "changed",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the persisted mode actually flipped; \
+                              false for no-ops.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mode",
+                    ty: TypeSchema::String,
+                    comment: "New scheduler-gate mode as wire string (`auto` / `off`).",
                     required: true,
                 },
             ],
@@ -842,6 +1006,19 @@ fn handle_graph_export(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_obsidian_vault_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            obsidian_config_dir: Option<String>,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::obsidian_vault_status_rpc(&config, req.obsidian_config_dir).await?)
+    })
+}
+
 fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -860,6 +1037,21 @@ fn handle_reset_tree(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(read_rpc::reset_tree_rpc(&config).await?)
+    })
+}
+
+fn handle_pipeline_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(rpc::pipeline_status_rpc(&config).await?)
+    })
+}
+
+fn handle_set_enabled(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::SetEnabledRequest>(Value::Object(params))?;
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        to_json(rpc::set_enabled_rpc(&mut config, req).await?)
     })
 }
 

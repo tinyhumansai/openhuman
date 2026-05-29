@@ -76,7 +76,7 @@ jobs:
           OPENHUMAN_BUILD_SHA: ${{ github.sha }}
           OPENHUMAN_APP_ENV: production
         run: |
-          cargo build --release --bin openhuman-core
+          bash scripts/ci-cancel-aware.sh cargo build --release --bin openhuman-core
           VERSION="${{ github.event.release.tag_name }}"
           bash scripts/release/package-cli-tarball.sh \
             target/release/openhuman-core \

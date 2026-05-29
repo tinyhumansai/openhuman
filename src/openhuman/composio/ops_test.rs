@@ -123,7 +123,7 @@ async fn composio_delete_connection_errors_without_session() {
 async fn composio_list_tools_errors_without_session() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
-    let err = composio_list_tools(&config, None).await.unwrap_err();
+    let err = composio_list_tools(&config, None, None).await.unwrap_err();
     // Same tolerance as `composio_list_toolkits_errors_without_session`.
     assert!(
         err.to_lowercase().contains("composio")
@@ -316,16 +316,26 @@ fn config_with_backend(tmp: &tempfile::TempDir, base: String) -> Config {
 }
 
 fn sample_memory_chunk(source_kind: SourceKind, source_id: &str, seq: u32) -> Chunk {
+    sample_memory_chunk_with_owner(source_kind, source_id, "alice@example.com", seq)
+}
+
+fn sample_memory_chunk_with_owner(
+    source_kind: SourceKind,
+    source_id: &str,
+    owner: &str,
+    seq: u32,
+) -> Chunk {
     let ts = Utc
         .timestamp_millis_opt(1_700_000_000_000 + i64::from(seq))
         .unwrap();
+    let content = format!("composio memory {source_id} {owner} {seq}");
     Chunk {
-        id: chunk_id(source_kind, source_id, seq, "composio memory"),
-        content: format!("composio memory {source_id} {seq}"),
+        id: chunk_id(source_kind, source_id, seq, &content),
+        content,
         metadata: Metadata {
             source_kind,
             source_id: source_id.to_string(),
-            owner: "alice@example.com".to_string(),
+            owner: owner.to_string(),
             timestamp: ts,
             time_range: (ts, ts),
             tags: vec!["composio".to_string()],
@@ -513,6 +523,78 @@ async fn composio_delete_connection_clear_memory_deletes_slack_source() {
 }
 
 #[tokio::test]
+async fn composio_delete_connection_clear_memory_keeps_other_gmail_connections() {
+    let app = Router::new()
+        .route(
+            "/agent-integrations/composio/connections",
+            get(|| async {
+                Json(json!({
+                    "success": true,
+                    "data": {"connections": [
+                        {"id":"c1","toolkit":"gmail","status":"ACTIVE"},
+                        {"id":"c2","toolkit":"gmail","status":"ACTIVE"}
+                    ]}
+                }))
+            }),
+        )
+        .route(
+            "/agent-integrations/composio/connections/{id}",
+            axum::routing::delete(|Path(_id): Path<String>| async move {
+                Json(json!({"success": true, "data": {"deleted": true}}))
+            }),
+        );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+    let c1_account = sample_memory_chunk_with_owner(
+        SourceKind::Email,
+        "gmail:pilot-at-example-dot-com",
+        "gmail-sync:c1",
+        0,
+    );
+    let c2_account = sample_memory_chunk_with_owner(
+        SourceKind::Email,
+        "gmail:pilot-at-example-dot-com",
+        "gmail-sync:c2",
+        1,
+    );
+    let c1_connection_scoped =
+        sample_memory_chunk_with_owner(SourceKind::Email, "gmail:c1:thread-a", "gmail-sync:c1", 2);
+    let c2_connection_scoped =
+        sample_memory_chunk_with_owner(SourceKind::Email, "gmail:c2:thread-b", "gmail-sync:c2", 3);
+    memory_tree_store::upsert_chunks(
+        &config,
+        &[
+            c1_account,
+            c2_account.clone(),
+            c1_connection_scoped,
+            c2_connection_scoped.clone(),
+        ],
+    )
+    .expect("chunks should seed");
+
+    let outcome = composio_delete_connection(&config, "c1", true)
+        .await
+        .unwrap();
+
+    assert!(outcome.value.deleted);
+    assert_eq!(outcome.value.memory_chunks_deleted, 2);
+    let remaining = memory_tree_store::list_chunks(
+        &config,
+        &memory_tree_store::ListChunksQuery {
+            source_kind: Some(SourceKind::Email),
+            ..Default::default()
+        },
+    )
+    .expect("chunks should list");
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.iter().any(|chunk| chunk.id == c2_account.id));
+    assert!(remaining
+        .iter()
+        .any(|chunk| chunk.id == c2_connection_scoped.id));
+}
+
+#[tokio::test]
 async fn notion_cleanup_targets_include_synced_page_sources() {
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
@@ -668,7 +750,7 @@ async fn composio_list_tools_via_mock_with_filter() {
     let base = start_mock_backend(app).await;
     let tmp = tempfile::tempdir().unwrap();
     let config = config_with_backend(&tmp, base);
-    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]))
+    let outcome = composio_list_tools(&config, Some(vec!["gmail".into()]), None)
         .await
         .unwrap();
     assert_eq!(outcome.value.tools.len(), 2);
@@ -728,6 +810,9 @@ async fn composio_execute_via_mock_propagates_backend_error() {
 
 #[tokio::test]
 async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
+    let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+        .lock()
+        .await;
     use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
     use crate::openhuman::memory_tree::tree::rpc::{list_chunks_rpc, ListChunksRequest};
@@ -1533,7 +1618,7 @@ async fn composio_list_connections_routes_through_direct_mode() {
 async fn composio_list_tools_in_direct_mode_does_not_fall_back_to_backend() {
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
-    let result = composio_list_tools(&config, None).await;
+    let result = composio_list_tools(&config, None, None).await;
     match result {
         Ok(outcome) => {
             // If the prefetch returns empty connections (test env may

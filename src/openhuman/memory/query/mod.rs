@@ -174,16 +174,13 @@ impl Tool for MemoryTreeTool {
 ///
 /// The consolidated `parameters_schema()` exposes one shared
 /// `time_window_days` field for both `query_source` and `query_global` (the
-/// `query_source` backend uses that exact name). The `query_global` backend
-/// — `QueryGlobalRequest { window_days: u32 }` in `memory/tree/retrieval/rpc.rs`
-/// — was never aligned with that schema, so any call following the
-/// consolidated contract failed with `missing field 'window_days'`.
-///
-/// Translating in the dispatch keeps the LLM-facing schema stable and
-/// leaves the standalone [`MemoryTreeQueryGlobalTool`] (which advertises
-/// `window_days` natively) untouched. An explicit `window_days` always
-/// wins so callers can opt into the underlying contract if they ever
-/// want to.
+/// `query_source` backend uses that exact name). `QueryGlobalRequest` in
+/// `memory_tree/retrieval/rpc.rs` uses `time_window_days` as its primary
+/// field name and accepts `window_days` via `#[serde(alias = "window_days")]`.
+/// The translation here keeps the LLM-facing consolidated schema stable
+/// (callers always send `time_window_days`) while routing through the alias
+/// path, which is equivalent. An explicit `window_days` in the payload
+/// always wins — the translator is a no-op for callers that already use it.
 fn translate_query_global_args(mut args: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = args.as_object_mut() {
         if !obj.contains_key("window_days") {
@@ -270,6 +267,14 @@ mod memory_tree_dispatcher_tests {
 
     #[tokio::test]
     async fn memory_tree_query_global_mode_dispatches_successfully() {
+        // Hold TEST_ENV_LOCK for the duration of the test so that concurrent
+        // tests using WorkspaceEnvGuard (which sets OPENHUMAN_WORKSPACE to a
+        // temp path and then deletes it) cannot race with the Config::load_or_init
+        // call inside MemoryTreeTool.execute — the race caused "Failed to read
+        // config file" when the temp dir was deleted between exists() and read().
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let result = MemoryTreeTool
             .execute(json!({
                 "mode": "query_global",

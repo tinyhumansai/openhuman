@@ -293,6 +293,12 @@ const zhCN2: TranslationMap = {
   'chat.turn': '轮',
   'chat.turns': '轮',
   'chat.openWorkerThread': '打开工作线程',
+  'chat.attachment.attach': '添加图片',
+  'chat.attachment.remove': '移除 {name}',
+  'chat.attachment.tooMany': '每条消息最多 {max} 张图片',
+  'chat.attachment.tooLarge': '图片超过 {max} 大小限制',
+  'chat.attachment.unsupportedType': '不支持的文件类型。请使用 PNG、JPEG、WebP、GIF 或 BMP。',
+  'chat.attachment.readFailed': '无法读取文件',
   'memory.searchAria': '搜索记忆',
   'memory.searchPlaceholder': '搜索记忆条目...',
   'memory.sourceFilter.all': '所有来源',
@@ -399,6 +405,7 @@ const zhCN2: TranslationMap = {
   'devOptions.menuComposioTriggers': '集成触发器',
   'devOptions.menuComposioTriggersDesc': '为 Composio 集成触发器配置 AI 分级设置',
   'mic.deviceSelector': '麦克风装置',
+  'mic.tapToSendCountdown': '点击发送 ({seconds}秒)',
 };
 
 export default zhCN2;

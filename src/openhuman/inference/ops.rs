@@ -9,9 +9,50 @@ use crate::openhuman::inference::{device, presets, sentiment, SentimentResult};
 use crate::openhuman::inference::{LocalAiEmbeddingResult, LocalAiStatus};
 use crate::rpc::RpcOutcome;
 use serde_json::{json, Value};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const LOG_PREFIX: &str = "[inference::ops]";
+
+/// User picked a provider id (slug) that isn't registered in the cloud
+/// provider list — e.g. selecting `"ollama"` as a cloud provider when it's
+/// actually a local runtime. Matches the literal phrase emitted at
+/// `src/openhuman/inference/provider/ops.rs:54`
+/// (`"no cloud provider with id or slug '{}' found"`).
+///
+/// Used by [`inference_list_models`] to demote this user-config case to
+/// `warn!` so it stops escalating to Sentry (TAURI-RUST-X, ~5740 events).
+/// The matcher is anchored on the exact phrase so unrelated sibling
+/// failures (TAURI-RUST-12 JSON parse, TAURI-RUST-2W reqwest builder,
+/// TAURI-RUST-JP local ollama_admin transport) still surface as real
+/// errors.
+fn is_unknown_provider_user_config(err: &str) -> bool {
+    err.contains("no cloud provider with id or slug")
+}
+
+/// Returns `true` when the error from a provider chat attempt is a known,
+/// expected user-state or provider-state condition that already has its own
+/// Sentry report (or is deterministically expected and has no remediation
+/// path):
+///
+/// - **401 Unauthorized** — API key revoked / wrong key. Already reported by
+///   the provider layer's `api_error` path. An ops-level duplicate adds noise
+///   with no additional context.
+/// - **429 Too Many Requests / rate-limit** — Quota exhaustion. Already
+///   covered by the `is_upstream_rate_limit_message` classifier in
+///   `expected_error_kind`; the reliable-provider layer retries with
+///   backoff before propagating.
+/// - **Model not found** — User selected a model that doesn't exist for
+///   their key. The provider layer already classifies this as a config
+///   rejection (TAURI-RUST-68, ~1309 events).
+///
+/// The matcher is intentionally broad so the ops-level wrapper stays out
+/// of the Sentry funnel for all provider-state failures — the underlying
+/// call site (`compatible.rs` / `report_error_or_expected`) is already
+/// responsible for the authoritative report. Unclassified failures (5xx,
+/// unexpected payloads, network errors) are NOT matched and still escalate.
+fn is_expected_chat_failure(err: &str) -> bool {
+    crate::core::observability::expected_error_kind(err).is_some()
+}
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct InferenceTestProviderModelResult {
@@ -163,7 +204,22 @@ pub async fn inference_test_provider_model(
             output_len = outcome.value.reply.len(),
             "{LOG_PREFIX} test_provider_model:ok"
         ),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} test_provider_model:error"),
+        Err(err) => {
+            if is_expected_chat_failure(err) {
+                // Provider-state / user-config failure (401, 429, model not
+                // found, API key missing, etc.). The underlying provider
+                // layer already emitted its own Sentry event or classified
+                // this as expected. An ops-level duplicate adds noise.
+                // Targets TAURI-RUST-68 (~1,309 events).
+                warn!(
+                    provider,
+                    error = %err,
+                    "{LOG_PREFIX} test_provider_model:expected-error (no Sentry)"
+                );
+            } else {
+                error!(error = %err, "{LOG_PREFIX} test_provider_model:error");
+            }
+        }
     }
     result
 }
@@ -245,7 +301,29 @@ pub async fn inference_list_models(provider_id: &str) -> Result<RpcOutcome<Value
     let result = providers::ops::list_configured_models(provider_id).await;
     match &result {
         Ok(_) => debug!("{LOG_PREFIX} list_models:ok"),
-        Err(err) => error!(error = %err, "{LOG_PREFIX} list_models:error"),
+        Err(err) => {
+            if is_unknown_provider_user_config(err) {
+                // User selected a provider id that isn't a registered
+                // cloud provider (e.g. picking "ollama", a local runtime).
+                // Demote to `warn!` so it stays in local logs but doesn't
+                // escalate to Sentry. Targets TAURI-RUST-X (~5740 events).
+                warn!(
+                    provider_id,
+                    error = %err,
+                    "{LOG_PREFIX} list_models:unknown-provider (user-config)"
+                );
+            } else {
+                // Real error — embed `{err}` in the format string so
+                // Sentry's event title carries the actionable cause
+                // instead of the opaque `list_models:error` shape that
+                // made TAURI-RUST-X untriageable.
+                error!(
+                    provider_id,
+                    error = %err,
+                    "{LOG_PREFIX} list_models:error: {err}"
+                );
+            }
+        }
     }
     result
 }

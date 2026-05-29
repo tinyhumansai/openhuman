@@ -13,9 +13,10 @@
 //!    `ToolResults` envelopes with a placeholder, preserving the
 //!    `AssistantToolCalls ⇔ ToolResults` API invariant.
 //! 4. **Autocompact** — prose summarisation of older messages.
-//!    OpenHuman's existing `auto_compact_history` lives in
-//!    `agent/loop_/history.rs` and operates on `ChatMessage` (not
-//!    `ConversationMessage`), so we don't call it here — the pipeline
+//!    The summariser (`ProviderSummarizer` in `context/summarizer.rs`,
+//!    optionally wrapped by `segment_recap_summarizer.rs`) operates on
+//!    `ConversationMessage` and issues LLM calls, so we don't run it
+//!    here — the pipeline
 //!    instead signals a `PipelineOutcome::AutocompactionRequested` to
 //!    the caller and trusts the caller to dispatch its own summariser
 //!    when ready. Keeping the pipeline pure (no LLM calls) means the
@@ -269,6 +270,7 @@ mod tests {
                 name: "t".into(),
                 arguments: "{}".into(),
             }],
+            reasoning_content: None,
         }
     }
 

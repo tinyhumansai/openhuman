@@ -14,8 +14,11 @@
 //! Things this backend deliberately does not do:
 //!
 //! - Network capability requests. By default an AppContainer has *no*
-//!   network capabilities — we honor `jail.allow_net` by adding
-//!   `internetClient` and `privateNetworkClientServer` capabilities.
+//!   network capabilities — we honor `jail.allow_net` by adding the
+//!   `internetClient` capability (outbound client only, matching the
+//!   `jail.allow_net` docstring of "Allow outbound network"). LAN /
+//!   inbound capabilities are intentionally not granted; see
+//!   `NET_CAPABILITY_NAMES` for the rationale.
 //! - Persistent profile cleanup. We use a deterministic profile name
 //!   derived from `jail.label` so reruns reuse the same SID. The host
 //!   should call `DeleteAppContainerProfile` on uninstall — out of scope.
@@ -44,7 +47,8 @@ use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    FreeSid, ACL, DACL_SECURITY_INFORMATION, PSID, SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
+    DeriveCapabilitySidsFromName, FreeSid, ACL, DACL_SECURITY_INFORMATION, PSID,
+    SECURITY_CAPABILITIES, SID_AND_ATTRIBUTES,
 };
 
 // Well-known Win32 access masks. `windows-sys` has moved these constants
@@ -56,6 +60,36 @@ const GENERIC_READ: u32 = 0x8000_0000;
 const GENERIC_WRITE: u32 = 0x4000_0000;
 const DELETE: u32 = 0x0001_0000;
 const NO_INHERITANCE: u32 = 0;
+/// SE_GROUP_ENABLED — marks a SID in a `SID_AND_ATTRIBUTES` entry as active.
+/// Required for capability SIDs passed to AppContainer SECURITY_CAPABILITIES.
+/// Source: WinNT.h.
+const SE_GROUP_ENABLED: u32 = 0x0000_0004;
+
+/// AppContainer capability names granted when `jail.allow_net == true`.
+///
+/// Per `jail.rs`, `allow_net` is documented as **"Allow outbound network"**
+/// — so the capability set here is strictly outbound-client only:
+///
+/// - `internetClient` — outbound TCP/UDP to the public internet (client only).
+///
+/// Intentionally NOT granted (each would over-grant relative to the
+/// documented `allow_net` contract):
+///
+/// - `internetClientServer` — would let the child `bind()` and accept
+///   inbound public-internet connections.
+/// - `privateNetworkClientServer` — would let the child `bind()` on the
+///   LAN, granting inbound LAN reachability beyond the documented
+///   outbound-only semantics. Excluding it keeps this backend faithful to
+///   the `Jail.allow_net` doc-string contract ("Allow outbound network"),
+///   which is the invariant being enforced here — not the actual network
+///   posture of the other backends (macOS Seatbelt grants `allow default`,
+///   i.e. full network, on `allow_net == true`, and the Linux Landlock
+///   backend does not gate network at all).
+///
+/// If a future caller needs LAN inbound or public server roles, add a
+/// dedicated `Jail` flag (e.g. `allow_private_lan_server`) and extend
+/// this list conditionally — do NOT silently expand `allow_net`.
+const NET_CAPABILITY_NAMES: &[&str] = &["internetClient"];
 use windows_sys::Win32::System::Memory::{LocalAlloc, LPTR};
 use windows_sys::Win32::System::Threading::{
     CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
@@ -129,21 +163,54 @@ unsafe fn spawn_in_container(jail: &Jail, cmd: Command) -> io::Result<Child> {
         grant_sid_access(ro, sid, GENERIC_READ)?;
     }
 
-    // 3. Build SECURITY_CAPABILITIES. For now we attach no capability SIDs;
-    //    network capabilities (`internetClient`) would need their own
-    //    well-known SID lookups via DeriveCapabilitySidsFromName — left as
-    //    a TODO with a clear failure mode (`jail.allow_net == true` will
-    //    log a warning until implemented).
+    // 3. Build SECURITY_CAPABILITIES. AppContainers start with no network
+    //    access by default; honour `jail.allow_net` by deriving the
+    //    capability SIDs in `NET_CAPABILITY_NAMES` via
+    //    `DeriveCapabilitySidsFromName` and attaching them as
+    //    SE_GROUP_ENABLED entries. `_cap_derivations` owns the
+    //    OS-allocated SID buffers and frees them via Drop after
+    //    CreateProcessW has captured the values into the child process.
+    //    `cap_attrs` must outlive CreateProcessW (the attribute list
+    //    references it by pointer) — it stays in scope until the end of
+    //    `spawn_in_container`.
+    let mut cap_attrs: Vec<SID_AND_ATTRIBUTES> = Vec::new();
+    let mut _cap_derivations: Vec<CapabilityDerivation> = Vec::new();
     if jail.allow_net {
-        log::warn!(
-            "[cwd_jail] AppContainer network capabilities not yet wired; \
-             jail.allow_net=true is currently equivalent to no-net on Windows"
-        );
+        let mut any_derived = false;
+        for &name in NET_CAPABILITY_NAMES {
+            match derive_capability(name) {
+                Ok(deriv) => {
+                    for &cap_sid in &deriv.capability_sids {
+                        cap_attrs.push(SID_AND_ATTRIBUTES {
+                            Sid: cap_sid,
+                            Attributes: SE_GROUP_ENABLED,
+                        });
+                        any_derived = true;
+                    }
+                    _cap_derivations.push(deriv);
+                }
+                Err(e) => log::warn!(
+                    "[cwd_jail] DeriveCapabilitySidsFromName({name}) failed: \
+                     {e}; this capability will not be granted"
+                ),
+            }
+        }
+        if !any_derived {
+            log::error!(
+                "[cwd_jail] jail.allow_net=true but NO network capability \
+                 could be derived; the AppContainer child will have no \
+                 network access. Check Userenv.dll availability."
+            );
+        }
     }
     let mut caps = SECURITY_CAPABILITIES {
         AppContainerSid: sid,
-        Capabilities: ptr::null_mut(),
-        CapabilityCount: 0,
+        Capabilities: if cap_attrs.is_empty() {
+            ptr::null_mut()
+        } else {
+            cap_attrs.as_mut_ptr()
+        },
+        CapabilityCount: cap_attrs.len() as u32,
         Reserved: 0,
     };
 
@@ -387,11 +454,134 @@ impl Drop for LocalGuard {
     }
 }
 
-// Unused import suppression on this platform.
-#[allow(dead_code)]
-fn _unused() {
-    let _ = SID_AND_ATTRIBUTES {
-        Sid: ptr::null_mut(),
-        Attributes: 0,
-    };
+/// Owned wrapper around the SID arrays returned by
+/// `DeriveCapabilitySidsFromName`. MSDN: each inner SID AND each array
+/// itself is `LocalAlloc`-backed; `Drop` releases all of them in the
+/// reverse order they were allocated.
+///
+/// The `capability_sids` are the ones we actually want for an
+/// AppContainer's `SECURITY_CAPABILITIES.Capabilities`; the
+/// `group_sids` come along because the Win32 API returns both, and we
+/// hold them here purely so we can free them.
+struct CapabilityDerivation {
+    capability_sids: Vec<PSID>,
+    capability_sids_ptr: *mut PSID,
+    group_sids: Vec<PSID>,
+    group_sids_ptr: *mut PSID,
+}
+
+impl Drop for CapabilityDerivation {
+    fn drop(&mut self) {
+        unsafe {
+            for &sid in &self.capability_sids {
+                if !sid.is_null() {
+                    LocalFree(sid as HLOCAL);
+                }
+            }
+            if !self.capability_sids_ptr.is_null() {
+                LocalFree(self.capability_sids_ptr as HLOCAL);
+            }
+            for &sid in &self.group_sids {
+                if !sid.is_null() {
+                    LocalFree(sid as HLOCAL);
+                }
+            }
+            if !self.group_sids_ptr.is_null() {
+                LocalFree(self.group_sids_ptr as HLOCAL);
+            }
+        }
+    }
+}
+
+/// Resolves a capability name (e.g. `"internetClient"`) to its SIDs via
+/// `DeriveCapabilitySidsFromName`. The returned [`CapabilityDerivation`]
+/// owns the OS allocations; drop it to free them. Use the
+/// `capability_sids` slice as the SID values for
+/// `SECURITY_CAPABILITIES.Capabilities` entries.
+///
+/// # Safety
+/// FFI into `userenv.dll`. Safe to call from any thread on Windows.
+unsafe fn derive_capability(name: &str) -> io::Result<CapabilityDerivation> {
+    let name_w = to_wide(name);
+    let mut group_sids: *mut PSID = ptr::null_mut();
+    let mut group_count: u32 = 0;
+    let mut cap_sids: *mut PSID = ptr::null_mut();
+    let mut cap_count: u32 = 0;
+    let ok = DeriveCapabilitySidsFromName(
+        name_w.as_ptr(),
+        &mut group_sids,
+        &mut group_count,
+        &mut cap_sids,
+        &mut cap_count,
+    );
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let capability_sids: Vec<PSID> = (0..cap_count as usize).map(|i| *cap_sids.add(i)).collect();
+    let group_sids_vec: Vec<PSID> = (0..group_count as usize)
+        .map(|i| *group_sids.add(i))
+        .collect();
+    Ok(CapabilityDerivation {
+        capability_sids,
+        capability_sids_ptr: cap_sids,
+        group_sids: group_sids_vec,
+        group_sids_ptr: group_sids,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn net_capability_names_is_outbound_client_only() {
+        // `Jail.allow_net` is documented as "Allow outbound network" in
+        // `jail.rs`, so the granted capability set must be strictly
+        // outbound-client.
+        assert!(NET_CAPABILITY_NAMES.contains(&"internetClient"));
+        // The following would over-grant inbound bind() rights and are
+        // intentionally NOT exposed via the coarse `allow_net` switch.
+        // A future caller that needs them should add a separate `Jail`
+        // flag (e.g. `allow_private_lan_server`) and gate them on it.
+        assert!(!NET_CAPABILITY_NAMES.contains(&"privateNetworkClientServer"));
+        assert!(!NET_CAPABILITY_NAMES.contains(&"internetClientServer"));
+    }
+
+    #[test]
+    fn derive_capability_resolves_well_known_internet_client() {
+        // `internetClient` is one of the Windows manifest-defined
+        // capabilities present on every supported Windows version
+        // (10+). DeriveCapabilitySidsFromName must succeed and return
+        // at least one non-null capability SID.
+        let deriv = unsafe { derive_capability("internetClient") }
+            .expect("internetClient must resolve on any supported Windows");
+        assert!(
+            !deriv.capability_sids.is_empty(),
+            "expected at least one capability SID for internetClient"
+        );
+        for &sid in &deriv.capability_sids {
+            assert!(!sid.is_null(), "capability SID must not be null");
+        }
+        // Dropping `deriv` here exercises the Drop impl that LocalFrees
+        // every SID + array — a no-op for the test runner unless it
+        // double-frees, which would crash the process.
+    }
+
+    #[test]
+    fn sanitize_profile_name_keeps_alnum_and_dot() {
+        let s = sanitize_profile_name("agent.delegate-7");
+        assert!(s.starts_with("openhuman."));
+        // hyphen mapped to underscore
+        assert!(s.contains("agent.delegate_7"));
+        assert!(s.len() <= 70); // "openhuman." (10) + label (≤60)
+    }
+
+    #[test]
+    fn sanitize_profile_name_truncates_long_labels() {
+        let long: String = "a".repeat(200);
+        let s = sanitize_profile_name(&long);
+        // Per the in-function comment: truncate to 60 then prefix.
+        assert!(s.len() <= 70);
+        assert!(s.starts_with("openhuman."));
+    }
 }

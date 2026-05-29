@@ -1,10 +1,13 @@
 /**
  * Authentication commands.
  */
-import { invoke } from '@tauri-apps/api/core';
-
 import { callCoreRpc } from '../../services/coreRpcClient';
-import { CommandResponse, isTauri } from './common';
+// `safeInvoke` (aliased to `invoke`) replaces bare
+// `@tauri-apps/api/core::invoke` so the CEF `window.ipc.postMessage`
+// synchronous throw (Sentry TAURI-REACT-7 / TAURI-REACT-6) surfaces as a
+// rejected Promise. `exchangeToken` runs early in the auth flow where the
+// CEF bridge can still be unwired, so this matters most.
+import { type CommandResponse, safeInvoke as invoke, isTauri } from './common';
 
 /**
  * Exchange a login token for a session token
@@ -39,10 +42,6 @@ export async function getAuthState(): Promise<{ is_authenticated: boolean; user:
  * Get the session token from secure storage
  */
 export async function getSessionToken(): Promise<string | null> {
-  if (!isTauri()) {
-    return null;
-  }
-
   const response = await callCoreRpc<{ result: { token: string | null } }>({
     method: 'openhuman.auth_get_session_token',
   });
@@ -53,10 +52,6 @@ export async function getSessionToken(): Promise<string | null> {
  * Logout and clear session
  */
 export async function logout(): Promise<void> {
-  if (!isTauri()) {
-    return;
-  }
-
   await callCoreRpc({ method: 'openhuman.auth_clear_session' });
 }
 
@@ -64,10 +59,6 @@ export async function logout(): Promise<void> {
  * Store session in secure storage
  */
 export async function storeSession(token: string, user: object): Promise<void> {
-  if (!isTauri()) {
-    return;
-  }
-
   await callCoreRpc({ method: 'openhuman.auth_store_session', params: { token, user } });
 }
 

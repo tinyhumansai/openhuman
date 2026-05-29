@@ -5,7 +5,7 @@
 //! All on-disk mutations serialise through a single process-wide mutex so
 //! concurrent RPC handlers don't interleave writes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
@@ -16,6 +16,7 @@ use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tempfile::NamedTempFile;
 
+use super::inverted_index::InvertedIndex;
 use super::types::{
     ConversationMessage, ConversationMessagePatch, ConversationThread, CreateConversationThread,
     CrossThreadHit,
@@ -25,6 +26,35 @@ const LOG_PREFIX: &str = "[memory:conversations]";
 const THREADS_FILENAME: &str = "threads.jsonl";
 const THREAD_MESSAGES_DIR: &str = "threads";
 static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+
+/// Per-workspace inverted index cache. Keyed by the workspace's
+/// `memory/conversations` root so multiple `ConversationStore` clones
+/// pointing at the same workspace share one index. The cache outlives
+/// individual store handles (which are cloneable PathBuf wrappers); it
+/// is bounded by the number of distinct workspaces a single process
+/// touches, which in practice is one. Tests using `TempDir` paths leave
+/// behind dead entries when the dir is removed — acceptable for an
+/// in-process cache.
+///
+/// # Lock ordering
+///
+/// Most mutating store methods (`append_message`, `delete_thread`, etc.)
+/// hold `CONVERSATION_STORE_LOCK` first, then briefly lock this cache to
+/// do a warm-cache index update — the classic nested order.
+///
+/// `search_cross_thread_messages` is the exception (issue #2849): its
+/// **warm-cache fast path** locks only this cache (no outer lock needed
+/// for a read-only index query), and its **cold-path rebuild** takes
+/// the outer lock briefly to snapshot the thread list, releases it, does
+/// the slow JSONL I/O lock-free, then acquires this cache lock to
+/// insert the result.  This avoids holding both locks for the entire
+/// rebuild, which previously blocked all concurrent writes.
+///
+/// **Rule:** never hold this cache lock while calling back into a public
+/// `ConversationStore` method that takes `CONVERSATION_STORE_LOCK` — that
+/// would invert the dominant ordering and risk a deadlock.
+static CONVERSATION_INDEX_CACHE: Lazy<Mutex<HashMap<PathBuf, InvertedIndex>>> =
+    Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn redact_title_for_log(title: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -61,6 +91,8 @@ enum ThreadLogEntry {
         parent_thread_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         labels: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        personality_id: Option<String>,
     },
     Delete {
         thread_id: String,
@@ -107,6 +139,7 @@ impl ConversationStore {
                 updated_at: now,
                 parent_thread_id: request.parent_thread_id.clone(),
                 labels: request.labels.clone(),
+                personality_id: request.personality_id.clone(),
             },
         )?;
         debug!(
@@ -148,33 +181,65 @@ impl ConversationStore {
     /// chat continuity needs a direct cross-thread reader to surface
     /// context the user shared in chat A when they ask a dependent
     /// question in chat B.
+    ///
+    /// Backed by an in-memory trigram/CJK-bigram inverted index
+    /// (`super::inverted_index`). The legacy implementation walked every
+    /// JSONL file and did `content.to_lowercase().contains(term)` per
+    /// message, which is O(threads × messages × content_len). The index
+    /// turns that into O(|posting lists|) for typical queries while
+    /// preserving the previous scoring contract
+    /// (`score = matched_terms / total_terms`, recency tiebreak).
+    ///
+    /// # Lock strategy (issue #2849)
+    ///
+    /// **Fast path (warm cache):** acquires only `CONVERSATION_INDEX_CACHE`
+    /// — no outer store lock — and returns immediately.
+    ///
+    /// **Cold path (first access):** snapshots the thread list under
+    /// `CONVERSATION_STORE_LOCK` (brief), then releases it before reading
+    /// JSONL files to build the inverted index. This avoids blocking
+    /// `append_message` / `get_messages` / `list_threads` during the
+    /// potentially-long rebuild. JSONL files are append-only, so a
+    /// concurrent write during the rebuild may mean the rebuilt index
+    /// misses that one message. It is *not* re-read later; subsequent
+    /// `append_message` calls only index their own (new) messages once
+    /// the cache is warm. The missed message therefore stays absent
+    /// until the cache is evicted and rebuilt — an accepted tradeoff
+    /// for issue #2849.
     pub fn search_cross_thread_messages(
         &self,
         query: &str,
         limit: usize,
         exclude_thread_id: Option<&str>,
     ) -> Result<Vec<CrossThreadHit>, String> {
-        let _guard = CONVERSATION_STORE_LOCK.lock();
-        let query_lower = query.to_lowercase();
-        let terms: Vec<&str> = query_lower
-            .split_whitespace()
-            .filter(|t| t.len() >= 3)
-            .collect();
-        if terms.is_empty() {
-            return Ok(Vec::new());
+        // Fast path: if the index is already warm, search without the
+        // outer store lock.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if let Some(idx) = cache.get_mut(&self.root_dir()) {
+                return Ok(idx.search(query, limit, exclude_thread_id));
+            }
         }
-        let threads = self.list_threads_unlocked()?;
-        let mut hits: Vec<CrossThreadHit> = Vec::new();
+
+        // Cold path: build the index. Snapshot the thread list under the
+        // store lock (brief), then release it so concurrent writes aren't
+        // blocked during the potentially-long JSONL file reads.
+        let threads = {
+            let _guard = CONVERSATION_STORE_LOCK.lock();
+            self.list_threads_unlocked()?
+        };
+
+        let mut idx = InvertedIndex::new();
         for thread in threads {
-            if exclude_thread_id == Some(thread.id.as_str()) {
+            let path = self.thread_messages_path(&thread.id);
+            if !path.exists() {
                 continue;
             }
-            let path = self.thread_messages_path(&thread.id);
             let messages = match read_jsonl::<ConversationMessage>(&path) {
                 Ok(m) => m,
                 Err(err) => {
                     tracing::warn!(
-                        "[conversations] cross-thread scan skipped unreadable file path={} error={}",
+                        "{LOG_PREFIX} index build skipped unreadable file path={} error={}",
                         path.display(),
                         err
                     );
@@ -182,30 +247,21 @@ impl ConversationStore {
                 }
             };
             for msg in messages {
-                let content_lower = msg.content.to_lowercase();
-                let matched = terms.iter().filter(|t| content_lower.contains(*t)).count();
-                if matched == 0 {
-                    continue;
-                }
-                let score = matched as f64 / terms.len() as f64;
-                hits.push(CrossThreadHit {
-                    thread_id: thread.id.clone(),
-                    message_id: msg.id,
-                    role: msg.sender,
-                    content: msg.content,
-                    created_at: msg.created_at,
-                    score,
-                });
+                idx.insert(&thread.id, msg);
             }
         }
-        hits.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| b.created_at.cmp(&a.created_at))
-        });
-        hits.truncate(limit);
-        Ok(hits)
+        debug!(
+            "{LOG_PREFIX} inverted index populated workspace={}",
+            self.root_dir().display()
+        );
+
+        // Insert the newly-built index and run the search. Another thread
+        // may have raced and already inserted — prefer the existing index
+        // if present (it may have more recent messages from concurrent
+        // append_message calls).
+        let mut cache = CONVERSATION_INDEX_CACHE.lock();
+        let entry = cache.entry(self.root_dir()).or_insert(idx);
+        Ok(entry.search(query, limit, exclude_thread_id))
     }
 
     /// Append a message to the thread's JSONL file. Errors if the thread is missing.
@@ -235,6 +291,20 @@ impl ConversationStore {
                 last_message_at: message.created_at.clone(),
             },
         )?;
+        // Keep the inverted index in sync. We only update if the index
+        // has already been materialized for this workspace — otherwise
+        // the next search will lazily rebuild and pick up this message
+        // anyway, and we avoid paying the rebuild cost on a write path.
+        // `insert` takes the message by value so it can move owned
+        // fields straight into its `DocEntry`; we clone here only when
+        // the cache is actually warm, paying for one extra owned copy
+        // (instead of cloning each field inside `insert`).
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if let Some(idx) = cache.get_mut(&self.root_dir()) {
+                idx.insert(thread_id, message.clone());
+            }
+        }
         debug!(
             "{LOG_PREFIX} appended message thread_id={} message_id={} path={}",
             thread_id,
@@ -266,6 +336,7 @@ impl ConversationStore {
                 updated_at: updated_at.to_string(),
                 parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(entry.labels.clone()),
+                personality_id: entry.personality_id.clone(),
             },
         )?;
         debug!(
@@ -300,6 +371,7 @@ impl ConversationStore {
                 updated_at: updated_at.to_string(),
                 parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(labels),
+                personality_id: entry.personality_id.clone(),
             },
         )?;
         debug!(
@@ -370,6 +442,14 @@ impl ConversationStore {
                 ));
             }
         }
+        // Drop every indexed message for this thread so future searches
+        // don't surface stale content.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if let Some(idx) = cache.get_mut(&self.root_dir()) {
+                idx.remove_thread(thread_id);
+            }
+        }
         debug!(
             "{LOG_PREFIX} deleted thread id={} path={}",
             thread_id,
@@ -388,6 +468,13 @@ impl ConversationStore {
                 .map_err(|e| format!("remove conversation dir {}: {e}", root.display()))?;
         }
         self.ensure_root()?;
+        // Drop the cached inverted index — the workspace is now empty,
+        // and any next search will lazily rebuild from the (now empty)
+        // JSONL tree.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            cache.remove(&root);
+        }
         debug!(
             "{LOG_PREFIX} purged threads={} messages={} root={}",
             stats.thread_count,
@@ -486,6 +573,7 @@ impl ConversationStore {
                     created_at: entry.created_at.clone(),
                     parent_thread_id: entry.parent_thread_id.clone(),
                     labels: entry.labels.clone(),
+                    personality_id: entry.personality_id.clone(),
                 }
             })
             .collect();
@@ -545,6 +633,7 @@ impl ConversationStore {
             created_at: entry.created_at.clone(),
             parent_thread_id: entry.parent_thread_id.clone(),
             labels: entry.labels.clone(),
+            personality_id: entry.personality_id.clone(),
         }))
     }
 
@@ -564,6 +653,7 @@ impl ConversationStore {
                     created_at,
                     parent_thread_id,
                     labels,
+                    personality_id,
                     ..
                 } => {
                     let (
@@ -572,6 +662,7 @@ impl ConversationStore {
                         labels_value,
                         message_count_value,
                         last_message_at_value,
+                        personality_id_value,
                     ) = match index.get(&thread_id) {
                         Some(existing) => (
                             existing.created_at.clone(),
@@ -579,10 +670,18 @@ impl ConversationStore {
                             labels.unwrap_or_else(|| existing.labels.clone()),
                             existing.message_count,
                             existing.last_message_at.clone(),
+                            personality_id.or_else(|| existing.personality_id.clone()),
                         ),
                         None => {
                             let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
-                            (created_at, parent_thread_id, inferred, None, None)
+                            (
+                                created_at,
+                                parent_thread_id,
+                                inferred,
+                                None,
+                                None,
+                                personality_id,
+                            )
                         }
                     };
                     index.insert(
@@ -594,6 +693,7 @@ impl ConversationStore {
                             labels: labels_value,
                             message_count: message_count_value,
                             last_message_at: last_message_at_value,
+                            personality_id: personality_id_value,
                         },
                     );
                 }
@@ -654,6 +754,7 @@ struct ThreadIndexEntry {
     message_count: Option<usize>,
     /// Timestamp of the newest message, or `None` if unknown (legacy).
     last_message_at: Option<String>,
+    personality_id: Option<String>,
 }
 
 fn infer_labels(thread_id: &str) -> Vec<String> {

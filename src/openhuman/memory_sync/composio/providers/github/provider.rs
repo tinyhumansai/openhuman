@@ -8,7 +8,7 @@
 //!   3. Resolve the authenticated user's GitHub login (used in the search
 //!      query); cached cheaply across re-fetches.
 //!   4. Search for issues and PRs involving the user via
-//!      `GITHUB_SEARCH_ISSUES` with `involves:{login}`, filtered to items
+//!      `GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS` with `involves:{login}`, filtered to items
 //!      updated since the cursor (when available).
 //!   5. For each result, persist as a single memory document if it's new
 //!      *or* edited since the last sync.
@@ -27,12 +27,12 @@ use crate::openhuman::memory_sync::composio::providers::sync_state::{
     persist_single_item, SyncState,
 };
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
 };
 
-pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_AUTHENTICATED_USER";
-pub(crate) const ACTION_SEARCH_ISSUES: &str = "GITHUB_SEARCH_ISSUES";
+pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_THE_AUTHENTICATED_USER";
+pub(crate) const ACTION_SEARCH_ISSUES: &str = "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS";
 
 /// Items per search page on steady-state syncs.
 const PAGE_SIZE: u32 = 50;
@@ -197,12 +197,7 @@ impl ComposioProvider for GitHubProvider {
         };
 
         // Build the base search query.
-        let query = match &state.cursor {
-            Some(cursor) => {
-                format!("involves:{login} updated:>{cursor}")
-            }
-            None => format!("involves:{login}"),
-        };
+        let query = build_search_query(&login, state.cursor.as_deref());
 
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
@@ -386,6 +381,133 @@ impl ComposioProvider for GitHubProvider {
             }),
         })
     }
+
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let max = filter.effective_max();
+        let query = build_fetch_query(filter);
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            max,
+            query = %query,
+            "[composio:github] fetch_tasks"
+        );
+
+        let mut args = json!({
+            "q": query,
+            "sort": "updated",
+            "order": "desc",
+            "per_page": max.min(100) as u32,
+            "page": 1,
+        });
+        merge_extra(&mut args, &filter.extra);
+
+        let resp = ctx
+            .execute(ACTION_SEARCH_ISSUES, Some(args))
+            .await
+            .map_err(|e| format!("[composio:github] {ACTION_SEARCH_ISSUES}: {e:#}"))?;
+        if !resp.successful {
+            return Err(format!(
+                "[composio:github] {ACTION_SEARCH_ISSUES}: {}",
+                resp.error.unwrap_or_else(|| "provider failure".into())
+            ));
+        }
+
+        let mut out: Vec<NormalizedTask> = Vec::new();
+        for issue in sync::extract_issues(&resp.data) {
+            if out.len() >= max {
+                break;
+            }
+            if let Some(nt) = normalize_github_issue(&issue) {
+                out.push(nt);
+            }
+        }
+        tracing::debug!(count = out.len(), "[composio:github] fetch_tasks complete");
+        Ok(out)
+    }
+}
+
+/// Build a GitHub Search-Issues query from a [`TaskFetchFilter`].
+///
+/// Combines repo / label / state / assignee qualifiers. When the filter
+/// carries no constraints at all we fall back to `involves:@me` so a
+/// task source never accidentally pulls the entire public issue
+/// universe.
+pub(super) fn build_fetch_query(filter: &TaskFetchFilter) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(repo) = filter
+        .repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        parts.push(format!("repo:{repo}"));
+    }
+    for label in filter
+        .labels
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+    {
+        parts.push(format!("label:\"{label}\""));
+    }
+    if let Some(state) = filter
+        .state
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        parts.push(format!("state:{state}"));
+    }
+    if filter.assignee_is_me {
+        parts.push("assignee:@me".to_string());
+    }
+    if parts.is_empty() {
+        return "involves:@me".to_string();
+    }
+    parts.join(" ")
+}
+
+/// Map a raw GitHub issue/PR payload into a [`NormalizedTask`].
+fn normalize_github_issue(issue: &serde_json::Value) -> Option<NormalizedTask> {
+    let external_id = sync::extract_issue_id(issue)?;
+    let title =
+        sync::extract_issue_title(issue).unwrap_or_else(|| format!("GitHub issue {external_id}"));
+    Some(NormalizedTask {
+        external_id,
+        source_id: String::new(),
+        provider: "github".to_string(),
+        title,
+        body: pick_str(issue, &["body", "data.body"]),
+        url: pick_str(issue, &["html_url", "data.html_url"]),
+        status: pick_str(issue, &["state", "data.state"]),
+        assignee: pick_str(issue, &["assignee.login", "data.assignee.login"]),
+        due: None,
+        labels: extract_github_labels(issue),
+        priority: None,
+        updated_at: sync::extract_issue_updated_at(issue),
+        raw: issue.clone(),
+    })
+}
+
+/// Extract label names from a GitHub issue payload (`labels` is an array
+/// of `{ name }` objects). Tolerant of the Composio `data` wrapper.
+fn extract_github_labels(issue: &serde_json::Value) -> Vec<String> {
+    let arr = issue
+        .get("labels")
+        .or_else(|| issue.get("data").and_then(|d| d.get("labels")))
+        .and_then(|v| v.as_array());
+    match arr {
+        Some(items) => items
+            .iter()
+            .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
+            .map(|s| s.to_string())
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 impl GitHubProvider {
@@ -419,7 +541,25 @@ impl GitHubProvider {
         }
 
         sync::extract_user_login(&resp.data).ok_or_else(|| {
-            "[composio:github] GITHUB_GET_AUTHENTICATED_USER returned no login".to_string()
+            "[composio:github] GITHUB_GET_THE_AUTHENTICATED_USER returned no login".to_string()
         })
+    }
+}
+
+/// Build the GitHub Search-Issues query for an incremental sync.
+///
+/// `involves:` is GitHub's logical-OR over `author`, `assignee`, `mentions`,
+/// and `commenter`, so the result set covers every item the connected user
+/// has standing in — not only items explicitly assigned to them. When a
+/// cursor from a prior sync is present, an `updated:>{cursor}` clause is
+/// appended so the next page request only returns items changed since.
+///
+/// Kept as a free function (rather than inline in `sync()`) so the query
+/// contract — specifically the `involves:` qualifier — can be asserted by
+/// unit tests without spinning up the full sync pipeline.
+pub(super) fn build_search_query(login: &str, cursor: Option<&str>) -> String {
+    match cursor {
+        Some(cursor) => format!("involves:{login} updated:>{cursor}"),
+        None => format!("involves:{login}"),
     }
 }

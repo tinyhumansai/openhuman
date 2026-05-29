@@ -319,6 +319,13 @@ const de2: TranslationMap = {
   'chat.turn': 'drehen',
   'chat.turns': 'dreht sich',
   'chat.openWorkerThread': 'Arbeitsthread öffnen',
+  'chat.attachment.attach': 'Bild anhängen',
+  'chat.attachment.remove': '{name} entfernen',
+  'chat.attachment.tooMany': 'Maximal {max} Bilder pro Nachricht',
+  'chat.attachment.tooLarge': 'Bild überschreitet die Größenbeschränkung von {max}',
+  'chat.attachment.unsupportedType':
+    'Nicht unterstützter Dateityp. Verwenden Sie PNG, JPEG, WebP, GIF oder BMP.',
+  'chat.attachment.readFailed': 'Datei konnte nicht gelesen werden',
   'memory.searchAria': 'Speicher durchsuchen',
   'memory.searchPlaceholder': 'Speichereinträge durchsuchen...',
   'memory.sourceFilter.all': 'Alle Quellen',
@@ -436,6 +443,7 @@ const de2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Konfiguriere KI-Triage-Einstellungen für Composio-Integrationsauslöser',
   'mic.deviceSelector': 'Mikrofongerät',
+  'mic.tapToSendCountdown': 'Zum Senden tippen ({seconds}s)',
 };
 
 export default de2;

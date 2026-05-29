@@ -316,6 +316,13 @@ const pt2: TranslationMap = {
   'chat.turn': 'turno',
   'chat.turns': 'turnos',
   'chat.openWorkerThread': 'Abrir thread de worker',
+  'chat.attachment.attach': 'Anexar imagem',
+  'chat.attachment.remove': 'Remover {name}',
+  'chat.attachment.tooMany': 'Máximo de {max} imagens por mensagem',
+  'chat.attachment.tooLarge': 'A imagem excede o limite de tamanho de {max}',
+  'chat.attachment.unsupportedType':
+    'Tipo de arquivo não suportado. Use PNG, JPEG, WebP, GIF ou BMP.',
+  'chat.attachment.readFailed': 'Não foi possível ler o arquivo',
   'memory.searchAria': 'Pesquisar memória',
   'memory.searchPlaceholder': 'Pesquisar entradas de memória...',
   'memory.sourceFilter.all': 'Todas as fontes',
@@ -435,6 +442,7 @@ const pt2: TranslationMap = {
   'devOptions.menuComposioTriggersDesc':
     'Definir configurações de triagem de IA para gatilhos de integração Composio',
   'mic.deviceSelector': 'Dispositivo de microfone',
+  'mic.tapToSendCountdown': 'Toque para enviar ({seconds}s)',
 };
 
 export default pt2;

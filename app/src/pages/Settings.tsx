@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import CostDashboardPanel from '../components/dashboard/CostDashboardPanel';
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
 import AboutPanel from '../components/settings/panels/AboutPanel';
+import AgentAccessPanel from '../components/settings/panels/AgentAccessPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
@@ -16,7 +18,9 @@ import ComposioTriagePanel from '../components/settings/panels/ComposioTriagePan
 import CronJobsPanel from '../components/settings/panels/CronJobsPanel';
 import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOptionsPanel';
 import DevicesComingSoonPanel from '../components/settings/panels/DevicesComingSoonPanel';
+import DevWorkflowPanel from '../components/settings/panels/DevWorkflowPanel';
 import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
+import EventLogPanel from '../components/settings/panels/EventLogPanel';
 import HeartbeatPanel from '../components/settings/panels/HeartbeatPanel';
 import LedgerUsagePanel from '../components/settings/panels/LedgerUsagePanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
@@ -25,6 +29,7 @@ import McpServerPanel from '../components/settings/panels/McpServerPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MigrationPanel from '../components/settings/panels/MigrationPanel';
+import ModelHealthPanel from '../components/settings/panels/ModelHealthPanel';
 import NotificationsTabbedPanel from '../components/settings/panels/NotificationsTabbedPanel';
 import PersonaPanel from '../components/settings/panels/PersonaPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
@@ -32,10 +37,13 @@ import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePan
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
+import SkillsRunnerPanel from '../components/settings/panels/SkillsRunnerPanel';
+import TaskSourcesPanel from '../components/settings/panels/TaskSourcesPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
+import ToolPolicyDiagnosticsPanel from '../components/settings/panels/ToolPolicyDiagnosticsPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
@@ -321,9 +329,23 @@ const Settings = () => {
       route: 'ledger-usage',
       icon: LlmIcon,
     },
+    {
+      id: 'cost-dashboard',
+      title: t('settings.costDashboard.title'),
+      description: t('settings.costDashboard.desc'),
+      route: 'cost-dashboard',
+      icon: LlmIcon,
+    },
   ];
 
   const composioSettingsItems = [
+    {
+      id: 'task-sources',
+      title: t('settings.taskSources.title'),
+      description: t('settings.taskSources.subtitle'),
+      route: 'task-sources',
+      icon: ToolsIcon,
+    },
     {
       id: 'composio-routing',
       title: t('settings.developerMenu.composioRouting.title'),
@@ -411,10 +433,15 @@ const Settings = () => {
         <Route path="mascot" element={wrapSettingsPage(<MascotPanel />)} />
         <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
+        <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
+        <Route
+          path="tool-policy-diagnostics"
+          element={wrapSettingsPage(<ToolPolicyDiagnosticsPanel />)}
+        />
         <Route path="autonomy" element={wrapSettingsPage(<AutonomyPanel />)} />
         <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
         {/* Legacy direct path for the routing tab — kept so existing links
@@ -434,9 +461,16 @@ const Settings = () => {
           path="ledger-usage"
           element={wrapSettingsPage(<LedgerUsagePanel />, { maxWidthClass: 'max-w-4xl' })}
         />
+        <Route
+          path="cost-dashboard"
+          element={wrapSettingsPage(<CostDashboardPanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
         <Route path="search" element={wrapSettingsPage(<SearchPanel />)} />
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
+        <Route path="task-sources" element={wrapSettingsPage(<TaskSourcesPanel />)} />
+        <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
+        <Route path="skills-runner" element={wrapSettingsPage(<SkillsRunnerPanel />)} />
         <Route
           path="screen-awareness-debug"
           element={wrapSettingsPage(<ScreenAwarenessDebugPanel />)}
@@ -445,6 +479,11 @@ const Settings = () => {
         <Route path="voice-debug" element={wrapSettingsPage(<VoiceDebugPanel />)} />
         <Route path="local-model-debug" element={wrapSettingsPage(<LocalModelDebugPanel />)} />
         <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
+        <Route path="event-log" element={wrapSettingsPage(<EventLogPanel />)} />
+        <Route
+          path="model-health"
+          element={wrapSettingsPage(<ModelHealthPanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
         <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
         <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
         <Route path="intelligence" element={<Intelligence />} />

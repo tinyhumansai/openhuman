@@ -157,7 +157,6 @@ pub async fn memory_learn_all(
 mod tests {
     use std::ffi::OsString;
     use std::path::PathBuf;
-    use std::sync::OnceLock;
 
     use serde_json::json;
     use tempfile::TempDir;
@@ -166,15 +165,7 @@ mod tests {
     use crate::openhuman::memory_store::NamespaceDocumentInput;
 
     fn ensure_memory_client() {
-        static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
-        let workspace = WORKSPACE.get_or_init(|| {
-            let tmp = TempDir::new().expect("tempdir");
-            let path = tmp.path().join("workspace");
-            std::fs::create_dir_all(&path).expect("workspace dir");
-            std::mem::forget(tmp);
-            path
-        });
-        let _ = crate::openhuman::memory::global::init(workspace.clone());
+        crate::openhuman::memory::ops::ensure_shared_memory_client();
     }
 
     struct WorkspaceEnvGuard {
@@ -184,7 +175,9 @@ mod tests {
 
     impl WorkspaceEnvGuard {
         fn set(path: &std::path::Path) -> Self {
-            let lock = crate::openhuman::config::TEST_ENV_LOCK.lock().unwrap();
+            let lock = crate::openhuman::config::TEST_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             let previous = std::env::var_os("OPENHUMAN_WORKSPACE");
             std::env::set_var("OPENHUMAN_WORKSPACE", path);
             Self {
@@ -206,12 +199,13 @@ mod tests {
 
     async fn seed_namespace(prefix: &str) -> String {
         ensure_memory_client();
-        let namespace = format!("{prefix}-{}", uuid::Uuid::new_v4());
+        let short_id = &uuid::Uuid::new_v4().as_simple().to_string()[..12];
+        let namespace = format!("{prefix}ns{short_id}");
         let client = crate::openhuman::memory::global::client().expect("memory client");
         client
             .put_doc_light(NamespaceDocumentInput {
                 namespace: namespace.clone(),
-                key: format!("key-{}", uuid::Uuid::new_v4()),
+                key: format!("testkey{short_id}"),
                 title: "Test".into(),
                 content: "Seed content".into(),
                 source_type: "doc".into(),
@@ -230,17 +224,21 @@ mod tests {
     async fn write_config_with_runtime_enabled(
         workspace_root: &std::path::Path,
         runtime_enabled: bool,
-    ) {
-        let _guard = WorkspaceEnvGuard::set(workspace_root);
+    ) -> WorkspaceEnvGuard {
+        let guard = WorkspaceEnvGuard::set(workspace_root);
         let mut config = crate::openhuman::config::Config::load_or_init()
             .await
             .expect("load config");
         config.local_ai.runtime_enabled = runtime_enabled;
         config.save().await.expect("save config");
+        guard
     }
 
     #[tokio::test]
     async fn memory_learn_all_is_noop_for_explicit_empty_namespace_list() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         ensure_memory_client();
         let outcome = memory_learn_all(LearnAllParams {
             namespaces: Some(vec![]),
@@ -254,8 +252,14 @@ mod tests {
 
     #[tokio::test]
     async fn memory_learn_all_is_noop_when_requested_namespaces_do_not_exist() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         ensure_memory_client();
-        let missing = format!("missing-{}", uuid::Uuid::new_v4());
+        let missing = format!(
+            "missing{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
         let outcome = memory_learn_all(LearnAllParams {
             namespaces: Some(vec![missing]),
         })
@@ -267,12 +271,17 @@ mod tests {
 
     #[tokio::test]
     async fn memory_learn_all_filters_missing_namespaces_and_dedupes_requested_order() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let namespace_a = seed_namespace("memory-learn-a").await;
         let namespace_b = seed_namespace("memory-learn-b").await;
-        let missing = format!("missing-{}", uuid::Uuid::new_v4());
+        let missing = format!(
+            "missing{}",
+            &uuid::Uuid::new_v4().as_simple().to_string()[..12]
+        );
         let tmp = TempDir::new().expect("tempdir");
-        write_config_with_runtime_enabled(tmp.path(), true).await;
-        let _workspace = WorkspaceEnvGuard::set(tmp.path());
+        let _workspace = write_config_with_runtime_enabled(tmp.path(), true).await;
 
         let outcome = memory_learn_all(LearnAllParams {
             namespaces: Some(vec![
@@ -295,10 +304,12 @@ mod tests {
 
     #[tokio::test]
     async fn memory_learn_all_requires_local_ai_once_existing_namespace_is_selected() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let namespace = seed_namespace("memory-learn-runtime").await;
         let tmp = TempDir::new().expect("tempdir");
-        write_config_with_runtime_enabled(tmp.path(), false).await;
-        let _workspace = WorkspaceEnvGuard::set(tmp.path());
+        let _workspace = write_config_with_runtime_enabled(tmp.path(), false).await;
 
         let err = memory_learn_all(LearnAllParams {
             namespaces: Some(vec![namespace]),
@@ -311,11 +322,13 @@ mod tests {
 
     #[tokio::test]
     async fn memory_learn_all_uses_all_namespaces_when_none_is_requested() {
+        let _serial = crate::openhuman::memory::ops::GLOBAL_MEMORY_TEST_LOCK
+            .lock()
+            .await;
         let namespace_a = seed_namespace("memory-learn-all-a").await;
         let namespace_b = seed_namespace("memory-learn-all-b").await;
         let tmp = TempDir::new().expect("tempdir");
-        write_config_with_runtime_enabled(tmp.path(), true).await;
-        let _workspace = WorkspaceEnvGuard::set(tmp.path());
+        let _workspace = write_config_with_runtime_enabled(tmp.path(), true).await;
 
         let outcome = memory_learn_all(LearnAllParams { namespaces: None })
             .await

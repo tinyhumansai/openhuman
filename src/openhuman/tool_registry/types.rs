@@ -68,4 +68,62 @@ pub struct ToolPolicyDiagnostics {
     pub json_rpc_tools: usize,
     pub possible_write_surfaces: Vec<String>,
     pub policy_surfaces: Vec<String>,
+    pub posture: ToolPolicyPosture,
+    pub mcp_allowlists: McpAllowlistDiagnostics,
+    pub mcp_write_audit: McpWriteAuditHealth,
+    pub recent_denials: Vec<RecentPolicyDenial>,
+    pub capability_providers: CapabilityProviderDiagnostics,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ToolPolicyPosture {
+    pub autonomy_level: String,
+    pub workspace_only: bool,
+    pub max_actions_per_hour: u32,
+    pub require_approval_for_medium_risk: bool,
+    pub block_high_risk_commands: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct McpAllowlistDiagnostics {
+    pub enabled: bool,
+    pub server_count: usize,
+    pub enabled_server_count: usize,
+    pub servers: Vec<McpServerAllowlistSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct McpServerAllowlistSummary {
+    pub name: String,
+    pub enabled: bool,
+    pub allowed_tools_count: usize,
+    pub disallowed_tools_count: usize,
+    pub has_allowlist: bool,
+    pub has_denylist: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct McpWriteAuditHealth {
+    pub enabled: bool,
+    pub recent_rows: Option<u64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RecentPolicyDenial {
+    pub timestamp_ms: i64,
+    pub tool_name: String,
+    pub policy: String,
+    pub action: String,
+    pub reason: String,
+}
+
+/// Redacted diagnostics for configured external capability providers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CapabilityProviderDiagnostics {
+    pub total_providers: usize,
+    pub enabled_providers: usize,
+    pub trusted_providers: usize,
+    pub trusted_enabled_providers: usize,
+    pub registry_errors: Vec<String>,
 }

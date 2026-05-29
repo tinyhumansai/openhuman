@@ -82,7 +82,17 @@ describe('CreateSkillModal', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('rekeys allowedTools to allowed-tools on submit and calls onCreated', async () => {
+  it('submits name + description, calls onCreated with the new skill', async () => {
+    // The previous incarnation of this test also drove Tags + Allowed-tools
+    // inputs and asserted the `allowedTools` → `allowed-tools` rekey at the
+    // call site. CreateSkillForm dropped those inputs in the refactor (the
+    // form is now Name + Description + the `[[inputs]]` editor only — see
+    // ScheduledCronCard / CreateSkillForm.tsx), so the inputs are no longer
+    // collectable from the modal UI. The rekey itself still happens in
+    // `skillsApi.createSkill` (services/api/skillsApi.ts → params build) and
+    // is covered by the skillsApi unit tests; this test now just guards the
+    // modal's submit-pipeline shape: name + description → createSkill →
+    // onCreated.
     const { skillsApi } = await import('../../../services/api/skillsApi');
     const created = builtSkill();
     vi.mocked(skillsApi.createSkill).mockResolvedValueOnce(created);
@@ -93,23 +103,19 @@ describe('CreateSkillModal', () => {
 
     fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'My Skill' } });
     fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'does stuff' } });
-    fireEvent.change(screen.getByLabelText(/Tags/), { target: { value: 'alpha, beta' } });
-    fireEvent.change(screen.getByLabelText(/Allowed tools/), {
-      target: { value: 'mcp/fs, fetch' },
-    });
 
     const submit = screen.getByRole('button', { name: /Create skill/ });
     await act(async () => {
       fireEvent.click(submit);
     });
 
-    expect(vi.mocked(skillsApi.createSkill)).toHaveBeenCalledWith({
-      name: 'My Skill',
-      description: 'does stuff',
-      scope: 'user',
-      tags: ['alpha', 'beta'],
-      allowedTools: ['mcp/fs', 'fetch'],
-    });
+    expect(vi.mocked(skillsApi.createSkill)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'My Skill',
+        description: 'does stuff',
+        scope: 'user',
+      })
+    );
     expect(onCreated).toHaveBeenCalledWith(created);
   });
 
@@ -130,5 +136,12 @@ describe('CreateSkillModal', () => {
       expect(screen.getByRole('alert')).toHaveTextContent('slug already exists');
     });
     expect(submit.disabled).toBe(false);
+  });
+
+  it('close button calls onClose when not submitting', () => {
+    const onClose = vi.fn();
+    render(<CreateSkillModal onClose={onClose} onCreated={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

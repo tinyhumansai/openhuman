@@ -378,6 +378,29 @@ pub async fn test_connection(
     }
 }
 
+/// Build an embedding provider from the live config — the same construction
+/// [`embed`] uses, exposed so other domains (e.g. `codegraph`) can obtain a
+/// provider for `signature()` + direct embedding without a JSON-RPC round-trip.
+pub fn provider_from_config(config: &Config) -> anyhow::Result<Box<dyn super::EmbeddingProvider>> {
+    let provider_name = &config.memory.embedding_provider;
+    let model = &config.memory.embedding_model;
+    let dims = config.memory.embedding_dimensions;
+    let api_key = resolve_api_key(config, provider_name);
+    let custom_endpoint = provider_name.strip_prefix("custom:").map(|s| s.to_string());
+    let provider_slug = if provider_name.starts_with("custom:") {
+        "custom"
+    } else {
+        provider_name.as_str()
+    };
+    create_embedding_provider_with_credentials(
+        provider_slug,
+        model,
+        dims,
+        &api_key,
+        custom_endpoint.as_deref(),
+    )
+}
+
 fn resolve_api_key(config: &Config, provider_name: &str) -> String {
     let slug = if provider_name.starts_with("custom:") {
         "custom"

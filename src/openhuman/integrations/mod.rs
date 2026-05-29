@@ -11,6 +11,7 @@ pub mod brave;
 pub mod client;
 pub mod google_places;
 pub mod parallel;
+pub mod querit;
 pub mod searxng;
 pub mod seltz;
 pub mod stock_prices;
@@ -28,6 +29,7 @@ pub use parallel::{
     ParallelChatTool, ParallelDatasetTool, ParallelEnrichTool, ParallelExtractTool,
     ParallelResearchTool, ParallelSearchTool,
 };
+pub use querit::QueritSearchTool;
 pub use searxng::{SearxngSearchArgs, SearxngSearchResponse, SearxngSearchTool};
 pub use seltz::SeltzSearchTool;
 pub use stock_prices::{

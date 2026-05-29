@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   beginInferenceTurn,
+  clearAllChatRuntime,
   clearInferenceStatusForThread,
+  clearPendingApprovalForThread,
   clearRuntimeForThread,
   clearStreamingAssistantForThread,
   clearTaskBoardForThread,
@@ -12,6 +14,7 @@ import reducer, {
   hydrateRuntimeFromSnapshot,
   markInferenceTurnStreaming,
   setInferenceStatusForThread,
+  setPendingApprovalForThread,
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
@@ -261,5 +264,59 @@ describe('chatRuntimeSlice', () => {
     expect(cleared.toolTimelineByThread['thread-1']).toBeUndefined();
     expect(cleared.taskBoardByThread['thread-1']).toBeUndefined();
     expect(cleared.inferenceTurnLifecycleByThread['thread-1']).toBeUndefined();
+  });
+
+  describe('pending approval (ApprovalGate surface)', () => {
+    const approval = {
+      requestId: 'req-approval-1',
+      toolName: 'shell',
+      message: 'Run `npm test` in the project',
+    };
+
+    it('stores and clears a pending approval per thread', () => {
+      const withApproval = reducer(
+        undefined,
+        setPendingApprovalForThread({ threadId: 'thread-1', approval })
+      );
+      expect(withApproval.pendingApprovalByThread['thread-1']).toEqual(approval);
+
+      const cleared = reducer(
+        withApproval,
+        clearPendingApprovalForThread({ threadId: 'thread-1' })
+      );
+      expect(cleared.pendingApprovalByThread['thread-1']).toBeUndefined();
+    });
+
+    it('keeps approvals isolated across threads', () => {
+      const a = reducer(undefined, setPendingApprovalForThread({ threadId: 't1', approval }));
+      const b = reducer(
+        a,
+        setPendingApprovalForThread({
+          threadId: 't2',
+          approval: { ...approval, requestId: 'req-2' },
+        })
+      );
+      const clearedT1 = reducer(b, clearPendingApprovalForThread({ threadId: 't1' }));
+      expect(clearedT1.pendingApprovalByThread['t1']).toBeUndefined();
+      expect(clearedT1.pendingApprovalByThread['t2']?.requestId).toBe('req-2');
+    });
+
+    it('clearRuntimeForThread drops a stale parked approval', () => {
+      const withApproval = reducer(
+        undefined,
+        setPendingApprovalForThread({ threadId: 'thread-1', approval })
+      );
+      const cleared = reducer(withApproval, clearRuntimeForThread({ threadId: 'thread-1' }));
+      expect(cleared.pendingApprovalByThread['thread-1']).toBeUndefined();
+    });
+
+    it('clearAllChatRuntime drops all pending approvals', () => {
+      const withApproval = reducer(
+        undefined,
+        setPendingApprovalForThread({ threadId: 'thread-1', approval })
+      );
+      const cleared = reducer(withApproval, clearAllChatRuntime());
+      expect(cleared.pendingApprovalByThread).toEqual({});
+    });
   });
 });

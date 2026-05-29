@@ -14,6 +14,10 @@ mod core_rpc;
 mod deep_link_ipc;
 #[cfg(target_os = "windows")]
 mod deep_link_ipc_windows;
+// Cross-platform module: the registry-reading function is windows-only, but
+// the parsing helpers compile (and test) everywhere so `cargo test` on the
+// developer host covers them.
+mod deep_link_registration_check;
 mod dictation_hotkeys;
 mod discord_scanner;
 mod fake_camera;
@@ -32,6 +36,8 @@ mod native_notifications;
 mod notification_settings;
 mod process_kill;
 mod process_recovery;
+#[cfg(target_os = "windows")]
+mod reset_reboot_schedule;
 mod screen_capture;
 mod slack_scanner;
 mod telegram_scanner;
@@ -262,6 +268,27 @@ async fn restart_core_process(
     state.inner().restart().await
 }
 
+/// Attempt to auto-recover from a port conflict by reaping stale OpenHuman
+/// processes (cross-platform) and restarting the embedded core.
+///
+/// Called by the BootCheckGate "Fix Automatically" button when the core is
+/// unreachable due to a port conflict.
+#[tauri::command]
+async fn recover_port_conflict(
+    state: tauri::State<'_, core_process::CoreProcessHandle>,
+) -> Result<core_process::RecoveryOutcome, String> {
+    log::info!("[core] recover_port_conflict: command invoked from frontend");
+    let _guard = state.inner().restart_lock().await;
+    log::debug!("[core] recover_port_conflict: acquired restart lock");
+    let outcome = state.inner().recover_port_conflict().await;
+    log::debug!(
+        "[core] recover_port_conflict: result success={} message={}",
+        outcome.success,
+        outcome.message
+    );
+    Ok(outcome)
+}
+
 /// Start the embedded core process on demand.
 ///
 /// Called by the BootCheckGate (Local mode) before the version check.  The
@@ -359,6 +386,18 @@ async fn reset_local_data(
     state.inner().shutdown().await;
     log::info!("[core] reset_local_data: embedded core stopped");
 
+    // ── 3b. Release the host-process log file handle (issue #1615) ──────
+    //
+    // The daily-rotating log appender at `<data_dir>/logs/openhuman-*.log`
+    // is owned by *this* Tauri host process, not by the embedded core
+    // tokio task — so `shutdown()` above does not release it. On Windows
+    // that lingering OS file handle causes `remove_dir_all(.openhuman)`
+    // below to fail with `ERROR_SHARING_VIOLATION` (os error 32). Drop
+    // the writer guard now so the background flushing thread exits and
+    // the file handle is closed before the removal walks the tree.
+    let log_guard_dropped = openhuman_core::core::logging::shutdown_file_guard();
+    log::info!("[core] reset_local_data: shutdown_file_guard dropped guard = {log_guard_dropped}");
+
     // ── 4. Remove the paths ─────────────────────────────────────────────
     //
     // Missing entries are non-fatal: the user may already have manually
@@ -425,23 +464,125 @@ fn is_windows_file_lock_error(error: &std::io::Error) -> bool {
     cfg!(windows) && is_windows_file_lock_raw_os_error(error.raw_os_error())
 }
 
+/// Returns:
+///   * `Ok(())` — the underlying remove failure should be swallowed (e.g.
+///     the path disappeared between the failed `remove_*` call and the
+///     reboot-fallback walk, so there is nothing left to clean up).
+///   * `Err(msg)` — a user-facing failure message the caller should surface
+///     to the UI / propagate up the reset flow.
 fn reset_local_data_delete_error(
     label: &str,
     path: &std::path::Path,
     error: &std::io::Error,
-) -> String {
+) -> Result<(), String> {
     if is_windows_file_lock_error(error) {
         log::warn!(
             "[core] reset_local_data: Windows file lock blocked removal of {label} at {}: {error}",
             path.display()
         );
-        return format!(
-            "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
-            path.display()
-        );
+
+        // Fallback: queue the still-locked sub-tree for deletion on the
+        // next Windows boot via MoveFileExW + MOVEFILE_DELAY_UNTIL_REBOOT.
+        // By this point in `reset_local_data` we have already:
+        //   * shut down the embedded core (drops every SQLite/log handle
+        //     the core task held), and
+        //   * released the host-process log appender via
+        //     `shutdown_file_guard()` (drops the rolling log file handle).
+        // So any remaining lock now comes from *outside* this process —
+        // anti-virus / file indexer / sibling app / Explorer — and cannot
+        // be released by closing more OpenHuman windows. See issue #1615.
+        #[cfg(target_os = "windows")]
+        {
+            return schedule_reboot_delete_or_describe(label, path, error);
+        }
+        // `is_windows_file_lock_error` is gated on `cfg!(windows)`, so on
+        // Linux/macOS this branch is unreachable at runtime — but cargo
+        // still type-checks the file for those targets and needs a value
+        // of type `String`.
+        #[cfg(not(target_os = "windows"))]
+        {
+            return Err(format!(
+                "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. Close all OpenHuman windows and try again. ({error})",
+                path.display()
+            ));
+        }
     }
 
-    format!("Failed to remove {label} at {}: {error}", path.display())
+    Err(format!(
+        "Failed to remove {label} at {}: {error}",
+        path.display()
+    ))
+}
+
+/// Windows-only: ask the session manager to delete `path` (and its
+/// children if it is a directory) on the next reboot, and return either a
+/// user-facing message describing the outcome or `Ok(())` when the
+/// underlying failure should be treated as already-cleaned-up.
+#[cfg(target_os = "windows")]
+fn schedule_reboot_delete_or_describe(
+    label: &str,
+    path: &std::path::Path,
+    original_error: &std::io::Error,
+) -> Result<(), String> {
+    match reset_reboot_schedule::schedule_path_for_reboot_deletion(path) {
+        Ok(summary) => {
+            log::info!(
+                "[core] reset_local_data: scheduled {label} at {} for reboot deletion (files={}, dirs={})",
+                path.display(),
+                summary.files,
+                summary.dirs
+            );
+            Err(format!(
+                "Couldn't remove {label} at {} right now because another process is holding it open ({original_error}). {} files and {} folders have been queued for deletion the next time you restart Windows — restart soon to finish the reset.",
+                path.display(),
+                summary.files,
+                summary.dirs,
+            ))
+        }
+        // Race condition: the still-locked path disappeared between the
+        // `remove_*` call that failed with `ERROR_SHARING_VIOLATION` and
+        // the metadata read inside the reboot-schedule walk. Whoever else
+        // held the handle has already finished cleaning up, so the reset
+        // goal is achieved — swallow the original lock error and treat
+        // this as success. The empty partial schedule (no entries queued
+        // yet) is what distinguishes "vanished cleanly" from "started
+        // walking, then hit a real error."
+        Err(failure)
+            if failure.error.kind() == std::io::ErrorKind::NotFound
+                && failure.partial.total() == 0 =>
+        {
+            log::info!(
+                "[core] reset_local_data: {label} at {} disappeared between lock failure and reboot fallback; treating as removed",
+                path.display(),
+            );
+            Ok(())
+        }
+        Err(failure) => {
+            let partial_total = failure.partial.total();
+            log::error!(
+                "[core] reset_local_data: reboot delete fallback failed for {label} at {}: {} (partial schedule: files={}, dirs={})",
+                path.display(),
+                failure.error,
+                failure.partial.files,
+                failure.partial.dirs,
+            );
+            if partial_total == 0 {
+                Err(format!(
+                    "Failed to remove {label} at {} because it is locked by another OpenHuman window or process, and scheduling deletion on next reboot also failed ({}). Close all OpenHuman windows and try again. ({original_error})",
+                    path.display(),
+                    failure.error,
+                ))
+            } else {
+                Err(format!(
+                    "Failed to remove {label} at {} because it is locked by another OpenHuman window or process. {} files and {} folders were queued for the next reboot before scheduling failed ({}); the rest still needs manual cleanup. Close all OpenHuman windows and try again. ({original_error})",
+                    path.display(),
+                    failure.partial.files,
+                    failure.partial.dirs,
+                    failure.error,
+                ))
+            }
+        }
+    }
 }
 
 /// Call the core's `config_get_data_paths` RPC and parse the response.
@@ -511,7 +652,7 @@ async fn remove_path_if_exists(path: &std::path::Path, label: &str) -> Result<()
             );
             Ok(())
         }
-        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
+        Err(e) => reset_local_data_delete_error(label, path, &e),
     }
 }
 
@@ -532,7 +673,7 @@ async fn remove_dir_if_exists(path: &std::path::Path, label: &str) -> Result<(),
             );
             Ok(())
         }
-        Err(e) => Err(reset_local_data_delete_error(label, path, &e)),
+        Err(e) => reset_local_data_delete_error(label, path, &e),
     }
 }
 
@@ -1843,18 +1984,58 @@ fn linux_is_root_uid(uid: u32) -> bool {
     uid == 0
 }
 
-fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &str, arch: &str) {
+/// Whether to skip the Linux `--disable-gpu` / `--disable-gpu-compositing`
+/// workaround.
+///
+/// The workaround was added for issue #1697 — on Arch/Manjaro-family Linux
+/// systems, the AppImage can abort during CEF GPU process startup when EGL
+/// context creation fails before Chromium's own fallback path gets a usable
+/// renderer. The unconditional disable keeps packaged builds launchable on
+/// those configurations, but the side effect is that WebGL2 surfaces (the
+/// Rive mascot on the Human tab; any other GPU-accelerated canvas) cannot
+/// initialise. Users on working GPU stacks (most Ubuntu, WSL2 with proper
+/// driver passthrough, Fedora, etc.) can opt back into hardware
+/// acceleration by setting `OPENHUMAN_FORCE_GPU=1`.
+///
+/// Uses the same recognized truthy tokens as [`cef_prewarm_enabled`], but
+/// this control is explicit opt-in: `1` / `true` / `yes` / `on`
+/// (case-insensitive) enables the override, and anything else (including
+/// unset) preserves the default disable.
+fn cef_force_gpu_enabled(env_override: Option<&str>) -> bool {
+    match env_override {
+        Some(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        }
+        None => false,
+    }
+}
+
+fn append_platform_cef_gpu_workarounds(
+    args: &mut Vec<CefCommandLineArg>,
+    os: &str,
+    arch: &str,
+    force_gpu_override: Option<&str>,
+) {
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
     // abort during CEF GPU process startup when EGL context creation fails
     // before Chromium's own fallback path gets a usable renderer. Disable the
     // hardware GPU path on Linux so packaged builds can still launch via
-    // software compositing.
+    // software compositing. Users with working GPU stacks can opt back into
+    // hardware acceleration via `OPENHUMAN_FORCE_GPU=1` — required for the
+    // Rive mascot on the Human tab and any other WebGL2 surface to render.
     if os == "linux" {
-        args.push(("--disable-gpu", None));
-        args.push(("--disable-gpu-compositing", None));
-        log::info!(
-            "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697)"
-        );
+        if cef_force_gpu_enabled(force_gpu_override) {
+            log::info!(
+                "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping --disable-gpu / --disable-gpu-compositing (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
+            );
+        } else {
+            args.push(("--disable-gpu", None));
+            args.push(("--disable-gpu-compositing", None));
+            log::info!(
+                "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697); set OPENHUMAN_FORCE_GPU=1 to re-enable hardware compositing (needed for WebGL2 surfaces like the Rive mascot)"
+            );
+        }
     }
 
     // Issue #1012: Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
@@ -1882,10 +2063,25 @@ fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &s
     #[cfg(target_os = "linux")]
     {
         let uid = nix::unistd::getuid().as_raw();
-        if os == "linux" && linux_is_root_uid(uid) {
+        // Dev-only: also honor OPENHUMAN_CEF_NO_SANDBOX=1 so a non-root headless
+        // box (no sudo to chown chrome-sandbox root:4755) can launch over RDP.
+        //
+        // SECURITY: gated to debug builds only. Disabling Chromium's process
+        // sandbox in a release binary would let anyone with env-write access
+        // on the host silently turn off a meaningful defense-in-depth layer
+        // (graycyrus review on PR #2875). In release builds `forced` stays
+        // false so only the `linux_is_root_uid` path can opt in (uid=0
+        // already implies root-equivalent trust).
+        #[cfg(debug_assertions)]
+        let forced = std::env::var("OPENHUMAN_CEF_NO_SANDBOX")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        #[cfg(not(debug_assertions))]
+        let forced = false;
+        if os == "linux" && (linux_is_root_uid(uid) || forced) {
             args.push(("--no-sandbox", None));
             log::info!(
-                "[cef-startup] running as root (uid=0) on Linux: adding --no-sandbox \
+                "[cef-startup] Linux: adding --no-sandbox (root uid or OPENHUMAN_CEF_NO_SANDBOX) \
                  (OPENHUMAN-TAURI-K1)"
             );
         }
@@ -2209,8 +2405,34 @@ pub fn run() {
 
         // SAFETY: mutex_name is null-terminated UTF-16; handle is checked below.
         let handle = unsafe { CreateMutexW(std::ptr::null(), 0, mutex_name.as_ptr()) };
+        // Capture GetLastError immediately after CreateMutexW so no intervening
+        // syscall (e.g. logging) can clobber the thread-local error code.
+        let last_error = unsafe { GetLastError() };
 
-        if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // Primary: hold the handle until run() returns.
+        struct OwnedMutex(isize);
+        impl Drop for OwnedMutex {
+            fn drop(&mut self) {
+                if self.0 != 0 {
+                    unsafe { CloseHandle(self.0 as _) };
+                }
+            }
+        }
+
+        if handle.is_null() {
+            // CreateMutexW failed for a reason other than "already exists"
+            // (which returns a valid handle plus ERROR_ALREADY_EXISTS). Likely
+            // causes: out-of-memory, security-descriptor fault, or other
+            // Win32-level anomaly. Without the guard, a concurrent second
+            // launch can re-trigger the cef::initialize panic this block was
+            // added to prevent — but refusing to start at all is strictly
+            // worse for the user. Log loudly so the failure is observable in
+            // Sentry / log files and continue best-effort.
+            log::error!(
+                "[single-instance] CreateMutexW returned NULL handle (GetLastError={last_error}); continuing without pre-CEF single-instance guard — concurrent launches may hit OPENHUMAN-TAURI-A"
+            );
+            OwnedMutex(0)
+        } else if last_error == ERROR_ALREADY_EXISTS {
             // Another instance is already past this point — exit before we
             // touch CEF at all. Forward deep links first so OAuth callbacks
             // are not dropped by this early pre-plugin exit.
@@ -2223,25 +2445,14 @@ pub fn run() {
                     );
                 }
             }
-            if !handle.is_null() {
-                unsafe { CloseHandle(handle) };
-            }
+            unsafe { CloseHandle(handle) };
             log::info!(
                 "[single-instance] pre-CEF mutex held by primary; secondary exiting (OPENHUMAN-TAURI-A fix)"
             );
             std::process::exit(0);
+        } else {
+            OwnedMutex(handle as isize)
         }
-
-        // Primary: hold the handle until run() returns.
-        struct OwnedMutex(isize);
-        impl Drop for OwnedMutex {
-            fn drop(&mut self) {
-                if self.0 != 0 {
-                    unsafe { CloseHandle(self.0 as _) };
-                }
-            }
-        }
-        OwnedMutex(handle as isize)
     };
 
     #[cfg(windows)]
@@ -2432,10 +2643,12 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
+        let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,
             std::env::consts::OS,
             std::env::consts::ARCH,
+            force_gpu_env.as_deref(),
         );
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
@@ -2551,8 +2764,34 @@ pub fn run() {
         .setup(move |app| {
             #[cfg(windows)]
             {
-                if let Err(err) = app.deep_link().register_all() {
-                    log::warn!("[deep-link] register_all failed (non-fatal): {err}");
+                // `register_all` writes HKCU\Software\Classes\openhuman so the
+                // browser can hand `openhuman://auth?...` callbacks back to
+                // the running instance. The plugin only returns an Err — and
+                // it only logs at `warn` — when its single internal write
+                // fails outright; it does not verify what's on disk. Issue
+                // #2699 reports OAuth callbacks silently disappearing on
+                // some Windows installs, which traced back to a missing or
+                // stale `command` value here. Read it back and log loudly
+                // (Sentry-level `error`) so the failure mode is observable
+                // in support logs; we deliberately do NOT auto-repair —
+                // writing the wrong exe path can brick a working install.
+                let register_err = app.deep_link().register_all().err();
+                let status = deep_link_registration_check::verify_protocol_registration();
+                let status_log = status.redacted();
+                if register_err.is_none() && status.is_healthy() {
+                    log::info!("[deep-link] openhuman:// scheme registered ({status_log})");
+                } else {
+                    // Use the redacted form so per-user install paths
+                    // (`C:\Users\<username>\...`) do not land in Sentry / user
+                    // logs — basenames are kept so the diagnostic still
+                    // identifies the registered exe.
+                    log::error!(
+                        "[deep-link] openhuman:// scheme registration unhealthy — \
+                         OAuth callbacks may never reach the app. \
+                         register_all_error={register_err:?}, hkcu_status={status_log}. \
+                         See gitbooks/overview/troubleshooting-sign-in.md \
+                         (\"Windows: openhuman:// handler not registered\") for the manual repair."
+                    );
                 }
                 deep_link_ipc_windows::drain_pending_urls(app.app_handle());
             }
@@ -3138,6 +3377,10 @@ pub fn run() {
                             request_id: request_id.clone(),
                             meet_url: meet_url.clone(),
                             display_name: "OpenHuman Dev".to_string(),
+                            // Dev-auto launch has no real user identity — the
+                            // wake gate will fail-closed (no wakes fire) which
+                            // is the safe posture for an automated harness.
+                            owner_display_name: String::new(),
                         };
                         match meet_call::meet_call_open_window(app_handle.clone(), state, args)
                             .await
@@ -3182,6 +3425,7 @@ pub fn run() {
             download_app_update,
             install_app_update,
             restart_core_process,
+            recover_port_conflict,
             start_core_process,
             reset_local_data,
             app_quit,
@@ -3221,6 +3465,7 @@ pub fn run() {
             workspace_paths::open_workspace_path,
             workspace_paths::reveal_workspace_path,
             workspace_paths::preview_workspace_text,
+            workspace_paths::resolve_workspace_absolute_path,
             meet_call::meet_call_open_window,
             meet_call::meet_call_close_window,
             companion_commands::register_companion_hotkey,
@@ -3553,28 +3798,77 @@ mod tests {
     #[test]
     fn reset_local_data_delete_error_keeps_generic_message_for_other_errors() {
         let err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        let msg = reset_local_data_delete_error(
+        let result = reset_local_data_delete_error(
             "current openhuman dir",
             std::path::Path::new("/tmp/openhuman"),
             &err,
         );
 
+        let msg = result.expect_err("non-lock errors must still surface to the UI");
         assert!(msg.starts_with("Failed to remove current openhuman dir at /tmp/openhuman:"));
         assert!(!msg.contains("Close all OpenHuman windows and try again"));
     }
 
     #[cfg(windows)]
     #[test]
-    fn reset_local_data_delete_error_explains_windows_file_locks() {
-        let err = std::io::Error::from_raw_os_error(32);
-        let msg = reset_local_data_delete_error(
-            "current openhuman dir",
-            std::path::Path::new("C:\\Users\\me\\.openhuman"),
-            &err,
-        );
+    fn reset_local_data_delete_error_swallows_lock_failure_when_path_disappeared() {
+        // Race condition the reboot fallback now handles: the locked path
+        // was gone by the time `schedule_path_for_reboot_deletion` ran its
+        // `symlink_metadata` probe, so the reset goal is already met. The
+        // helper must return `Ok(())` rather than surfacing a confusing
+        // "couldn't remove (it's not there)" toast.
+        let dir = tempfile::tempdir().expect("tempdir for reset error test");
+        let missing = dir.path().join("definitely-not-there");
 
-        assert!(msg.contains("locked by another OpenHuman window or process"));
-        assert!(msg.contains("Close all OpenHuman windows and try again"));
+        let err = std::io::Error::from_raw_os_error(32);
+        let result = reset_local_data_delete_error("current openhuman dir", &missing, &err);
+
+        assert!(
+            result.is_ok(),
+            "expected NotFound + empty partial schedule to be swallowed as success, got {result:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reset_local_data_delete_error_reports_reboot_schedule_counts() {
+        // When the lock fallback can walk a real directory tree, the user
+        // message should report how much has been queued so the support
+        // log preserves "what was actually scheduled". Scheduling itself
+        // may still fail at the MoveFileExW step in unprivileged test
+        // processes (the registry key write requires administrator); the
+        // fallback then carries a partial schedule that the error path
+        // surfaces, so both branches must keep mentioning the lock cause
+        // *and* expose either the queued counts or the schedule failure.
+        let dir = tempfile::tempdir().expect("tempdir for reset error test");
+        let target = dir.path().join("reset-mock");
+        std::fs::create_dir_all(target.join("nested")).expect("mkdir nested");
+        std::fs::write(target.join("a.txt"), b"x").expect("write a.txt");
+        std::fs::write(target.join("nested").join("b.txt"), b"y").expect("write b.txt");
+
+        let err = std::io::Error::from_raw_os_error(32);
+        let result = reset_local_data_delete_error("current openhuman dir", &target, &err);
+
+        // Path exists on disk, so the fallback must surface the outcome —
+        // either an "all-queued" success-but-needs-reboot message (admin)
+        // or one of the failure flavours (non-admin).
+        let msg = result
+            .expect_err("path exists, fallback must report queued counts or scheduling failure");
+        let admin_path = msg.contains("queued for deletion the next time you restart Windows")
+            && msg.contains("2 files and 2 folders");
+        let user_full_fail = msg.contains("scheduling deletion on next reboot also failed");
+        let user_partial = msg.contains("queued for the next reboot before scheduling failed");
+        assert!(
+            admin_path || user_full_fail || user_partial,
+            "expected reboot-scheduled, fully-failed, or partial-fail message, got: {msg}"
+        );
+        // Whatever branch we land on, the user must still be told the lock
+        // is what blocked the immediate removal.
+        assert!(
+            msg.contains("locked by another OpenHuman window or process")
+                || msg.contains("another process is holding it open"),
+            "missing lock cause: {msg}"
+        );
     }
 
     /// Tests for setup_tray conditional compilation
@@ -3835,7 +4129,7 @@ mod tests {
     #[test]
     fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
         let mut args = Vec::new();
-        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64");
+        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None);
 
         assert!(args.contains(&("--disable-gpu", None)));
         assert!(args.contains(&("--disable-gpu-compositing", None)));
@@ -3844,7 +4138,7 @@ mod tests {
     #[test]
     fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
         let mut args = Vec::new();
-        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64");
+        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", None);
 
         assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
     }
@@ -3853,13 +4147,74 @@ mod tests {
     fn platform_cef_gpu_workarounds_leave_other_platforms_alone() {
         for (os, arch) in [("macos", "aarch64"), ("windows", "x86_64")] {
             let mut args = Vec::new();
-            append_platform_cef_gpu_workarounds(&mut args, os, arch);
+            append_platform_cef_gpu_workarounds(&mut args, os, arch, None);
 
             assert!(
                 args.is_empty(),
                 "unexpected CEF GPU flags for {os}/{arch}: {args:?}"
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // OPENHUMAN_FORCE_GPU override (re-enables WebGL2 surfaces — Rive mascot)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn force_gpu_default_off_when_env_unset() {
+        assert!(!cef_force_gpu_enabled(None));
+    }
+
+    #[test]
+    fn force_gpu_explicit_enable_values_match_prewarm_pattern() {
+        for v in ["1", "true", "yes", "on", "TRUE", "Yes", "On"] {
+            assert!(
+                cef_force_gpu_enabled(Some(v)),
+                "OPENHUMAN_FORCE_GPU={v:?} should opt in"
+            );
+        }
+    }
+
+    #[test]
+    fn force_gpu_anything_else_is_off() {
+        // Mirrors prewarm semantics: only explicit truthy values opt in.
+        for v in ["", "0", "false", "no", "off", "FALSE", "Off", "maybe", " "] {
+            assert!(
+                !cef_force_gpu_enabled(Some(v)),
+                "OPENHUMAN_FORCE_GPU={v:?} must not silently opt in"
+            );
+        }
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
+        // Assert the two GPU-disable flags are absent rather than the whole
+        // arg list being empty: on root-Linux runners (CI in some configs)
+        // the function still appends `--no-sandbox` via the orthogonal
+        // OPENHUMAN-TAURI-K1 branch, which would make a strict `is_empty()`
+        // check fail spuriously. We only care about the GPU branch here.
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"));
+
+        assert!(
+            !args.contains(&("--disable-gpu", None)),
+            "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu, got: {args:?}"
+        );
+        assert!(
+            !args.contains(&("--disable-gpu-compositing", None)),
+            "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu-compositing, got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_force_gpu_does_not_affect_intel_macos_path() {
+        // OPENHUMAN_FORCE_GPU only governs the Linux #1697 workaround; the
+        // separate Intel-macOS #1012 disable must still apply, regardless of
+        // the env var.
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"));
+
+        assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
     }
 
     /// On an Intel macOS build the ARCH constant must equal "x86_64".

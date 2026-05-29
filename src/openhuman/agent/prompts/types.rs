@@ -274,6 +274,15 @@ pub struct CuratedMemoryPromptSnapshot {
 // Prompt context (everything a section needs)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// An entry in the master agent's personality roster prompt section.
+#[derive(Debug, Clone, Default)]
+pub struct PersonalityRosterEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub memory_summary: Option<String>,
+}
+
 pub struct PromptContext<'a> {
     pub workspace_dir: &'a Path,
     pub model_name: &'a str,
@@ -311,6 +320,17 @@ pub struct PromptContext<'a> {
     /// session, tests). Pre-fetched by the caller from the
     /// `auth_get_me` cache so prompt builders never reach the network.
     pub user_identity: Option<UserIdentity>,
+    /// Personality-specific SOUL.md content. When `Some`, the
+    /// `IdentitySection` uses this instead of reading the workspace
+    /// root `SOUL.md`. `None` falls back to existing behavior.
+    pub personality_soul_md: Option<String>,
+    /// Personality-specific MEMORY.md content. When `Some`, the
+    /// `UserFilesSection` uses this instead of reading the workspace
+    /// root `MEMORY.md`. `None` falls back to existing behavior.
+    pub personality_memory_md: Option<String>,
+    /// Non-self personality roster entries for the master agent's prompt.
+    /// Empty for non-master agents.
+    pub personality_roster: Vec<PersonalityRosterEntry>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

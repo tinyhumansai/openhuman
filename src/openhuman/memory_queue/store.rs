@@ -325,8 +325,37 @@ pub fn recover_stale_locks(config: &Config) -> Result<usize> {
             params![now_ms],
         )?;
         if n > 0 {
-            log::warn!("[memory::jobs] recovered {n} stale-locked job(s) at startup");
+            // Info, not warn: with graceful shutdown releasing in-flight
+            // locks (see `release_running_locks`), a non-empty recovery now
+            // means the previous process was hard-killed — expected and
+            // self-healing, not actionable (bug-report-2026-05-26 I2).
+            log::info!("[memory::jobs] recovered {n} stale-locked job(s) at startup");
         }
+        Ok(n)
+    })
+}
+
+/// Release this process's in-flight job locks on a *graceful* shutdown:
+/// flip every `running` row back to `ready` so the work is immediately
+/// re-claimable on next launch instead of waiting out the lease and
+/// surfacing as a stale-lock recovery. The core runs a single worker pool,
+/// so any `running` row at clean-shutdown time was claimed by us.
+/// Returns the number of rows released (bug-report-2026-05-26 I2).
+pub fn release_running_locks(config: &Config) -> Result<usize> {
+    with_connection(config, |conn| {
+        // TODO(multi-process): this releases *every* `running` row, with no
+        // process-scoped guard (e.g. a `worker_pid` / session-token column).
+        // Correct today because a single worker pool is the invariant, but if
+        // multi-process workers are ever introduced, a rolling restart with
+        // two overlapping processes would let one shutdown release the other's
+        // in-flight locks. Add a per-owner predicate here when that happens.
+        let n = conn.execute(
+            "UPDATE mem_tree_jobs
+                SET status = 'ready',
+                    locked_until_ms = NULL
+              WHERE status = 'running'",
+            [],
+        )?;
         Ok(n)
     })
 }
@@ -608,6 +637,27 @@ mod tests {
         assert_eq!(recovered, 1);
         let row = get_job(&cfg, &id).unwrap().unwrap();
         assert_eq!(row.status, JobStatus::Ready);
+    }
+
+    #[test]
+    fn release_running_locks_resets_running_rows_regardless_of_lease() {
+        let (_tmp, cfg) = test_config();
+        let payload = ExtractChunkPayload {
+            chunk_id: "c-release".into(),
+        };
+        let nj = NewJob::extract_chunk(&payload).unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().unwrap();
+
+        // Claim with a long, still-valid lease. `recover_stale_locks` would
+        // NOT touch this (not expired), but a graceful shutdown release must
+        // so a clean restart re-claims it immediately (bug-report-2026-05-26 I2).
+        let _ = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+
+        let released = release_running_locks(&cfg).unwrap();
+        assert_eq!(released, 1);
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.status, JobStatus::Ready);
+        assert!(row.locked_until_ms.is_none());
     }
 
     /// Happy path: a non-stale settlement still succeeds after the claim-token

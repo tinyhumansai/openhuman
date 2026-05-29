@@ -1,4 +1,14 @@
-import { LuArrowLeft, LuArrowRight } from 'react-icons/lu';
+import { useMemo, useState } from 'react';
+import {
+  LuArrowLeft,
+  LuArrowRight,
+  LuBot,
+  LuCircleCheck,
+  LuClipboardList,
+  LuShieldCheck,
+  LuWrench,
+  LuX,
+} from 'react-icons/lu';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { TaskBoard, TaskBoardCard, TaskBoardCardStatus } from '../../../types/turnState';
@@ -18,10 +28,21 @@ interface TaskKanbanBoardProps {
   board: TaskBoard;
   disabled?: boolean;
   onMove?: (card: TaskBoardCard, status: TaskBoardCardStatus) => void;
+  onUpdateCard?: (card: TaskBoardCard, nextCard: TaskBoardCard) => void;
 }
 
-export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanBoardProps) {
+export function TaskKanbanBoard({
+  board,
+  disabled = false,
+  onMove,
+  onUpdateCard,
+}: TaskKanbanBoardProps) {
   const { t } = useT();
+  const [selectedCardId, setSelectedCardId] = useState<string | null>(null);
+  const selectedCard = useMemo(
+    () => board.cards.find(card => card.id === selectedCardId) ?? null,
+    [board.cards, selectedCardId]
+  );
 
   if (board.cards.length === 0) return null;
 
@@ -99,6 +120,39 @@ export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanB
                       </div>
                     )}
                   </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {card.assignedAgent && (
+                      <span className="inline-flex max-w-full items-center gap-1 rounded-md bg-ocean-50 px-1.5 py-0.5 text-[10px] text-ocean-700 dark:bg-ocean-500/10 dark:text-ocean-200">
+                        <LuBot className="h-3 w-3 flex-none" />
+                        <span className="truncate">{card.assignedAgent}</span>
+                      </span>
+                    )}
+                    {card.allowedTools && card.allowedTools.length > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-1.5 py-0.5 text-[10px] text-stone-600 dark:bg-neutral-800 dark:text-neutral-300">
+                        <LuWrench className="h-3 w-3" />
+                        {card.allowedTools.length}
+                      </span>
+                    )}
+                    {card.approvalMode && (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 dark:bg-amber-500/10 dark:text-amber-200">
+                        <LuShieldCheck className="h-3 w-3" />
+                        {card.approvalMode === 'required'
+                          ? t('conversations.taskKanban.approval.requiredBadge')
+                          : t('conversations.taskKanban.approval.notRequiredBadge')}
+                      </span>
+                    )}
+                    {card.acceptanceCriteria && card.acceptanceCriteria.length > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-sage-50 px-1.5 py-0.5 text-[10px] text-sage-700 dark:bg-sage-500/10 dark:text-sage-200">
+                        <LuCircleCheck className="h-3 w-3" />
+                        {card.acceptanceCriteria.length}
+                      </span>
+                    )}
+                  </div>
+                  {card.objective && (
+                    <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
+                      {card.objective}
+                    </p>
+                  )}
                   {card.notes && (
                     <p className="mt-1 break-words text-[11px] leading-snug text-stone-500 dark:text-neutral-400">
                       {card.notes}
@@ -109,12 +163,376 @@ export function TaskKanbanBoard({ board, disabled = false, onMove }: TaskKanbanB
                       {card.blocker}
                     </p>
                   )}
+                  {(onUpdateCard ||
+                    card.plan?.length ||
+                    card.allowedTools?.length ||
+                    card.acceptanceCriteria?.length ||
+                    card.evidence?.length ||
+                    card.objective ||
+                    card.assignedAgent ||
+                    card.approvalMode) && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCardId(card.id)}
+                      className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-ocean-600 hover:text-ocean-700 dark:text-ocean-300 dark:hover:text-ocean-200">
+                      <LuClipboardList className="h-3 w-3" />
+                      {t('conversations.taskKanban.briefButton')}
+                    </button>
+                  )}
                 </article>
               ))}
             </div>
           </section>
         ))}
       </div>
+      {selectedCard && (
+        <TaskBriefDialog
+          card={selectedCard}
+          disabled={disabled}
+          onClose={() => setSelectedCardId(null)}
+          onUpdate={onUpdateCard}
+        />
+      )}
     </div>
   );
+}
+
+function TaskBriefDialog({
+  card,
+  disabled,
+  onClose,
+  onUpdate,
+}: {
+  card: TaskBoardCard;
+  disabled: boolean;
+  onClose: () => void;
+  onUpdate?: (card: TaskBoardCard, nextCard: TaskBoardCard) => void;
+}) {
+  const { t } = useT();
+  const editable = Boolean(onUpdate) && !disabled;
+  const [title, setTitle] = useState(card.title);
+  const [status, setStatus] = useState<TaskBoardCardStatus>(card.status);
+  const [objective, setObjective] = useState(card.objective ?? '');
+  const [assignedAgent, setAssignedAgent] = useState(card.assignedAgent ?? '');
+  const [approvalMode, setApprovalMode] = useState(card.approvalMode ?? '');
+  const [plan, setPlan] = useState(joinLines(card.plan));
+  const [allowedTools, setAllowedTools] = useState(joinLines(card.allowedTools));
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState(joinLines(card.acceptanceCriteria));
+  const [evidence, setEvidence] = useState(joinLines(card.evidence));
+  const [notes, setNotes] = useState(card.notes ?? '');
+  const [blocker, setBlocker] = useState(card.blocker ?? '');
+
+  const save = () => {
+    if (!editable) return;
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+    onUpdate?.(card, {
+      ...card,
+      title: trimmedTitle,
+      status,
+      objective: emptyToNull(objective),
+      assignedAgent: emptyToNull(assignedAgent),
+      approvalMode:
+        approvalMode === 'required' || approvalMode === 'not_required' ? approvalMode : null,
+      plan: splitLines(plan),
+      allowedTools: splitLines(allowedTools),
+      acceptanceCriteria: splitLines(acceptanceCriteria),
+      evidence: splitLines(evidence),
+      notes: emptyToNull(notes),
+      blocker: emptyToNull(blocker),
+    });
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4 py-6">
+      <section className="max-h-full w-full max-w-xl overflow-y-auto rounded-lg border border-stone-200 bg-white p-4 shadow-xl dark:border-neutral-800 dark:bg-neutral-900">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase text-stone-400 dark:text-neutral-500">
+              {t('conversations.taskKanban.briefTitle')}
+            </p>
+            <h3 className="break-words text-base font-semibold text-stone-900 dark:text-neutral-50">
+              {card.title}
+            </h3>
+          </div>
+          <button
+            type="button"
+            aria-label={t('conversations.taskKanban.closeBrief')}
+            onClick={onClose}
+            className="flex h-7 w-7 flex-none items-center justify-center rounded-md text-stone-500 hover:bg-stone-100 hover:text-stone-800 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100">
+            <LuX className="h-4 w-4" />
+          </button>
+        </div>
+
+        {editable ? (
+          <div className="space-y-3 text-sm">
+            <label className="block">
+              <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+                {t('conversations.taskKanban.field.title')}
+              </span>
+              <input
+                value={title}
+                onChange={e => setTitle(e.target.value)}
+                className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+                  {t('conversations.taskKanban.field.status')}
+                </span>
+                <select
+                  value={status}
+                  onChange={e => setStatus(e.target.value as TaskBoardCardStatus)}
+                  className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50">
+                  {COLUMN_DEFS.map(column => (
+                    <option key={column.status} value={column.status}>
+                      {t(column.labelKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <BriefInput
+                label={t('conversations.taskKanban.field.assignedAgent')}
+                value={assignedAgent}
+                onChange={setAssignedAgent}
+              />
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+                  {t('conversations.taskKanban.field.approval')}
+                </span>
+                <select
+                  value={approvalMode}
+                  onChange={e => setApprovalMode(e.target.value)}
+                  className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50">
+                  <option value="">{t('conversations.taskKanban.approval.default')}</option>
+                  <option value="required">
+                    {t('conversations.taskKanban.approval.required')}
+                  </option>
+                  <option value="not_required">
+                    {t('conversations.taskKanban.approval.notRequired')}
+                  </option>
+                </select>
+              </label>
+            </div>
+            <BriefInput
+              label={t('conversations.taskKanban.field.objective')}
+              value={objective}
+              onChange={setObjective}
+            />
+            <BriefTextarea
+              label={t('conversations.taskKanban.field.plan')}
+              value={plan}
+              onChange={setPlan}
+            />
+            <BriefTextarea
+              label={t('conversations.taskKanban.field.allowedTools')}
+              value={allowedTools}
+              onChange={setAllowedTools}
+            />
+            <BriefTextarea
+              label={t('conversations.taskKanban.field.acceptanceCriteria')}
+              value={acceptanceCriteria}
+              onChange={setAcceptanceCriteria}
+            />
+            <BriefTextarea
+              label={t('conversations.taskKanban.field.evidence')}
+              value={evidence}
+              onChange={setEvidence}
+            />
+            <BriefTextarea
+              label={t('conversations.taskKanban.field.notes')}
+              value={notes}
+              onChange={setNotes}
+            />
+            <BriefTextarea
+              label={t('conversations.taskKanban.field.blocker')}
+              value={blocker}
+              onChange={setBlocker}
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-md border border-stone-200 px-3 py-1.5 text-xs font-medium text-stone-600 hover:bg-stone-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800">
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={!title.trim()}
+                className="rounded-md bg-ocean-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-ocean-700 disabled:opacity-50">
+                {t('conversations.taskKanban.saveChanges')}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4 text-sm">
+            <BriefText
+              label={t('conversations.taskKanban.field.objective')}
+              value={card.objective}
+            />
+            <BriefText
+              label={t('conversations.taskKanban.field.assignedAgent')}
+              value={card.assignedAgent}
+              mono
+            />
+            <BriefText
+              label={t('conversations.taskKanban.field.approval')}
+              value={
+                card.approvalMode === 'required'
+                  ? t('conversations.taskKanban.approval.requiredBeforeExecution')
+                  : card.approvalMode === 'not_required'
+                    ? t('conversations.taskKanban.approval.notRequired')
+                    : undefined
+              }
+            />
+            <BriefList
+              label={t('conversations.taskKanban.field.plan')}
+              values={card.plan}
+              ordered
+            />
+            <BriefList
+              label={t('conversations.taskKanban.field.allowedTools')}
+              values={card.allowedTools}
+              mono
+            />
+            <BriefList
+              label={t('conversations.taskKanban.field.acceptanceCriteria')}
+              values={card.acceptanceCriteria}
+            />
+            <BriefList
+              label={t('conversations.taskKanban.field.evidence')}
+              values={card.evidence}
+            />
+            <BriefText label={t('conversations.taskKanban.field.notes')} value={card.notes} />
+            <BriefText
+              label={t('conversations.taskKanban.field.blocker')}
+              value={card.blocker}
+              tone="danger"
+            />
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function BriefInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+        {label}
+      </span>
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="w-full rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
+      />
+    </label>
+  );
+}
+
+function BriefTextarea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs font-semibold text-stone-500 dark:text-neutral-400">
+        {label}
+      </span>
+      <textarea
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        rows={3}
+        className="w-full resize-y rounded-md border border-stone-200 bg-white px-2 py-1.5 text-sm text-stone-900 dark:border-neutral-700 dark:bg-neutral-950 dark:text-neutral-50"
+      />
+    </label>
+  );
+}
+
+function BriefText({
+  label,
+  value,
+  mono = false,
+  tone = 'default',
+}: {
+  label: string;
+  value?: string | null;
+  mono?: boolean;
+  tone?: 'default' | 'danger';
+}) {
+  if (!value) return null;
+  return (
+    <div>
+      <h4 className="mb-1 text-xs font-semibold text-stone-500 dark:text-neutral-400">{label}</h4>
+      <p
+        className={`break-words text-sm ${
+          mono ? 'font-mono' : ''
+        } ${tone === 'danger' ? 'text-coral-600' : 'text-stone-800 dark:text-neutral-100'}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function BriefList({
+  label,
+  values,
+  ordered = false,
+  mono = false,
+}: {
+  label: string;
+  values?: string[];
+  ordered?: boolean;
+  mono?: boolean;
+}) {
+  if (!values?.length) return null;
+  const List = ordered ? 'ol' : 'ul';
+  return (
+    <div>
+      <h4 className="mb-1 text-xs font-semibold text-stone-500 dark:text-neutral-400">{label}</h4>
+      <List
+        className={`space-y-1 ${
+          ordered ? 'list-decimal' : 'list-disc'
+        } list-inside text-sm text-stone-800 dark:text-neutral-100 ${mono ? 'font-mono' : ''}`}>
+        {values.map((value, index) => (
+          <li key={index} className="break-words">
+            {value}
+          </li>
+        ))}
+      </List>
+    </div>
+  );
+}
+
+function joinLines(values?: string[]): string {
+  return values?.join('\n') ?? '';
+}
+
+function splitLines(value: string): string[] {
+  return value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean);
+}
+
+function emptyToNull(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
