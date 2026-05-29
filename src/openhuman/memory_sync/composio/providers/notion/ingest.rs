@@ -139,11 +139,11 @@ pub async fn ingest_page_into_memory_tree(
     .await
     .map_err(|e| anyhow::anyhow!("delete-prior task join error: {e}"))??;
     if removed > 0 {
-        log::debug!(
-            "[composio:notion] ingest: re-ingest cleanup connection_id={} page_id={} removed_chunks={}",
-            connection_id,
-            page_id,
-            removed
+        tracing::debug!(
+            connection_id = %connection_id,
+            page_id = %page_id,
+            removed_chunks = removed,
+            "[composio:notion] ingest: re-ingest cleanup"
         );
     }
 
@@ -171,12 +171,12 @@ pub async fn ingest_page_into_memory_tree(
             // the normal update path. Seeing it here means the prior
             // chunks were already absent (fresh ingest into a primed
             // memory_tree) — fine, just log at debug.
-            log::debug!(
-                "[composio:notion] ingest: page connection_id={} page_id={} chunks_written={} already_ingested={}",
-                connection_id,
-                page_id,
+            tracing::debug!(
+                connection_id = %connection_id,
+                page_id = %page_id,
                 chunks_written,
                 already_ingested,
+                "[composio:notion] ingest: page persisted"
             );
             Ok(chunks_written)
         }
