@@ -64,4 +64,13 @@ describe('<GraphReachPanel />', () => {
     render(<GraphReachPanel result={multi} />);
     expect(screen.getByText('2 components · largest holds 4')).toBeInTheDocument();
   });
+
+  it('uses the all-singular caption for a single-node component (self-loop-only)', () => {
+    // The only fact is "Alice→Alice": the engine keeps Alice as a singleton
+    // (size 1), and the caption renders the all-singular variant — never the
+    // ungrammatical "1 component · 1 entities".
+    const lonely = computeGraphReach([rel('Alice', 'Alice')]);
+    render(<GraphReachPanel result={lonely} />);
+    expect(screen.getByText('1 component · 1 entity')).toBeInTheDocument();
+  });
 });

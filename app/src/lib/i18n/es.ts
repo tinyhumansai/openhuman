@@ -4509,6 +4509,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  'graphReach.centerBadge': 'centro',
+  'graphReach.centerTitle':
+    'Un centro de su grupo: alcanza cada entidad conectada con el mínimo posible de saltos (la excentricidad iguala al radio).',
+  'graphReach.colEccentricity': 'Excentricidad',
+  'graphReach.colEntity': 'Entidad',
+  'graphReach.colLinks': 'Enlaces',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'Aún no hay grafo de conocimiento.',
+  'graphReach.emptyHint':
+    'A medida que el asistente registra hechos conectados sobre usted, la forma y el centro de su memoria aparecerán aquí.',
+  'graphReach.errorPrefix': 'No se pudo cargar el grafo:',
+  'graphReach.intro':
+    'La excentricidad mide lo lejos que está una entidad de todo lo que puede alcanzar: su camino más corto más largo. El diámetro es la mayor brecha de este tipo, el radio la menor, y el centro es la entidad que alcanza todo el grupo en el menor número de saltos. Ni el grado ni el PageRank revelan el centro.',
+  'graphReach.loading': 'Calculando alcance…',
+  'graphReach.metricDiameter': 'Diámetro',
+  'graphReach.metricEntities': 'Entidades',
+  'graphReach.metricRadius': 'Radio',
+  'graphReach.namespaceAll': 'Todos los espacios de nombres',
+  'graphReach.namespaceLabel': 'Espacio de nombres',
+  'graphReach.rankedHeading': 'Entidades más centrales',
+  'graphReach.retry': 'Reintentar',
+  'graphReach.summaryCaption': '{components} componentes · el mayor contiene {giant}',
+  'graphReach.summaryCaptionOne': '1 componente · {giant} entidades',
+  'graphReach.summaryCaptionOneAndOne': '1 componente · 1 entidad',
+  'graphReach.title': 'Alcance del grafo',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

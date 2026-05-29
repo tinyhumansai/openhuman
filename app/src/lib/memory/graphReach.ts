@@ -31,7 +31,10 @@
  *   - Entity identity is the raw string AS-IS: NO trimming, NO case-folding —
  *     matching the sibling lenses, so "Alice" / "alice" stay distinct nodes.
  *   - The graph is UNDIRECTED and SIMPLE: direction is dropped, parallel edges
- *     collapse to one, and self-loops (subject === object) are dropped.
+ *     collapse to one, and self-loop EDGES (subject === object) are dropped —
+ *     the endpoint is still REGISTERED as a node, so a loop-only entity still
+ *     appears as a singleton component (size 1, eccentricity 0) rather than
+ *     vanishing into an empty result.
  *   - componentId is the SMALLEST id-sorted index in the component, so it is a
  *     stable label; the giant component breaks size ties by smallest componentId.
  */
@@ -82,7 +85,13 @@ function buildAdjacency(relations: GraphRelation[]): Map<string, Set<string>> {
   for (const relation of relations) {
     if (!isRelation(relation)) continue;
     const { subject, object } = relation;
-    if (subject === object) continue;
+    if (subject === object) {
+      // Self-loop: register the endpoint as a node but add no self-edge — a
+      // loop-only entity (e.g. "Alice→Alice") still appears as a singleton
+      // component with eccentricity 0 rather than vanishing into empty state.
+      neighbours(subject);
+      continue;
+    }
     neighbours(subject).add(object);
     neighbours(object).add(subject);
   }

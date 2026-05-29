@@ -4393,6 +4393,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'graphReach.centerBadge': '중심',
+  'graphReach.centerTitle':
+    '해당 클러스터의 중심 — 가능한 최소 홉 수로 연결된 모든 엔티티에 도달합니다(이심률이 반지름과 같음).',
+  'graphReach.colEccentricity': '이심률',
+  'graphReach.colEntity': '엔티티',
+  'graphReach.colLinks': '링크',
+  'graphReach.colRank': '#',
+  'graphReach.empty': '아직 지식 그래프가 없습니다.',
+  'graphReach.emptyHint':
+    '어시스턴트가 당신에 관한 연결된 사실들을 기록함에 따라, 기억의 형태와 중심이 여기에 드러납니다.',
+  'graphReach.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'graphReach.intro':
+    '이심률은 한 엔티티가 도달할 수 있는 모든 것으로부터 얼마나 멀리 있는지를 나타냅니다 — 가장 긴 최단경로입니다. 지름은 그러한 간격 중 가장 넓은 것, 반지름은 가장 좁은 것이며, 중심은 최소 홉 수로 전체 클러스터에 도달하는 엔티티입니다. 차수나 PageRank로는 중심이 드러나지 않습니다.',
+  'graphReach.loading': '도달 범위 계산 중…',
+  'graphReach.metricDiameter': '지름',
+  'graphReach.metricEntities': '엔티티',
+  'graphReach.metricRadius': '반지름',
+  'graphReach.namespaceAll': '모든 네임스페이스',
+  'graphReach.namespaceLabel': '네임스페이스',
+  'graphReach.rankedHeading': '가장 중심적인 엔티티',
+  'graphReach.retry': '다시 시도',
+  'graphReach.summaryCaption': '컴포넌트 {components}개 · 최대 컴포넌트가 {giant}개 보유',
+  'graphReach.summaryCaptionOne': '컴포넌트 1개 · 엔티티 {giant}개',
+  'graphReach.summaryCaptionOneAndOne': '컴포넌트 1개 · 엔티티 1개',
+  'graphReach.title': '그래프 도달 범위',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

@@ -4350,6 +4350,31 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'graphReach.centerBadge': 'مركز',
+  'graphReach.centerTitle':
+    'مركز لعنقوده — يصل إلى كل كيان متصل بأقل عدد ممكن من القفزات (الانحراف يساوي نصف القطر).',
+  'graphReach.colEccentricity': 'الانحراف',
+  'graphReach.colEntity': 'الكيان',
+  'graphReach.colLinks': 'روابط',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'لا يوجد رسم معرفة بعد.',
+  'graphReach.emptyHint': 'كلما سجّل المساعد حقائق مترابطة عنك، ستظهر هنا شكل ومركز ذاكرتك.',
+  'graphReach.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'graphReach.intro':
+    'الانحراف هو مدى بُعد الكيان عن كل ما يمكنه الوصول إليه — أطول مسار أقصر له. القطر هو أوسع تلك الفجوات، ونصف القطر أصغرها، والمركز هو الكيان الذي يصل إلى العنقود بأكمله بأقل عدد من القفزات. لا تكشف الدرجة ولا PageRank عن المركز.',
+  'graphReach.loading': 'يجري حساب المدى…',
+  'graphReach.metricDiameter': 'القطر',
+  'graphReach.metricEntities': 'الكيانات',
+  'graphReach.metricRadius': 'نصف القطر',
+  'graphReach.namespaceAll': 'كل مساحات الأسماء',
+  'graphReach.namespaceLabel': 'مساحة الأسماء',
+  'graphReach.rankedHeading': 'الكيانات الأكثر مركزية',
+  'graphReach.retry': 'إعادة المحاولة',
+  'graphReach.summaryCaption': '{components} مكوّنات · الأكبر يضم {giant}',
+  'graphReach.summaryCaptionOne': 'مكوّن واحد · {giant} كيانات',
+  'graphReach.summaryCaptionOneAndOne': 'مكوّن واحد · كيان واحد',
+  'graphReach.title': 'مدى الرسم البياني',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

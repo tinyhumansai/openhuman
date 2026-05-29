@@ -4501,6 +4501,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'graphReach.centerBadge': 'centro',
+  'graphReach.centerTitle':
+    "Un centro del suo gruppo — raggiunge ogni entità connessa nel minor numero di salti possibile (l'eccentricità è uguale al raggio).",
+  'graphReach.colEccentricity': 'Eccentricità',
+  'graphReach.colEntity': 'Entità',
+  'graphReach.colLinks': 'Collegamenti',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'Ancora nessun grafo della conoscenza.',
+  'graphReach.emptyHint':
+    "Man mano che l'assistente registra fatti connessi su di te, qui appariranno la forma e il centro della tua memoria.",
+  'graphReach.errorPrefix': 'Impossibile caricare il grafo:',
+  'graphReach.intro':
+    "L'eccentricità misura quanto un'entità sia lontana da tutto ciò che può raggiungere — il suo più lungo cammino più breve. Il diametro è la maggiore di queste distanze, il raggio la minore, e il centro è l'entità che raggiunge l'intero gruppo nel minor numero di salti. Né il grado né il PageRank rivelano il centro.",
+  'graphReach.loading': 'Calcolo della portata…',
+  'graphReach.metricDiameter': 'Diametro',
+  'graphReach.metricEntities': 'Entità',
+  'graphReach.metricRadius': 'Raggio',
+  'graphReach.namespaceAll': 'Tutti gli spazi dei nomi',
+  'graphReach.namespaceLabel': 'Spazio dei nomi',
+  'graphReach.rankedHeading': 'Entità più centrali',
+  'graphReach.retry': 'Riprova',
+  'graphReach.summaryCaption': '{components} componenti · il più grande contiene {giant}',
+  'graphReach.summaryCaptionOne': '1 componente · {giant} entità',
+  'graphReach.summaryCaptionOneAndOne': '1 componente · 1 entità',
+  'graphReach.title': 'Portata del grafo',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

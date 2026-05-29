@@ -4443,6 +4443,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'graphReach.centerBadge': 'pusat',
+  'graphReach.centerTitle':
+    'Pusat dari klasternya — mencapai setiap entitas terhubung dalam jumlah lompatan paling sedikit (eksentrisitas sama dengan radius).',
+  'graphReach.colEccentricity': 'Eksentrisitas',
+  'graphReach.colEntity': 'Entitas',
+  'graphReach.colLinks': 'Tautan',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'Belum ada graf pengetahuan.',
+  'graphReach.emptyHint':
+    'Saat asisten mencatat fakta-fakta terhubung tentang Anda, bentuk dan pusat memori Anda akan muncul di sini.',
+  'graphReach.errorPrefix': 'Tidak dapat memuat graf:',
+  'graphReach.intro':
+    'Eksentrisitas adalah seberapa jauh sebuah entitas dari segala sesuatu yang dapat dijangkaunya — jalur terpendek terpanjangnya. Diameter adalah selisih terlebar dari jenis itu, radius adalah yang terkecil, dan pusat adalah entitas yang menjangkau seluruh klaster dalam lompatan paling sedikit. Baik derajat maupun PageRank tidak mengungkap pusat.',
+  'graphReach.loading': 'Menghitung jangkauan…',
+  'graphReach.metricDiameter': 'Diameter',
+  'graphReach.metricEntities': 'Entitas',
+  'graphReach.metricRadius': 'Radius',
+  'graphReach.namespaceAll': 'Semua ruang nama',
+  'graphReach.namespaceLabel': 'Ruang nama',
+  'graphReach.rankedHeading': 'Entitas paling sentral',
+  'graphReach.retry': 'Coba lagi',
+  'graphReach.summaryCaption': '{components} komponen · terbesar berisi {giant}',
+  'graphReach.summaryCaptionOne': '1 komponen · {giant} entitas',
+  'graphReach.summaryCaptionOneAndOne': '1 komponen · 1 entitas',
+  'graphReach.title': 'Jangkauan Graf',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

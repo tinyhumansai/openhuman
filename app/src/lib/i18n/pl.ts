@@ -4501,6 +4501,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'graphReach.centerBadge': 'centrum',
+  'graphReach.centerTitle':
+    'Centrum swojego klastra — osiąga każdą połączoną encję w najmniejszej możliwej liczbie skoków (ekscentryczność równa się promieniowi).',
+  'graphReach.colEccentricity': 'Ekscentryczność',
+  'graphReach.colEntity': 'Encja',
+  'graphReach.colLinks': 'Łącza',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'Jeszcze brak grafu wiedzy.',
+  'graphReach.emptyHint':
+    'W miarę jak asystent zapisuje powiązane fakty o Tobie, kształt i centrum Twojej pamięci pojawią się tutaj.',
+  'graphReach.errorPrefix': 'Nie udało się załadować grafu:',
+  'graphReach.intro':
+    'Ekscentryczność to miara odległości encji od wszystkiego, co może osiągnąć — jej najdłuższa najkrótsza ścieżka. Średnica to największa taka odległość, promień najmniejsza, a centrum to encja, która osiąga cały klaster w najmniejszej liczbie skoków. Ani stopień, ani PageRank nie ujawniają centrum.',
+  'graphReach.loading': 'Obliczanie zasięgu…',
+  'graphReach.metricDiameter': 'Średnica',
+  'graphReach.metricEntities': 'Encje',
+  'graphReach.metricRadius': 'Promień',
+  'graphReach.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'graphReach.namespaceLabel': 'Przestrzeń nazw',
+  'graphReach.rankedHeading': 'Najbardziej centralne encje',
+  'graphReach.retry': 'Spróbuj ponownie',
+  'graphReach.summaryCaption': '{components} składowych · największa zawiera {giant}',
+  'graphReach.summaryCaptionOne': '1 składowa · {giant} encji',
+  'graphReach.summaryCaptionOneAndOne': '1 składowa · 1 encja',
+  'graphReach.title': 'Zasięg grafu',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

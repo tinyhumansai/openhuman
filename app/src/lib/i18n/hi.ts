@@ -4434,6 +4434,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'graphReach.centerBadge': 'केंद्र',
+  'graphReach.centerTitle':
+    'अपने क्लस्टर का केंद्र — हर जुड़ी इकाई तक सबसे कम संभव छलांगों में पहुँचता है (विकेन्द्रता त्रिज्या के बराबर है)।',
+  'graphReach.colEccentricity': 'विकेन्द्रता',
+  'graphReach.colEntity': 'इकाई',
+  'graphReach.colLinks': 'लिंक',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'अभी तक कोई नॉलेज ग्राफ नहीं।',
+  'graphReach.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में जुड़े हुए तथ्य दर्ज करता है, आपकी स्मृति का आकार और केंद्र यहाँ उभरेगा।',
+  'graphReach.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'graphReach.intro':
+    'विकेन्द्रता बताती है कि एक इकाई उन सब चीज़ों से कितनी दूर है जिन तक वह पहुँच सकती है — उसका सबसे लंबा सबसे-छोटा-पथ। व्यास इन में सबसे बड़ा अंतर है, त्रिज्या सबसे छोटा, और केंद्र वह इकाई है जो सबसे कम छलांगों में पूरे क्लस्टर तक पहुँचती है। न डिग्री और न ही PageRank केंद्र को उजागर करता है।',
+  'graphReach.loading': 'पहुँच गणना हो रही है…',
+  'graphReach.metricDiameter': 'व्यास',
+  'graphReach.metricEntities': 'इकाइयाँ',
+  'graphReach.metricRadius': 'त्रिज्या',
+  'graphReach.namespaceAll': 'सभी नेमस्पेस',
+  'graphReach.namespaceLabel': 'नेमस्पेस',
+  'graphReach.rankedHeading': 'सबसे केंद्रीय इकाइयाँ',
+  'graphReach.retry': 'पुनः प्रयास',
+  'graphReach.summaryCaption': '{components} घटक · सबसे बड़ा {giant} रखता है',
+  'graphReach.summaryCaptionOne': '1 घटक · {giant} इकाइयाँ',
+  'graphReach.summaryCaptionOneAndOne': '1 घटक · 1 इकाई',
+  'graphReach.title': 'ग्राफ पहुँच',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

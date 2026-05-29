@@ -132,7 +132,12 @@ const GraphReachPanel = ({ result, loading, error, onRetry }: GraphReachPanelPro
       </div>
       <p className="text-[11px] text-stone-500 dark:text-neutral-400">
         {result.componentCount === 1
-          ? t('graphReach.summaryCaptionOne').replace('{giant}', String(result.giantComponentSize))
+          ? result.giantComponentSize === 1
+            ? t('graphReach.summaryCaptionOneAndOne')
+            : t('graphReach.summaryCaptionOne').replace(
+                '{giant}',
+                String(result.giantComponentSize)
+              )
           : t('graphReach.summaryCaption')
               .replace('{components}', String(result.componentCount))
               .replace('{giant}', String(result.giantComponentSize))}

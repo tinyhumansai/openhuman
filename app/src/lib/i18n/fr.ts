@@ -4524,6 +4524,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'graphReach.centerBadge': 'centre',
+  'graphReach.centerTitle':
+    "Un centre de son groupe — atteint chaque entité connectée en un minimum de sauts (l'excentricité égale le rayon).",
+  'graphReach.colEccentricity': 'Excentricité',
+  'graphReach.colEntity': 'Entité',
+  'graphReach.colLinks': 'Liens',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'Pas encore de graphe de connaissances.',
+  'graphReach.emptyHint':
+    "À mesure que l'assistant enregistre des faits connectés à votre sujet, la forme et le centre de votre mémoire apparaîtront ici.",
+  'graphReach.errorPrefix': 'Impossible de charger le graphe :',
+  'graphReach.intro':
+    "L'excentricité mesure à quelle distance une entité se trouve de tout ce qu'elle peut atteindre — son plus long plus court chemin. Le diamètre est le plus large de ces écarts, le rayon le plus petit, et le centre est l'entité qui atteint l'ensemble du groupe en le moins de sauts. Ni le degré ni le PageRank ne révèlent le centre.",
+  'graphReach.loading': 'Calcul de la portée…',
+  'graphReach.metricDiameter': 'Diamètre',
+  'graphReach.metricEntities': 'Entités',
+  'graphReach.metricRadius': 'Rayon',
+  'graphReach.namespaceAll': 'Tous les espaces de noms',
+  'graphReach.namespaceLabel': 'Espace de noms',
+  'graphReach.rankedHeading': 'Entités les plus centrales',
+  'graphReach.retry': 'Réessayer',
+  'graphReach.summaryCaption': '{components} composantes · la plus grande contient {giant}',
+  'graphReach.summaryCaptionOne': '1 composante · {giant} entités',
+  'graphReach.summaryCaptionOneAndOne': '1 composante · 1 entité',
+  'graphReach.title': 'Portée du graphe',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

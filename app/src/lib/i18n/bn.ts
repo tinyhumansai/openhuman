@@ -4427,6 +4427,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'graphReach.centerBadge': 'কেন্দ্র',
+  'graphReach.centerTitle':
+    'তার ক্লাস্টারের একটি কেন্দ্র — সম্ভাব্য সবচেয়ে কম লাফে প্রতিটি সংযুক্ত সত্তায় পৌঁছায় (অপকেন্দ্রতা ব্যাসার্ধের সমান)।',
+  'graphReach.colEccentricity': 'অপকেন্দ্রতা',
+  'graphReach.colEntity': 'সত্তা',
+  'graphReach.colLinks': 'লিঙ্ক',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'graphReach.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সংযুক্ত তথ্য রেকর্ড করে, আপনার মেমরির আকার ও কেন্দ্র এখানে উঠে আসবে।',
+  'graphReach.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'graphReach.intro':
+    'অপকেন্দ্রতা হলো একটি সত্তা যা পৌঁছাতে পারে তার সমস্ত কিছুর থেকে কত দূরে আছে — তার দীর্ঘতম সংক্ষিপ্ততম-পথ। ব্যাস হলো সর্ববৃহৎ এমন ব্যবধান, ব্যাসার্ধ ক্ষুদ্রতম, এবং কেন্দ্র হলো সেই সত্তা যা সবচেয়ে কম লাফে পুরো ক্লাস্টারে পৌঁছায়। ডিগ্রি বা PageRank কোনটিই কেন্দ্রকে উন্মোচন করে না।',
+  'graphReach.loading': 'নাগাল গণনা করা হচ্ছে…',
+  'graphReach.metricDiameter': 'ব্যাস',
+  'graphReach.metricEntities': 'সত্তা',
+  'graphReach.metricRadius': 'ব্যাসার্ধ',
+  'graphReach.namespaceAll': 'সমস্ত নেমস্পেস',
+  'graphReach.namespaceLabel': 'নেমস্পেস',
+  'graphReach.rankedHeading': 'সবচেয়ে কেন্দ্রীয় সত্তা',
+  'graphReach.retry': 'পুনরায় চেষ্টা',
+  'graphReach.summaryCaption': '{components}টি উপাদান · বৃহত্তমটিতে {giant} রয়েছে',
+  'graphReach.summaryCaptionOne': '১টি উপাদান · {giant}টি সত্তা',
+  'graphReach.summaryCaptionOneAndOne': '১টি উপাদান · ১টি সত্তা',
+  'graphReach.title': 'গ্রাফ নাগাল',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;

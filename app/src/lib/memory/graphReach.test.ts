@@ -101,11 +101,29 @@ describe('computeGraphReach — components', () => {
 });
 
 describe('computeGraphReach — normalization & determinism', () => {
-  it('drops self-loops entirely', () => {
+  it('drops the self-loop EDGE but keeps the endpoint as a node', () => {
     const r = computeGraphReach([rel('A', 'A'), rel('A', 'B'), rel('B', 'C'), rel('C', 'A')]);
     expect(r.nodeCount).toBe(3);
     expect(r.edgeCount).toBe(3);
     expect(r.diameter).toBe(1); // plain triangle
+  });
+
+  it('preserves an entity whose only relation is a self-loop (singleton component)', () => {
+    // A user with the single fact "Alice→Alice" must still see Alice in the
+    // graph as a singleton component (size 1, eccentricity 0), not vanish.
+    const r = computeGraphReach([rel('Alice', 'Alice')]);
+    expect(r.nodeCount).toBe(1);
+    expect(r.edgeCount).toBe(0);
+    expect(r.componentCount).toBe(1);
+    expect(r.giantComponentSize).toBe(1);
+    expect(r.diameter).toBe(0);
+    expect(r.radius).toBe(0);
+    expect(r.nodes[0]).toMatchObject({
+      id: 'Alice',
+      degree: 0,
+      eccentricity: 0,
+      isCenter: true, // 0 === radius -> Alice is the (trivial) center of itself
+    });
   });
 
   it('collapses parallel edges and ignores direction', () => {

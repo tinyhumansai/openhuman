@@ -4469,6 +4469,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'graphReach.centerBadge': 'центр',
+  'graphReach.centerTitle':
+    'Центр своего кластера — достигает каждой связанной сущности за минимально возможное число шагов (эксцентриситет равен радиусу).',
+  'graphReach.colEccentricity': 'Эксцентриситет',
+  'graphReach.colEntity': 'Сущность',
+  'graphReach.colLinks': 'Связки',
+  'graphReach.colRank': '#',
+  'graphReach.empty': 'Пока нет графа знаний.',
+  'graphReach.emptyHint':
+    'По мере того как ассистент фиксирует связанные факты о вас, здесь появятся форма и центр вашей памяти.',
+  'graphReach.errorPrefix': 'Не удалось загрузить граф:',
+  'graphReach.intro':
+    'Эксцентриситет — это насколько далеко сущность находится от всего, до чего может дотянуться, — её самый длинный кратчайший путь. Диаметр — самый широкий такой разрыв, радиус — наименьший, а центр — это сущность, достигающая всего кластера за наименьшее число шагов. Ни степень, ни PageRank не вскрывают центр.',
+  'graphReach.loading': 'Вычисление охвата…',
+  'graphReach.metricDiameter': 'Диаметр',
+  'graphReach.metricEntities': 'Сущности',
+  'graphReach.metricRadius': 'Радиус',
+  'graphReach.namespaceAll': 'Все пространства имён',
+  'graphReach.namespaceLabel': 'Пространство имён',
+  'graphReach.rankedHeading': 'Самые центральные сущности',
+  'graphReach.retry': 'Повторить',
+  'graphReach.summaryCaption': '{components} компонент · крупнейшая содержит {giant}',
+  'graphReach.summaryCaptionOne': '1 компонента · {giant} сущностей',
+  'graphReach.summaryCaptionOneAndOne': '1 компонента · 1 сущность',
+  'graphReach.title': 'Охват графа',
+  'memory.tab.reach': 'Reach',
 };
 
 export default messages;
