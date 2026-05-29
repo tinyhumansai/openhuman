@@ -315,14 +315,10 @@ impl ConversationStore {
             let mut idx = InvertedIndex::new();
             self.populate_index_unlocked(&mut idx)?;
             cache.insert(key.clone(), idx);
-        // Fast path: if the index is already warm, search without the
-        // outer store lock.
-        {
-            let mut cache = CONVERSATION_INDEX_CACHE.lock();
-            if let Some(idx) = cache.get_mut(&self.root_dir()) {
-                return Ok(idx.search(query, limit, exclude_thread_id));
-            }
         }
+        let idx = cache.get_mut(&key).expect("inserted above if absent");
+        Ok(f(idx))
+    }
 
     /// Walk every per-thread JSONL file in the workspace and insert each
     /// message into `idx`. Used as the fallback cold-build path inside
