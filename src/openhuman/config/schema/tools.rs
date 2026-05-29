@@ -48,6 +48,86 @@ impl Default for MultimodalConfig {
     }
 }
 
+/// File-attachment counterpart to [`MultimodalConfig`]. Governs how
+/// `[FILE:…]` markers in user messages are resolved, validated, and
+/// inlined as text context for the agent.
+///
+/// Defaults err on the side of "useful for prose docs without blowing
+/// the context window": 4 files per turn, 16 MB per file, 50 000 chars
+/// of extracted text per file. Remote fetch is opt-in.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MultimodalFileConfig {
+    #[serde(default = "default_multimodal_max_files")]
+    pub max_files: usize,
+    #[serde(default = "default_multimodal_max_file_size_mb")]
+    pub max_file_size_mb: usize,
+    #[serde(default = "default_multimodal_max_extracted_text_chars")]
+    pub max_extracted_text_chars: usize,
+    #[serde(default)]
+    pub allow_remote_fetch: bool,
+    #[serde(default = "default_multimodal_allowed_file_mime_types")]
+    pub allowed_mime_types: Vec<String>,
+}
+
+fn default_multimodal_max_files() -> usize {
+    4
+}
+
+fn default_multimodal_max_file_size_mb() -> usize {
+    16
+}
+
+fn default_multimodal_max_extracted_text_chars() -> usize {
+    50_000
+}
+
+fn default_multimodal_allowed_file_mime_types() -> Vec<String> {
+    vec![
+        // Extractable text formats.
+        "application/pdf".to_string(),
+        "text/plain".to_string(),
+        "text/csv".to_string(),
+        "text/markdown".to_string(),
+        // Binary-only formats surfaced as metadata-only references.
+        "application/zip".to_string(),
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".to_string(),
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document".to_string(),
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation".to_string(),
+        "application/octet-stream".to_string(),
+    ]
+}
+
+impl MultimodalFileConfig {
+    /// Clamp configured values to safe runtime bounds.
+    pub fn effective_limits(&self) -> (usize, usize, usize) {
+        let max_files = self.max_files.clamp(1, 16);
+        let max_file_size_mb = self.max_file_size_mb.clamp(1, 50);
+        let max_extracted_text_chars = self.max_extracted_text_chars.clamp(1_000, 200_000);
+        (max_files, max_file_size_mb, max_extracted_text_chars)
+    }
+
+    /// True iff `mime` is on the configured allowlist (case-insensitive).
+    pub fn is_mime_allowed(&self, mime: &str) -> bool {
+        let needle = mime.to_ascii_lowercase();
+        self.allowed_mime_types
+            .iter()
+            .any(|allowed| allowed.eq_ignore_ascii_case(&needle))
+    }
+}
+
+impl Default for MultimodalFileConfig {
+    fn default() -> Self {
+        Self {
+            max_files: default_multimodal_max_files(),
+            max_file_size_mb: default_multimodal_max_file_size_mb(),
+            max_extracted_text_chars: default_multimodal_max_extracted_text_chars(),
+            allow_remote_fetch: false,
+            allowed_mime_types: default_multimodal_allowed_file_mime_types(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct BrowserComputerUseConfig {
