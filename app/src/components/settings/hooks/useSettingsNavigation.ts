@@ -34,6 +34,8 @@ export type SettingsRoute =
   | 'mascot'
   | 'persona'
   | 'appearance'
+  | 'agent-access'
+  | 'approval-history'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
@@ -119,6 +121,10 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
+    // `approval-history` must be checked before `agent-access` is irrelevant
+    // (distinct prefixes), but both are explicit leaf routes under Agent access.
+    if (path.includes('/settings/approval-history')) return 'approval-history';
+    if (path.includes('/settings/agent-access')) return 'agent-access';
     if (path.includes('/settings/mcp-server')) return 'mcp-server';
     if (path.includes('/settings/dev-workflow')) return 'dev-workflow';
     return 'home';
@@ -175,6 +181,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   const developerCrumb: BreadcrumbItem = {
     label: 'Developer Options',
     onClick: () => navigate('/settings/developer-options'),
+  };
+
+  const agentAccessCrumb: BreadcrumbItem = {
+    label: 'Agent access',
+    onClick: () => navigate('/settings/agent-access'),
   };
 
   const getBreadcrumbs = (): BreadcrumbItem[] => {
@@ -253,6 +264,14 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Appearance (theme) panel sits at the top level of Settings.
       case 'appearance':
         return [settingsCrumb];
+
+      // Agent access panel sits at the top level of Settings.
+      case 'agent-access':
+        return [settingsCrumb];
+
+      // Approval history is a leaf under Agent access.
+      case 'approval-history':
+        return [settingsCrumb, agentAccessCrumb];
 
       case 'home':
       default:

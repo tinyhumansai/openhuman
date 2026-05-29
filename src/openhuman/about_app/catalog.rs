@@ -1398,6 +1398,18 @@ const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "security.approval_history",
+        name: "Approval History",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Review a read-only audit trail of past tool-approval decisions \
+                      (Approve once / Always allow / Deny), newest first. Summaries are \
+                      scrubbed of chat content and arguments are shown as redacted shape only.",
+        how_to: "Settings → Agent OS access → View approval history",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
         id: "tool.detect_tools",
         name: "Detect Installed Tools",
         domain: "tools",
