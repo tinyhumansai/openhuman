@@ -192,4 +192,52 @@ mod tests {
             "\"aborted\""
         );
     }
+
+    /// Regression guard. Earlier revisions of [`PendingApproval`]
+    /// exposed a `session_id: String` field — when an operator had
+    /// set the RPC bearer to a stable value, that field carried the
+    /// raw credential, and Debug-formatting / serializing a pending
+    /// row was enough to leak it. Both surfaces are exercised here.
+    #[test]
+    fn pending_approval_debug_and_serialize_do_not_carry_session_id() {
+        let p = PendingApproval {
+            request_id: "req-1".to_string(),
+            tool_name: "composio".to_string(),
+            action_summary: "send slack message".to_string(),
+            args_redacted: serde_json::json!({ "tool_slug": "SLACK_SEND" }),
+            created_at: Utc::now(),
+            expires_at: None,
+        };
+        let dbg = format!("{p:?}");
+        assert!(
+            !dbg.contains("session_id"),
+            "Debug output must not surface session_id: {dbg}"
+        );
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(
+            json.get("session_id").is_none(),
+            "Serialized JSON must not surface session_id: {json}"
+        );
+
+        let audit = ApprovalAuditEntry {
+            request_id: "req-1".to_string(),
+            tool_name: "composio".to_string(),
+            action_summary: "send slack message".to_string(),
+            args_redacted: serde_json::json!({ "tool_slug": "SLACK_SEND" }),
+            created_at: Utc::now(),
+            expires_at: None,
+            decided_at: Utc::now(),
+            decision: ApprovalDecision::ApproveOnce,
+        };
+        let audit_dbg = format!("{audit:?}");
+        assert!(
+            !audit_dbg.contains("session_id"),
+            "ApprovalAuditEntry Debug must not surface session_id: {audit_dbg}"
+        );
+        let audit_json = serde_json::to_value(&audit).unwrap();
+        assert!(
+            audit_json.get("session_id").is_none(),
+            "ApprovalAuditEntry JSON must not surface session_id: {audit_json}"
+        );
+    }
 }

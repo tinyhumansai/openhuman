@@ -123,6 +123,17 @@ impl ApprovalGate {
     }
 
     fn new(config: Config, session_id: String, ttl: Duration) -> Self {
+        // Regression guard: the gate's session_id must be the per-launch
+        // UUID minted by `bootstrap_core_runtime` (shape:
+        // `session-<uuid>`). Any other shape risks re-introducing the
+        // credential leak that was fixed by switching off the RPC bearer
+        // — fail loudly in debug builds the moment a caller wires up a
+        // raw token (or any other ad-hoc string).
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            session_id.starts_with("session-"),
+            "ApprovalGate session_id must be a per-launch UUID prefix, not a credential",
+        );
         Self {
             config,
             session_id,
@@ -503,7 +514,11 @@ mod tests {
             workspace_dir: dir.path().to_path_buf(),
             ..Config::default()
         };
-        let session = format!("test-session-{}", uuid::Uuid::new_v4());
+        // Mirrors the `session-<uuid>` shape minted by
+        // `bootstrap_core_runtime` in production so the
+        // `debug_assert!` regression guard in `ApprovalGate::new`
+        // doesn't trip in tests.
+        let session = format!("session-{}", uuid::Uuid::new_v4());
         // 500ms TTL was racing the 50×10ms poll loop on slow CI
         // runners — the row would expire (and get denied by
         // list_pending's lazy-expire) before `decide` could fire,
