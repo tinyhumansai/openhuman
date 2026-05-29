@@ -4443,6 +4443,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'graphBridges.articulationBadge': 'simpul potong',
+  'graphBridges.articulationTitle':
+    'Menghapus entitas ini akan memutus graf: klaster yang melewatinya kehilangan tautan satu sama lain.',
+  'graphBridges.articulationsHeading': 'Entitas artikulasi',
+  'graphBridges.bridgesHeading': 'Relasi jembatan',
+  'graphBridges.colEntity': 'Entitas',
+  'graphBridges.colLinks': 'Tautan',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'Belum ada graf pengetahuan.',
+  'graphBridges.emptyHint':
+    'Saat asisten mencatat fakta-fakta terhubung tentang Anda, titik-titik kegagalan tunggal struktural akan muncul di sini.',
+  'graphBridges.errorPrefix': 'Tidak dapat memuat graf:',
+  'graphBridges.intro':
+    'Titik artikulasi adalah entitas yang penghapusannya akan memutus graf memori. Jembatan adalah relasi tunggal yang menahan dua bagian tetap terhubung. Hilangkan satu, dan sebagian besar konteks menjadi senyap — kerentanan struktural yang tidak diungkap oleh derajat maupun PageRank.',
+  'graphBridges.loading': 'Menghitung pemotongan struktural…',
+  'graphBridges.metricArticulations': 'Artikulasi',
+  'graphBridges.metricConnections': 'Koneksi',
+  'graphBridges.metricEntities': 'Entitas',
+  'graphBridges.namespaceAll': 'Semua ruang nama',
+  'graphBridges.namespaceLabel': 'Ruang nama',
+  'graphBridges.noBridges':
+    'Tidak ada jembatan — setiap relasi berada dalam setidaknya satu siklus.',
+  'graphBridges.noFragiles':
+    'Tidak ada titik kegagalan tunggal struktural — setiap tautan berada dalam setidaknya satu siklus.',
+  'graphBridges.retry': 'Coba lagi',
+  'graphBridges.summaryCaption': '{bridges} jembatan · {components} komponen',
+  'graphBridges.summaryCaptionOne': '{bridges} jembatan · komponen tunggal',
+  'graphBridges.summaryCaptionOneBridge': '1 jembatan · {components} komponen',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 jembatan · komponen tunggal',
+  'graphBridges.title': 'Jembatan Graf',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

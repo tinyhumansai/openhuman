@@ -4543,6 +4543,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'graphBridges.articulationBadge': 'Schnittknoten',
+  'graphBridges.articulationTitle':
+    'Das Entfernen dieser Entität würde den Graphen trennen: Cluster, die durch sie verlaufen, verlieren ihre Verbindung zueinander.',
+  'graphBridges.articulationsHeading': 'Artikulationsentitäten',
+  'graphBridges.bridgesHeading': 'Brücken-Relationen',
+  'graphBridges.colEntity': 'Entität',
+  'graphBridges.colLinks': 'Verknüpfungen',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'Noch kein Wissensgraph.',
+  'graphBridges.emptyHint':
+    'Während der Assistent verbundene Fakten über Sie erfasst, erscheinen hier die strukturellen Single Points of Failure.',
+  'graphBridges.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'graphBridges.intro':
+    'Artikulationspunkte sind Entitäten, deren Entfernung den Speichergraphen trennen würde. Brücken sind die einzigen Relationen, die zwei Hälften zusammenhalten. Verliert man eine, verstummt ein ganzer Kontextbereich — eine strukturelle Schwachstelle, die weder Grad noch PageRank aufdecken.',
+  'graphBridges.loading': 'Berechne strukturelle Schnitte…',
+  'graphBridges.metricArticulations': 'Artikulationen',
+  'graphBridges.metricConnections': 'Verbindungen',
+  'graphBridges.metricEntities': 'Entitäten',
+  'graphBridges.namespaceAll': 'Alle Namensräume',
+  'graphBridges.namespaceLabel': 'Namensraum',
+  'graphBridges.noBridges': 'Keine Brücken — jede Relation liegt in mindestens einem Zyklus.',
+  'graphBridges.noFragiles':
+    'Keine strukturellen Single Points of Failure — jede Verbindung liegt in mindestens einem Zyklus.',
+  'graphBridges.retry': 'Wiederholen',
+  'graphBridges.summaryCaption': '{bridges} Brücken · {components} Komponenten',
+  'graphBridges.summaryCaptionOne': '{bridges} Brücken · eine Komponente',
+  'graphBridges.summaryCaptionOneBridge': '1 Brücke · {components} Komponenten',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 Brücke · eine Komponente',
+  'graphBridges.title': 'Graph-Brücken',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

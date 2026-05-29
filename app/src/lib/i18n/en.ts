@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.bridges': 'Bridges',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,36 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+
+  'graphBridges.title': 'Graph Bridges',
+  'graphBridges.intro':
+    'Articulation points are entities whose removal would disconnect the memory graph. Bridges are the lone relations holding two halves together. Lose one and a swath of context goes silent — a structural vulnerability neither degree nor PageRank surfaces.',
+  'graphBridges.loading': 'Computing structural cuts…',
+  'graphBridges.errorPrefix': 'Could not load the graph:',
+  'graphBridges.retry': 'Retry',
+  'graphBridges.empty': 'No knowledge graph yet.',
+  'graphBridges.emptyHint':
+    'As the assistant records connected facts about you, the structural single-points-of-failure will surface here.',
+  'graphBridges.namespaceLabel': 'Namespace',
+  'graphBridges.namespaceAll': 'All namespaces',
+  'graphBridges.metricEntities': 'Entities',
+  'graphBridges.metricConnections': 'Connections',
+  'graphBridges.metricArticulations': 'Articulations',
+  'graphBridges.summaryCaption': '{bridges} bridges · {components} components',
+  'graphBridges.summaryCaptionOne': '{bridges} bridges · single component',
+  'graphBridges.summaryCaptionOneBridge': '1 bridge · {components} components',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 bridge · single component',
+  'graphBridges.articulationsHeading': 'Articulation entities',
+  'graphBridges.noFragiles':
+    'No structural single-points-of-failure — every link sits in at least one cycle.',
+  'graphBridges.colRank': '#',
+  'graphBridges.colEntity': 'Entity',
+  'graphBridges.colLinks': 'Links',
+  'graphBridges.articulationBadge': 'cut vertex',
+  'graphBridges.articulationTitle':
+    'Removing this entity would disconnect the graph: clusters that pass through it lose their link to each other.',
+  'graphBridges.bridgesHeading': 'Bridge relations',
+  'graphBridges.noBridges': 'No bridges — every relation sits in at least one cycle.',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -2500,7 +2531,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',

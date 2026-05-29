@@ -4393,6 +4393,35 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'graphBridges.articulationBadge': '절단 정점',
+  'graphBridges.articulationTitle':
+    '이 엔티티를 제거하면 그래프가 분리됩니다: 이를 거치는 클러스터들은 서로 간 링크를 잃습니다.',
+  'graphBridges.articulationsHeading': '절단 엔티티',
+  'graphBridges.bridgesHeading': '다리 관계',
+  'graphBridges.colEntity': '엔티티',
+  'graphBridges.colLinks': '링크',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': '아직 지식 그래프가 없습니다.',
+  'graphBridges.emptyHint':
+    '어시스턴트가 당신에 관한 연결된 사실들을 기록함에 따라, 구조적 단일 장애점들이 여기에 드러납니다.',
+  'graphBridges.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'graphBridges.intro':
+    '절단점은 제거하면 메모리 그래프가 분리되는 엔티티입니다. 다리는 두 부분을 유일하게 연결하는 관계입니다. 하나만 잃어도 한 묶음의 맥락이 침묵에 빠집니다 — 차수나 PageRank로는 드러나지 않는 구조적 취약점입니다.',
+  'graphBridges.loading': '구조적 절단 계산 중…',
+  'graphBridges.metricArticulations': '절단점',
+  'graphBridges.metricConnections': '연결',
+  'graphBridges.metricEntities': '엔티티',
+  'graphBridges.namespaceAll': '모든 네임스페이스',
+  'graphBridges.namespaceLabel': '네임스페이스',
+  'graphBridges.noBridges': '다리 없음 — 모든 관계가 최소 하나의 사이클에 속합니다.',
+  'graphBridges.noFragiles': '구조적 단일 장애점 없음 — 모든 링크가 최소 하나의 사이클에 속합니다.',
+  'graphBridges.retry': '다시 시도',
+  'graphBridges.summaryCaption': '다리 {bridges}개 · 컴포넌트 {components}개',
+  'graphBridges.summaryCaptionOne': '다리 {bridges}개 · 단일 컴포넌트',
+  'graphBridges.summaryCaptionOneBridge': '교량 1개 · 컴포넌트 {components}개',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '교량 1개 · 단일 컴포넌트',
+  'graphBridges.title': '그래프 다리',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

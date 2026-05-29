@@ -4350,6 +4350,35 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'graphBridges.articulationBadge': 'رأس قاطع',
+  'graphBridges.articulationTitle':
+    'إزالة هذا الكيان ستفصل الرسم البياني: العناقيد التي تمر عبره تفقد الرابط بينها.',
+  'graphBridges.articulationsHeading': 'كيانات نقاط القطع',
+  'graphBridges.bridgesHeading': 'علاقات الجسور',
+  'graphBridges.colEntity': 'الكيان',
+  'graphBridges.colLinks': 'روابط',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'لا يوجد رسم معرفة بعد.',
+  'graphBridges.emptyHint':
+    'كلما سجّل المساعد حقائق مترابطة عنك، ستظهر هنا نقاط الفشل البنيوية الفردية.',
+  'graphBridges.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'graphBridges.intro':
+    'نقاط القطع هي كيانات تؤدي إزالتها إلى فصل رسم الذاكرة. الجسور هي العلاقات الوحيدة التي تربط النصفين معًا. افقد جسرًا واحدًا فيصمت قطاع كامل من السياق — ثغرة بنيوية لا تكشفها لا الدرجة ولا خوارزمية PageRank.',
+  'graphBridges.loading': 'يجري حساب القطوع البنيوية…',
+  'graphBridges.metricArticulations': 'نقاط القطع',
+  'graphBridges.metricConnections': 'الاتصالات',
+  'graphBridges.metricEntities': 'الكيانات',
+  'graphBridges.namespaceAll': 'كل مساحات الأسماء',
+  'graphBridges.namespaceLabel': 'مساحة الأسماء',
+  'graphBridges.noBridges': 'لا توجد جسور — كل علاقة ضمن دورة واحدة على الأقل.',
+  'graphBridges.noFragiles': 'لا توجد نقاط فشل بنيوية فردية — كل رابط ضمن دورة واحدة على الأقل.',
+  'graphBridges.retry': 'إعادة المحاولة',
+  'graphBridges.summaryCaption': '{bridges} جسور · {components} مكوّنات',
+  'graphBridges.summaryCaptionOne': '{bridges} جسور · مكوّن واحد',
+  'graphBridges.summaryCaptionOneBridge': 'جسر واحد · {components} مكوّنات',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': 'جسر واحد · مكوّن واحد',
+  'graphBridges.title': 'جسور الرسم البياني',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

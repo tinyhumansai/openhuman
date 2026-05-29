@@ -4434,6 +4434,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'graphBridges.articulationBadge': 'कट शीर्ष',
+  'graphBridges.articulationTitle':
+    'इस इकाई को हटाने से ग्राफ टूट जाएगा: इससे गुज़रने वाले क्लस्टर आपस का लिंक खो देते हैं।',
+  'graphBridges.articulationsHeading': 'आर्टिक्युलेशन इकाइयाँ',
+  'graphBridges.bridgesHeading': 'ब्रिज संबंध',
+  'graphBridges.colEntity': 'इकाई',
+  'graphBridges.colLinks': 'लिंक',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'अभी तक कोई नॉलेज ग्राफ नहीं।',
+  'graphBridges.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में जुड़े हुए तथ्य दर्ज करता है, संरचनात्मक एकल-विफलता-बिंदु यहाँ उभरेंगे।',
+  'graphBridges.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'graphBridges.intro':
+    'आर्टिक्युलेशन बिंदु वे इकाइयाँ हैं जिन्हें हटाने पर मेमोरी ग्राफ टूट जाएगा। ब्रिज वे एकमात्र संबंध हैं जो दो हिस्सों को आपस में थामे रखते हैं। एक खो दें और संदर्भ का पूरा हिस्सा खामोश हो जाता है — एक संरचनात्मक कमजोरी जिसे न तो डिग्री और न ही PageRank उजागर करता है।',
+  'graphBridges.loading': 'संरचनात्मक कट गणना हो रही है…',
+  'graphBridges.metricArticulations': 'आर्टिक्युलेशन',
+  'graphBridges.metricConnections': 'कनेक्शन',
+  'graphBridges.metricEntities': 'इकाइयाँ',
+  'graphBridges.namespaceAll': 'सभी नेमस्पेस',
+  'graphBridges.namespaceLabel': 'नेमस्पेस',
+  'graphBridges.noBridges': 'कोई ब्रिज नहीं — हर संबंध कम-से-कम एक चक्र में है।',
+  'graphBridges.noFragiles':
+    'कोई संरचनात्मक एकल-विफलता-बिंदु नहीं — हर लिंक कम-से-कम एक चक्र में है।',
+  'graphBridges.retry': 'पुनः प्रयास',
+  'graphBridges.summaryCaption': '{bridges} ब्रिज · {components} घटक',
+  'graphBridges.summaryCaptionOne': '{bridges} ब्रिज · एकल घटक',
+  'graphBridges.summaryCaptionOneBridge': '1 ब्रिज · {components} घटक',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 ब्रिज · एकल घटक',
+  'graphBridges.title': 'ग्राफ ब्रिज',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

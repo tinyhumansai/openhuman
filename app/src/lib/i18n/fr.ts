@@ -4524,6 +4524,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'graphBridges.articulationBadge': 'sommet coupant',
+  'graphBridges.articulationTitle':
+    'Supprimer cette entité déconnecterait le graphe : les groupes qui passent par elle perdent leur lien entre eux.',
+  'graphBridges.articulationsHeading': "Entités d'articulation",
+  'graphBridges.bridgesHeading': 'Relations de pont',
+  'graphBridges.colEntity': 'Entité',
+  'graphBridges.colLinks': 'Liens',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'Pas encore de graphe de connaissances.',
+  'graphBridges.emptyHint':
+    "À mesure que l'assistant enregistre des faits connectés à votre sujet, les points de défaillance structurels uniques apparaîtront ici.",
+  'graphBridges.errorPrefix': 'Impossible de charger le graphe :',
+  'graphBridges.intro':
+    "Les points d'articulation sont des entités dont la suppression déconnecterait le graphe mémoire. Les ponts sont les seules relations qui maintiennent ensemble deux moitiés. En perdre un et toute une portion de contexte devient silencieuse — une vulnérabilité structurelle que ni le degré ni le PageRank ne révèlent.",
+  'graphBridges.loading': 'Calcul des coupes structurelles…',
+  'graphBridges.metricArticulations': 'Articulations',
+  'graphBridges.metricConnections': 'Connexions',
+  'graphBridges.metricEntities': 'Entités',
+  'graphBridges.namespaceAll': 'Tous les espaces de noms',
+  'graphBridges.namespaceLabel': 'Espace de noms',
+  'graphBridges.noBridges': 'Aucun pont — chaque relation se trouve dans au moins un cycle.',
+  'graphBridges.noFragiles':
+    'Aucun point de défaillance structurel unique — chaque lien se trouve dans au moins un cycle.',
+  'graphBridges.retry': 'Réessayer',
+  'graphBridges.summaryCaption': '{bridges} ponts · {components} composantes',
+  'graphBridges.summaryCaptionOne': '{bridges} ponts · composante unique',
+  'graphBridges.summaryCaptionOneBridge': '1 pont · {components} composantes',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 pont · composante unique',
+  'graphBridges.title': 'Ponts du graphe',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

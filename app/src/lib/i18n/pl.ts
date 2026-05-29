@@ -4501,6 +4501,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'graphBridges.articulationBadge': 'wierzchołek tnący',
+  'graphBridges.articulationTitle':
+    'Usunięcie tej encji rozłączyłoby graf: klastry przechodzące przez nią tracą wzajemne połączenie.',
+  'graphBridges.articulationsHeading': 'Encje artykulacji',
+  'graphBridges.bridgesHeading': 'Relacje mostowe',
+  'graphBridges.colEntity': 'Encja',
+  'graphBridges.colLinks': 'Łącza',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'Jeszcze brak grafu wiedzy.',
+  'graphBridges.emptyHint':
+    'W miarę jak asystent zapisuje powiązane fakty o Tobie, strukturalne pojedyncze punkty awarii pojawią się tutaj.',
+  'graphBridges.errorPrefix': 'Nie udało się załadować grafu:',
+  'graphBridges.intro':
+    'Punkty artykulacji to encje, których usunięcie rozłączyłoby graf pamięci. Mosty są jedynymi relacjami, które trzymają razem dwie połowy. Strać jedną, a cały pas kontekstu milknie — strukturalna podatność, której ani stopień, ani PageRank nie ujawniają.',
+  'graphBridges.loading': 'Obliczanie cięć strukturalnych…',
+  'graphBridges.metricArticulations': 'Artykulacje',
+  'graphBridges.metricConnections': 'Połączenia',
+  'graphBridges.metricEntities': 'Encje',
+  'graphBridges.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'graphBridges.namespaceLabel': 'Przestrzeń nazw',
+  'graphBridges.noBridges': 'Brak mostów — każda relacja należy do co najmniej jednego cyklu.',
+  'graphBridges.noFragiles':
+    'Brak strukturalnych pojedynczych punktów awarii — każde łącze należy do co najmniej jednego cyklu.',
+  'graphBridges.retry': 'Spróbuj ponownie',
+  'graphBridges.summaryCaption': '{bridges} mostów · {components} składowych',
+  'graphBridges.summaryCaptionOne': '{bridges} mostów · jedna składowa',
+  'graphBridges.summaryCaptionOneBridge': '1 most · {components} składowych',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 most · jedna składowa',
+  'graphBridges.title': 'Mosty grafu',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

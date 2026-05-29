@@ -4469,6 +4469,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'graphBridges.articulationBadge': 'точка сочленения',
+  'graphBridges.articulationTitle':
+    'Удаление этой сущности разорвало бы граф: кластеры, проходящие через неё, теряют связь друг с другом.',
+  'graphBridges.articulationsHeading': 'Точки сочленения',
+  'graphBridges.bridgesHeading': 'Связи-мосты',
+  'graphBridges.colEntity': 'Сущность',
+  'graphBridges.colLinks': 'Связки',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'Пока нет графа знаний.',
+  'graphBridges.emptyHint':
+    'По мере того как ассистент фиксирует связанные факты о вас, здесь появятся структурные единые точки отказа.',
+  'graphBridges.errorPrefix': 'Не удалось загрузить граф:',
+  'graphBridges.intro':
+    'Точки сочленения — это сущности, удаление которых разорвало бы граф памяти. Мосты — это единственные связи, удерживающие две половины вместе. Потеряйте одну, и целая полоса контекста замолчит — структурная уязвимость, которую не вскрывают ни степень, ни PageRank.',
+  'graphBridges.loading': 'Вычисление структурных разрезов…',
+  'graphBridges.metricArticulations': 'Сочленения',
+  'graphBridges.metricConnections': 'Связи',
+  'graphBridges.metricEntities': 'Сущности',
+  'graphBridges.namespaceAll': 'Все пространства имён',
+  'graphBridges.namespaceLabel': 'Пространство имён',
+  'graphBridges.noBridges': 'Мостов нет — каждая связь входит хотя бы в один цикл.',
+  'graphBridges.noFragiles':
+    'Структурных единых точек отказа нет — каждая связь входит хотя бы в один цикл.',
+  'graphBridges.retry': 'Повторить',
+  'graphBridges.summaryCaption': '{bridges} мостов · {components} компонент',
+  'graphBridges.summaryCaptionOne': '{bridges} мостов · одна компонента',
+  'graphBridges.summaryCaptionOneBridge': '1 мост · {components} компонент',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 мост · одна компонента',
+  'graphBridges.title': 'Мосты графа',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

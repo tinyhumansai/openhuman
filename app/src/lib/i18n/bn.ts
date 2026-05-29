@@ -4427,6 +4427,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'graphBridges.articulationBadge': 'কাট শীর্ষ',
+  'graphBridges.articulationTitle':
+    'এই সত্তা সরিয়ে দিলে গ্রাফ বিচ্ছিন্ন হয়ে যাবে: এর মধ্য দিয়ে যাওয়া ক্লাস্টারগুলো পরস্পরের লিঙ্ক হারায়।',
+  'graphBridges.articulationsHeading': 'আর্টিকুলেশন সত্তা',
+  'graphBridges.bridgesHeading': 'ব্রিজ সম্পর্ক',
+  'graphBridges.colEntity': 'সত্তা',
+  'graphBridges.colLinks': 'লিঙ্ক',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'graphBridges.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সংযুক্ত তথ্য রেকর্ড করে, কাঠামোগত একক-ব্যর্থতা-বিন্দুগুলো এখানে উঠে আসবে।',
+  'graphBridges.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'graphBridges.intro':
+    'আর্টিকুলেশন বিন্দু হলো এমন সত্তা যাদের অপসারণ মেমরি গ্রাফকে বিচ্ছিন্ন করে দেবে। ব্রিজ হলো একমাত্র সম্পর্ক যা দুই অর্ধকে একত্রে ধরে রাখে। একটি হারিয়ে ফেললে প্রসঙ্গের একটা পুরো অংশ স্তব্ধ হয়ে যায় — একটি কাঠামোগত দুর্বলতা যা ডিগ্রি বা PageRank কোনটিই উন্মোচন করে না।',
+  'graphBridges.loading': 'কাঠামোগত কাট গণনা করা হচ্ছে…',
+  'graphBridges.metricArticulations': 'আর্টিকুলেশন',
+  'graphBridges.metricConnections': 'সংযোগ',
+  'graphBridges.metricEntities': 'সত্তা',
+  'graphBridges.namespaceAll': 'সমস্ত নেমস্পেস',
+  'graphBridges.namespaceLabel': 'নেমস্পেস',
+  'graphBridges.noBridges': 'কোনো ব্রিজ নেই — প্রতিটি সম্পর্ক অন্তত একটি চক্রে আছে।',
+  'graphBridges.noFragiles':
+    'কোনো কাঠামোগত একক-ব্যর্থতা-বিন্দু নেই — প্রতিটি লিঙ্ক অন্তত একটি চক্রে আছে।',
+  'graphBridges.retry': 'পুনরায় চেষ্টা',
+  'graphBridges.summaryCaption': '{bridges}টি ব্রিজ · {components}টি উপাদান',
+  'graphBridges.summaryCaptionOne': '{bridges}টি ব্রিজ · একক উপাদান',
+  'graphBridges.summaryCaptionOneBridge': '১টি ব্রিজ · {components}টি উপাদান',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '১টি ব্রিজ · একক উপাদান',
+  'graphBridges.title': 'গ্রাফ ব্রিজ',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;

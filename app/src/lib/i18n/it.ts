@@ -4501,6 +4501,36 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'graphBridges.articulationBadge': 'vertice di taglio',
+  'graphBridges.articulationTitle':
+    'Rimuovere questa entità disconnetterebbe il grafo: i gruppi che vi passano perdono il loro collegamento reciproco.',
+  'graphBridges.articulationsHeading': 'Entità di articolazione',
+  'graphBridges.bridgesHeading': 'Relazioni ponte',
+  'graphBridges.colEntity': 'Entità',
+  'graphBridges.colLinks': 'Collegamenti',
+  'graphBridges.colRank': '#',
+  'graphBridges.empty': 'Ancora nessun grafo della conoscenza.',
+  'graphBridges.emptyHint':
+    "Man mano che l'assistente registra fatti connessi su di te, qui appariranno i punti singoli di guasto strutturale.",
+  'graphBridges.errorPrefix': 'Impossibile caricare il grafo:',
+  'graphBridges.intro':
+    "I punti di articolazione sono entità la cui rimozione disconnetterebbe il grafo della memoria. I ponti sono le uniche relazioni che tengono insieme due metà. Perderne uno e un'intera fascia di contesto tace — una vulnerabilità strutturale che né il grado né il PageRank rivelano.",
+  'graphBridges.loading': 'Calcolo dei tagli strutturali…',
+  'graphBridges.metricArticulations': 'Articolazioni',
+  'graphBridges.metricConnections': 'Connessioni',
+  'graphBridges.metricEntities': 'Entità',
+  'graphBridges.namespaceAll': 'Tutti gli spazi dei nomi',
+  'graphBridges.namespaceLabel': 'Spazio dei nomi',
+  'graphBridges.noBridges': 'Nessun ponte — ogni relazione si trova in almeno un ciclo.',
+  'graphBridges.noFragiles':
+    'Nessun punto singolo di guasto strutturale — ogni collegamento si trova in almeno un ciclo.',
+  'graphBridges.retry': 'Riprova',
+  'graphBridges.summaryCaption': '{bridges} ponti · {components} componenti',
+  'graphBridges.summaryCaptionOne': '{bridges} ponti · componente singolo',
+  'graphBridges.summaryCaptionOneBridge': '1 ponte · {components} componenti',
+  'graphBridges.summaryCaptionOneBridgeOneComponent': '1 ponte · componente singolo',
+  'graphBridges.title': 'Ponti del grafo',
+  'memory.tab.bridges': 'Bridges',
 };
 
 export default messages;
