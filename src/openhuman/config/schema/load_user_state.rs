@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub(crate) const ACTIVE_USER_STATE_FILE: &str = "active_user.toml";
@@ -25,13 +26,50 @@ pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
 
 /// Writes the active user id to `{default_openhuman_dir}/active_user.toml`.
 pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Result<()> {
+    std::fs::create_dir_all(default_openhuman_dir).with_context(|| {
+        format!(
+            "Failed to create active user state directory: {}",
+            default_openhuman_dir.display()
+        )
+    })?;
+
     let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
     let state = ActiveUserState {
         user_id: user_id.to_string(),
     };
     let toml_str = toml::to_string_pretty(&state).context("serialize active_user.toml")?;
-    std::fs::write(&path, toml_str)
-        .with_context(|| format!("Failed to write active user state: {}", path.display()))?;
+    let temp_path = default_openhuman_dir.join(format!(
+        ".{ACTIVE_USER_STATE_FILE}.tmp-{}",
+        uuid::Uuid::new_v4()
+    ));
+
+    let mut temp_file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)
+        .with_context(|| {
+            format!(
+                "Failed to create temporary active user state: {}",
+                temp_path.display()
+            )
+        })?;
+    temp_file
+        .write_all(toml_str.as_bytes())
+        .context("Failed to write temporary active user state")?;
+    temp_file
+        .sync_all()
+        .context("Failed to fsync temporary active user state")?;
+    drop(temp_file);
+
+    if let Err(error) = std::fs::rename(&temp_path, &path) {
+        let _ = std::fs::remove_file(&temp_path);
+        anyhow::bail!(
+            "Failed to atomically persist active user state {}: {error}",
+            path.display()
+        );
+    }
+
+    sync_directory(default_openhuman_dir)?;
     tracing::debug!(user_id = %user_id, path = %path.display(), "active user written");
     Ok(())
 }
@@ -67,4 +105,18 @@ pub const PRE_LOGIN_USER_ID: &str = "local";
 /// `{default_openhuman_dir}/users/local`.
 pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
     user_openhuman_dir(default_openhuman_dir, PRE_LOGIN_USER_ID)
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<()> {
+    let dir = std::fs::File::open(path)
+        .with_context(|| format!("Failed to open directory for fsync: {}", path.display()))?;
+    dir.sync_all()
+        .with_context(|| format!("Failed to fsync directory metadata: {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> Result<()> {
+    Ok(())
 }
