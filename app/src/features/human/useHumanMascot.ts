@@ -2,8 +2,7 @@ import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import type { ChatSubagentDoneEvent } from '../../services/chatService';
-import { subscribeChatEvents } from '../../services/chatService';
+import { type ChatSubagentDoneEvent, subscribeChatEvents } from '../../services/chatService';
 import { selectEffectiveMascotVoiceId } from '../../store/mascotSlice';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
