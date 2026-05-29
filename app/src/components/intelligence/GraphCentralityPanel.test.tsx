@@ -59,14 +59,18 @@ describe('<GraphCentralityPanel />', () => {
   });
 
   it('flags a connector/bridge entity with a badge', () => {
-    // L1..L5 -> H -> X: X is a high-influence, low-degree connector.
+    // V inherits hub H's outflow (top influence) but has degree 1, while the
+    // source hubs M2/M3 fill the middle degree tiers -> V is a connector.
     const bridgeResult = computeGraphCentrality([
       rel('L1', 'H'),
       rel('L2', 'H'),
       rel('L3', 'H'),
-      rel('L4', 'H'),
-      rel('L5', 'H'),
-      rel('H', 'X'),
+      rel('H', 'V'),
+      rel('M2', 'x'),
+      rel('M2', 'y'),
+      rel('M3', 'p'),
+      rel('M3', 'q'),
+      rel('M3', 'r'),
     ]);
     render(<GraphCentralityPanel result={bridgeResult} />);
     expect(screen.getByText('connector')).toBeInTheDocument();

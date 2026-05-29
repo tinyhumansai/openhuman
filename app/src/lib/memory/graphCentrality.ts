@@ -249,36 +249,55 @@ export function computeGraphCentrality(
  */
 export interface BridgeFlag {
   id: string;
-  pageRankPosition: number; // 1-based rank by PageRank (desc)
-  degreePosition: number; // 1-based rank by total degree (desc)
-  gap: number;
+  pageRankRank: number; // 1-based DENSE rank by PageRank value (ties share a rank)
+  degreeRank: number; // 1-based DENSE rank by total degree value (ties share a rank)
+  gap: number; // degreeRank - pageRankRank
+}
+
+/**
+ * Dense 1-based ranks by a numeric metric (descending): nodes with an equal
+ * value share the same rank. Using the metric VALUES (not array positions)
+ * makes ranking independent of entity names — a pure rename can never change a
+ * node's rank, so it can never add/remove a bridge flag.
+ */
+function denseRanksDesc(
+  nodes: CentralityNode[],
+  value: (node: CentralityNode) => number
+): Map<string, number> {
+  const sorted = [...nodes].sort((a, b) => value(b) - value(a));
+  const ranks = new Map<string, number>();
+  let rank = 0;
+  let previous = Number.POSITIVE_INFINITY;
+  for (const node of sorted) {
+    const v = value(node);
+    if (v < previous) {
+      rank += 1;
+      previous = v;
+    }
+    ranks.set(node.id, rank);
+  }
+  return ranks;
 }
 
 /**
  * Flag connector/bridge entities from a computed result. A node is a bridge
- * when its PageRank position is at least `minGap` places ahead of its degree
- * position (default 2) — surfaces hubs whose influence outruns their raw fan-out.
+ * when its PageRank rank is at least `minGap` tiers ahead of its degree rank
+ * (default 2) — surfaces hubs whose influence outruns their raw fan-out. Ranks
+ * are tie-aware dense ranks on the metric values, so the result never depends
+ * on entity names.
  */
 export function findBridges(result: CentralityResult, minGap = 2): BridgeFlag[] {
   const { nodes } = result;
   if (nodes.length === 0) return [];
-  // PageRank position: nodes are already sorted by pageRank desc.
-  const pageRankPosition = new Map<string, number>();
-  nodes.forEach((node, i) => pageRankPosition.set(node.id, i + 1));
-  // Degree position: rank by total degree desc, id asc tie-break.
-  const byDegree = [...nodes].sort(
-    (a, b) => b.totalDegree - a.totalDegree || compareIds(a.id, b.id)
-  );
-  const degreePosition = new Map<string, number>();
-  byDegree.forEach((node, i) => degreePosition.set(node.id, i + 1));
+  const pageRankRanks = denseRanksDesc(nodes, node => node.pageRank);
+  const degreeRanks = denseRanksDesc(nodes, node => node.totalDegree);
 
   const bridges: BridgeFlag[] = [];
   for (const node of nodes) {
-    const pr = pageRankPosition.get(node.id)!;
-    const deg = degreePosition.get(node.id)!;
-    const gap = deg - pr;
-    if (gap >= minGap)
-      bridges.push({ id: node.id, pageRankPosition: pr, degreePosition: deg, gap });
+    const pageRankRank = pageRankRanks.get(node.id)!;
+    const degreeRank = degreeRanks.get(node.id)!;
+    const gap = degreeRank - pageRankRank;
+    if (gap >= minGap) bridges.push({ id: node.id, pageRankRank, degreeRank, gap });
   }
   return bridges;
 }

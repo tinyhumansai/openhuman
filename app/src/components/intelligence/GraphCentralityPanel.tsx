@@ -206,6 +206,9 @@ const GraphCentralityPanel = ({ result, loading, error, onRetry }: GraphCentrali
                   className="py-1 text-right text-stone-500 dark:text-neutral-400"
                   title={t('graphCentrality.degreeTitle')
                     .replace('{in}', String(node.inDegree))
+                    .replace('{out}', String(node.outDegree))}
+                  aria-label={t('graphCentrality.degreeTitle')
+                    .replace('{in}', String(node.inDegree))
                     .replace('{out}', String(node.outDegree))}>
                   {node.totalDegree}
                 </td>

@@ -210,23 +210,45 @@ describe('computeGraphCentrality — convergence cap', () => {
 });
 
 describe('findBridges', () => {
+  // V inherits hub H's outflow (highest PageRank) but has degree 1, while the
+  // pure-source hubs M2/M3 occupy the middle degree tiers — so V's PageRank
+  // dense-rank (1) sits well above its degree dense-rank, marking it a connector.
+  const bridgeFixture: GraphRelation[] = [
+    rel('L1', 'H'),
+    rel('L2', 'H'),
+    rel('L3', 'H'),
+    rel('H', 'V'),
+    rel('M2', 'x'),
+    rel('M2', 'y'),
+    rel('M3', 'p'),
+    rel('M3', 'q'),
+    rel('M3', 'r'),
+  ];
+
   it('flags a high-PageRank, low-degree connector and not the obvious hub', () => {
-    // L1..L5 -> H (H is a high in-degree hub); H -> X (X has degree 1 but
-    // inherits most of H's rank => high PageRank, low degree => a bridge).
-    const r = computeGraphCentrality([
-      rel('L1', 'H'),
-      rel('L2', 'H'),
-      rel('L3', 'H'),
-      rel('L4', 'H'),
-      rel('L5', 'H'),
-      rel('H', 'X'),
-    ]);
-    const bridges = findBridges(r);
+    const bridges = findBridges(computeGraphCentrality(bridgeFixture));
     const ids = bridges.map(b => b.id);
-    expect(ids).toContain('X');
+    expect(ids).toContain('V');
     expect(ids).not.toContain('H'); // H ranks high on BOTH degree and PageRank
-    const x = bridges.find(b => b.id === 'X')!;
-    expect(x.gap).toBeGreaterThanOrEqual(2);
+    const v = bridges.find(b => b.id === 'V')!;
+    expect(v.gap).toBeGreaterThanOrEqual(2);
+  });
+
+  it('uses tie-aware dense ranks — flags are independent of entity names', () => {
+    const base = findBridges(computeGraphCentrality(bridgeFixture));
+    // Relabel every entity via a bijection; the structure is identical so the
+    // set of gaps must be identical (only the ids change).
+    const renamed = bridgeFixture.map(t => rel(`z_${t.subject}`, `z_${t.object}`, t.evidenceCount));
+    const after = findBridges(computeGraphCentrality(renamed));
+    expect(after.map(b => b.gap).sort()).toEqual(base.map(b => b.gap).sort());
+    expect(after.map(b => b.id)).toEqual(base.map(b => `z_${b.id}`));
+  });
+
+  it('gives tied nodes the same dense rank (no name-driven gap)', () => {
+    // Two mutually-linked nodes: identical pageRank AND identical degree, so
+    // both dense ranks tie and neither is a spurious bridge.
+    const bridges = findBridges(computeGraphCentrality([rel('A', 'B'), rel('B', 'A')]));
+    expect(bridges).toEqual([]);
   });
 
   it('returns [] for an empty graph', () => {

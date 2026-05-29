@@ -3,7 +3,7 @@
  * namespace selector; delegates all rendering to the pure <GraphCentralityPanel>.
  * Read-only — the result is recomputed from the live graph, never persisted.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { CentralityResult } from '../../lib/memory/graphCentrality';
@@ -17,16 +17,23 @@ const GraphCentralityTab = () => {
   const [error, setError] = useState<string | null>(null);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [namespace, setNamespace] = useState('');
+  // Monotonic token: ignore a response if a newer load has since started, so
+  // an out-of-order resolution can never overwrite the latest result.
+  const latestRequestId = useRef(0);
 
   const load = useCallback(async (ns: string) => {
+    const requestId = (latestRequestId.current += 1);
     setLoading(true);
     setError(null);
     try {
-      setResult(await loadCentrality(ns || undefined));
+      const next = await loadCentrality(ns || undefined);
+      if (requestId !== latestRequestId.current) return;
+      setResult(next);
     } catch (err) {
+      if (requestId !== latestRequestId.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   }, []);
 
