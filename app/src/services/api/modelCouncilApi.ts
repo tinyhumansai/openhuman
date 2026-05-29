@@ -58,7 +58,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  */
 export function unwrapCouncilEnvelope(payload: unknown): ModelCouncilResult {
   const record = asRecord(payload);
-  if (record && 'result' in record && 'logs' in record && Array.isArray(record.logs)) {
+  if (
+    record &&
+    'result' in record &&
+    record.result != null &&
+    'logs' in record &&
+    Array.isArray(record.logs)
+  ) {
     return record.result as ModelCouncilResult;
   }
   return payload as ModelCouncilResult;

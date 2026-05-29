@@ -32,6 +32,14 @@ describe('unwrapCouncilEnvelope', () => {
     const notAnEnvelope = { result: RESULT } as unknown;
     expect(unwrapCouncilEnvelope(notAnEnvelope)).toEqual({ result: RESULT });
   });
+
+  it('does NOT unwrap a null result (guards against { result: null, logs } crashing the UI)', () => {
+    // A partial-error envelope with a null result must not be unwrapped to
+    // `null` — that would crash the component on `result.members`. The guard
+    // returns the payload as-is so the caller surfaces it as a malformed shape.
+    const withNull = { result: null, logs: ['boom'] } as unknown;
+    expect(unwrapCouncilEnvelope(withNull)).toEqual({ result: null, logs: ['boom'] });
+  });
 });
 
 describe('modelCouncilApi.runCouncil', () => {

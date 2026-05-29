@@ -17,38 +17,53 @@ import { modelCouncilApi, type ModelCouncilResult } from '../../services/api/mod
 /** Matches the server-side MAX_COUNCIL_MEMBERS cap. */
 const MAX_MEMBERS = 5;
 
+/** A member row carries a stable id so React keys survive mid-list removal. */
+interface MemberRow {
+  id: number;
+  value: string;
+}
+
+/** Next id = max existing + 1: unique among current rows, no ref/StrictMode hazard. */
+const nextMemberId = (rows: MemberRow[]): number =>
+  rows.reduce((max, r) => Math.max(max, r.id), -1) + 1;
+
 const ModelCouncilTab = () => {
   const { t } = useT();
   const [question, setQuestion] = useState('');
-  const [members, setMembers] = useState<string[]>(['', '']);
+  const [members, setMembers] = useState<MemberRow[]>([
+    { id: 0, value: '' },
+    { id: 1, value: '' },
+  ]);
   const [chair, setChair] = useState('');
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ModelCouncilResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const filledMembers = useMemo(
-    () => members.map(m => m.trim()).filter(m => m.length > 0),
+    () => members.map(m => m.value.trim()).filter(v => v.length > 0),
     [members]
   );
 
   const canRun =
     !running && question.trim().length > 0 && filledMembers.length > 0 && chair.trim().length > 0;
 
-  const updateMember = useCallback((index: number, value: string) => {
-    setMembers(prev => prev.map((m, i) => (i === index ? value : m)));
+  const updateMember = useCallback((id: number, value: string) => {
+    setMembers(prev => prev.map(m => (m.id === id ? { ...m, value } : m)));
   }, []);
 
   const addMember = useCallback(() => {
-    setMembers(prev => (prev.length >= MAX_MEMBERS ? prev : [...prev, '']));
+    setMembers(prev =>
+      prev.length >= MAX_MEMBERS ? prev : [...prev, { id: nextMemberId(prev), value: '' }]
+    );
   }, []);
 
-  const removeMember = useCallback((index: number) => {
-    setMembers(prev => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  const removeMember = useCallback((id: number) => {
+    setMembers(prev => (prev.length <= 1 ? prev : prev.filter(m => m.id !== id)));
   }, []);
 
   const handleRun = useCallback(async () => {
     if (running) return;
-    const trimmedMembers = members.map(m => m.trim()).filter(m => m.length > 0);
+    const trimmedMembers = members.map(m => m.value.trim()).filter(v => v.length > 0);
     if (question.trim().length === 0 || trimmedMembers.length === 0 || chair.trim().length === 0) {
       return;
     }
@@ -108,18 +123,18 @@ const ModelCouncilTab = () => {
         </div>
         <ul className="space-y-1.5">
           {members.map((member, index) => (
-            <li key={index} className="flex items-center gap-2">
+            <li key={member.id} className="flex items-center gap-2">
               <input
                 type="text"
-                value={member}
-                onChange={e => updateMember(index, e.target.value)}
+                value={member.value}
+                onChange={e => updateMember(member.id, e.target.value)}
                 placeholder={t('modelCouncil.memberPlaceholder')}
                 aria-label={t('modelCouncil.memberAria').replace('{n}', String(index + 1))}
                 className="flex-1 rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm font-mono text-stone-800 dark:text-neutral-100 focus:outline-none focus:ring-2 focus:ring-primary-400"
               />
               <button
                 type="button"
-                onClick={() => removeMember(index)}
+                onClick={() => removeMember(member.id)}
                 disabled={members.length <= 1}
                 aria-label={t('modelCouncil.removeMemberAria').replace('{n}', String(index + 1))}
                 className="shrink-0 rounded-lg border border-stone-200 dark:border-neutral-700 px-2 py-1.5 text-xs text-stone-500 dark:text-neutral-400 hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed">

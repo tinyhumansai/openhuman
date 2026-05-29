@@ -226,8 +226,7 @@ pub async fn run_council(
             }
         }
     });
-    let members: Vec<CouncilMemberResult> =
-        futures_util::future::join_all(member_futures).await;
+    let members: Vec<CouncilMemberResult> = futures_util::future::join_all(member_futures).await;
 
     let success_count = members.iter().filter(|m| m.response.is_some()).count();
     log::debug!(
@@ -252,7 +251,10 @@ pub async fn run_council(
     .await
     .map_err(|e| format!("model council: chair synthesis failed: {e}"))?
     .value;
-    log::debug!("[model-council] synthesis complete: {} chars", synthesis.len());
+    log::debug!(
+        "[model-council] synthesis complete: {} chars",
+        synthesis.len()
+    );
 
     let result = ModelCouncilResult {
         question: question.to_string(),
@@ -294,9 +296,9 @@ mod tests {
             "claude".to_string(),
             "".to_string(),
             "   ".to_string(),
-            "gpt".to_string(),     // dup of trimmed " gpt "
+            "gpt".to_string(), // dup of trimmed " gpt "
             "gemini".to_string(),
-            "claude".to_string(),  // dup
+            "claude".to_string(), // dup
         ];
         let out = normalize_member_models(&input);
         assert_eq!(out, vec!["gpt", "claude", "gemini"]);
@@ -356,7 +358,10 @@ mod tests {
 
     #[test]
     fn synthesis_prompt_includes_question_and_each_answer() {
-        let members = vec![ok_member("gpt", "Paris is the capital."), ok_member("claude", "The capital is Paris.")];
+        let members = vec![
+            ok_member("gpt", "Paris is the capital."),
+            ok_member("claude", "The capital is Paris."),
+        ];
         let prompt = build_synthesis_prompt("What is the capital of France?", &members);
         assert!(prompt.contains("What is the capital of France?"));
         assert!(prompt.contains("Paris is the capital."));
@@ -370,7 +375,10 @@ mod tests {
 
     #[test]
     fn synthesis_prompt_marks_failed_seats_with_their_error() {
-        let members = vec![ok_member("gpt", "ok answer"), err_member("claude", "rate limited")];
+        let members = vec![
+            ok_member("gpt", "ok answer"),
+            err_member("claude", "rate limited"),
+        ];
         let prompt = build_synthesis_prompt("q", &members);
         assert!(prompt.contains("[no response: rate limited]"));
         assert!(prompt.contains("ok answer"));

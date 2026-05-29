@@ -47,8 +47,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "member_models",
                     "Member model ids to consult (deduplicated; max 5).",
                 ),
-                required_string("chair_model", "Model id that synthesizes the member answers."),
-                optional_f64("temperature", "Optional sampling temperature for all calls."),
+                required_string(
+                    "chair_model",
+                    "Model id that synthesizes the member answers.",
+                ),
+                optional_f64(
+                    "temperature",
+                    "Optional sampling temperature for all calls.",
+                ),
             ],
             outputs: vec![json_output(
                 "result",
