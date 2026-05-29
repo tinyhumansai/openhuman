@@ -695,9 +695,7 @@ impl Agent {
                     .map(|c| c.multimodal_files.clone())
                     .unwrap_or_default();
                 let prepared = crate::openhuman::agent::multimodal::prepare_messages_for_provider(
-                    &messages,
-                    &image_cfg,
-                    &file_cfg,
+                    &messages, &image_cfg, &file_cfg,
                 )
                 .await?;
                 let mut messages = prepared.messages;
