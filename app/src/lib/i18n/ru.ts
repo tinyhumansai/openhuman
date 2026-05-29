@@ -4469,6 +4469,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'knowledgeGaps.allConnected': 'Каждая сущность хорошо связана — пробелов не найдено.',
+  'knowledgeGaps.empty': 'Пока нет графа знаний.',
+  'knowledgeGaps.emptyHint':
+    'По мере того как ассистент фиксирует факты, здесь появятся слабо связанные сущности.',
+  'knowledgeGaps.errorPrefix': 'Не удалось загрузить граф:',
+  'knowledgeGaps.heading': 'Разрежённые сущности',
+  'knowledgeGaps.intro':
+    'Противоположность центральности: сущности, о которых ассистент почти ничего не зафиксировал — сироты (без связей) и листья (одна связь) — лучшие кандидаты, чтобы узнать о них больше.',
+  'knowledgeGaps.kindLeaf': 'лист',
+  'knowledgeGaps.kindOrphan': 'сирота',
+  'knowledgeGaps.loading': 'Поиск пробелов…',
+  'knowledgeGaps.metricEntities': 'Сущности',
+  'knowledgeGaps.metricLeaves': 'Листья',
+  'knowledgeGaps.metricOrphans': 'Сироты',
+  'knowledgeGaps.namespaceAll': 'Все пространства имён',
+  'knowledgeGaps.namespaceLabel': 'Пространство имён',
+  'knowledgeGaps.objectOnly': 'упомянуто, но не описано',
+  'knowledgeGaps.ratioCaption': '{ratio}% сущностей слабо связаны',
+  'knowledgeGaps.retry': 'Повторить',
+  'knowledgeGaps.title': 'Пробелы в знаниях',
+  'knowledgeGaps.truncated': 'Показано {shown} из {total} разрежённых сущностей.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

@@ -4443,6 +4443,29 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'knowledgeGaps.allConnected':
+    'Setiap entitas terhubung dengan baik — tidak ada celah yang ditemukan.',
+  'knowledgeGaps.empty': 'Belum ada graf pengetahuan.',
+  'knowledgeGaps.emptyHint':
+    'Saat asisten mencatat fakta, entitas yang jarang terhubung akan muncul di sini.',
+  'knowledgeGaps.errorPrefix': 'Tidak dapat memuat graf:',
+  'knowledgeGaps.heading': 'Entitas jarang',
+  'knowledgeGaps.intro':
+    'Kebalikan dari sentralitas: entitas yang hampir tidak dicatat apa-apa oleh asisten — yatim (tanpa koneksi) dan daun (satu koneksi) — kandidat terbaik untuk dipelajari lebih lanjut.',
+  'knowledgeGaps.kindLeaf': 'daun',
+  'knowledgeGaps.kindOrphan': 'yatim',
+  'knowledgeGaps.loading': 'Mencari celah…',
+  'knowledgeGaps.metricEntities': 'Entitas',
+  'knowledgeGaps.metricLeaves': 'Daun',
+  'knowledgeGaps.metricOrphans': 'Yatim',
+  'knowledgeGaps.namespaceAll': 'Semua ruang nama',
+  'knowledgeGaps.namespaceLabel': 'Ruang nama',
+  'knowledgeGaps.objectOnly': 'disebutkan, tidak pernah dijelaskan',
+  'knowledgeGaps.ratioCaption': '{ratio}% entitas terhubung jarang',
+  'knowledgeGaps.retry': 'Coba lagi',
+  'knowledgeGaps.title': 'Celah Pengetahuan',
+  'knowledgeGaps.truncated': 'Menampilkan {shown} dari {total} entitas jarang.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

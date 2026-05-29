@@ -4393,6 +4393,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'knowledgeGaps.allConnected': '모든 엔티티가 잘 연결되어 있습니다 — 간격이 발견되지 않았습니다.',
+  'knowledgeGaps.empty': '아직 지식 그래프가 없습니다.',
+  'knowledgeGaps.emptyHint':
+    '어시스턴트가 사실을 기록함에 따라, 드물게 연결된 엔티티가 여기에 나타납니다.',
+  'knowledgeGaps.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'knowledgeGaps.heading': '희소 엔티티',
+  'knowledgeGaps.intro':
+    '중심성의 역: 어시스턴트가 거의 아무것도 기록하지 않은 엔티티 — 고아(연결 없음)와 잎(단일 연결) — 더 많이 학습할 최고의 후보입니다.',
+  'knowledgeGaps.kindLeaf': '잎',
+  'knowledgeGaps.kindOrphan': '고아',
+  'knowledgeGaps.loading': '간격 찾는 중…',
+  'knowledgeGaps.metricEntities': '엔티티',
+  'knowledgeGaps.metricLeaves': '잎',
+  'knowledgeGaps.metricOrphans': '고아',
+  'knowledgeGaps.namespaceAll': '모든 네임스페이스',
+  'knowledgeGaps.namespaceLabel': '네임스페이스',
+  'knowledgeGaps.objectOnly': '언급됨, 설명 없음',
+  'knowledgeGaps.ratioCaption': '엔티티의 {ratio}%가 희소하게 연결됨',
+  'knowledgeGaps.retry': '다시 시도',
+  'knowledgeGaps.title': '지식 간격',
+  'knowledgeGaps.truncated': '{total}개 희소 엔티티 중 {shown}개 표시 중.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

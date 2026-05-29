@@ -4524,6 +4524,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'knowledgeGaps.allConnected': 'Chaque entité est bien connectée — aucune lacune trouvée.',
+  'knowledgeGaps.empty': 'Pas encore de graphe de connaissances.',
+  'knowledgeGaps.emptyHint':
+    "À mesure que l'assistant enregistre des faits, les entités peu connectées apparaîtront ici.",
+  'knowledgeGaps.errorPrefix': 'Impossible de charger le graphe :',
+  'knowledgeGaps.heading': 'Entités clairsemées',
+  'knowledgeGaps.intro':
+    "L'inverse de la centralité : les entités sur lesquelles l'assistant n'a presque rien enregistré — orphelins (aucune connexion) et feuilles (une seule connexion) — les meilleurs candidats pour en apprendre davantage.",
+  'knowledgeGaps.kindLeaf': 'feuille',
+  'knowledgeGaps.kindOrphan': 'orphelin',
+  'knowledgeGaps.loading': 'Recherche de lacunes…',
+  'knowledgeGaps.metricEntities': 'Entités',
+  'knowledgeGaps.metricLeaves': 'Feuilles',
+  'knowledgeGaps.metricOrphans': 'Orphelins',
+  'knowledgeGaps.namespaceAll': 'Tous les espaces de noms',
+  'knowledgeGaps.namespaceLabel': 'Espace de noms',
+  'knowledgeGaps.objectOnly': 'mentionné, jamais décrit',
+  'knowledgeGaps.ratioCaption': '{ratio}% des entités sont peu connectées',
+  'knowledgeGaps.retry': 'Réessayer',
+  'knowledgeGaps.title': 'Lacunes de connaissance',
+  'knowledgeGaps.truncated': 'Affichage de {shown} sur {total} entités clairsemées.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

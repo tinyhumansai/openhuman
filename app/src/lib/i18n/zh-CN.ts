@@ -4214,6 +4214,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'knowledgeGaps.allConnected': '每个实体连接良好——未发现缺口。',
+  'knowledgeGaps.empty': '暂无知识图。',
+  'knowledgeGaps.emptyHint': '随着助手记录事实,稀疏连接的实体将在此显现。',
+  'knowledgeGaps.errorPrefix': '无法加载图:',
+  'knowledgeGaps.heading': '稀疏实体',
+  'knowledgeGaps.intro':
+    '中心性的反面:助手几乎没有记录任何信息的实体——孤立(无连接)和叶子(单一连接)——是最值得进一步了解的候选。',
+  'knowledgeGaps.kindLeaf': '叶子',
+  'knowledgeGaps.kindOrphan': '孤立',
+  'knowledgeGaps.loading': '正在查找缺口…',
+  'knowledgeGaps.metricEntities': '实体',
+  'knowledgeGaps.metricLeaves': '叶子',
+  'knowledgeGaps.metricOrphans': '孤立',
+  'knowledgeGaps.namespaceAll': '所有命名空间',
+  'knowledgeGaps.namespaceLabel': '命名空间',
+  'knowledgeGaps.objectOnly': '已提及,从未描述',
+  'knowledgeGaps.ratioCaption': '{ratio}% 的实体连接稀疏',
+  'knowledgeGaps.retry': '重试',
+  'knowledgeGaps.title': '知识缺口',
+  'knowledgeGaps.truncated': '显示 {total} 个稀疏实体中的 {shown} 个。',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

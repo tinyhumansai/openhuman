@@ -4543,6 +4543,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'knowledgeGaps.allConnected': 'Jede Entität ist gut verbunden — keine Lücken gefunden.',
+  'knowledgeGaps.empty': 'Noch kein Wissensgraph.',
+  'knowledgeGaps.emptyHint':
+    'Während der Assistent Fakten erfasst, erscheinen hier dünn verbundene Entitäten.',
+  'knowledgeGaps.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'knowledgeGaps.heading': 'Dünne Entitäten',
+  'knowledgeGaps.intro':
+    'Das Gegenteil von Zentralität: Entitäten, über die der Assistent kaum etwas erfasst hat — Waisen (keine Verbindungen) und Blätter (eine einzige Verbindung) — die besten Kandidaten, mehr über sie zu lernen.',
+  'knowledgeGaps.kindLeaf': 'Blatt',
+  'knowledgeGaps.kindOrphan': 'Waise',
+  'knowledgeGaps.loading': 'Suche Lücken…',
+  'knowledgeGaps.metricEntities': 'Entitäten',
+  'knowledgeGaps.metricLeaves': 'Blätter',
+  'knowledgeGaps.metricOrphans': 'Waisen',
+  'knowledgeGaps.namespaceAll': 'Alle Namensräume',
+  'knowledgeGaps.namespaceLabel': 'Namensraum',
+  'knowledgeGaps.objectOnly': 'erwähnt, nie beschrieben',
+  'knowledgeGaps.ratioCaption': '{ratio}% der Entitäten sind dünn verbunden',
+  'knowledgeGaps.retry': 'Wiederholen',
+  'knowledgeGaps.title': 'Wissenslücken',
+  'knowledgeGaps.truncated': 'Zeige {shown} von {total} dünnen Entitäten.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

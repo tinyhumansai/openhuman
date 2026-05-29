@@ -4427,6 +4427,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'knowledgeGaps.allConnected': 'প্রতিটি সত্তা ভালভাবে সংযুক্ত — কোন ফাঁক পাওয়া যায়নি।',
+  'knowledgeGaps.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'knowledgeGaps.emptyHint': 'সহকারী যখন তথ্য রেকর্ড করে, কম-সংযুক্ত সত্তাগুলি এখানে উঠে আসবে।',
+  'knowledgeGaps.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'knowledgeGaps.heading': 'বিরল সত্তা',
+  'knowledgeGaps.intro':
+    'কেন্দ্রীয়তার বিপরীত: যেসব সত্তা সম্পর্কে সহকারী খুব কমই কিছু রেকর্ড করেছে — অনাথ (কোনো সংযোগ নেই) এবং পাতা (একটি সংযোগ) — সম্পর্কে আরও জানার সেরা প্রার্থী।',
+  'knowledgeGaps.kindLeaf': 'পাতা',
+  'knowledgeGaps.kindOrphan': 'অনাথ',
+  'knowledgeGaps.loading': 'ফাঁক খোঁজা হচ্ছে…',
+  'knowledgeGaps.metricEntities': 'সত্তা',
+  'knowledgeGaps.metricLeaves': 'পাতা',
+  'knowledgeGaps.metricOrphans': 'অনাথ',
+  'knowledgeGaps.namespaceAll': 'সমস্ত নেমস্পেস',
+  'knowledgeGaps.namespaceLabel': 'নেমস্পেস',
+  'knowledgeGaps.objectOnly': 'উল্লিখিত, কখনো বর্ণিত নয়',
+  'knowledgeGaps.ratioCaption': '{ratio}% সত্তা বিরলভাবে সংযুক্ত',
+  'knowledgeGaps.retry': 'পুনরায় চেষ্টা',
+  'knowledgeGaps.title': 'জ্ঞান ফাঁক',
+  'knowledgeGaps.truncated': '{total} বিরল সত্তার মধ্যে {shown} দেখাচ্ছি।',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

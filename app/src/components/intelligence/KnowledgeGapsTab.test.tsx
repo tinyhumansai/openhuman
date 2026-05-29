@@ -40,8 +40,8 @@ describe('<KnowledgeGapsTab />', () => {
 
   it('loads on mount and renders the gap list', async () => {
     render(<KnowledgeGapsTab />);
-    expect(mockLoad).toHaveBeenCalledWith(undefined);
     await waitFor(() => expect(screen.getByText('Sparse entities')).toBeInTheDocument());
+    expect(mockLoad).toHaveBeenCalledWith(undefined);
   });
 
   it('shows the namespace selector and re-queries on change', async () => {

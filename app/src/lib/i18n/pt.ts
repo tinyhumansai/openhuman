@@ -4498,6 +4498,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
+  'knowledgeGaps.allConnected': 'Cada entidade está bem conectada — nenhuma lacuna encontrada.',
+  'knowledgeGaps.empty': 'Ainda sem grafo de conhecimento.',
+  'knowledgeGaps.emptyHint':
+    'À medida que o assistente registra fatos, entidades pouco conectadas aparecerão aqui.',
+  'knowledgeGaps.errorPrefix': 'Não foi possível carregar o grafo:',
+  'knowledgeGaps.heading': 'Entidades esparsas',
+  'knowledgeGaps.intro':
+    'O inverso da centralidade: entidades sobre as quais o assistente mal registrou algo — órfãos (sem conexões) e folhas (uma única conexão) — os melhores candidatos para aprender mais.',
+  'knowledgeGaps.kindLeaf': 'folha',
+  'knowledgeGaps.kindOrphan': 'órfão',
+  'knowledgeGaps.loading': 'Buscando lacunas…',
+  'knowledgeGaps.metricEntities': 'Entidades',
+  'knowledgeGaps.metricLeaves': 'Folhas',
+  'knowledgeGaps.metricOrphans': 'Órfãos',
+  'knowledgeGaps.namespaceAll': 'Todos os espaços de nomes',
+  'knowledgeGaps.namespaceLabel': 'Espaço de nomes',
+  'knowledgeGaps.objectOnly': 'mencionado, nunca descrito',
+  'knowledgeGaps.ratioCaption': '{ratio}% das entidades estão pouco conectadas',
+  'knowledgeGaps.retry': 'Tentar novamente',
+  'knowledgeGaps.title': 'Lacunas de conhecimento',
+  'knowledgeGaps.truncated': 'Mostrando {shown} de {total} entidades esparsas.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

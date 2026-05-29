@@ -4350,6 +4350,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'knowledgeGaps.allConnected': 'كل كيان موصول جيداً — لم يُعثر على فجوات.',
+  'knowledgeGaps.empty': 'لا يوجد رسم معرفي بعد.',
+  'knowledgeGaps.emptyHint': 'كلما سجّل المساعد حقائق، ستظهر هنا الكيانات قليلة الاتصال.',
+  'knowledgeGaps.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'knowledgeGaps.heading': 'كيانات شحيحة',
+  'knowledgeGaps.intro':
+    'عكس المركزية: كيانات سجّل المساعد عنها القليل جداً — الأيتام (بلا اتصالات) والأوراق (اتصال واحد) — أفضل المرشحين للتعلم أكثر عنهم.',
+  'knowledgeGaps.kindLeaf': 'ورقة',
+  'knowledgeGaps.kindOrphan': 'يتيم',
+  'knowledgeGaps.loading': 'البحث عن الفجوات…',
+  'knowledgeGaps.metricEntities': 'الكيانات',
+  'knowledgeGaps.metricLeaves': 'أوراق',
+  'knowledgeGaps.metricOrphans': 'أيتام',
+  'knowledgeGaps.namespaceAll': 'كل مساحات الأسماء',
+  'knowledgeGaps.namespaceLabel': 'مساحة الأسماء',
+  'knowledgeGaps.objectOnly': 'مذكور، لم يوصف أبداً',
+  'knowledgeGaps.ratioCaption': '{ratio}% من الكيانات قليلة الاتصال',
+  'knowledgeGaps.retry': 'إعادة المحاولة',
+  'knowledgeGaps.title': 'فجوات المعرفة',
+  'knowledgeGaps.truncated': 'عرض {shown} من أصل {total} كيان شحيح.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

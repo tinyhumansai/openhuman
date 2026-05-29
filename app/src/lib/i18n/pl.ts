@@ -4501,6 +4501,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'knowledgeGaps.allConnected': 'Każda encja jest dobrze połączona — nie znaleziono luk.',
+  'knowledgeGaps.empty': 'Jeszcze brak grafu wiedzy.',
+  'knowledgeGaps.emptyHint':
+    'Gdy asystent zapisuje fakty, słabo połączone encje pojawią się tutaj.',
+  'knowledgeGaps.errorPrefix': 'Nie udało się załadować grafu:',
+  'knowledgeGaps.heading': 'Rzadkie encje',
+  'knowledgeGaps.intro':
+    'Odwrotność centralności: encje, o których asystent ledwo cokolwiek zarejestrował — sieroty (brak połączeń) i liście (jedno połączenie) — najlepsi kandydaci, aby się o nich więcej dowiedzieć.',
+  'knowledgeGaps.kindLeaf': 'liść',
+  'knowledgeGaps.kindOrphan': 'sierota',
+  'knowledgeGaps.loading': 'Szukanie luk…',
+  'knowledgeGaps.metricEntities': 'Encje',
+  'knowledgeGaps.metricLeaves': 'Liście',
+  'knowledgeGaps.metricOrphans': 'Sieroty',
+  'knowledgeGaps.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'knowledgeGaps.namespaceLabel': 'Przestrzeń nazw',
+  'knowledgeGaps.objectOnly': 'wspomniane, nigdy opisane',
+  'knowledgeGaps.ratioCaption': '{ratio}% encji jest słabo połączonych',
+  'knowledgeGaps.retry': 'Spróbuj ponownie',
+  'knowledgeGaps.title': 'Luki w wiedzy',
+  'knowledgeGaps.truncated': 'Pokazuję {shown} z {total} rzadkich encji.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

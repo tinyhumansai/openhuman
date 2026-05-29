@@ -4501,6 +4501,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'knowledgeGaps.allConnected': 'Ogni entità è ben collegata — nessuna lacuna trovata.',
+  'knowledgeGaps.empty': 'Ancora nessun grafo della conoscenza.',
+  'knowledgeGaps.emptyHint':
+    "Man mano che l'assistente registra fatti, qui appariranno le entità scarsamente collegate.",
+  'knowledgeGaps.errorPrefix': 'Impossibile caricare il grafo:',
+  'knowledgeGaps.heading': 'Entità sparse',
+  'knowledgeGaps.intro':
+    "L'inverso della centralità: entità su cui l'assistente ha registrato a malapena qualcosa — orfani (nessuna connessione) e foglie (una sola connessione) — i migliori candidati su cui imparare di più.",
+  'knowledgeGaps.kindLeaf': 'foglia',
+  'knowledgeGaps.kindOrphan': 'orfano',
+  'knowledgeGaps.loading': 'Ricerca lacune…',
+  'knowledgeGaps.metricEntities': 'Entità',
+  'knowledgeGaps.metricLeaves': 'Foglie',
+  'knowledgeGaps.metricOrphans': 'Orfani',
+  'knowledgeGaps.namespaceAll': 'Tutti gli spazi dei nomi',
+  'knowledgeGaps.namespaceLabel': 'Spazio dei nomi',
+  'knowledgeGaps.objectOnly': 'menzionato, mai descritto',
+  'knowledgeGaps.ratioCaption': '{ratio}% delle entità sono scarsamente collegate',
+  'knowledgeGaps.retry': 'Riprova',
+  'knowledgeGaps.title': 'Lacune di conoscenza',
+  'knowledgeGaps.truncated': 'Mostrando {shown} di {total} entità sparse.',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;

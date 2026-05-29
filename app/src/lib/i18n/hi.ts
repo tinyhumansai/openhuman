@@ -4434,6 +4434,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'knowledgeGaps.allConnected': 'हर इकाई अच्छी तरह जुड़ी है — कोई कमी नहीं मिली।',
+  'knowledgeGaps.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'knowledgeGaps.emptyHint': 'जैसे-जैसे सहायक तथ्य दर्ज करता है, कम-जुड़ी इकाइयाँ यहाँ उभरेंगी।',
+  'knowledgeGaps.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'knowledgeGaps.heading': 'विरल इकाइयाँ',
+  'knowledgeGaps.intro':
+    'केंद्रीयता का व्युत्क्रम: वे इकाइयाँ जिनके बारे में सहायक ने मुश्किल से कुछ दर्ज किया है — अनाथ (कोई कनेक्शन नहीं) और पत्तियाँ (एक कनेक्शन) — अधिक जानने के लिए सर्वोत्तम उम्मीदवार।',
+  'knowledgeGaps.kindLeaf': 'पत्ती',
+  'knowledgeGaps.kindOrphan': 'अनाथ',
+  'knowledgeGaps.loading': 'कमियाँ ढूंढी जा रही हैं…',
+  'knowledgeGaps.metricEntities': 'इकाइयाँ',
+  'knowledgeGaps.metricLeaves': 'पत्तियाँ',
+  'knowledgeGaps.metricOrphans': 'अनाथ',
+  'knowledgeGaps.namespaceAll': 'सभी नेमस्पेस',
+  'knowledgeGaps.namespaceLabel': 'नेमस्पेस',
+  'knowledgeGaps.objectOnly': 'उल्लेखित, कभी वर्णित नहीं',
+  'knowledgeGaps.ratioCaption': '{ratio}% इकाइयाँ विरल रूप से जुड़ी हैं',
+  'knowledgeGaps.retry': 'पुनः प्रयास',
+  'knowledgeGaps.title': 'ज्ञान कमियाँ',
+  'knowledgeGaps.truncated': '{total} विरल इकाइयों में से {shown} दिखा रहे हैं।',
+  'memory.tab.gaps': 'Gaps',
 };
 
 export default messages;
