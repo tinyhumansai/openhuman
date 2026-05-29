@@ -1378,3 +1378,66 @@ fn nvidia_nim_falls_back_to_default_model_when_no_model_in_string() {
         "should fall back to default_model from config entry"
     );
 }
+
+// ── config.api_key fallback scoping (PR #2724) ───────────────────────────
+
+/// Build a tempdir-backed Config with a global `config.api_key`, a custom
+/// `inference_url`, and two cloud providers: one whose endpoint matches the
+/// inference_url (the legacy direct-inference slug) and one that does not.
+///
+/// The tempdir workspace has no stored auth-profiles, so `lookup_key_for_slug`
+/// exhausts the standard auth path and reaches the `config.api_key` fallback.
+fn config_for_api_key_fallback(tmp: &TempDir) -> Config {
+    let mut custom = openai_entry("p_custom", "custom");
+    custom.endpoint = "https://inference.example.com/v1".to_string();
+    let config = config_with_providers_in_tempdir(
+        tmp,
+        vec![custom, anthropic_entry("p_anthropic", "anthropic")],
+    );
+    let mut config = config;
+    config.api_key = Some("global-key".to_string());
+    config.inference_url = Some("https://inference.example.com/v1".to_string());
+    config
+}
+
+/// The legacy direct-inference slug — the provider whose endpoint matches
+/// `config.inference_url` — inherits the global `config.api_key`.
+#[test]
+fn config_api_key_fallback_applies_to_legacy_inference_slug() {
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_for_api_key_fallback(&tmp);
+    assert_eq!(
+        lookup_key_for_slug("custom", &config).expect("lookup must succeed"),
+        "global-key",
+        "legacy direct-inference slug must inherit config.api_key fallback",
+    );
+}
+
+/// Load-bearing negative assertion: a provider whose endpoint does NOT match
+/// `config.inference_url` must NOT inherit the global `config.api_key`.
+/// Without this guard the fallback would leak one provider's credential to
+/// every other provider (cross-provider credential leak, PR #2724).
+#[test]
+fn config_api_key_fallback_does_not_leak_to_other_slugs() {
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_for_api_key_fallback(&tmp);
+    assert_eq!(
+        lookup_key_for_slug("anthropic", &config).expect("lookup must succeed"),
+        "",
+        "non-matching slug must NOT inherit config.api_key — would leak credentials",
+    );
+}
+
+/// When `inference_url` itself is unset, the `config.api_key` fallback never
+/// fires (no legacy direct-inference slug to scope to), so no slug inherits it.
+#[test]
+fn config_api_key_fallback_inert_without_inference_url() {
+    let tmp = TempDir::new().expect("tempdir");
+    let mut config = config_for_api_key_fallback(&tmp);
+    config.inference_url = None;
+    assert_eq!(
+        lookup_key_for_slug("custom", &config).expect("lookup must succeed"),
+        "",
+        "without inference_url there is no legacy slug — fallback must stay inert",
+    );
+}
