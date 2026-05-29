@@ -862,6 +862,7 @@ pub fn build_core_http_router(socketio_enabled: bool) -> Router {
         .route("/schema", get(schema_handler))
         .route("/events", get(events_handler))
         .route("/events/webhooks", get(webhook_events_handler))
+        .route("/events/domain", get(domain_events_handler))
         .route("/rpc", post(rpc_handler))
         .route("/ws/dictation", get(dictation_ws_handler))
         .route("/auth", get(desktop_auth_handler))
@@ -1183,6 +1184,101 @@ async fn webhook_events_handler() -> Response {
     ));
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(10)))
+        .into_response()
+}
+
+/// SSE endpoint streaming DomainEvent bus events for the live event log panel.
+///
+/// Requires bearer auth. Streams all domain events as JSON with event type
+/// set to the domain name (agent, tool, memory, etc.).
+async fn domain_events_handler(headers: axum::http::HeaderMap) -> Response {
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let bearer_ok = bearer
+        .map(crate::core::auth::verify_bearer_token)
+        .unwrap_or(false);
+
+    if !bearer_ok {
+        log::warn!("[events/domain] reject subscribe: missing or invalid bearer token");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "error": "unauthorized",
+                "message": "Bearer token required for domain event stream"
+            })),
+        )
+            .into_response();
+    }
+
+    // Read dashboard config for event stream settings.
+    let es_cfg = crate::openhuman::config::rpc::load_config_with_timeout()
+        .await
+        .map(|c| c.dashboard.event_stream)
+        .unwrap_or_default();
+
+    if !es_cfg.enabled {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "ok": false, "error": "event stream disabled by config" })),
+        )
+            .into_response();
+    }
+
+    let bus = match crate::core::event_bus::global() {
+        Some(bus) => bus,
+        None => {
+            log::warn!("[events/domain] event bus not initialized");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "ok": false, "error": "event bus not initialized" })),
+            )
+                .into_response();
+        }
+    };
+
+    log::debug!("[events/domain] client connected, streaming domain events");
+
+    // Send config as first SSE event so frontend can apply settings.
+    let config_event = Event::default().event("config").data(
+        serde_json::to_string(&json!({
+            "max_entries": es_cfg.max_entries,
+            "new_entries": es_cfg.new_entries,
+        }))
+        .unwrap_or_default(),
+    );
+
+    let rx = bus.raw_receiver();
+    let event_stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(
+        |item| -> Option<Result<Event, std::convert::Infallible>> {
+            let event = match item {
+                Ok(ev) => ev,
+                Err(_) => return None,
+            };
+            let domain = event.domain().to_string();
+            let event_name = event.variant_name();
+            let agent = event.agent_hint().unwrap_or("").to_string();
+            let data = json!({
+                "domain": domain,
+                "event": event_name,
+                "agent": agent,
+                "timestamp": chrono::Utc::now().format("%H:%M:%S").to_string(),
+            });
+            let data_str = serde_json::to_string(&data).ok()?;
+            Some(Ok(Event::default().event(domain).data(data_str)))
+        },
+    );
+
+    let config_stream =
+        futures::stream::once(async move { Ok::<_, std::convert::Infallible>(config_event) });
+    let stream = config_stream.chain(event_stream);
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(5)))
         .into_response()
 }
 

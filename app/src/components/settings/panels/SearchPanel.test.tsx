@@ -8,7 +8,7 @@
  *  - "Block all"  → persists `allowed_domains: []` + `allow_all: false`,
  *  - "Custom"     → reveals the host editor and saving persists the list.
  */
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../test/test-utils';
@@ -42,6 +42,7 @@ function settings(overrides: Record<string, unknown> = {}) {
     timeout_secs: 15,
     parallel_configured: false,
     brave_configured: false,
+    querit_configured: false,
     allowed_domains: ['reuters.com'],
     allow_all: false,
     ...overrides,
@@ -54,6 +55,7 @@ const CUSTOM = 'settings.search.accessCustom';
 const BLOCK_ALL = 'settings.search.accessBlockAll';
 
 const radio = (name: string) => screen.getByRole('radio', { name });
+const keyEditor = (label: string) => within(screen.getByRole('group', { name: label }));
 
 describe('SearchPanel — unified web-access modes', () => {
   beforeEach(() => {
@@ -169,5 +171,67 @@ describe('SearchPanel — unified web-access modes', () => {
 
     const reopened = (await screen.findByPlaceholderText(PLACEHOLDER)) as HTMLTextAreaElement;
     expect(reopened.value).toBe('example.com');
+  });
+
+  test('saving Parallel and Brave API keys sends provider-specific patches', async () => {
+    renderWithProviders(<SearchPanel embedded />);
+    await screen.findByPlaceholderText('settings.search.placeholderParallel');
+
+    const parallel = keyEditor('settings.search.parallelKeyLabel');
+    const parallelInput = parallel.getByPlaceholderText(
+      'settings.search.placeholderParallel'
+    ) as HTMLInputElement;
+    fireEvent.change(parallelInput, { target: { value: 'parallel-test-key' } });
+    fireEvent.click(parallel.getByText('settings.search.save'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({
+        parallel_api_key: 'parallel-test-key',
+      })
+    );
+    expect(parallelInput.value).toBe('');
+
+    const brave = keyEditor('settings.search.braveKeyLabel');
+    const braveInput = brave.getByPlaceholderText(
+      'settings.search.placeholderBrave'
+    ) as HTMLInputElement;
+    fireEvent.change(braveInput, { target: { value: 'brave-test-key' } });
+    fireEvent.click(brave.getByText('settings.search.save'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ brave_api_key: 'brave-test-key' })
+    );
+    expect(braveInput.value).toBe('');
+  });
+
+  test('Querit key editor can reveal, save, and clear the stored API key', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({ result: settings({ querit_configured: true }) });
+    renderWithProviders(<SearchPanel embedded />);
+    await screen.findByPlaceholderText('settings.search.placeholderStored');
+
+    const querit = keyEditor('settings.search.queritKeyLabel');
+    const input = querit.getByPlaceholderText(
+      'settings.search.placeholderStored'
+    ) as HTMLInputElement;
+    expect(input.type).toBe('password');
+
+    fireEvent.click(querit.getByText('settings.search.show'));
+    expect(input.type).toBe('text');
+
+    fireEvent.change(input, { target: { value: 'querit-test-key' } });
+    fireEvent.click(querit.getByText('settings.search.save'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({
+        querit_api_key: 'querit-test-key',
+      })
+    );
+    expect(input.value).toBe('');
+
+    fireEvent.click(querit.getByText('settings.search.clear'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ querit_api_key: '' })
+    );
   });
 });

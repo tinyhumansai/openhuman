@@ -345,6 +345,42 @@ async fn vault_create_returns_current_host_os() {
 }
 
 #[tokio::test]
+async fn vault_create_uses_pii_safe_memory_namespace() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+
+    let outcome = ops::vault_create(
+        &config,
+        "Test",
+        tmp.path().to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap();
+
+    let namespace = &outcome.value.namespace;
+    assert!(namespace.starts_with("vault-"));
+    assert!(!namespace.contains(&outcome.value.id));
+    assert!(!crate::openhuman::memory_store::safety::has_likely_secret(
+        namespace
+    ));
+    assert!(!crate::openhuman::memory_store::safety::pii::has_likely_pii(namespace));
+}
+
+#[test]
+fn vault_namespace_derivation_does_not_embed_pii_like_ids() {
+    let namespace = ops::vault_namespace_for_id("VECJ880326XK4");
+
+    assert!(namespace.starts_with("vault-"));
+    assert!(!namespace.contains("VECJ880326XK4"));
+    assert!(!crate::openhuman::memory_store::safety::has_likely_secret(
+        &namespace
+    ));
+    assert!(!crate::openhuman::memory_store::safety::pii::has_likely_pii(&namespace));
+}
+
+#[tokio::test]
 async fn vault_sync_status_returns_idle_for_unknown_vault() {
     let outcome = ops::vault_sync_status("__ops_status_unknown__")
         .await

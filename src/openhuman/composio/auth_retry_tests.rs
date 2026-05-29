@@ -168,7 +168,7 @@ async fn does_not_retry_on_first_attempt_success() {
 
     let resp = execute_with_auth_retry_inner(
         &client,
-        "GITHUB_USERS_GET_AUTHENTICATED",
+        "GITHUB_GET_THE_AUTHENTICATED_USER",
         None,
         Duration::from_secs(60), // would hang the test if we ever slept
     )

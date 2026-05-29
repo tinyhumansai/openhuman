@@ -87,10 +87,15 @@ pub async fn start<R: Runtime>(
     app: AppHandle<R>,
     request_id: String,
     meet_url: String,
+    owner_display_name: String,
+    bot_display_name: String,
 ) -> Result<(), String> {
     log::info!(
-        "[meet-audio] start request_id={request_id} url_prefix={}",
-        truncate_for_log(&meet_url, 64)
+        "[meet-audio] start request_id={request_id} url_prefix={} \
+         owner_chars={} bot_chars={}",
+        truncate_for_log(&meet_url, 64),
+        owner_display_name.chars().count(),
+        bot_display_name.chars().count()
     );
 
     if let Some(state) = app.try_state::<MeetAudioState>() {
@@ -104,12 +109,22 @@ pub async fn start<R: Runtime>(
     }
 
     // Tell core to open its session first so the very first PCM push
-    // doesn't race the start RPC.
+    // doesn't race the start RPC. Hand the call owner + bot display
+    // names through with the request so the core wake-word gate
+    // (privacy lock: only the owner can trigger tool calls) is
+    // active before the first caption can arrive.
     rpc_call(
         "openhuman.meet_agent_start_session",
         serde_json::json!({
             "request_id": request_id,
             "sample_rate_hz": 16_000,
+            "owner_display_name": owner_display_name,
+            "bot_display_name": bot_display_name,
+            // Persisted into the recent-calls JSONL by stop_session
+            // so the Skills "Meeting Bots" card can show "joined
+            // <code>" in the history list. The URL the shell built
+            // the CEF window with is the canonical value.
+            "meet_url": meet_url,
         }),
     )
     .await?;
@@ -170,7 +185,7 @@ pub async fn start<R: Runtime>(
                     caption_listener_disabled(request_id.clone())
                 }
             };
-            let speak = speak_pump::start(request_id.clone(), cdp, session);
+            let speak = speak_pump::start(app.clone(), request_id.clone(), cdp, session);
             (speak, captions)
         }
         Err(err) => {

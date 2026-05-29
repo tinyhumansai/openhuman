@@ -2,7 +2,9 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::OnceCell;
 
 use crate::openhuman::util::floor_char_boundary;
 
@@ -188,6 +190,33 @@ pub struct SecurityPolicy {
     /// (or an "Always allow" decision) and observed live via `live_policy`.
     pub auto_approve: Vec<String>,
     pub tracker: ActionTracker,
+    /// Lazily-cached canonical form of [`workspace_dir`].
+    ///
+    /// `validate_path` / `validate_parent_path` use the canonical workspace
+    /// root to check resolved paths against `forbidden_paths`. Without a cache
+    /// each call invokes `tokio::fs::canonicalize(&workspace_dir)` — one
+    /// `stat(2)` + symlink walk on the same path on every file op. A single
+    /// agent turn doing tens of read/edit/shell-path validations hits this
+    /// repeatedly with identical input.
+    ///
+    /// `workspace_dir` is effectively immutable for a given `SecurityPolicy`
+    /// (a config update builds a *new* policy via `from_config` and swaps the
+    /// `Arc` in [`live_policy`]), so caching the resolved value is safe and
+    /// stays correct across config updates.
+    ///
+    /// `Arc<OnceCell<_>>` so the struct stays `Clone` (clone the `Arc`) and
+    /// init happens lazily on the first async call site without blocking
+    /// constructors. Fallback (raw `workspace_dir` if canonicalize fails)
+    /// matches the previous inline behavior exactly.
+    ///
+    /// Visibility is `pub` to match every other field on the struct: external
+    /// crates (Cargo examples, downstream consumers) construct
+    /// `SecurityPolicy` with the `..SecurityPolicy::default()` functional-update
+    /// spread, and Rust requires every field of the target struct to be
+    /// visible to the caller in that syntax — even fields supplied by the
+    /// default. `pub(crate)` was an over-tight first cut that broke
+    /// `examples/mouse_smoke.rs` with E0451.
+    pub canonical_workspace: Arc<OnceCell<PathBuf>>,
 }
 
 impl Default for SecurityPolicy {
@@ -284,6 +313,7 @@ impl Default for SecurityPolicy {
             allow_tool_install: false,
             auto_approve: Vec::new(),
             tracker: ActionTracker::new(),
+            canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
 }
@@ -1666,6 +1696,28 @@ impl SecurityPolicy {
         parent.canonicalize().ok().map(|p| p.join(name))
     }
 
+    /// Return the canonical form of `workspace_dir`, hydrating the
+    /// `canonical_workspace` cache on the first call.
+    ///
+    /// `validate_path` / `validate_parent_path` both need the canonical
+    /// workspace root for forbidden-path containment checks. The underlying
+    /// `tokio::fs::canonicalize` is a `stat(2)` + symlink walk and was
+    /// previously invoked on every call with the same input.
+    ///
+    /// Falls back to the raw `workspace_dir` if `canonicalize` fails (e.g.
+    /// during early startup or in tests where the workspace doesn't exist on
+    /// disk), matching the inline behavior the callers used before the cache.
+    async fn workspace_root(&self) -> PathBuf {
+        self.canonical_workspace
+            .get_or_init(|| async {
+                tokio::fs::canonicalize(&self.workspace_dir)
+                    .await
+                    .unwrap_or_else(|_| self.workspace_dir.clone())
+            })
+            .await
+            .clone()
+    }
+
     /// Validate a path for file I/O: string checks, canonicalize, workspace containment,
     /// and forbidden-path check on the resolved path.
     /// Returns the canonical `PathBuf` on success.
@@ -1691,9 +1743,7 @@ impl SecurityPolicy {
                 resolved.display()
             ));
         }
-        let workspace_root = tokio::fs::canonicalize(&self.workspace_dir)
-            .await
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root().await;
         self.check_resolved_against_forbidden(&resolved, &workspace_root)?;
         log::debug!(
             "[security] validate_path: '{}' resolved to '{}'",
@@ -1760,9 +1810,7 @@ impl SecurityPolicy {
         let resolved_parent = canonical_ancestor.join(relative_suffix);
         let result = resolved_parent.join(file_name);
 
-        let workspace_root = tokio::fs::canonicalize(&self.workspace_dir)
-            .await
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root().await;
         self.check_resolved_against_forbidden(&canonical_ancestor, &workspace_root)?;
         self.check_resolved_against_forbidden(&result, &workspace_root)?;
 
@@ -2023,6 +2071,7 @@ impl SecurityPolicy {
             allow_tool_install: autonomy_config.allow_tool_install,
             auto_approve: autonomy_config.auto_approve.clone(),
             tracker: ActionTracker::new(),
+            canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
 }

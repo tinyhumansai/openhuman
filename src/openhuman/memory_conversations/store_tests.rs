@@ -847,6 +847,74 @@ fn update_thread_labels_missing_thread_returns_error() {
 }
 
 #[test]
+fn cold_search_does_not_serialize_on_outer_lock() {
+    // Issue #2849: verify that a cold-cache search releases the store
+    // lock before the JSONL rebuild, so concurrent writes aren't blocked.
+    let (_temp, store) = make_store();
+
+    // Seed a thread with a message so the search has something to find.
+    store
+        .ensure_thread(CreateConversationThread {
+            id: "t1".to_string(),
+            title: "test thread".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            parent_thread_id: None,
+            labels: None,
+        })
+        .unwrap();
+    store
+        .append_message(
+            "t1",
+            ConversationMessage {
+                id: "m1".to_string(),
+                content: "hello world".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: json!({}),
+                sender: "user".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+            },
+        )
+        .unwrap();
+
+    // Evict any warm cache so the next search triggers a cold rebuild.
+    {
+        let mut cache = CONVERSATION_INDEX_CACHE.lock();
+        cache.remove(&store.root_dir());
+    }
+
+    // Spawn a thread that tries to append a message while a cold search
+    // is (conceptually) running. In the old code this would deadlock or
+    // serialize behind the full rebuild; in the fixed code the store lock
+    // is released after the thread-list snapshot and the append succeeds
+    // concurrently.
+    let store2 = store.clone();
+    let writer = std::thread::spawn(move || {
+        store2
+            .append_message(
+                "t1",
+                ConversationMessage {
+                    id: "m2".to_string(),
+                    content: "concurrent write".to_string(),
+                    message_type: "text".to_string(),
+                    extra_metadata: json!({}),
+                    sender: "assistant".to_string(),
+                    created_at: "2026-01-01T00:00:01Z".to_string(),
+                },
+            )
+            .unwrap();
+    });
+
+    // Run the cold search — should not deadlock.
+    let results = store
+        .search_cross_thread_messages("hello", 10, None)
+        .unwrap();
+    assert!(!results.is_empty(), "search should find seeded message");
+
+    // The concurrent write must also succeed.
+    writer.join().expect("concurrent write must not deadlock");
+}
+
+#[test]
 fn read_jsonl_skips_invalid_lines_but_keeps_valid_ones() {
     let tmp = TempDir::new().unwrap();
     let path = tmp.path().join("messages.jsonl");

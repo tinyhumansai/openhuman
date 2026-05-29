@@ -3320,6 +3320,10 @@ pub fn run() {
                             request_id: request_id.clone(),
                             meet_url: meet_url.clone(),
                             display_name: "OpenHuman Dev".to_string(),
+                            // Dev-auto launch has no real user identity — the
+                            // wake gate will fail-closed (no wakes fire) which
+                            // is the safe posture for an automated harness.
+                            owner_display_name: String::new(),
                         };
                         match meet_call::meet_call_open_window(app_handle.clone(), state, args)
                             .await
@@ -3404,6 +3408,7 @@ pub fn run() {
             workspace_paths::open_workspace_path,
             workspace_paths::reveal_workspace_path,
             workspace_paths::preview_workspace_text,
+            workspace_paths::resolve_workspace_absolute_path,
             meet_call::meet_call_open_window,
             meet_call::meet_call_close_window,
             companion_commands::register_companion_hotkey,

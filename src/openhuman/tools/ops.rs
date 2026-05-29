@@ -338,13 +338,14 @@ pub fn all_tools_with_runtime(
     //
     // Exactly one engine drives `web_search_tool` plus any
     // engine-specific tools (Parallel research/extract/etc., Brave
-    // news/image/video). Mirrors the LLM-provider API-key model: a
-    // single switch, BYO credentials, layered tool surface.
+    // news/image/video, Querit advanced filters). Mirrors the
+    // LLM-provider API-key model: a single switch, BYO credentials,
+    // layered tool surface.
     //
     // Legacy `seltz` / `searxng` config blocks are still parsed but
     // no longer register tools — they were superseded by this
-    // selector. Use `search.engine = "managed" | "parallel" | "brave"`
-    // instead.
+    // selector. Use `search.engine = "managed" | "parallel" | "brave"
+    // | "querit"` instead.
     {
         use crate::openhuman::config::SearchEngine;
         let search = &root_config.search;
@@ -443,6 +444,25 @@ pub fn all_tools_with_runtime(
                 tools.push(Box::new(
                     crate::openhuman::integrations::BraveVideoSearchTool::new(
                         api_key,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+            }
+            SearchEngine::Querit => {
+                tracing::debug!("[search] active engine = querit (BYO direct API)");
+                tools.push(Box::new(
+                    crate::openhuman::integrations::QueritSearchTool::new_web_search_tool(
+                        search.querit.api_key.clone(),
+                        None,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+                tools.push(Box::new(
+                    crate::openhuman::integrations::QueritSearchTool::new(
+                        search.querit.api_key.clone(),
+                        None,
                         max_results,
                         timeout_secs,
                     ),

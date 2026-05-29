@@ -36,7 +36,7 @@ static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 /// behind dead entries when the dir is removed — acceptable for an
 /// in-process cache.
 ///
-/// # Lock ordering (INVARIANT)
+/// # Lock ordering
 ///
 /// When BOTH `CONVERSATION_STORE_LOCK` and `CONVERSATION_INDEX_CACHE`
 /// must be held simultaneously, `CONVERSATION_STORE_LOCK` MUST be
@@ -191,6 +191,23 @@ impl ConversationStore {
     /// turns that into O(|posting lists|) for typical queries while
     /// preserving the previous scoring contract
     /// (`score = matched_terms / total_terms`, recency tiebreak).
+    ///
+    /// # Lock strategy (issue #2849)
+    ///
+    /// **Fast path (warm cache):** acquires only `CONVERSATION_INDEX_CACHE`
+    /// — no outer store lock — and returns immediately.
+    ///
+    /// **Cold path (first access):** snapshots the thread list under
+    /// `CONVERSATION_STORE_LOCK` (brief), then releases it before reading
+    /// JSONL files to build the inverted index. This avoids blocking
+    /// `append_message` / `get_messages` / `list_threads` during the
+    /// potentially-long rebuild. JSONL files are append-only, so a
+    /// concurrent write during the rebuild may mean the rebuilt index
+    /// misses that one message. It is *not* re-read later; subsequent
+    /// `append_message` calls only index their own (new) messages once
+    /// the cache is warm. The missed message therefore stays absent
+    /// until the cache is evicted and rebuilt — an accepted tradeoff
+    /// for issue #2849.
     pub fn search_cross_thread_messages(
         &self,
         query: &str,
@@ -298,10 +315,14 @@ impl ConversationStore {
             let mut idx = InvertedIndex::new();
             self.populate_index_unlocked(&mut idx)?;
             cache.insert(key.clone(), idx);
+        // Fast path: if the index is already warm, search without the
+        // outer store lock.
+        {
+            let mut cache = CONVERSATION_INDEX_CACHE.lock();
+            if let Some(idx) = cache.get_mut(&self.root_dir()) {
+                return Ok(idx.search(query, limit, exclude_thread_id));
+            }
         }
-        let idx = cache.get_mut(&key).expect("inserted above if absent");
-        Ok(f(idx))
-    }
 
     /// Walk every per-thread JSONL file in the workspace and insert each
     /// message into `idx`. Used as the fallback cold-build path inside
@@ -316,6 +337,15 @@ impl ConversationStore {
         // propagate — silently returning Ok would mask it and make search
         // appear to return zero results for an undiagnosed reason.
         let threads = self.list_threads_unlocked()?;
+        // Cold path: build the index. Snapshot the thread list under the
+        // store lock (brief), then release it so concurrent writes aren't
+        // blocked during the potentially-long JSONL file reads.
+        let threads = {
+            let _guard = CONVERSATION_STORE_LOCK.lock();
+            self.list_threads_unlocked()?
+        };
+
+        let mut idx = InvertedIndex::new();
         for thread in threads {
             let path = self.thread_messages_path(&thread.id);
             if !path.exists() {
@@ -333,8 +363,6 @@ impl ConversationStore {
                 }
             };
             for msg in messages {
-                // Move each freshly-deserialized message straight into
-                // the index; no per-field clones on the rebuild path.
                 idx.insert(&thread.id, msg);
             }
         }
@@ -342,7 +370,14 @@ impl ConversationStore {
             "{LOG_PREFIX} inverted index populated workspace={}",
             self.root_dir().display()
         );
-        Ok(())
+
+        // Insert the newly-built index and run the search. Another thread
+        // may have raced and already inserted — prefer the existing index
+        // if present (it may have more recent messages from concurrent
+        // append_message calls).
+        let mut cache = CONVERSATION_INDEX_CACHE.lock();
+        let entry = cache.entry(self.root_dir()).or_insert(idx);
+        Ok(entry.search(query, limit, exclude_thread_id))
     }
 
     /// Append a message to the thread's JSONL file. Errors if the thread is missing.

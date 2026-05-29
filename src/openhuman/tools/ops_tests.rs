@@ -993,6 +993,32 @@ fn all_tools_registers_brave_engine_lsp_and_tool_stats_when_enabled() {
     }
 }
 
+#[test]
+fn all_tools_registers_querit_engine_when_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_QUERIT.into();
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert_contains_all(&names, &["web_search_tool", "querit_search"]);
+}
+
 #[tokio::test]
 async fn all_tools_executes_apify_family_against_fake_backend() {
     let backend = integration_test_support::spawn_fake_integration_backend().await;

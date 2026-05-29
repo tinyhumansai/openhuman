@@ -96,7 +96,7 @@ async fn execute_blocked_in_readonly_mode() {
     let result = tool
         .execute(json!({
             "action": "execute",
-            "action_name": "GITHUB_LIST_REPOS"
+            "action_name": "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"
         }))
         .await
         .unwrap();
@@ -114,7 +114,7 @@ async fn execute_blocked_when_rate_limited() {
     let result = tool
         .execute(json!({
             "action": "execute",
-            "action_name": "GITHUB_LIST_REPOS"
+            "action_name": "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"
         }))
         .await
         .unwrap();

@@ -522,11 +522,12 @@ impl Default for WebSearchConfig {
 // which tools are registered: `managed` → backend-proxied `web_search`;
 // `parallel` → direct Parallel API tools (search/extract/chat/research/
 // enrich/dataset); `brave` → direct Brave Search tools (web/news/
-// images/videos).
+// images/videos); `querit` → direct Querit web search.
 
 pub const SEARCH_ENGINE_MANAGED: &str = "managed";
 pub const SEARCH_ENGINE_PARALLEL: &str = "parallel";
 pub const SEARCH_ENGINE_BRAVE: &str = "brave";
+pub const SEARCH_ENGINE_QUERIT: &str = "querit";
 
 fn default_search_engine() -> String {
     SEARCH_ENGINE_MANAGED.into()
@@ -572,14 +573,15 @@ impl SearchEngineCredentials {
 
 /// Unified search-engine configuration. Exactly one engine drives tool
 /// registration at a time. `managed` is the backend-proxied default and
-/// requires no key; `parallel` and `brave` are BYO and require their
+/// requires no key; `parallel`, `brave`, and `querit` are BYO and require their
 /// own API key in the matching sub-block.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
     /// Active search engine. One of [`SEARCH_ENGINE_MANAGED`],
-    /// [`SEARCH_ENGINE_PARALLEL`], [`SEARCH_ENGINE_BRAVE`]. Unknown
-    /// values fall back to managed at registration time.
+    /// [`SEARCH_ENGINE_PARALLEL`], [`SEARCH_ENGINE_BRAVE`], or
+    /// [`SEARCH_ENGINE_QUERIT`]. Unknown values fall back to managed at
+    /// registration time.
     #[serde(default = "default_search_engine")]
     pub engine: String,
 
@@ -598,6 +600,10 @@ pub struct SearchConfig {
     /// Brave Search credentials (used when `engine = "brave"`).
     #[serde(default)]
     pub brave: SearchEngineCredentials,
+
+    /// Querit credentials (used when `engine = "querit"`).
+    #[serde(default)]
+    pub querit: SearchEngineCredentials,
 }
 
 impl Default for SearchConfig {
@@ -608,6 +614,7 @@ impl Default for SearchConfig {
             timeout_secs: default_search_timeout_secs(),
             parallel: SearchEngineCredentials::default(),
             brave: SearchEngineCredentials::default(),
+            querit: SearchEngineCredentials::default(),
         }
     }
 }
@@ -620,6 +627,7 @@ pub enum SearchEngine {
     Managed,
     Parallel,
     Brave,
+    Querit,
 }
 
 impl SearchConfig {
@@ -631,6 +639,7 @@ impl SearchConfig {
         match self.engine.trim().to_ascii_lowercase().as_str() {
             SEARCH_ENGINE_PARALLEL if self.parallel.has_key() => SearchEngine::Parallel,
             SEARCH_ENGINE_BRAVE if self.brave.has_key() => SearchEngine::Brave,
+            SEARCH_ENGINE_QUERIT if self.querit.has_key() => SearchEngine::Querit,
             _ => SearchEngine::Managed,
         }
     }
@@ -677,6 +686,17 @@ mod search_config_tests {
         assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
         cfg.brave.api_key = Some("real".into());
         assert_eq!(cfg.effective_engine(), SearchEngine::Brave);
+    }
+
+    #[test]
+    fn querit_requires_key() {
+        let mut cfg = SearchConfig {
+            engine: SEARCH_ENGINE_QUERIT.into(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_engine(), SearchEngine::Managed);
+        cfg.querit.api_key = Some("real".into());
+        assert_eq!(cfg.effective_engine(), SearchEngine::Querit);
     }
 
     #[test]

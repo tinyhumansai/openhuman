@@ -171,17 +171,44 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // this is the `type` field used by litellm/Anthropic-style
         // envelopes for the same class of user-state error.
         "not_found_error",
-        // TAURI-RUST-4K7 — Ollama models that don't support tool calling
-        // (e.g. gemma3:1b-it-qat, huihui_ai/deepseek-r1-abliterated:8b)
-        // return HTTP 400 with one of these phrases. The compatible
-        // provider (`compatible.rs`) detects the error and retries
-        // without tools, so the 400 is expected capability-discovery
-        // rather than a product bug. Suppress Sentry to avoid noise from
-        // the first-attempt rejection that precedes the successful retry.
+        // TAURI-RUST-4NM — nvidia-nim (and some other providers) return
+        // `{"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}`
+        // when the `model` key is absent or empty in the request body.
+        // This is a user-configuration error (provider string has no model
+        // component, e.g. `nvidia-nim:` with empty model), not a product
+        // regression. Demote from Sentry; the factory now validates this
+        // up-front so in practice this phrase should no longer appear.
+        "model field is required",
+        // TAURI-RUST-4XK — Ollama 403 when the requested model requires a
+        // paid Ollama subscription. Body carries the upgrade URL. User must
+        // switch to a free model or upgrade their Ollama account.
+        "requires a subscription",
+        // TAURI-RUST-2G / TAURI-RUST-2F — DeepSeek / compatible providers
+        // that use extended thinking reject tool-call turns when the
+        // `reasoning_content` block from a prior assistant turn is not
+        // threaded back. This is user-config state (model requires the
+        // caller to replay the thinking block; the frontend replay logic in
+        // `turn.rs` handles it for subsequent turns, so the first-turn 400
+        // is expected capability-discovery, not a regression).
+        "in the thinking mode must be passed back",
+        // TAURI-RUST-35 / TAURI-RUST-4K7 / TAURI-RUST-4Z0 — Ollama models
+        // (e.g. gemma3, phi3, deepseek-r1) that do not support function
+        // calling return HTTP 400 with this phrase. The compatible provider
+        // retries without tools on 400, so the initial rejection is expected
+        // capability-discovery. Sentry noise suppressed here.
         "does not support tools",
+        // TAURI-RUST-4K7-d — alternative phrasing used by some Ollama model
+        // versions for the same tool-unsupported condition.
         "function calling is not supported",
+        // TAURI-RUST-4K7-e — litellm / OpenAI-compatible proxies reject the
+        // `tools` key in the request body when the backing model does not
+        // support tool use (e.g. local Ollama via LiteLLM gateway).
         "unknown parameter: tools",
+        // TAURI-RUST-4K7-f — Ollama native API surface rejects the field
+        // outright when the model has no function-calling capability.
         "unrecognized field `tools`",
+        // TAURI-RUST-4K7-g — another litellm / proxy variant of the same
+        // tool-unsupported condition.
         "unsupported parameter: tools",
         // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
         // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
@@ -563,6 +590,21 @@ mod tests {
                 "broader classifier must continue to match: {body:?}"
             );
         }
+    }
+
+    #[test]
+    fn detects_nvidia_nim_missing_model_body() {
+        // TAURI-RUST-4NM — nvidia-nim rejects requests with model="" with
+        // `{"error":{"message":"model field is required",...}}`.
+        let body = r#"nvidia-nim API error (400 Bad Request): {"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}"#;
+        assert!(
+            is_provider_config_rejection_message(body),
+            "TAURI-RUST-4NM body must classify as provider config-rejection: {body:?}"
+        );
+        // Also verify the bare phrase on its own (defense-in-depth path).
+        assert!(is_provider_config_rejection_message(
+            "model field is required"
+        ));
     }
 
     #[test]
