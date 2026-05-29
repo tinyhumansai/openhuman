@@ -1047,6 +1047,16 @@ impl OpenAiCompatibleProvider {
                     Some(native_request.model.as_str()),
                     status,
                 );
+            } else if Self::is_native_tool_schema_unsupported(status, &body) {
+                // Model rejects tool definitions (e.g. Ollama "does not support tools").
+                // The caller's retry loop already handles this by re-issuing without
+                // tools — suppress the Sentry event so noise doesn't accumulate for
+                // every model that lacks tool-calling support (TAURI-RUST-4K7).
+                log::info!(
+                    "[stream] {} model rejected tool schema (status={}) — caller will retry without tools",
+                    self.name,
+                    status,
+                );
             } else if super::should_report_provider_http_failure(status) {
                 crate::core::observability::report_error(
                     message.as_str(),

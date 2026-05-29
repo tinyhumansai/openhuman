@@ -211,13 +211,13 @@ impl SignManager {
                 .post(&url)
                 .timeout(Duration::from_secs(HTTP_TIMEOUT_SECS))
                 .header("Content-Type", "application/json")
-                .header("X-AppVersion", "openhuman/0.1.0")
+                .header("X-AppVersion", super::config::DEFAULT_PLUGIN_VERSION)
                 .header("X-OperationSystem", "linux")
                 .header(
                     "X-Instance-Id",
                     super::proto_constants::OPENHUMAN_INSTANCE_ID,
                 )
-                .header("X-Bot-Version", "openhuman/0.1.0");
+                .header("X-Bot-Version", env!("CARGO_PKG_VERSION"));
             if !route_env.is_empty() {
                 req = req.header("X-Route-Env", route_env);
             }

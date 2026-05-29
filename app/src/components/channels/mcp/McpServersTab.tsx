@@ -13,7 +13,9 @@ import InstallDialog from './InstallDialog';
 import InstalledServerDetail from './InstalledServerDetail';
 import InstalledServerList from './InstalledServerList';
 import McpCatalogBrowser from './McpCatalogBrowser';
+import McpConnectionHealthToolbar from './McpConnectionHealthToolbar';
 import McpInventoryPanel from './McpInventoryPanel';
+import McpServerSearch from './McpServerSearch';
 import type { ConnStatus, InstalledServer } from './types';
 
 const log = debug('mcp-clients:tab');
@@ -32,6 +34,9 @@ const McpServersTab = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rightPane, setRightPane] = useState<RightPane>({ mode: 'none' });
+  // Local-only filter for the installed-server list. Not persisted — the
+  // search is a transient scan helper, not a saved view.
+  const [searchFilter, setSearchFilter] = useState('');
   // Sharable Inventory modal toggle. Local state — the manifest UX is
   // a one-off interaction, not a saved view.
   const [inventoryOpen, setInventoryOpen] = useState(false);
@@ -135,6 +140,53 @@ const McpServersTab = () => {
     [loadInstalled, fetchStatuses]
   );
 
+  // Count rejected settlements and, if any, throw a descriptive error so the
+  // toolbar surfaces it through its `role="alert"` region — otherwise a bulk
+  // action that partially (or wholly) fails looks identical to success and
+  // the user is left re-scanning the status dots. The status refresh still
+  // runs first so the dots reconcile regardless of the partial failure.
+  const reportBulkFailures = useCallback(
+    (results: PromiseSettledResult<unknown>[], total: number) => {
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed > 0) {
+        log('bulk op partial failure: %d/%d failed', failed, total);
+        throw new Error(
+          t('mcp.health.bulkPartialFailure')
+            .replace('{failed}', String(failed))
+            .replace('{total}', String(total))
+        );
+      }
+    },
+    [t]
+  );
+
+  // Bulk Retry — iterate through errored servers, collect per-server outcomes
+  // via `Promise.allSettled` so one bad apple doesn't abort the batch, then
+  // refresh statuses once at the end. The toolbar shows its own disabled state
+  // during the await; the next poll tick reconciles any drift. Partial/total
+  // failures are surfaced via `reportBulkFailures`.
+  const handleBulkReconnect = useCallback(
+    async (serverIds: string[]) => {
+      log('bulk reconnect ids=%o', serverIds);
+      const results = await Promise.allSettled(serverIds.map(id => mcpClientsApi.connect(id)));
+      await fetchStatuses();
+      reportBulkFailures(results, serverIds.length);
+    },
+    [fetchStatuses, reportBulkFailures]
+  );
+
+  // Bulk Disconnect — same shape as bulk reconnect. The toolbar gates this
+  // behind a confirmation dialog before we get here.
+  const handleBulkDisconnect = useCallback(
+    async (serverIds: string[]) => {
+      log('bulk disconnect ids=%o', serverIds);
+      const results = await Promise.allSettled(serverIds.map(id => mcpClientsApi.disconnect(id)));
+      await fetchStatuses();
+      reportBulkFailures(results, serverIds.length);
+    },
+    [fetchStatuses, reportBulkFailures]
+  );
+
   const selectedServerId = rightPane.mode === 'detail' ? rightPane.serverId : null;
   const selectedServer = servers.find(s => s.server_id === selectedServerId) ?? null;
   const selectedConnStatus = statuses.find(s => s.server_id === selectedServerId);
@@ -167,11 +219,21 @@ const McpServersTab = () => {
         </button>
       </div>
       <div className="flex gap-4 flex-1 min-h-0">
-        {/* Left pane: installed list */}
+        {/* Left pane: health toolbar + search + installed list */}
         <div className="w-56 shrink-0 flex flex-col">
           {loadError && (
             <div className="mb-2 rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
               {loadError}
+            </div>
+          )}
+          <McpConnectionHealthToolbar
+            statuses={statuses}
+            onReconnect={handleBulkReconnect}
+            onDisconnect={handleBulkDisconnect}
+          />
+          {servers.length > 0 && (
+            <div className="mb-2">
+              <McpServerSearch value={searchFilter} onChange={setSearchFilter} />
             </div>
           )}
           <InstalledServerList
@@ -180,6 +242,7 @@ const McpServersTab = () => {
             selectedId={selectedServerId}
             onSelect={handleSelectServer}
             onBrowseCatalog={handleBrowseCatalog}
+            filter={searchFilter}
           />
         </div>
 

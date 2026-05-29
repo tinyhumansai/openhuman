@@ -1,38 +1,165 @@
 //! User profile learning hook.
 //!
-//! Extracts user preferences from conversation turns using lightweight regex
-//! patterns (e.g. "I prefer...", "always use...", "my timezone is...") and
-//! stores them in the `user_profile` memory category.
+//! Extracts user preferences from conversation turns using a curated
+//! list of fixed-string opening phrases (e.g. *"I prefer…"*,
+//! *"always use…"*, *"my timezone is…"*) compiled into a single
+//! Aho-Corasick DFA, and stores matched sentences in the
+//! `user_profile` memory category. The hook runs on every user turn
+//! via [`PostTurnHook::on_turn_complete`], so the match path is
+//! deliberately allocation-free.
+//!
+//! ## Why Aho-Corasick instead of `.contains()` per pattern
+//!
+//! The previous implementation lower-cased the entire user message
+//! once, lower-cased each sentence again inside a loop, and then ran
+//! every pattern through `str::contains` — for a 5-sentence message
+//! that was 6 `String` allocations plus 5 × N substring scans per
+//! turn. The current implementation builds one
+//! [`AhoCorasick`] DFA at first use with
+//! [`AhoCorasickBuilder::ascii_case_insensitive`] enabled, then runs a
+//! single byte-level pass per sentence. Zero per-call allocation,
+//! linear-time scan, and the same pattern source-of-truth.
+//!
+//! ## Word boundaries
+//!
+//! Each candidate match is accepted only if **both** of the following
+//! hold:
+//!
+//! 1. The byte immediately after the match end is non-alphanumeric
+//!    ASCII (whitespace, punctuation, or the leading byte of a
+//!    multi-byte UTF-8 sequence) — so `"I preferred X"` does **not**
+//!    match the `"i prefer"` phrase.
+//! 2. There is at least one further byte of content past that boundary
+//!    — so empty-tail fragments like `"I prefer"` (the residue of
+//!    splitting `"I prefer."` on `.`) or dangling `"I prefer:"` are
+//!    rejected. These carry no preference target and would otherwise
+//!    pollute `user_profile` memory with useless slugs.
+//!
+//! Together this catches `"I prefer:X"`, `"I prefer-X"`,
+//! `"I prefer X"` and `"I prefer\nX"` while filtering out the
+//! degenerate empty-tail cases. As a consequence the previous
+//! post-loop fallback (which only existed to rescue the
+//! `"i prefer<punct>"` shape) is no longer needed and was removed.
 
 use crate::openhuman::agent::hooks::{PostTurnHook, TurnContext};
 use crate::openhuman::config::LearningConfig;
 use crate::openhuman::memory::{Memory, MemoryCategory};
+use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use async_trait::async_trait;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-/// Regex-based patterns that signal explicit user preferences.
+/// Sentence delimiters used to split a user message into candidate
+/// preference statements. Includes `?` and `;` (which the previous
+/// implementation missed) so that *"What's your view? I prefer Rust."*
+/// and *"OK; I prefer Rust."* are both decomposed correctly.
+///
+/// `:` is intentionally **not** a delimiter: *"My role: engineer"* is
+/// best treated as a single statement so the `"my role"` phrase can
+/// match against it.
+const SENTENCE_DELIMITERS: &[char] = &['.', '!', '?', ';', '\n'];
+
+/// Minimum byte length of a sentence to be considered for preference
+/// extraction. The shortest pattern (`"i like"`, `"i want"`, …) is six
+/// bytes; anything below eight bytes can't carry a pattern plus a
+/// trailing target token, so we'd just be matching noise.
+const MIN_SENTENCE_BYTES: usize = 8;
+
+/// Maximum number of preferences emitted from a single user message —
+/// guards memory writes from a runaway "list of 50 prefs" prompt.
+const MAX_PREFERENCES_PER_TURN: usize = 5;
+
+/// Curated opening phrases that signal an explicit user preference.
+///
+/// All entries are lowercase ASCII; the DFA is built case-insensitive
+/// so we never need to lowercase the input. Each phrase is matched
+/// with a trailing word-boundary check (see [`sentence_has_preference`]),
+/// so trailing whitespace is **not** part of the pattern itself.
+///
+/// Categories (informational; the DFA is unordered):
+///
+/// * **Direct preference / inclination** — `"i prefer"`, `"i'd prefer"`,
+///   `"i would prefer"`, `"i'd rather"`, `"i like"`, `"i dislike"`,
+///   `"i don't like"`, `"i want"`, `"i need"`.
+/// * **Habit / instruction** — `"i always"`, `"always use"`,
+///   `"never use"`, `"please always"`, `"please never"`, `"please use"`,
+///   `"from now on"`, `"going forward"`.
+/// * **Identity / context** — `"my name is"`, `"i am a"`, `"i'm a"`,
+///   `"i work"`, `"my role"`, `"my stack"`, `"my timezone"`,
+///   `"my language"`, `"my pronouns"`, `"my preferred"`, `"call me"`,
+///   `"address me as"`.
 const PREFERENCE_PATTERNS: &[&str] = &[
-    "i prefer ",
-    "i always ",
-    "always use ",
-    "never use ",
-    "my timezone ",
-    "my language ",
-    "i like ",
-    "i don't like ",
-    "i want ",
-    "i need ",
-    "please always ",
-    "please never ",
-    "from now on ",
-    "going forward ",
-    "my name is ",
-    "i am a ",
-    "i'm a ",
-    "i work ",
-    "my role ",
-    "my stack ",
+    // Direct preference / inclination
+    "i prefer",
+    "i'd prefer",
+    "i would prefer",
+    "i'd rather",
+    "i like",
+    "i dislike",
+    "i don't like",
+    "i want",
+    "i need",
+    // Habit / instruction
+    "i always",
+    "always use",
+    "never use",
+    "please always",
+    "please never",
+    "please use",
+    "from now on",
+    "going forward",
+    // Identity / context
+    "my name is",
+    "i am a",
+    "i'm a",
+    "i work",
+    "my role",
+    "my stack",
+    "my timezone",
+    "my language",
+    "my pronouns",
+    "my preferred",
+    "call me",
+    "address me as",
 ];
+
+/// Compiled DFA over [`PREFERENCE_PATTERNS`]. Built lazily on first
+/// call and reused for the lifetime of the process.
+static PREFERENCE_DFA: LazyLock<AhoCorasick> = LazyLock::new(|| {
+    AhoCorasickBuilder::new()
+        .ascii_case_insensitive(true)
+        .match_kind(MatchKind::LeftmostFirst)
+        .build(PREFERENCE_PATTERNS)
+        .expect("PREFERENCE_PATTERNS is a static, valid pattern list")
+});
+
+/// Returns `true` if `sentence` contains a preference opening phrase
+/// followed by a word-boundary byte **and at least one byte of trailing
+/// content**. Zero allocations.
+///
+/// End-of-sentence (`bytes.get(m.end()) == None`) is intentionally
+/// **rejected**: a sentence that consists of nothing but the opening
+/// phrase carries no preference target (e.g. `"I prefer"` after
+/// splitting `"I prefer."` on `.`). Storing it would just pollute
+/// `user_profile` memory with a slug that resolves to "I prefer". The
+/// caller in [`UserProfileHook::extract_preferences`] depends on this
+/// behaviour to filter the empty-tail case without a second pass.
+fn sentence_has_preference(sentence: &str) -> bool {
+    let bytes = sentence.as_bytes();
+    PREFERENCE_DFA.find_iter(bytes).any(|m| {
+        // End-of-sentence — no trailing content for the pattern to
+        // qualify, so this is not a useful preference signal.
+        let Some(b) = bytes.get(m.end()) else {
+            return false;
+        };
+        // Any non-ASCII-alphanumeric byte is a valid boundary —
+        // including the leading byte of a multi-byte UTF-8 sequence
+        // (always >= 0x80 and therefore not alphanumeric). We then
+        // require at least one further byte of content past the
+        // boundary so we don't store fragments like `"I prefer:"`
+        // either.
+        !b.is_ascii_alphanumeric() && bytes.get(m.end() + 1).is_some()
+    })
+}
 
 /// Post-turn hook that extracts user preferences from conversations.
 pub struct UserProfileHook {
@@ -46,34 +173,28 @@ impl UserProfileHook {
     }
 
     /// Extract preference statements from the user message.
+    ///
+    /// Splits on [`SENTENCE_DELIMITERS`], filters sentences below
+    /// [`MIN_SENTENCE_BYTES`], and accepts any sentence where the
+    /// Aho-Corasick DFA finds a preference phrase followed by a
+    /// word boundary. Output is capped at [`MAX_PREFERENCES_PER_TURN`]
+    /// entries. Allocation-free until a match is pushed onto `found`.
     fn extract_preferences(message: &str) -> Vec<String> {
-        let lower = message.to_lowercase();
         let mut found = Vec::new();
 
-        for sentence in message.split(['.', '!', '\n']) {
+        for sentence in message.split(SENTENCE_DELIMITERS) {
             let trimmed = sentence.trim();
-            if trimmed.is_empty() || trimmed.len() < 10 {
+            if trimmed.len() < MIN_SENTENCE_BYTES {
                 continue;
             }
-            let sentence_lower = trimmed.to_lowercase();
-            for pattern in PREFERENCE_PATTERNS {
-                if sentence_lower.contains(pattern) {
-                    found.push(trimmed.to_string());
+            if sentence_has_preference(trimmed) {
+                found.push(trimmed.to_string());
+                if found.len() >= MAX_PREFERENCES_PER_TURN {
                     break;
                 }
             }
         }
 
-        // Also check the full message for short, direct preference statements
-        if found.is_empty()
-            && message.trim().len() >= 15
-            && (lower.starts_with("i prefer") || lower.starts_with("always use"))
-        {
-            found.push(message.trim().to_string());
-        }
-
-        // Deduplicate and cap
-        found.truncate(5);
         found
     }
 
@@ -256,17 +377,185 @@ mod tests {
     }
 
     #[test]
-    fn extract_preferences_uses_full_message_fallback_and_caps_results() {
-        let fallback =
-            UserProfileHook::extract_preferences("I prefer compact diffs in code reviews");
-        assert_eq!(fallback, vec!["I prefer compact diffs in code reviews"]);
+    fn extract_preferences_handles_single_sentence_message() {
+        // No sentence delimiter — the whole message is one sentence,
+        // matched by the DFA. The previous implementation needed a
+        // dedicated post-loop fallback for this case; with the
+        // word-boundary check inside `sentence_has_preference` the
+        // main path handles it directly.
+        let prefs = UserProfileHook::extract_preferences("I prefer compact diffs in code reviews");
+        assert_eq!(prefs, vec!["I prefer compact diffs in code reviews"]);
+    }
 
+    #[test]
+    fn extract_preferences_caps_at_max_per_turn() {
+        // Message contains seven preference statements; cap is
+        // MAX_PREFERENCES_PER_TURN (5).
         let many = UserProfileHook::extract_preferences(
             "I prefer Rust. I always use tests. Please always explain failures. \
              My timezone is PST. My stack is Tauri. Going forward use concise output. \
              Never use nested bullets.",
         );
-        assert_eq!(many.len(), 5);
+        assert_eq!(many.len(), MAX_PREFERENCES_PER_TURN);
+    }
+
+    // ---------- word-boundary correctness ----------
+
+    #[test]
+    fn extract_preferences_word_boundary_rejects_alphanumeric_continuation() {
+        // "I preferred" must NOT match `"i prefer"` — the byte after
+        // the match end is alphanumeric, so it's a continuation of the
+        // word, not a boundary. Previously this would have matched
+        // via `str::contains` because the substring `"i prefer"` is
+        // literally present in `"i preferred"`.
+        let prefs =
+            UserProfileHook::extract_preferences("I preferred to wait but it was ultimately fine.");
+        assert!(prefs.is_empty(), "got: {prefs:?}");
+
+        // Similarly for "I needed" against "i need", "I wanted"
+        // against "i want".
+        let prefs2 = UserProfileHook::extract_preferences("I needed coffee. I wanted snacks.");
+        assert!(prefs2.is_empty(), "got: {prefs2:?}");
+    }
+
+    #[test]
+    fn extract_preferences_word_boundary_accepts_non_alphanumeric_continuation() {
+        // Punctuation directly after a pattern still counts as a
+        // boundary, so `"I prefer:something"` matches. This is the
+        // recovered capability from the previous implementation,
+        // which only caught this case via the special-purpose
+        // post-loop fallback that has now been removed.
+        assert_eq!(
+            UserProfileHook::extract_preferences("I prefer:Rust"),
+            vec!["I prefer:Rust"]
+        );
+        assert_eq!(
+            UserProfileHook::extract_preferences("I prefer-compact diffs"),
+            vec!["I prefer-compact diffs"]
+        );
+    }
+
+    #[test]
+    fn extract_preferences_rejects_bare_pattern_with_no_content_after() {
+        // Sentences where the pattern runs to the end with no target
+        // word carry no useful preference signal and must be dropped.
+        // `"I prefer."` after splitting on `.` becomes the sentence
+        // `"I prefer"` — pattern match reaches end-of-sentence with
+        // no content after it, so the boundary check returns false.
+        for noise in [
+            "I prefer.",
+            "Sometimes I prefer.",
+            "I always! Whatever.",
+            "I want.",
+        ] {
+            let prefs = UserProfileHook::extract_preferences(noise);
+            assert!(
+                prefs.is_empty(),
+                "noise {noise:?} unexpectedly produced {prefs:?}"
+            );
+        }
+    }
+
+    // ---------- expanded sentence-delimiter set ----------
+
+    #[test]
+    fn extract_preferences_splits_on_question_mark_and_semicolon() {
+        // The previous splitter only split on `.`/`!`/`\n`. A leading
+        // question or list-style preamble used to bleed into the
+        // preference sentence and either swallow context or miss the
+        // match entirely. `?` and `;` are now delimiters; `:` is
+        // intentionally not (so `"My role: engineer"` stays as one
+        // sentence the `"my role"` pattern can match).
+        let q = UserProfileHook::extract_preferences(
+            "What's the timezone situation? My timezone is PST.",
+        );
+        assert_eq!(q.len(), 1);
+        assert!(q[0].contains("My timezone"));
+
+        let s = UserProfileHook::extract_preferences("OK; I prefer Rust over Python.");
+        assert_eq!(s.len(), 1);
+        assert!(s[0].contains("I prefer Rust"));
+    }
+
+    // ---------- expanded pattern coverage ----------
+
+    #[test]
+    fn extract_preferences_catches_extended_patterns() {
+        // Each new pattern category gets one minimal trigger so any
+        // future drop is loud at CI time.
+        let cases = [
+            (
+                "I'd prefer concise responses",
+                "I'd prefer concise responses",
+            ),
+            (
+                "I would prefer not to repeat myself",
+                "I would prefer not to repeat myself",
+            ),
+            (
+                "I'd rather skip the boilerplate",
+                "I'd rather skip the boilerplate",
+            ),
+            (
+                "I dislike verbose explanations",
+                "I dislike verbose explanations",
+            ),
+            (
+                "Please use snake_case in variables",
+                "Please use snake_case in variables",
+            ),
+            ("Call me Alex from now on", "Call me Alex from now on"),
+            ("Address me as Dr. Smith", "Address me as Dr"),
+            ("My pronouns are they/them", "My pronouns are they/them"),
+            (
+                "My preferred editor is Helix",
+                "My preferred editor is Helix",
+            ),
+        ];
+        for (msg, expected_substr) in cases {
+            let prefs = UserProfileHook::extract_preferences(msg);
+            assert!(
+                prefs.iter().any(|p| p.contains(expected_substr)),
+                "input {msg:?} should yield {expected_substr:?}, got {prefs:?}"
+            );
+        }
+    }
+
+    // ---------- Unicode / non-ASCII safety ----------
+
+    #[test]
+    fn extract_preferences_non_ascii_does_not_panic_or_falsely_match() {
+        // Cyrillic / Polish diacritics / emoji must not match any
+        // ASCII pattern, must not panic the DFA, and must not break
+        // the byte-level word-boundary check (the leading byte of a
+        // multi-byte UTF-8 sequence is >= 0x80 and therefore not
+        // ASCII-alphanumeric, so it correctly counts as a boundary).
+        assert!(
+            UserProfileHook::extract_preferences("Это нормальное сообщение без предпочтений.")
+                .is_empty()
+        );
+        assert!(UserProfileHook::extract_preferences(
+            "Oczywiście — żadnej preferencji tutaj nie ma."
+        )
+        .is_empty());
+
+        // Multi-byte prefix followed by a real preference must still match.
+        let mixed =
+            UserProfileHook::extract_preferences("🤔 I prefer compact diffs in code reviews.");
+        assert_eq!(mixed.len(), 1);
+        assert!(mixed[0].contains("I prefer compact diffs"));
+    }
+
+    // ---------- DFA construction smoke test ----------
+
+    #[test]
+    fn preference_dfa_compiles_and_has_expected_pattern_count() {
+        // Force LazyLock initialization. If PREFERENCE_PATTERNS ever
+        // contains a malformed entry, this is where it surfaces — not
+        // in production at the first call site. Also catches a typo
+        // that silently swallows an entry from the patterns slice.
+        let dfa = &*PREFERENCE_DFA;
+        assert_eq!(dfa.patterns_len(), PREFERENCE_PATTERNS.len());
     }
 
     #[tokio::test]

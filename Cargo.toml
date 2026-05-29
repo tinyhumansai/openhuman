@@ -113,6 +113,12 @@ dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 dotenvy = "0.15"
 console = "0.16"
 regex = "1.10"
+# Multi-pattern fixed-string DFA matcher used by `routing::quality` for
+# refusal/empty-noise detection on local-model responses. Already in the
+# dep graph transitively via `regex` (which uses it for literal
+# optimization); declared directly here so `openhuman` owns the
+# version pin and the import isn't an unstable transitive surface.
+aho-corasick = "1.1"
 walkdir = "2"
 glob = "0.3"
 unicode-segmentation = "1"

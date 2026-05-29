@@ -1,10 +1,11 @@
 //! Unit tests for the GitHub Composio provider.
 
-use super::provider::build_search_query;
+use super::provider::{build_search_query, ACTION_GET_AUTHENTICATED_USER, ACTION_SEARCH_ISSUES};
 use super::sync::{
     extract_issue_id, extract_issue_title, extract_issue_updated_at, extract_issues,
     extract_user_login,
 };
+use super::tools::GITHUB_CURATED;
 use super::GitHubProvider;
 use crate::openhuman::memory_sync::composio::providers::ComposioProvider;
 use serde_json::json;
@@ -230,4 +231,90 @@ fn build_search_query_interpolates_login_verbatim() {
     let query = build_search_query("Hyphen-User_99", Some("2026-01-02T03:04:05Z"));
     assert!(query.contains("involves:Hyphen-User_99"));
     assert!(query.contains("updated:>2026-01-02T03:04:05Z"));
+}
+
+// ── slug regression tests (#2768) ───────────────────────────────────────────
+//
+// Guard the current Composio action slug values used by the GitHub provider.
+// Outdated slugs (e.g. GITHUB_USERS_GET_AUTHENTICATED, GITHUB_LIST_REPOS,
+// GITHUB_LIST_ISSUES) were previously scattered across tests; these assertions
+// pin the correct values in one place so a slug rename is caught immediately.
+
+#[test]
+fn action_get_authenticated_user_slug_is_current() {
+    // The Composio v3 slug is GITHUB_GET_THE_AUTHENTICATED_USER.
+    // Regression: was mistakenly referenced as GITHUB_USERS_GET_AUTHENTICATED
+    // in tests (see issue #2768).
+    assert_eq!(
+        ACTION_GET_AUTHENTICATED_USER, "GITHUB_GET_THE_AUTHENTICATED_USER",
+        "slug must match Composio v3 catalog; old slug GITHUB_USERS_GET_AUTHENTICATED is retired"
+    );
+}
+
+#[test]
+fn action_search_issues_slug_is_current() {
+    assert_eq!(
+        ACTION_SEARCH_ISSUES, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
+        "slug must match Composio v3 catalog"
+    );
+}
+
+#[test]
+fn curated_list_does_not_contain_retired_slugs() {
+    // Guard against re-introducing removed slugs that no longer exist in the
+    // Composio v3 GitHub app catalog.
+    const RETIRED: &[&str] = &[
+        "GITHUB_USERS_GET_AUTHENTICATED", // replaced by GITHUB_GET_THE_AUTHENTICATED_USER
+        "GITHUB_LIST_REPOS", // replaced by GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER
+        "GITHUB_LIST_ISSUES", // replaced by GITHUB_LIST_REPOSITORY_ISSUES
+        "GITHUB_COMMIT_MULTIPLE_FILES", // removed from Composio catalog
+        "GITHUB_CLOSE_AN_ISSUE", // removed; use GITHUB_UPDATE_AN_ISSUE with state=closed
+        "GITHUB_DELETE_A_BRANCH", // removed; use GITHUB_DELETE_A_REFERENCE
+    ];
+
+    let slugs: Vec<&str> = GITHUB_CURATED.iter().map(|t| t.slug).collect();
+    for retired in RETIRED {
+        assert!(
+            !slugs.contains(retired),
+            "curated list must not contain retired slug {retired} (see #2768)"
+        );
+    }
+}
+
+#[test]
+fn curated_list_contains_current_read_slugs() {
+    // Verify that the primary read-tier actions are present with their correct
+    // v3 slug names (not the old v1/v2 names).
+    let slugs: Vec<&str> = GITHUB_CURATED.iter().map(|t| t.slug).collect();
+    let required = [
+        "GITHUB_GET_THE_AUTHENTICATED_USER",
+        "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+        "GITHUB_LIST_REPOSITORY_ISSUES",
+        "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
+        "GITHUB_LIST_PULL_REQUESTS",
+        "GITHUB_GET_A_PULL_REQUEST",
+    ];
+    for slug in required {
+        assert!(
+            slugs.contains(&slug),
+            "curated list must contain current slug {slug} (see #2768)"
+        );
+    }
+}
+
+#[test]
+fn curated_list_contains_current_write_slugs() {
+    let slugs: Vec<&str> = GITHUB_CURATED.iter().map(|t| t.slug).collect();
+    let required = [
+        "GITHUB_CREATE_AN_ISSUE",
+        "GITHUB_UPDATE_AN_ISSUE",
+        "GITHUB_CREATE_A_PULL_REQUEST",
+        "GITHUB_MERGE_A_PULL_REQUEST",
+    ];
+    for slug in required {
+        assert!(
+            slugs.contains(&slug),
+            "curated list must contain current write slug {slug} (see #2768)"
+        );
+    }
 }

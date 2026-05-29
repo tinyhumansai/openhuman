@@ -1488,6 +1488,10 @@ async fn run_server_inner(
                     ),
                     Err(e) => log::warn!("[boot] whatsapp_data::global init failed: {e}"),
                 }
+                // Seed bundled default skills into <workspace>/skills/ so they
+                // ship with the system — discoverable (skills_list) and runnable
+                // — without a manual drop. Idempotent; never clobbers user edits.
+                crate::openhuman::skills::registry::seed_default_skills(&cfg.workspace_dir);
             }
             Err(e) => {
                 log::error!(

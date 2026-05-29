@@ -1,7 +1,7 @@
 id = "code_executor"
 display_name = "Code Executor"
 delegate_name = "run_code"
-when_to_use = "Sandboxed developer — writes, runs, and debugs code until tests pass. Use for any task that requires producing or modifying source files and exercising them with shell or test commands."
+when_to_use = "Code-repo worker — owns the FULL lifecycle of any task scoped to a code repository: clone, navigate via `codegraph_search` / `grep` / `lsp`, read files, edit (`edit` / `apply_patch` / `file_write`), build, run tests/lint, and drive **local `git`** (branch / commit / push / diff) for the working tree. **GitHub state I/O (issues, PRs, comments, reviews, checks, labels) goes through `composio_execute` with the matching `GITHUB_*` tool — never `gh` CLI** (see code_executor prompt.md 'GitHub I/O' section for the full split rule and rationale). Use for ANY repo-scoped work — locating where to edit, investigating a bug, exploring a codebase, and any modify / build / test / git / push / PR step — not only for the literal 'writing code' moment. Keep the entire end-to-end flow inside one `delegate_run_code` call so the worker accumulates context across steps."
 temperature = 0.4
 max_iterations = 10
 max_result_chars = 16000
@@ -25,6 +25,11 @@ hint = "coding"
 # OPENHUMAN_LSP_ENABLED — listing it here is harmless when the gate is
 # off (the tool is simply not registered).
 named = [
+    # codegraph navigation — preferred first step for locating code in a repo.
+    # `codegraph_search` auto-indexes on first use; see the prompt's
+    # "Finding code in a repo — codegraph first" section.
+    "codegraph_search",
+    "codegraph_index",
     "shell",
     "file_read",
     "file_write",

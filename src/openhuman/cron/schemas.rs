@@ -18,6 +18,7 @@ fn job_id_input(comment: &'static str) -> FieldSchema {
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
+        schemas("add"),
         schemas("list"),
         schemas("update"),
         schemas("remove"),
@@ -28,6 +29,10 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
 
 pub fn all_registered_controllers() -> Vec<RegisteredController> {
     vec![
+        RegisteredController {
+            schema: schemas("add"),
+            handler: handle_add,
+        },
         RegisteredController {
             schema: schemas("list"),
             handler: handle_list,
@@ -53,6 +58,83 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
 
 pub fn schemas(function: &str) -> ControllerSchema {
     match function {
+        "add" => ControllerSchema {
+            namespace: "cron",
+            function: "add",
+            description: "Create a new cron job (shell or agent).",
+            inputs: vec![
+                FieldSchema {
+                    name: "name",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Human-readable job name.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "schedule",
+                    ty: TypeSchema::Ref("CronSchedule"),
+                    comment: "When to run — { kind: 'cron', expr } | { kind: 'at', at } | { kind: 'every', every_ms }.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "job_type",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec!["shell", "agent"],
+                    })),
+                    comment: "Defaults to 'agent' when prompt is set, 'shell' when command is set.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "command",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Shell command (required for shell jobs).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "prompt",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Agent task prompt (required for agent jobs).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "session_target",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Enum {
+                        variants: vec!["isolated", "main"],
+                    })),
+                    comment: "Defaults to 'isolated'.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "model",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Model override for agent jobs.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "agent_id",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Built-in agent or skill definition ID.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "delivery",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Ref("DeliveryConfig"))),
+                    comment: "Delivery mode (proactive, announce, etc.).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "delete_after_run",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "If true, remove the job after its first execution.",
+                    required: false,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "job",
+                ty: TypeSchema::Ref("CronJob"),
+                comment: "Newly created cron job.",
+                required: true,
+            }],
+        },
         "list" => ControllerSchema {
             namespace: "cron",
             function: "list",
@@ -193,6 +275,95 @@ pub fn schemas(function: &str) -> ControllerSchema {
             }],
         },
     }
+}
+
+fn handle_add(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+
+        let schedule: crate::openhuman::cron::Schedule = read_required(&params, "schedule")?;
+        let name = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let command = params
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let prompt = params
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let session_target_str = params
+            .get("session_target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("isolated");
+        let session_target = match session_target_str {
+            "main" => crate::openhuman::cron::SessionTarget::Main,
+            "isolated" => crate::openhuman::cron::SessionTarget::Isolated,
+            other => return Err(format!("invalid 'session_target': {other}")),
+        };
+        let model = params
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let agent_id = params
+            .get("agent_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let delivery: Option<crate::openhuman::cron::DeliveryConfig> = match params.get("delivery")
+        {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(
+                serde_json::from_value(v.clone())
+                    .map_err(|e| format!("invalid 'delivery': {e}"))?,
+            ),
+        };
+        let delete_after_run = params
+            .get("delete_after_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Determine job type
+        let job_type = match params.get("job_type").and_then(|v| v.as_str()) {
+            Some("shell") => "shell",
+            Some("agent") => "agent",
+            Some(other) => return Err(format!("invalid 'job_type': {other}")),
+            None => {
+                if prompt.is_some() {
+                    "agent"
+                } else {
+                    "shell"
+                }
+            }
+        };
+
+        let job = match job_type {
+            "shell" => {
+                let cmd = command.ok_or("'command' is required for shell jobs")?;
+                crate::openhuman::cron::store::add_shell_job(&config, name, schedule, &cmd)
+                    .map_err(|e| e.to_string())?
+            }
+            "agent" => {
+                let p = prompt.ok_or("'prompt' is required for agent jobs")?;
+                crate::openhuman::cron::store::add_agent_job_with_definition(
+                    &config,
+                    name,
+                    schedule,
+                    &p,
+                    session_target,
+                    model,
+                    delivery,
+                    delete_after_run,
+                    agent_id,
+                )
+                .map_err(|e| e.to_string())?
+            }
+            other => return Err(format!("invalid 'job_type': {other}")),
+        };
+
+        to_json(RpcOutcome::single_log(job, "cron job created"))
+    })
 }
 
 fn handle_list(_params: Map<String, Value>) -> ControllerFuture {
@@ -344,20 +515,41 @@ mod tests {
     // ── registry helpers ────────────────────────────────────────────
 
     #[test]
+    fn schemas_add_requires_schedule_and_returns_job() {
+        let s = schemas("add");
+        assert_eq!(s.namespace, "cron");
+        assert_eq!(s.function, "add");
+        let required: Vec<_> = s
+            .inputs
+            .iter()
+            .filter(|f| f.required)
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(required, vec!["schedule"]);
+        assert_eq!(s.outputs[0].name, "job");
+    }
+
+    #[test]
     fn all_controller_schemas_covers_every_supported_function() {
         let names: Vec<_> = all_controller_schemas()
             .into_iter()
             .map(|s| s.function)
             .collect();
-        assert_eq!(names, vec!["list", "update", "remove", "run", "runs"]);
+        assert_eq!(
+            names,
+            vec!["add", "list", "update", "remove", "run", "runs"]
+        );
     }
 
     #[test]
     fn all_registered_controllers_has_handler_per_schema() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 5);
+        assert_eq!(controllers.len(), 6);
         let names: Vec<_> = controllers.iter().map(|c| c.schema.function).collect();
-        assert_eq!(names, vec!["list", "update", "remove", "run", "runs"]);
+        assert_eq!(
+            names,
+            vec!["add", "list", "update", "remove", "run", "runs"]
+        );
     }
 
     // ── read_required ───────────────────────────────────────────────

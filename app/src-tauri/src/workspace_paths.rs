@@ -51,6 +51,29 @@ pub async fn preview_workspace_text(path: String) -> Result<WorkspaceTextPreview
     preview_workspace_text_from_root(&workspace, &path, DEFAULT_PREVIEW_MAX_BYTES)
 }
 
+/// Resolve a workspace-relative path to its canonical absolute path on disk,
+/// after validating it stays inside the active OpenHuman workspace.
+///
+/// This exposes the internal [`resolve_workspace_path`] helper so UI flows that
+/// need an absolute path to compose with a platform-specific URL scheme (e.g.
+/// `obsidian://open?path=<abs>`) can route through the shared workspace-link
+/// layer instead of re-implementing path normalization in the renderer.
+///
+/// Errors mirror the other workspace-path commands — empty input, parent-dir
+/// escape, NUL bytes, URI-scheme prefixes, paths outside the workspace, and
+/// missing files all surface a non-leaky message.
+#[tauri::command]
+pub async fn resolve_workspace_absolute_path(path: String) -> Result<String, String> {
+    let workspace = active_workspace_root().await?;
+    let target = resolve_workspace_path(&workspace, &path)?;
+    let workspace_label = workspace_path_label(&workspace, &target);
+    log::debug!(
+        "[workspace-paths] resolve_workspace_absolute_path: {}",
+        workspace_label
+    );
+    Ok(target.to_string_lossy().into_owned())
+}
+
 async fn active_workspace_root() -> Result<PathBuf, String> {
     let config = openhuman_core::openhuman::config::Config::load_or_init()
         .await
@@ -212,7 +235,7 @@ pub(crate) fn resolve_workspace_path(
     log::debug!(
         "[workspace-paths] resolved workspace path: {} -> {}",
         normalized_path,
-        target.display()
+        workspace_path_label(workspace_root, &target)
     );
     Ok(target)
 }
@@ -398,6 +421,33 @@ mod tests {
             !err.contains(&workspace.path().display().to_string()),
             "error leaked workspace root: {err}"
         );
+    }
+
+    #[test]
+    fn resolve_workspace_path_resolves_memory_tree_content_inside_workspace() {
+        let workspace = tempdir().unwrap();
+        let docs = workspace.path().join("memory_tree").join("content");
+        fs::create_dir_all(&docs).unwrap();
+
+        let resolved = resolve_workspace_path(workspace.path(), "memory_tree/content").unwrap();
+
+        let canonical_root = fs::canonicalize(workspace.path()).unwrap();
+        assert!(
+            resolved.starts_with(&canonical_root),
+            "resolved path escaped workspace root: {} not under {}",
+            resolved.display(),
+            canonical_root.display()
+        );
+        assert_eq!(resolved, docs.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_workspace_path_rejects_empty_whitespace_input() {
+        let workspace = tempdir().unwrap();
+
+        let err = resolve_workspace_path(workspace.path(), "   ").unwrap_err();
+
+        assert!(err.contains("empty"), "unexpected error: {err}");
     }
 
     #[cfg(unix)]

@@ -64,7 +64,13 @@ export default function IntelligenceCallsTab({ onToast }: Props) {
     setError(null);
     setSubmitting(true);
     try {
-      const result = await joinMeetCall({ meetUrl, displayName });
+      // ownerDisplayName left empty here because this tab's UI is hidden
+      // behind a "Coming Soon" gate (see render branch below) — the call
+      // is dead-code-reachable only. When the tab is revived it must
+      // collect an owner-name input the same way `MeetingBotsCard` does
+      // (privacy lock for the in-call wake gate). Empty fails closed in
+      // core, so we're safe in the meantime.
+      const result = await joinMeetCall({ meetUrl, displayName, ownerDisplayName: '' });
       setActiveCalls(prev => [
         ...prev.filter(call => call.requestId !== result.requestId),
         { requestId: result.requestId, meetUrl: result.meetUrl, displayName: result.displayName },

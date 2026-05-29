@@ -33,6 +33,32 @@ describe('segmentMessage', () => {
     expect(segments.every(s => s.length >= 40)).toBe(true);
   });
 
+  it('merges a short first paragraph into the second paragraph', () => {
+    const text =
+      'Ok.\n\n' +
+      'This second paragraph is intentionally long enough to stand alone after merging.';
+    const segments = segmentMessage(text);
+
+    expect(segments.length).toBe(1);
+    expect(segments[0].startsWith('Ok.\n\n')).toBe(true);
+    expect(segments[0].length).toBeGreaterThanOrEqual(40);
+  });
+
+  it('forward-merges a short first paragraph yet keeps the remaining bubbles', () => {
+    // Three paragraphs where only the first is below MIN_SEGMENT_CHARS. This
+    // exercises the forward-merge branch in mergeTooShort while still returning
+    // multiple segments from the paragraph-split strategy (no leading stub).
+    const text =
+      'Ok.\n\n' +
+      'This second paragraph is intentionally long enough to stand alone as a bubble.\n\n' +
+      'And a third paragraph that is also long enough to remain its own standalone bubble.';
+    const segments = segmentMessage(text);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[0].startsWith('Ok.\n\n')).toBe(true);
+    expect(segments.every(s => s.length >= 40)).toBe(true);
+  });
+
   it('splits on sentence boundaries when no paragraph breaks exist', () => {
     const text =
       'This is the first sentence with some content. This is the second sentence with more content. ' +

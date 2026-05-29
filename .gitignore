@@ -106,5 +106,7 @@ test-map.md
 
 # AI assistant progress tracking
 .kimi/
+.specify/
+.claude/skills/
 .codex-tmp
 *.enc

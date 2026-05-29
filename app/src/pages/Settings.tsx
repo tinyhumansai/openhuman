@@ -37,6 +37,7 @@ import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePan
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
+import SkillsRunnerPanel from '../components/settings/panels/SkillsRunnerPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -480,6 +481,7 @@ const Settings = () => {
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
+        <Route path="skills-runner" element={wrapSettingsPage(<SkillsRunnerPanel />)} />
         <Route
           path="screen-awareness-debug"
           element={wrapSettingsPage(<ScreenAwarenessDebugPanel />)}

@@ -138,6 +138,15 @@ named = [
     # touch files itself.
     "todowrite",
     "plan_exit",
+    # Skill chaining: let an in-flight autonomous skill (e.g.
+    # `github-issue-crusher` after the draft PR is open) spawn another
+    # bundled skill_run (e.g. `pr-review-shepherd` against that PR) as a
+    # fresh background job, so each skill stays narrow + composable.
+    # Thin wrapper over `skills::schemas::spawn_skill_run_background` — the
+    # same helper the `openhuman.skills_run` JSON-RPC controller uses, so
+    # RPC callers and tool callers share one spawn path (iter cap,
+    # transcript isolation, degenerate-response detector all apply).
+    "run_skill",
     # Self-update — lets the orchestrator answer "am I up to date" /
     # "update OpenHuman" without sending the user to Settings →
     # Developer Options. `update_check` is read-only; `update_apply`

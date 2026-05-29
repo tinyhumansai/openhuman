@@ -1230,7 +1230,13 @@ async fn run_inner_loop(
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
 ) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
-    let max_iterations = max_iterations.max(1);
+    // An autonomous skill run (set via `with_autonomous_iter_cap`) lifts the
+    // per-agent cap so sub-agents run until done / the circuit breaker trips.
+    // Take the larger of the two so a sub-agent that already wants more keeps it.
+    let max_iterations = super::autonomous::autonomous_iter_cap()
+        .map(|cap| cap.max(max_iterations))
+        .unwrap_or(max_iterations)
+        .max(1);
 
     // Compiled digest of this sub-agent run's tool calls + results, for a
     // graceful checkpoint if it hits the iteration cap (mirrors the main

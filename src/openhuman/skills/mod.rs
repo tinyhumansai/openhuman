@@ -8,6 +8,9 @@ pub mod ops_discover;
 pub mod ops_install;
 pub mod ops_parse;
 pub mod ops_types;
+pub mod preflight;
+pub mod registry;
+pub mod run_log;
 pub mod schemas;
 pub mod types;
 

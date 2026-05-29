@@ -60,6 +60,12 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
   const wsReadyRef = useRef(false);
   const stoppedRef = useRef(false);
   const inflightRef = useRef(false);
+  // True while the bot is actively producing PCM into the Meet call.
+  // Drives the mascot face so the mouth animates in time with the audio
+  // participants hear. Source of truth is the Rust speak_pump (edge-detected
+  // from the RPC poll loop). Same requestId guards against stale events from
+  // a previous session bleeding into this session's mascot state.
+  const [isSpeaking, setIsSpeaking] = useState(false);
 
   const captureFrame = useCallback(async () => {
     if (stoppedRef.current || !wsReadyRef.current || inflightRef.current) return;
@@ -163,8 +169,29 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
     };
     worker.postMessage({ cmd: 'start', intervalMs });
 
+    // Subscribe to the speak_pump's speaking-state edge events so the
+    // mascot face toggles in sync with the audio participants hear. Done
+    // inside this effect so the listener lifetime is bound to the same
+    // session — a remount tears it down with the rest of the pipeline.
+    let unlistenSpeaking: UnlistenFn | undefined;
+    let speakingListenerCancelled = false;
+    listen<{ requestId?: string; speaking?: boolean }>('meet-video:speaking-state', event => {
+      const payload = event.payload;
+      if (!payload) return;
+      // Ignore events from a different session during teardown / restart.
+      if (payload.requestId && payload.requestId !== session.requestId) return;
+      setIsSpeaking(!!payload.speaking);
+    })
+      .then(stop => {
+        if (speakingListenerCancelled) stop();
+        else unlistenSpeaking = stop;
+      })
+      .catch(err => console.debug('[meet-video-producer] speaking-state listen failed', err));
+
     return () => {
       stoppedRef.current = true;
+      speakingListenerCancelled = true;
+      if (unlistenSpeaking) unlistenSpeaking();
       try {
         worker.postMessage({ cmd: 'stop' });
         worker.terminate();
@@ -186,7 +213,7 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
       wsRef.current = null;
       wsReadyRef.current = false;
     };
-  }, [session.port, captureFrame]);
+  }, [session.port, session.requestId, captureFrame]);
 
   return (
     <div
@@ -201,7 +228,7 @@ const ProducerSession: FC<{ session: BusSession }> = ({ session }) => {
         pointerEvents: 'none',
         opacity: 0,
       }}>
-      <RiveMascot face="idle" size={FRAME_H} />
+      <RiveMascot face={isSpeaking ? 'speaking' : 'idle'} size={FRAME_H} />
     </div>
   );
 };
