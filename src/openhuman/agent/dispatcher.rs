@@ -550,11 +550,18 @@ impl ToolDispatcher for NativeToolDispatcher {
             .into_iter()
             .flat_map(|i| match &history[i] {
                 ConversationMessage::Chat(chat) => vec![chat.clone()],
-                ConversationMessage::AssistantToolCalls { text, tool_calls } => {
-                    let payload = serde_json::json!({
+                ConversationMessage::AssistantToolCalls {
+                    text,
+                    tool_calls,
+                    reasoning_content,
+                } => {
+                    let mut payload = serde_json::json!({
                         "content": text,
                         "tool_calls": tool_calls,
                     });
+                    if let Some(rc) = reasoning_content {
+                        payload["reasoning_content"] = serde_json::Value::String(rc.clone());
+                    }
                     vec![ChatMessage::assistant(payload.to_string())]
                 }
                 ConversationMessage::ToolResults(results) => results

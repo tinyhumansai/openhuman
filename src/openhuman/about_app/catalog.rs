@@ -74,6 +74,25 @@ const POLYMARKET_TRADING_DATA: Option<CapabilityPrivacy> = Some(CapabilityPrivac
     destinations: &["Polymarket CLOB API"],
 });
 
+// "Test Connection" on the Embeddings settings panel routes a small probe
+// payload to *whichever provider the user has selected* — not just the
+// managed cloud default. `DERIVED_TO_BACKEND` only enumerates the managed
+// path (OpenHuman backend / Neocortex), which under-reports the actual
+// privacy surface when the user has switched to OpenAI / Cohere / a
+// self-hosted endpoint. The catalog needs to list every reachable
+// destination so the Privacy surface can render the full set instead of
+// implying probes always stay on the managed path.
+const EMBEDDING_PROBE_TO_CONFIGURED_PROVIDER: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Derived,
+    destinations: &[
+        "OpenHuman backend / TinyHumans Neocortex (managed cloud default)",
+        "OpenAI API (api.openai.com)",
+        "Cohere API (api.cohere.com)",
+        "User-configured OpenAI-compatible endpoint (custom:<url>)",
+    ],
+});
+
 const CAPABILITIES: &[Capability] = &[
     Capability {
         id: "conversation.create",
@@ -293,6 +312,50 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Chat > ask the assistant about people, conversations, or windows",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.embedding_provider_config",
+        name: "Configure Embedding Provider",
+        domain: "embeddings",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Pick which embedding provider drives semantic search across your memory: \
+             managed cloud (default, Voyage-backed via api.tinyhumans.ai), OpenAI, \
+             Cohere, local Ollama, or a custom OpenAI-compatible endpoint. API keys \
+             are stored encrypted via the local keyring under `embeddings:<slug>`; \
+             model name and embedding dimensions are tunable per provider. The \
+             legacy `inference_embed` RPC is aliased to `embeddings_embed` so \
+             existing callers continue to work.",
+        how_to: "Settings > AI > Embeddings",
+        status: CapabilityStatus::Beta,
+        // Privacy depends on the selected provider — see
+        // `intelligence.embedding_provider_test` for the per-provider data
+        // destinations. The configuration surface itself only writes to the
+        // local keyring and config, so leaving this `None` (treat-as-unknown)
+        // would under-report; we annotate the credential side here and the
+        // network side on the test action.
+        privacy: LOCAL_CREDENTIALS,
+    },
+    Capability {
+        id: "intelligence.embedding_provider_test",
+        name: "Test Embedding Provider",
+        domain: "embeddings",
+        category: CapabilityCategory::Intelligence,
+        description:
+            "Verify a configured embedding provider before committing it to \
+             memory ingestion. Sends a small one-shot embed request and reports \
+             the model, dimensions, and any auth/error surface so a \
+             misconfigured key doesn't get discovered halfway through a 50k \
+             chunk backfill.",
+        how_to: "Settings > AI > Embeddings > Test Connection",
+        // The probe payload routes to whichever provider the user has
+        // selected — managed cloud (default), OpenAI, Cohere, or a custom
+        // OpenAI-compatible endpoint. Using `DERIVED_TO_BACKEND` here would
+        // under-report by only listing the managed path; the dedicated
+        // constant enumerates every reachable destination so the Privacy
+        // surface renders the full set.
+        status: CapabilityStatus::Beta,
+        privacy: EMBEDDING_PROBE_TO_CONFIGURED_PROVIDER,
     },
     Capability {
         id: "intelligence.mcp_server",
@@ -878,56 +941,6 @@ const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
-        id: "screen_intelligence.gameplay_review_import",
-        name: "Import Gameplay Review Sessions",
-        domain: "screen_intelligence",
-        category: CapabilityCategory::ScreenIntelligence,
-        description: "Import local gameplay keyframes or a recordings folder into a review session.",
-        how_to: "Intelligence > Gameplay > Import session",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-    Capability {
-        id: "screen_intelligence.gameplay_review_analyze",
-        name: "Analyze Gameplay Sessions",
-        domain: "screen_intelligence",
-        category: CapabilityCategory::ScreenIntelligence,
-        description: "Generate a recap, highlight list, and review notes from imported gameplay frames.",
-        how_to: "Intelligence > Gameplay > Analyze session",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-    Capability {
-        id: "screen_intelligence.gameplay_review_clip_metadata",
-        name: "Draft Clip Metadata",
-        domain: "screen_intelligence",
-        category: CapabilityCategory::ScreenIntelligence,
-        description: "Generate platform-ready titles, descriptions, and tags for gameplay clips.",
-        how_to: "Intelligence > Gameplay > Draft clips",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-    Capability {
-        id: "screen_intelligence.gameplay_review_presets",
-        name: "Save Game Coaching Presets",
-        domain: "screen_intelligence",
-        category: CapabilityCategory::ScreenIntelligence,
-        description: "Store game-specific coaching focus, spoiler mode, and notes for repeat reviews.",
-        how_to: "Intelligence > Gameplay > Presets",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-    Capability {
-        id: "screen_intelligence.gameplay_review_spoilers",
-        name: "Set Spoiler Controls",
-        domain: "screen_intelligence",
-        category: CapabilityCategory::ScreenIntelligence,
-        description: "Keep gameplay coaching spoiler-safe or story-aware per session.",
-        how_to: "Intelligence > Gameplay > Spoiler mode",
-        status: CapabilityStatus::Beta,
-        privacy: LOCAL_RAW,
-    },
-    Capability {
         id: "screen_intelligence.configure_capture_fps",
         name: "Configure Capture FPS",
         domain: "screen_intelligence",
@@ -1185,6 +1198,18 @@ const CAPABILITIES: &[Capability] = &[
         how_to: "Settings > Delete All Data",
         status: CapabilityStatus::ComingSoon,
         privacy: None,
+    },
+    Capability {
+        id: "automation.task_sources",
+        name: "Task Sources",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Pull work items from GitHub, Notion, Linear, and ClickUp using per-source \
+                      filters, then enrich them onto the agent's todo board and (for proactive \
+                      sources) start an agent working on them.",
+        how_to: "Settings > Task Sources",
+        status: CapabilityStatus::Beta,
+        privacy: DERIVED_TO_BACKEND,
     },
     Capability {
         id: "automation.view_cron_jobs",

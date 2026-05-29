@@ -150,6 +150,7 @@ pub fn all_tools_with_runtime(
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
+        Box::new(DelegateToPersonalityTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
         // todo registry the agent can rewrite end-to-end, plus the
         // `plan_exit` marker that hands a plan-mode pass off to a

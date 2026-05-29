@@ -185,6 +185,7 @@ impl Tool for SpawnWorkerThreadTool {
                 created_at: now.clone(),
                 parent_thread_id: Some(current_thread_id.clone()),
                 labels: Some(vec!["worker".to_string()]),
+                personality_id: None,
             },
         )
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -407,6 +408,7 @@ mod tests {
                 created_at: "now".into(),
                 parent_thread_id: None,
                 labels: Some(vec!["worker".to_string()]),
+                personality_id: None,
             },
         )
         .unwrap();
@@ -449,6 +451,7 @@ mod tests {
                 created_at: "now".into(),
                 parent_thread_id: Some("parent".into()),
                 labels: None,
+                personality_id: None,
             },
         )
         .unwrap();

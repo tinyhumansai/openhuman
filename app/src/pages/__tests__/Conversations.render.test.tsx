@@ -933,11 +933,72 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     fireEvent.click(screen.getByLabelText('Move right'));
 
     await waitFor(() => {
-      expect(screen.getByText('Could not move task; changes were not saved.')).toBeInTheDocument();
+      expect(
+        screen.getByText('Could not update task; changes were not saved.')
+      ).toBeInTheDocument();
     });
     expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
       'board-thread',
       expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+    );
+  });
+
+  it('rolls back and shows feedback when task board edit persistence fails', async () => {
+    const thread = makeThread({ id: 'edit-board-thread', title: 'Edit Board Thread' });
+    const board = {
+      threadId: 'edit-board-thread',
+      updatedAt: '2026-05-04T10:00:00Z',
+      cards: [
+        {
+          id: 'task-1',
+          title: 'Plan rollout',
+          status: 'todo' as const,
+          objective: 'Draft the launch task brief',
+          assignedAgent: 'planner',
+          approvalMode: 'required' as const,
+          plan: ['Read docs'],
+          allowedTools: ['todo'],
+          acceptanceCriteria: ['Saved board round-trips'],
+          evidence: [],
+          order: 0,
+          updatedAt: '2026-05-04T10:00:00Z',
+        },
+      ],
+    };
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
+    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Task brief'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Updated rollout' } });
+    fireEvent.change(screen.getByLabelText('Assigned agent'), {
+      target: { value: 'code_executor' },
+    });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Could not update task; changes were not saved.')
+      ).toBeInTheDocument();
+    });
+    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
+      'edit-board-thread',
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'task-1',
+          title: 'Updated rollout',
+          assignedAgent: 'code_executor',
+        }),
+      ])
     );
   });
 

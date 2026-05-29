@@ -1,6 +1,7 @@
 mod archetype_delegation;
 mod ask_clarification;
 mod delegate;
+mod delegate_to_personality;
 mod dispatch;
 mod plan_exit;
 pub mod remember_preference;
@@ -17,6 +18,7 @@ pub(crate) use dispatch::dispatch_subagent;
 pub use archetype_delegation::ArchetypeDelegationTool;
 pub use ask_clarification::AskClarificationTool;
 pub use delegate::DelegateTool;
+pub use delegate_to_personality::DelegateToPersonalityTool;
 pub use plan_exit::{PlanExitTool, PLAN_EXIT_MARKER};
 pub use remember_preference::RememberPreferenceTool;
 pub use run_skill::{RunSkillTool, RUN_SKILL_TOOL_NAME};

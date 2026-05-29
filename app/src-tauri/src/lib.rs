@@ -1984,18 +1984,58 @@ fn linux_is_root_uid(uid: u32) -> bool {
     uid == 0
 }
 
-fn append_platform_cef_gpu_workarounds(args: &mut Vec<CefCommandLineArg>, os: &str, arch: &str) {
+/// Whether to skip the Linux `--disable-gpu` / `--disable-gpu-compositing`
+/// workaround.
+///
+/// The workaround was added for issue #1697 — on Arch/Manjaro-family Linux
+/// systems, the AppImage can abort during CEF GPU process startup when EGL
+/// context creation fails before Chromium's own fallback path gets a usable
+/// renderer. The unconditional disable keeps packaged builds launchable on
+/// those configurations, but the side effect is that WebGL2 surfaces (the
+/// Rive mascot on the Human tab; any other GPU-accelerated canvas) cannot
+/// initialise. Users on working GPU stacks (most Ubuntu, WSL2 with proper
+/// driver passthrough, Fedora, etc.) can opt back into hardware
+/// acceleration by setting `OPENHUMAN_FORCE_GPU=1`.
+///
+/// Uses the same recognized truthy tokens as [`cef_prewarm_enabled`], but
+/// this control is explicit opt-in: `1` / `true` / `yes` / `on`
+/// (case-insensitive) enables the override, and anything else (including
+/// unset) preserves the default disable.
+fn cef_force_gpu_enabled(env_override: Option<&str>) -> bool {
+    match env_override {
+        Some(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        }
+        None => false,
+    }
+}
+
+fn append_platform_cef_gpu_workarounds(
+    args: &mut Vec<CefCommandLineArg>,
+    os: &str,
+    arch: &str,
+    force_gpu_override: Option<&str>,
+) {
     // Issue #1697: on Arch/Manjaro-family Linux systems, the AppImage can
     // abort during CEF GPU process startup when EGL context creation fails
     // before Chromium's own fallback path gets a usable renderer. Disable the
     // hardware GPU path on Linux so packaged builds can still launch via
-    // software compositing.
+    // software compositing. Users with working GPU stacks can opt back into
+    // hardware acceleration via `OPENHUMAN_FORCE_GPU=1` — required for the
+    // Rive mascot on the Human tab and any other WebGL2 surface to render.
     if os == "linux" {
-        args.push(("--disable-gpu", None));
-        args.push(("--disable-gpu-compositing", None));
-        log::info!(
-            "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697)"
-        );
+        if cef_force_gpu_enabled(force_gpu_override) {
+            log::info!(
+                "[cef-startup] OPENHUMAN_FORCE_GPU set — skipping --disable-gpu / --disable-gpu-compositing (issue #1697). If the app fails to launch with a GPU process abort, unset the env var."
+            );
+        } else {
+            args.push(("--disable-gpu", None));
+            args.push(("--disable-gpu-compositing", None));
+            log::info!(
+                "[cef-startup] Linux detected: adding --disable-gpu and --disable-gpu-compositing (issue #1697); set OPENHUMAN_FORCE_GPU=1 to re-enable hardware compositing (needed for WebGL2 surfaces like the Rive mascot)"
+            );
+        }
     }
 
     // Issue #1012: Intel macOS (x86_64) crashes with EXC_CRASH (SIGABRT)
@@ -2603,10 +2643,12 @@ pub fn run() {
         // `about:blank` (blank panel for Telegram / WhatsApp / Slack / Discord).
         // Same port the `cdp::CDP_HOST`/`cdp::CDP_PORT` constants expect.
         args.push(("--remote-debugging-port", Some("19222")));
+        let force_gpu_env = std::env::var("OPENHUMAN_FORCE_GPU").ok();
         append_platform_cef_gpu_workarounds(
             &mut args,
             std::env::consts::OS,
             std::env::consts::ARCH,
+            force_gpu_env.as_deref(),
         );
         tauri::Builder::<tauri::Cef>::new().command_line_args::<&str, &str>(args)
     };
@@ -4087,7 +4129,7 @@ mod tests {
     #[test]
     fn platform_cef_gpu_workarounds_disable_linux_gpu_path() {
         let mut args = Vec::new();
-        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64");
+        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", None);
 
         assert!(args.contains(&("--disable-gpu", None)));
         assert!(args.contains(&("--disable-gpu-compositing", None)));
@@ -4096,7 +4138,7 @@ mod tests {
     #[test]
     fn platform_cef_gpu_workarounds_disable_intel_macos_compositing_only() {
         let mut args = Vec::new();
-        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64");
+        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", None);
 
         assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
     }
@@ -4105,13 +4147,74 @@ mod tests {
     fn platform_cef_gpu_workarounds_leave_other_platforms_alone() {
         for (os, arch) in [("macos", "aarch64"), ("windows", "x86_64")] {
             let mut args = Vec::new();
-            append_platform_cef_gpu_workarounds(&mut args, os, arch);
+            append_platform_cef_gpu_workarounds(&mut args, os, arch, None);
 
             assert!(
                 args.is_empty(),
                 "unexpected CEF GPU flags for {os}/{arch}: {args:?}"
             );
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // OPENHUMAN_FORCE_GPU override (re-enables WebGL2 surfaces — Rive mascot)
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn force_gpu_default_off_when_env_unset() {
+        assert!(!cef_force_gpu_enabled(None));
+    }
+
+    #[test]
+    fn force_gpu_explicit_enable_values_match_prewarm_pattern() {
+        for v in ["1", "true", "yes", "on", "TRUE", "Yes", "On"] {
+            assert!(
+                cef_force_gpu_enabled(Some(v)),
+                "OPENHUMAN_FORCE_GPU={v:?} should opt in"
+            );
+        }
+    }
+
+    #[test]
+    fn force_gpu_anything_else_is_off() {
+        // Mirrors prewarm semantics: only explicit truthy values opt in.
+        for v in ["", "0", "false", "no", "off", "FALSE", "Off", "maybe", " "] {
+            assert!(
+                !cef_force_gpu_enabled(Some(v)),
+                "OPENHUMAN_FORCE_GPU={v:?} must not silently opt in"
+            );
+        }
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_skip_linux_disable_when_force_gpu_set() {
+        // Assert the two GPU-disable flags are absent rather than the whole
+        // arg list being empty: on root-Linux runners (CI in some configs)
+        // the function still appends `--no-sandbox` via the orthogonal
+        // OPENHUMAN-TAURI-K1 branch, which would make a strict `is_empty()`
+        // check fail spuriously. We only care about the GPU branch here.
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "linux", "x86_64", Some("1"));
+
+        assert!(
+            !args.contains(&("--disable-gpu", None)),
+            "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu, got: {args:?}"
+        );
+        assert!(
+            !args.contains(&("--disable-gpu-compositing", None)),
+            "OPENHUMAN_FORCE_GPU=1 must suppress --disable-gpu-compositing, got: {args:?}"
+        );
+    }
+
+    #[test]
+    fn platform_cef_gpu_workarounds_force_gpu_does_not_affect_intel_macos_path() {
+        // OPENHUMAN_FORCE_GPU only governs the Linux #1697 workaround; the
+        // separate Intel-macOS #1012 disable must still apply, regardless of
+        // the env var.
+        let mut args = Vec::new();
+        append_platform_cef_gpu_workarounds(&mut args, "macos", "x86_64", Some("1"));
+
+        assert_eq!(args, vec![("--disable-gpu-compositing", None)]);
     }
 
     /// On an Intel macOS build the ARCH constant must equal "x86_64".

@@ -37,6 +37,7 @@ mod runtime;
 mod runtime_python;
 mod scheduler_gate;
 mod storage_memory;
+mod task_sources;
 mod tools;
 mod update;
 
@@ -77,6 +78,7 @@ pub use storage_memory::{
     LlmBackend, MemoryConfig, MemoryTreeConfig, StorageConfig, StorageProviderConfig,
     StorageProviderSection, DEFAULT_CLOUD_LLM_MODEL,
 };
+pub use task_sources::TaskSourcesConfig;
 pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,

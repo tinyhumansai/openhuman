@@ -953,6 +953,52 @@ const it5: TranslationMap = {
   'settings.modelHealth.modal.apply': 'Apply Replacement',
   'settings.modelHealth.tag.cheaper': 'CHEAPER',
   'settings.modelHealth.tag.better': 'BETTER',
+  // Task sources (#task-sources)
+  'settings.taskSources.title': 'Task Sources',
+  'settings.taskSources.subtitle': 'Pull tasks from your tools onto the agent todo board',
+  'settings.taskSources.description':
+    'Collect work items from GitHub, Notion, Linear, and ClickUp, enrich them, and route them onto the agent todo board.',
+  'settings.taskSources.connectHint':
+    'Task sources use your connected accounts. Connect them under Integrations first.',
+  'settings.taskSources.disabledBanner':
+    'Task sources are disabled in settings. Enable them to poll automatically.',
+  'settings.taskSources.loadError': 'Failed to load task sources',
+  'settings.taskSources.addTitle': 'Add a task source',
+  'settings.taskSources.provider': 'Provider',
+  'settings.taskSources.name': 'Name (optional)',
+  'settings.taskSources.namePlaceholder': 'e.g. My open issues',
+  'settings.taskSources.github.repo': 'Repository (owner/name, optional)',
+  'settings.taskSources.github.labels': 'Labels (comma-separated)',
+  'settings.taskSources.notion.database': 'Database (board) ID',
+  'settings.taskSources.linear.team': 'Team ID (optional)',
+  'settings.taskSources.clickup.team': 'Workspace (team) ID (optional)',
+  'settings.taskSources.assignedToMe': 'Only items assigned to me',
+  'settings.taskSources.add': 'Add source',
+  'settings.taskSources.adding': 'Adding…',
+  'settings.taskSources.preview': 'Preview',
+  'settings.taskSources.previewResult': '{count} task(s) match this filter',
+  'settings.taskSources.fetchNow': 'Fetch now',
+  'settings.taskSources.fetching': 'Fetching…',
+  'settings.taskSources.fetchResult': 'Routed {routed} of {fetched} task(s)',
+  'settings.taskSources.configured': 'Configured sources',
+  'settings.taskSources.empty': 'No task sources configured yet.',
+  'settings.taskSources.proactive': 'Proactive',
+  'settings.taskSources.lastFetch': 'Last fetch',
+  'settings.taskSources.never': 'Never',
+  'settings.taskSources.statusEnabled': 'Enabled',
+  'settings.taskSources.statusDisabled': 'Disabled',
+  'settings.taskSources.enable': 'Enable',
+  'settings.taskSources.disable': 'Disable',
+  'settings.taskSources.remove': 'Remove',
+  'settings.taskSources.removeConfirm':
+    'Remove this task source? All ingested task history will be deleted and cannot be undone.',
+
+  'settings.taskSources.refresh': 'Refresh',
+  // Task sources provider labels (#task-sources)
+  'settings.taskSources.providers.github': 'GitHub',
+  'settings.taskSources.providers.notion': 'Notion',
+  'settings.taskSources.providers.linear': 'Linear',
+  'settings.taskSources.providers.clickup': 'ClickUp',
 
   // /skills IA restructure (Phase 2/3) — dashboard + new-skill page.
   'skills.dashboard.title': 'Skills',
@@ -971,6 +1017,9 @@ const it5: TranslationMap = {
   'skills.new.title': 'Create a skill',
   'skills.new.placeholderBody':
     'Authoring form arrives soon. For now, use the “New skill” button on the runner page.',
+  'settings.agentAccess.requireTaskPlanApproval.label': 'Require task plan approval',
+  'settings.agentAccess.requireTaskPlanApproval.desc':
+    'Pause before an assigned agent executes an agent-authored task brief.',
 };
 
 export default it5;

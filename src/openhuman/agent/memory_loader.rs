@@ -722,6 +722,7 @@ mod tests {
                 title: "Chat A".to_string(),
                 created_at: "2026-04-10T12:00:00Z".to_string(),
                 labels: None,
+                personality_id: None,
             })
             .expect("ensure thread-a");
         store
@@ -748,6 +749,7 @@ mod tests {
                 title: "Chat B".to_string(),
                 created_at: "2026-04-10T13:00:00Z".to_string(),
                 labels: None,
+                personality_id: None,
             })
             .expect("ensure thread-b");
 

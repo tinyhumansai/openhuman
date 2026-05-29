@@ -810,4 +810,96 @@ mod tests {
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         Arc::new(config)
     }
+
+    // ── Schedule serde roundtrip tests ──────────────────────────────────────
+    //
+    // These tests verify that the JSON shapes documented in `parameters_schema()`
+    // actually deserialize into the `Schedule` enum. A mismatch between the schema
+    // and the serde struct silently breaks tool calls at runtime (same root cause
+    // as the `window_days` / `time_window_days` field name drift in issue #2252).
+
+    #[test]
+    fn schedule_cron_variant_deserializes_from_schema_shape() {
+        let s: Schedule = serde_json::from_value(json!({
+            "kind": "cron",
+            "expr": "0 9 * * *"
+        }))
+        .expect("cron schedule must deserialize from schema-documented shape");
+        assert!(matches!(s, Schedule::Cron { .. }));
+    }
+
+    #[test]
+    fn schedule_cron_variant_accepts_optional_tz() {
+        let s: Schedule = serde_json::from_value(json!({
+            "kind": "cron",
+            "expr": "0 9 * * *",
+            "tz": "America/Los_Angeles"
+        }))
+        .expect("cron schedule with tz must deserialize");
+        match s {
+            Schedule::Cron { tz, .. } => {
+                assert_eq!(tz.as_deref(), Some("America/Los_Angeles"))
+            }
+            _ => panic!("expected Cron variant"),
+        }
+    }
+
+    #[test]
+    fn schedule_at_variant_deserializes_from_schema_shape() {
+        let s: Schedule = serde_json::from_value(json!({
+            "kind": "at",
+            "at": "2024-06-01T09:00:00Z"
+        }))
+        .expect("at schedule must deserialize from schema-documented shape");
+        assert!(matches!(s, Schedule::At { .. }));
+    }
+
+    #[test]
+    fn schedule_every_variant_deserializes_from_schema_shape() {
+        let s: Schedule = serde_json::from_value(json!({
+            "kind": "every",
+            "every_ms": 60000u64
+        }))
+        .expect("every schedule must deserialize from schema-documented shape");
+        assert!(matches!(s, Schedule::Every { every_ms: 60000 }));
+    }
+
+    #[test]
+    fn schedule_fails_when_kind_is_missing() {
+        let result = serde_json::from_value::<Schedule>(json!({"expr": "0 9 * * *"}));
+        assert!(
+            result.is_err(),
+            "Schedule must reject a payload without 'kind'"
+        );
+    }
+
+    #[test]
+    fn schedule_fails_when_kind_is_unknown() {
+        let result = serde_json::from_value::<Schedule>(json!({"kind": "daily"}));
+        assert!(
+            result.is_err(),
+            "Schedule must reject an unrecognised 'kind' value"
+        );
+    }
+
+    #[test]
+    fn cron_add_tool_schema_requires_name_and_schedule() {
+        // Use the real schema from CronAddTool::parameters_schema() so a
+        // future change that removes or renames a required field breaks this
+        // test rather than silently passing against a hardcoded fixture.
+        let cfg = Arc::new(Config::default());
+        let tool = CronAddTool::new(cfg.clone(), test_security(&cfg));
+        let schema = tool.parameters_schema();
+        let required = schema["required"]
+            .as_array()
+            .expect("CronAddTool schema must have a 'required' array");
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("name")),
+            "'name' must appear in CronAddTool schema required list"
+        );
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("schedule")),
+            "'schedule' must appear in CronAddTool schema required list"
+        );
+    }
 }

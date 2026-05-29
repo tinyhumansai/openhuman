@@ -62,18 +62,6 @@ const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
 /// Keep these updater-specific so unrelated GitHub or generic transport
 /// failures still reach Sentry.
 ///
-/// The last entry is `tauri-plugin-updater`'s own non-success log line
-/// (`updater.rs`: `log::error!("update endpoint did not respond with a
-/// successful status code")`). The plugin emits it on *any* non-2xx
-/// response and **discards the status code**, so the Sentry event carries
-/// no `domain`/`status` tag and no actionable detail — it can only be
-/// matched by this message string. It is distinctive to the updater
-/// (literally names "update endpoint"), so matching it domain-agnostically
-/// is safe. A genuinely-broken update manifest still surfaces with full
-/// structured context (status + url) through the core's `domain=update`
-/// `check_releases` path, which keeps non-transient statuses visible — see
-/// `UPDATER_TRANSIENT_HTTP_STATUSES` (404 deliberately omitted there).
-/// Drops TAURI-RUST-CD (~151 events / 9 days, Windows background checks).
 const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
     "failed to check for updates: error sending request",
     "github api error: 403",
@@ -140,39 +128,8 @@ pub enum ExpectedErrorKind {
     ///   demoted breadcrumb can stay sparse (debug level, metadata-only
     ///   fields) instead of warn-level with the full body included.
     ///
-    /// Drops OPENHUMAN-TAURI-R5 (~2.5k events) and OPENHUMAN-TAURI-R6
-    /// (~2.5k events) — both are the same `127.0.0.1:18474` connect-refused
-    /// shape, one at the `integrations.get` emit site and one re-wrapped by
-    /// `rpc.invoke_method`. See [`is_loopback_unavailable`] for the exact
-    /// body shapes matched.
     LoopbackUnavailable,
-    /// A user prompt was rejected by the in-process prompt-injection guard
-    /// before it reached the model. Both enforcement actions that produce a
-    /// user-visible error — `Blocked` (score ≥ 0.70) and `ReviewBlocked`
-    /// (score ≥ 0.55) — are expected, user-input conditions: the detector
-    /// fired on the user's own message and the UI already surfaces an
-    /// actionable "please rephrase" message. Sentry has no remediation path
-    /// and the volume is high (OPENHUMAN-TAURI-140: ~1 480 events in 2 days,
-    /// ~56 events/hour, all from `openhuman.agent_chat` via
-    /// `local_ai.ops.agent_chat`).
     PromptInjectionBlocked,
-    /// The request exceeded the model's context window — the
-    /// conversation/prompt is too long for the configured model. A
-    /// deterministic user-state / usage condition; the remediation is
-    /// "start a new chat, trim the conversation, or pick a larger-context
-    /// model", which the UI surfaces. Sentry has no signal to act on.
-    ///
-    /// The provider HTTP layer (`providers::ops::api_error`) suppresses its
-    /// own per-attempt event for this condition, and
-    /// `providers::reliable` marks it non-retryable. This arm catches the
-    /// **re-report** when the same error is raised again by
-    /// `agent.run_single` / `web_channel.run_chat_task` under a different
-    /// `domain` tag (same two-emit-site shape as the empty-response and
-    /// session-expired fixes). Delegates to the single-source matcher
-    /// [`crate::openhuman::inference::provider::is_context_window_exceeded_message`]
-    /// so the retry classifier, the api_error cascade, and this arm can't
-    /// drift. Drops Sentry TAURI-RUST-501
-    /// (`Context size has been exceeded`, custom-provider 500).
     ContextWindowExceeded,
     /// The memory-store chunk DB's per-path circuit breaker is currently open
     /// because too many consecutive SQLite init attempts failed. This is the
@@ -183,6 +140,17 @@ pub enum ExpectedErrorKind {
     /// reset window elapses and a subsequent init succeeds.
     ///
     MemoryStoreBreakerOpen,
+    /// WhatsApp structured-ingest write hit a transient SQLite file lock
+    /// (`SQLITE_BUSY` / `SQLITE_LOCKED`) after exhausting the local retry
+    /// budget. This is an expected local-contention condition (typically on
+    /// Windows when another process briefly holds a file lock) and the
+    /// scanner retries on the next tick, so Sentry has no immediate
+    /// remediation path.
+    ///
+    /// Anchored narrowly to the whatsapp ingest failure envelope plus the
+    /// SQLite lock text, so unrelated DB lock errors in other domains still
+    /// reach Sentry.
+    WhatsAppDataSqliteBusy,
     /// Host disk is full — the filesystem returned `ENOSPC` to a write,
     /// `mkdir`, or `open` syscall. The user cannot recover from this without
     /// freeing space on their machine, and Sentry has no remediation path
@@ -277,6 +245,7 @@ pub enum ExpectedErrorKind {
     /// (~815 events Chinese-Windows variant) where the English-only
     /// `is_network_unreachable_message` anchors miss the inner OS message.
     ChannelSupervisorRestart,
+    ConfigLoadTimedOut,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -284,6 +253,13 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
+    // `_api_key is not configured` catches backend-reported environment variable
+    // phrases like `VOYAGE_API_KEY is not configured` and
+    // `COHERE_API_KEY is not configured` returned by the embeddings backend
+    // when the relevant env var is absent (TAURI-RUST-2H5, ~5 K events).
+    // The `_api_key` anchor (lower-cased suffix of an env-var name) keeps
+    // generic "X is not configured" prose from being silenced — only
+    // ALL_CAPS_API_KEY-style names match.
     if lower.contains("api key not set")
         || lower.contains("missing api key")
         || lower.contains("_api_key is not configured")
@@ -385,8 +361,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_memory_store_breaker_open(&lower) {
         return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
     }
+    if is_whatsapp_data_sqlite_busy_message(&lower) {
+        return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
+    }
     if is_disk_full_message(&lower) {
         return Some(ExpectedErrorKind::DiskFull);
+    }
+    if is_config_load_timed_out_message(&lower) {
+        return Some(ExpectedErrorKind::ConfigLoadTimedOut);
     }
     if is_memory_store_pii_rejection(&lower) {
         return Some(ExpectedErrorKind::MemoryStorePiiRejection);
@@ -407,7 +389,84 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_filesystem_user_path_invalid_message(&lower) {
         return Some(ExpectedErrorKind::FilesystemUserPathInvalid);
     }
+    // Upstream rate-limit responses — provider throttles the account (429) or
+    // wraps the 429 inside an HTTP 500 (`"429 rate limit exceeded"` in the
+    // body). In both cases the reliable-provider layer already retries with
+    // backoff, and the embeddings path has a proactive token-bucket limiter
+    // (`embeddings::rate_limit`). The upstream quota is an account-capacity
+    // signal, not a code bug — Sentry has no remediation path and the
+    // per-attempt events generate pure noise (OPENHUMAN-TAURI-S: ~6 984
+    // events from HTTP 500 wrapping a "429 rate limit exceeded" body;
+    // OPENHUMAN-TAURI-6Y: ~19 849 events from direct 429s; OPENHUMAN-TAURI-2E:
+    // ~1 482 events carrying a `"rate_limit_error"` type in the JSON body;
+    // OPENHUMAN-TAURI-RQ: ~741 events from the embeddings path).
+    //
+    // Checked LAST inside `expected_error_kind` — transient HTTP status matches
+    // (`is_transient_upstream_http_message`) are already caught by the earlier
+    // arm, so this arm only adds coverage for the 500-wrapping-429 body shape
+    // and provider JSON envelopes that name the error type explicitly.
+    if is_upstream_rate_limit_message(&lower) {
+        return Some(ExpectedErrorKind::TransientUpstreamHttp);
+    }
     None
+}
+
+/// Detect upstream rate-limit error bodies that bubble up from any provider
+/// or embedding API call site.
+///
+/// Covers three observed wire shapes:
+///
+/// 1. **OpenAI / Anthropic JSON body** — `"rate_limit_error"` is the `"type"`
+///    field in the structured error object:
+///    `{"error":{"message":"Rate limit exceeded.","type":"rate_limit_error"}}`
+///    (OPENHUMAN-TAURI-2E / -RQ).
+///
+/// 2. **OpenHuman backend wrapping upstream** — `"Upstream rate limit exceeded
+///    for model 'summarization-v1'. Please retry shortly."` embedded in a 500
+///    response body (OPENHUMAN-TAURI-6Y / -7H).
+///
+/// 3. **Plain phrase** — `"429 rate limit exceeded, please try again later"` /
+///    `"rate limit exceeded"` from any other upstream (OPENHUMAN-TAURI-S).
+///
+/// The match is against the full lowercased error string (including any
+/// caller wrapping prefix), so it survives `agent.run_single` / `rpc.invoke_method`
+/// re-reports as well as the original call-site emit.
+///
+/// **Polarity contract**: this predicate is *inclusive* — it returns `true`
+/// only for messages that are unambiguously rate-limit throttle signals. It
+/// must NOT match unrelated errors that incidentally mention "limit" or "rate"
+/// (e.g. action-budget `"Rate limit exceeded: action budget exhausted"`
+/// from `security::policy` — distinguished by the `"action budget"` anchor).
+pub fn is_upstream_rate_limit_message(lower: &str) -> bool {
+    // `"rate_limit_error"` is the structured error type from OpenAI / Anthropic
+    // compatible APIs. Tight anchor — colons and underscores don't appear in
+    // ordinary log text.
+    if lower.contains("rate_limit_error") {
+        return true;
+    }
+    // `"upstream rate limit exceeded"` is the OpenHuman backend's own phrase
+    // when it wraps an upstream provider 429 as an HTTP 500.
+    if lower.contains("upstream rate limit exceeded") {
+        return true;
+    }
+    // `"429 rate limit exceeded"` is the numeric-prefix form emitted by some
+    // backends (e.g. OPENHUMAN-TAURI-S: `"error":"429 rate limit exceeded"`).
+    // Anchored on the `"429 rate limit"` substring so a plain `"rate limit
+    // exceeded"` mention (which could appear in the `security::policy` action-
+    // budget message) is NOT matched here — the next arm handles clean phrase
+    // matches only when scoped by a provider API error prefix.
+    if lower.contains("429 rate limit") {
+        return true;
+    }
+    // `"rate limit exceeded"` on its own is matched ONLY when it appears inside
+    // a canonical provider API error envelope (`"api error ("` prefix from
+    // `ops::api_error` / `embeddings::openai`). This keeps the security::policy
+    // `"Rate limit exceeded: action budget exhausted"` message from being
+    // silently swallowed — that phrase does not carry an API error prefix.
+    if lower.contains("api error (") && lower.contains("rate limit exceeded") {
+        return true;
+    }
+    false
 }
 
 /// Detect filesystem-out-of-space errors that bubble up from any syscall
@@ -423,6 +482,31 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 ///   The text anchor already covers it.
 fn is_disk_full_message(lower: &str) -> bool {
     lower.contains("no space left on device") || lower.contains("not enough space on the disk")
+}
+
+/// Detect the literal `"Config loading timed out"` string produced by
+/// [`crate::openhuman::config::ops::load_config_with_timeout`] /
+/// [`crate::openhuman::config::ops::reload_config_snapshot_with_timeout`]
+/// when `tokio::time::timeout` elapses around `Config::load_or_init` /
+/// `Config::load_from_config_path`.
+fn is_config_load_timed_out_message(lower: &str) -> bool {
+    lower.contains("config loading timed out")
+}
+
+/// Match whatsapp structured-ingest failures caused by transient SQLite lock
+/// contention. Keep this matcher scoped to the whatsapp ingest envelope so we
+/// don't demote unrelated database failures in other domains.
+fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
+    if !lower.contains("[whatsapp_data] ingest failed:") {
+        return false;
+    }
+    if !lower.contains("upsert wa_message") {
+        return false;
+    }
+    lower.contains("database is locked")
+        || lower.contains("database table is locked")
+        || lower.contains("database file is locked")
+        || lower.contains("error code 5")
 }
 
 fn is_embedding_backend_auth_failure(lower: &str) -> bool {
@@ -506,6 +590,18 @@ fn is_memory_store_breaker_open(lower: &str) -> bool {
 ///   `"session JWT required"` — local pre-flight guards that fire when the
 ///   stored profile is empty (`#1465`-ish onboarding spam) or has been
 ///   cleared by a previous 401 cycle. Both shapes are OpenHuman-specific.
+/// - `"backend rejected session token on GET /payments/stripe/currentPlan"` and
+///   all analogous `"{METHOD} {path}"` variants — the `BackendApiError::Unauthorized`
+///   typed error surfaced by `api::rest::BackendOAuthClient::authed_json` when any
+///   OpenHuman REST endpoint returns HTTP 401. The `get_authed_value` wrapper in
+///   `billing::ops` stringifies this via `.to_string()`, producing the
+///   `"backend rejected session token on …"` prefix. This is uniquely scoped to
+///   the `BackendApiError::Unauthorized` variant (the phrase does not appear in
+///   any third-party provider error path) so it is safe to classify as session
+///   expiry without the conjunctive-anchor guard pattern needed for `"Invalid
+///   token"`. Targets TAURI-RUST-E (~1 437 events from
+///   `openhuman.billing_get_current_plan` polling on every background billing
+///   refresh cycle after the user's JWT lapses).
 ///
 /// At the JSON-RPC dispatch boundary the same strict match controls
 /// `DomainEvent::SessionExpired` publication, so downstream/provider 401s stay
@@ -516,6 +612,16 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         || lower.contains("no backend session token")
         || lower.contains("session jwt required")
         || msg.contains("SESSION_EXPIRED")
+        || (msg.contains("OpenHuman API error (401") && msg.contains("\"error\":\"Invalid token\""))
+        || (msg.contains("Embedding API error (401") && msg.contains("\"error\":\"Invalid token\""))
+        // TAURI-RUST-E — billing endpoint 401s via `BackendApiError::Unauthorized`
+        // stringified by `billing::ops::get_authed_value(..).map_err(|e| e.to_string())`.
+        // The display form is `"backend rejected session token on {METHOD} {path}"`;
+        // the phrase is uniquely scoped to `BackendApiError::Unauthorized` so no
+        // conjunctive guard is needed. Covers all billing RPC methods
+        // (billing_get_current_plan, billing_get_balance, etc.) and any other
+        // `authed_json` caller that stringifies via `.to_string()`.
+        || lower.contains("backend rejected session token")
         // OPENHUMAN-TAURI-4P0 — OpenHuman backend's "Invalid token" 401
         // envelope. Both anchors must be present: the OpenHuman-scoped
         // `"OpenHuman API error (401"` prefix (so a third-party provider's
@@ -1022,8 +1128,28 @@ fn is_provider_user_state_message(lower: &str) -> bool {
     //
     // Drops Sentry TAURI-RUST-X9 (~15.7 k events / ~22 h, single user,
     // release openhuman@0.54.0+c25fc8e5fd3e).
+    //
+    // TAURI-RUST-322 (#2929): same direct-mode path but the Composio v3
+    // `/connected_accounts` API returns HTTP 403 instead of 401. This
+    // happens when the BYO API key exists and is syntactically valid but
+    // does not carry the `connected_accounts:read` permission (e.g. a
+    // scoped or legacy key). Wire shape:
+    //
+    //   `[composio-direct] list_connections failed: Composio v3
+    //    connected_accounts failed: HTTP 403`
+    //
+    // 403 from Composio v3 is a user-state condition (key permissions),
+    // not a bug in openhuman_core. Sentry has no remediation path — the
+    // user must regenerate their key with the correct scopes on
+    // app.composio.dev. The polling layer retries every 5 s and the UI
+    // already surfaces the error; flooding Sentry with 1,000+ events per
+    // user adds no signal.
+    //
+    // Drops Sentry TAURI-RUST-322 (1,021 events, multi-release).
     if lower.contains("[composio-direct]")
-        && (lower.contains("http 401") || lower.contains("invalid api key"))
+        && (lower.contains("http 401")
+            || lower.contains("http 403")
+            || lower.contains("invalid api key"))
     {
         return true;
     }
@@ -1463,6 +1589,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected memory-store circuit-breaker-open error"
             );
         }
+        ExpectedErrorKind::WhatsAppDataSqliteBusy => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "whatsapp_data_sqlite_busy",
+                "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite busy/locked error"
+            );
+        }
         ExpectedErrorKind::FilesystemUserPathInvalid => {
             // User-input validation failure surfaced at the RPC
             // boundary — e.g. `openhuman.vault_create` called with a
@@ -1546,6 +1680,15 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "channel_supervisor_restart",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected channel-supervisor restart: {message}"
+            );
+        }
+        ExpectedErrorKind::ConfigLoadTimedOut => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "config_load_timed_out",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected config-load timeout: {message}"
             );
         }
     }
@@ -1887,25 +2030,83 @@ pub fn is_transient_message_failure(msg: &str) -> bool {
 /// Returns true when a Sentry event is a budget-exhausted 400 that should be
 /// dropped from `before_send`.
 ///
-/// Match criteria (all required):
-/// - tag `failure == "non_2xx"`
-/// - tag `status == "400"`
-/// - the event message or any exception value contains one of the tight
-///   budget-exhaustion phrases
+/// **Two-tier match — either tier fires a drop:**
 ///
-/// Note: `domain` is intentionally not gated here as defense-in-depth over
-/// the emit-site classifier — any non_2xx/400 event that carries the
-/// budget-exhausted phrasing is dropped regardless of which domain produced
-/// it, so a future re-emitter under a different tag still gets filtered.
+/// 1. **Tag-gated path** (primary suppression, added in PR #1633):
+///    - tag `failure == "non_2xx"`
+///    - tag `status == "400"`
+///    - event message or any exception value contains one of the tight
+///      budget-exhaustion phrases from
+///      [`crate::openhuman::inference::provider::is_budget_exhausted_message`]
+///
+/// 2. **Text-only path** (defense-in-depth, covers OPENHUMAN-CORE-N /
+///    TAURI-RUST-1P — GitHub issue #2935):
+///    - event message or any exception value contains the exact phrase
+///      `"Insufficient budget"` (the literal wire body the OpenHuman API
+///      returns in `{"success":false,"error":"Insufficient budget"}`),
+///      regardless of which tags are set.
+///
+///    The text-only tier is intentionally tighter than tier 1 — it only
+///    matches the exact phrase the backend uses, never the looser
+///    `"add credits"` / `"budget exceeded"` phrases that might appear in
+///    unrelated product copy.  This prevents future call sites that call
+///    `report_error` without setting `failure` / `status` tags (or that
+///    invoke `sentry::capture_message` directly) from leaking budget
+///    exhaustion events to Sentry.
+///
+/// Note: `domain` is intentionally not gated here so a future re-emitter
+/// under a different domain tag still gets filtered.
 pub fn is_budget_event(event: &sentry::protocol::Event<'_>) -> bool {
+    // Tier 1 — tag-gated primary path.
     let tags = &event.tags;
+    if tags.get("failure").map(String::as_str) == Some("non_2xx")
+        && tags.get("status").map(String::as_str) == Some("400")
+        && event_contains_budget_exhausted_message(event)
+    {
+        return true;
+    }
+    // Tier 2 — text-only defense-in-depth: drop any event whose message or
+    // exception value contains the exact wire phrase the OpenHuman backend
+    // emits for budget exhaustion, regardless of tags.
+    event_contains_budget_insufficient_phrase(event)
+}
+
+/// Defense-in-depth `before_send` filter for Sentry event CORE-RUST-EK
+/// (~827 events): every call to the cloud embedding API (OpenAI
+/// `text-embedding-3-large` or Voyage) that returns HTTP 401 fires a Sentry
+/// error event via `report_error_or_expected` in
+/// `src/openhuman/embeddings/openai.rs`.
+///
+/// 401 on the embedding call path means the configured API key is stale or
+/// invalid. This is the same class of condition as the VOYAGE_API_KEY-missing
+/// error (PR #2915) and the billing-expired 401 (PR #2924): the user's LLM
+/// session was interrupted by an auth failure that the core will retry on the
+/// next turn, but the Sentry volume-per-key ratio yields zero actionable signal.
+///
+/// Match criteria (all required):
+/// - tag `domain == "embeddings"` — pins the filter to the embeddings call
+///   path and avoids silencing unrelated 401s from provider chat, billing, or
+///   the backend RPC layer
+/// - tag `failure == "non_2xx"` — the marker set by `embeddings::openai::embed`
+///   at the non-2xx path
+/// - tag `status == "401"` — narrows to auth-rejection failures (429 / 500
+///   are handled by the existing rate-limit filter)
+///
+/// The primary suppression for the OpenHuman-backend "Invalid token" shape
+/// already lives in `expected_error_kind` / `is_session_expired_message`. This
+/// filter is defense-in-depth: it catches any third-party provider 401 that
+/// doesn't carry the OpenHuman-backend body (e.g. OpenAI's
+/// `{"error":{"code":"invalid_api_key",...}}`), ensuring CORE-RUST-EK stays
+/// off Sentry regardless of which embedding provider is configured.
+pub fn is_embeddings_api_key_401_event(event: &sentry::protocol::Event<'_>) -> bool {
+    let tags = &event.tags;
+    if tags.get("domain").map(String::as_str) != Some("embeddings") {
+        return false;
+    }
     if tags.get("failure").map(String::as_str) != Some("non_2xx") {
         return false;
     }
-    if tags.get("status").map(String::as_str) != Some("400") {
-        return false;
-    }
-    event_contains_budget_exhausted_message(event)
+    tags.get("status").map(String::as_str) == Some("401")
 }
 
 /// 404 on PATCH/DELETE to a channel-message path is an expected backend state
@@ -1967,6 +2168,30 @@ fn event_contains_budget_exhausted_message(event: &sentry::protocol::Event<'_>) 
     })
 }
 
+/// Tier-2 (text-only) budget check for [`is_budget_event`].
+///
+/// Matches the exact literal phrase `"Insufficient budget"` (case-insensitive)
+/// in the event message or any exception value. This is the wire body the
+/// OpenHuman backend returns: `{"success":false,"error":"Insufficient budget"}`.
+///
+/// Deliberately narrower than [`event_contains_budget_exhausted_message`]:
+/// only the precise backend phrase is matched, never the looser
+/// `"add credits"` / `"budget exceeded"` / `"insufficient balance"` phrases
+/// which might appear in unrelated product copy that would otherwise produce
+/// false positives.
+fn event_contains_budget_insufficient_phrase(event: &sentry::protocol::Event<'_>) -> bool {
+    const PHRASE: &str = "insufficient budget";
+    let has_phrase = |s: &str| s.to_ascii_lowercase().contains(PHRASE);
+    if event.message.as_deref().is_some_and(has_phrase) {
+        return true;
+    }
+    event
+        .exception
+        .values
+        .iter()
+        .any(|exc| exc.value.as_deref().is_some_and(has_phrase))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2012,8 +2237,57 @@ mod tests {
         );
     }
 
+    /// Task B (issue #2898): prove the canonical 429 error message produced by
+    /// the embedding clients is already classified as `TransientUpstreamHttp`
+    /// so Sentry events are suppressed even without backoff.
+    ///
+    /// The `is_transient_upstream_http_message` matcher checks for
+    /// `"api error (429 "` (case-insensitive), which is present in both the
+    /// OpenAI and Cohere canonical error shapes.
+    #[test]
+    fn embedding_429_classifies_as_transient_upstream_http() {
+        // OpenAI/Voyage canonical shape (openai.rs emit site).
+        let msg = "Embedding API error (429 Too Many Requests): Rate limit exceeded.";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "OpenAI 429 must classify as TransientUpstreamHttp: {msg}"
+        );
+
+        // Cohere canonical shape (cohere.rs emit site).
+        let cohere_msg = "Cohere embed API error (429 Too Many Requests): rate limit exceeded.";
+        assert_eq!(
+            expected_error_kind(cohere_msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "Cohere 429 must classify as TransientUpstreamHttp: {cohere_msg}"
+        );
+
+        // After-cap bail shape from the retry loop (openai.rs).
+        let cap_msg =
+            "Embedding API error (429 Too Many Requests): rate limit exceeded after 3 retries";
+        assert_eq!(
+            expected_error_kind(cap_msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "retry-cap bail message must classify as TransientUpstreamHttp: {cap_msg}"
+        );
+
+        // After-cap bail shape from the retry loop (cohere.rs).
+        let cohere_cap_msg =
+            "Cohere embed API error (429 Too Many Requests): rate limit exceeded after 3 retries";
+        assert_eq!(
+            expected_error_kind(cohere_cap_msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "Cohere retry-cap bail message must classify as TransientUpstreamHttp: {cohere_cap_msg}"
+        );
+    }
+
     #[test]
     fn classifies_backend_env_api_key_not_configured() {
+        // TAURI-RUST-2H5 (~5 K events): backend embedding endpoint returns a
+        // 400 with `{"success":false,"error":"VOYAGE_API_KEY is not configured"}`
+        // whenever the backend env var is absent. This is a known server-side
+        // config state, not an app error — silence it the same way we silence
+        // other `ApiKeyMissing` variants.
         for raw in [
             r#"Embedding API error (400 Bad Request): {"success":false,"error":"VOYAGE_API_KEY is not configured"}"#,
             r#"Embedding API error 400 Bad Request: {"success":false,"error":"VOYAGE_API_KEY is not configured"}"#,
@@ -2035,6 +2309,10 @@ mod tests {
         // should match.
         assert_eq!(
             expected_error_kind("workspace path is not configured for this user"),
+            None
+        );
+        assert_eq!(
+            expected_error_kind("embedding model is not configured"),
             None
         );
         assert_eq!(
@@ -2503,6 +2781,72 @@ mod tests {
     }
 
     #[test]
+    fn classifies_config_load_timed_out() {
+        // Canonical wire string emitted by `load_config_with_timeout` and
+        // `reload_config_snapshot_with_timeout` in
+        // `src/openhuman/config/ops.rs`. Drops TAURI-RUST-5X.
+        assert_eq!(
+            expected_error_kind("Config loading timed out"),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
+        );
+        // Same shape after the RPC dispatch wraps it for display — the
+        // matcher is substring-anchored, so a context prefix does not
+        // break it.
+        assert_eq!(
+            expected_error_kind("rpc.invoke_method failed: Config loading timed out"),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
+        );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_timeouts_as_config_load_timed_out() {
+        // Network / HTTP timeouts go to `NetworkUnreachable` /
+        // `TransientUpstreamHttp`, not the config-load bucket. The
+        // anchor is the full literal phrase, so a bare "timed out" or
+        // "operation timed out" body cannot trip this matcher.
+        assert_ne!(
+            expected_error_kind(
+                "Channel discord error: IO error: Operation timed out (os error 60); restarting"
+            ),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
+        );
+        assert_ne!(
+            expected_error_kind("OpenHuman API error (504 Gateway Timeout): error code: 504"),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
+        );
+        // Bare "timed out" without the config-load phrase must not match.
+        assert_eq!(expected_error_kind("cron job timed out after 30s"), None,);
+    }
+
+    fn classifies_whatsapp_data_sqlite_busy_errors() {
+        for raw in [
+            r#"[whatsapp_data] ingest failed: upsert wa_message chat=120363402402350155@g.us msg=false_120363402402350155@g.us_3A357F28AE74548B1507_207897942335683@lid: database is locked: Error code 5: The database file is locked"#,
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: upsert wa_message [email] msg=false_120363402402350155@g.us_3A357F28AE74548B1507_207897942335683@lid: database is locked: Error code 5: The database file is locked"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
+                "should classify whatsapp_data sqlite busy/locked: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_sqlite_lock_messages_as_whatsapp_busy() {
+        for raw in [
+            "failed to run subconscious schema DDL: database is locked",
+            "memory queue write failed: database table is locked",
+            "[whatsapp_data] list_messages failed: database is locked",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
+                "must not classify as whatsapp_data sqlite busy: {raw}"
+            );
+        }
+    }
+
+    #[test]
     fn does_not_classify_unrelated_messages_as_memory_pii_rejection() {
         // A generic "personal identifiers" mention without the "cannot contain"
         // anchor must not be silenced.
@@ -2535,6 +2879,132 @@ mod tests {
             expected_error_kind("[memory_tree] failed to run schema DDL: disk full"),
             None
         );
+    }
+
+    // ── Upstream rate-limit suppression (OPENHUMAN-TAURI-S / -6Y / -2E / -RQ) ─
+
+    /// Canonical Anthropic / OpenAI body with a structured `"rate_limit_error"`
+    /// type — OPENHUMAN-TAURI-2E (~1 482 events) and -RQ (~741 events).
+    #[test]
+    fn classifies_rate_limit_error_type_as_transient() {
+        for raw in [
+            // Direct 429 from the embeddings path (OPENHUMAN-TAURI-RQ):
+            r#"Embedding API error (429 Too Many Requests): {"error":{"message":"Rate limit exceeded. Please retry after a brief wait.","type":"rate_limit_error"}}"#,
+            // Via llm_provider.api_error (OPENHUMAN-TAURI-2E):
+            r#"[observability] llm_provider.api_error failed: OpenHuman API error (429 Too Many Requests): {"error":{"message":"Rate limit exceeded. Please retry after a brief wait.","type":"rate_limit_error"}}"#,
+            // Re-reported by agent.run_single:
+            r#"run_chat_task failed client_id=abc thread_id=t1 request_id=r1 error=OpenHuman API error (429 Too Many Requests): {"error":{"message":"Rate limit exceeded.","type":"rate_limit_error"}}"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "should classify rate_limit_error body as transient: {raw}"
+            );
+        }
+    }
+
+    /// OpenHuman backend wrapping an upstream 429 as HTTP 500 with a
+    /// `"upstream rate limit exceeded"` body — OPENHUMAN-TAURI-6Y (~19 849
+    /// events).
+    #[test]
+    fn classifies_upstream_rate_limit_in_500_body_as_transient() {
+        for raw in [
+            r#"OpenHuman API error (500 Internal Server Error): {"success":false,"error":"Upstream rate limit exceeded for model 'summarization-v1'. Please retry shortly."}"#,
+            r#"[observability] llm_provider.api_error failed: OpenHuman API error (500 Internal Server Error): {"success":false,"error":"Upstream rate limit exceeded for model 'summarization-v1'. Please retry shortly.","details":{"provider":"gmi","upstreamModel":"deepseek-ai/DeepSeek-V3-0324"}}"#,
+            // Re-wrapped by rpc.invoke_method:
+            r#"rpc.invoke_method failed: LLM summarisation failed: OpenHuman API error (500 Internal Server Error): {"success":false,"error":"Upstream rate limit exceeded for model 'summarization-v1'."}"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "should classify upstream-rate-limit-in-500 as transient: {raw}"
+            );
+        }
+    }
+
+    /// Backend returning HTTP 500 with a numeric `"429 rate limit exceeded"`
+    /// body — OPENHUMAN-TAURI-S (~6 984 events).
+    #[test]
+    fn classifies_429_rate_limit_in_500_body_as_transient() {
+        for raw in [
+            r#"OpenHuman API error (500 Internal Server Error): {"success":false,"error":"429 rate limit exceeded, please try again later"}"#,
+            r#"[observability] llm_provider.api_error failed: OpenHuman API error (500 Internal Server Error): {"success":false,"error":"429 rate limit exceeded, please try again later"}"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::TransientUpstreamHttp),
+                "should classify 429-in-500-body as transient: {raw}"
+            );
+        }
+    }
+
+    /// The security::policy `"Rate limit exceeded: action budget exhausted"`
+    /// must NOT be silenced — it's a user-facing hard stop, not a transient
+    /// upstream quota hit.
+    #[test]
+    fn does_not_classify_security_policy_rate_limit_as_transient() {
+        let msg = "Rate limit exceeded: action budget exhausted (0 actions/hour). \
+                   Increase the limit in Settings -> Advanced -> Agent autonomy";
+        assert_eq!(
+            expected_error_kind(msg),
+            None,
+            "security policy action-budget error must reach Sentry: {msg}"
+        );
+        // Wrapped by rpc.invoke_method — the prefix must not accidentally
+        // trigger the `api error (` anchor.
+        assert_eq!(
+            expected_error_kind(&format!("rpc.invoke_method failed: {msg}")),
+            None,
+            "wrapped security policy action-budget error must reach Sentry"
+        );
+    }
+
+    /// Standalone `"rate limit exceeded"` without the `"api error ("` anchor
+    /// must NOT be silenced — keeps loose phrases from accidentally demoting
+    /// unrelated errors.
+    #[test]
+    fn does_not_classify_bare_rate_limit_exceeded_as_transient() {
+        assert_eq!(
+            expected_error_kind("rate limit exceeded"),
+            None,
+            "bare 'rate limit exceeded' without API error anchor must reach Sentry"
+        );
+    }
+
+    /// `is_upstream_rate_limit_message` predicate unit tests — verifies the
+    /// polarity contract independently of `expected_error_kind`.
+    #[test]
+    fn upstream_rate_limit_predicate_matches_expected_shapes() {
+        for lower in [
+            r#"{"error":{"message":"rate limit exceeded.","type":"rate_limit_error"}}"#,
+            "upstream rate limit exceeded for model 'summarization-v1'",
+            "429 rate limit exceeded, please try again later",
+            r#"openai api error (429 too many requests): {"error":{"message":"rate limit exceeded.","type":"rate_limit_error"}}"#,
+        ] {
+            assert!(
+                is_upstream_rate_limit_message(lower),
+                "should match: {lower}"
+            );
+        }
+    }
+
+    #[test]
+    fn upstream_rate_limit_predicate_does_not_match_unrelated() {
+        for lower in [
+            // security::policy budget message — must not be swallowed
+            "rate limit exceeded: action budget exhausted (0 actions/hour)",
+            // bare phrase without anchor
+            "rate limit exceeded",
+            // unrelated 500 body
+            r#"{"success":false,"error":"internal server error"}"#,
+            // budget exhausted — different concept
+            "budget exhausted, add credits to continue",
+        ] {
+            assert!(
+                !is_upstream_rate_limit_message(lower),
+                "should not match: {lower}"
+            );
+        }
     }
 
     #[test]
@@ -3549,6 +4019,84 @@ mod tests {
         );
     }
 
+    // ── TAURI-RUST-322 (#2929): composio-direct 403 (key missing perms) ─
+
+    #[test]
+    fn classifies_composio_direct_403_as_provider_user_state() {
+        // Canonical Sentry TAURI-RUST-322 wire shape — the verbatim
+        // title body from the issue (1,021 events, multi-release). The
+        // Composio v3 `/connected_accounts` endpoint returns HTTP 403
+        // when the BYO API key exists but lacks `connected_accounts:read`
+        // permission. This is a user-state condition; Sentry has no
+        // remediation path.
+        let msg = "[composio-direct] list_connections failed: \
+                   Composio v3 connected_accounts failed: HTTP 403";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "composio-direct HTTP 403 must demote to ProviderUserState (TAURI-RUST-322)"
+        );
+    }
+
+    #[test]
+    fn classifies_composio_direct_403_for_other_ops() {
+        // The `[composio-direct]` + `HTTP 403` arm must cover every op
+        // that can hit a 403 from the Composio v3 tenant (list_tools
+        // prefetch, authorize, etc.) — not just list_connections.
+        let shapes = [
+            // list_tools prefetch of connections hits the 403 wall
+            "[composio-direct] list_tools: prefetch connections failed: \
+             Composio v3 connected_accounts failed: HTTP 403",
+            // list_connections itself (the primary source of the leak)
+            "[composio-direct] list_connections (direct) failed: \
+             Composio v3 connected_accounts failed: HTTP 403",
+            // any future direct-mode op that hits a 403
+            "[composio-direct] composio_list_connections (direct) failed: \
+             Composio v3 connected_accounts failed: HTTP 403",
+        ];
+        for msg in shapes {
+            assert_eq!(
+                expected_error_kind(msg),
+                Some(ExpectedErrorKind::ProviderUserState),
+                "every [composio-direct] op with HTTP 403 must demote to ProviderUserState: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_http_403_as_composio_direct_user_state() {
+        // Discrimination test: a 403 that does NOT carry the
+        // `[composio-direct]` prefix must NOT match this arm. Backend-mode
+        // composio 403s and unrelated 403s must remain visible in Sentry.
+        let backend_403 = "[composio] list_connections failed: \
+                           Backend returned 403 Forbidden for GET \
+                           https://api.tinyhumans.ai/agent-integrations/composio/connections";
+        // The backend-mode shape passes through `is_backend_user_error_message`
+        // (4xx matcher), not this arm. Verify it does NOT match this arm.
+        assert!(
+            !lower_contains_composio_direct_auth_wall(backend_403),
+            "backend-mode 403 must NOT match the composio-direct arm"
+        );
+
+        let unrelated_403 = "GitHub API error: HTTP 403: rate limit exceeded";
+        assert_ne!(
+            expected_error_kind(unrelated_403),
+            Some(ExpectedErrorKind::ProviderUserState),
+            "unrelated 403 (no [composio-direct] anchor) must NOT match the composio-direct arm"
+        );
+    }
+
+    // Helper used only in the discrimination test above — mirrors the
+    // exact condition in `is_provider_user_state_message` without
+    // requiring access to the private function.
+    fn lower_contains_composio_direct_auth_wall(msg: &str) -> bool {
+        let lower = msg.to_ascii_lowercase();
+        lower.contains("[composio-direct]")
+            && (lower.contains("http 401")
+                || lower.contains("http 403")
+                || lower.contains("invalid api key"))
+    }
+
     // ── TAURI-RUST-34H: backend-wrapped Cloudflare anti-bot interstitial ─
 
     #[test]
@@ -4036,6 +4584,83 @@ mod tests {
         assert_eq!(expected_error_kind("session_expired lowercase"), None);
     }
 
+    /// TAURI-RUST-E (~1 437 events): billing poll fires `report_error_or_expected`
+    /// on every refresh cycle once the user's JWT lapses because the
+    /// `BackendApiError::Unauthorized` typed error was stringified to
+    /// `"backend rejected session token on GET /payments/stripe/currentPlan"` by
+    /// `billing::ops::get_authed_value(..).map_err(|e| e.to_string())` before the
+    /// phrase was added to `is_session_expired_message`.
+    ///
+    /// The phrase `"backend rejected session token"` is uniquely produced by
+    /// `BackendApiError::Unauthorized`'s `Display` impl in `api::rest` — no
+    /// third-party provider path emits it — so no conjunctive guard is needed.
+    #[test]
+    fn classifies_billing_401_as_session_expired() {
+        // Exact wire shape from `billing_get_current_plan` — the most common
+        // event in TAURI-RUST-E.
+        assert_eq!(
+            expected_error_kind(
+                "backend rejected session token on GET /payments/stripe/currentPlan"
+            ),
+            Some(ExpectedErrorKind::SessionExpired),
+            "TAURI-RUST-E: billing_get_current_plan 401 must classify as SessionExpired"
+        );
+
+        // Other billing methods share the same `BackendApiError::Unauthorized`
+        // display shape — pin them so a wording change in `rest.rs` would catch
+        // every billing call site.
+        for path in [
+            "/payments/credits/balance",
+            "/payments/credits/transactions?limit=20&offset=0",
+            "/payments/credits/auto-recharge",
+            "/payments/credits/auto-recharge/cards",
+            "/payments/stripe/purchasePlan",
+            "/payments/stripe/portal",
+            "/coupons/me",
+        ] {
+            let msg = format!("backend rejected session token on GET {path}");
+            assert_eq!(
+                expected_error_kind(&msg),
+                Some(ExpectedErrorKind::SessionExpired),
+                "billing 401 must classify as SessionExpired: {msg}"
+            );
+        }
+
+        // POST / PATCH / DELETE variants are also produced by `authed_json`.
+        for raw in [
+            "backend rejected session token on POST /payments/credits/top-up",
+            "backend rejected session token on PATCH /payments/credits/auto-recharge",
+            "backend rejected session token on DELETE /payments/credits/auto-recharge/cards/pm_123",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SessionExpired),
+                "TAURI-RUST-E variant must classify as SessionExpired: {raw}"
+            );
+        }
+    }
+
+    /// `"backend rejected session token"` is scoped to `BackendApiError::Unauthorized`
+    /// in `api::rest`. Ensure unrelated messages containing the individual
+    /// words don't accidentally match.
+    #[test]
+    fn does_not_classify_unrelated_rejected_messages_as_session_expired() {
+        // Third-party provider errors that mention a token being rejected but
+        // do not contain the exact OpenHuman `BackendApiError::Unauthorized`
+        // display phrase.
+        for raw in [
+            "Discord API error: token rejected by upstream",
+            "Stripe webhook signature rejected — bad secret",
+            "API token rejected: please regenerate",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                None,
+                "unrelated token-rejected message must NOT suppress Sentry: {raw}"
+            );
+        }
+    }
+
     #[test]
     fn report_error_does_not_panic_with_many_tags() {
         let err = anyhow::anyhow!("multi-tag");
@@ -4498,7 +5123,11 @@ mod tests {
     }
 
     #[test]
-    fn budget_filter_requires_non_2xx_failure_and_400_status() {
+    fn budget_filter_requires_non_2xx_failure_and_400_status_for_loose_phrases() {
+        // Tier 1 requires both tags for the loose budget phrases ("budget exceeded",
+        // "add credits", …) that might coincidentally appear in unrelated product
+        // copy. Tier 2 (text-only) only fires for the exact backend phrase
+        // "insufficient budget" — so the loose phrases still need both tags.
         let message = "Budget exceeded — add credits to continue";
         for tags in [
             vec![("failure", "transport"), ("status", "400")],
@@ -4508,6 +5137,192 @@ mod tests {
             let event = event_with_tags_and_message(&tags, message);
             assert!(!is_budget_event(&event));
         }
+    }
+
+    /// Tier-2 defense-in-depth: drop the exact "Insufficient budget" phrase
+    /// the OpenHuman backend returns regardless of which tags are set.
+    /// Regression guard for OPENHUMAN-CORE-N / TAURI-RUST-1P (GitHub #2935).
+    #[test]
+    fn budget_filter_drops_insufficient_budget_without_tags() {
+        // The exact JSON wire body from the OpenHuman backend.
+        let message = r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget"}"#;
+
+        // No tags at all.
+        let event = event_with_message(message);
+        assert!(
+            is_budget_event(&event),
+            "tier-2 must drop 'Insufficient budget' even without failure/status tags"
+        );
+
+        // Wrong status tag only.
+        let event = event_with_tags_and_message(&[("status", "400")], message);
+        assert!(
+            is_budget_event(&event),
+            "tier-2 must drop 'Insufficient budget' when only status tag is set"
+        );
+
+        // Wrong failure tag only.
+        let event = event_with_tags_and_message(&[("failure", "transport")], message);
+        assert!(
+            is_budget_event(&event),
+            "tier-2 must drop 'Insufficient budget' when failure tag doesn't match"
+        );
+    }
+
+    /// Regression guard: tier-2 must also catch the exception/tracing path
+    /// (`sentry-tracing` with `attach_stacktrace=true` may populate the
+    /// exception list rather than `event.message`).
+    #[test]
+    fn budget_filter_drops_insufficient_budget_exception_without_tags() {
+        // Exact wire body from OpenHuman backend wrapped in an exception value.
+        let event = event_with_exception_value(
+            r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"INSUFFICIENT BUDGET"}"#,
+        );
+        assert!(
+            is_budget_event(&event),
+            "tier-2 must drop exception-path 'Insufficient budget' case-insensitively"
+        );
+
+        // Mixed case variant.
+        let event = event_with_exception_value(
+            r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient Budget"}"#,
+        );
+        assert!(
+            is_budget_event(&event),
+            "tier-2 must drop exception-path 'Insufficient Budget' case-insensitively"
+        );
+
+        // Wrong failure/status tags should not prevent tier-2 from matching.
+        let mut event = event_with_exception_value(
+            r#"OpenHuman API error (400 Bad Request): {"success":false,"error":"Insufficient budget"}"#,
+        );
+        event
+            .tags
+            .insert("failure".to_string(), "transport".to_string());
+        assert!(
+            is_budget_event(&event),
+            "tier-2 must drop exception-path even when failure tag does not match"
+        );
+
+        // Unrelated exception values must not match.
+        let event = event_with_exception_value("retry budget exhausted after 3 attempts");
+        assert!(
+            !is_budget_event(&event),
+            "tier-2 must not match unrelated exception value"
+        );
+    }
+
+    /// Tier-2 only matches the tight phrase — unrelated 400 errors with "budget"
+    /// in an unrelated context should not be silently dropped.
+    #[test]
+    fn budget_filter_tier2_does_not_match_unrelated_messages() {
+        for msg in [
+            "retry budget exhausted after 3 attempts",
+            "bad request: missing field",
+            "budget_id=42 not found",
+            "",
+        ] {
+            let event = event_with_message(msg);
+            assert!(
+                !is_budget_event(&event),
+                "tier-2 must not match unrelated message: {msg:?}"
+            );
+        }
+    }
+
+    /// CORE-RUST-EK (~827 events): every 401 from the embeddings call path
+    /// (`domain=embeddings`, `failure=non_2xx`, `status=401`) must be filtered
+    /// before it reaches Sentry. Covers both the OpenHuman-backend "Invalid
+    /// token" shape (already handled by the primary `is_session_expired_message`
+    /// classifier) and third-party provider body shapes (OpenAI
+    /// `invalid_api_key`, plain `Unauthorized`) that fall through the string
+    /// classifier.
+    #[test]
+    fn embeddings_401_filter_drops_domain_embeddings_status_401() {
+        // Canonical CORE-RUST-EK wire shape: OpenAI `text-embedding-3-large`
+        // key is stale. `report_error_or_expected` sets
+        // domain=embeddings / operation=openai_embed / failure=non_2xx /
+        // status=401 / model=text-embedding-3-large.
+        let event = event_with_tags_and_message(
+            &[
+                ("domain", "embeddings"),
+                ("operation", "openai_embed"),
+                ("failure", "non_2xx"),
+                ("status", "401"),
+                ("model", "text-embedding-3-large"),
+            ],
+            r#"Embedding API error (401 Unauthorized): {"error":{"message":"Incorrect API key provided. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error","param":null,"code":"invalid_api_key"}}"#,
+        );
+        assert!(
+            is_embeddings_api_key_401_event(&event),
+            "CORE-RUST-EK: domain=embeddings status=401 must be filtered"
+        );
+    }
+
+    /// Any other embedding status (e.g. 429 rate-limit, 500 server error)
+    /// must not be filtered by the embeddings-401 guard — those have their
+    /// own handlers (rate-limit filter, general error reporting).
+    #[test]
+    fn embeddings_401_filter_passes_other_statuses() {
+        for status in ["429", "500", "400"] {
+            let event = event_with_tags_and_message(
+                &[
+                    ("domain", "embeddings"),
+                    ("failure", "non_2xx"),
+                    ("status", status),
+                ],
+                "Embedding API error",
+            );
+            assert!(
+                !is_embeddings_api_key_401_event(&event),
+                "domain=embeddings status={status} must NOT be filtered by the 401 guard"
+            );
+        }
+    }
+
+    /// Non-embeddings domains must not be filtered even if status=401 — the
+    /// guard is scoped specifically to `domain=embeddings` so that provider-chat
+    /// and backend-API 401s remain subject to their own classifiers.
+    #[test]
+    fn embeddings_401_filter_passes_non_embeddings_domains() {
+        for domain in ["llm_provider", "backend_api", "rpc", "composio"] {
+            let event = event_with_tags_and_message(
+                &[
+                    ("domain", domain),
+                    ("failure", "non_2xx"),
+                    ("status", "401"),
+                ],
+                "API error (401 Unauthorized): some body",
+            );
+            assert!(
+                !is_embeddings_api_key_401_event(&event),
+                "domain={domain} status=401 must NOT be swallowed by the embeddings-401 guard"
+            );
+        }
+    }
+
+    /// The guard requires both `failure=non_2xx` and `status=401` to be
+    /// present; missing either tag must cause the filter to pass the event
+    /// through.
+    #[test]
+    fn embeddings_401_filter_requires_failure_and_status_tags() {
+        let no_failure_tag = event_with_tags_and_message(
+            &[("domain", "embeddings"), ("status", "401")],
+            "Embedding API error (401 Unauthorized): unauthorized",
+        );
+        assert!(
+            !is_embeddings_api_key_401_event(&no_failure_tag),
+            "missing failure tag must not trigger the guard"
+        );
+
+        let no_status_tag = event_with_tags_and_message(
+            &[("domain", "embeddings"), ("failure", "non_2xx")],
+            "Embedding API error (401 Unauthorized): unauthorized",
+        );
+        assert!(
+            !is_embeddings_api_key_401_event(&no_status_tag),
+            "missing status tag must not trigger the guard"
+        );
     }
 
     #[test]

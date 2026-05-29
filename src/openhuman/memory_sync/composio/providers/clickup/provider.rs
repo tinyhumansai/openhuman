@@ -32,8 +32,8 @@ use crate::openhuman::memory_sync::composio::providers::sync_state::{
     persist_single_item, SyncState,
 };
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
+    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
 };
 
 pub(crate) const ACTION_GET_AUTHORIZED_USER: &str = "CLICKUP_GET_AUTHORIZED_USER";
@@ -465,6 +465,144 @@ impl ComposioProvider for ClickUpProvider {
             }),
         })
     }
+
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let max = filter.effective_max();
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            max,
+            team_id = ?filter.team_id,
+            assignee_is_me = filter.assignee_is_me,
+            "[composio:clickup] fetch_tasks"
+        );
+
+        // Resolve which workspaces (teams) to query. An explicit
+        // `team_id` from the filter wins; otherwise enumerate every
+        // workspace the connection can see.
+        let workspaces = match &filter.team_id {
+            Some(team) if !team.trim().is_empty() => vec![team.trim().to_string()],
+            _ => {
+                let resp = ctx
+                    .execute(ACTION_GET_AUTHORIZED_TEAMS_WORKSPACES, Some(json!({})))
+                    .await
+                    .map_err(|e| {
+                        format!(
+                            "[composio:clickup] {ACTION_GET_AUTHORIZED_TEAMS_WORKSPACES}: {e:#}"
+                        )
+                    })?;
+                if !resp.successful {
+                    return Err(format!(
+                        "[composio:clickup] {ACTION_GET_AUTHORIZED_TEAMS_WORKSPACES}: {}",
+                        resp.error.unwrap_or_else(|| "provider failure".into())
+                    ));
+                }
+                sync::extract_workspace_ids(&resp.data)
+            }
+        };
+
+        // Resolve the current user id only when the filter scopes to
+        // "assigned to me".
+        let assignees: Vec<String> = if filter.assignee_is_me {
+            let resp = ctx
+                .execute(ACTION_GET_AUTHORIZED_USER, Some(json!({})))
+                .await
+                .map_err(|e| format!("[composio:clickup] {ACTION_GET_AUTHORIZED_USER}: {e:#}"))?;
+            // Fail closed: if we can't resolve the user, error rather than
+            // silently dropping the assignee filter and fetching the whole
+            // workspace's tasks.
+            if !resp.successful {
+                return Err(format!(
+                    "[composio:clickup] {ACTION_GET_AUTHORIZED_USER}: {}",
+                    resp.error.unwrap_or_else(|| "provider failure".into())
+                ));
+            }
+            let id = sync::extract_user_id(&resp.data).ok_or_else(|| {
+                "[composio:clickup] CLICKUP_GET_AUTHORIZED_USER returned no user.id".to_string()
+            })?;
+            vec![id]
+        } else {
+            Vec::new()
+        };
+
+        let mut out: Vec<NormalizedTask> = Vec::new();
+        'workspaces: for workspace_id in &workspaces {
+            let mut args = json!({
+                "team_id": workspace_id,
+                "order_by": "updated",
+                "reverse": true,
+                "page": 0,
+                "page_size": max.min(100) as u32,
+                "subtasks": true,
+            });
+            if !assignees.is_empty() {
+                args["assignees"] = json!(assignees);
+            }
+            if let Some(list_id) = filter.list_id.as_deref().filter(|s| !s.trim().is_empty()) {
+                args["list_ids"] = json!([list_id]);
+            }
+            merge_extra(&mut args, &filter.extra);
+
+            let resp = ctx
+                .execute(ACTION_GET_FILTERED_TEAM_TASKS, Some(args))
+                .await
+                .map_err(|e| {
+                    format!("[composio:clickup] {ACTION_GET_FILTERED_TEAM_TASKS} ws={workspace_id}: {e:#}")
+                })?;
+            if !resp.successful {
+                return Err(format!(
+                    "[composio:clickup] {ACTION_GET_FILTERED_TEAM_TASKS} ws={workspace_id}: {}",
+                    resp.error.unwrap_or_else(|| "provider failure".into())
+                ));
+            }
+
+            for task in sync::extract_tasks(&resp.data) {
+                if out.len() >= max {
+                    break 'workspaces;
+                }
+                if let Some(nt) = normalize_clickup_task(&task) {
+                    out.push(nt);
+                }
+            }
+        }
+
+        tracing::debug!(count = out.len(), "[composio:clickup] fetch_tasks complete");
+        Ok(out)
+    }
+}
+
+/// Map a raw ClickUp task payload into a [`NormalizedTask`]. Returns
+/// `None` only when the task has no extractable id (unroutable).
+fn normalize_clickup_task(task: &serde_json::Value) -> Option<NormalizedTask> {
+    let external_id =
+        crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id(
+            task,
+            TASK_ID_PATHS,
+        )?;
+    let title =
+        sync::extract_task_name(task).unwrap_or_else(|| format!("ClickUp task {external_id}"));
+    Some(NormalizedTask {
+        external_id,
+        source_id: String::new(),
+        provider: "clickup".to_string(),
+        title,
+        body: pick_str(task, &["description", "data.description", "text_content"]),
+        url: pick_str(task, &["url", "data.url"]),
+        status: pick_str(task, &["status.status", "data.status.status", "status"]),
+        assignee: first_array_str(
+            task,
+            &["assignees", "data.assignees"],
+            &["username", "email"],
+        ),
+        due: pick_str(task, &["due_date", "data.due_date"]),
+        labels: Vec::new(),
+        priority: pick_str(task, &["priority.priority", "data.priority.priority"]),
+        updated_at: sync::extract_task_updated(task),
+        raw: task.clone(),
+    })
 }
 
 impl ClickUpProvider {

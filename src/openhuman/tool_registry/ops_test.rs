@@ -224,6 +224,29 @@ fn get_tool_reports_unknown_id() {
 }
 
 #[test]
+fn all_registry_entries_have_non_empty_name_and_description() {
+    let entries = registry_entries();
+    assert!(
+        !entries.is_empty(),
+        "registry must contain at least one tool"
+    );
+    let mut violations: Vec<String> = Vec::new();
+    for entry in &entries {
+        if entry.name.trim().is_empty() {
+            violations.push(format!("tool_id='{}' has empty name", entry.tool_id));
+        }
+        if entry.description.trim().is_empty() {
+            violations.push(format!("tool_id='{}' has empty description", entry.tool_id));
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "registry integrity violations:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn controller_json_schema_marks_required_and_optional_fields() {
     let schema = schema_fields_to_json_schema(&[
         FieldSchema {

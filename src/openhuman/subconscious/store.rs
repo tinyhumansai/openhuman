@@ -2,6 +2,17 @@
 //!
 //! Follows the cron module's `with_connection` pattern: opens the database,
 //! runs DDL on every connection, and provides pure functions.
+//!
+//! ## Init-failure noise suppression (TAURI-RUST-A)
+//!
+//! `with_connection` runs the schema DDL on every call. Transient
+//! `SQLITE_BUSY` / `SQLITE_LOCKED` errors (e.g. concurrent in-process RPC
+//! calls, antivirus hold, network-drive WAL rejection) are handled by a
+//! per-connection busy timeout (5 s) plus an application-level retry loop
+//! (3 retries, 100 / 300 / 900 ms backoff). Only `DatabaseBusy` /
+//! `DatabaseLocked` errors are retried — schema or corruption errors fail
+//! through immediately so Sentry captures a real root cause rather than a
+//! transient noise event.
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
@@ -61,9 +72,8 @@ pub fn with_connection<T>(
     let db_path = workspace_dir.join("subconscious").join("subconscious.db");
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create subconscious dir: {}", parent.display()))?;
+            .with_context(|| format!("create subconscious dir: {}", parent.display()))?;
     }
-
     let conn = open_and_initialize_with_retry(&db_path)?;
     f(&conn)
 }

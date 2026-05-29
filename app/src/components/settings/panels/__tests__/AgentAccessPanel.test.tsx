@@ -74,9 +74,20 @@ describe('AgentAccessPanel', () => {
   it('toggling "confine to workspace" persists workspace_only', async () => {
     renderWithProviders(<AgentAccessPanel />);
     await screen.findByText('Read-only');
-    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('checkbox', { name: /confine to workspace/i }));
     await waitFor(() =>
       expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({ workspace_only: true }))
+    );
+  });
+
+  it('toggling task plan approval persists require_task_plan_approval', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    await screen.findByText('Read-only');
+    fireEvent.click(screen.getByRole('checkbox', { name: /require task plan approval/i }));
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ require_task_plan_approval: false })
+      )
     );
   });
 
@@ -111,7 +122,9 @@ describe('AgentAccessPanel', () => {
     });
     renderWithProviders(<AgentAccessPanel />);
     expect(await screen.findByText('/home/u/notes')).toBeInTheDocument();
-    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
+    expect(
+      (screen.getByRole('checkbox', { name: /confine to workspace/i }) as HTMLInputElement).checked
+    ).toBe(true);
   });
 
   it('shows the empty "always-allow" state when no tools are allow-listed', async () => {

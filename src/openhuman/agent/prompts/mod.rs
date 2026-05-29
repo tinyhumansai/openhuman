@@ -422,6 +422,49 @@ pub struct UserIdentitySection;
 /// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
 pub struct UserFilesSection;
 
+/// Renders the personality roster for the master agent's system prompt.
+///
+/// When [`PromptContext::personality_roster`] is non-empty, emits an
+/// `## Available Personalities` section listing each non-self personality
+/// with its `id`, `name`, `description`, and an optional truncated
+/// `memory_summary`. Empty (and skipped) for non-master agents.
+pub struct PersonalityRosterSection;
+
+impl PromptSection for PersonalityRosterSection {
+    fn name(&self) -> &str {
+        "personality_roster"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.personality_roster.is_empty() {
+            return Ok(String::new());
+        }
+        let mut out = String::from("## Available Personalities\n\n");
+        out.push_str(
+            "You are the master agent. You can delegate tasks to these personality agents \
+             using the `delegate_to_personality` tool. Each personality has its own memory, \
+             identity, and expertise.\n\n",
+        );
+        for entry in &ctx.personality_roster {
+            out.push_str(&format!(
+                "- **{}** (`{}`): {}",
+                entry.name, entry.id, entry.description
+            ));
+            if let Some(ref summary) = entry.memory_summary {
+                let truncated = if summary.chars().count() > 200 {
+                    let head: String = summary.chars().take(200).collect();
+                    format!("{head}…")
+                } else {
+                    summary.clone()
+                };
+                out.push_str(&format!("\n  Recent context: {truncated}"));
+            }
+            out.push('\n');
+        }
+        Ok(out)
+    }
+}
+
 impl PromptSection for IdentitySection {
     fn name(&self) -> &str {
         "identity"
@@ -448,9 +491,20 @@ impl PromptSection for IdentitySection {
         for file in all_files {
             // Always sync to disk so builtin updates ship.
             sync_workspace_file(ctx.workspace_dir, file);
-            if !skip_in_prompt.contains(file) {
-                inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
+            if skip_in_prompt.contains(file) {
+                continue;
             }
+            if *file == "SOUL.md" {
+                if let Some(ref soul) = ctx.personality_soul_md {
+                    tracing::debug!(
+                        "[identity] personality SOUL.md override active ({} chars)",
+                        soul.len()
+                    );
+                    inject_inline_content(&mut prompt, "SOUL.md", soul, BOOTSTRAP_MAX_CHARS);
+                    continue;
+                }
+            }
+            inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
         }
 
         // PROFILE.md / MEMORY.md injection lives in the dedicated
@@ -490,12 +544,16 @@ impl PromptSection for UserFilesSection {
             );
         }
         if ctx.include_memory_md {
-            // Prefer the session-frozen curated-memory snapshot when the
-            // session has taken one — that's the runtime-writable store
-            // behind `curated_memory.add/replace/remove`. Fall back to
-            // the workspace file only when no snapshot is attached (pure
-            // prompt-unit tests and older call sites).
-            if let Some(snap) = &ctx.curated_snapshot {
+            // Personality-specific MEMORY.md takes highest priority, then
+            // the session-frozen curated-memory snapshot, then the
+            // workspace file (pure prompt-unit tests and older call sites).
+            if let Some(ref memory_md) = ctx.personality_memory_md {
+                tracing::debug!(
+                    "[user_files] personality MEMORY.md override active ({} chars)",
+                    memory_md.len()
+                );
+                inject_inline_content(&mut out, "MEMORY.md", memory_md, USER_FILE_MAX_CHARS);
+            } else if let Some(snap) = &ctx.curated_snapshot {
                 inject_snapshot_content(&mut out, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
                 inject_snapshot_content(&mut out, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
             } else {
@@ -928,6 +986,9 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     }
 }
 
@@ -1279,9 +1340,40 @@ fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &s
     inject_workspace_file_capped(prompt, workspace_dir, filename, BOOTSTRAP_MAX_CHARS);
 }
 
-/// Inject `content` into `prompt` under a header matching
-/// [`inject_workspace_file_capped`]'s format — so a swap from the
-/// file-based loader to a curated-memory snapshot is byte-compatible
+/// Inject pre-loaded string content into `prompt` under a `### label` heading,
+/// capped at `max_chars`. Mirrors the format of [`inject_snapshot_content`]
+/// and [`inject_workspace_file_capped`] but takes a `&str` instead of a file
+/// path. Used for personality-specific overrides (`personality_soul_md`,
+/// `personality_memory_md`) on [`PromptContext`] so a swap from the file-based
+/// loader to an inline override is byte-compatible with the workspace-file path.
+///
+/// Empty/whitespace content is silently skipped.
+fn inject_inline_content(prompt: &mut String, label: &str, content: &str, max_chars: usize) {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let _ = writeln!(prompt, "### {label}\n");
+    let truncated = if trimmed.chars().count() > max_chars {
+        trimmed
+            .char_indices()
+            .nth(max_chars)
+            .map(|(idx, _)| &trimmed[..idx])
+            .unwrap_or(trimmed)
+    } else {
+        trimmed
+    };
+    prompt.push_str(truncated);
+    if truncated.len() < trimmed.len() {
+        let _ = writeln!(
+            prompt,
+            "\n\n[... truncated at {max_chars} chars — use `read` for full file]\n"
+        );
+    } else {
+        prompt.push_str("\n\n");
+    }
+}
+
 /// for the output header and truncation semantics.
 ///
 /// Empty/whitespace content is silently skipped, mirroring the file

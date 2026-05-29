@@ -171,10 +171,6 @@ const zhCN1: TranslationMap = {
   'memory.noResults': '未找到记忆',
   'memory.empty': '暂无记忆。记忆将在你交互时自动创建。',
   'memory.tab.memory': '记忆',
-  'memory.tab.gameplay': 'Gameplay',
-  'gameplay.spoiler.off': 'Spoiler-safe',
-  'gameplay.spoiler.light': 'Light spoilers',
-  'gameplay.spoiler.full': 'Full spoilers',
   'memory.tab.subconscious': '潜意识',
   'memory.tab.dreams': '梦境',
   'memory.tab.calls': '调用记录',
@@ -1571,6 +1567,32 @@ const zhCN1: TranslationMap = {
   'settings.search.accessBlockAll': 'Block all',
   'settings.search.accessBlockAllHint':
     'All web access is blocked — the assistant cannot open or read any website.',
+  'memory.tab.centrality': 'Centrality',
+  'graphCentrality.title': 'Knowledge Graph Centrality',
+  'graphCentrality.intro':
+    'PageRank over your memory graph surfaces the load-bearing hubs — and the connector entities that link otherwise-separate clusters, which a raw frequency count cannot reveal.',
+  'graphCentrality.loading': 'Computing centrality…',
+  'graphCentrality.errorPrefix': 'Could not load the graph:',
+  'graphCentrality.retry': 'Retry',
+  'graphCentrality.empty': 'No knowledge graph yet.',
+  'graphCentrality.emptyHint':
+    'As the assistant records facts about you, the most connected entities will surface here.',
+  'graphCentrality.namespaceLabel': 'Namespace',
+  'graphCentrality.namespaceAll': 'All namespaces',
+  'graphCentrality.metricEntities': 'Entities',
+  'graphCentrality.metricConnections': 'Connections',
+  'graphCentrality.metricClusters': 'Clusters',
+  'graphCentrality.clustersCaption': '{components} clusters · largest holds {largest}',
+  'graphCentrality.approximateBadge': 'approximate',
+  'graphCentrality.approximateTitle': 'Stopped at the iteration cap before fully converging',
+  'graphCentrality.rankedHeading': 'Top entities by influence',
+  'graphCentrality.colRank': '#',
+  'graphCentrality.colEntity': 'Entity',
+  'graphCentrality.colInfluence': 'Influence',
+  'graphCentrality.colLinks': 'Links',
+  'graphCentrality.bridgeBadge': 'connector',
+  'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
+  'graphCentrality.degreeTitle': '{in} in · {out} out',
 };
 
 export default zhCN1;

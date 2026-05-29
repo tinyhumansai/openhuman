@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
-import { GameplayReviewWorkspace } from '../components/intelligence/GameplayReviewWorkspace';
+import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
 import IntelligenceCallsTab from '../components/intelligence/IntelligenceCallsTab';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
@@ -23,12 +23,12 @@ import type {
 
 type IntelligenceTab =
   | 'memory'
-  | 'gameplay'
   | 'subconscious'
   | 'calls'
   | 'dreams'
   | 'tasks'
-  | 'diagram';
+  | 'diagram'
+  | 'centrality';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -98,12 +98,12 @@ export default function Intelligence() {
 
   const tabs: { id: IntelligenceTab; label: string; comingSoon?: boolean }[] = [
     { id: 'memory', label: t('memory.tab.memory') },
-    { id: 'gameplay', label: t('memory.tab.gameplay') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     { id: 'tasks', label: 'Tasks' },
     { id: 'diagram', label: t('memory.tab.diagram') },
     { id: 'calls', label: t('memory.tab.calls') },
     { id: 'dreams', label: t('memory.tab.dreams') },
+    { id: 'centrality', label: t('memory.tab.centrality') },
   ];
 
   return (
@@ -158,8 +158,6 @@ export default function Intelligence() {
             {/* Tab content */}
             {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
 
-            {activeTab === 'gameplay' && <GameplayReviewWorkspace onToast={addToast} />}
-
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
                 addSubconsciousTask={addSubconsciousTask}
@@ -188,6 +186,8 @@ export default function Intelligence() {
             {activeTab === 'calls' && <IntelligenceCallsTab onToast={addToast} />}
 
             {activeTab === 'dreams' && <IntelligenceDreamsTab />}
+
+            {activeTab === 'centrality' && <GraphCentralityTab />}
           </div>
         </div>
       </div>

@@ -720,6 +720,9 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
                 include_memory_md: false,
                 curated_snapshot: None,
                 user_identity: None,
+                personality_soul_md: None,
+                personality_memory_md: None,
+                personality_roster: vec![],
             };
             match build(&ctx) {
                 Ok(body) if !body.is_empty() => Some(body),

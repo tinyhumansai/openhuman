@@ -368,6 +368,9 @@ mod tests {
                         include_memory_md: false,
                         curated_snapshot: None,
                         user_identity: None,
+                        personality_soul_md: None,
+                        personality_memory_md: None,
+                        personality_roster: vec![],
                     };
                     let body = build(&ctx)
                         .unwrap_or_else(|e| panic!("{} prompt build failed: {e}", def.id));

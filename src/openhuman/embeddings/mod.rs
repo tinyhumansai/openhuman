@@ -21,6 +21,7 @@ pub mod ollama;
 pub mod openai;
 mod provider_trait;
 pub mod rate_limit;
+pub mod retry_after;
 mod rpc;
 mod schemas;
 pub mod voyage;

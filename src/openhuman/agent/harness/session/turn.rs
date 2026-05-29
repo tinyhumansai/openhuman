@@ -1016,6 +1016,12 @@ impl Agent {
                         Some(text.clone())
                     },
                     tool_calls: persisted_tool_calls,
+                    reasoning_content: response
+                        .reasoning_content
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string),
                 });
 
                 // Persist the transcript **right after** the provider
@@ -2169,6 +2175,13 @@ impl Agent {
             include_memory_md: !self.omit_memory_md,
             curated_snapshot: None,
             user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
+            // TODO(phase-2): Wire personality context into the live agent turn.
+            // Currently personalities only take effect during delegate_to_personality sub-agent runs.
+            // To activate: load the active profile via AgentProfileStore::resolve(), build
+            // PersonalityContext::from_profile(), and populate these fields.
+            personality_soul_md: None, // TODO: personality_ctx.soul_md_override
+            personality_memory_md: None, // TODO: personality_ctx.memory_md_override
+            personality_roster: vec![], // TODO: build_personality_roster(&workspace_dir)
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
