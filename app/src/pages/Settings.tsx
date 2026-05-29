@@ -20,6 +20,7 @@ import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOption
 import DevicesComingSoonPanel from '../components/settings/panels/DevicesComingSoonPanel';
 import DevWorkflowPanel from '../components/settings/panels/DevWorkflowPanel';
 import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
+import EventLogPanel from '../components/settings/panels/EventLogPanel';
 import HeartbeatPanel from '../components/settings/panels/HeartbeatPanel';
 import LedgerUsagePanel from '../components/settings/panels/LedgerUsagePanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
@@ -28,6 +29,7 @@ import McpServerPanel from '../components/settings/panels/McpServerPanel';
 import MemoryDataPanel from '../components/settings/panels/MemoryDataPanel';
 import MemoryDebugPanel from '../components/settings/panels/MemoryDebugPanel';
 import MigrationPanel from '../components/settings/panels/MigrationPanel';
+import ModelHealthPanel from '../components/settings/panels/ModelHealthPanel';
 import NotificationsTabbedPanel from '../components/settings/panels/NotificationsTabbedPanel';
 import PersonaPanel from '../components/settings/panels/PersonaPanel';
 import PrivacyPanel from '../components/settings/panels/PrivacyPanel';
@@ -39,6 +41,7 @@ import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
 import TeamPanel from '../components/settings/panels/TeamPanel';
+import ToolPolicyDiagnosticsPanel from '../components/settings/panels/ToolPolicyDiagnosticsPanel';
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
@@ -426,6 +429,10 @@ const Settings = () => {
         <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}
         <Route path="developer-options" element={wrapSettingsPage(<DeveloperOptionsPanel />)} />
+        <Route
+          path="tool-policy-diagnostics"
+          element={wrapSettingsPage(<ToolPolicyDiagnosticsPanel />)}
+        />
         <Route path="autonomy" element={wrapSettingsPage(<AutonomyPanel />)} />
         <Route path="mcp-server" element={wrapSettingsPage(<McpServerPanel />)} />
         {/* Legacy direct path for the routing tab — kept so existing links
@@ -461,6 +468,11 @@ const Settings = () => {
         <Route path="voice-debug" element={wrapSettingsPage(<VoiceDebugPanel />)} />
         <Route path="local-model-debug" element={wrapSettingsPage(<LocalModelDebugPanel />)} />
         <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
+        <Route path="event-log" element={wrapSettingsPage(<EventLogPanel />)} />
+        <Route
+          path="model-health"
+          element={wrapSettingsPage(<ModelHealthPanel />, { maxWidthClass: 'max-w-4xl' })}
+        />
         <Route path="memory-data" element={wrapSettingsPage(<MemoryDataPanel />)} />
         <Route path="memory-debug" element={wrapSettingsPage(<MemoryDebugPanel />)} />
         <Route path="intelligence" element={<Intelligence />} />

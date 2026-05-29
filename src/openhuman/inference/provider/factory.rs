@@ -768,6 +768,34 @@ fn make_cloud_provider_by_slug(
         model.to_string()
     };
 
+    // Guard: if effective_model is still empty after fallback, bail with an
+    // actionable error. Sending an empty model string to providers like
+    // nvidia-nim causes a 400 "model field is required" — a confusing error
+    // that obscures the real cause (missing model in the provider string or
+    // unset default_model on the config entry).
+    // See https://github.com/tinyhumansai/openhuman/issues/2784.
+    //
+    // OpenhumanJwt entries are exempt: they always delegate to
+    // make_openhuman_backend which derives the model from config.default_model,
+    // ignoring whatever effective_model we computed here.
+    if entry.auth_style != AuthStyle::OpenhumanJwt && effective_model.trim().is_empty() {
+        log::warn!(
+            "[nvidia-nim][chat-factory] role={} slug={} resolved to empty model — \
+             provider string must include a model id (e.g. '{}:<model-id>') or \
+             set default_model on the cloud_providers entry",
+            role,
+            slug,
+            slug,
+        );
+        anyhow::bail!(
+            "[chat-factory] role '{}' resolved to an empty model id for slug '{}'. \
+             Include a model in the provider string (e.g. '{slug}:<model-id>') or \
+             set default_model on the cloud_providers entry for slug '{slug}'.",
+            role,
+            slug,
+        );
+    }
+
     if entry.auth_style != AuthStyle::OpenhumanJwt && is_abstract_tier_model(&effective_model) {
         if let Some(default_model) = entry
             .default_model

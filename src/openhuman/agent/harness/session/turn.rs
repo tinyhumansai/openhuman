@@ -21,6 +21,7 @@ use super::transcript;
 use super::types::Agent;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
@@ -49,6 +50,51 @@ use crate::openhuman::agent::harness::token_budget::{
 use anyhow::Result;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+/// True when `msg` is an `assistant` ChatMessage whose JSON-encoded content
+/// carries a non-empty `tool_calls` array.
+///
+/// `to_provider_messages` (in `agent/dispatcher.rs`) serialises an
+/// `AssistantToolCalls` ConversationMessage as a single `assistant` ChatMessage
+/// with a JSON body of the form `{"content": "...", "tool_calls": [...]}`. To
+/// detect those at the `ChatMessage` boundary (where `bound_cached_transcript_messages`
+/// operates) we have to peek inside the JSON. See TAURI-RUST-7 for the
+/// failure mode this guards against.
+fn assistant_message_has_tool_calls(msg: &ChatMessage) -> bool {
+    if msg.role != "assistant" {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&msg.content) else {
+        return false;
+    };
+    // CodeRabbit follow-up: only treat this as the native tool_calls envelope
+    // when the full expected shape is present:
+    //   - top-level JSON object
+    //   - `content` key present (the envelope `dispatcher.rs` emits — see
+    //     `to_provider_messages`)
+    //   - non-empty `tool_calls` array whose every element carries an `id`
+    //     string, a `name` string, and an `arguments` field
+    // This stops a legitimate assistant text reply that happens to contain
+    // the literal string `tool_calls` from being misclassified and dropped at
+    // the bound-cached-transcript boundary.
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    if !obj.contains_key("content") {
+        return false;
+    }
+    let Some(tool_calls) = obj.get("tool_calls").and_then(|tc| tc.as_array()) else {
+        return false;
+    };
+    if tool_calls.is_empty() {
+        return false;
+    }
+    tool_calls.iter().all(|tc| {
+        tc.get("id").and_then(|v| v.as_str()).is_some()
+            && tc.get("name").and_then(|v| v.as_str()).is_some()
+            && tc.get("arguments").is_some()
+    })
+}
 
 /// Instruction appended (as a synthetic user turn) to the provider
 /// messages when a turn hits the tool-call iteration cap. Asks the model
@@ -795,6 +841,14 @@ impl Agent {
                     calls.len()
                 );
                 if calls.is_empty() {
+                    // Capture reasoning_content before response.text is moved.
+                    // Thinking models (DeepSeek-R1, Qwen3, GLM-4) return
+                    // chain-of-thought in this field; the API contract requires
+                    // it to be echoed back verbatim in subsequent turns or it
+                    // returns HTTP 400. We stash it in extra_metadata so
+                    // convert_messages_for_native can include it when building
+                    // the next request's message list.
+                    let turn_reasoning_content = response.reasoning_content.clone();
                     let final_text = if text.is_empty() {
                         response.text.unwrap_or_default()
                     } else {
@@ -811,18 +865,27 @@ impl Agent {
                             "[agent_loop] provider returned an empty final response (i={}, no text, no tool calls) — surfacing as error instead of a silent blank reply",
                             iteration + 1
                         );
-                        return Err(anyhow::anyhow!(
-                            "The model returned an empty response. Please try again."
-                        ));
+                        // Typed variant so `run_single` can route this
+                        // through `AgentError::skips_sentry()` and demote
+                        // to a `log::info!` instead of escalating to
+                        // Sentry (TAURI-RUST-4JX). The `Display` impl
+                        // still renders the canonical user-facing string
+                        // for UI surfaces, so the user behaviour is
+                        // unchanged.
+                        return Err(AgentError::EmptyProviderResponse {
+                            iteration: iteration + 1,
+                        }
+                        .into());
                     }
                     log::info!(
                         "[agent] no tool calls — returning final response after {} iteration(s)",
                         iteration + 1
                     );
                     log::info!(
-                        "[agent_loop] final response i={} final_chars={}",
+                        "[agent_loop] final response i={} final_chars={} has_reasoning_content={}",
                         iteration + 1,
-                        final_text.chars().count()
+                        final_text.chars().count(),
+                        turn_reasoning_content.is_some()
                     );
 
                     self.emit_progress(AgentProgress::TurnCompleted {
@@ -830,10 +893,24 @@ impl Agent {
                     })
                     .await;
 
-                    self.history
-                        .push(ConversationMessage::Chat(ChatMessage::assistant(
-                            final_text.clone(),
-                        )));
+                    let mut assistant_msg = ChatMessage::assistant(final_text.clone());
+                    if let Some(rc) = turn_reasoning_content {
+                        // Store reasoning_content in extra_metadata so it
+                        // survives in history and is passed back to the
+                        // provider on the next turn.
+                        assistant_msg.extra_metadata =
+                            Some(serde_json::json!({ "reasoning_content": rc }));
+                        log::debug!(
+                            "[agent_loop] stored reasoning_content in extra_metadata for next turn (chars={})",
+                            assistant_msg
+                                .extra_metadata
+                                .as_ref()
+                                .and_then(|m| m.get("reasoning_content"))
+                                .and_then(|v| v.as_str())
+                                .map_or(0, |s| s.chars().count())
+                        );
+                    }
+                    self.history.push(ConversationMessage::Chat(assistant_msg));
                     self.trim_history();
 
                     // Mirror the final assistant reply into the transcript
@@ -1364,6 +1441,12 @@ impl Agent {
                             ToolPolicyDecision::Deny { .. } => "denied",
                             ToolPolicyDecision::Allow => "allowed",
                         };
+                        crate::openhuman::tool_registry::denials::record(
+                            call.name.as_str(),
+                            self.tool_policy.name(),
+                            blocked_action,
+                            reason,
+                        );
                         tracing::debug!(
                             tool = call.name.as_str(),
                             policy = self.tool_policy.name(),
@@ -1693,6 +1776,30 @@ impl Agent {
             bounded.push(messages[0].clone());
         }
         bounded.extend(tail.iter().cloned());
+
+        // TAURI-RUST-7: symmetric guard to the leading-orphan strip above. A
+        // resumed transcript that ends on an `assistant` message containing
+        // `tool_calls` (because the cached transcript was captured mid-cycle,
+        // before the tool responses were persisted) is rejected by the
+        // provider with `400 An assistant message with 'tool_calls' must be
+        // followed by tool messages`. Pop any such trailing assistant
+        // tool_calls so the bounded transcript ends on a clean turn boundary.
+        let mut dropped_tail = 0usize;
+        while bounded
+            .last()
+            .map(assistant_message_has_tool_calls)
+            .unwrap_or(false)
+        {
+            bounded.pop();
+            dropped_tail += 1;
+        }
+        if dropped_tail > 0 {
+            log::debug!(
+                "[agent] bound_cached_transcript_messages stripped {dropped_tail} trailing \
+                 assistant tool_calls message(s) without paired tool responses"
+            );
+        }
+
         bounded
     }
 

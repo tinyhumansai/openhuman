@@ -169,6 +169,10 @@ async fn handle_request(id: Value, method: &str, params: Value, session: &mut Mc
             log::debug!("[mcp_server] resources/list request id={request_id}");
             success_response(id, resources::list_resources_result())
         }
+        "resources/templates/list" => {
+            log::debug!("[mcp_server] resources/templates/list request id={request_id}");
+            success_response(id, resources::list_resource_templates_result())
+        }
         "resources/read" => {
             log::debug!("[mcp_server] resources/read request id={request_id}");
             match resources::read_resource_result(&params) {
@@ -732,5 +736,47 @@ mod tests {
         .await;
 
         assert_eq!(response["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_returns_empty_array() {
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 14,
+            "method": "resources/templates/list"
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        let templates = response["result"]["resourceTemplates"]
+            .as_array()
+            .expect("resourceTemplates array");
+        assert!(
+            templates.is_empty(),
+            "resources/templates/list must return an empty array — catalog is static"
+        );
+    }
+
+    #[tokio::test]
+    async fn resources_templates_list_ignores_unknown_params() {
+        // Per the MCP spec, the server should tolerate extra/cursor params
+        // on resources/templates/list and still return the empty catalog
+        // instead of an `Invalid params` error.
+        let response = request(json!({
+            "jsonrpc": "2.0",
+            "id": 15,
+            "method": "resources/templates/list",
+            "params": { "cursor": "irrelevant" }
+        }))
+        .await;
+
+        assert!(
+            response.get("error").is_none(),
+            "unexpected error: {response}"
+        );
+        assert_eq!(response["result"]["resourceTemplates"], json!([]));
     }
 }

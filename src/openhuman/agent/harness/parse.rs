@@ -597,7 +597,17 @@ pub(crate) fn parse_structured_tool_calls(tool_calls: &[ToolCall]) -> Vec<Parsed
 /// Build assistant history entry in JSON format for native tool-call APIs.
 /// `convert_messages` in the OpenRouter provider parses this JSON to reconstruct
 /// the proper `NativeMessage` with structured `tool_calls`.
-pub(crate) fn build_native_assistant_history(text: &str, tool_calls: &[ToolCall]) -> String {
+///
+/// `reasoning_content` carries the model's thinking output (when the provider
+/// surfaced it). It is persisted so the next request can replay it: DeepSeek's
+/// thinking mode rejects an `assistant` turn that carries `tool_calls` if its
+/// `reasoning_content` is not passed back (Sentry TAURI-RUST-4KB). Omitted from
+/// the JSON when empty, so non-reasoning models are unaffected.
+pub(crate) fn build_native_assistant_history(
+    text: &str,
+    reasoning_content: Option<&str>,
+    tool_calls: &[ToolCall],
+) -> String {
     let calls_json: Vec<serde_json::Value> = tool_calls
         .iter()
         .map(|tc| {
@@ -615,11 +625,16 @@ pub(crate) fn build_native_assistant_history(text: &str, tool_calls: &[ToolCall]
         serde_json::Value::String(text.trim().to_string())
     };
 
-    serde_json::json!({
+    let mut entry = serde_json::json!({
         "content": content,
         "tool_calls": calls_json,
-    })
-    .to_string()
+    });
+
+    if let Some(reasoning) = reasoning_content.map(str::trim).filter(|r| !r.is_empty()) {
+        entry["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
+    }
+
+    entry.to_string()
 }
 
 pub(crate) fn build_assistant_history_with_tool_calls(

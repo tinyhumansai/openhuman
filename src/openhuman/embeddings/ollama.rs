@@ -152,6 +152,104 @@ impl OllamaEmbedding {
             .map_err(|e| anyhow::anyhow!("invalid Ollama base_url `{}`: {e}", self.base_url))?;
         Ok(format!("{}/api/embed", self.base_url))
     }
+
+    /// Sends a single text to Ollama and returns either the embedding, or
+    /// `None` if Ollama produced the NaN-encoding 500 wire shape for that
+    /// individual input. Any other failure (transport error, non-2xx without
+    /// NaN signature, malformed JSON, dimension mismatch, count mismatch)
+    /// surfaces as an `Err` so genuine bugs are still loud.
+    ///
+    /// Used by [`Self::embed_per_text_fallback`] to recover a batch that
+    /// failed wholesale on NaN — see TAURI-RUST-AZ.
+    async fn embed_one_with_nan_recovery(&self, text: &str) -> anyhow::Result<Option<Vec<f32>>> {
+        let resp = self
+            .http_client()
+            .post(self.embed_url()?)
+            .json(&OllamaEmbedRequest {
+                model: self.model.clone(),
+                input: vec![text.to_string()],
+            })
+            .send()
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "ollama embed request failed (is Ollama running at {}?): {e}",
+                    self.base_url
+                )
+            })?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let detail = body.trim();
+            // Per-text NaN: substitute empty vector, log once.
+            if status.as_u16() == 500 && is_nan_encode_error(&body) {
+                tracing::warn!(
+                    target: "embeddings.ollama",
+                    "[embeddings] ollama produced NaN for a single text (model={}); \
+                     substituting empty embedding (downstream blob will be 0 bytes)",
+                    self.model
+                );
+                return Ok(None);
+            }
+            anyhow::bail!(
+                "ollama embed failed with status {status}{}",
+                if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {detail}")
+                }
+            );
+        }
+
+        let payload: OllamaEmbedResponse = resp
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("ollama embed response parse failed: {e}"))?;
+        if payload.embeddings.len() != 1 {
+            anyhow::bail!(
+                "ollama embed count mismatch: sent 1 text, got {} embeddings",
+                payload.embeddings.len()
+            );
+        }
+        let v = payload.embeddings.into_iter().next().unwrap();
+        if v.len() != self.dims {
+            anyhow::bail!(
+                "ollama embed dimension mismatch: expected {}, got {}",
+                self.dims,
+                v.len()
+            );
+        }
+        Ok(Some(v))
+    }
+
+    /// Recovery path invoked when a batch request fails with the Ollama
+    /// NaN-encoding 500 wire shape. Re-sends each live input one at a time;
+    /// per-text NaN failures are filled with `Vec::new()` so the overall
+    /// result vector still has length `total_len` and aligns with the
+    /// caller's original `texts` slice (same convention as blank inputs).
+    async fn embed_per_text_fallback(
+        &self,
+        total_len: usize,
+        live: &[(usize, String)],
+    ) -> anyhow::Result<Vec<Vec<f32>>> {
+        let mut result = vec![Vec::new(); total_len];
+        let mut nan_substituted = 0usize;
+        for (orig_idx, text) in live {
+            match self.embed_one_with_nan_recovery(text).await? {
+                Some(v) => result[*orig_idx] = v,
+                None => nan_substituted += 1,
+            }
+        }
+        tracing::warn!(
+            target: "embeddings.ollama",
+            "[embeddings] ollama per-text fallback complete: {} of {} inputs returned NaN and \
+             were substituted with empty embeddings",
+            nan_substituted,
+            live.len()
+        );
+        Ok(result)
+    }
 }
 
 impl Default for OllamaEmbedding {
@@ -177,6 +275,18 @@ struct OllamaEmbedRequest {
 struct OllamaEmbedResponse {
     #[serde(default)]
     embeddings: Vec<Vec<f32>>,
+}
+
+/// Detects the Ollama-side NaN-encoding 500 wire shape:
+///   `{"error":"failed to encode response: json: unsupported value: NaN"}`
+///
+/// Ollama produces NaN for some inputs (model bug / numerically degenerate
+/// token sequences) and then fails to encode the response as JSON. One bad
+/// input poisons the entire batch.
+///
+/// See TAURI-RUST-AZ on Sentry.
+fn is_nan_encode_error(body: &str) -> bool {
+    body.to_ascii_lowercase().contains("unsupported value: nan")
 }
 
 #[async_trait]
@@ -266,6 +376,40 @@ impl EmbeddingProvider for OllamaEmbedding {
                     format!(": {detail}")
                 }
             );
+
+            // TAURI-RUST-AZ: Ollama returns 500 `unsupported value: NaN` when the
+            // model produces NaN for some input in the batch. One bad input
+            // poisons the whole batch under the default code path. Recover by
+            // re-sending each live input individually; per-text NaN failures
+            // are replaced with an empty embedding (same convention used for
+            // blank inputs above), so the rest of the batch still succeeds.
+            if status.as_u16() == 500 && is_nan_encode_error(&body) {
+                tracing::warn!(
+                    target: "embeddings.ollama",
+                    "[embeddings] ollama returned NaN-encoding 500 for batch of {} (model={}); \
+                     falling back to per-text requests",
+                    live.len(),
+                    self.model
+                );
+                crate::core::observability::report_error_or_expected(
+                    &message,
+                    "embeddings",
+                    "ollama_embed",
+                    &[
+                        ("model", self.model.as_str()),
+                        ("status", status_str.as_str()),
+                        ("failure", "nan_batch_recovered"),
+                    ],
+                );
+                // Single-text NaN: re-issuing the same request would only
+                // reproduce the failure. Skip the wasted round-trip and
+                // substitute an empty embedding directly.
+                if live.len() == 1 {
+                    return Ok(vec![Vec::new(); texts.len()]);
+                }
+                return self.embed_per_text_fallback(texts.len(), &live).await;
+            }
+
             crate::core::observability::report_error_or_expected(
                 &message,
                 "embeddings",

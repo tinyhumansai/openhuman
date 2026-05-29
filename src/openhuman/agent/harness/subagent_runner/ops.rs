@@ -1526,8 +1526,11 @@ async fn run_inner_loop(
         if force_text_mode {
             history.push(ChatMessage::assistant(response_text.clone()));
         } else {
-            let assistant_history_content =
-                super::super::parse::build_native_assistant_history(&response_text, &native_calls);
+            let assistant_history_content = super::super::parse::build_native_assistant_history(
+                &response_text,
+                resp.reasoning_content.as_deref(),
+                &native_calls,
+            );
             history.push(ChatMessage::assistant(assistant_history_content));
         }
 

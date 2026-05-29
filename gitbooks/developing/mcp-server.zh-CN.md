@@ -90,6 +90,10 @@ MCP 服务器将内置提示词资产作为静态资源暴露出来。支持 `re
 
 单元测试 `catalog_mirrors_builtins` 会将资源目录与 `loader.rs` 中的 `BUILTINS` 切片进行交叉验证。若新增内置子智能体而未在目录中添加对应条目，该测试将失败，从而阻断 CI。
 
+### 资源模板
+
+由于目录完全静态——所有 URI 均为具体地址，不存在模板化——`resources/templates/list` 始终返回空的 `resourceTemplates` 数组。该处理器是为了 MCP 规范合规性：当客户端在看到 `resources` 能力后探测 `resources/templates/list` 时，会获得格式良好的结果而非 `-32601 Method not found`。
+
 ### 冒烟测试
 
 ```bash
@@ -97,7 +101,8 @@ printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}' \
   '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
   '{"jsonrpc":"2.0","id":2,"method":"resources/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"resources/templates/list"}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"openhuman://prompts/identity"}}' \
   | openhuman-core mcp
 ```
 
@@ -109,8 +114,25 @@ HTTP JSON-RPC 服务器还暴露一个只读的全局工具注册表，供需要
 | --- | --- |
 | `openhuman.tool_registry_list` | 列出 MCP stdio 工具和控制器支持的工具，包含稳定的 `tool_id`、路由、版本、输入/输出 schema、允许的智能体、标签、启用状态和健康状况。 |
 | `openhuman.tool_registry_get` | 通过 `tool_id` 返回一个注册表条目，例如 `memory.search` 或 `tools.web_search`。 |
+| `openhuman.tool_registry_diagnostics` | 返回脱敏的清单统计、疑似写入面、策略面以及外部能力提供方诊断信息。 |
 
 注册表仅用于发现。它不改变工具分派或权限检查；MCP 调用仍通过 `tools/call`，控制器支持的工具仍通过其现有的 JSON-RPC 方法路由。
+
+### 外部能力提供方
+
+OpenHuman 可以在 `config.toml` 中记录可信外部能力提供方。这只是治理元数据：不会安装包、执行远程代码，也不会绕过现有 MCP/控制器分派路径。
+
+```toml
+[[capability_providers]]
+id = "Acme Tools"
+display_name = "Acme Tools"
+source_uri = "https://example.com/openhuman/acme-tools"
+source_digest = "sha256:abc123"
+trust_state = "trusted"
+enabled = true
+```
+
+Provider id 会在策略检查前规范化。例如 `Acme Tools` 会变成 `acme-tools`；规范化后重复的 id 会被拒绝。只有同时满足 `enabled = true` 和 `trust_state = "trusted"` 的提供方，才会被后续准入检查视为可用。没有 provider 配置时保持旧行为：provider 注册表为空，现有工具不会被隐藏。
 
 ## 冒烟测试
 
