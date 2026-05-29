@@ -66,6 +66,7 @@ async fn message_dispatch_processes_messages_in_parallel() {
             workspace_dir: Arc::new(std::env::temp_dir()),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             multimodal: crate::openhuman::config::MultimodalConfig::default(),
+            multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
         });
 
         (channel_impl, runtime_ctx)
@@ -137,6 +138,7 @@ async fn process_channel_message_cancels_scoped_typing_task() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
     });
 
     process_channel_message(
@@ -225,6 +227,7 @@ async fn dispatch_routes_through_agent_run_turn_bus_handler() {
         workspace_dir: Arc::new(std::env::temp_dir()),
         message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
         multimodal: crate::openhuman::config::MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
     });
 
     process_channel_message(

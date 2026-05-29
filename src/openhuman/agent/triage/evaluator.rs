@@ -473,6 +473,7 @@ async fn try_arm(
         silent: true,
         channel_name: "triage".to_string(),
         multimodal: MultimodalConfig::default(),
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
         max_tool_iterations: 1,
         on_delta: None,
         target_agent_id: Some("trigger_triage".to_string()),

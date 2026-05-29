@@ -190,6 +190,7 @@ pub(crate) async fn agent_turn(
     temperature: f64,
     silent: bool,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_tool_iterations: usize,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
@@ -204,6 +205,7 @@ pub(crate) async fn agent_turn(
         silent,
         "channel",
         multimodal_config,
+        multimodal_file_config,
         max_tool_iterations,
         None,
         None,
@@ -258,6 +260,7 @@ pub(crate) async fn run_tool_call_loop(
     // approval now flows through the process-global `ApprovalGate`.
     _channel_name: &str,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     visible_tool_names: Option<&HashSet<String>>,
@@ -446,8 +449,12 @@ pub(crate) async fn run_tool_call_loop(
             return Err(cap_err.into());
         }
 
-        let prepared_messages =
-            multimodal::prepare_messages_for_provider(history, multimodal_config).await?;
+        let prepared_messages = multimodal::prepare_messages_for_provider(
+            history,
+            multimodal_config,
+            multimodal_file_config,
+        )
+        .await?;
 
         // Unified path via Provider::chat so provider-specific native tool logic
         // (OpenAI/Anthropic/OpenRouter/compatible adapters) is honored.

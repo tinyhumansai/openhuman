@@ -880,6 +880,7 @@ pub(crate) async fn process_channel_message(
         silent: true,
         channel_name: msg.channel.clone(),
         multimodal: ctx.multimodal.clone(),
+        multimodal_files: ctx.multimodal_files.clone(),
         max_tool_iterations: ctx.max_tool_iterations,
         on_delta: None, // on_progress handles text deltas now
         target_agent_id: scoping.target_agent_id,

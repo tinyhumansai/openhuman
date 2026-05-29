@@ -108,6 +108,10 @@ fn multimodal_cfg() -> crate::openhuman::config::MultimodalConfig {
     crate::openhuman::config::MultimodalConfig::default()
 }
 
+fn multimodal_file_cfg() -> crate::openhuman::config::MultimodalFileConfig {
+    crate::openhuman::config::MultimodalFileConfig::default()
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Item 1 — Full turn cycle: user → LLM emits tool call → tool executes →
 //           result injected → LLM produces final text.
@@ -146,6 +150,7 @@ async fn full_turn_cycle_user_llm_tool_result_final() {
         true,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         2,
         None,
         None,
@@ -206,6 +211,7 @@ async fn max_iterations_exceeded_downcasts_to_typed_agent_error() {
         true,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         1,
         None,
         None,
@@ -283,6 +289,7 @@ async fn visible_tool_names_rejects_tool_outside_whitelist() {
         true,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         2,
         None,
         Some(&whitelist),
@@ -342,6 +349,7 @@ async fn visible_tool_names_allows_tool_inside_whitelist() {
         true,
         "channel",
         &multimodal_cfg(),
+        &multimodal_file_cfg(),
         2,
         None,
         Some(&whitelist),
