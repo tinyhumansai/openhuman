@@ -12,8 +12,16 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock, isTauri: vi.fn(() =
 // coreIsTauri() from @tauri-apps/api/core. The default mock returns false
 // (non-Tauri env); tests that need the Tauri-path branch override it
 // inline.
+//
+// `safeInvoke` is the migration shim for the CEF IPC sync-throw
+// (OPENHUMAN-TAURI-REACT-7 / TAURI-REACT-6). In production it routes through
+// `coreInvoke`; for unit tests we keep `invokeMock` as the seam so the
+// existing assertions on call args / order keep working unchanged.
 const isTauriMock = vi.fn(() => false);
-vi.mock('../../utils/tauriCommands/common', () => ({ isTauri: isTauriMock }));
+vi.mock('../../utils/tauriCommands/common', () => ({
+  isTauri: isTauriMock,
+  safeInvoke: (...args: unknown[]) => invokeMock(...args),
+}));
 
 vi.mock('../coreRpcClient', () => ({ clearCoreRpcTokenCache: clearCoreRpcTokenCacheMock }));
 

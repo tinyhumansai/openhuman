@@ -65,11 +65,11 @@ jobs:
       - name: Install vendored tauri-cli (cef-aware bundler)
         if: steps.tauri-cli-cache.outputs.cache-hit != 'true'
         shell: bash
-        run: cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
+        run: bash scripts/ci-cancel-aware.sh cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli
       - name: Enable Corepack
         run: corepack enable
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
 
       # vite build runs via tauri.conf.json's beforeBuildCommand during the
       # "Build Tauri app" step below — no separate frontend build needed.
@@ -103,7 +103,7 @@ jobs:
           VITE_LATEST_APP_DOWNLOAD_URL: ${{ vars.VITE_LATEST_APP_DOWNLOAD_URL }}
           TAURI_CONFIG_OVERRIDE: ${{ steps.config-overrides.outputs.json }}
         run: |
-          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
+          NODE_OPTIONS="--max-old-space-size=8192" bash ../scripts/ci-cancel-aware.sh cargo tauri build -c "$TAURI_CONFIG_OVERRIDE" --target x86_64-pc-windows-msvc
       - name: Upload MSI artifact
         uses: actions/upload-artifact@v5
         with:

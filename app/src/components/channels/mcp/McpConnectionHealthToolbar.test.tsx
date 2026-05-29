@@ -190,6 +190,26 @@ describe('McpConnectionHealthToolbar', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+  it('Escape closes the confirm dialog without calling onDisconnect', () => {
+    const onDisconnect = vi.fn();
+    render(
+      <McpConnectionHealthToolbar
+        statuses={[statusFor('a', 'connected')]}
+        onReconnect={async () => {}}
+        onDisconnect={onDisconnect}
+      />
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: /Disconnect all \d+ connected MCP servers/i })
+    );
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    act(() => {
+      fireEvent.keyDown(document, { key: 'Escape' });
+    });
+    expect(onDisconnect).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
   it('confirm in the dialog fires onDisconnect with connected IDs and closes the dialog', async () => {
     const onDisconnect = vi.fn().mockResolvedValue(undefined);
     render(

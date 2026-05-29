@@ -6,7 +6,7 @@
 //! exactly once in the file (so the model can't accidentally edit
 //! every match). Set `replace_all` to override.
 
-use crate::openhuman::security::SecurityPolicy;
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -56,6 +56,13 @@ impl Tool for EditFileTool {
         PermissionLevel::Write
     }
 
+    /// `edit` always modifies an **existing** file → in ask-before-edit it
+    /// routes through the human approval gate; in Full it runs; read-only is
+    /// blocked in `execute`.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")
@@ -84,7 +91,9 @@ impl Tool for EditFileTool {
         }
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(

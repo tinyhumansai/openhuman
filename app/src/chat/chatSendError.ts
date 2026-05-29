@@ -15,7 +15,8 @@ export type ChatSendErrorCode =
   | 'safety_timeout'
   | 'usage_limit_reached'
   | 'prompt_blocked'
-  | 'prompt_review';
+  | 'prompt_review'
+  | 'attachment_invalid';
 
 export interface ChatSendError {
   code: ChatSendErrorCode;

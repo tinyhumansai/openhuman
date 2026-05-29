@@ -51,6 +51,8 @@ pub struct Vault {
     pub id: String,
     pub name: String,
     pub root_path: String,
+    #[serde(default)]
+    pub host_os: Option<String>,
     pub namespace: String,
     pub include_globs: Vec<String>,
     pub exclude_globs: Vec<String>,

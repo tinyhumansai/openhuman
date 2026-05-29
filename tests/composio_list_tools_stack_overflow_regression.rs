@@ -220,12 +220,14 @@ impl Provider for StubProvider {
                     arguments: json!({ "toolkits": ["gmail"] }).to_string(),
                 }],
                 usage: None,
+                reasoning_content: None,
             })
         } else {
             Ok(ChatResponse {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             })
         }
     }

@@ -8,6 +8,26 @@ use crate::openhuman::security::{AuditLogger, SecurityPolicy};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Derive the browser tool's host allowlist from the unified web-access list
+/// (`http_request.allowed_domains`).
+///
+/// The browser tool shares the single fetch allowlist rather than the
+/// deprecated `[browser].allowed_domains`, but the `"*"` allow-all wildcard is
+/// stripped on purpose: `web_fetch`/`curl` treat `"*"` as "open to all public
+/// sites", whereas the browser (a real Chromium with JS, cookies, and
+/// logged-in sessions) must NOT inherit blanket access from a fetch-side
+/// toggle. Browser allow-all stays gated by `OPENHUMAN_BROWSER_ALLOW_ALL`
+/// (`allow_all_browser_domains()`), and the tool itself stays behind
+/// `browser.enabled`. Net effect is fail-safe: unifying can only ever narrow
+/// the browser's reach, never widen it.
+pub(crate) fn browser_allowed_domains(http_allowed_domains: &[String]) -> Vec<String> {
+    http_allowed_domains
+        .iter()
+        .filter(|domain| domain.as_str() != "*")
+        .cloned()
+        .collect()
+}
+
 /// Create the default tool registry
 pub fn default_tools(security: Arc<SecurityPolicy>) -> Vec<Box<dyn Tool>> {
     default_tools_with_runtime(security, Arc::new(NativeRuntime::new()))
@@ -138,6 +158,8 @@ pub fn all_tools_with_runtime(
         Box::new(TodoTool::new()),
         Box::new(PlanExitTool::new()),
         Box::new(CurrentTimeTool::new()),
+        Box::new(DetectToolsTool::new()),
+        Box::new(InstallToolTool::new(security.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
         Box::new(CronListTool::new(config.clone())),
         Box::new(CronRemoveTool::new(config.clone())),
@@ -199,15 +221,20 @@ pub fn all_tools_with_runtime(
     ];
 
     if browser_config.enabled {
+        // Unified web-access allowlist (merge fetch + browser firewalls): the
+        // browser tool shares the single `http_request.allowed_domains` host
+        // list rather than the now-deprecated `[browser].allowed_domains`. See
+        // `browser_allowed_domains` for why the `"*"` wildcard is stripped.
+        let browser_allowed_domains = browser_allowed_domains(&http_config.allowed_domains);
         // Add legacy browser_open tool for simple URL opening
         tools.push(Box::new(BrowserOpenTool::new(
             security.clone(),
-            browser_config.allowed_domains.clone(),
+            browser_allowed_domains.clone(),
         )));
         // Add full browser automation tool (pluggable backend)
         tools.push(Box::new(BrowserTool::new_with_backend(
             security.clone(),
-            browser_config.allowed_domains.clone(),
+            browser_allowed_domains.clone(),
             browser_config.session_name.clone(),
             browser_config.backend.clone(),
             browser_config.native_headless,

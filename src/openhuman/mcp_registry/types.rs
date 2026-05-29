@@ -39,6 +39,63 @@ impl CommandKind {
     }
 }
 
+// ── Transport ────────────────────────────────────────────────────────────────
+
+/// How a connected MCP server's transport is dialled.
+///
+/// Mirrors `mcp_client::registry::McpTransportClient` at the install-record
+/// layer — same two backends (`McpStdioClient` / `McpHttpClient`), one extra
+/// indirection because the install row has to be serialisable + persistable
+/// across restarts. The `dispatch_kind` string is what we persist into the
+/// `mcp_servers.transport` column (`"stdio"` | `"http_remote"`); existing
+/// rows from before the column existed default to `"stdio"` per the
+/// store-side migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Transport {
+    /// Local subprocess JSON-RPC over stdin/stdout. Spawned via
+    /// `command` + `args` (resolved from `command_kind`).
+    Stdio,
+    /// HTTPS endpoint hosted by the upstream registry (typically Smithery —
+    /// `~99%` of their listings are HTTP-remote). Streamable HTTP + OAuth +
+    /// SSE per the MCP spec, served by [`mcp_client::McpHttpClient`].
+    HttpRemote { url: String },
+}
+
+impl Transport {
+    /// Stable string identifier persisted in `mcp_servers.transport`.
+    /// Kept narrow on purpose — schema migrations notice unknown values.
+    pub fn dispatch_kind(&self) -> &'static str {
+        match self {
+            Self::Stdio => "stdio",
+            Self::HttpRemote { .. } => "http_remote",
+        }
+    }
+
+    /// Inverse of `dispatch_kind`. Unknown / missing values fall back to
+    /// `Stdio` so pre-migration rows (where the column didn't exist and
+    /// every record was implicitly stdio) keep working with no behaviour
+    /// change.
+    pub fn parse(kind: &str, deployment_url: Option<&str>) -> Self {
+        match kind {
+            "http_remote" => Self::HttpRemote {
+                url: deployment_url.unwrap_or("").to_string(),
+            },
+            _ => Self::Stdio,
+        }
+    }
+
+    /// `Some(url)` for HTTP-remote, `None` for stdio. Convenience accessor
+    /// for the store layer that needs to persist `deployment_url` as its
+    /// own column.
+    pub fn deployment_url(&self) -> Option<&str> {
+        match self {
+            Self::Stdio => None,
+            Self::HttpRemote { url } => Some(url.as_str()),
+        }
+    }
+}
+
 // ── InstalledServer ─────────────────────────────────────────────────────────
 
 /// A locally installed MCP server record.
@@ -58,11 +115,14 @@ pub struct InstalledServer {
     pub description: Option<String>,
     /// Icon URL from the registry.
     pub icon_url: Option<String>,
-    /// How the server subprocess should be launched.
+    /// How the server subprocess should be launched (stdio installs only).
+    /// For HTTP-remote installs this is still set to a sensible default —
+    /// callers route off [`Self::transport`] instead.
     pub command_kind: CommandKind,
-    /// Resolved binary or launcher (`npx`, `uvx`, etc).
+    /// Resolved binary or launcher (`npx`, `uvx`, etc). Empty string for
+    /// HTTP-remote installs.
     pub command: String,
-    /// Arguments passed to `command`.
+    /// Arguments passed to `command`. Empty vec for HTTP-remote installs.
     pub args: Vec<String>,
     /// Names of required env vars (values are stored separately and never logged).
     pub env_keys: Vec<String>,
@@ -72,6 +132,18 @@ pub struct InstalledServer {
     pub installed_at: i64,
     /// Unix epoch milliseconds when the server last connected successfully.
     pub last_connected_at: Option<i64>,
+    /// Transport variant for this install — `Stdio` for legacy / local
+    /// subprocess servers, `HttpRemote { url }` for Smithery-hosted ones.
+    /// Defaults to `Stdio` for rows persisted before the column existed.
+    #[serde(default = "default_transport")]
+    pub transport: Transport,
+}
+
+/// Default for `InstalledServer::transport` when the field is missing from
+/// a serialised payload (e.g. legacy persisted rows, callers that haven't
+/// migrated their construction site yet).
+fn default_transport() -> Transport {
+    Transport::Stdio
 }
 
 // ── McpTool ─────────────────────────────────────────────────────────────────
@@ -278,11 +350,89 @@ mod tests {
             config: None,
             installed_at: 1_700_000_000_000,
             last_connected_at: None,
+            transport: Transport::Stdio,
         };
         let v = serde_json::to_value(&server).unwrap();
         // env_keys present, but no raw values
         assert!(v.get("env_keys").is_some());
         assert!(v.get("env_values").is_none());
+    }
+
+    /// `Transport::dispatch_kind` is the column value persisted into
+    /// `mcp_servers.transport`. Pinning both stdio and http-remote so a
+    /// schema-side change can't silently rename one without surfacing here.
+    #[test]
+    fn transport_dispatch_kind_strings_are_stable() {
+        assert_eq!(Transport::Stdio.dispatch_kind(), "stdio");
+        assert_eq!(
+            Transport::HttpRemote {
+                url: "https://example.com/mcp".to_string()
+            }
+            .dispatch_kind(),
+            "http_remote"
+        );
+    }
+
+    /// `Transport::parse` is what the store layer calls when re-hydrating
+    /// a row. The Stdio fallback for unknown / missing values is the
+    /// migration-safety hatch — rows persisted before the `transport`
+    /// column existed must keep working as stdio installs.
+    #[test]
+    fn transport_parse_falls_back_to_stdio_for_unknown_kinds() {
+        // Stdio: explicit + with-no-url
+        assert_eq!(Transport::parse("stdio", None), Transport::Stdio);
+        assert_eq!(Transport::parse("stdio", Some("ignored")), Transport::Stdio);
+
+        // Pre-migration empty value → stdio (backwards-compat).
+        assert_eq!(Transport::parse("", None), Transport::Stdio);
+        // Unknown kind from a future row → stdio (defensive default; we'd
+        // rather a misconfigured row stall on connect than misroute).
+        assert_eq!(Transport::parse("garbage", None), Transport::Stdio);
+
+        // HTTP remote round-trip carries the URL through.
+        assert_eq!(
+            Transport::parse("http_remote", Some("https://x.io/mcp")),
+            Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string()
+            }
+        );
+    }
+
+    /// `deployment_url` accessor is what the store uses to populate the
+    /// adjacent `mcp_servers.deployment_url` column. Stdio → `None`,
+    /// HTTP remote → `Some(url)`. Confirms the two never get crossed.
+    #[test]
+    fn transport_deployment_url_accessor() {
+        assert_eq!(Transport::Stdio.deployment_url(), None);
+        let http = Transport::HttpRemote {
+            url: "https://smithery.ai/server/x".to_string(),
+        };
+        assert_eq!(http.deployment_url(), Some("https://smithery.ai/server/x"));
+    }
+
+    /// `InstalledServer::transport` is `#[serde(default)]`-backed so that
+    /// pre-migration JSON payloads (without the field at all) deserialise
+    /// as stdio installs. Without this, every persisted row from before
+    /// this change would fail to load after upgrade.
+    #[test]
+    fn installed_server_defaults_transport_to_stdio_on_missing_field() {
+        let legacy = json!({
+            "server_id": "uuid-1",
+            "qualified_name": "@old/server",
+            "display_name": "Old",
+            "description": null,
+            "icon_url": null,
+            "command_kind": "node",
+            "command": "npx",
+            "args": ["-y", "@old/server"],
+            "env_keys": [],
+            "config": null,
+            "installed_at": 1_700_000_000_000i64,
+            "last_connected_at": null
+            // ← deliberately no `transport` key
+        });
+        let s: InstalledServer = serde_json::from_value(legacy).unwrap();
+        assert_eq!(s.transport, Transport::Stdio);
     }
 
     #[test]

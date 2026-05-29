@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::openhuman::config::Config;
 
-use super::types::{CommandKind, InstalledServer};
+use super::types::{CommandKind, InstalledServer, Transport};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -81,7 +81,45 @@ fn init_schema(conn: &Connection) -> Result<()> {
              cached_at   INTEGER NOT NULL
          );",
     )
-    .context("Failed to initialise mcp_clients schema")
+    .context("Failed to initialise mcp_clients schema")?;
+
+    // Additive HTTP-remote transport columns (introduced after the schema
+    // was first cut). SQLite's `ALTER TABLE ADD COLUMN` doesn't support
+    // `IF NOT EXISTS`, so we use `PRAGMA table_info` to detect which
+    // columns are already there and skip the ones that are. Idempotent
+    // across launches; old `'stdio'`-implicit rows pick up the new
+    // `transport` column with the default value.
+    let existing_cols = mcp_servers_columns(conn)?;
+    if !existing_cols.iter().any(|c| c == "transport") {
+        conn.execute(
+            "ALTER TABLE mcp_servers ADD COLUMN transport TEXT NOT NULL DEFAULT 'stdio'",
+            [],
+        )
+        .context("Failed to add transport column to mcp_servers")?;
+    }
+    if !existing_cols.iter().any(|c| c == "deployment_url") {
+        conn.execute("ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT", [])
+            .context("Failed to add deployment_url column to mcp_servers")?;
+    }
+
+    Ok(())
+}
+
+/// Snapshot of the column names on `mcp_servers`. Used by the additive
+/// migration in [`init_schema`] to decide which `ALTER TABLE ADD COLUMN`
+/// statements still need to run on this DB.
+fn mcp_servers_columns(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(mcp_servers)")
+        .context("prepare PRAGMA table_info")?;
+    // PRAGMA table_info row shape: (cid, name, type, notnull, dflt_value, pk).
+    let mut rows = stmt.query([])?;
+    let mut cols = Vec::new();
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        cols.push(name);
+    }
+    Ok(cols)
 }
 
 // ── InstalledServer CRUD ──────────────────────────────────────────────────────
@@ -102,8 +140,8 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
         "INSERT INTO mcp_servers
              (server_id, qualified_name, display_name, description, icon_url,
               command_kind, command, args_json, env_keys_json, config_json,
-              installed_at, last_connected_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+              installed_at, last_connected_at, transport, deployment_url)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             server.server_id,
             server.qualified_name,
@@ -117,6 +155,8 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
             config_json,
             server.installed_at,
             server.last_connected_at,
+            server.transport.dispatch_kind(),
+            server.transport.deployment_url(),
         ],
     )
     .context("Failed to insert mcp_server")?;
@@ -131,7 +171,7 @@ pub fn list_servers_conn(conn: &Connection) -> Result<Vec<InstalledServer>> {
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at
+                installed_at, last_connected_at, transport, deployment_url
          FROM mcp_servers ORDER BY installed_at ASC",
     )?;
     let rows = stmt.query_map([], map_server_row)?;
@@ -150,7 +190,7 @@ pub fn get_server_conn(conn: &Connection, server_id: &str) -> Result<InstalledSe
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at
+                installed_at, last_connected_at, transport, deployment_url
          FROM mcp_servers WHERE server_id = ?1",
     )?;
     let mut rows = stmt.query(params![server_id])?;
@@ -203,6 +243,15 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
         })?),
     };
 
+    // Both transport columns are post-migration additions, so `row.get`
+    // may return missing-column-by-name errors on a DB that hasn't run the
+    // ADD COLUMN steps for some reason (rare — the migration is in
+    // `init_schema`). Fall back to stdio rather than fail loading the
+    // whole row.
+    let transport_kind: String = row.get::<_, Option<String>>(12)?.unwrap_or_default();
+    let deployment_url: Option<String> = row.get(13)?;
+    let transport = Transport::parse(&transport_kind, deployment_url.as_deref());
+
     Ok(InstalledServer {
         server_id: row.get(0)?,
         qualified_name: row.get(1)?,
@@ -216,6 +265,7 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
         config,
         installed_at: row.get(10)?,
         last_connected_at: row.get(11)?,
+        transport,
     })
 }
 
@@ -345,6 +395,27 @@ mod tests {
             config: None,
             installed_at: 1_700_000_000_000,
             last_connected_at: None,
+            transport: Transport::Stdio,
+        }
+    }
+
+    fn sample_http_server(id: &str, url: &str) -> InstalledServer {
+        InstalledServer {
+            server_id: id.to_string(),
+            qualified_name: "@test/http-server".to_string(),
+            display_name: "Test HTTP Server".to_string(),
+            description: None,
+            icon_url: None,
+            command_kind: CommandKind::Node, // unused for HTTP
+            command: String::new(),
+            args: Vec::new(),
+            env_keys: Vec::new(),
+            config: None,
+            installed_at: 1_700_000_000_000,
+            last_connected_at: None,
+            transport: Transport::HttpRemote {
+                url: url.to_string(),
+            },
         }
     }
 
@@ -436,5 +507,101 @@ mod tests {
         let loaded = get_server_conn(&conn, "srv-args").unwrap();
         assert_eq!(loaded.args, vec!["--port", "8080"]);
         assert_eq!(loaded.env_keys, vec!["KEY_A", "KEY_B"]);
+    }
+
+    /// HTTP-remote row round-trips through INSERT/SELECT with the
+    /// `deployment_url` preserved and `transport.dispatch_kind()` flipped
+    /// to `"http_remote"`. Without this test a regression in the
+    /// `map_server_row` column indices would silently downgrade every
+    /// HTTP-remote install back to stdio at next launch.
+    #[test]
+    fn http_remote_server_roundtrips_with_url_preserved() {
+        let (_f, conn) = open_test_conn();
+        let server = sample_http_server("srv-http", "https://smithery.ai/server/x/mcp");
+        insert_server_conn(&conn, &server).unwrap();
+
+        let loaded = get_server_conn(&conn, "srv-http").unwrap();
+        match loaded.transport {
+            Transport::HttpRemote { url } => {
+                assert_eq!(url, "https://smithery.ai/server/x/mcp");
+            }
+            other => panic!("expected HttpRemote, got {other:?}"),
+        }
+    }
+
+    /// Mixed stdio + http rows list back in their persisted form (no
+    /// cross-contamination of the `transport` column between rows).
+    #[test]
+    fn list_servers_preserves_per_row_transport() {
+        let (_f, conn) = open_test_conn();
+        insert_server_conn(&conn, &sample_server("srv-stdio")).unwrap();
+        insert_server_conn(&conn, &sample_http_server("srv-http", "https://x.io/mcp")).unwrap();
+
+        let mut servers = list_servers_conn(&conn).unwrap();
+        servers.sort_by_key(|s| s.server_id.clone());
+        assert_eq!(servers.len(), 2);
+        // Alphabetical sort: "srv-http" precedes "srv-stdio".
+        assert_eq!(servers[0].server_id, "srv-http");
+        assert_eq!(
+            servers[0].transport,
+            Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string()
+            }
+        );
+        assert_eq!(servers[1].server_id, "srv-stdio");
+        assert_eq!(servers[1].transport, Transport::Stdio);
+    }
+
+    /// Simulates the pre-migration state by dropping the `transport` and
+    /// `deployment_url` columns *after* schema init, manually inserting a
+    /// row that lacks them, and then re-running `init_schema` to confirm
+    /// the additive ALTER TABLE re-introduces the columns idempotently and
+    /// the old row loads as stdio (the migration's whole point).
+    ///
+    /// SQLite can't `DROP COLUMN` portably before 3.35, so the test uses
+    /// a CREATE-TABLE-AS rebuild to mimic the original schema shape.
+    #[test]
+    fn additive_migration_recovers_pre_migration_row_as_stdio() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+
+        // Step 1: pre-migration schema (no transport / deployment_url).
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                server_id           TEXT PRIMARY KEY,
+                qualified_name      TEXT NOT NULL,
+                display_name        TEXT NOT NULL,
+                description         TEXT,
+                icon_url            TEXT,
+                command_kind        TEXT NOT NULL DEFAULT 'node',
+                command             TEXT NOT NULL,
+                args_json           TEXT NOT NULL DEFAULT '[]',
+                env_keys_json       TEXT NOT NULL DEFAULT '[]',
+                config_json         TEXT,
+                installed_at        INTEGER NOT NULL,
+                last_connected_at   INTEGER
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers
+                (server_id, qualified_name, display_name, command_kind, command, installed_at)
+             VALUES ('legacy-1', '@old/server', 'Old', 'node', 'npx', 1700000000000)",
+            [],
+        )
+        .unwrap();
+
+        // Step 2: simulate the upgrade path — re-run init_schema, which
+        // detects the missing columns via PRAGMA and runs ALTER TABLE.
+        init_schema(&conn).unwrap();
+
+        // Idempotency: running it again must not fail or duplicate the
+        // columns. (Real launches hit this every process start.)
+        init_schema(&conn).unwrap();
+
+        // Step 3: the legacy row loads as Transport::Stdio.
+        let loaded = get_server_conn(&conn, "legacy-1").unwrap();
+        assert_eq!(loaded.transport, Transport::Stdio);
+        assert_eq!(loaded.command, "npx");
     }
 }

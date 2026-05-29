@@ -355,6 +355,44 @@ async fn apply_model_settings_updates_fields_and_persists_snapshot() {
 }
 
 #[tokio::test]
+async fn apply_search_settings_sets_and_clears_allowed_domains() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    // Explicit host list is trimmed, blanks dropped, sorted + de-duped.
+    let patch = SearchSettingsPatch {
+        allowed_domains: Some(vec![
+            " reuters.com ".into(),
+            "reuters.com".into(),
+            String::new(),
+            "github.com".into(),
+        ]),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(
+        cfg.http_request.allowed_domains,
+        vec!["github.com".to_string(), "reuters.com".to_string()]
+    );
+
+    // allow_all = true collapses the list to the wildcard.
+    let patch = SearchSettingsPatch {
+        allow_all: Some(true),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert_eq!(cfg.http_request.allowed_domains, vec!["*".to_string()]);
+
+    // allow_all = false drops the wildcard (explicit hosts only / blocked).
+    let patch = SearchSettingsPatch {
+        allow_all: Some(false),
+        ..Default::default()
+    };
+    apply_search_settings(&mut cfg, patch).await.expect("apply");
+    assert!(cfg.http_request.allowed_domains.is_empty());
+}
+
+#[tokio::test]
 async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
     // #1342: custom OpenAI-compatible providers — api_key must round-trip
     // through `apply_model_settings` and clear when an empty string is sent.
@@ -618,6 +656,33 @@ async fn apply_memory_settings_updates_all_provided_fields() {
         cfg.agent.memory_window,
         Some(crate::openhuman::config::schema::MemoryContextWindow::Extended)
     );
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_updates_action_budget() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    cfg.autonomy.max_actions_per_hour = 20;
+
+    let outcome = apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            max_actions_per_hour: Some(64),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply autonomy settings");
+
+    assert_eq!(cfg.autonomy.max_actions_per_hour, 64);
+    assert_eq!(
+        outcome.value["config"]["autonomy"]["max_actions_per_hour"],
+        serde_json::json!(64)
+    );
+    assert!(outcome
+        .logs
+        .iter()
+        .any(|l| l.contains("autonomy settings saved to")));
 }
 
 #[tokio::test]
@@ -1133,12 +1198,14 @@ async fn apply_screen_intelligence_settings_clamps_baseline_fps() {
 
 #[tokio::test]
 async fn apply_autonomy_settings_persists_max_actions_per_hour() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let outcome = apply_autonomy_settings(
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(200),
+            ..Default::default()
         },
     )
     .await
@@ -1156,6 +1223,7 @@ async fn apply_autonomy_settings_persists_max_actions_per_hour() {
 
 #[tokio::test]
 async fn apply_autonomy_settings_no_op_when_patch_empty() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let prior = cfg.autonomy.max_actions_per_hour;
@@ -1163,6 +1231,7 @@ async fn apply_autonomy_settings_no_op_when_patch_empty() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: None,
+            ..Default::default()
         },
     )
     .await
@@ -1172,12 +1241,14 @@ async fn apply_autonomy_settings_no_op_when_patch_empty() {
 
 #[tokio::test]
 async fn apply_autonomy_settings_rejects_zero() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempdir().unwrap();
     let mut cfg = tmp_config(&tmp);
     let err = apply_autonomy_settings(
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(0),
+            ..Default::default()
         },
     )
     .await
@@ -1190,6 +1261,7 @@ async fn apply_autonomy_settings_rejects_zero() {
 
 #[tokio::test]
 async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // u32::MAX is the new "unlimited" sentinel exposed by the UI as a
     // preset. The upper cap was lifted in the same PR that defaulted
     // fresh installs to u32::MAX; anything in [1, u32::MAX] should now
@@ -1200,6 +1272,7 @@ async fn apply_autonomy_settings_accepts_unlimited_sentinel() {
         &mut cfg,
         AutonomySettingsPatch {
             max_actions_per_hour: Some(u32::MAX),
+            ..Default::default()
         },
     )
     .await
@@ -1217,6 +1290,7 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
 
     let patch = AutonomySettingsPatch {
         max_actions_per_hour: Some(500),
+        ..Default::default()
     };
     let outcome = load_and_apply_autonomy_settings(patch)
         .await
@@ -1226,6 +1300,64 @@ async fn load_and_apply_autonomy_settings_roundtrip() {
     // Reload from scratch and confirm the saved value sticks.
     let reloaded = load_config_with_timeout().await.expect("reload");
     assert_eq!(reloaded.autonomy.max_actions_per_hour, 500);
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}
+
+#[tokio::test]
+async fn apply_autonomy_settings_replaces_auto_approve() {
+    // ENV_LOCK serializes the `live_policy::reload_from` triggered by
+    // `apply_autonomy_settings` against other live-policy-touching tests.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+    apply_autonomy_settings(
+        &mut cfg,
+        AutonomySettingsPatch {
+            auto_approve: Some(vec!["shell".into(), "curl".into()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply auto_approve");
+    assert_eq!(cfg.autonomy.auto_approve, vec!["shell", "curl"]);
+    // Persisted to the TOML, not just held in memory.
+    let on_disk = tokio::fs::read_to_string(&cfg.config_path).await.unwrap();
+    assert!(
+        on_disk.contains("auto_approve") && on_disk.contains("shell") && on_disk.contains("curl"),
+        "auto_approve allowlist should round-trip to TOML, got:\n{on_disk}"
+    );
+}
+
+#[tokio::test]
+async fn add_auto_approve_tool_appends_then_dedupes() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+
+    add_auto_approve_tool("git_operations")
+        .await
+        .expect("first add");
+    // Idempotent: a second add of the same tool must not create a duplicate.
+    add_auto_approve_tool("git_operations")
+        .await
+        .expect("second add (idempotent)");
+
+    let reloaded = load_config_with_timeout().await.expect("reload");
+    let hits = reloaded
+        .autonomy
+        .auto_approve
+        .iter()
+        .filter(|t| t.as_str() == "git_operations")
+        .count();
+    assert_eq!(
+        hits, 1,
+        "tool must appear exactly once after duplicate adds"
+    );
 
     unsafe {
         std::env::remove_var("OPENHUMAN_WORKSPACE");

@@ -243,11 +243,6 @@ pub fn register_agent_handlers() {
                     &model,
                     temperature,
                     silent,
-                    // Approval is not wired into the channel path today; if
-                    // CLI migrates to the bus later, extend AgentTurnRequest
-                    // with `approval: Option<Arc<ApprovalManager>>` and pass
-                    // it through here.
-                    None,
                     &channel_name,
                     &multimodal,
                     max_tool_iterations,

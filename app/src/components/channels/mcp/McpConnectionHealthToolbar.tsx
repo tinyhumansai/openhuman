@@ -17,7 +17,7 @@
  * subsequent `fetchStatuses()` refresh; this component only orchestrates
  * the user intent.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { ConnStatus } from './types';
@@ -81,6 +81,19 @@ const McpConnectionHealthToolbar = ({
   const [opError, setOpError] = useState<string | null>(null);
 
   const counts = useMemo(() => computeHealthCounts(statuses), [statuses]);
+
+  // Escape closes the "Disconnect all" confirmation WITHOUT firing the bulk
+  // RPC — the standard modal-dismiss affordance, matching the other MCP
+  // dialogs. The listener is only attached while the dialog is open. (Must
+  // be declared before the early return below to satisfy the rules of hooks.)
+  useEffect(() => {
+    if (!confirmDisconnect) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setConfirmDisconnect(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [confirmDisconnect]);
 
   // Nothing to summarise — match the parent's existing "hide chrome when
   // there's nothing installed" pattern.

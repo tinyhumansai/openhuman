@@ -15,7 +15,7 @@ export const SUPPORTED_MASCOT_COLORS: readonly MascotColor[] = [
   'burgundy',
   'black',
   'navy',
-  'green',
+  'custom',
 ];
 
 export const DEFAULT_MASCOT_COLOR: MascotColor = 'yellow';
@@ -124,6 +124,8 @@ export interface MascotState {
    * override is absent or scrubbed during rehydrate.
    */
   customMascotGifUrl: string | null;
+  customPrimaryColor: string;
+  customSecondaryColor: string;
 }
 
 const initialState: MascotState = {
@@ -133,6 +135,8 @@ const initialState: MascotState = {
   voiceUseLocaleDefault: false,
   selectedMascotId: null,
   customMascotGifUrl: null,
+  customPrimaryColor: '#F7D145',
+  customSecondaryColor: '#B23C05',
 };
 
 function isMascotColor(value: unknown): value is MascotColor {
@@ -206,6 +210,12 @@ const mascotSlice = createSlice({
     setMascotVoiceUseLocaleDefault(state, action: PayloadAction<boolean>) {
       state.voiceUseLocaleDefault = Boolean(action.payload);
     },
+    setCustomPrimaryColor(state, action: PayloadAction<string>) {
+      state.customPrimaryColor = action.payload;
+    },
+    setCustomSecondaryColor(state, action: PayloadAction<string>) {
+      state.customSecondaryColor = action.payload;
+    },
   },
   extraReducers: builder => {
     builder.addCase(resetUserScopedState, () => initialState);
@@ -222,6 +232,8 @@ const mascotSlice = createSlice({
           voiceUseLocaleDefault?: unknown;
           selectedMascotId?: unknown;
           customMascotGifUrl?: unknown;
+          customPrimaryColor?: unknown;
+          customSecondaryColor?: unknown;
         };
       };
       if (rehydrateAction.key !== 'mascot') return;
@@ -261,6 +273,12 @@ const mascotSlice = createSlice({
         typeof rehydrateAction.payload?.voiceUseLocaleDefault === 'boolean'
           ? rehydrateAction.payload.voiceUseLocaleDefault
           : false;
+      const rpc = rehydrateAction.payload?.customPrimaryColor;
+      state.customPrimaryColor =
+        typeof rpc === 'string' && rpc.length > 0 ? rpc : initialState.customPrimaryColor;
+      const rsc = rehydrateAction.payload?.customSecondaryColor;
+      state.customSecondaryColor =
+        typeof rsc === 'string' && rsc.length > 0 ? rsc : initialState.customSecondaryColor;
     });
   },
 });
@@ -272,6 +290,8 @@ export const {
   setMascotVoiceUseLocaleDefault,
   setSelectedMascotId,
   setCustomMascotGifUrl,
+  setCustomPrimaryColor,
+  setCustomSecondaryColor,
 } = mascotSlice.actions;
 
 export const selectMascotColor = (state: { mascot: MascotState }): MascotColor =>
@@ -291,6 +311,12 @@ export const selectSelectedMascotId = (state: { mascot: MascotState }): string |
 
 export const selectCustomMascotGifUrl = (state: { mascot: MascotState }): string | null =>
   state.mascot.customMascotGifUrl;
+
+export const selectCustomPrimaryColor = (state: { mascot: MascotState }): string =>
+  state.mascot.customPrimaryColor;
+
+export const selectCustomSecondaryColor = (state: { mascot: MascotState }): string =>
+  state.mascot.customSecondaryColor;
 
 /**
  * Resolve the voice id the next reply will be synthesised with, taking

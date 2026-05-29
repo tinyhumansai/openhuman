@@ -33,6 +33,13 @@ pub struct ComposioTool {
     api_key: String,
     default_entity_id: String,
     security: Arc<SecurityPolicy>,
+    /// Base URL for Composio v3 endpoints (`{base}/tools`). Production
+    /// always uses [`COMPOSIO_API_BASE_V3`] via [`Self::new`]; the
+    /// `#[cfg(test)]` `new_with_v3_base` constructor lets unit tests point
+    /// the direct-mode `/tools` listing at a local axum mock — the same
+    /// base-URL injection the backend `ComposioClient` gets through
+    /// `IntegrationClient::new` in `client_tests.rs`.
+    base_v3: String,
 }
 
 impl ComposioTool {
@@ -40,6 +47,43 @@ impl ComposioTool {
         api_key: &str,
         default_entity_id: Option<&str>,
         security: Arc<SecurityPolicy>,
+    ) -> Self {
+        // Production always pins the real HTTPS v3 endpoint.
+        Self::new_internal(
+            api_key,
+            default_entity_id,
+            security,
+            COMPOSIO_API_BASE_V3.to_string(),
+        )
+    }
+
+    /// Test-only seam: construct with an explicit Composio v3 base URL so
+    /// unit tests can point the direct `/tools` request — including the
+    /// `tags` filter — at a local mock instead of `backend.composio.dev`.
+    ///
+    /// `#[cfg(test)]`-gated on purpose: `list_tool_schemas_v3` attaches the
+    /// `x-api-key` header to whatever `base_v3` holds, so the only way to
+    /// reach the v3 endpoint in production is [`Self::new`], which always
+    /// uses the HTTPS [`COMPOSIO_API_BASE_V3`] const. An injectable base must
+    /// never carry a non-HTTPS URL outside tests.
+    #[cfg(test)]
+    pub(crate) fn new_with_v3_base(
+        api_key: &str,
+        default_entity_id: Option<&str>,
+        security: Arc<SecurityPolicy>,
+        base_v3: String,
+    ) -> Self {
+        Self::new_internal(api_key, default_entity_id, security, base_v3)
+    }
+
+    /// Shared constructor body. Private so the injectable `base_v3` cannot be
+    /// supplied by production callers — they go through [`Self::new`] (real
+    /// HTTPS const) and tests through the `#[cfg(test)]` `new_with_v3_base`.
+    fn new_internal(
+        api_key: &str,
+        default_entity_id: Option<&str>,
+        security: Arc<SecurityPolicy>,
+        base_v3: String,
     ) -> Self {
         let trimmed = api_key.trim();
         if trimmed.len() != api_key.len() {
@@ -59,6 +103,7 @@ impl ComposioTool {
             api_key: trimmed.to_string(),
             default_entity_id: normalize_entity_id(default_entity_id.unwrap_or("default")),
             security,
+            base_v3,
         }
     }
 
@@ -134,6 +179,44 @@ impl ComposioTool {
         Ok(body.items)
     }
 
+    /// Build the query-parameter pairs for the Composio v3 `GET /tools`
+    /// listing used by [`Self::list_tool_schemas_v3`].
+    ///
+    /// `toolkits` is sent as a single comma-joined `toolkits=` param (the
+    /// legacy plural the v3 backend tolerates; cf. `list_actions_v3` which
+    /// sends both the plural and `toolkit_slug` singular forms). `tags` is
+    /// encoded as **repeated** `tags=` params (`tags=a&tags=b`) — the shape
+    /// Composio v3 `/tools` documents for tag filtering ("can be specified
+    /// multiple times"), NOT the comma-joined form the backend proxy uses.
+    /// Blank entries are trimmed and dropped; an empty `tags` slice yields
+    /// no `tags` params (treated as no filter).
+    ///
+    /// Pure (no I/O) so the param shape is unit-testable without a live
+    /// HTTP round trip — mirrors [`Self::build_execute_action_v3_request`].
+    fn build_list_tool_schemas_v3_query(
+        toolkits: &[&str],
+        tags: Option<&[&str]>,
+    ) -> Vec<(&'static str, String)> {
+        let mut params: Vec<(&'static str, String)> = vec![("limit", "200".to_string())];
+
+        let trimmed: Vec<&str> = toolkits
+            .iter()
+            .map(|t| t.trim())
+            .filter(|t| !t.is_empty())
+            .collect();
+        if !trimmed.is_empty() {
+            params.push(("toolkits", trimmed.join(",")));
+        }
+
+        if let Some(tags) = tags {
+            for tag in tags.iter().map(|t| t.trim()).filter(|t| !t.is_empty()) {
+                params.push(("tags", tag.to_string()));
+            }
+        }
+
+        params
+    }
+
     /// List v3 tool definitions for one or more toolkits, preserving the
     /// raw `input_parameters` JSON schema each action carries.
     ///
@@ -149,22 +232,31 @@ impl ComposioTool {
     /// catalogue scan. Empty filter returns every action across every
     /// toolkit on the user's tenant (potentially large; callers should
     /// pass a non-empty filter in practice).
+    ///
+    /// `tags` narrows the result by Composio action tag (OR semantics —
+    /// multiple tags broaden the result). This is the direct-mode (BYO
+    /// key) counterpart to the backend proxy's `tags` query param wired
+    /// in [`crate::openhuman::composio::client::ComposioClient::list_tools`];
+    /// without it a self-key user's `composio_list_tools(..., tags)`
+    /// request would silently drop the tag filter. Blank/empty `tags`
+    /// are treated as no filter.
     pub(crate) async fn list_tool_schemas_v3(
         &self,
         toolkits: &[&str],
+        tags: Option<&[&str]>,
     ) -> anyhow::Result<Vec<ComposioToolSchemaV3>> {
-        let url = format!("{COMPOSIO_API_BASE_V3}/tools");
-        let mut req = self.client().get(&url).header("x-api-key", &self.api_key);
-        req = req.query(&[("limit", "200")]);
-        let trimmed: Vec<&str> = toolkits
-            .iter()
-            .map(|t| t.trim())
-            .filter(|t| !t.is_empty())
-            .collect();
-        if !trimmed.is_empty() {
-            let csv = trimmed.join(",");
-            req = req.query(&[("toolkits", csv.as_str())]);
-        }
+        let url = format!("{}/tools", self.base_v3);
+        let params = Self::build_list_tool_schemas_v3_query(toolkits, tags);
+        tracing::debug!(
+            toolkits = toolkits.len(),
+            tags = tags.map(<[&str]>::len).unwrap_or(0),
+            "[composio-direct] list_tool_schemas_v3: GET v3 /tools query built"
+        );
+        let req = self
+            .client()
+            .get(&url)
+            .header("x-api-key", &self.api_key)
+            .query(&params);
 
         let resp = req.send().await?;
         if !resp.status().is_success() {

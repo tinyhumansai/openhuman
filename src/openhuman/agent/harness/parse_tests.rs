@@ -70,6 +70,65 @@ fn parse_tool_call_value_supports_function_shape_flat_shape_and_invalid_names() 
 }
 
 #[test]
+fn parse_tool_call_value_accepts_argument_key_aliases() {
+    // Correct name but the model used `args`/`parameters` instead of the
+    // canonical `arguments` — recover the call rather than drop it and burn
+    // an agent iteration (bug-report-2026-05-26 A3).
+    let with_args = serde_json::json!({ "name": "echo", "args": { "value": "hi" } });
+    let parsed = parse_tool_call_value(&with_args).expect("args alias should parse");
+    assert_eq!(parsed.name, "echo");
+    assert_eq!(parsed.arguments, serde_json::json!({ "value": "hi" }));
+
+    let with_parameters = serde_json::json!({
+        "function": { "name": "shell", "parameters": "{\"command\":\"ls\"}" }
+    });
+    let parsed = parse_tool_call_value(&with_parameters).expect("parameters alias should parse");
+    assert_eq!(parsed.name, "shell");
+    assert_eq!(parsed.arguments, serde_json::json!({ "command": "ls" }));
+
+    // Name stays strict: an arg alias without a recognized name key is not
+    // a tool call (guards the whole-response JSON parse path).
+    assert!(parse_tool_call_value(&serde_json::json!({ "tool": "echo", "args": {} })).is_none());
+}
+
+#[test]
+fn whole_response_singleton_ignores_generic_arg_aliases() {
+    // A plain JSON answer that happens to carry a `name` plus a generic,
+    // object-valued `input`. Tagged contexts widen `input` into arguments…
+    let answer = serde_json::json!({ "name": "Alice", "input": { "value": "hi" } });
+    let tagged = parse_tool_calls_from_json_value(&answer);
+    assert_eq!(tagged.len(), 1);
+    assert_eq!(tagged[0].arguments, serde_json::json!({ "value": "hi" }));
+
+    // …but the whole-response (bare singleton) path must treat this as plain
+    // text, not a tool call: it carries no canonical `arguments` marker, only
+    // a `name` that happens to match a tool (CodeRabbit, #2683).
+    let whole = parse_tool_calls_from_json_value_aliased(&answer, false);
+    assert!(
+        whole.is_empty(),
+        "bare whole-response object without canonical `arguments` must not dispatch a tool call"
+    );
+
+    // A bare object WITH the canonical `arguments` key is still recognized on
+    // the whole-response path — `arguments` is the explicit tool-call marker.
+    let bare_call = serde_json::json!({ "name": "echo", "arguments": { "value": "hi" } });
+    let calls = parse_tool_calls_from_json_value_aliased(&bare_call, false);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments, serde_json::json!({ "value": "hi" }));
+
+    // The `tool_calls`-keyed envelope is an explicit marker and stays
+    // permissive even when aliases are forbidden for bare objects.
+    let envelope = serde_json::json!({
+        "tool_calls": [ { "name": "echo", "input": { "value": "hi" } } ]
+    });
+    let calls = parse_tool_calls_from_json_value_aliased(&envelope, false);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments, serde_json::json!({ "value": "hi" }));
+}
+
+#[test]
 fn parse_tool_calls_from_json_value_handles_tool_calls_array_arrays_and_singletons() {
     let wrapped = serde_json::json!({
         "tool_calls": [
@@ -208,10 +267,25 @@ fn structured_tool_call_and_history_helpers_round_trip_expected_shapes() {
     assert_eq!(parsed.len(), 1);
     assert_eq!(parsed[0].arguments, serde_json::json!({ "value": "hello" }));
 
-    let native = build_native_assistant_history("done", &tool_calls);
+    let native = build_native_assistant_history("done", None, &tool_calls);
     let native_json: serde_json::Value = serde_json::from_str(&native).expect("valid json");
     assert_eq!(native_json["content"], "done");
     assert_eq!(native_json["tool_calls"][0]["id"], "call-1");
+    // No reasoning supplied -> field omitted entirely (non-reasoning models
+    // must not gain a spurious `reasoning_content` key).
+    assert!(native_json.get("reasoning_content").is_none());
+
+    // DeepSeek thinking mode: reasoning must round-trip onto the tool-call
+    // turn (Sentry TAURI-RUST-4KB).
+    let native_reasoning =
+        build_native_assistant_history("done", Some("  step-by-step thoughts  "), &tool_calls);
+    let reasoning_json: serde_json::Value =
+        serde_json::from_str(&native_reasoning).expect("valid json");
+    assert_eq!(reasoning_json["reasoning_content"], "step-by-step thoughts");
+    // Whitespace-only reasoning is treated as absent.
+    let native_blank = build_native_assistant_history("done", Some("   "), &tool_calls);
+    let blank_json: serde_json::Value = serde_json::from_str(&native_blank).expect("valid json");
+    assert!(blank_json.get("reasoning_content").is_none());
 
     let xml_history = build_assistant_history_with_tool_calls("", &tool_calls);
     assert!(xml_history.contains("<tool_call>"));

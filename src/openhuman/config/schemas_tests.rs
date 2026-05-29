@@ -130,6 +130,47 @@ fn deserialize_params_parses_model_settings_update() {
 }
 
 #[test]
+fn deserialize_params_parses_autonomy_update_with_trusted_roots() {
+    // Mirrors the JSON the AgentAccessPanel posts.
+    let params = serde_json::json!({
+        "level": "supervised",
+        "workspace_only": true,
+        "allow_tool_install": false,
+        "trusted_roots": [
+            { "path": "/data/repo", "access": "readwrite" },
+            { "path": "/srv/docs" }
+        ]
+    });
+    let m = params.as_object().unwrap().clone();
+    let out: AutonomySettingsUpdate = deserialize_params(m).unwrap();
+    assert_eq!(out.level.as_deref(), Some("supervised"));
+    assert_eq!(out.workspace_only, Some(true));
+    assert_eq!(out.allow_tool_install, Some(false));
+    let roots = out.trusted_roots.expect("trusted_roots present");
+    assert_eq!(roots.len(), 2);
+    assert_eq!(roots[0].path, "/data/repo");
+    assert_eq!(
+        roots[0].access,
+        crate::openhuman::security::TrustedAccess::ReadWrite
+    );
+    // `access` defaults to Read when omitted.
+    assert_eq!(
+        roots[1].access,
+        crate::openhuman::security::TrustedAccess::Read
+    );
+}
+
+#[test]
+fn autonomy_settings_rpc_is_registered() {
+    let funcs: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    assert!(funcs.contains(&"get_autonomy_settings"));
+    assert!(funcs.contains(&"update_autonomy_settings"));
+}
+
+#[test]
 fn deserialize_params_parses_memory_settings_update() {
     let mut m = Map::new();
     m.insert("backend".into(), Value::String("sqlite".into()));
@@ -235,6 +276,7 @@ async fn handle_get_autonomy_settings_returns_current_value() {
     let _ = crate::openhuman::config::ops::load_and_apply_autonomy_settings(
         crate::openhuman::config::ops::AutonomySettingsPatch {
             max_actions_per_hour: Some(123),
+            ..Default::default()
         },
     )
     .await

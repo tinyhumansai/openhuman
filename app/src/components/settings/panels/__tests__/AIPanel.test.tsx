@@ -38,7 +38,7 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   saveAISettings: vi.fn(),
   loadLocalProviderSnapshot: vi.fn(),
   testProviderModel: vi.fn(),
-  setCloudProviderKey: vi.fn(),
+  setCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   clearCloudProviderKey: vi.fn().mockResolvedValue(undefined),
   serializeProviderRef: vi.fn((r: { kind: string; providerSlug?: string; model?: string }) =>
     r.kind === 'openhuman'
@@ -354,6 +354,25 @@ describe('AIPanel', () => {
     );
     // The input for the API key should be visible.
     expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+  });
+
+  it('surfaces provider setup errors in an alert with technical details collapsed', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(listProviderModels).mockRejectedValueOnce(
+      new Error('Could not reach OpenAI: provider returned 401 Unauthorized')
+    );
+
+    renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect OpenAI/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect OpenAI/i });
+    fireEvent.change(within(dialog).getByLabelText(/API key/i), {
+      target: { value: 'sk-bad-key' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(/rejected the credentials/i);
   });
 
   it('clicking the OpenRouter chip shows both API key entry and the OAuth button', async () => {

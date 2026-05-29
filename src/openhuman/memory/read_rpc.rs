@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::store::{self as chunk_store, with_connection};
 use crate::openhuman::memory_store::chunks::types::SourceKind;
+use crate::openhuman::memory_store::content::obsidian_registry;
 use crate::openhuman::memory_store::content::read as content_read;
 use crate::openhuman::memory_tree::retrieval::types::NodeKind;
 use crate::openhuman::memory_tree::score::store as score_store;
@@ -964,9 +965,12 @@ pub struct GraphExportResponse {
     #[serde(default)]
     pub edges: Vec<GraphEdge>,
     /// Absolute path to the on-disk `<workspace>/memory_tree/content/` root.
-    /// UIs use this to open files via the `obsidian://open?path=...` deep
-    /// link — Obsidian resolves arbitrary absolute paths without requiring
-    /// the vault to be registered.
+    /// UIs use this both to point an `obsidian://open?path=...` deep link at
+    /// the vault and as the folder the user adds via "Open folder as vault".
+    /// That deep link only resolves once this folder (or an ancestor) is a
+    /// *registered* Obsidian vault — the scheme cannot register a new vault on
+    /// its own, so the UI first calls [`obsidian_vault_status_rpc`] and guides
+    /// the user to add it when it isn't.
     pub content_root_abs: String,
 }
 
@@ -1000,6 +1004,67 @@ pub async fn graph_export_rpc(
         mode,
         resp.nodes.len(),
         resp.edges.len(),
+        crate::openhuman::memory::util::redact::redact(&resp.content_root_abs),
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+/// Response shape for [`obsidian_vault_status_rpc`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ObsidianVaultStatusResponse {
+    /// `true` when the content root (or an ancestor) is already a registered
+    /// Obsidian vault, so `obsidian://open?path=` will actually resolve.
+    pub registered: bool,
+    /// `true` when an `obsidian.json` was found and parsed (Obsidian is set
+    /// up). Lets the UI offer "Open folder as vault" vs. "Install Obsidian".
+    pub config_found: bool,
+    /// Absolute path to `<workspace>/memory_tree/content/` — the folder the
+    /// user adds to Obsidian, and the target of the deep link.
+    pub content_root_abs: String,
+}
+
+/// `memory_tree_obsidian_vault_status` — best-effort check of whether the
+/// memory-tree content root is a registered Obsidian vault.
+///
+/// The Memory tab calls this before firing the `obsidian://open?path=` deep
+/// link: that scheme only resolves vaults already present in Obsidian's
+/// `obsidian.json`, so opening an unregistered folder lands on *"Unable to
+/// find a vault for the URL"*. `obsidian_config_dir` optionally overrides
+/// where we look for `obsidian.json` (non-standard installs: Flatpak / Snap /
+/// portable). Never errors and never hits the network — a probe miss simply
+/// reports `registered = false` and the UI degrades to "open anyway" + reveal.
+pub async fn obsidian_vault_status_rpc(
+    config: &Config,
+    obsidian_config_dir: Option<String>,
+) -> Result<RpcOutcome<ObsidianVaultStatusResponse>, String> {
+    let cfg = config.clone();
+    let resp = tokio::task::spawn_blocking(move || -> ObsidianVaultStatusResponse {
+        let content_root = cfg.memory_tree_content_root();
+        // Treat a blank/whitespace override as "no override" — otherwise
+        // `Path::new("")` resolves to `.` and would probe a stray local
+        // `./obsidian.json`. The UI omits the field when empty, but the RPC
+        // is a public controller so normalize defensively here.
+        let extra = obsidian_config_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(std::path::Path::new);
+        let reg = obsidian_registry::vault_registration_status(&content_root, extra);
+        ObsidianVaultStatusResponse {
+            registered: reg.registered,
+            config_found: reg.config_found,
+            content_root_abs: content_root.to_string_lossy().to_string(),
+        }
+    })
+    .await
+    .map_err(|e| format!("obsidian_vault_status join error: {e}"))?;
+
+    // Redact the absolute path (embeds the user's home / username) — log only
+    // the booleans and a stable hash, matching `graph_export_rpc`.
+    let log = format!(
+        "memory_tree::read: obsidian_vault_status registered={} config_found={} root_hash={}",
+        resp.registered,
+        resp.config_found,
         crate::openhuman::memory::util::redact::redact(&resp.content_root_abs),
     );
     Ok(RpcOutcome::single_log(resp, log))
@@ -2380,5 +2445,69 @@ mod tests {
             .unwrap();
         assert_eq!(composio_count, 0);
         assert_eq!(other_count, 1);
+    }
+
+    #[tokio::test]
+    async fn obsidian_status_registered_when_override_config_lists_content_root() {
+        let (_tmp, cfg) = test_config();
+        let content_root = cfg.memory_tree_content_root();
+        // A separate dir standing in for a non-standard Obsidian config
+        // location, with an obsidian.json that registers the content root.
+        let cfg_dir = TempDir::new().unwrap();
+        let body = format!(
+            "{{ \"vaults\": {{ \"id0\": {{ \"path\": {}, \"open\": true }} }} }}",
+            serde_json::to_string(&content_root.to_string_lossy().to_string()).unwrap()
+        );
+        std::fs::write(cfg_dir.path().join("obsidian.json"), body).unwrap();
+
+        let outcome =
+            obsidian_vault_status_rpc(&cfg, Some(cfg_dir.path().to_string_lossy().to_string()))
+                .await
+                .unwrap();
+
+        assert!(outcome.value.registered);
+        assert!(outcome.value.config_found);
+        assert_eq!(
+            outcome.value.content_root_abs,
+            content_root.to_string_lossy().to_string()
+        );
+        // The log reports the booleans but redacts the absolute path (it
+        // embeds the user's home / username).
+        assert!(
+            outcome.logs[0].contains("registered=true"),
+            "log: {}",
+            outcome.logs[0]
+        );
+        assert!(
+            !outcome.logs[0].contains(content_root.to_str().unwrap()),
+            "log leaked content root: {}",
+            outcome.logs[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn obsidian_status_not_registered_for_empty_override_dir() {
+        let (_tmp, cfg) = test_config();
+        // Empty override dir → no obsidian.json there → content root is not a
+        // registered vault. (A temp content root can't be under any real host
+        // vault either, so this stays false regardless of the dev machine.)
+        let cfg_dir = TempDir::new().unwrap();
+        let outcome =
+            obsidian_vault_status_rpc(&cfg, Some(cfg_dir.path().to_string_lossy().to_string()))
+                .await
+                .unwrap();
+        assert!(!outcome.value.registered);
+    }
+
+    #[tokio::test]
+    async fn obsidian_status_blank_override_is_treated_as_none() {
+        // A whitespace-only override must be normalized to None rather than
+        // resolving to "." and probing a stray local ./obsidian.json. The temp
+        // content root isn't under any real host vault, so this stays false.
+        let (_tmp, cfg) = test_config();
+        let outcome = obsidian_vault_status_rpc(&cfg, Some("   ".to_string()))
+            .await
+            .unwrap();
+        assert!(!outcome.value.registered);
     }
 }
