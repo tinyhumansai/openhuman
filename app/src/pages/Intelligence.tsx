@@ -3,9 +3,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
-import MemoryTimelineTab from '../components/intelligence/MemoryTimelineTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
+import MemoryTimelineTab from '../components/intelligence/MemoryTimelineTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
@@ -21,7 +21,14 @@ import type {
 } from '../types/intelligence';
 import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'diagram' | 'centrality' | 'timeline';
+type IntelligenceTab =
+  | 'memory'
+  | 'subconscious'
+  | 'tasks'
+  | 'workflows'
+  | 'diagram'
+  | 'centrality'
+  | 'timeline';
 
 export default function Intelligence() {
   const { t } = useT();
