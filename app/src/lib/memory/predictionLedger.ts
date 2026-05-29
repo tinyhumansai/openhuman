@@ -275,15 +275,21 @@ export function parsePredictionRecords(raw: unknown): PredictionRecord[] {
     const confidence = asFiniteNumber(e.confidence);
     const createdAt = asFiniteNumber(e.createdAt);
     if (id === null || statement === null || confidence === null || createdAt === null) continue;
-    const outcome = e.outcome === 'true' || e.outcome === 'false' ? e.outcome : null;
+    // `outcome` and `resolvedAt` are a single resolved-pair: a record counts as
+    // resolved only when BOTH are valid. A stray outcome without a resolvedAt
+    // (or vice versa) would otherwise become a corrupt "resolved" entry that
+    // skews resolvedCount / Brier / bins / trend, so coerce it back to open.
+    const outcomeRaw = e.outcome === 'true' || e.outcome === 'false' ? e.outcome : null;
+    const resolvedAtRaw = asFiniteNumber(e.resolvedAt);
+    const resolvedPair = outcomeRaw !== null && resolvedAtRaw !== null;
     out.push({
       id,
       statement,
       confidence: clamp01(confidence),
       createdAt,
       resolveBy: asFiniteNumber(e.resolveBy),
-      outcome,
-      resolvedAt: asFiniteNumber(e.resolvedAt),
+      outcome: resolvedPair ? outcomeRaw : null,
+      resolvedAt: resolvedPair ? resolvedAtRaw : null,
       category: asString(e.category),
       notes: asString(e.notes),
     });

@@ -258,4 +258,29 @@ describe('parsePredictionRecords', () => {
     ]);
     expect(parsed[0].outcome).toBeNull();
   });
+
+  it('coerces a record back to open when outcome/resolvedAt are not BOTH valid', () => {
+    const parsed = parsePredictionRecords([
+      // outcome present but no resolvedAt -> open (not a corrupt "resolved").
+      { id: 'a', statement: 'x', confidence: 0.5, createdAt: NOW, outcome: 'true' },
+      // resolvedAt present but no/invalid outcome -> open.
+      { id: 'b', statement: 'y', confidence: 0.5, createdAt: NOW, resolvedAt: NOW },
+      // both valid -> stays resolved.
+      {
+        id: 'c',
+        statement: 'z',
+        confidence: 0.5,
+        createdAt: NOW,
+        outcome: 'false',
+        resolvedAt: NOW,
+      },
+    ]);
+    const byId = Object.fromEntries(parsed.map(p => [p.id, p]));
+    expect(byId.a.outcome).toBeNull();
+    expect(byId.a.resolvedAt).toBeNull();
+    expect(byId.b.outcome).toBeNull();
+    expect(byId.b.resolvedAt).toBeNull();
+    expect(byId.c.outcome).toBe('false');
+    expect(byId.c.resolvedAt).toBe(NOW);
+  });
 });

@@ -44,9 +44,9 @@ describe('predictionLedgerApi.loadLedger', () => {
     expect(await loadLedger()).toEqual([]);
   });
 
-  it('returns [] for malformed JSON (never throws)', async () => {
+  it('throws on a malformed (corrupt) blob rather than silently returning []', async () => {
     mockReadMemoryFile.mockResolvedValueOnce('{not valid json');
-    expect(await loadLedger()).toEqual([]);
+    await expect(loadLedger()).rejects.toThrow(/corrupted/);
   });
 
   it('parses a valid ledger blob', async () => {

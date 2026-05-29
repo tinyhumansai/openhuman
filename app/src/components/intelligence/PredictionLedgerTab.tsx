@@ -3,7 +3,7 @@
  * persistence, and id/timestamp minting (in event handlers, never during
  * render). Delegates all rendering to the pure <PredictionLedger>.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import {
@@ -42,6 +42,8 @@ const PredictionLedgerTab = ({ onToast }: PredictionLedgerTabProps) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ConfirmationModalType>(CLOSED_MODAL);
+  // Monotonic token: only the most recent persist may roll back on failure.
+  const persistSeq = useRef(0);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -56,14 +58,26 @@ const PredictionLedgerTab = ({ onToast }: PredictionLedgerTabProps) => {
   }, []);
 
   useEffect(() => {
-    void refresh();
+    // Defer the initial fetch through a microtask so `setState` calls inside
+    // `refresh` don't run during effect-commit (which trips the
+    // `react-hooks/set-state-in-effect` lint). Matches SubconsciousReflectionCards.
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (cancelled) return;
+      void refresh();
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [refresh]);
 
   // Optimistically update the in-memory ledger, then persist. On a write
-  // failure, toast the error AND reload from disk so the view re-syncs with
-  // what actually persisted (no silent divergence from the on-disk truth).
+  // failure, roll back to the pre-write state and toast — but ONLY if this is
+  // still the latest persist. A stale failure (a newer save already succeeded)
+  // must not clobber the newer state, so it is ignored via the seq token.
   const persist = useCallback(
     (next: PredictionRecord[], successTitle?: string) => {
+      const seq = (persistSeq.current += 1);
       const previous = records;
       setRecords(next);
       void saveLedger(next)
@@ -71,6 +85,7 @@ const PredictionLedgerTab = ({ onToast }: PredictionLedgerTabProps) => {
           if (successTitle) onToast({ type: 'success', title: successTitle });
         })
         .catch(err => {
+          if (seq !== persistSeq.current) return;
           setRecords(previous);
           onToast({
             type: 'error',

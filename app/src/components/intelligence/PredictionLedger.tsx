@@ -285,7 +285,9 @@ const PredictionLedger = ({
               points={report.trend
                 .map((point, i) => {
                   const x = (i / (report.trend.length - 1)) * 100;
-                  const y = Math.min(1, Math.max(0, point.brierScore)) * 24;
+                  // SVG y grows downward; invert so a lower (better) Brier sits
+                  // lower on screen, matching the "lower is better" framing.
+                  const y = 24 - Math.min(1, Math.max(0, point.brierScore)) * 24;
                   return `${x.toFixed(2)},${y.toFixed(2)}`;
                 })
                 .join(' ')}

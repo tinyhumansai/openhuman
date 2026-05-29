@@ -22,22 +22,37 @@ const log = debug('prediction-ledger:api');
 export const LEDGER_PATH = 'predictions/ledger.json';
 
 /**
- * Load and parse the ledger. Returns [] on first run (the read RPC rejects when
- * the file does not exist) and on a malformed/empty blob — never throws — so a
- * fresh user sees the empty state rather than an error.
+ * Load and parse the ledger.
+ *
+ * Returns [] for the two BENIGN cases — the file does not exist yet (the read
+ * RPC rejects on first run) and an empty/whitespace blob — so a fresh user sees
+ * the empty state, not an error.
+ *
+ * A present-but-unparseable blob is NOT benign: it is real corruption, so this
+ * THROWS rather than returning []. Swallowing it would render the ledger as
+ * empty and let the next save overwrite the corrupt-but-recoverable file,
+ * destroying data. The container surfaces the thrown error instead.
  */
 export async function loadLedger(): Promise<PredictionRecord[]> {
+  let content: string;
   try {
-    const content = await aiReadMemoryFile(LEDGER_PATH);
-    if (!content || !content.trim()) return [];
-    return parsePredictionRecords(JSON.parse(content));
+    content = await aiReadMemoryFile(LEDGER_PATH);
   } catch (err) {
-    log(
-      'loadLedger: no readable ledger yet (%s)',
-      err instanceof Error ? err.message : String(err)
-    );
+    log('loadLedger: no ledger file yet (%s)', err instanceof Error ? err.message : String(err));
     return [];
   }
+  if (!content || !content.trim()) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (err) {
+    throw new Error(
+      `Prediction ledger at ${LEDGER_PATH} is corrupted and could not be parsed: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+  return parsePredictionRecords(parsed);
 }
 
 /** Persist the full ledger as pretty-printed JSON (diff-friendly on disk). */
