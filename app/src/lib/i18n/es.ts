@@ -4509,6 +4509,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'Cantidad',
+  'predicateDiversity.colFrequency': 'Frecuencia',
+  'predicateDiversity.colPredicate': 'Predicado',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'Aún no hay grafo de conocimiento.',
+  'predicateDiversity.emptyHint':
+    'A medida que el asistente registra relaciones sobre usted, la forma de su vocabulario de predicados aparecerá aquí.',
+  'predicateDiversity.errorPrefix': 'No se pudo cargar el grafo:',
+  'predicateDiversity.intro':
+    'Cada otra lente analiza el grafo (quién apunta a quién). Esta lente analiza el VOCABULARIO: cuán variadas son las relaciones que el asistente ha construido — y cuán uniformemente se usa ese vocabulario. Dos grafos con el mismo número de relaciones pueden llevar cantidades muy diferentes de sorpresa estructural.',
+  'predicateDiversity.loading': 'Calculando diversidad de vocabulario…',
+  'predicateDiversity.metricDistinct': 'Predicados distintos',
+  'predicateDiversity.metricEntropy': 'Entropía (bits)',
+  'predicateDiversity.metricEvenness': 'Uniformidad',
+  'predicateDiversity.namespaceAll': 'Todos los espacios de nombres',
+  'predicateDiversity.namespaceLabel': 'Espacio de nombres',
+  'predicateDiversity.rankedHeading': 'Predicados principales',
+  'predicateDiversity.retry': 'Reintentar',
+  'predicateDiversity.summaryCaption': '{relations} relaciones contadas',
+  'predicateDiversity.summaryCaptionOne': '1 relación contada',
+  'predicateDiversity.title': 'Diversidad de predicados',
 };
 
 export default messages;

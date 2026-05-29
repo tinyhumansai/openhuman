@@ -4443,6 +4443,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'Jumlah',
+  'predicateDiversity.colFrequency': 'Frekuensi',
+  'predicateDiversity.colPredicate': 'Predikat',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'Belum ada graf pengetahuan.',
+  'predicateDiversity.emptyHint':
+    'Saat asisten mencatat relasi tentang Anda, bentuk kosakata predikat Anda akan muncul di sini.',
+  'predicateDiversity.errorPrefix': 'Tidak dapat memuat graf:',
+  'predicateDiversity.intro':
+    'Setiap lensa lain menganalisis graf (siapa menunjuk ke siapa). Lensa ini menganalisis KOSAKATA: seberapa bervariasi relasi yang dibangun asisten — dan seberapa merata kosakata itu digunakan? Dua graf dengan jumlah relasi sama dapat membawa kejutan struktural yang sangat berbeda.',
+  'predicateDiversity.loading': 'Menghitung keragaman kosakata…',
+  'predicateDiversity.metricDistinct': 'Predikat berbeda',
+  'predicateDiversity.metricEntropy': 'Entropi (bit)',
+  'predicateDiversity.metricEvenness': 'Kemerataan',
+  'predicateDiversity.namespaceAll': 'Semua ruang nama',
+  'predicateDiversity.namespaceLabel': 'Ruang nama',
+  'predicateDiversity.rankedHeading': 'Predikat teratas',
+  'predicateDiversity.retry': 'Coba lagi',
+  'predicateDiversity.summaryCaption': '{relations} relasi terhitung',
+  'predicateDiversity.summaryCaptionOne': '1 relasi terhitung',
+  'predicateDiversity.title': 'Keragaman Predikat',
 };
 
 export default messages;

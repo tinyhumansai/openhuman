@@ -4501,6 +4501,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'Liczba',
+  'predicateDiversity.colFrequency': 'Częstotliwość',
+  'predicateDiversity.colPredicate': 'Predykat',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'Jeszcze brak grafu wiedzy.',
+  'predicateDiversity.emptyHint':
+    'Gdy asystent zapisuje relacje o tobie, kształt twojego słownika predykatów pojawi się tutaj.',
+  'predicateDiversity.errorPrefix': 'Nie udało się załadować grafu:',
+  'predicateDiversity.intro':
+    'Każda inna soczewka analizuje graf (kto wskazuje na kogo). Ta soczewka analizuje SŁOWNIK: jak różnorodne są relacje, które zbudował asystent — i jak równomiernie jest używany ten słownik? Dwa grafy o tej samej liczbie relacji mogą nieść bardzo różne ilości strukturalnej niespodzianki.',
+  'predicateDiversity.loading': 'Obliczanie różnorodności słownika…',
+  'predicateDiversity.metricDistinct': 'Różne predykaty',
+  'predicateDiversity.metricEntropy': 'Entropia (bity)',
+  'predicateDiversity.metricEvenness': 'Równomierność',
+  'predicateDiversity.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'predicateDiversity.namespaceLabel': 'Przestrzeń nazw',
+  'predicateDiversity.rankedHeading': 'Najlepsze predykaty',
+  'predicateDiversity.retry': 'Spróbuj ponownie',
+  'predicateDiversity.summaryCaption': '{relations} relacji zliczonych',
+  'predicateDiversity.summaryCaptionOne': '1 relacja zliczona',
+  'predicateDiversity.title': 'Różnorodność predykatów',
 };
 
 export default messages;

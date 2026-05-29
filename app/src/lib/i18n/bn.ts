@@ -4427,6 +4427,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'গণনা',
+  'predicateDiversity.colFrequency': 'ফ্রিকোয়েন্সি',
+  'predicateDiversity.colPredicate': 'বিধেয়',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'predicateDiversity.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সম্পর্ক রেকর্ড করে, আপনার বিধেয় শব্দভাণ্ডারের আকৃতি এখানে উঠে আসবে।',
+  'predicateDiversity.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'predicateDiversity.intro':
+    'প্রতিটি অন্য লেন্স গ্রাফ বিশ্লেষণ করে (কে কাকে নির্দেশ করে)। এই লেন্স শব্দভাণ্ডার বিশ্লেষণ করে: সহকারী যে সম্পর্কগুলি তৈরি করেছে সেগুলি কতটা বৈচিত্র্যময় — এবং সেই শব্দভাণ্ডার কতটা সমানভাবে ব্যবহৃত হয়? একই সংখ্যক সম্পর্কের দুটি গ্রাফ খুব ভিন্ন পরিমাণের কাঠামোগত বিস্ময় বহন করতে পারে।',
+  'predicateDiversity.loading': 'শব্দভাণ্ডার বৈচিত্র্য গণনা করা হচ্ছে…',
+  'predicateDiversity.metricDistinct': 'স্বতন্ত্র বিধেয়',
+  'predicateDiversity.metricEntropy': 'এনট্রপি (বিট)',
+  'predicateDiversity.metricEvenness': 'সমতা',
+  'predicateDiversity.namespaceAll': 'সমস্ত নেমস্পেস',
+  'predicateDiversity.namespaceLabel': 'নেমস্পেস',
+  'predicateDiversity.rankedHeading': 'শীর্ষ বিধেয়',
+  'predicateDiversity.retry': 'পুনরায় চেষ্টা',
+  'predicateDiversity.summaryCaption': '{relations} টি সম্পর্ক গণনা করা হয়েছে',
+  'predicateDiversity.summaryCaptionOne': '১টি সম্পর্ক গণনা করা হয়েছে',
+  'predicateDiversity.title': 'বিধেয় বৈচিত্র্য',
 };
 
 export default messages;

@@ -4393,6 +4393,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': '개수',
+  'predicateDiversity.colFrequency': '빈도',
+  'predicateDiversity.colPredicate': '술어',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': '아직 지식 그래프가 없습니다.',
+  'predicateDiversity.emptyHint':
+    '어시스턴트가 사용자에 대한 관계를 기록함에 따라, 술어 어휘의 형태가 여기에 나타납니다.',
+  'predicateDiversity.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'predicateDiversity.intro':
+    '다른 모든 렌즈는 그래프를 분석합니다(누가 누구를 가리키는지). 이 렌즈는 어휘를 분석합니다: 어시스턴트가 구축한 관계가 얼마나 다양한가 — 그리고 그 어휘가 얼마나 고르게 사용되는가? 동일한 수의 관계를 가진 두 그래프가 매우 다른 양의 구조적 놀라움을 전달할 수 있습니다.',
+  'predicateDiversity.loading': '어휘 다양성 계산 중…',
+  'predicateDiversity.metricDistinct': '고유한 술어',
+  'predicateDiversity.metricEntropy': '엔트로피 (비트)',
+  'predicateDiversity.metricEvenness': '고름',
+  'predicateDiversity.namespaceAll': '모든 네임스페이스',
+  'predicateDiversity.namespaceLabel': '네임스페이스',
+  'predicateDiversity.rankedHeading': '상위 술어',
+  'predicateDiversity.retry': '다시 시도',
+  'predicateDiversity.summaryCaption': '관계 {relations}건 집계됨',
+  'predicateDiversity.summaryCaptionOne': '관계 1건 집계됨',
+  'predicateDiversity.title': '술어 다양성',
 };
 
 export default messages;

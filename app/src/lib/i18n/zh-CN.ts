@@ -4214,6 +4214,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': '数量',
+  'predicateDiversity.colFrequency': '频次',
+  'predicateDiversity.colPredicate': '谓词',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': '暂无知识图。',
+  'predicateDiversity.emptyHint': '随着助手记录你的相关关系,你谓词词汇的形态将在此显现。',
+  'predicateDiversity.errorPrefix': '无法加载图:',
+  'predicateDiversity.intro':
+    '其他每个透镜分析图(谁指向谁)。本透镜分析词汇:助手构建的关系有多样化,以及该词汇被使用得有多均匀?具有相同关系数量的两个图可能承载着差异极大的结构性惊喜。',
+  'predicateDiversity.loading': '正在计算词汇多样性…',
+  'predicateDiversity.metricDistinct': '不同谓词',
+  'predicateDiversity.metricEntropy': '熵(比特)',
+  'predicateDiversity.metricEvenness': '均匀度',
+  'predicateDiversity.namespaceAll': '所有命名空间',
+  'predicateDiversity.namespaceLabel': '命名空间',
+  'predicateDiversity.rankedHeading': '首位谓词',
+  'predicateDiversity.retry': '重试',
+  'predicateDiversity.summaryCaption': '已统计 {relations} 条关系',
+  'predicateDiversity.summaryCaptionOne': '已统计 1 个关系',
+  'predicateDiversity.title': '谓词多样性',
 };
 
 export default messages;

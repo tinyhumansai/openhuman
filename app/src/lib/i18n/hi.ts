@@ -4434,6 +4434,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'गिनती',
+  'predicateDiversity.colFrequency': 'आवृत्ति',
+  'predicateDiversity.colPredicate': 'विधेय',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'predicateDiversity.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में संबंध दर्ज करता है, आपकी विधेय शब्दावली का आकार यहाँ उभरेगा।',
+  'predicateDiversity.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'predicateDiversity.intro':
+    'हर अन्य लेंस ग्राफ का विश्लेषण करती है (कौन किसकी ओर इशारा करता है)। यह लेंस शब्दावली का विश्लेषण करती है: सहायक ने जो संबंध बनाए हैं वे कितने विविध हैं — और वह शब्दावली कितनी समान रूप से उपयोग होती है? समान संख्या के संबंधों वाले दो ग्राफ बहुत भिन्न मात्रा में संरचनात्मक आश्चर्य ले जा सकते हैं।',
+  'predicateDiversity.loading': 'शब्दावली विविधता गणना हो रही है…',
+  'predicateDiversity.metricDistinct': 'विशिष्ट विधेय',
+  'predicateDiversity.metricEntropy': 'एन्ट्रॉपी (बिट्स)',
+  'predicateDiversity.metricEvenness': 'समानता',
+  'predicateDiversity.namespaceAll': 'सभी नेमस्पेस',
+  'predicateDiversity.namespaceLabel': 'नेमस्पेस',
+  'predicateDiversity.rankedHeading': 'शीर्ष विधेय',
+  'predicateDiversity.retry': 'पुनः प्रयास',
+  'predicateDiversity.summaryCaption': '{relations} संबंध गिने गए',
+  'predicateDiversity.summaryCaptionOne': '1 संबंध गिना गया',
+  'predicateDiversity.title': 'विधेय विविधता',
 };
 
 export default messages;

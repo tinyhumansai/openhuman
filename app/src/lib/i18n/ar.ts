@@ -4350,6 +4350,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'العدد',
+  'predicateDiversity.colFrequency': 'التردد',
+  'predicateDiversity.colPredicate': 'المسند',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'لا يوجد رسم معرفي بعد.',
+  'predicateDiversity.emptyHint':
+    'كلما سجّل المساعد علاقات عنك، سيظهر هنا شكل مفردات المسندات لديك.',
+  'predicateDiversity.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'predicateDiversity.intro':
+    'كل العدسات الأخرى تحلل الرسم (من يشير إلى من). هذه العدسة تحلل المفردات: كم هي متنوعة العلاقات التي بناها المساعد — وكم تُستخدم تلك المفردات بانتظام؟ رسمان بنفس عدد العلاقات قد يحملان كميات مختلفة جداً من المفاجأة البنيوية.',
+  'predicateDiversity.loading': 'حساب تنوع المفردات…',
+  'predicateDiversity.metricDistinct': 'مسندات متمايزة',
+  'predicateDiversity.metricEntropy': 'الإنتروبيا (بت)',
+  'predicateDiversity.metricEvenness': 'التساوي',
+  'predicateDiversity.namespaceAll': 'كل مساحات الأسماء',
+  'predicateDiversity.namespaceLabel': 'مساحة الأسماء',
+  'predicateDiversity.rankedHeading': 'أعلى المسندات',
+  'predicateDiversity.retry': 'إعادة المحاولة',
+  'predicateDiversity.summaryCaption': '{relations} علاقة محتسبة',
+  'predicateDiversity.summaryCaptionOne': 'علاقة واحدة محتسبة',
+  'predicateDiversity.title': 'تنوع المسندات',
 };
 
 export default messages;

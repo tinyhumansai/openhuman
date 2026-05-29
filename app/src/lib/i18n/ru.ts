@@ -4469,6 +4469,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'Количество',
+  'predicateDiversity.colFrequency': 'Частота',
+  'predicateDiversity.colPredicate': 'Предикат',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'Пока нет графа знаний.',
+  'predicateDiversity.emptyHint':
+    'По мере того как ассистент фиксирует отношения о вас, здесь появится форма вашего словаря предикатов.',
+  'predicateDiversity.errorPrefix': 'Не удалось загрузить граф:',
+  'predicateDiversity.intro':
+    'Все остальные линзы анализируют граф (кто на кого указывает). Эта линза анализирует СЛОВАРЬ: насколько разнообразны отношения, которые построил ассистент — и насколько равномерно используется этот словарь? Два графа с одинаковым числом отношений могут нести очень разное количество структурной неожиданности.',
+  'predicateDiversity.loading': 'Вычисление разнообразия словаря…',
+  'predicateDiversity.metricDistinct': 'Различных предикатов',
+  'predicateDiversity.metricEntropy': 'Энтропия (биты)',
+  'predicateDiversity.metricEvenness': 'Равномерность',
+  'predicateDiversity.namespaceAll': 'Все пространства имён',
+  'predicateDiversity.namespaceLabel': 'Пространство имён',
+  'predicateDiversity.rankedHeading': 'Топ-предикаты',
+  'predicateDiversity.retry': 'Повторить',
+  'predicateDiversity.summaryCaption': '{relations} отношений учтено',
+  'predicateDiversity.summaryCaptionOne': '1 связь учтена',
+  'predicateDiversity.title': 'Разнообразие предикатов',
 };
 
 export default messages;

@@ -4543,6 +4543,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'Anzahl',
+  'predicateDiversity.colFrequency': 'Häufigkeit',
+  'predicateDiversity.colPredicate': 'Prädikat',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'Noch kein Wissensgraph.',
+  'predicateDiversity.emptyHint':
+    'Während der Assistent Relationen über Sie erfasst, erscheint hier die Form Ihres Prädikatvokabulars.',
+  'predicateDiversity.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'predicateDiversity.intro':
+    'Jede andere Linse analysiert den Graphen (wer auf wen zeigt). Diese Linse analysiert das VOKABULAR: wie vielfältig sind die vom Assistenten gebauten Relationen — und wie gleichmäßig wird das Vokabular verwendet? Zwei Graphen mit gleicher Relationsanzahl können sehr unterschiedliche strukturelle Überraschung tragen.',
+  'predicateDiversity.loading': 'Berechne Vokabulardiversität…',
+  'predicateDiversity.metricDistinct': 'Verschiedene Prädikate',
+  'predicateDiversity.metricEntropy': 'Entropie (Bits)',
+  'predicateDiversity.metricEvenness': 'Gleichmäßigkeit',
+  'predicateDiversity.namespaceAll': 'Alle Namensräume',
+  'predicateDiversity.namespaceLabel': 'Namensraum',
+  'predicateDiversity.rankedHeading': 'Top-Prädikate',
+  'predicateDiversity.retry': 'Wiederholen',
+  'predicateDiversity.summaryCaption': '{relations} Relationen gezählt',
+  'predicateDiversity.summaryCaptionOne': '1 Relation gezählt',
+  'predicateDiversity.title': 'Prädikat-Diversität',
 };
 
 export default messages;

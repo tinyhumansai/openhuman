@@ -4524,6 +4524,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'memory.tab.vocab': 'Vocabulary',
+  'predicateDiversity.colCount': 'Nombre',
+  'predicateDiversity.colFrequency': 'Fréquence',
+  'predicateDiversity.colPredicate': 'Prédicat',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.empty': 'Pas encore de graphe de connaissances.',
+  'predicateDiversity.emptyHint':
+    "À mesure que l'assistant enregistre des relations à votre sujet, la forme de votre vocabulaire de prédicats apparaîtra ici.",
+  'predicateDiversity.errorPrefix': 'Impossible de charger le graphe :',
+  'predicateDiversity.intro':
+    "Toutes les autres lentilles analysent le graphe (qui pointe vers qui). Celle-ci analyse le VOCABULAIRE : à quel point les relations construites par l'assistant sont-elles variées — et à quel point ce vocabulaire est-il utilisé uniformément ? Deux graphes ayant le même nombre de relations peuvent porter des quantités très différentes de surprise structurelle.",
+  'predicateDiversity.loading': 'Calcul de la diversité du vocabulaire…',
+  'predicateDiversity.metricDistinct': 'Prédicats distincts',
+  'predicateDiversity.metricEntropy': 'Entropie (bits)',
+  'predicateDiversity.metricEvenness': 'Uniformité',
+  'predicateDiversity.namespaceAll': 'Tous les espaces de noms',
+  'predicateDiversity.namespaceLabel': 'Espace de noms',
+  'predicateDiversity.rankedHeading': 'Principaux prédicats',
+  'predicateDiversity.retry': 'Réessayer',
+  'predicateDiversity.summaryCaption': '{relations} relations comptées',
+  'predicateDiversity.summaryCaptionOne': '1 relation comptée',
+  'predicateDiversity.title': 'Diversité des prédicats',
 };
 
 export default messages;

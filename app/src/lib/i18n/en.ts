@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.vocab': 'Vocabulary',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,28 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+
+  'predicateDiversity.title': 'Predicate Diversity',
+  'predicateDiversity.intro':
+    'Every other lens analyses the graph (who points at whom). This lens analyses the VOCABULARY: how varied are the relations the assistant has built — and how evenly is that vocabulary used? Two graphs with the same number of relations can carry very different amounts of structural surprise.',
+  'predicateDiversity.loading': 'Computing vocabulary diversity…',
+  'predicateDiversity.errorPrefix': 'Could not load the graph:',
+  'predicateDiversity.retry': 'Retry',
+  'predicateDiversity.empty': 'No knowledge graph yet.',
+  'predicateDiversity.emptyHint':
+    'As the assistant records relations about you, the shape of your predicate vocabulary will surface here.',
+  'predicateDiversity.namespaceLabel': 'Namespace',
+  'predicateDiversity.namespaceAll': 'All namespaces',
+  'predicateDiversity.metricDistinct': 'Distinct predicates',
+  'predicateDiversity.metricEntropy': 'Entropy (bits)',
+  'predicateDiversity.metricEvenness': 'Evenness',
+  'predicateDiversity.summaryCaption': '{relations} relations counted',
+  'predicateDiversity.summaryCaptionOne': '1 relation counted',
+  'predicateDiversity.rankedHeading': 'Top predicates',
+  'predicateDiversity.colRank': '#',
+  'predicateDiversity.colPredicate': 'Predicate',
+  'predicateDiversity.colFrequency': 'Frequency',
+  'predicateDiversity.colCount': 'Count',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -2500,7 +2523,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',
