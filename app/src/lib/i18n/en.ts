@@ -330,6 +330,29 @@ const en: TranslationMap = {
   'graphCentrality.bridgeBadge': 'connector',
   'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
   'graphCentrality.degreeTitle': '{in} in · {out} out',
+  'memory.tab.associations': 'Associations',
+  'entityAssociations.title': 'Entity Associations',
+  'entityAssociations.intro':
+    'Entities that share many of the same connections are associated — even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
+  'entityAssociations.loading': 'Scoring associations…',
+  'entityAssociations.errorPrefix': 'Could not load the graph:',
+  'entityAssociations.retry': 'Retry',
+  'entityAssociations.empty': 'No associations yet.',
+  'entityAssociations.emptyHint':
+    'When entities start sharing connections, the strongest pairings will surface here.',
+  'entityAssociations.namespaceLabel': 'Namespace',
+  'entityAssociations.namespaceAll': 'All namespaces',
+  'entityAssociations.metricEntities': 'Entities',
+  'entityAssociations.metricPairs': 'Associations',
+  'entityAssociations.rankedHeading': 'Strongest associations',
+  'entityAssociations.linkedBadge': 'linked',
+  'entityAssociations.inferredBadge': 'inferred',
+  'entityAssociations.linkedTitle': 'These entities are directly connected.',
+  'entityAssociations.inferredTitle':
+    'No direct link — associated only through shared connections.',
+  'entityAssociations.sharedLabel': '{shared} shared',
+  'entityAssociations.pairTitle': '{jaccard}% similar · {shared} of {union} connections shared',
+  'entityAssociations.truncated': 'Showing {shown} of {total} — strongest first.',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
