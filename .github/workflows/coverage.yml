@@ -93,6 +93,16 @@ jobs:
           key: core-coverage
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Install python-pptx for generate_presentation tool tests
+        # The presentation tool (#2778) bundles a python-pptx-backed
+        # script that runs through runtime_python's managed venv. The
+        # integration test at tests/presentation_tool.rs spins up that
+        # venv against a tempdir cache and shells out to python3; this
+        # step ensures `pip install python-pptx==1.0.2` is reachable
+        # from the cargo-llvm-cov runner so coverage on the success
+        # branch is real rather than skipped.
+        run: |
+          python3 -m pip install --user --quiet python-pptx==1.0.2
       - name: Run cargo llvm-cov for openhuman core
         run: cargo llvm-cov -p openhuman --lcov --output-path lcov-core.info
       - name: Upload core lcov
