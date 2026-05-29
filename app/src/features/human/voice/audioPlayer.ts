@@ -123,7 +123,7 @@ export async function playBase64Audio(
   audio.addEventListener(
     'loadedmetadata',
     () => {
-      audioLog('playback metadata ready duration=%.2fs mime=%s', audio.duration, mime);
+      audioLog('playback metadata ready duration=%ss mime=%s', audio.duration.toFixed(2), mime);
       resolveMetadata();
     },
     { once: true }

@@ -636,8 +636,11 @@ export function MicComposer({
         wav.size,
         Math.round(Date.now() - reEncodeStart)
       );
+      // Snapshot before the WAV path so the WAV callback doesn't compound
+      // against a value that handleRetry already mutated on native retries.
+      const nativeRetries = cumulativeRetries;
       const text = await transcribeWithRetry(wav, 'wav', attempt => {
-        handleRetry(cumulativeRetries + attempt);
+        handleRetry(nativeRetries + attempt);
       });
       composerLog(
         '[session:%d] transcribe ok path=wav-fallback total_ms=%d',
@@ -656,7 +659,7 @@ export function MicComposer({
     ? retryCount > 0
       ? t('mic.retryingTranscription')
           .replace('{attempt}', String(retryCount))
-          .replace('{max}', String(STT_MAX_RETRIES))
+          .replace('{max}', String(STT_MAX_RETRIES * 2))
       : t('mic.transcribing')
     : isRecording
       ? remainingSecs != null && remainingSecs <= 10
