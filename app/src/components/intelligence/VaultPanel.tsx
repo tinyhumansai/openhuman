@@ -338,6 +338,12 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
         <ul className="divide-y divide-stone-100 dark:divide-neutral-800" data-testid="vault-list">
           {vaults.map(v => {
             const state = busy[v.id];
+            const writeStateReason = v.write_state_reason
+              ? t(
+                  `vault.writeState.reasons.${v.write_state_reason}`,
+                  t('vault.writeState.unknownReason')
+                )
+              : t('vault.writeState.unknownReason');
             return (
               <li key={v.id} className="flex items-center justify-between gap-3 py-2">
                 <div className="min-w-0 flex-1">
@@ -361,12 +367,12 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
                     <span
                       className={writeStateBadgeClass(v.write_state)}
-                      title={v.write_state_reason ?? undefined}
+                      title={writeStateReason}
                       data-testid={`vault-write-state-${v.id}`}>
                       {t(`vault.writeState.${v.write_state}`)}
                     </span>
                     <span className="text-[11px] text-stone-400 dark:text-neutral-500">
-                      {v.write_state_reason ?? t('vault.writeState.unknownReason')}
+                      {writeStateReason}
                     </span>
                   </div>
                 </div>

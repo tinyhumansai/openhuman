@@ -137,8 +137,7 @@ pub async fn vault_write_markdown(
         log::debug!(
             "[vault] write_markdown: rejected non-writable id={id} state={write_state:?} reason={write_reason:?}"
         );
-        return Err(write_reason
-            .unwrap_or_else(|| "vault folder is not writable on this device".to_string()));
+        return Err(store::vault_write_state_reason_message(write_reason.as_deref()).to_string());
     }
 
     let rel = validate_markdown_rel_path(rel_path)?;

@@ -12,6 +12,12 @@ use super::types::{Vault, VaultFile, VaultFileStatus, VaultWriteState};
 
 static MIGRATED_VAULT_DBS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
+pub(crate) const VAULT_WRITE_REASON_EMPTY_PATH: &str = "empty_path";
+pub(crate) const VAULT_WRITE_REASON_UNAVAILABLE: &str = "unavailable";
+pub(crate) const VAULT_WRITE_REASON_NOT_DIRECTORY: &str = "not_directory";
+pub(crate) const VAULT_WRITE_REASON_READ_ONLY: &str = "read_only";
+pub(crate) const VAULT_WRITE_REASON_WRITABLE: &str = "writable";
+
 pub(crate) fn with_connection<T>(
     config: &Config,
     f: impl FnOnce(&Connection) -> Result<T>,
@@ -293,41 +299,52 @@ pub(crate) fn vault_write_state_for_root_path(
     if trimmed.is_empty() {
         return (
             VaultWriteState::Unavailable,
-            Some("Vault folder path is empty.".to_string()),
+            Some(VAULT_WRITE_REASON_EMPTY_PATH.to_string()),
         );
     }
 
     let path = std::path::Path::new(trimmed);
     let metadata = match std::fs::metadata(path) {
         Ok(metadata) => metadata,
-        Err(err) => {
+        Err(_) => {
             return (
                 VaultWriteState::Unavailable,
-                Some(format!(
-                    "Vault folder is not available on this device: {err}"
-                )),
-            );
+                Some(VAULT_WRITE_REASON_UNAVAILABLE.to_string()),
+            )
         }
     };
 
     if !metadata.is_dir() {
         return (
             VaultWriteState::Unavailable,
-            Some("Vault path is not a directory.".to_string()),
+            Some(VAULT_WRITE_REASON_NOT_DIRECTORY.to_string()),
         );
     }
 
     if metadata.permissions().readonly() {
         return (
             VaultWriteState::ReadOnly,
-            Some("Vault folder is read-only on this device.".to_string()),
+            Some(VAULT_WRITE_REASON_READ_ONLY.to_string()),
         );
     }
 
     (
         VaultWriteState::Writable,
-        Some("Approved markdown/wiki writes can be saved in this vault.".to_string()),
+        Some(VAULT_WRITE_REASON_WRITABLE.to_string()),
     )
+}
+
+pub(crate) fn vault_write_state_reason_message(reason_code: Option<&str>) -> &'static str {
+    match reason_code {
+        Some(VAULT_WRITE_REASON_EMPTY_PATH) => "Vault folder path is empty.",
+        Some(VAULT_WRITE_REASON_UNAVAILABLE) => "Vault folder is not available on this device.",
+        Some(VAULT_WRITE_REASON_NOT_DIRECTORY) => "Vault path is not a directory.",
+        Some(VAULT_WRITE_REASON_READ_ONLY) => "Vault folder is read-only on this device.",
+        Some(VAULT_WRITE_REASON_WRITABLE) => {
+            "Approved markdown/wiki writes can be saved in this vault."
+        }
+        _ => "Vault write state is unknown.",
+    }
 }
 
 pub(crate) fn path_looks_compatible_with_host_os(raw_path: &str, host_os: &str) -> bool {

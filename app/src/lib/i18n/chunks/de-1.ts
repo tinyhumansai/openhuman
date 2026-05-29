@@ -1576,6 +1576,12 @@ const de1: TranslationMap = {
   'vault.writeState.read_only': 'Schreibgeschützt',
   'vault.writeState.unavailable': 'Nicht verfügbar',
   'vault.writeState.unknownReason': 'Schreibstatus ist unbekannt.',
+  'vault.writeState.reasons.writable':
+    'Genehmigte Markdown-/Wiki-Schreibvorgänge können in diesem Tresor gespeichert werden.',
+  'vault.writeState.reasons.read_only': 'Der Tresorordner ist auf diesem Gerät schreibgeschützt.',
+  'vault.writeState.reasons.unavailable': 'Der Tresorordner ist auf diesem Gerät nicht verfügbar.',
+  'vault.writeState.reasons.not_directory': 'Der Tresorpfad ist kein Ordner.',
+  'vault.writeState.reasons.empty_path': 'Der Tresorordnerpfad ist leer.',
   'vault.syncingProgress': 'Synchronisierung… {ingested}/{total}',
   'vault.removing': 'Entfernen…',
   'vault.relative.sec': 'vor {count}s',

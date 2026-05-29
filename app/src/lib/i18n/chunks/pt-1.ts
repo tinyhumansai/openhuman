@@ -1571,6 +1571,12 @@ const pt1: TranslationMap = {
   'vault.writeState.read_only': 'Somente leitura',
   'vault.writeState.unavailable': 'Indisponível',
   'vault.writeState.unknownReason': 'Estado de gravação desconhecido.',
+  'vault.writeState.reasons.writable':
+    'Gravações Markdown/wiki aprovadas podem ser salvas neste cofre.',
+  'vault.writeState.reasons.read_only': 'A pasta do cofre é somente leitura neste dispositivo.',
+  'vault.writeState.reasons.unavailable': 'A pasta do cofre não está disponível neste dispositivo.',
+  'vault.writeState.reasons.not_directory': 'O caminho do cofre não é uma pasta.',
+  'vault.writeState.reasons.empty_path': 'O caminho da pasta do cofre está vazio.',
   'vault.syncingProgress': 'Sincronizando… {ingested}/{total}',
   'vault.removing': 'Removendo…',
   'vault.relative.sec': '{count}s atrás',

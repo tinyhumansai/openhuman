@@ -1549,6 +1549,12 @@ const ar1: TranslationMap = {
   'vault.writeState.read_only': 'للقراءة فقط',
   'vault.writeState.unavailable': 'غير متاح',
   'vault.writeState.unknownReason': 'حالة الكتابة غير معروفة.',
+  'vault.writeState.reasons.writable':
+    'يمكن حفظ عمليات كتابة Markdown/wiki الموافق عليها في هذا المخزن.',
+  'vault.writeState.reasons.read_only': 'مجلد المخزن للقراءة فقط على هذا الجهاز.',
+  'vault.writeState.reasons.unavailable': 'مجلد المخزن غير متاح على هذا الجهاز.',
+  'vault.writeState.reasons.not_directory': 'مسار المخزن ليس دليلاً.',
+  'vault.writeState.reasons.empty_path': 'مسار مجلد المخزن فارغ.',
   'vault.syncingProgress': 'جارٍ المزامنة… {ingested}/{total}',
   'vault.removing': 'جارٍ الإزالة...',
   'vault.relative.sec': 'قبل {count}s',

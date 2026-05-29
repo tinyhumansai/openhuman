@@ -1573,6 +1573,14 @@ const es1: TranslationMap = {
   'vault.writeState.read_only': 'Solo lectura',
   'vault.writeState.unavailable': 'No disponible',
   'vault.writeState.unknownReason': 'Se desconoce el estado de escritura.',
+  'vault.writeState.reasons.writable':
+    'Las escrituras Markdown/wiki aprobadas se pueden guardar en esta bóveda.',
+  'vault.writeState.reasons.read_only':
+    'La carpeta de la bóveda es de solo lectura en este dispositivo.',
+  'vault.writeState.reasons.unavailable':
+    'La carpeta de la bóveda no está disponible en este dispositivo.',
+  'vault.writeState.reasons.not_directory': 'La ruta de la bóveda no es una carpeta.',
+  'vault.writeState.reasons.empty_path': 'La ruta de la carpeta de la bóveda está vacía.',
   'vault.syncingProgress': 'Sincronizando... {ingested}/{total}',
   'vault.removing': 'Eliminando…',
   'vault.relative.sec': 'Hace {count}s',

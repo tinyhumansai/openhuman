@@ -1578,6 +1578,14 @@ const fr1: TranslationMap = {
   'vault.writeState.read_only': 'Lecture seule',
   'vault.writeState.unavailable': 'Indisponible',
   'vault.writeState.unknownReason': "L'état d'écriture est inconnu.",
+  'vault.writeState.reasons.writable':
+    'Les écritures Markdown/wiki approuvées peuvent être enregistrées dans ce coffre.',
+  'vault.writeState.reasons.read_only':
+    'Le dossier du coffre est en lecture seule sur cet appareil.',
+  'vault.writeState.reasons.unavailable':
+    "Le dossier du coffre n'est pas disponible sur cet appareil.",
+  'vault.writeState.reasons.not_directory': "Le chemin du coffre n'est pas un dossier.",
+  'vault.writeState.reasons.empty_path': 'Le chemin du dossier du coffre est vide.',
   'vault.syncingProgress': 'Synchronisation… {ingested}/{total}',
   'vault.removing': 'Suppression…',
   'vault.relative.sec': 'il y a {count}s',

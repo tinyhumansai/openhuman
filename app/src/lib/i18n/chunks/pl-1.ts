@@ -912,6 +912,12 @@ const pl1: TranslationMap = {
   'vault.writeState.read_only': 'Tylko do odczytu',
   'vault.writeState.unavailable': 'Niedostępny',
   'vault.writeState.unknownReason': 'Stan zapisu jest nieznany.',
+  'vault.writeState.reasons.writable':
+    'Zatwierdzone zapisy Markdown/wiki mogą być zapisane w tym skarbcu.',
+  'vault.writeState.reasons.read_only': 'Folder skarbca jest tylko do odczytu na tym urządzeniu.',
+  'vault.writeState.reasons.unavailable': 'Folder skarbca jest niedostępny na tym urządzeniu.',
+  'vault.writeState.reasons.not_directory': 'Ścieżka skarbca nie jest folderem.',
+  'vault.writeState.reasons.empty_path': 'Ścieżka folderu skarbca jest pusta.',
   'vault.syncingProgress': 'Synchronizowanie… {ingested}/{total}',
   'vault.removing': 'Usuwanie…',
   'vault.relative.sec': '{count} s temu',

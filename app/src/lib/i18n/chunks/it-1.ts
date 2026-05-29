@@ -1566,6 +1566,14 @@ const it1: TranslationMap = {
   'vault.writeState.read_only': 'Sola lettura',
   'vault.writeState.unavailable': 'Non disponibile',
   'vault.writeState.unknownReason': 'Stato di scrittura sconosciuto.',
+  'vault.writeState.reasons.writable':
+    'Le scritture Markdown/wiki approvate possono essere salvate in questo deposito.',
+  'vault.writeState.reasons.read_only':
+    'La cartella del deposito è in sola lettura su questo dispositivo.',
+  'vault.writeState.reasons.unavailable':
+    'La cartella del deposito non è disponibile su questo dispositivo.',
+  'vault.writeState.reasons.not_directory': 'Il percorso del deposito non è una cartella.',
+  'vault.writeState.reasons.empty_path': 'Il percorso della cartella del deposito è vuoto.',
   'vault.syncingProgress': 'Sincronizzazione… {ingested}/{total}',
   'vault.removing': 'Rimozione in corso…',
   'vault.relative.sec': '{count}s fa',

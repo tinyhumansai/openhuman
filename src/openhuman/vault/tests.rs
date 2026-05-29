@@ -104,6 +104,10 @@ fn store_stamps_new_vaults_with_current_host_os() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].host_os.as_deref(), Some(std::env::consts::OS));
     assert_eq!(listed[0].write_state, VaultWriteState::Writable);
+    assert_eq!(
+        listed[0].write_state_reason.as_deref(),
+        Some(store::VAULT_WRITE_REASON_WRITABLE)
+    );
 }
 
 #[test]
@@ -120,11 +124,10 @@ fn store_marks_missing_vault_folder_unavailable_instead_of_hiding_it() {
     let listed = store::list_vaults(&config).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].write_state, VaultWriteState::Unavailable);
-    assert!(listed[0]
-        .write_state_reason
-        .as_deref()
-        .unwrap()
-        .contains("not available"));
+    assert_eq!(
+        listed[0].write_state_reason.as_deref(),
+        Some(store::VAULT_WRITE_REASON_UNAVAILABLE)
+    );
 }
 
 #[test]
@@ -369,6 +372,10 @@ async fn vault_create_returns_current_host_os() {
 
     assert_eq!(outcome.value.host_os.as_deref(), Some(std::env::consts::OS));
     assert_eq!(outcome.value.write_state, VaultWriteState::Writable);
+    assert_eq!(
+        outcome.value.write_state_reason.as_deref(),
+        Some(store::VAULT_WRITE_REASON_WRITABLE)
+    );
 }
 
 #[tokio::test]

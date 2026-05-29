@@ -34,7 +34,7 @@ function vault(overrides: Record<string, unknown> = {}) {
     last_synced_at: null,
     file_count: 0,
     write_state: 'writable',
-    write_state_reason: 'Approved markdown/wiki writes can be saved in this vault.',
+    write_state_reason: 'writable',
     ...overrides,
   };
 }
@@ -114,13 +114,13 @@ describe('<VaultPanel />', () => {
           id: 'v-readonly',
           name: 'Read only',
           write_state: 'read_only',
-          write_state_reason: 'Vault folder is read-only on this device.',
+          write_state_reason: 'read_only',
         }),
         vault({
           id: 'v-missing',
           name: 'Missing',
           write_state: 'unavailable',
-          write_state_reason: 'Vault folder is not available on this device.',
+          write_state_reason: 'unavailable',
         }),
       ],
       logs: [],

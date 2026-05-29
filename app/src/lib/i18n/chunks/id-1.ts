@@ -1561,6 +1561,12 @@ const id1: TranslationMap = {
   'vault.writeState.read_only': 'Hanya baca',
   'vault.writeState.unavailable': 'Tidak tersedia',
   'vault.writeState.unknownReason': 'Status tulis tidak diketahui.',
+  'vault.writeState.reasons.writable':
+    'Penulisan Markdown/wiki yang disetujui dapat disimpan di vault ini.',
+  'vault.writeState.reasons.read_only': 'Folder vault hanya baca di perangkat ini.',
+  'vault.writeState.reasons.unavailable': 'Folder vault tidak tersedia di perangkat ini.',
+  'vault.writeState.reasons.not_directory': 'Jalur vault bukan folder.',
+  'vault.writeState.reasons.empty_path': 'Jalur folder vault kosong.',
   'vault.syncingProgress': 'Menyinkronkan… {ingested}/{total}',
   'vault.removing': 'Menghapus…',
   'vault.relative.sec': '{count}s yang lalu',
