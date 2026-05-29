@@ -485,6 +485,11 @@ const Conversations = ({
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
       sendingThreadIdRef.current = null;
+      // Reset so the NEXT send starts from a clean "never had a status"
+      // baseline — otherwise the rearm effect could read this turn's last
+      // status as a stale "previous" and falsely treat the next send's
+      // first signal as a chat-done transition.
+      prevInferenceStatusRef.current = undefined;
       pendingSendRef.current = null;
       setPendingSendingThreadId(null);
     }, 120_000);
@@ -522,14 +527,22 @@ const Conversations = ({
     }
     prevInferenceStatusRef.current = status;
     armSilenceTimer(threadId);
-    // armSilenceTimer is stable (refs + dispatch); depending on the
-    // selector references is enough to rearm on every progress event.
+    // Scope the dependencies to the SENDING thread's slices only, keyed by the
+    // reactive `activeThreadId` (set on send, cleared on done/error/timeout —
+    // so it tracks the in-flight turn for the timer's whole lifetime, unlike
+    // `pendingSendingThreadId` which is released the moment the backend accepts
+    // the send). Depending on the whole maps would rearm this thread's timer
+    // whenever ANY other thread's state changed — unrelated background activity
+    // shouldn't keep a foreground turn's timer alive. armSilenceTimer is stable
+    // (refs + dispatch), so listing the per-thread values is enough to rearm on
+    // every progress event for this thread.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
-    inferenceStatusByThread,
-    streamingAssistantByThread,
-    toolTimelineByThread,
-    taskBoardByThread,
+    activeThreadId,
+    activeThreadId ? inferenceStatusByThread[activeThreadId] : undefined,
+    activeThreadId ? streamingAssistantByThread[activeThreadId] : undefined,
+    activeThreadId ? toolTimelineByThread[activeThreadId] : undefined,
+    activeThreadId ? taskBoardByThread[activeThreadId] : undefined,
   ]);
 
   useEffect(() => {
@@ -709,6 +722,10 @@ const Conversations = ({
     // changes for `sendingThreadId`, so long-running agent turns stay alive
     // as long as the backend is emitting signals. A truly hung server still
     // fails fast.
+    // Fresh send: clear the previous-status baseline before arming so the
+    // first inference signal of this turn isn't misread as a chat-done
+    // transition (defined → undefined) left over from the prior turn.
+    prevInferenceStatusRef.current = undefined;
     armSilenceTimer(sendingThreadId);
     dispatch(setToolTimelineForThread({ threadId: sendingThreadId, entries: [] }));
     dispatch(beginInferenceTurn({ threadId: sendingThreadId }));
@@ -741,6 +758,7 @@ const Conversations = ({
         sendingTimeoutRef.current = null;
       }
       sendingThreadIdRef.current = null;
+      prevInferenceStatusRef.current = undefined;
       const msg = err instanceof Error ? err.message : String(err);
       if (
         msg.toLowerCase().includes('blocked by a security policy') ||

@@ -866,6 +866,63 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     }
   });
 
+  it('does NOT rearm the silence timer on an unrelated thread’s updates', async () => {
+    // Regression for the per-thread dependency scoping: the rearm effect must
+    // react only to the SENDING thread's slices. A different thread churning
+    // (background triage, another conversation) must not keep the foreground
+    // turn's 120s timer alive — otherwise a truly hung send never fails fast.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'send on the foreground thread' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Churn an UNRELATED thread the whole time the foreground send is open.
+      // None of these dispatches target the sending thread ('send-thread'),
+      // so they must not rearm its timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: 'some-other-thread',
+            status: { phase: 'subagent', iteration: 3, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: 'some-other-thread',
+            entries: [{ id: 'other-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Cross the original 120s deadline (80s + 50s = 130s). Because the
+      // unrelated-thread churn did NOT rearm, the safety timer fires: the
+      // pending guard is released and Send re-enables once the user types.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50_000);
+      });
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('releases the pending-send lock when chatSend rejects', async () => {
     vi.mocked(chatSend).mockRejectedValueOnce(new Error('emit failed'));
     const { textarea } = await renderSelectedConversation();
