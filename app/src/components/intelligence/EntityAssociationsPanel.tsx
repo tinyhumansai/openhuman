@@ -129,7 +129,7 @@ const EntityAssociationsPanel = ({
         <ul className="space-y-1.5">
           {report.pairs.map(pair => (
             <li
-              key={`${pair.a}${pair.b}`}
+              key={JSON.stringify([pair.a, pair.b])}
               className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-2"
               title={t('entityAssociations.pairTitle')
                 .replace('{jaccard}', String(pct(pair.jaccard)))
