@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Reach',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,30 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+  'graphReach.title': 'Graph Reach',
+  'graphReach.intro':
+    'Eccentricity is how far an entity sits from everything it can reach — its longest shortest-path. The diameter is the widest such gap, the radius the smallest, and the center is the entity that reaches the whole cluster in the fewest hops. Neither degree nor PageRank surfaces the center.',
+  'graphReach.loading': 'Computing reach…',
+  'graphReach.errorPrefix': 'Could not load the graph:',
+  'graphReach.retry': 'Retry',
+  'graphReach.empty': 'No knowledge graph yet.',
+  'graphReach.emptyHint':
+    'As the assistant records connected facts about you, the shape and center of your memory will surface here.',
+  'graphReach.namespaceLabel': 'Namespace',
+  'graphReach.namespaceAll': 'All namespaces',
+  'graphReach.metricEntities': 'Entities',
+  'graphReach.metricDiameter': 'Diameter',
+  'graphReach.metricRadius': 'Radius',
+  'graphReach.summaryCaption': '{components} components · largest holds {giant}',
+  'graphReach.summaryCaptionOne': '1 component · {giant} entities',
+  'graphReach.rankedHeading': 'Most central entities',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Entity',
+  'graphReach.colEccentricity': 'Eccentricity',
+  'graphReach.colLinks': 'Links',
+  'graphReach.centerBadge': 'center',
+  'graphReach.centerTitle':
+    'A center of its cluster — reaches every connected entity in the fewest possible hops (eccentricity equals the radius).',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
