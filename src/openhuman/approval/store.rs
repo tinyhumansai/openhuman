@@ -104,6 +104,45 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Sentinel value written into the `session_id` column when scrubbing
+/// legacy rows whose `session_id` may have stored a credential-shaped
+/// value (an operator-supplied RPC bearer rather than a per-launch
+/// UUID). Public so tests / future migrations can refer to it by
+/// name.
+pub const PRE_MIGRATION_SESSION_ID: &str = "pre-migration-redacted";
+
+/// Idempotently scrub legacy `session_id` rows.
+///
+/// Earlier builds wrote the verbatim JSON-RPC bearer
+/// (`OPENHUMAN_CORE_TOKEN`) into `pending_approvals.session_id`. The
+/// column is retained for downgrade safety, but its stored value is
+/// now a per-launch UUID with no credential material. This migration
+/// overwrites any pre-existing value with [`PRE_MIGRATION_SESSION_ID`]
+/// the first time a v1 DB is opened by a v2-aware build, then bumps
+/// `PRAGMA user_version` to 1 so the rewrite never repeats.
+fn migrate_session_id_scrub(conn: &Connection) -> Result<()> {
+    let user_version: i64 = conn
+        .query_row("PRAGMA user_version", params![], |r| r.get(0))
+        .context("[approval::store] read PRAGMA user_version")?;
+    if user_version < 1 {
+        let updated = conn
+            .execute(
+                "UPDATE pending_approvals SET session_id = ?1 WHERE session_id != ?1",
+                params![PRE_MIGRATION_SESSION_ID],
+            )
+            .context("[approval::store] scrub legacy session_id")?;
+        conn.execute_batch("PRAGMA user_version = 1;")
+            .context("[approval::store] bump user_version to 1")?;
+        if updated > 0 {
+            tracing::info!(
+                rows = updated,
+                "[approval::store] scrubbed legacy session_id values from pending_approvals"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Open (and migrate) the approval DB, then call `f` with a live
 /// connection. Mirrors `notifications/store.rs::with_connection`.
 fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
@@ -133,6 +172,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
     conn.execute_batch(SCHEMA)
         .context("[approval::store] schema migration failed")?;
     migrate_columns(&conn)?;
+    migrate_session_id_scrub(&conn)?;
 
     f(&conn)
 }
@@ -847,6 +887,77 @@ mod tests {
         // Second open must be a no-op (migration is idempotent).
         let rows = list_pending(&config).unwrap();
         assert!(rows.is_empty(), "decided rows should not appear in pending");
+    }
+
+    #[test]
+    fn migrate_session_id_scrub_overwrites_legacy_values_and_bumps_user_version() {
+        // Simulate an older build that wrote credential-shaped values
+        // into `session_id`. After opening the store via
+        // `with_connection`, every pre-existing session_id must be
+        // overwritten with the redaction sentinel, and re-opening the
+        // store must be a no-op (idempotent — guarded by user_version).
+        let dir = TempDir::new().unwrap();
+        let workspace = dir.path().to_path_buf();
+        let db_path = workspace.join("approval").join("approval.db");
+        std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
+        // The bearer-shaped value below is a fixture, NOT a real
+        // credential — picked to be obviously recognizable in any
+        // diff if the scrub ever regresses.
+        let bearer_shaped = "deadbeefcafebabe1234567890abcdef";
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute(
+                "INSERT INTO pending_approvals
+                    (request_id, tool_name, action_summary, args_redacted,
+                     session_id, created_at)
+                 VALUES ('legacy', 'composio', 'legacy row', '{}', ?1, ?2)",
+                params![bearer_shaped, Utc::now().to_rfc3339()],
+            )
+            .unwrap();
+            // Sanity-check: a fresh DB starts at user_version = 0.
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", params![], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 0);
+        }
+        let config = Config {
+            workspace_dir: workspace,
+            ..Config::default()
+        };
+        // First open runs the scrub.
+        let _ = list_pending(&config).unwrap();
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            let stored: String = conn
+                .query_row(
+                    "SELECT session_id FROM pending_approvals WHERE request_id = 'legacy'",
+                    params![],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                stored, PRE_MIGRATION_SESSION_ID,
+                "scrub must overwrite legacy session_id with the redaction sentinel"
+            );
+            let v: i64 = conn
+                .query_row("PRAGMA user_version", params![], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 1, "user_version must be bumped to 1 after scrub");
+        }
+        // Second open must NOT touch already-scrubbed rows.
+        let _ = list_pending(&config).unwrap();
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            let stored: String = conn
+                .query_row(
+                    "SELECT session_id FROM pending_approvals WHERE request_id = 'legacy'",
+                    params![],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(stored, PRE_MIGRATION_SESSION_ID);
+        }
     }
 
     #[test]
