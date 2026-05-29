@@ -367,15 +367,21 @@ impl CoreProcessHandle {
 
             let port_open = self.is_rpc_port_open().await;
             return Err(self
-                .cleanup_startup_timeout(received_ready, port_open)
+                .cleanup_startup_timeout(received_ready, port_open, startup_attempt + 1)
                 .await);
         }
 
         let port_open = self.is_rpc_port_open().await;
-        Err(self.cleanup_startup_timeout(false, port_open).await)
+        Err(self.cleanup_startup_timeout(false, port_open, 2).await)
     }
 
-    async fn cleanup_startup_timeout(&self, received_ready: bool, port_open: bool) -> String {
+    async fn cleanup_startup_timeout(
+        &self,
+        received_ready: bool,
+        port_open: bool,
+        attempt: u8,
+    ) -> String {
+        let port = self.port();
         let task_state = {
             let guard = self.task.lock().await;
             match guard.as_ref() {
@@ -386,18 +392,20 @@ impl CoreProcessHandle {
         };
         log::error!(
             "[core] startup timed out after {CORE_READY_TIMEOUT_MS}ms \
-             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state}); \
+             (port={port}, ready_signal={received_ready}, port_open={port_open}, \
+             task_state={task_state}, attempt={attempt}); \
              aborting embedded startup task before retry"
         );
         self.cancel_shutdown_token(" after startup timeout").await;
         self.abort_task(" after startup timeout").await;
         format!(
             "core process did not become ready within {CORE_READY_TIMEOUT_MS}ms \
-             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state})"
+             (port={port}, ready_signal={received_ready}, port_open={port_open}, \
+             task_state={task_state}, attempt={attempt})"
         )
     }
 
-    fn apply_embedded_ready_signal(
+    pub(crate) fn apply_embedded_ready_signal(
         &self,
         ready: openhuman_core::core::jsonrpc::EmbeddedReadySignal,
     ) {
@@ -627,6 +635,61 @@ impl CoreProcessHandle {
     pub async fn send_terminate_signal(&self) {
         self.cancel_shutdown_token(" on app shutdown").await;
         self.abort_task(" on app shutdown").await;
+    }
+}
+
+/// Result returned to the frontend after a port-conflict auto-recovery attempt.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecoveryOutcome {
+    pub success: bool,
+    pub message: String,
+    pub new_port: Option<u16>,
+}
+
+impl CoreProcessHandle {
+    /// Attempt to recover from a port conflict: reap stale OpenHuman processes,
+    /// wait briefly for the port to free, then start the embedded core.
+    ///
+    /// Called from the `recover_port_conflict` Tauri command when the frontend's
+    /// boot-check detects the core is unreachable due to a port conflict.
+    pub async fn recover_port_conflict(&self) -> RecoveryOutcome {
+        log::debug!(
+            "[core_process] recover_port_conflict: starting recovery for port {}",
+            self.preferred_port
+        );
+
+        tokio::task::spawn_blocking(crate::process_recovery::reap_stale_openhuman_processes)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("[core_process] recover_port_conflict: reap task panicked: {e}")
+            });
+        log::debug!("[core_process] recover_port_conflict: stale process reap complete");
+
+        // Give the OS time to release the port after process termination.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        log::debug!("[core_process] recover_port_conflict: post-reap wait complete");
+
+        match self.ensure_running().await {
+            Ok(()) => {
+                let new_port = self.port();
+                log::info!(
+                    "[core_process] recover_port_conflict: recovery succeeded, core on port {new_port}"
+                );
+                RecoveryOutcome {
+                    success: true,
+                    message: format!("Core recovered on port {new_port}"),
+                    new_port: Some(new_port),
+                }
+            }
+            Err(err) => {
+                log::warn!("[core_process] recover_port_conflict: recovery failed: {err}");
+                RecoveryOutcome {
+                    success: false,
+                    message: format!("Recovery failed: {err}"),
+                    new_port: None,
+                }
+            }
+        }
     }
 }
 

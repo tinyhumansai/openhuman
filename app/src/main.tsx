@@ -1,5 +1,6 @@
 // IMPORTANT: Polyfills must be imported FIRST
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import 'katex/dist/katex.min.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 

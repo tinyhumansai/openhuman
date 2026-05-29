@@ -724,6 +724,7 @@ fn known_tiers_pass() {
         "agentic-v1",
         "coding-v1",
         "reasoning-quick-v1",
+        "summarization-v1",
     ] {
         assert!(
             is_known_openhuman_tier(tier),
@@ -738,6 +739,7 @@ fn known_hints_pass() {
     assert!(is_known_openhuman_tier("hint:chat"));
     assert!(is_known_openhuman_tier("hint:agentic"));
     assert!(is_known_openhuman_tier("hint:coding"));
+    assert!(is_known_openhuman_tier("hint:summarization"));
 }
 
 #[test]
@@ -748,7 +750,7 @@ fn invalid_models_fail() {
     assert!(!is_known_openhuman_tier(""));
     assert!(!is_known_openhuman_tier("reasoning-v2"));
     // Unrecognized `hint:*` values must NOT be accepted — the factory only
-    // translates the four hints above, so any other `hint:*` string would
+    // translates the known hints above, so any other `hint:*` string would
     // otherwise be forwarded to the backend and rejected with HTTP 400.
     assert!(!is_known_openhuman_tier("hint:garbage"));
     assert!(!is_known_openhuman_tier("hint:reasoning-quick"));
@@ -759,14 +761,24 @@ fn invalid_models_fail() {
 fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
     // must be forwarded to the backend unchanged. The backend is authoritative
-    // over which hint values it accepts; the factory only translates the four
-    // canonical hints (reasoning/chat/agentic/coding).
-    for hint in ["hint:reaction", "hint:garbage", "hint:summarization"] {
+    // over which hint values it accepts; the factory only translates the
+    // canonical hints (reasoning/chat/agentic/coding/summarization).
+    // `hint:summarization` became canonical when `summarization-v1` shipped
+    // (PR #2690), so it is no longer a passthrough case.
+    for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
         let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
         assert_eq!(model, hint, "hint '{hint}' should pass through unchanged");
     }
+}
+
+#[test]
+fn make_openhuman_backend_translates_summarization_hint() {
+    let mut config = Config::default();
+    config.default_model = Some("hint:summarization".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
 }
 
 #[test]
@@ -883,6 +895,311 @@ fn byok_sentinel_error_mentions_configuration_action() {
     );
 }
 
+// ── BYOK workload inheritance tests ──────────────────────────────────────────
+
+#[test]
+fn byok_fallback_agentic_always_uses_managed_backend() {
+    // The agentic role is excluded from BYOK inheritance: it uses managed-backend
+    // tier models (agentic-v1) and handles hint:agentic routing directives.
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    // agentic_provider is unset and chat BYOK is configured → agentic must
+    // still resolve to the managed backend, NOT inherit from chat BYOK.
+    let result = provider_for_role("agentic", &config);
+    assert_eq!(
+        result, "openhuman",
+        "agentic role must always resolve to managed backend regardless of BYOK config"
+    );
+}
+
+#[test]
+fn byok_fallback_inherits_chat_provider_for_unset_coding() {
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    // coding_provider is unset → should inherit chat BYOK
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openai:gpt-4o",
+        "unset coding must inherit chat BYOK"
+    );
+    assert_ne!(result, "openhuman");
+}
+
+#[test]
+fn byok_fallback_inherits_reasoning_when_chat_unset() {
+    let mut config = Config::default();
+    config
+        .cloud_providers
+        .push(anthropic_entry("p_ant", "anthropic"));
+    config.reasoning_provider = Some("anthropic:claude-opus-4-7".to_string());
+    // coding_provider is unset, chat_provider is unset → should inherit reasoning BYOK
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "anthropic:claude-opus-4-7",
+        "unset coding must inherit reasoning BYOK when chat is unset"
+    );
+}
+
+#[test]
+fn byok_fallback_respects_priority_order() {
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config
+        .cloud_providers
+        .push(anthropic_entry("p_ant", "anthropic"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.reasoning_provider = Some("anthropic:claude-opus-4-7".to_string());
+    // chat wins (higher priority) for unset coding
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openai:gpt-4o",
+        "chat_provider must win over reasoning_provider in priority"
+    );
+}
+
+#[test]
+fn byok_fallback_skips_local_ollama() {
+    let mut config = Config::default();
+    config.chat_provider = Some("ollama:llama3.1".to_string());
+    // Ollama is local — must NOT be inherited for non-agentic roles either
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openhuman",
+        "local ollama must not be inherited as BYOK fallback"
+    );
+}
+
+#[test]
+fn byok_fallback_skips_local_lmstudio() {
+    let mut config = Config::default();
+    config.chat_provider = Some("lmstudio:google/gemma-4-e4b".to_string());
+    // LM Studio is local — must NOT be inherited; fall through to openhuman
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openhuman",
+        "local lmstudio must not be inherited as BYOK fallback"
+    );
+}
+
+#[test]
+fn byok_fallback_skips_openhuman_sentinel() {
+    let mut config = Config::default();
+    config.chat_provider = Some("openhuman".to_string());
+    // "openhuman" is the managed backend sentinel, not BYOK
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openhuman",
+        "openhuman sentinel in chat must not be treated as BYOK"
+    );
+}
+
+#[test]
+fn byok_fallback_skips_cloud_sentinel() {
+    let mut config = Config::default();
+    config.chat_provider = Some("cloud".to_string());
+    // "cloud" means "use primary" — not BYOK
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openhuman",
+        "cloud sentinel in chat must not be treated as BYOK"
+    );
+}
+
+#[test]
+fn byok_fallback_no_byok_configured() {
+    // All workload routes unset → falls through to managed backend unchanged
+    let config = Config::default();
+    assert_eq!(
+        provider_for_role("coding", &config),
+        "openhuman",
+        "no BYOK configured must fall through to openhuman for coding"
+    );
+    assert_eq!(
+        provider_for_role("agentic", &config),
+        "openhuman",
+        "no BYOK configured must fall through to openhuman for agentic"
+    );
+}
+
+#[test]
+fn byok_fallback_explicit_agentic_overrides_chat_byok() {
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config
+        .cloud_providers
+        .push(anthropic_entry("p_ant", "anthropic"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.agentic_provider = Some("anthropic:claude-haiku-4-5".to_string());
+    // Explicit agentic setting wins over BYOK inheritance
+    let result = provider_for_role("agentic", &config);
+    assert_eq!(
+        result, "anthropic:claude-haiku-4-5",
+        "explicit agentic_provider must win over inherited BYOK"
+    );
+}
+
+#[test]
+fn byok_fallback_explicit_openhuman_agentic_overrides_chat_byok() {
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.agentic_provider = Some("openhuman".to_string());
+    // Explicit "openhuman" in agentic wins — user made a deliberate choice
+    let result = provider_for_role("agentic", &config);
+    assert_eq!(
+        result, "openhuman",
+        "explicit openhuman in agentic must not be overridden by BYOK inheritance"
+    );
+}
+
+#[test]
+fn byok_fallback_all_workloads_set_independently() {
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config
+        .cloud_providers
+        .push(anthropic_entry("p_ant", "anthropic"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.reasoning_provider = Some("anthropic:claude-opus-4-7".to_string());
+    config.agentic_provider = Some("anthropic:claude-haiku-4-5".to_string());
+    config.coding_provider = Some("openai:gpt-4o-mini".to_string());
+    assert_eq!(provider_for_role("chat", &config), "openai:gpt-4o");
+    assert_eq!(
+        provider_for_role("reasoning", &config),
+        "anthropic:claude-opus-4-7"
+    );
+    assert_eq!(
+        provider_for_role("agentic", &config),
+        "anthropic:claude-haiku-4-5"
+    );
+    assert_eq!(provider_for_role("coding", &config), "openai:gpt-4o-mini");
+}
+
+#[test]
+fn byok_fallback_empty_string_treated_as_unset() {
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    config.coding_provider = Some(String::new()); // empty string = unset
+                                                  // Empty string must be treated as unset → coding inherits chat BYOK
+    let result = provider_for_role("coding", &config);
+    assert_eq!(
+        result, "openai:gpt-4o",
+        "empty coding_provider must be treated as unset and inherit chat BYOK"
+    );
+    // agentic is excluded from BYOK inheritance regardless
+    config.agentic_provider = Some(String::new());
+    let agentic_result = provider_for_role("agentic", &config);
+    assert_eq!(
+        agentic_result, "openhuman",
+        "empty agentic_provider must stay on managed backend even when chat BYOK is configured"
+    );
+}
+
+// ── claude_agent_sdk provider factory tests ───────────────────────────────────
+
+#[test]
+fn claude_agent_sdk_bare_provider_string_uses_default_model() {
+    let config = Config::default();
+    let (_, model) = create_chat_provider_from_string("reasoning", "claude_agent_sdk", &config)
+        .expect("claude_agent_sdk must build without a model suffix");
+    // Default model from ClaudeAgentSdkConfig
+    assert_eq!(
+        model, "claude-sonnet-4-6",
+        "claude_agent_sdk with no suffix must use the default model"
+    );
+}
+
+#[test]
+fn claude_agent_sdk_with_model_suffix() {
+    let config = Config::default();
+    let (_, model) =
+        create_chat_provider_from_string("reasoning", "claude_agent_sdk:claude-opus-4-7", &config)
+            .expect("claude_agent_sdk:<model> must build");
+    assert_eq!(model, "claude-opus-4-7");
+}
+
+#[test]
+fn claude_agent_sdk_with_custom_default_model_in_config() {
+    let mut config = Config::default();
+    config.claude_agent_sdk.default_model = "claude-haiku-4-5".to_string();
+    let (_, model) = create_chat_provider_from_string("chat", "claude_agent_sdk", &config)
+        .expect("claude_agent_sdk must build with config default model");
+    assert_eq!(model, "claude-haiku-4-5");
+}
+
+// ── resolve_byok_fallback_provider_string direct tests ───────────────────────
+
+#[test]
+fn resolve_byok_fallback_returns_none_when_no_byok() {
+    let config = Config::default();
+    assert!(
+        resolve_byok_fallback_provider_string(&config).is_none(),
+        "all routes empty must return None"
+    );
+}
+
+#[test]
+fn resolve_byok_fallback_returns_none_for_local_only() {
+    let mut config = Config::default();
+    config.chat_provider = Some("ollama:llama3.1".to_string());
+    config.reasoning_provider = Some("lmstudio:google/gemma".to_string());
+    assert!(
+        resolve_byok_fallback_provider_string(&config).is_none(),
+        "only local providers must return None"
+    );
+}
+
+#[test]
+fn resolve_byok_fallback_returns_some_for_openai() {
+    let mut config = Config::default();
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    let result = resolve_byok_fallback_provider_string(&config);
+    assert_eq!(result, Some("openai:gpt-4o".to_string()));
+}
+
+#[test]
+fn resolve_byok_fallback_returns_some_for_anthropic() {
+    let mut config = Config::default();
+    config.reasoning_provider = Some("anthropic:claude-sonnet-4-6".to_string());
+    let result = resolve_byok_fallback_provider_string(&config);
+    assert_eq!(result, Some("anthropic:claude-sonnet-4-6".to_string()));
+}
+
+#[test]
+fn resolve_byok_fallback_skips_empty_and_finds_next() {
+    let mut config = Config::default();
+    config.chat_provider = Some(String::new()); // empty — skipped
+    config.reasoning_provider = Some("anthropic:claude-opus-4-7".to_string());
+    let result = resolve_byok_fallback_provider_string(&config);
+    assert_eq!(result, Some("anthropic:claude-opus-4-7".to_string()));
+}
+
+#[test]
+fn byok_fallback_background_workloads_never_inherit() {
+    // Background workloads (memory, embeddings, heartbeat, learning, subconscious)
+    // must stay on the managed backend even when chat BYOK is configured.
+    let mut config = Config::default();
+    config.cloud_providers.push(openai_entry("p_oai", "openai"));
+    config.chat_provider = Some("openai:gpt-4o".to_string());
+    for role in &[
+        "memory",
+        "embeddings",
+        "heartbeat",
+        "learning",
+        "subconscious",
+    ] {
+        let result = provider_for_role(role, &config);
+        assert_eq!(
+            result, "openhuman",
+            "background workload '{}' must not inherit chat BYOK",
+            role
+        );
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires live LM Studio on localhost:1234"]
 async fn live_lmstudio_provider_streams_thinking_and_text() {
@@ -987,5 +1304,77 @@ async fn live_ollama_provider_streams_text() {
     assert!(
         streamed_text.contains("OLLAMA_LIVE_OK"),
         "streamed text never surfaced the final answer: {streamed_text}"
+    );
+}
+
+// ── nvidia-nim / empty-model guard tests (issue #2784) ─────────────────────
+
+/// Helper: build a minimal nvidia-nim-style cloud provider entry.
+fn nvidia_nim_entry(id: &str, default_model: Option<&str>) -> CloudProviderCreds {
+    CloudProviderCreds {
+        id: id.to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: default_model.map(ToString::to_string),
+        ..Default::default()
+    }
+}
+
+/// When the provider string includes a model id the factory should build
+/// successfully and return that model id unchanged.
+#[test]
+fn nvidia_nim_with_explicit_model_builds_correctly() {
+    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let (_, model) = create_chat_provider_from_string(
+        "reasoning",
+        "nvidia-nim:meta/llama-3.1-8b-instruct",
+        &config,
+    )
+    .expect("nvidia-nim with explicit model must build");
+    assert_eq!(
+        model, "meta/llama-3.1-8b-instruct",
+        "model id must pass through unchanged"
+    );
+}
+
+/// When the provider string has no model id (`"nvidia-nim:"`) and no
+/// default_model is configured, the factory must fail with a clear error
+/// rather than silently sending an empty model string to the API (which
+/// triggers a 400 "model field is required" from nvidia-nim).
+///
+/// Regression test for https://github.com/tinyhumansai/openhuman/issues/2784.
+#[test]
+fn nvidia_nim_empty_model_in_provider_string_errors_clearly() {
+    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let err = match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
+        Ok(_) => panic!("empty model string must not succeed — would send model='' to the API"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("empty model id"),
+        "error must mention empty model id, got: {msg}"
+    );
+    assert!(
+        msg.contains("nvidia-nim"),
+        "error must name the provider slug, got: {msg}"
+    );
+}
+
+/// When the provider string has no model id but the entry has a concrete
+/// default_model, that default should be used — no error.
+#[test]
+fn nvidia_nim_falls_back_to_default_model_when_no_model_in_string() {
+    let config = config_with_providers(vec![nvidia_nim_entry(
+        "p_nim",
+        Some("meta/llama-3.1-70b-instruct"),
+    )]);
+    let (_, model) = create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
+        .expect("nvidia-nim: with default_model configured must build");
+    assert_eq!(
+        model, "meta/llama-3.1-70b-instruct",
+        "should fall back to default_model from config entry"
     );
 }

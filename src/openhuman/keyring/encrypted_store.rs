@@ -32,6 +32,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use super::crypto;
+
 /// Length of the random encryption key in bytes (256-bit, matches `ChaCha20`).
 const KEY_LEN: usize = 32;
 
@@ -202,8 +204,9 @@ impl SecretStore {
             | Ok(crate::openhuman::keyring::MigrationOutcome::NoSourceFile) => {}
             Err(error) => {
                 log::warn!(
-                    "[security] failed to migrate legacy secret-store key from {}: {error}",
-                    self.key_path.display()
+                    "[security] failed to migrate legacy secret-store key from {}: {error} | detail={}",
+                    self.key_path.display(),
+                    error.diagnostic()
                 );
             }
         }
@@ -211,7 +214,10 @@ impl SecretStore {
         let hex_key =
             crate::openhuman::keyring::get_or_create_random(&user_id, KEYCHAIN_MASTER_KEY, KEY_LEN)
                 .map_err(|e| {
-                    anyhow::anyhow!("Failed to load secret-store master key from keychain: {e}")
+                    anyhow::anyhow!(
+                        "Failed to load secret-store master key from keychain: {e} | detail={}",
+                        e.diagnostic()
+                    )
                 })?;
         decode_key_hex(hex_key.trim())
     }
@@ -615,12 +621,8 @@ fn xor_cipher(data: &[u8], key: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Generate a random 256-bit key using the OS CSPRNG.
-///
-/// Uses `OsRng` (via `getrandom`) directly, providing full 256-bit entropy
-/// without the fixed version/variant bits that UUID v4 introduces.
 fn generate_random_key() -> Vec<u8> {
-    ChaCha20Poly1305::generate_key(&mut OsRng).to_vec()
+    crypto::generate_random_bytes(KEY_LEN)
 }
 
 fn decode_key_hex(hex_key: &str) -> Result<Vec<u8>> {
@@ -633,14 +635,8 @@ fn decode_key_hex(hex_key: &str) -> Result<Vec<u8>> {
     Ok(key)
 }
 
-/// Hex-encode bytes to a lowercase hex string.
 fn hex_encode(data: &[u8]) -> String {
-    let mut s = String::with_capacity(data.len() * 2);
-    for b in data {
-        use std::fmt::Write;
-        let _ = write!(s, "{b:02x}");
-    }
-    s
+    crypto::hex_encode(data)
 }
 
 /// Build the `/grant` argument for `icacls` using a normalized username.
@@ -684,19 +680,8 @@ fn qualify_windows_username(username: &str, userdomain: &str, computername: &str
     }
 }
 
-/// Hex-decode a hex string to bytes.
-#[allow(clippy::manual_is_multiple_of)]
 fn hex_decode(hex: &str) -> Result<Vec<u8>> {
-    if (hex.len() & 1) != 0 {
-        anyhow::bail!("Hex string has odd length");
-    }
-    (0..hex.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&hex[i..i + 2], 16)
-                .map_err(|e| anyhow::anyhow!("Invalid hex at position {i}: {e}"))
-        })
-        .collect()
+    crypto::hex_decode(hex).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 #[cfg(test)]

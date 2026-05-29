@@ -77,7 +77,6 @@ const PersonaPanel = () => {
     };
     // Load once on mount — `t` is intentionally excluded so a locale change
     // does not re-fetch and overwrite unsaved edits.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const nameDirty = nameDraft.trim() !== storedDisplayName;

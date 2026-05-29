@@ -19,6 +19,8 @@
 //! Endpoints exempt from auth (checked by [`rpc_auth_middleware`]):
 //! - `GET /`              — public info page
 //! - `GET /health`        — liveness probe
+//! - `GET /auth`          — desktop login callback fallback; consumes only
+//!                          one-time login tokens, never raw session JWTs
 //! - `GET /auth/telegram` — external browser callback (carries its own token)
 //! - `GET /schema`        — read-only schema discovery
 //! - `GET /events`        — SSE stream; browser `EventSource` cannot set headers
@@ -65,6 +67,7 @@ static RPC_TOKEN: OnceLock<String> = OnceLock::new();
 const PUBLIC_PATHS: &[&str] = &[
     "/",
     "/health",
+    "/auth",
     "/auth/telegram",
     "/schema",
     "/events",
@@ -446,6 +449,11 @@ mod tests {
             extract_query_token(Some("token=cafe%2Dbabe")),
             Some("cafe-babe".to_string())
         );
+    }
+
+    #[test]
+    fn public_paths_include_desktop_auth_callback() {
+        assert!(PUBLIC_PATHS.contains(&"/auth"));
     }
 
     #[cfg(unix)]

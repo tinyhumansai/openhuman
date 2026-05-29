@@ -60,6 +60,12 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
+<!-- TODO: translate (de) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
+<!-- /TODO -->
+
 # Was ist OpenHuman?
 
 OpenHuman ist ein quelloffener, agentenbasierter Assistent, der sich in deinen Alltag einfügt. Jeder Punkt verlinkt auf die ausführliche Beschreibung in der [Doku](https://tinyhumans.gitbook.io/openhuman/).

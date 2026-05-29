@@ -583,6 +583,37 @@ fn clear_lock_if_stale_reclaims_aged_malformed_lock() {
     assert!(!lock_path.exists());
 }
 
+/// Regression (init hang): a pidless lock left by a kill/crash mid-write must
+/// be reclaimed after the short [`MALFORMED_LOCK_GRACE_MS`], NOT held for the
+/// full [`STALE_LOCK_AGE_MS`]. Previously a fresh pidless lock made
+/// `app_state_snapshot` (→ `acquire_lock`) block ~30s, stranding the user on
+/// "Initializing OpenHuman" after a kill+reopen.
+#[test]
+fn clear_lock_if_stale_reclaims_pidless_lock_past_short_grace() {
+    let tmp = TempDir::new().unwrap();
+    let store = AuthProfilesStore::new(tmp.path(), false);
+
+    let lock_path = tmp.path().join(LOCK_FILENAME);
+    std::fs::write(&lock_path, "garbage without a pid line\n").unwrap();
+    // Past the malformed grace but far below the 30s stale-age threshold —
+    // the old code would have left this in place and blocked ~30s.
+    assert!(MALFORMED_LOCK_GRACE_MS + 500 < STALE_LOCK_AGE_MS);
+    let aged = std::time::SystemTime::now()
+        - std::time::Duration::from_millis(MALFORMED_LOCK_GRACE_MS + 500);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&lock_path)
+        .expect("reopen lock for set_modified")
+        .set_modified(aged)
+        .expect("backdate lock mtime");
+
+    assert!(
+        store.clear_lock_if_stale(),
+        "a pidless lock past the short grace should be reclaimed without waiting STALE_LOCK_AGE_MS"
+    );
+    assert!(!lock_path.exists());
+}
+
 #[test]
 fn lock_timeout_allows_fresh_leaked_locks_to_age_into_stale_reclaim() {
     assert!(

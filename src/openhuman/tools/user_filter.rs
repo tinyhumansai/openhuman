@@ -5,6 +5,8 @@ use std::collections::HashSet;
 /// are always retained — only tools that appear here are filterable.
 const TOOL_ID_TO_RUST_NAMES: &[(&str, &[&str])] = &[
     ("shell", &["shell"]),
+    ("detect_tools", &["detect_tools"]),
+    ("install_tool", &["install_tool"]),
     ("git_operations", &["git_operations"]),
     ("file_read", &["file_read", "read_diff", "csv_export"]),
     ("file_write", &["file_write", "update_memory_md"]),

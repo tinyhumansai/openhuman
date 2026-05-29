@@ -270,6 +270,14 @@ mod memory_tree_dispatcher_tests {
 
     #[tokio::test]
     async fn memory_tree_query_global_mode_dispatches_successfully() {
+        // Hold TEST_ENV_LOCK for the duration of the test so that concurrent
+        // tests using WorkspaceEnvGuard (which sets OPENHUMAN_WORKSPACE to a
+        // temp path and then deletes it) cannot race with the Config::load_or_init
+        // call inside MemoryTreeTool.execute — the race caused "Failed to read
+        // config file" when the temp dir was deleted between exists() and read().
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let result = MemoryTreeTool
             .execute(json!({
                 "mode": "query_global",

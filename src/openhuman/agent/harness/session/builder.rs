@@ -924,6 +924,13 @@ impl Agent {
         };
         let (provider, mut model_name): (Box<dyn Provider>, String) =
             crate::openhuman::inference::provider::create_chat_provider(provider_role, config)?;
+        log::info!(
+            "[session-builder] agent_id={} provider_role={} resolved_model={} supports_native_tools={}",
+            agent_id,
+            provider_role,
+            model_name,
+            provider.supports_native_tools()
+        );
         let target_agent_id = target_def
             .map(|def| def.id.as_str())
             .unwrap_or("orchestrator");

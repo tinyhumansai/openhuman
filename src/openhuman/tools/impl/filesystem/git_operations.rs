@@ -1,4 +1,4 @@
-use crate::openhuman::security::{AutonomyLevel, SecurityPolicy};
+use crate::openhuman::security::{AutonomyLevel, CommandClass, GateDecision, SecurityPolicy};
 use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -449,6 +449,16 @@ impl Tool for GitOperationsTool {
         true
     }
 
+    /// Write git operations (commit/add/checkout/stash/…) route through the
+    /// human approval gate in ask-before-edit; read operations (status/diff/
+    /// log/branch) never prompt. In Full, writes run; read-only is blocked in
+    /// `execute` via the existing `can_act()` / autonomy check.
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        let operation = args.get("operation").and_then(|v| v.as_str()).unwrap_or("");
+        self.requires_write_access(operation)
+            && self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt
+    }
+
     async fn execute_with_options(
         &self,
         args: serde_json::Value,
@@ -491,13 +501,15 @@ impl Tool for GitOperationsTool {
         if self.requires_write_access(operation) {
             if !self.security.can_act() {
                 return Ok(ToolResult::error(
-                    "Action blocked: git write operations require higher autonomy level",
+                    "[policy-blocked] Action blocked: git write operations require higher autonomy level",
                 ));
             }
 
             match self.security.autonomy {
                 AutonomyLevel::ReadOnly => {
-                    return Ok(ToolResult::error("Action blocked: read-only mode"));
+                    return Ok(ToolResult::error(
+                        "[policy-blocked] Action blocked: read-only mode",
+                    ));
                 }
                 AutonomyLevel::Supervised | AutonomyLevel::Full => {}
             }

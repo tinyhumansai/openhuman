@@ -113,6 +113,29 @@ export interface ProactiveMessageEvent {
   full_response: string;
 }
 
+/**
+ * Emitted when the agent turn parks on the ApprovalGate — a `Prompt`-class
+ * (external-effect) tool call is awaiting the user's decision (only when the
+ * core runs with `OPENHUMAN_APPROVAL_GATE=1`). The frontend surfaces a
+ * pending-approval prompt; answering routes to the `openhuman.approval_decide`
+ * RPC. A typed `yes`/`no` chat reply is also honoured server-side; any other
+ * text cancels the parked turn and is taken as a fresh message.
+ */
+export interface ChatApprovalRequestEvent {
+  thread_id: string;
+  client_id?: string;
+  request_id: string;
+  tool_name: string;
+  /** Human-readable summary of the action awaiting approval. */
+  message: string;
+  /**
+   * Redacted args of the gated call — e.g. `{ command }` for shell,
+   * `{ path }` for file writes, `{ url }` for network. The card renders the
+   * exact command/target from this so the user sees precisely what will run.
+   */
+  args?: Record<string, unknown>;
+}
+
 /** Emitted when the agent turn begins (before the first LLM call). */
 export interface ChatInferenceStartEvent {
   thread_id: string;
@@ -292,6 +315,7 @@ export interface ChatEventListeners {
   onToolArgsDelta?: (event: ChatToolArgsDeltaEvent) => void;
   onTaskBoardUpdated?: (event: ChatTaskBoardUpdatedEvent) => void;
   onProactiveMessage?: (event: ProactiveMessageEvent) => void;
+  onApprovalRequest?: (event: ChatApprovalRequestEvent) => void;
   onDone?: (event: ChatDoneEvent) => void;
   onError?: (event: ChatErrorEvent) => void;
 }
@@ -321,6 +345,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     toolArgsDelta: 'tool_args_delta',
     taskBoardUpdated: 'task_board_updated',
     proactiveMessage: 'proactive_message',
+    approvalRequest: 'approval_request',
     done: 'chat_done',
     error: 'chat_error',
   } as const;
@@ -571,6 +596,22 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.proactiveMessage, cb);
     handlers.push([EVENTS.proactiveMessage, cb]);
+  }
+
+  if (listeners.onApprovalRequest) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatApprovalRequestEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s tool=%s',
+        EVENTS.approvalRequest,
+        e.thread_id,
+        e.request_id,
+        e.tool_name
+      );
+      listeners.onApprovalRequest?.(e);
+    };
+    socket.on(EVENTS.approvalRequest, cb);
+    handlers.push([EVENTS.approvalRequest, cb]);
   }
 
   if (listeners.onTaskBoardUpdated) {

@@ -73,6 +73,10 @@ jobs:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
       CARGO_INCREMENTAL: '0'
+      # Coverage instrumentation makes each test binary link substantially
+      # heavier. Keep the core coverage job's linker work serialized to avoid
+      # intermittent rust-lld bus errors on hosted Linux runners.
+      CARGO_BUILD_JOBS: '1'
       # sccache is incompatible with `-C instrument-coverage` profiles, so we
       # skip it for coverage runs and rely on Swatinem/rust-cache for warmup.
     steps:

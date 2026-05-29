@@ -43,6 +43,18 @@ const de3: TranslationMap = {
     'Nutze „Ordner anzeigen“, um das Vault-Verzeichnis direkt zu öffnen. Vault-Pfad:',
   'workspace.revealVaultFailed': 'Vault-Ordner konnte nicht angezeigt werden',
   'workspace.revealFolder': 'Ordner anzeigen',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Speicherdiagramm konnte nicht geladen werden',
   'workspace.loadingGraph': 'Speicherdiagramm wird geladen...',
   'workspace.graphViewMode': 'Speicherdiagramm-Ansichtsmodus',
@@ -195,6 +207,13 @@ const de3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Runtime neu starten/aktualisieren',
   'bootCheck.unexpectedError': 'Unerwarteter Boot-Check-Fehler',
   'bootCheck.actionFailed': 'Etwas ist schief gelaufen. Bitte versuche es erneut.',
+  'bootCheck.portConflictTitle': 'App-Engine konnte nicht gestartet werden',
+  'bootCheck.portConflictBody':
+    'Ein anderer Prozess nutzt den Netzwerkport, den OpenHuman benötigt. Wir versuchen, das automatisch zu beheben.',
+  'bootCheck.portConflictFixButton': 'Automatisch beheben',
+  'bootCheck.portConflictFixing': 'Wird behoben…',
+  'bootCheck.portConflictFixFailed':
+    'Automatische Behebung fehlgeschlagen. Bitte starten Sie Ihren Computer neu und versuchen Sie es erneut.',
   'notifications.justNow': 'gerade jetzt',
   'notifications.minAgo': 'Vor {n}m',
   'notifications.hrAgo': 'Vor {n}h',
@@ -249,6 +268,7 @@ const de3: TranslationMap = {
   'memory.ingestingTitle': 'Einnahme von {title}',
   'mic.noAudioCaptured': 'Kein Ton aufgenommen',
   'mic.noSpeechDetected': 'Keine Sprache erkannt',
+  'mic.lowConfidenceResult': 'Audio konnte nicht klar verstanden werden — bitte erneut versuchen',
   'mic.failedToStopRecording': 'Aufzeichnung konnte nicht gestoppt werden: {message}',
   'mic.transcriptionFailed': 'Transkription fehlgeschlagen: {message}',
   'reflections.kind.retrospective': 'Retrospektive',
@@ -424,6 +444,15 @@ const de3: TranslationMap = {
   'channels.yuanbao.reconnect': 'Reconnect',
   'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default de3;

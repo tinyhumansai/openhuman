@@ -34,7 +34,7 @@ import {
   stopListening,
 } from 'tauri-plugin-ptt-api';
 
-import { YellowMascot } from '../../features/human/Mascot';
+import { RiveMascot } from '../../features/human/Mascot';
 import { useHumanMascot } from '../../features/human/useHumanMascot';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
@@ -431,7 +431,7 @@ export const MascotScreen: FC = () => {
       {/* Mascot canvas */}
       <div className="flex-1 flex items-center justify-center overflow-hidden min-h-0 py-4">
         <div className="w-full max-w-xs aspect-square">
-          <YellowMascot face={face} arm="none" size="100%" />
+          <RiveMascot face={face} />
         </div>
       </div>
 

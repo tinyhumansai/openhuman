@@ -10,7 +10,9 @@
 //! this module as `memory::conversations` during the migration.
 
 mod bus;
+mod inverted_index;
 mod store;
+mod tokenize;
 mod types;
 
 pub use bus::register_conversation_persistence_subscriber;

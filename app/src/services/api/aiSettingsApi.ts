@@ -226,6 +226,26 @@ export async function loadAISettings(): Promise<AISettings> {
     subconscious: parseProviderString(config.subconscious_provider),
   };
 
+  // Diagnostic: detect partial BYOK routing — some workloads have a BYOK cloud
+  // provider configured while others are left at default/openhuman. The Rust
+  // factory inherits the BYOK provider for unset workloads, but this log makes
+  // it easy to trace the config state from the frontend side.
+  const byokProvider = (['chat', 'reasoning', 'agentic', 'coding'] as const).find(w => {
+    const ref_ = routing[w];
+    return ref_.kind === 'cloud';
+  });
+  const hasUnsetChatWorkloads = (['chat', 'reasoning', 'coding'] as const).some(w => {
+    const ref_ = routing[w];
+    return ref_.kind === 'default';
+  });
+  if (byokProvider !== undefined && hasUnsetChatWorkloads) {
+    const byokSlug = (routing[byokProvider] as { kind: 'cloud'; providerSlug: string })
+      .providerSlug;
+    console.debug(
+      '[ai-settings] partial BYOK routing detected — unset workloads will inherit from: ' + byokSlug
+    );
+  }
+
   return { cloudProviders, routing };
 }
 // ─── Write path: diff + save ───────────────────────────────────────────────

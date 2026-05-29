@@ -42,6 +42,18 @@ const id3: TranslationMap = {
     'Gunakan Tampilkan Folder untuk membuka direktori vault secara langsung. Path vault:',
   'workspace.revealVaultFailed': 'Tidak dapat menampilkan folder vault',
   'workspace.revealFolder': 'Tampilkan Folder',
+  'workspace.checkingVault': 'Checking…',
+  'workspace.vaultNotRegisteredHelp':
+    'Obsidian only opens folders you\'ve added as a vault. In Obsidian, choose "Open folder as vault" and pick the folder below — you only need to do this once. Then click View Vault again.',
+  'workspace.obsidianNotFoundHelp':
+    "We couldn't find Obsidian on this device. Install it, or — if it's installed somewhere non-standard — set its config folder under Advanced.",
+  'workspace.openAnyway': 'Open in Obsidian anyway',
+  'workspace.installObsidian': 'Install Obsidian',
+  'workspace.obsidianAdvanced': 'Obsidian installed elsewhere?',
+  'workspace.obsidianConfigDirLabel': 'Obsidian config folder',
+  'workspace.obsidianConfigDirHint':
+    'Path to the folder containing obsidian.json (e.g. ~/.config/obsidian). Leave blank to auto-detect.',
+  'workspace.obsidianConfigDirPlaceholder': '~/.config/obsidian',
   'workspace.graphLoadFailed': 'Gagal memuat grafik memori',
   'workspace.loadingGraph': 'Memuat grafik memori...',
   'workspace.graphViewMode': 'Mode tampilan grafik memori',
@@ -190,6 +202,13 @@ const id3: TranslationMap = {
   'bootCheck.restartUpdateCore': 'Mulai Ulang / Perbarui Runtime',
   'bootCheck.unexpectedError': 'Kesalahan Boot-Check Tak Terduga',
   'bootCheck.actionFailed': 'Terjadi kesalahan. Silakan coba lagi.',
+  'bootCheck.portConflictTitle': 'Tidak dapat memulai mesin aplikasi',
+  'bootCheck.portConflictBody':
+    'Proses lain sedang menggunakan port jaringan yang dibutuhkan OpenHuman. Kami akan mencoba memperbaikinya secara otomatis.',
+  'bootCheck.portConflictFixButton': 'Perbaiki Otomatis',
+  'bootCheck.portConflictFixing': 'Memperbaiki…',
+  'bootCheck.portConflictFixFailed':
+    'Perbaikan otomatis tidak berhasil. Silakan restart komputer Anda dan coba lagi.',
   'notifications.justNow': 'baru saja',
   'notifications.minAgo': '{n}m lalu',
   'notifications.hrAgo': '{n}j lalu',
@@ -247,6 +266,7 @@ const id3: TranslationMap = {
   'memory.ingestingTitle': 'Mengingesti {title}',
   'mic.noAudioCaptured': 'Tidak ada audio tertangkap',
   'mic.noSpeechDetected': 'Tidak ada suara terdeteksi',
+  'mic.lowConfidenceResult': 'Tidak dapat memahami audio dengan jelas — silakan coba lagi',
   'mic.failedToStopRecording': 'Gagal menghentikan perekaman: {message}',
   'mic.transcriptionFailed': 'Transkripsi gagal: {message}',
   'reflections.kind.retrospective': 'Retrospektif',
@@ -417,6 +437,15 @@ const id3: TranslationMap = {
   'channels.yuanbao.reconnect': 'Reconnect',
   'channels.yuanbao.savedRestartRequired': 'Channel saved. Restart the app to activate it.',
   'channels.yuanbao.unexpectedStatus': 'Unexpected connection status: {status}',
+  'chat.approval.approve': 'Approve',
+  'chat.approval.alwaysAllow': 'Always allow',
+  'chat.approval.alwaysAllowHint': 'Stop asking for this tool — add it to your Always-allow list',
+  'chat.approval.deciding': 'Working…',
+  'chat.approval.deny': 'Deny',
+  'chat.approval.error': 'Could not record your decision — try again.',
+  'chat.approval.fallback': 'The agent wants to run an action that needs your approval.',
+  'chat.approval.title': 'Approval needed',
+  'chat.approval.tool': 'Tool:',
 };
 
 export default id3;
