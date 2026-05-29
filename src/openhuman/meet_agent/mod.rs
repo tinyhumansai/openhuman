@@ -39,6 +39,7 @@ pub mod ops;
 pub mod rpc;
 pub mod schemas;
 pub mod session;
+pub mod store;
 pub mod types;
 pub mod wav;
 

@@ -157,7 +157,23 @@ pub fn all_tools_with_runtime(
         // follow-up; the tool emits a stable marker today.
         Box::new(TodoTool::new()),
         Box::new(PlanExitTool::new()),
+        // Skill chaining: let an in-flight autonomous skill (e.g.
+        // `github-issue-crusher`) kick off another bundled skill_run as a
+        // fresh background job (e.g. `pr-review-shepherd` against the PR it
+        // just opened) so each skill stays narrow + composable. Thin
+        // wrapper over `skills::schemas::spawn_skill_run_background` — the
+        // same helper `openhuman.skills_run` JSON-RPC uses, so RPC callers
+        // and tool callers share one spawn path.
+        Box::new(RunSkillTool::new()),
         Box::new(CurrentTimeTool::new()),
+        Box::new(CodegraphIndexTool::new(
+            config.clone(),
+            workspace_dir.to_path_buf(),
+        )),
+        Box::new(CodegraphSearchTool::new(
+            config.clone(),
+            workspace_dir.to_path_buf(),
+        )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
         Box::new(CronAddTool::new(config.clone(), security.clone())),
@@ -338,13 +354,14 @@ pub fn all_tools_with_runtime(
     //
     // Exactly one engine drives `web_search_tool` plus any
     // engine-specific tools (Parallel research/extract/etc., Brave
-    // news/image/video). Mirrors the LLM-provider API-key model: a
-    // single switch, BYO credentials, layered tool surface.
+    // news/image/video, Querit advanced filters). Mirrors the
+    // LLM-provider API-key model: a single switch, BYO credentials,
+    // layered tool surface.
     //
     // Legacy `seltz` / `searxng` config blocks are still parsed but
     // no longer register tools — they were superseded by this
-    // selector. Use `search.engine = "managed" | "parallel" | "brave"`
-    // instead.
+    // selector. Use `search.engine = "managed" | "parallel" | "brave"
+    // | "querit"` instead.
     {
         use crate::openhuman::config::SearchEngine;
         let search = &root_config.search;
@@ -443,6 +460,25 @@ pub fn all_tools_with_runtime(
                 tools.push(Box::new(
                     crate::openhuman::integrations::BraveVideoSearchTool::new(
                         api_key,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+            }
+            SearchEngine::Querit => {
+                tracing::debug!("[search] active engine = querit (BYO direct API)");
+                tools.push(Box::new(
+                    crate::openhuman::integrations::QueritSearchTool::new_web_search_tool(
+                        search.querit.api_key.clone(),
+                        None,
+                        max_results,
+                        timeout_secs,
+                    ),
+                ));
+                tools.push(Box::new(
+                    crate::openhuman::integrations::QueritSearchTool::new(
+                        search.querit.api_key.clone(),
+                        None,
                         max_results,
                         timeout_secs,
                     ),

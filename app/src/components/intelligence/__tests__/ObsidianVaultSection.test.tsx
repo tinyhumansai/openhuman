@@ -10,6 +10,7 @@ vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(un
 
 vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
   revealWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  resolveWorkspaceAbsolutePath: vi.fn().mockResolvedValue('/tmp/workspace/memory_tree/content'),
 }));
 
 const { memoryTreeObsidianVaultStatus } =
@@ -19,9 +20,10 @@ const { memoryTreeObsidianVaultStatus } =
 
 const { openUrl } = (await import('../../../utils/openUrl')) as unknown as { openUrl: Mock };
 
-const { revealWorkspacePath } =
+const { revealWorkspacePath, resolveWorkspaceAbsolutePath } =
   (await import('../../../utils/tauriCommands/workspacePaths')) as unknown as {
     revealWorkspacePath: Mock;
+    resolveWorkspaceAbsolutePath: Mock;
   };
 
 const ROOT = '/tmp/workspace/memory_tree/content';
@@ -37,6 +39,7 @@ describe('ObsidianVaultSection', () => {
     localStorage.clear();
     openUrl.mockResolvedValue(undefined);
     revealWorkspacePath.mockResolvedValue(undefined);
+    resolveWorkspaceAbsolutePath.mockResolvedValue(ROOT);
   });
 
   it('registered vault → opens the deep link directly, no guidance shown', async () => {
@@ -121,5 +124,42 @@ describe('ObsidianVaultSection', () => {
 
     await waitFor(() => expect(screen.getByTestId('obsidian-vault-guidance')).toBeInTheDocument());
     expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  // #2492: the absolute path that feeds the `obsidian://open?path=…` URL must
+  // come from the shared workspace-link layer (the Rust-side resolver), not
+  // from the `contentRootAbs` prop. The prop stays around for display, but
+  // the deep link URL is composed with whatever the resolver returns.
+  it('deep link uses the workspace-link resolver, not the contentRootAbs prop', async () => {
+    const resolved = '/private/var/folders/canonical/memory_tree/content';
+    resolveWorkspaceAbsolutePath.mockResolvedValue(resolved);
+    memoryTreeObsidianVaultStatus.mockResolvedValue(status({ registered: true }));
+    renderWithProviders(<ObsidianVaultSection contentRootAbs={ROOT} />);
+
+    fireEvent.click(screen.getByTestId('memory-open-in-obsidian'));
+
+    await waitFor(() =>
+      expect(resolveWorkspaceAbsolutePath).toHaveBeenCalledWith('memory_tree/content')
+    );
+    await waitFor(() =>
+      expect(openUrl).toHaveBeenCalledWith('obsidian://open?path=' + encodeURIComponent(resolved))
+    );
+  });
+
+  // #2492: when the Rust-side resolver rejects (e.g. workspace path missing
+  // on disk), the click must not silently no-op — it surfaces an error toast
+  // and keeps the guidance panel expanded so the user has an escape hatch.
+  it('resolver failure surfaces an error toast and keeps guidance expanded', async () => {
+    resolveWorkspaceAbsolutePath.mockRejectedValue(new Error('workspace path does not exist'));
+    memoryTreeObsidianVaultStatus.mockResolvedValue(status({ registered: true }));
+    const onToast = vi.fn();
+    renderWithProviders(<ObsidianVaultSection contentRootAbs={ROOT} onToast={onToast} />);
+
+    fireEvent.click(screen.getByTestId('memory-open-in-obsidian'));
+
+    await waitFor(() => expect(onToast).toHaveBeenCalled());
+    expect(onToast.mock.calls[0][0].type).toBe('error');
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(screen.getByTestId('obsidian-vault-guidance')).toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@
 
 use chrono::Utc;
 use futures::FutureExt;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
@@ -14,6 +15,21 @@ use super::state;
 use super::store;
 use super::sync;
 use super::types::{Vault, VaultFile, VaultSyncState, VaultSyncStatus};
+
+/// Derive a stable memory namespace for a vault without embedding the raw UUID.
+///
+/// Memory writes reject namespace/key values that resemble PII. Raw UUID hex can
+/// occasionally match strict alphanumeric identifier patterns, so vault
+/// namespaces use an alphabet-only digest suffix instead.
+pub(crate) fn vault_namespace_for_id(id: &str) -> String {
+    let digest = Sha256::digest(id.as_bytes());
+    let suffix: String = digest
+        .iter()
+        .take(24)
+        .map(|byte| char::from(b'a' + (byte % 26)))
+        .collect();
+    format!("vault-{suffix}")
+}
 
 /// Create a new vault pointing at a local folder.
 pub async fn vault_create(
@@ -46,7 +62,7 @@ pub async fn vault_create(
         include_globs.len(),
         exclude_globs.len(),
     );
-    let namespace = format!("vault:{id}");
+    let namespace = vault_namespace_for_id(&id);
     let vault = Vault {
         id: id.clone(),
         name: trimmed_name.to_string(),

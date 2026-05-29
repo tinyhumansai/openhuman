@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
+import { GameplayReviewWorkspace } from '../components/intelligence/GameplayReviewWorkspace';
 import IntelligenceCallsTab from '../components/intelligence/IntelligenceCallsTab';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
@@ -23,6 +24,7 @@ import type {
 
 type IntelligenceTab =
   | 'memory'
+  | 'gameplay'
   | 'subconscious'
   | 'calls'
   | 'dreams'
@@ -98,6 +100,7 @@ export default function Intelligence() {
 
   const tabs: { id: IntelligenceTab; label: string; comingSoon?: boolean }[] = [
     { id: 'memory', label: t('memory.tab.memory') },
+    { id: 'gameplay', label: t('memory.tab.gameplay') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     { id: 'tasks', label: 'Tasks' },
     { id: 'diagram', label: t('memory.tab.diagram') },
@@ -157,6 +160,8 @@ export default function Intelligence() {
 
             {/* Tab content */}
             {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
+
+            {activeTab === 'gameplay' && <GameplayReviewWorkspace onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab

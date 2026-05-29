@@ -528,19 +528,33 @@ impl OpenAiCompatibleProvider {
         tools: Option<&[crate::openhuman::tools::ToolSpec]>,
     ) -> Option<Vec<serde_json::Value>> {
         tools.map(|items| {
-            items
-                .iter()
-                .map(|tool| {
-                    serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        }
-                    })
-                })
-                .collect()
+            let mut seen: std::collections::HashSet<&str> =
+                std::collections::HashSet::with_capacity(items.len());
+            let mut dropped: Vec<&str> = Vec::new();
+            let mut out: Vec<serde_json::Value> = Vec::with_capacity(items.len());
+            for tool in items {
+                if !seen.insert(tool.name.as_str()) {
+                    dropped.push(tool.name.as_str());
+                    continue;
+                }
+                out.push(serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                }));
+            }
+            if !dropped.is_empty() {
+                log::warn!(
+                    "[providers][compatible] dropped {} duplicate tool spec(s) at wire \
+                     boundary (TAURI-RUST-2E): {:?}",
+                    dropped.len(),
+                    dropped
+                );
+            }
+            out
         })
     }
 
@@ -1031,6 +1045,16 @@ impl OpenAiCompatibleProvider {
                     "streaming_chat",
                     self.name.as_str(),
                     Some(native_request.model.as_str()),
+                    status,
+                );
+            } else if Self::is_native_tool_schema_unsupported(status, &body) {
+                // Model rejects tool definitions (e.g. Ollama "does not support tools").
+                // The caller's retry loop already handles this by re-issuing without
+                // tools — suppress the Sentry event so noise doesn't accumulate for
+                // every model that lacks tool-calling support (TAURI-RUST-4K7).
+                log::info!(
+                    "[stream] {} model rejected tool schema (status={}) — caller will retry without tools",
+                    self.name,
                     status,
                 );
             } else if super::should_report_provider_http_failure(status) {

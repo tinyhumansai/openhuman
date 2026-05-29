@@ -25,7 +25,10 @@ import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import { openUrl } from '../../utils/openUrl';
 import { memoryTreeObsidianVaultStatus } from '../../utils/tauriCommands';
-import { revealWorkspacePath } from '../../utils/tauriCommands/workspacePaths';
+import {
+  resolveWorkspaceAbsolutePath,
+  revealWorkspacePath,
+} from '../../utils/tauriCommands/workspacePaths';
 import { MEMORY_CONTENT_WORKSPACE_PATH } from './memoryWorkspacePaths';
 
 /** localStorage key for the optional Obsidian config-dir override. */
@@ -55,18 +58,29 @@ export function ObsidianVaultSection({ contentRootAbs, onToast }: ObsidianVaultS
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [configDir, setConfigDir] = useState<string>(readConfigDirOverride);
 
-  /** Build + fire the `obsidian://` deep link. Resolves to an error or null. */
+  /**
+   * Build + fire the `obsidian://` deep link.
+   *
+   * The absolute path is resolved through the shared workspace-link layer
+   * (`resolve_workspace_absolute_path` Tauri command) rather than reused from
+   * the `contentRootAbs` prop — this routes Obsidian deep links through the
+   * same canonicalize + workspace-containment guard as `open_workspace_path`
+   * and `preview_workspace_text` (see issue #2492 / #2476).
+   *
+   * Resolves to an error or null.
+   */
   const fireDeepLink = useCallback(async (): Promise<unknown | null> => {
-    const url = `obsidian://open?path=${encodeURIComponent(contentRootAbs)}`;
     console.debug('[ui-flow][obsidian-vault] firing deep link');
     try {
+      const absolutePath = await resolveWorkspaceAbsolutePath(MEMORY_CONTENT_WORKSPACE_PATH);
+      const url = `obsidian://open?path=${encodeURIComponent(absolutePath)}`;
       await openUrl(url);
       return null;
     } catch (err) {
-      console.error('[ui-flow][obsidian-vault] openUrl failed', err);
+      console.error('[ui-flow][obsidian-vault] resolve/open failed', err);
       return err;
     }
-  }, [contentRootAbs]);
+  }, []);
 
   const reveal = useCallback(() => {
     void (async () => {

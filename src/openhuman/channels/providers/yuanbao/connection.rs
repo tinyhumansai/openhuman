@@ -401,15 +401,19 @@ impl YuanbaoConnection {
         //   "bot" when missing (matches the plugin's static-token branch
         //   and `data.source || "bot"` resolution).
         let resolved_source = if source.is_empty() { "bot" } else { source };
+        // Align with yuanbao-openclaw-plugin: app_version → plugin_version,
+        // DeviceInfo field 24 → bot_version (OpenHuman framework / CARGO_PKG_VERSION).
+        let plugin_version = super::config::strip_version_prefix(&cfg.bot_version);
+        let framework_version = env!("CARGO_PKG_VERSION");
         let frame = encode_auth_bind(
             "ybBot",
             &uid,
             resolved_source,
             token,
             &msg_id,
-            env!("CARGO_PKG_VERSION"),
+            plugin_version,
             std::env::consts::OS,
-            &cfg.bot_version,
+            framework_version,
             &cfg.route_env,
         );
         self.send_frame(frame).await

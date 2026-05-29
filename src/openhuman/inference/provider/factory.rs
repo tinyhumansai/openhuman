@@ -788,7 +788,7 @@ fn make_cloud_provider_by_slug(
             slug,
         );
         anyhow::bail!(
-            "[chat-factory] role '{}' resolved to an empty model id for slug '{}'. \
+            "[chat-factory] no model configured: role '{}' resolved to an empty model id for slug '{}'. \
              Include a model in the provider string (e.g. '{slug}:<model-id>') or \
              set default_model on the cloud_providers entry for slug '{slug}'.",
             role,

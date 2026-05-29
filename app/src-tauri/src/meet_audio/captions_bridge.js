@@ -139,18 +139,35 @@
   }
 
   // Auto-enable captions: walk every button on the page and click any
-  // that has an aria-label starting with "Turn on captions". Caps the
-  // attempts so we don't fight a user who deliberately disables CC.
-  var ENABLE_ATTEMPT_BUDGET = 30; // ~30 * 2s = 60s
+  // that has an aria-label matching the "turn on captions" intent.
+  // Substring match (not prefix) — Meet rolls out variant labels
+  // ("Turn on captions (c)", "Turn on live captions", "Subtitles",
+  // "Captions") that the strict prefix-only matcher missed, forcing
+  // the user to click the toggle by hand. Caps attempts so a user who
+  // deliberately disables CC isn't fought over forever.
+  var ENABLE_ATTEMPT_BUDGET = 60; // ~60 * 2s = 120s — covers slow admit
   var enableAttempts = 0;
   function tryEnableCaptions() {
     if (enableAttempts >= ENABLE_ATTEMPT_BUDGET) return;
     enableAttempts++;
     var buttons = document.querySelectorAll("button[aria-label]");
+    var ON_PATTERNS = [
+      "turn on captions",
+      "turn on live captions",
+      "turn on subtitles",
+      "turn on closed captions",
+      "captions on",
+      "captions (c)",
+      "show captions",
+      "enable captions",
+    ];
+    // Negative guard: never click anything that is already-on (Meet
+    // shows "Turn off captions" when CC is active).
+    var OFF_PATTERNS = ["turn off captions", "captions off", "disable captions"];
     for (var i = 0; i < buttons.length; i++) {
       var lbl = (buttons[i].getAttribute("aria-label") || "").toLowerCase();
-      // Match "Turn on captions" but NOT "Turn off captions".
-      if (lbl.indexOf("turn on captions") === 0 || /^turn on captions/.test(lbl)) {
+      if (OFF_PATTERNS.some(function (p) { return lbl.indexOf(p) >= 0; })) continue;
+      if (ON_PATTERNS.some(function (p) { return lbl.indexOf(p) >= 0; })) {
         try {
           buttons[i].click();
           enableAttempts = ENABLE_ATTEMPT_BUDGET; // success — stop trying.

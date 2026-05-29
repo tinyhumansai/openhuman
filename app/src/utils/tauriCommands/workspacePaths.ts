@@ -45,3 +45,15 @@ export async function previewWorkspaceText(path: string): Promise<WorkspaceTextP
     sizeBytes: preview.size_bytes,
   };
 }
+
+/**
+ * Resolve a workspace-relative path to its canonical absolute path on disk,
+ * after the Rust side validates it stays inside the active OpenHuman
+ * workspace. Useful for UI flows that need to compose an absolute path into a
+ * platform-specific URL scheme (e.g. `obsidian://open?path=<abs>`) without
+ * re-implementing path normalization in the renderer.
+ */
+export async function resolveWorkspaceAbsolutePath(path: string): Promise<string> {
+  assertTauri();
+  return invoke<string>('resolve_workspace_absolute_path', { path });
+}

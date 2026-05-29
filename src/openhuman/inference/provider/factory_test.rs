@@ -370,6 +370,57 @@ fn empty_model_in_ollama_rejected() {
 }
 
 #[test]
+fn cloud_provider_with_no_model_and_no_default_rejected() {
+    // TAURI-RUST-4NM — nvidia-nim (and others) reject `model=""` with
+    // "model field is required". The factory must catch this up-front with
+    // a clear, actionable message instead of leaking an empty model to the API.
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_nim".to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: None, // no fallback model configured
+        ..Default::default()
+    });
+
+    let err = match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
+        Ok(_) => panic!("empty model must fail"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("no model configured"),
+        "expected 'no model configured' in error, got: {msg}"
+    );
+    assert!(
+        msg.contains("nvidia-nim"),
+        "error must name the slug; got: {msg}"
+    );
+}
+
+#[test]
+fn cloud_provider_default_model_used_when_model_part_is_empty() {
+    // When provider string is "nvidia-nim:" (empty model) but the entry
+    // has a default_model, the factory must use the default — not error.
+    let mut config = Config::default();
+    config.cloud_providers.push(CloudProviderCreds {
+        id: "p_nim".to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: Some("meta/llama-3.1-8b-instruct".to_string()),
+        ..Default::default()
+    });
+
+    let (_, model) = create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
+        .expect("empty model with default_model must succeed");
+    assert_eq!(model, "meta/llama-3.1-8b-instruct");
+}
+
+#[test]
 fn missing_slug_for_openai_gives_clear_error() {
     let config = Config::default();
     let err = create_chat_provider_from_string("reasoning", "openai:gpt-4o", &config)

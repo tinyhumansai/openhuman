@@ -65,11 +65,11 @@ pub mod tim {
 }
 
 /// Fixed instance id reported in `AuthBindReq.DeviceInfo.instance_id` and
-/// the `X-Instance-Id` HTTP header. Mirrors `OPENCLAW_ID = 16` used by
+/// the `X-Instance-Id` HTTP header. Mirrors `OPENCLAW_ID = 20` used by
 /// `yuanbao-openclaw-plugin` (`src/access/ws/conn-codec.ts`) — the server
 /// keys some checks off this value, so it must match the value the sign
 /// endpoint sees when the token is minted.
-pub const OPENHUMAN_INSTANCE_ID: &str = "16";
+pub const OPENHUMAN_INSTANCE_ID: &str = "20";
 
 /// Reconnect backoff schedule (seconds). Mirrors hermes-agent.
 pub const RECONNECT_DELAYS: &[u64] = &[1, 2, 5, 10, 30, 60];

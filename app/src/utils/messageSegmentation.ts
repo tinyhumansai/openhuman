@@ -59,7 +59,18 @@ export function getSegmentDelay(segment: string): number {
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
-/** Merge adjacent items that are shorter than MIN_SEGMENT_CHARS. */
+/**
+ * Merge adjacent items that are shorter than MIN_SEGMENT_CHARS.
+ *
+ * Previously only short segments following a prior segment were merged (into
+ * the preceding one). A short *first* segment was left as-is because the
+ * `result.length > 0` guard prevented it from being absorbed. This caused the
+ * first chat bubble to show fewer than MIN_SEGMENT_CHARS characters while all
+ * subsequent short segments were correctly consolidated.
+ *
+ * Fix: after the normal backward-merge pass, check whether the first segment
+ * is still too short and, if so, forward-merge it into the second segment.
+ */
 function mergeTooShort(parts: string[], joiner: string): string[] {
   const result: string[] = [];
   for (const part of parts) {
@@ -69,6 +80,14 @@ function mergeTooShort(parts: string[], joiner: string): string[] {
       result.push(part);
     }
   }
+
+  // If the first segment is still shorter than the minimum, forward-merge it
+  // into the second segment (if one exists) so no leading stub bubble is shown.
+  if (result.length >= 2 && result[0].length < MIN_SEGMENT_CHARS) {
+    result[1] = result[0] + joiner + result[1];
+    result.shift();
+  }
+
   return result;
 }
 

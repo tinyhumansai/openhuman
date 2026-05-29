@@ -20,6 +20,7 @@ import DeveloperOptionsPanel from '../components/settings/panels/DeveloperOption
 import DevicesComingSoonPanel from '../components/settings/panels/DevicesComingSoonPanel';
 import DevWorkflowPanel from '../components/settings/panels/DevWorkflowPanel';
 import EmbeddingsPanel from '../components/settings/panels/EmbeddingsPanel';
+import EventLogPanel from '../components/settings/panels/EventLogPanel';
 import HeartbeatPanel from '../components/settings/panels/HeartbeatPanel';
 import LedgerUsagePanel from '../components/settings/panels/LedgerUsagePanel';
 import LocalModelDebugPanel from '../components/settings/panels/LocalModelDebugPanel';
@@ -36,6 +37,7 @@ import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePan
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
+import SkillsRunnerPanel from '../components/settings/panels/SkillsRunnerPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
 import TeamManagementPanel from '../components/settings/panels/TeamManagementPanel';
 import TeamMembersPanel from '../components/settings/panels/TeamMembersPanel';
@@ -459,6 +461,7 @@ const Settings = () => {
         <Route path="agent-chat" element={wrapSettingsPage(<AgentChatPanel />)} />
         <Route path="cron-jobs" element={wrapSettingsPage(<CronJobsPanel />)} />
         <Route path="dev-workflow" element={wrapSettingsPage(<DevWorkflowPanel />)} />
+        <Route path="skills-runner" element={wrapSettingsPage(<SkillsRunnerPanel />)} />
         <Route
           path="screen-awareness-debug"
           element={wrapSettingsPage(<ScreenAwarenessDebugPanel />)}
@@ -467,6 +470,7 @@ const Settings = () => {
         <Route path="voice-debug" element={wrapSettingsPage(<VoiceDebugPanel />)} />
         <Route path="local-model-debug" element={wrapSettingsPage(<LocalModelDebugPanel />)} />
         <Route path="webhooks-debug" element={wrapSettingsPage(<WebhooksDebugPanel />)} />
+        <Route path="event-log" element={wrapSettingsPage(<EventLogPanel />)} />
         <Route
           path="model-health"
           element={wrapSettingsPage(<ModelHealthPanel />, { maxWidthClass: 'max-w-4xl' })}

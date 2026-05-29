@@ -443,11 +443,11 @@ mod tests {
     #[test]
     fn build_summarizer_prompt_includes_tool_name_and_hint() {
         let prompt = build_summarizer_prompt(
-            "GITHUB_LIST_ISSUES",
+            "GITHUB_LIST_REPOSITORY_ISSUES",
             Some("find the most urgent open issues"),
             "{\"issues\": [{\"id\": 1}]}",
         );
-        assert!(prompt.contains("GITHUB_LIST_ISSUES"));
+        assert!(prompt.contains("GITHUB_LIST_REPOSITORY_ISSUES"));
         assert!(prompt.contains("find the most urgent open issues"));
         assert!(prompt.contains("Parent task hint:"));
         assert!(prompt.contains("--- BEGIN ---"));

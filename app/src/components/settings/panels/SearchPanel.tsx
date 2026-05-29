@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
@@ -62,8 +62,10 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   const [status, setStatus] = useState<Status>({ kind: 'loading' });
   const [parallelKey, setParallelKey] = useState<string>('');
   const [braveKey, setBraveKey] = useState<string>('');
+  const [queritKey, setQueritKey] = useState<string>('');
   const [showParallel, setShowParallel] = useState(false);
   const [showBrave, setShowBrave] = useState(false);
+  const [showQuerit, setShowQuerit] = useState(false);
   // Editor text for the allowed-websites host list (one host per line). The
   // "*" wildcard is represented by the access mode, not shown here.
   const [allowedText, setAllowedText] = useState<string>('');
@@ -91,6 +93,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
       id: 'brave',
       label: t('settings.search.engineBraveLabel'),
       description: t('settings.search.engineBraveDesc'),
+      requiresKey: true,
+    },
+    {
+      id: 'querit',
+      label: t('settings.search.engineQueritLabel'),
+      description: t('settings.search.engineQueritDesc'),
       requiresKey: true,
     },
   ];
@@ -142,17 +150,22 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     }
   };
 
-  const persistKey = async (engine: 'parallel' | 'brave', rawKey: string) => {
+  const persistKey = async (engine: 'parallel' | 'brave' | 'querit', rawKey: string) => {
     if (!settings) return;
     setStatus({ kind: 'saving' });
     try {
-      await openhumanUpdateSearchSettings(
-        engine === 'parallel' ? { parallel_api_key: rawKey } : { brave_api_key: rawKey }
-      );
+      const update =
+        engine === 'parallel'
+          ? { parallel_api_key: rawKey }
+          : engine === 'brave'
+            ? { brave_api_key: rawKey }
+            : { querit_api_key: rawKey };
+      await openhumanUpdateSearchSettings(update);
       const refreshed = await openhumanGetSearchSettings();
       setSettings(refreshed.result);
       if (engine === 'parallel') setParallelKey('');
-      else setBraveKey('');
+      else if (engine === 'brave') setBraveKey('');
+      else setQueritKey('');
       setStatus({ kind: 'saved' });
     } catch (err) {
       setStatus({ kind: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -196,6 +209,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
     if (engine === 'managed') return true;
     if (engine === 'parallel') return settings.parallel_configured;
     if (engine === 'brave') return settings.brave_configured;
+    if (engine === 'querit') return settings.querit_configured;
     return false;
   };
 
@@ -334,6 +348,23 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
                 docUrl="https://brave.com/search/api/"
                 t={t}
               />
+              <KeyEditor
+                label={t('settings.search.queritKeyLabel')}
+                placeholder={
+                  settings.querit_configured
+                    ? t('settings.search.placeholderStored')
+                    : t('settings.search.placeholderQuerit')
+                }
+                show={showQuerit}
+                onToggleShow={() => setShowQuerit(s => !s)}
+                value={queritKey}
+                onChange={setQueritKey}
+                onSave={() => void persistKey('querit', queritKey)}
+                onClear={() => void persistKey('querit', '')}
+                configured={settings.querit_configured}
+                docUrl="https://www.querit.ai/en/docs/reference/post"
+                t={t}
+              />
             </div>
 
             {/* Allowed websites — unified host allowlist shared by web_fetch /
@@ -450,49 +481,62 @@ const KeyEditor = ({
   configured,
   docUrl,
   t,
-}: KeyEditorProps) => (
-  <div className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
-    <div className="flex items-center justify-between mb-2">
-      <label className="text-xs font-semibold text-stone-700 dark:text-neutral-200">{label}</label>
-      <a
-        href={docUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-[10px] text-primary-500 hover:underline">
-        {t('settings.search.getApiKey')} ↗
-      </a>
-    </div>
-    <div className="flex items-center gap-2">
-      <input
-        type={show ? 'text' : 'password'}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
-      />
-      <button
-        type="button"
-        onClick={onToggleShow}
-        className="px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800">
-        {show ? t('settings.search.hide') : t('settings.search.show')}
-      </button>
-      <button
-        type="button"
-        onClick={onSave}
-        disabled={value.trim().length === 0}
-        className="px-3 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium disabled:opacity-50">
-        {t('settings.search.save')}
-      </button>
-      {configured && (
+}: KeyEditorProps) => {
+  const inputId = useId();
+
+  return (
+    <div
+      role="group"
+      aria-labelledby={inputId}
+      className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3">
+      <div className="flex items-center justify-between mb-2">
+        <label
+          id={inputId}
+          htmlFor={`${inputId}-input`}
+          className="text-xs font-semibold text-stone-700 dark:text-neutral-200">
+          {label}
+        </label>
+        <a
+          href={docUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[10px] text-primary-500 hover:underline">
+          {t('settings.search.getApiKey')} ↗
+        </a>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          id={`${inputId}-input`}
+          type={show ? 'text' : 'password'}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="flex-1 min-w-0 px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-xs font-mono text-stone-900 dark:text-neutral-100 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
+        />
         <button
           type="button"
-          onClick={onClear}
-          className="px-2 py-1.5 rounded-md border border-coral-200 dark:border-coral-500/30 text-xs text-coral-600 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/10">
-          {t('settings.search.clear')}
+          onClick={onToggleShow}
+          className="px-2 py-1.5 rounded-md border border-stone-200 dark:border-neutral-800 text-xs text-stone-600 dark:text-neutral-300 hover:bg-stone-50 dark:hover:bg-neutral-800">
+          {show ? t('settings.search.hide') : t('settings.search.show')}
         </button>
-      )}
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={value.trim().length === 0}
+          className="px-3 py-1.5 rounded-md bg-primary-500 hover:bg-primary-600 text-white text-xs font-medium disabled:opacity-50">
+          {t('settings.search.save')}
+        </button>
+        {configured && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="px-2 py-1.5 rounded-md border border-coral-200 dark:border-coral-500/30 text-xs text-coral-600 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/10">
+            {t('settings.search.clear')}
+          </button>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default SearchPanel;

@@ -99,7 +99,12 @@ async fn vault_sync_roundtrip_updates_memory_and_ledger() {
         .await
         .expect("vault_sync first");
     let first = wait_for_sync(&vault.id).await;
-    assert_eq!(first.status, VaultSyncStatus::Completed);
+    assert_eq!(
+        first.status,
+        VaultSyncStatus::Completed,
+        "first sync failed with errors: {:?}",
+        first.errors
+    );
     assert_eq!(first.ingested, 2);
     assert_eq!(first.removed, 0);
     assert_eq!(first.failed, 0);
@@ -168,7 +173,12 @@ async fn vault_sync_roundtrip_updates_memory_and_ledger() {
         .await
         .expect("vault_sync second");
     let second = wait_for_sync(&vault.id).await;
-    assert_eq!(second.status, VaultSyncStatus::Completed);
+    assert_eq!(
+        second.status,
+        VaultSyncStatus::Completed,
+        "second sync failed with errors: {:?}",
+        second.errors
+    );
     assert_eq!(second.ingested, 2);
     assert_eq!(second.removed, 1);
     assert_eq!(second.failed, 0);

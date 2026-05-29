@@ -41,6 +41,7 @@ pub use noop::NoopEmbedding;
 pub use ollama::{OllamaEmbedding, DEFAULT_OLLAMA_DIMENSIONS, DEFAULT_OLLAMA_MODEL};
 pub use openai::OpenAiEmbedding;
 pub use provider_trait::{format_embedding_signature, EmbeddingProvider};
+pub use rpc::provider_from_config;
 pub use schemas::{
     all_controller_schemas as all_embeddings_controller_schemas,
     all_registered_controllers as all_embeddings_registered_controllers,

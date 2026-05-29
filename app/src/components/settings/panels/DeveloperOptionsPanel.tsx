@@ -74,6 +74,28 @@ const developerItems = [
       </svg>
     ),
   },
+  // Settings → Developer → Skills Runner is commented out: the same UX
+  // (and more) now lives at /skills (Connections → Runners sub-tab) as
+  // the scheduled-skills dashboard, with /skills/run for ad-hoc runs.
+  // The route + panel component remain wired (Settings.tsx:458 keeps the
+  // /settings/skills-runner route), so deep links and bookmarks still
+  // resolve — only the menu entry is hidden.
+  // {
+  //   id: 'skills-runner',
+  //   titleKey: 'settings.developerMenu.skillsRunner.title',
+  //   descriptionKey: 'settings.developerMenu.skillsRunner.desc',
+  //   route: 'skills-runner',
+  //   icon: (
+  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //       <path
+  //         strokeLinecap="round"
+  //         strokeLinejoin="round"
+  //         strokeWidth={2}
+  //         d="M13 10V3L4 14h7v7l9-11h-7z"
+  //       />
+  //     </svg>
+  //   ),
+  // },
   {
     id: 'dev-workflow',
     titleKey: 'settings.developerMenu.devWorkflow.title',
@@ -134,6 +156,22 @@ const developerItems = [
           strokeLinejoin="round"
           strokeWidth={2}
           d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m5-5a4 4 0 015.656 5.656l-1 1m-5 5l5-5"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'event-log',
+    titleKey: 'settings.developerMenu.eventLog.title',
+    descriptionKey: 'settings.developerMenu.eventLog.desc',
+    route: 'event-log',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M4 6h16M4 10h16M4 14h16M4 18h16"
         />
       </svg>
     ),
