@@ -740,7 +740,9 @@ async fn run_typed_mode(
                 // behaviour on network failure.
                 let fresh_actions = match &client_kind {
                     Some(ComposioClientKind::Backend(client)) => {
-                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk).await {
+                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk, None)
+                            .await
+                        {
                             Ok(actions) if !actions.is_empty() => actions,
                             Ok(_) => {
                                 tracing::debug!(
@@ -1524,8 +1526,11 @@ async fn run_inner_loop(
         if force_text_mode {
             history.push(ChatMessage::assistant(response_text.clone()));
         } else {
-            let assistant_history_content =
-                super::super::parse::build_native_assistant_history(&response_text, &native_calls);
+            let assistant_history_content = super::super::parse::build_native_assistant_history(
+                &response_text,
+                resp.reasoning_content.as_deref(),
+                &native_calls,
+            );
             history.push(ChatMessage::assistant(assistant_history_content));
         }
 

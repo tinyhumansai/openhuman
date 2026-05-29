@@ -10,11 +10,17 @@
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// Binds the process-global memory client to a single shared temp workspace.
+/// Binds the process-global memory client to a single shared temp workspace and
+/// returns that workspace path.
 ///
 /// Safe to call from multiple test threads concurrently — subsequent calls with
 /// the same workspace path return the existing client without rebinding.
-pub(crate) fn ensure_shared_memory_client() {
+///
+/// The returned path lets callers whose RPC path *also* resolves the workspace
+/// from `OPENHUMAN_WORKSPACE` (notably `memory::ops::documents` via
+/// `memory_init` → `current_workspace_dir`) pin the env var to this same path so
+/// the env and the bound client agree. See `documents::tests`.
+pub(crate) fn ensure_shared_memory_client() -> PathBuf {
     static WORKSPACE: OnceLock<PathBuf> = OnceLock::new();
     let workspace = WORKSPACE.get_or_init(|| {
         let tmp = tempfile::TempDir::new().expect("tempdir");
@@ -25,4 +31,5 @@ pub(crate) fn ensure_shared_memory_client() {
     });
     crate::openhuman::memory::global::init(workspace.clone())
         .expect("initialize shared test memory client");
+    workspace.clone()
 }

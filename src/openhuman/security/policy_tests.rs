@@ -98,6 +98,64 @@ fn action_budget_error_mentions_limit_and_settings() {
 // -- is_command_allowed -------------------------------------------
 
 #[test]
+fn default_policy_allowed_commands_expanded() {
+    // Issue #2486: verify all newly added safe commands are present in the
+    // default allowlist so agents can use them without manual configuration.
+    let p = default_policy();
+
+    // Build tools
+    for cmd in ["make", "cmake", "pnpm", "yarn"] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow build tool: {cmd}"
+        );
+    }
+
+    // Read-only inspection tools (low-risk)
+    for cmd in [
+        "sort file.txt",
+        "uniq file.txt",
+        "diff a.txt b.txt",
+        "which git",
+        "uname -a",
+        "basename /foo/bar.rs",
+        "dirname /foo/bar.rs",
+        "tr 'a' 'b'",
+        "cut -d: -f1 /dev/stdin",
+        "realpath .",
+        "readlink file",
+        "stat file.txt",
+        "file README.md",
+    ] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow read-only tool: {cmd}"
+        );
+    }
+
+    // Filesystem mutation tools (medium-risk — allowed on allowlist,
+    // but require approval in Supervised mode)
+    for cmd in [
+        "mkdir src/new",
+        "touch Makefile",
+        "cp src/a.rs src/b.rs",
+        "mv old.txt new.txt",
+        "ln -s src/a.rs link.rs",
+    ] {
+        assert!(
+            p.is_command_allowed(cmd),
+            "default policy should allow medium-risk tool: {cmd}"
+        );
+        // Confirm they are actually medium-risk so the approval gate applies
+        assert_eq!(
+            p.command_risk_level(cmd),
+            CommandRiskLevel::Medium,
+            "{cmd} should be classified as medium-risk"
+        );
+    }
+}
+
+#[test]
 fn allowed_commands_basic() {
     let p = default_policy();
     assert!(p.is_command_allowed("ls"));
@@ -885,6 +943,45 @@ fn write_to_not_yet_existing_path_in_workspace_still_allowed() {
     assert!(p.is_path_string_allowed("not-yet-existing/subdir/file.txt"));
 }
 
+// -- auto_approve defaults ----------------------------------------
+
+#[test]
+fn config_default_auto_approve_includes_expanded_tools() {
+    // Issue #2486: verify read-only tools are auto-approved by default,
+    // and write tools are NOT (Supervised mode must prompt for edits).
+    let cfg = crate::openhuman::config::AutonomyConfig::default();
+
+    // Pre-existing auto-approved tools must still be present
+    for tool in [
+        "file_read",
+        "memory_search",
+        "memory_list",
+        "get_time",
+        "list_dir",
+    ] {
+        assert!(
+            cfg.auto_approve.iter().any(|t| t == tool),
+            "default auto_approve must still include pre-existing tool: {tool}"
+        );
+    }
+
+    // Newly added read-only workspace-scoped tools
+    for tool in ["glob", "grep"] {
+        assert!(
+            cfg.auto_approve.iter().any(|t| t == tool),
+            "default auto_approve must include newly added tool: {tool}"
+        );
+    }
+
+    // Write tools must NOT be auto-approved (v4→v5 migration strips these)
+    for tool in ["file_write", "edit_file"] {
+        assert!(
+            !cfg.auto_approve.iter().any(|t| t == tool),
+            "write tool {tool} must NOT be auto-approved by default"
+        );
+    }
+}
+
 // -- from_config --------------------------------------------------
 
 #[test]
@@ -898,6 +995,7 @@ fn from_config_maps_all_fields() {
         max_cost_per_day_cents: 1000,
         require_approval_for_medium_risk: false,
         block_high_risk_commands: false,
+        auto_approve: vec!["shell".into(), "file_write".into()],
         ..crate::openhuman::config::AutonomyConfig::default()
     };
     let workspace = PathBuf::from("/tmp/test-workspace");
@@ -912,6 +1010,9 @@ fn from_config_maps_all_fields() {
     assert!(!policy.require_approval_for_medium_risk);
     assert!(!policy.block_high_risk_commands);
     assert_eq!(policy.workspace_dir, PathBuf::from("/tmp/test-workspace"));
+    // The "Always allow" allowlist is carried onto the policy so the gate can
+    // skip prompting for these tools.
+    assert_eq!(policy.auto_approve, vec!["shell", "file_write"]);
 }
 
 // -- Default policy -----------------------------------------------
@@ -2133,7 +2234,7 @@ fn full_access_bypasses_command_allowlist() {
 #[test]
 fn supervised_still_enforces_command_allowlist() {
     let p = default_policy(); // Supervised
-    assert!(!p.is_command_allowed("mkdir -p foo/bar")); // not allow-listed
+    assert!(p.is_command_allowed("mkdir -p foo/bar")); // allow-listed (expanded in #2486)
     assert!(!p.is_command_allowed("ls 2>/dev/null")); // redirect blocked
     assert!(p.is_command_allowed("ls -la")); // allow-listed, no redirect
 }
@@ -2232,5 +2333,110 @@ fn from_config_does_not_duplicate_user_granted_projects_root() {
     assert!(
         matches!(matches[0].access, TrustedAccess::Read),
         "must preserve the user-granted access level"
+    );
+}
+
+// -- canonical_workspace cache ------------------------------------
+
+/// `validate_path` previously called `tokio::fs::canonicalize(&workspace_dir)`
+/// inline on every invocation. The `canonical_workspace` OnceCell now memoizes
+/// that result. This test pins the contract: the cell starts empty, is
+/// populated after the first `validate_path` call, and stays populated (same
+/// value) across subsequent calls — i.e. only one canonicalize per policy.
+#[tokio::test]
+async fn validate_path_caches_canonical_workspace_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().to_path_buf();
+    let file = workspace.join("hello.txt");
+    std::fs::write(&file, "hi").unwrap();
+
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        // Disable workspace_only so we can refer to the temp workspace via
+        // its absolute path (the default policy blocks any absolute path
+        // when workspace_only=true). Clear forbidden_paths for the same
+        // reason — macOS tempdirs live under `/var/folders/…`.
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    // Empty before first use.
+    assert!(
+        policy.canonical_workspace.get().is_none(),
+        "OnceCell must start empty so the first call hydrates it"
+    );
+
+    // First call hydrates the cache.
+    let r1 = policy
+        .validate_path(file.to_str().unwrap())
+        .await
+        .expect("first validate_path call succeeds");
+    let cached_after_first = policy
+        .canonical_workspace
+        .get()
+        .expect("first validate_path call must hydrate the OnceCell")
+        .clone();
+
+    // Subsequent calls reuse the cached value without re-canonicalizing.
+    for _ in 0..5 {
+        let r = policy
+            .validate_path(file.to_str().unwrap())
+            .await
+            .expect("repeated validate_path calls succeed");
+        assert_eq!(r, r1, "validate_path result must be stable across calls");
+        let cached_now = policy
+            .canonical_workspace
+            .get()
+            .expect("OnceCell stays populated after first hydration");
+        assert_eq!(
+            cached_now, &cached_after_first,
+            "cached workspace root must not change across calls"
+        );
+    }
+}
+
+/// `validate_parent_path` shares the same cache as `validate_path` — both go
+/// through `workspace_root()`. Hydrating via either entry point must be
+/// observable from the other.
+#[tokio::test]
+async fn validate_parent_path_uses_same_cache_as_validate_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().to_path_buf();
+
+    let policy = SecurityPolicy {
+        workspace_dir: workspace.clone(),
+        // Disable workspace_only so we can refer to the temp workspace via
+        // its absolute path (the default policy blocks any absolute path
+        // when workspace_only=true). Clear forbidden_paths for the same
+        // reason — macOS tempdirs live under `/var/folders/…`.
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    };
+
+    // Empty before first use.
+    assert!(policy.canonical_workspace.get().is_none());
+
+    // Hydrate via validate_parent_path (target file does not exist yet).
+    let target = workspace.join("not-yet-written.txt");
+    let _ = policy
+        .validate_parent_path(target.to_str().unwrap())
+        .await
+        .expect("validate_parent_path succeeds against an extant parent");
+    let cached = policy
+        .canonical_workspace
+        .get()
+        .expect("validate_parent_path must also hydrate the OnceCell")
+        .clone();
+
+    // A subsequent validate_path call must see the same cached root.
+    let other = workspace.join("hi.txt");
+    std::fs::write(&other, "x").unwrap();
+    let _ = policy.validate_path(other.to_str().unwrap()).await.unwrap();
+    assert_eq!(
+        policy.canonical_workspace.get(),
+        Some(&cached),
+        "validate_path must reuse the cache hydrated by validate_parent_path"
     );
 }

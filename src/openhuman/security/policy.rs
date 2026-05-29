@@ -2,7 +2,9 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::OnceCell;
 
 use crate::openhuman::util::floor_char_boundary;
 
@@ -182,7 +184,39 @@ pub struct SecurityPolicy {
     pub trusted_roots: Vec<TrustedRoot>,
     /// Whether the agent may install OS packages via the `install_tool` tool.
     pub allow_tool_install: bool,
+    /// Tool names the user has pre-approved ("Always allow"). The `ApprovalGate`
+    /// skips the interactive prompt for any tool in this set. Sourced from
+    /// `autonomy.auto_approve`; populated/cleared via `config.update_autonomy_settings`
+    /// (or an "Always allow" decision) and observed live via `live_policy`.
+    pub auto_approve: Vec<String>,
     pub tracker: ActionTracker,
+    /// Lazily-cached canonical form of [`workspace_dir`].
+    ///
+    /// `validate_path` / `validate_parent_path` use the canonical workspace
+    /// root to check resolved paths against `forbidden_paths`. Without a cache
+    /// each call invokes `tokio::fs::canonicalize(&workspace_dir)` — one
+    /// `stat(2)` + symlink walk on the same path on every file op. A single
+    /// agent turn doing tens of read/edit/shell-path validations hits this
+    /// repeatedly with identical input.
+    ///
+    /// `workspace_dir` is effectively immutable for a given `SecurityPolicy`
+    /// (a config update builds a *new* policy via `from_config` and swaps the
+    /// `Arc` in [`live_policy`]), so caching the resolved value is safe and
+    /// stays correct across config updates.
+    ///
+    /// `Arc<OnceCell<_>>` so the struct stays `Clone` (clone the `Arc`) and
+    /// init happens lazily on the first async call site without blocking
+    /// constructors. Fallback (raw `workspace_dir` if canonicalize fails)
+    /// matches the previous inline behavior exactly.
+    ///
+    /// Visibility is `pub` to match every other field on the struct: external
+    /// crates (Cargo examples, downstream consumers) construct
+    /// `SecurityPolicy` with the `..SecurityPolicy::default()` functional-update
+    /// spread, and Rust requires every field of the target struct to be
+    /// visible to the caller in that syntax — even fields supplied by the
+    /// default. `pub(crate)` was an over-tight first cut that broke
+    /// `examples/mouse_smoke.rs` with E0451.
+    pub canonical_workspace: Arc<OnceCell<PathBuf>>,
 }
 
 impl Default for SecurityPolicy {
@@ -191,10 +225,24 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: PathBuf::from("."),
             workspace_only: true,
+            // When adding a new entry to this allowlist, re-audit
+            // `DANGEROUS_ENV_PREFIXES` (see below). Every newly-allowed binary
+            // may introduce its own env-driven subprocess hooks (pager, editor,
+            // loader override, SSH/diff helper, preprocessor) — those names
+            // must be added to the prefix denylist so that the
+            // `KEY=cmd <allowed-binary>` shape cannot bypass allowlisting via
+            // `skip_env_assignments` in `is_command_allowed`. Cross-ref #2636.
             allowed_commands: vec![
+                // Version control
                 "git".into(),
+                // Package managers / build systems
                 "npm".into(),
+                "pnpm".into(),
+                "yarn".into(),
                 "cargo".into(),
+                "make".into(),
+                "cmake".into(),
+                // Directory / file inspection (read-only, low-risk)
                 "ls".into(),
                 "cat".into(),
                 "grep".into(),
@@ -205,6 +253,25 @@ impl Default for SecurityPolicy {
                 "head".into(),
                 "tail".into(),
                 "date".into(),
+                "sort".into(),
+                "uniq".into(),
+                "diff".into(),
+                "which".into(),
+                "uname".into(),
+                "basename".into(),
+                "dirname".into(),
+                "tr".into(),
+                "cut".into(),
+                "realpath".into(),
+                "readlink".into(),
+                "stat".into(),
+                "file".into(),
+                // Filesystem mutations (medium-risk — require approval in Supervised mode)
+                "mkdir".into(),
+                "touch".into(),
+                "cp".into(),
+                "mv".into(),
+                "ln".into(),
                 // Windows read-only equivalents for the same basic
                 // inspection workflows as ls/cat/grep/which.
                 "dir".into(),
@@ -235,13 +302,18 @@ impl Default for SecurityPolicy {
                 "~/.aws".into(),
                 "~/.config".into(),
             ],
-            max_actions_per_hour: 20,
+            // Effectively unlimited — matches AutonomyConfig::default_max_actions_per_hour().
+            // The rate-limiter check is `count <= max`, so u32::MAX is functionally
+            // infinite without requiring an Option sentinel on the field type.
+            max_actions_per_hour: u32::MAX,
             max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
             trusted_roots: Vec::new(),
             allow_tool_install: false,
+            auto_approve: Vec::new(),
             tracker: ActionTracker::new(),
+            canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
 }
@@ -1624,6 +1696,28 @@ impl SecurityPolicy {
         parent.canonicalize().ok().map(|p| p.join(name))
     }
 
+    /// Return the canonical form of `workspace_dir`, hydrating the
+    /// `canonical_workspace` cache on the first call.
+    ///
+    /// `validate_path` / `validate_parent_path` both need the canonical
+    /// workspace root for forbidden-path containment checks. The underlying
+    /// `tokio::fs::canonicalize` is a `stat(2)` + symlink walk and was
+    /// previously invoked on every call with the same input.
+    ///
+    /// Falls back to the raw `workspace_dir` if `canonicalize` fails (e.g.
+    /// during early startup or in tests where the workspace doesn't exist on
+    /// disk), matching the inline behavior the callers used before the cache.
+    async fn workspace_root(&self) -> PathBuf {
+        self.canonical_workspace
+            .get_or_init(|| async {
+                tokio::fs::canonicalize(&self.workspace_dir)
+                    .await
+                    .unwrap_or_else(|_| self.workspace_dir.clone())
+            })
+            .await
+            .clone()
+    }
+
     /// Validate a path for file I/O: string checks, canonicalize, workspace containment,
     /// and forbidden-path check on the resolved path.
     /// Returns the canonical `PathBuf` on success.
@@ -1649,9 +1743,7 @@ impl SecurityPolicy {
                 resolved.display()
             ));
         }
-        let workspace_root = tokio::fs::canonicalize(&self.workspace_dir)
-            .await
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root().await;
         self.check_resolved_against_forbidden(&resolved, &workspace_root)?;
         log::debug!(
             "[security] validate_path: '{}' resolved to '{}'",
@@ -1718,9 +1810,7 @@ impl SecurityPolicy {
         let resolved_parent = canonical_ancestor.join(relative_suffix);
         let result = resolved_parent.join(file_name);
 
-        let workspace_root = tokio::fs::canonicalize(&self.workspace_dir)
-            .await
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root().await;
         self.check_resolved_against_forbidden(&canonical_ancestor, &workspace_root)?;
         self.check_resolved_against_forbidden(&result, &workspace_root)?;
 
@@ -1942,11 +2032,12 @@ impl SecurityPolicy {
             autonomy_config.max_actions_per_hour
         );
 
-        // NOTE: `autonomy_config.auto_approve` / `always_ask` are loaded from
-        // config (with non-empty defaults) but are NOT consumed here — the
-        // ApprovalGate has no always-allow / always-ask allowlist wired to them
-        // yet, so approval is driven purely by tier + `CommandClass`. These
-        // fields pre-date this PR; wiring them into the gate is a follow-up.
+        // `auto_approve` is the user's "Always allow" allowlist: the
+        // `ApprovalGate` reads it via `live_policy::current()` and skips the
+        // interactive prompt for any tool named in it. Tier + `CommandClass`
+        // (and the unconditional read-only / forbidden-path / high-risk denials)
+        // still run *before* the gate, so the allowlist can only suppress the
+        // human prompt — it can never override a hard policy denial.
 
         // The default projects home (`~/OpenHuman/projects`) is always a
         // read-write trusted root so the coding agent can create/edit projects
@@ -1978,7 +2069,9 @@ impl SecurityPolicy {
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
             trusted_roots,
             allow_tool_install: autonomy_config.allow_tool_install,
+            auto_approve: autonomy_config.auto_approve.clone(),
             tracker: ActionTracker::new(),
+            canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
 }

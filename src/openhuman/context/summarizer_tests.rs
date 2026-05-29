@@ -84,6 +84,7 @@ impl Provider for StubProvider {
             text: Some(self.reply.clone()),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         })
     }
 }

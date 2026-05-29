@@ -215,6 +215,13 @@ const MascotPanel = () => {
 
   const onGenderChange = (next: MascotVoiceGender) => {
     dispatch(setMascotVoiceGender(next));
+    const firstPreset = ELEVENLABS_VOICE_PRESETS.find(p => p.gender === next);
+    if (firstPreset) {
+      setVoicePasteMode(false);
+      setVoicePreviewError(null);
+      setVoiceDraft(firstPreset.id);
+      dispatch(setMascotVoiceId(firstPreset.id));
+    }
   };
 
   const onLocaleDefaultToggle = (next: boolean) => {

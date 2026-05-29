@@ -149,8 +149,8 @@ pub fn capability_matrix() -> Vec<ComposioCapability> {
 ///
 /// This is consulted by the meta-tool layer alongside any registered
 /// provider's [`ComposioProvider::curated_tools`]. It lets toolkits
-/// without a full native provider (e.g. `github`, which has no sync
-/// logic yet) still benefit from curated whitelisting.
+/// without a full native provider still benefit from curated
+/// whitelisting.
 ///
 /// Lookup key is the lowercased prefix returned by
 /// [`toolkit_from_slug`] applied to the action slug — e.g.

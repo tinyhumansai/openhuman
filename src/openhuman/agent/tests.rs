@@ -94,6 +94,7 @@ impl Provider for ScriptedProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -324,6 +325,7 @@ fn tool_response(calls: Vec<ToolCall>) -> ChatResponse {
         text: Some(String::new()),
         tool_calls: calls,
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -333,6 +335,7 @@ fn text_response(text: &str) -> ChatResponse {
         text: Some(text.into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -344,6 +347,7 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
         )),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -741,6 +745,7 @@ async fn turn_errors_on_empty_text_response() {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }]));
 
     let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
@@ -761,6 +766,7 @@ async fn turn_errors_on_none_text_response() {
         text: None,
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }]));
 
     let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
@@ -790,6 +796,7 @@ async fn turn_preserves_text_alongside_tool_calls() {
                 arguments: r#"{"message": "hi"}"#.into(),
             }],
             usage: None,
+            reasoning_content: None,
         },
         text_response("Here are the results"),
     ]));
@@ -871,6 +878,7 @@ async fn e2e_native_loop_executes_text_fallback_tool_calls_and_persists_history(
             ),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         },
         text_response("Completed via tool"),
     ]));
@@ -1081,6 +1089,7 @@ async fn native_dispatcher_handles_stringified_arguments() {
             arguments: r#"{"message": "hello"}"#.into(),
         }],
         usage: None,
+        reasoning_content: None,
     };
 
     let (_, calls) = dispatcher.parse_response(&response);
@@ -1107,6 +1116,7 @@ fn xml_dispatcher_handles_nested_json() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
 
     let dispatcher = XmlToolDispatcher;
@@ -1125,6 +1135,7 @@ fn xml_dispatcher_handles_empty_tool_call_tag() {
         text: Some("<tool_call>\n</tool_call>\nSome text".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
 
     let dispatcher = XmlToolDispatcher;
@@ -1139,6 +1150,7 @@ fn xml_dispatcher_handles_unclosed_tool_call() {
         text: Some("Before\n<tool_call>\n{\"name\": \"shell\"}".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
 
     let dispatcher = XmlToolDispatcher;
@@ -1305,22 +1317,67 @@ fn xml_dispatcher_converts_history_to_provider_messages() {
 
 #[test]
 fn native_dispatcher_converts_tool_results_to_tool_messages() {
+    // TAURI-RUST-7: `to_provider_messages` now drops orphan `ToolResults`
+    // that aren't preceded by an emitted `AssistantToolCalls`, since the
+    // OpenAI chat-completions contract rejects a `tool` message that does
+    // not follow a `tool_calls` opener. Feed a properly paired cycle so
+    // this test continues to verify the serialisation shape of ToolResults
+    // (one `tool` ChatMessage per result) rather than the orphan path.
     let dispatcher = NativeToolDispatcher;
-    let history = vec![ConversationMessage::ToolResults(vec![
-        ToolResultMessage {
-            tool_call_id: "tc1".into(),
-            content: "output1".into(),
+    let history = vec![
+        ConversationMessage::AssistantToolCalls {
+            text: None,
+            tool_calls: vec![
+                ToolCall {
+                    id: "tc1".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+                ToolCall {
+                    id: "tc2".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+            ],
         },
-        ToolResultMessage {
-            tool_call_id: "tc2".into(),
-            content: "output2".into(),
-        },
-    ])];
+        ConversationMessage::ToolResults(vec![
+            ToolResultMessage {
+                tool_call_id: "tc1".into(),
+                content: "output1".into(),
+            },
+            ToolResultMessage {
+                tool_call_id: "tc2".into(),
+                content: "output2".into(),
+            },
+        ]),
+    ];
 
     let messages = dispatcher.to_provider_messages(&history);
-    assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].role, "tool");
+    // assistant tool_calls opener + one `tool` message per tool_call_id.
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0].role, "assistant");
     assert_eq!(messages[1].role, "tool");
+    assert_eq!(messages[2].role, "tool");
+}
+
+#[test]
+fn native_dispatcher_drops_standalone_orphan_tool_results() {
+    // TAURI-RUST-7 regression: a `ToolResults` without a preceding
+    // `AssistantToolCalls` is an invalid wire shape (the provider rejects
+    // a `tool` message that doesn't follow a `tool_calls` opener). The
+    // dispatcher must drop it before serialising.
+    let dispatcher = NativeToolDispatcher;
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "tc-orphan".into(),
+        content: "stranded".into(),
+    }])];
+
+    let messages = dispatcher.to_provider_messages(&history);
+    assert!(
+        messages.is_empty(),
+        "standalone ToolResults must be dropped, got {} message(s)",
+        messages.len()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -338,3 +338,16 @@ export async function openhumanMigrateOpenclaw(
     params: { source_workspace: sourceWorkspace, dry_run: dryRun },
   });
 }
+
+export async function openhumanMigrateHermes(
+  sourceWorkspace?: string,
+  dryRun = true
+): Promise<CommandResponse<MigrationReport>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<MigrationReport>>({
+    method: 'openhuman.migrate_hermes',
+    params: { source_workspace: sourceWorkspace, dry_run: dryRun },
+  });
+}

@@ -34,6 +34,11 @@ vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(un
 vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
   openWorkspacePath: vi.fn().mockResolvedValue(undefined),
   revealWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  // #2492: the Obsidian deep link now resolves the vault's absolute path
+  // through the shared workspace-link layer instead of trusting the
+  // `content_root_abs` field returned from the graph export RPC. Return the
+  // same path the prop carries so the existing `openUrl` assertion is stable.
+  resolveWorkspaceAbsolutePath: vi.fn().mockResolvedValue('/tmp/workspace/memory_tree/content'),
   previewWorkspaceText: vi
     .fn()
     .mockResolvedValue({
@@ -235,24 +240,23 @@ describe('MemoryWorkspace (graph view)', () => {
     });
   });
 
-  it('hides toolkits without a memory-tree ingest provider entirely', async () => {
+  it('shows sync rows for provider-backed toolkits and hides non-syncable ones', async () => {
     listConnections.mockResolvedValue({
       connections: [
         { id: 'conn-gmail', toolkit: 'gmail', status: 'ACTIVE', accountEmail: 'a@x' },
         { id: 'conn-slack', toolkit: 'slack', status: 'ACTIVE', workspace: 'acme' },
         { id: 'conn-notion', toolkit: 'notion', status: 'ACTIVE' },
+        { id: 'conn-discord', toolkit: 'discord', status: 'ACTIVE' },
       ],
     });
     renderWithProviders(<MemoryWorkspace />);
-    // Gmail row exists with a working Sync button.
+    // Provider-backed toolkits should render actionable Sync rows
     expect(await screen.findByTestId('memory-source-sync-gmail')).toBeInTheDocument();
-    // Non-syncable toolkits are filtered out completely — neither
-    // the row nor the Sync button render. Cleaner than a "no sync
-    // yet" placeholder for an action the user can't take.
-    expect(screen.queryByTestId('memory-source-row-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-row-notion')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-slack')).toBeNull();
-    expect(screen.queryByTestId('memory-source-sync-notion')).toBeNull();
+    expect(screen.getByTestId('memory-source-sync-slack')).toBeInTheDocument();
+    expect(screen.getByTestId('memory-source-sync-notion')).toBeInTheDocument();
+    // Non-syncable toolkits stay hidden.
+    expect(screen.queryByTestId('memory-source-row-discord')).toBeNull();
+    expect(screen.queryByTestId('memory-source-sync-discord')).toBeNull();
   });
 
   it('toggling to Contacts mode re-fetches the graph with mode=contacts', async () => {

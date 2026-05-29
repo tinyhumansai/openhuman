@@ -316,6 +316,8 @@ export interface AutonomySettings {
   trusted_roots: TrustedRoot[];
   allow_tool_install: boolean;
   max_actions_per_hour: number;
+  /** "Always allow" allowlist — tool names the agent runs without a prompt. */
+  auto_approve: string[];
 }
 
 /** Partial update — omitted fields are left unchanged. */
@@ -327,6 +329,8 @@ export interface AutonomySettingsUpdate {
   trusted_roots?: TrustedRoot[];
   allow_tool_install?: boolean;
   max_actions_per_hour?: number;
+  /** Replaces the "Always allow" allowlist wholesale. */
+  auto_approve?: string[];
 }
 
 export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
@@ -444,6 +448,25 @@ export interface SearchSettings {
   allowed_domains: string[];
   /** True when the allowlist contains the `"*"` wildcard. */
   allow_all: boolean;
+}
+
+export interface DiagramViewerSettings {
+  enabled: boolean;
+  source_url: string;
+  refresh_interval_seconds: number;
+}
+
+export interface DashboardSettings {
+  diagram_viewer: DiagramViewerSettings;
+}
+
+export async function openhumanGetDashboardSettings(): Promise<CommandResponse<DashboardSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<DashboardSettings>>({
+    method: CORE_RPC_METHODS.configGetDashboardSettings,
+  });
 }
 
 export async function openhumanGetSearchSettings(): Promise<CommandResponse<SearchSettings>> {

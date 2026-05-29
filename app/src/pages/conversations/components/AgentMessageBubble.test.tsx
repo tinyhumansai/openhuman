@@ -76,3 +76,43 @@ describe('AgentMessageBubble markdown links', () => {
     expect(mocks.openWorkspacePath).not.toHaveBeenCalled();
   });
 });
+
+describe('BubbleMarkdown math rendering', () => {
+  test('renders \\[ ... \\] block math (raw delimiters consumed, math visible)', () => {
+    const { container } = render(<BubbleMarkdown content={'\\[ x^2 + y^2 = z^2 \\]'} />);
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('\\[');
+    expect(text).not.toContain('\\]');
+    expect(text).toContain('x');
+    expect(text).toContain('y');
+    expect(text).toContain('z');
+  });
+
+  test('renders inline \\( ... \\) math (raw delimiters consumed, math visible)', () => {
+    const { container } = render(<BubbleMarkdown content={'value \\(a+b\\) here'} />);
+    const text = container.textContent ?? '';
+    expect(text).not.toContain('\\(');
+    expect(text).not.toContain('\\)');
+    expect(text).toContain('value');
+    expect(text).toContain('here');
+    expect(text).toContain('a');
+    expect(text).toContain('b');
+  });
+
+  test('renders bare bracket vmatrix block (math rendered, not raw text)', () => {
+    const { container } = render(
+      <BubbleMarkdown content={'[ \\begin{vmatrix} 1 & 2 \\\\ 3 & 4 \\end{vmatrix} = -2 ]'} />
+    );
+    const text = container.textContent ?? '';
+    // KaTeX renders visible glyphs (∣ for vmatrix bars) — confirm rendering happened.
+    expect(text).toContain('∣');
+    expect(text).toContain('1');
+    expect(text).toContain('4');
+  });
+
+  test('does NOT treat currency mentions as math', () => {
+    const { container } = render(<BubbleMarkdown content={'total is $10 versus $20'} />);
+    expect(container.textContent).toContain('$10');
+    expect(container.textContent).toContain('$20');
+  });
+});

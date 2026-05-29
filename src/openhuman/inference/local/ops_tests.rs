@@ -146,3 +146,37 @@ async fn local_ai_assets_status_returns_without_panic() {
     let config = test_config(&tmp);
     let _ = local_ai_assets_status(&config).await;
 }
+
+// ── normalize_model_override (TAURI-RUST-RS) ───────────────────────────
+
+#[test]
+fn normalize_model_override_passthrough_none() {
+    assert_eq!(normalize_model_override(None), None);
+}
+
+#[test]
+fn normalize_model_override_blank_collapses_to_none() {
+    assert_eq!(normalize_model_override(Some(String::new())), None);
+    assert_eq!(normalize_model_override(Some("   ".to_string())), None);
+    assert_eq!(normalize_model_override(Some("\t\n".to_string())), None);
+}
+
+#[test]
+fn normalize_model_override_trims_surrounding_whitespace() {
+    assert_eq!(
+        normalize_model_override(Some("  reasoning-v1  ".to_string())),
+        Some("reasoning-v1".to_string())
+    );
+}
+
+#[test]
+fn normalize_model_override_passes_non_empty_verbatim() {
+    assert_eq!(
+        normalize_model_override(Some("agentic-v1".to_string())),
+        Some("agentic-v1".to_string())
+    );
+    assert_eq!(
+        normalize_model_override(Some("hint:reasoning".to_string())),
+        Some("hint:reasoning".to_string())
+    );
+}
