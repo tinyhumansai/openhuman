@@ -173,6 +173,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
     );
+    // Desktop gameplay review workflow
+    controllers
+        .extend(crate::openhuman::gameplay_review::all_gameplay_review_registered_controllers());
     // Backend Socket.IO bridge + related runtime plumbing
     controllers.extend(crate::openhuman::socket::all_socket_registered_controllers());
     // Managed Node.js runtime bridge (tool listing + dispatch)
@@ -306,6 +309,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas
         .extend(crate::openhuman::channels::providers::web::all_web_channel_controller_schemas());
     schemas.extend(crate::openhuman::channels::controllers::all_channels_controller_schemas());
+    schemas.extend(crate::openhuman::gameplay_review::all_gameplay_review_controller_schemas());
     schemas.extend(crate::openhuman::config::all_config_controller_schemas());
     schemas.extend(crate::openhuman::connectivity::all_connectivity_controller_schemas());
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());

@@ -1785,3 +1785,82 @@ fn native_message_reasoning_content_present_when_some() {
         "reasoning_content must be present in the wire payload when Some"
     );
 }
+
+// ── convert_tool_specs — TAURI-RUST-2E wire-boundary dedup ─────────────
+
+fn spec(name: &str) -> crate::openhuman::tools::ToolSpec {
+    crate::openhuman::tools::ToolSpec {
+        name: name.to_string(),
+        description: format!("{name} desc"),
+        parameters: serde_json::json!({"type": "object"}),
+    }
+}
+
+#[test]
+fn convert_tool_specs_none_input_returns_none() {
+    assert!(OpenAiCompatibleProvider::convert_tool_specs(None).is_none());
+}
+
+#[test]
+fn convert_tool_specs_empty_slice_returns_empty_vec() {
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&[])).unwrap();
+    assert!(out.is_empty());
+}
+
+#[test]
+fn convert_tool_specs_passes_through_unique_names() {
+    let specs = vec![spec("alpha"), spec("beta"), spec("gamma")];
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(out.len(), 3);
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+}
+
+#[test]
+fn convert_tool_specs_dedups_duplicate_names_first_wins() {
+    // First occurrence of `alpha` (with description "alpha desc") survives;
+    // the second is dropped wholesale even though its `parameters` differ.
+    let mut second_alpha = spec("alpha");
+    second_alpha.description = "should be dropped".to_string();
+    second_alpha.parameters = serde_json::json!({"different": true});
+    let specs = vec![spec("alpha"), spec("beta"), second_alpha, spec("gamma")];
+
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(
+        out.len(),
+        3,
+        "duplicate `alpha` must be dropped from wire payload"
+    );
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    assert_eq!(
+        out[0]["function"]["description"].as_str().unwrap(),
+        "alpha desc",
+        "first occurrence's description must survive (first-wins)"
+    );
+}
+
+#[test]
+fn convert_tool_specs_dedups_many_duplicates() {
+    let specs = vec![
+        spec("x"),
+        spec("x"),
+        spec("x"),
+        spec("y"),
+        spec("y"),
+        spec("z"),
+    ];
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(out.len(), 3);
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["x", "y", "z"]);
+}

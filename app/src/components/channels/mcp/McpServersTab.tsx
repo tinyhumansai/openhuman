@@ -15,6 +15,7 @@ import InstalledServerList from './InstalledServerList';
 import McpCatalogBrowser from './McpCatalogBrowser';
 import McpConnectionHealthToolbar from './McpConnectionHealthToolbar';
 import McpInventoryPanel from './McpInventoryPanel';
+import McpServerSearch from './McpServerSearch';
 import type { ConnStatus, InstalledServer } from './types';
 
 const log = debug('mcp-clients:tab');
@@ -33,6 +34,9 @@ const McpServersTab = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rightPane, setRightPane] = useState<RightPane>({ mode: 'none' });
+  // Local-only filter for the installed-server list. Not persisted — the
+  // search is a transient scan helper, not a saved view.
+  const [searchFilter, setSearchFilter] = useState('');
   // Sharable Inventory modal toggle. Local state — the manifest UX is
   // a one-off interaction, not a saved view.
   const [inventoryOpen, setInventoryOpen] = useState(false);
@@ -193,7 +197,7 @@ const McpServersTab = () => {
         </button>
       </div>
       <div className="flex gap-4 flex-1 min-h-0">
-        {/* Left pane: health toolbar + installed list */}
+        {/* Left pane: health toolbar + search + installed list */}
         <div className="w-56 shrink-0 flex flex-col">
           {loadError && (
             <div className="mb-2 rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300">
@@ -205,12 +209,18 @@ const McpServersTab = () => {
             onReconnect={handleBulkReconnect}
             onDisconnect={handleBulkDisconnect}
           />
+          {servers.length > 0 && (
+            <div className="mb-2">
+              <McpServerSearch value={searchFilter} onChange={setSearchFilter} />
+            </div>
+          )}
           <InstalledServerList
             servers={servers}
             statuses={statuses}
             selectedId={selectedServerId}
             onSelect={handleSelectServer}
             onBrowseCatalog={handleBrowseCatalog}
+            filter={searchFilter}
           />
         </div>
 

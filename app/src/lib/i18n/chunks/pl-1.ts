@@ -200,6 +200,10 @@ const pl1: TranslationMap = {
   'memory.empty':
     'Brak wspomnień. Wspomnienia powstają automatycznie podczas korzystania z aplikacji.',
   'memory.tab.memory': 'Pamięć',
+  'memory.tab.gameplay': 'Gameplay',
+  'gameplay.spoiler.off': 'Spoiler-safe',
+  'gameplay.spoiler.light': 'Light spoilers',
+  'gameplay.spoiler.full': 'Full spoilers',
   'memory.tab.subconscious': 'Podświadomość',
   'memory.tab.dreams': 'Marzenia senne',
   'memory.tab.calls': 'Połączenia',

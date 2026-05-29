@@ -87,10 +87,10 @@ pub struct Config {
     pub temperature_unsupported_models: Vec<String>,
 
     #[serde(default)]
-    pub observability: ObservabilityConfig,
+    pub dashboard: DashboardConfig,
 
     #[serde(default)]
-    pub dashboard: DashboardConfig,
+    pub observability: ObservabilityConfig,
 
     #[serde(default)]
     pub autonomy: AutonomyConfig,
