@@ -165,16 +165,27 @@ pub fn parse_image_markers(content: &str) -> (String, Vec<String>) {
     (cleaned.trim().to_string(), refs)
 }
 
+/// Count `[IMAGE:…]` markers in the **latest** user message only.
+///
+/// Earlier versions summed markers across every user-role message in
+/// the history, which made the per-turn `max_images` cap drift upward
+/// over a long conversation: a thread that attached three images on
+/// turn 1 already counted them again on turn 2 even when the new user
+/// message had no attachments at all. Looking only at the most recent
+/// user message matches the user's intent ("how many am I attaching
+/// THIS turn") and keeps the cap stable.
 pub fn count_image_markers(messages: &[ChatMessage]) -> usize {
-    messages
-        .iter()
-        .filter(|m| m.role == "user")
+    latest_user_message(messages)
         .map(|m| parse_image_markers(&m.content).1.len())
-        .sum()
+        .unwrap_or(0)
 }
 
 pub fn contains_image_markers(messages: &[ChatMessage]) -> bool {
     count_image_markers(messages) > 0
+}
+
+fn latest_user_message(messages: &[ChatMessage]) -> Option<&ChatMessage> {
+    messages.iter().rev().find(|m| m.role == "user")
 }
 
 pub fn extract_ollama_image_payload(image_ref: &str) -> Option<String> {
@@ -230,12 +241,13 @@ pub fn parse_file_markers(content: &str) -> (String, Vec<String>) {
     (cleaned.trim().to_string(), refs)
 }
 
+/// Count `[FILE:…]` markers in the **latest** user message only — same
+/// per-turn semantics as [`count_image_markers`]. See that function's
+/// rustdoc for the reasoning.
 pub fn count_file_markers(messages: &[ChatMessage]) -> usize {
-    messages
-        .iter()
-        .filter(|m| m.role == "user")
+    latest_user_message(messages)
         .map(|m| parse_file_markers(&m.content).1.len())
-        .sum()
+        .unwrap_or(0)
 }
 
 pub fn contains_file_markers(messages: &[ChatMessage]) -> bool {

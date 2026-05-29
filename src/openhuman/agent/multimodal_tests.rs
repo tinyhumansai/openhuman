@@ -598,6 +598,40 @@ fn multimodal_file_config_mime_allowlist_is_case_insensitive() {
 }
 
 #[test]
+fn count_markers_only_inspects_latest_user_message() {
+    // Regression: earlier versions summed markers across every user
+    // role in history, so an N-turn thread that attached 1 file per
+    // turn eventually exceeded max_files even though no single turn
+    // attached more than 1. Per-turn semantics: count only the latest
+    // user message.
+    let history = vec![
+        ChatMessage::user(
+            "[FILE:/tmp/a.txt] [FILE:/tmp/b.txt] [FILE:/tmp/c.txt] [FILE:/tmp/d.txt]".to_string(),
+        ),
+        ChatMessage::assistant("ok"),
+        ChatMessage::user("now just one [FILE:/tmp/e.txt]".to_string()),
+    ];
+    assert_eq!(count_file_markers(&history), 1);
+    assert!(contains_file_markers(&history));
+
+    let history_no_new_files = vec![
+        ChatMessage::user("[FILE:/tmp/a.txt] [FILE:/tmp/b.txt]".to_string()),
+        ChatMessage::assistant("ok"),
+        ChatMessage::user("no attachments this turn".to_string()),
+    ];
+    assert_eq!(count_file_markers(&history_no_new_files), 0);
+    assert!(!contains_file_markers(&history_no_new_files));
+
+    // Same semantics for the image counter.
+    let image_history = vec![
+        ChatMessage::user("[IMAGE:/tmp/1.png] [IMAGE:/tmp/2.png]".to_string()),
+        ChatMessage::assistant("ok"),
+        ChatMessage::user("plain text only".to_string()),
+    ];
+    assert_eq!(count_image_markers(&image_history), 0);
+}
+
+#[test]
 fn file_payload_renders_truncation_marker_in_compose() {
     let payload = FilePayload::Extracted {
         name: "long.txt".to_string(),
