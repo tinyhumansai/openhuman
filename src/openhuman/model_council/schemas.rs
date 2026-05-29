@@ -72,7 +72,15 @@ pub fn schemas(function: &str) -> ControllerSchema {
 
 fn handle_run(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
+        log::debug!("[model-council] handle_run: received RPC request");
         let p = deserialize_params::<ModelCouncilParams>(params)?;
+        // Log a sanitized summary only — never the full question text.
+        log::debug!(
+            "[model-council] handle_run: question_len={}, members={}, chair={}",
+            p.question.len(),
+            p.member_models.len(),
+            p.chair_model
+        );
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(
             crate::openhuman::model_council::council::run_council(
@@ -82,7 +90,11 @@ fn handle_run(params: Map<String, Value>) -> ControllerFuture {
                 &p.chair_model,
                 p.temperature,
             )
-            .await?,
+            .await
+            .map_err(|e| {
+                log::debug!("[model-council] handle_run: run_council failed: {e}");
+                e
+            })?,
         )
     })
 }

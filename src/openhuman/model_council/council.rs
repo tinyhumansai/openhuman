@@ -198,6 +198,14 @@ pub async fn run_council(
     let models = normalize_member_models(member_models);
     validate_council_request(question, &models, chair_model)?;
 
+    log::debug!(
+        "[model-council] run_council: question_len={}, members={}, chair={}, temp={:?}",
+        question.len(),
+        models.len(),
+        chair_model,
+        temperature
+    );
+
     // Fan out: each member answers the SAME question as an independent
     // single-shot completion. A per-member failure is captured in-band as an
     // error seat rather than aborting the whole council.
@@ -221,11 +229,20 @@ pub async fn run_council(
     let members: Vec<CouncilMemberResult> =
         futures_util::future::join_all(member_futures).await;
 
+    let success_count = members.iter().filter(|m| m.response.is_some()).count();
+    log::debug!(
+        "[model-council] member results: success={}, failed={}",
+        success_count,
+        members.len() - success_count
+    );
+
     if all_members_failed(&members) {
+        log::debug!("[model-council] all members failed; aborting before synthesis");
         return Err("model council: all member models failed to respond".to_string());
     }
 
     let synthesis_prompt = build_synthesis_prompt(question, &members);
+    log::debug!("[model-council] convening chair model: {chair_model}");
     let synthesis = agent_chat_simple(
         config,
         &synthesis_prompt,
@@ -235,6 +252,7 @@ pub async fn run_council(
     .await
     .map_err(|e| format!("model council: chair synthesis failed: {e}"))?
     .value;
+    log::debug!("[model-council] synthesis complete: {} chars", synthesis.len());
 
     let result = ModelCouncilResult {
         question: question.to_string(),

@@ -26,9 +26,11 @@ describe('unwrapCouncilEnvelope', () => {
     expect(unwrapCouncilEnvelope(RESULT)).toEqual(RESULT);
   });
 
-  it('does not mistake a result that happens to have a result field but no logs', () => {
-    const bare = { ...RESULT } as unknown;
-    expect(unwrapCouncilEnvelope(bare)).toEqual(RESULT);
+  it('passes through an object with a result field but no logs (not a real envelope)', () => {
+    // Only `{ result, logs }` (logs array present) is treated as the CLI
+    // envelope. A bare `{ result }` is returned unchanged, not unwrapped.
+    const notAnEnvelope = { result: RESULT } as unknown;
+    expect(unwrapCouncilEnvelope(notAnEnvelope)).toEqual({ result: RESULT });
   });
 });
 
