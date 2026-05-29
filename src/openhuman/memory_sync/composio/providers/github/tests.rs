@@ -246,8 +246,7 @@ fn action_get_authenticated_user_slug_is_current() {
     // Regression: was mistakenly referenced as GITHUB_USERS_GET_AUTHENTICATED
     // in tests (see issue #2768).
     assert_eq!(
-        ACTION_GET_AUTHENTICATED_USER,
-        "GITHUB_GET_THE_AUTHENTICATED_USER",
+        ACTION_GET_AUTHENTICATED_USER, "GITHUB_GET_THE_AUTHENTICATED_USER",
         "slug must match Composio v3 catalog; old slug GITHUB_USERS_GET_AUTHENTICATED is retired"
     );
 }
@@ -255,8 +254,7 @@ fn action_get_authenticated_user_slug_is_current() {
 #[test]
 fn action_search_issues_slug_is_current() {
     assert_eq!(
-        ACTION_SEARCH_ISSUES,
-        "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
+        ACTION_SEARCH_ISSUES, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS",
         "slug must match Composio v3 catalog"
     );
 }
@@ -266,12 +264,12 @@ fn curated_list_does_not_contain_retired_slugs() {
     // Guard against re-introducing removed slugs that no longer exist in the
     // Composio v3 GitHub app catalog.
     const RETIRED: &[&str] = &[
-        "GITHUB_USERS_GET_AUTHENTICATED",      // replaced by GITHUB_GET_THE_AUTHENTICATED_USER
-        "GITHUB_LIST_REPOS",                   // replaced by GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER
-        "GITHUB_LIST_ISSUES",                  // replaced by GITHUB_LIST_REPOSITORY_ISSUES
-        "GITHUB_COMMIT_MULTIPLE_FILES",        // removed from Composio catalog
-        "GITHUB_CLOSE_AN_ISSUE",               // removed; use GITHUB_UPDATE_AN_ISSUE with state=closed
-        "GITHUB_DELETE_A_BRANCH",              // removed; use GITHUB_DELETE_A_REFERENCE
+        "GITHUB_USERS_GET_AUTHENTICATED", // replaced by GITHUB_GET_THE_AUTHENTICATED_USER
+        "GITHUB_LIST_REPOS", // replaced by GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER
+        "GITHUB_LIST_ISSUES", // replaced by GITHUB_LIST_REPOSITORY_ISSUES
+        "GITHUB_COMMIT_MULTIPLE_FILES", // removed from Composio catalog
+        "GITHUB_CLOSE_AN_ISSUE", // removed; use GITHUB_UPDATE_AN_ISSUE with state=closed
+        "GITHUB_DELETE_A_BRANCH", // removed; use GITHUB_DELETE_A_REFERENCE
     ];
 
     let slugs: Vec<&str> = GITHUB_CURATED.iter().map(|t| t.slug).collect();
