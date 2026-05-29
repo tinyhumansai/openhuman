@@ -67,4 +67,11 @@ describe('<MemoryFreshnessPanel />', () => {
       screen.getByText('Every fact is still fresh — nothing to re-confirm.')
     ).toBeInTheDocument();
   });
+
+  it('notes when the re-confirm queue is truncated past the row cap', () => {
+    // 60 stale facts -> the queue is capped at 50 and a "showing 50 of 60" note appears.
+    const many = Array.from({ length: 60 }, (_, i) => rel('You', `fact${i}`, 365));
+    render(<MemoryFreshnessPanel report={computeFreshness(many, NOW)} />);
+    expect(screen.getByText('Showing 50 of 60 — address these first.')).toBeInTheDocument();
+  });
 });

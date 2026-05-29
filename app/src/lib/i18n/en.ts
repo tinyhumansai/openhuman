@@ -347,6 +347,7 @@ const en: TranslationMap = {
   'memoryFreshness.metricStale': 'Stale',
   'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
   'memoryFreshness.queueHeading': 'Re-confirm queue',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
   'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
   'memoryFreshness.statusFading': 'fading',
   'memoryFreshness.statusStale': 'stale',

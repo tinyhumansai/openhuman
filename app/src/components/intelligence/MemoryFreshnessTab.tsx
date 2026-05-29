@@ -3,7 +3,7 @@
  * selector, and minting `nowSeconds` (in handlers, never during render).
  * Delegates all rendering to the pure <MemoryFreshnessPanel>. Read-only.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { FreshnessReport } from '../../lib/memory/memoryFreshness';
@@ -19,16 +19,23 @@ const MemoryFreshnessTab = () => {
   const [error, setError] = useState<string | null>(null);
   const [namespaces, setNamespaces] = useState<string[]>([]);
   const [namespace, setNamespace] = useState('');
+  // Monotonic token: ignore a response if a newer load has since started, so
+  // an out-of-order resolution can never overwrite the latest result.
+  const latestRequestId = useRef(0);
 
   const load = useCallback(async (ns: string) => {
+    const requestId = (latestRequestId.current += 1);
     setLoading(true);
     setError(null);
     try {
-      setReport(await loadFreshness(nowSeconds(), ns || undefined));
+      const next = await loadFreshness(nowSeconds(), ns || undefined);
+      if (requestId !== latestRequestId.current) return;
+      setReport(next);
     } catch (err) {
+      if (requestId !== latestRequestId.current) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestId.current) setLoading(false);
     }
   }, []);
 

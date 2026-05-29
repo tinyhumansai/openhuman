@@ -188,6 +188,13 @@ const MemoryFreshnessPanel = ({ report, loading, error, onRetry }: MemoryFreshne
             ))}
           </ul>
         )}
+        {report.staleQueue.length > MAX_QUEUE_ROWS && (
+          <p className="text-center text-xs text-stone-400 dark:text-neutral-500">
+            {t('memoryFreshness.queueTruncated')
+              .replace('{shown}', String(MAX_QUEUE_ROWS))
+              .replace('{total}', String(report.staleQueue.length))}
+          </p>
+        )}
       </section>
     </div>
   );
