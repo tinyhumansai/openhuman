@@ -31,10 +31,14 @@ const FILE_MARKER_PREFIX: &str = "[FILE:";
 /// large, encrypted, malformed) must not stall a chat turn.
 const PDF_EXTRACTION_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Suffix appended when extracted text overflows
-/// `max_extracted_text_chars`. Length is reserved when computing the
-/// cap so the final string stays within the configured budget.
-const TEXT_TRUNCATION_SUFFIX: &str = "\n[…truncated]";
+/// Worst-case length budget reserved for the rendered truncation
+/// suffix. The actual emitted suffix is `"\n[…truncated {N} chars]"`
+/// where `N` is the dynamic dropped-character count. The reservation
+/// uses the longest plausible value (`max_extracted_text_chars` is
+/// clamped to 200_000, so `N` has up to 6 digits) so the truncated
+/// payload never overshoots `max_extracted_text_chars` even after the
+/// suffix is appended.
+const TEXT_TRUNCATION_SUFFIX_BUDGET: &str = "\n[…truncated 999999 chars]";
 
 #[derive(Debug, Clone)]
 pub struct PreparedMessages {
@@ -283,7 +287,7 @@ pub async fn prepare_messages_for_provider(
         .into());
     }
 
-    tracing::info!(
+    tracing::debug!(
         target: "multimodal",
         found_images,
         found_files,
@@ -751,7 +755,7 @@ async fn normalize_file_reference(
 
     let size_bytes = bytes.len();
 
-    tracing::info!(
+    tracing::debug!(
         target: "multimodal",
         file = %name,
         mime = %mime,
@@ -976,17 +980,19 @@ async fn extract_pdf_text(bytes: Vec<u8>) -> Result<String, String> {
 }
 
 /// Truncate `text` to at most `max_chars` Unicode scalar values, leaving
-/// room for [`TEXT_TRUNCATION_SUFFIX`] when capping (so callers that
-/// emit a trailing `[...truncated N chars]` block stay inside the
-/// budget). Returns the (possibly-trimmed) text and the count of chars
-/// dropped (0 when no truncation happened).
+/// room for the rendered `"\n[…truncated {dropped} chars]"` suffix.
+/// The reservation uses [`TEXT_TRUNCATION_SUFFIX_BUDGET`] — the
+/// worst-case rendered length — so the final `text + suffix` payload
+/// always stays inside `max_chars` regardless of the actual dropped
+/// digit count. Returns the (possibly-trimmed) text and the count of
+/// chars dropped (0 when no truncation happened).
 fn truncate_chars(text: String, max_chars: usize) -> (String, usize) {
     let total = text.chars().count();
     if total <= max_chars {
         return (text, 0);
     }
 
-    let suffix_chars = TEXT_TRUNCATION_SUFFIX.chars().count();
+    let suffix_chars = TEXT_TRUNCATION_SUFFIX_BUDGET.chars().count();
     let keep = max_chars.saturating_sub(suffix_chars);
     let truncated: String = text.chars().take(keep).collect();
     let dropped = total.saturating_sub(keep);
