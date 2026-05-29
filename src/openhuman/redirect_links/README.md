@@ -76,7 +76,7 @@ Insert is atomic (`ON CONFLICT DO NOTHING`) so concurrent shortens of the same U
 
 - **Ids are content-addressed, not random**: same URL → same id (deterministic, deduped). Removing a link and re-shortening the same URL yields the same id again.
 - **Length threshold guards token waste**: the placeholder is ~24 bytes, so URLs below `DEFAULT_MIN_URL_LEN` (80) are left untouched by inbound rewrite.
-- **Trailing punctuation handling**: inbound rewrite and public-link tagging strip trailing `. , ; : !` so prose like "see https://…/path." doesn't capture the period into the stored/tagged URL.
+- **Trailing punctuation handling**: inbound rewrite and public-link tagging strip trailing `. , ; : !` so prose like "see an HTTPS URL ending in a period." doesn't capture the period into the stored/tagged URL.
 - **`append_user_id_to_public_links` is anchored to `openhm.xyz`** specifically and rejects lookalikes (`evil-openhm.xyz`, `openhm.xyz.evil.com`); it splits off `#fragment` so `?u=` always lands in the query, and is idempotent against existing `?u=`/`&u=`.
 - **`id_from_short`** accepts both `openhuman://link/<id>` and a bare hex `<id>`, lowercasing the result; non-hex input returns `None`.
 - **No agent tools, no event-bus subscribers, no `bus.rs`/`tools.rs`** — this domain is store + ops + RPC only.
