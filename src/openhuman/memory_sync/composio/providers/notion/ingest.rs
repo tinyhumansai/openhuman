@@ -181,7 +181,11 @@ pub async fn ingest_page_into_memory_tree(
             Ok(chunks_written)
         }
         Err(err) => Err(anyhow::anyhow!(
-            "ingest_document failed for {source_id}: {err}"
+            // `{err:#}` (alternate formatter) bakes in the anyhow context
+            // chain so provider.rs's `tracing::warn!(error = %e)` doesn't
+            // strip the underlying cause (DB / embedding / persist failure)
+            // when it Displays the wrapped error.
+            "ingest_document failed for {source_id}: {err:#}"
         )),
     }
 }

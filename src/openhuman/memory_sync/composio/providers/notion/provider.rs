@@ -181,6 +181,14 @@ impl ComposioProvider for NotionProvider {
         let mut total_persisted: usize = 0;
         let mut newest_edited_time: Option<String> = None;
         let mut notion_cursor: Option<String> = None;
+        // Track whether any per-item ingest failed this pass. If so, we hold
+        // the persistent cursor — `last_edited_time > {cursor}` on the next
+        // sync would otherwise exclude the failed item, and because the new
+        // memory-tree pipeline (#2885) is delete-first, an *edited* page that
+        // failed to re-ingest is left with neither old nor new chunks until
+        // its next edit. Already-synced items are skipped cheaply via
+        // `is_synced` on the re-fetch, so the cost of holding is minimal.
+        let mut had_ingest_failures = false;
 
         for page_num in 0..MAX_PAGES_PER_SYNC {
             if state.budget_exhausted() {
@@ -300,6 +308,7 @@ impl ComposioProvider for NotionProvider {
                         total_persisted += 1;
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             page_id = %page_id,
                             error = %e,
@@ -326,8 +335,20 @@ impl ComposioProvider for NotionProvider {
         }
 
         // ── Step 5: advance cursor and save state ───────────────────
-        if let Some(new_cursor) = newest_edited_time {
-            state.advance_cursor(&new_cursor);
+        //
+        // Hold the cursor when any item failed to ingest this pass. See the
+        // `had_ingest_failures` declaration above for why this matters under
+        // the delete-first memory-tree pipeline (#2885).
+        if !had_ingest_failures {
+            if let Some(new_cursor) = newest_edited_time {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:notion] holding cursor — ingest failures this pass; next sync will \
+                 re-fetch the failed range"
+            );
         }
         state.save(&memory).await?;
 
