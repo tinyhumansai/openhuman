@@ -142,11 +142,7 @@ describe('listMeetCalls', () => {
         turn_count: 3,
       },
     ];
-    vi.mocked(callCoreRpc).mockResolvedValueOnce({
-      ok: true,
-      calls: mockCalls,
-      count: 1,
-    } as never);
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, calls: mockCalls, count: 1 } as never);
 
     const result = await listMeetCalls(20);
 
@@ -158,11 +154,7 @@ describe('listMeetCalls', () => {
   });
 
   it('returns an empty array when the core response has no calls field', async () => {
-    vi.mocked(callCoreRpc).mockResolvedValueOnce({
-      ok: true,
-      calls: undefined,
-      count: 0,
-    } as never);
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, calls: undefined, count: 0 } as never);
 
     const result = await listMeetCalls(10);
 
@@ -172,25 +164,17 @@ describe('listMeetCalls', () => {
   it('throws when the core responds with ok: false', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: false } as never);
 
-    await expect(listMeetCalls(20)).rejects.toThrow(
-      /meet_agent_list_calls/
-    );
+    await expect(listMeetCalls(20)).rejects.toThrow(/meet_agent_list_calls/);
   });
 
   it('throws when the core responds with a falsy result', async () => {
     vi.mocked(callCoreRpc).mockResolvedValueOnce(null as never);
 
-    await expect(listMeetCalls(20)).rejects.toThrow(
-      /meet_agent_list_calls/
-    );
+    await expect(listMeetCalls(20)).rejects.toThrow(/meet_agent_list_calls/);
   });
 
   it('uses the default limit of 20 when no argument is provided', async () => {
-    vi.mocked(callCoreRpc).mockResolvedValueOnce({
-      ok: true,
-      calls: [],
-      count: 0,
-    } as never);
+    vi.mocked(callCoreRpc).mockResolvedValueOnce({ ok: true, calls: [], count: 0 } as never);
 
     await listMeetCalls();
 
