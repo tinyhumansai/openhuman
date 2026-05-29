@@ -92,6 +92,12 @@ mod tests {
 
     #[test]
     fn install_then_reload_swaps_policy_and_bumps_generation() {
+        // Serialize against other tests that install/reload this process-global
+        // (the approval-gate auto_approve test and the autonomy `ops` tests),
+        // which all take this same lock — otherwise a parallel install races.
+        let _env = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let workspace = std::env::temp_dir().join("openhuman_live_policy_test");
         let initial = Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,

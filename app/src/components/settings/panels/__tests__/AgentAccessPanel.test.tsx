@@ -18,6 +18,7 @@ const autonomy = (overrides: Partial<AutonomySettings> = {}): AutonomySettings =
   trusted_roots: [],
   allow_tool_install: true,
   max_actions_per_hour: 0,
+  auto_approve: [],
   ...overrides,
 });
 
@@ -111,6 +112,31 @@ describe('AgentAccessPanel', () => {
     renderWithProviders(<AgentAccessPanel />);
     expect(await screen.findByText('/home/u/notes')).toBeInTheDocument();
     expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('shows the empty "always-allow" state when no tools are allow-listed', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    expect(await screen.findByText('Always-allowed tools')).toBeInTheDocument();
+    expect(screen.getByText('No always-allowed tools yet.')).toBeInTheDocument();
+  });
+
+  it('lists always-allowed tools and removing one persists the trimmed list', async () => {
+    mockGet.mockResolvedValue({ result: autonomy({ auto_approve: ['shell', 'curl'] }), logs: [] });
+    renderWithProviders(<AgentAccessPanel />);
+
+    // The allowlist renders each tool name.
+    expect(await screen.findByText('shell')).toBeInTheDocument();
+    expect(screen.getByText('curl')).toBeInTheDocument();
+
+    // trusted_roots is empty, so the only Remove buttons belong to the
+    // allowlist. Removing the first entry persists the trimmed list via
+    // update_autonomy_settings (auto_approve only — other fields untouched).
+    fireEvent.click(screen.getAllByText('Remove')[0]);
+    await waitFor(() =>
+      expect(mockUpdate).toHaveBeenLastCalledWith(
+        expect.objectContaining({ auto_approve: ['curl'] })
+      )
+    );
   });
 
   it('surfaces a load error without crashing', async () => {

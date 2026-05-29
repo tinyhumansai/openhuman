@@ -174,16 +174,13 @@ impl Tool for MemoryTreeTool {
 ///
 /// The consolidated `parameters_schema()` exposes one shared
 /// `time_window_days` field for both `query_source` and `query_global` (the
-/// `query_source` backend uses that exact name). The `query_global` backend
-/// — `QueryGlobalRequest { window_days: u32 }` in `memory/tree/retrieval/rpc.rs`
-/// — was never aligned with that schema, so any call following the
-/// consolidated contract failed with `missing field 'window_days'`.
-///
-/// Translating in the dispatch keeps the LLM-facing schema stable and
-/// leaves the standalone [`MemoryTreeQueryGlobalTool`] (which advertises
-/// `window_days` natively) untouched. An explicit `window_days` always
-/// wins so callers can opt into the underlying contract if they ever
-/// want to.
+/// `query_source` backend uses that exact name). `QueryGlobalRequest` in
+/// `memory_tree/retrieval/rpc.rs` uses `time_window_days` as its primary
+/// field name and accepts `window_days` via `#[serde(alias = "window_days")]`.
+/// The translation here keeps the LLM-facing consolidated schema stable
+/// (callers always send `time_window_days`) while routing through the alias
+/// path, which is equivalent. An explicit `window_days` in the payload
+/// always wins — the translator is a no-op for callers that already use it.
 fn translate_query_global_args(mut args: serde_json::Value) -> serde_json::Value {
     if let Some(obj) = args.as_object_mut() {
         if !obj.contains_key("window_days") {

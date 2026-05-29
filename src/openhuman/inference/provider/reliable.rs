@@ -99,19 +99,11 @@ fn is_stream_error_non_retryable(err: &StreamError) -> bool {
 }
 
 fn is_context_window_exceeded(err: &anyhow::Error) -> bool {
-    let lower = err.to_string().to_lowercase();
-    let hints = [
-        "exceeds the context window",
-        "context window of this model",
-        "maximum context length",
-        "context length exceeded",
-        "too many tokens",
-        "token limit exceeded",
-        "prompt is too long",
-        "input is too long",
-    ];
-
-    hints.iter().any(|hint| lower.contains(hint))
+    // Single source of truth for the context-overflow phrasing lives in
+    // `ops::is_context_window_exceeded_message` so the non-retryable
+    // classifier here, the `api_error` Sentry-suppression cascade, and the
+    // `core::observability` `ContextWindowExceeded` arm can't drift apart.
+    super::is_context_window_exceeded_message(&err.to_string())
 }
 
 /// Detect provider-side temporary capacity/outage errors. Covers:

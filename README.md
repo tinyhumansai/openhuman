@@ -69,7 +69,7 @@ These paths verify the artifact through your OS package manager's signing chain 
 **macOS (Homebrew tap):**
 
 ```bash
-brew tap tinyhumansai/openhuman
+brew tap tinyhumansai/core
 brew install openhuman
 ```
 

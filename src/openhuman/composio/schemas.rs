@@ -313,12 +313,25 @@ pub fn schemas(function: &str) -> ControllerSchema {
             function: "list_tools",
             description:
                 "List OpenAI-function-calling tool schemas for one or more Composio toolkits.",
-            inputs: vec![FieldSchema {
-                name: "toolkits",
-                ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
-                comment: "Optional list of toolkit slugs to filter by. Omit to get all.",
-                required: false,
-            }],
+            inputs: vec![
+                FieldSchema {
+                    name: "toolkits",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Optional list of toolkit slugs to filter by. Omit to get all.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "tags",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(
+                        TypeSchema::String,
+                    )))),
+                    comment: "Optional Composio action tags to filter by (OR semantics — \
+                              multiple tags broaden the result). Case-insensitive.",
+                    required: false,
+                },
+            ],
             outputs: vec![FieldSchema {
                 name: "tools",
                 ty: TypeSchema::Json,
@@ -778,7 +791,8 @@ fn handle_list_tools(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         let toolkits = read_optional::<Vec<String>>(&params, "toolkits")?;
-        to_json(super::ops::composio_list_tools(&config, toolkits).await?)
+        let tags = read_optional::<Vec<String>>(&params, "tags")?;
+        to_json(super::ops::composio_list_tools(&config, toolkits, tags).await?)
     })
 }
 

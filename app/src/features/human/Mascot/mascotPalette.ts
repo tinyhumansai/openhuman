@@ -60,7 +60,7 @@ const palettes: Record<MascotColor, MascotPalette> = {
 };
 
 export function getMascotPalette(color: MascotColor): MascotPalette {
-  return palettes[color];
+  return palettes[color] ?? YELLOW_PALETTE;
 }
 
 export function hexToArgbInt(hex: string): number {

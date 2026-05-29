@@ -51,6 +51,9 @@ const AgentAccessPanel = () => {
   const [level, setLevel] = useState<AutonomyLevel>('supervised');
   const [workspaceOnly, setWorkspaceOnly] = useState(false);
   const [trustedRoots, setTrustedRoots] = useState<TrustedRoot[]>([]);
+  // "Always allow" allowlist — populated by the in-chat "Always allow" button;
+  // shown here read-only with a Remove action (the re-protect path).
+  const [autoApprove, setAutoApprove] = useState<string[]>([]);
 
   const [newRootPath, setNewRootPath] = useState('');
   const [newRootAccess, setNewRootAccess] = useState<TrustedAccess>('read');
@@ -76,6 +79,7 @@ const AgentAccessPanel = () => {
         setLevel(resp.result.level);
         setWorkspaceOnly(resp.result.workspace_only);
         setTrustedRoots(resp.result.trusted_roots ?? []);
+        setAutoApprove(resp.result.auto_approve ?? []);
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
@@ -97,6 +101,11 @@ const AgentAccessPanel = () => {
     level: AutonomyLevel;
     workspaceOnly: boolean;
     trustedRoots: TrustedRoot[];
+    // Only sent when the allowlist itself is being changed. Omitting it leaves
+    // the server's `auto_approve` untouched (partial patch) — important so a
+    // tier/folder change here can't clobber a tool the user just added via the
+    // in-chat "Always allow" button.
+    autoApprove?: string[];
   }) => {
     const seq = ++persistSeqRef.current;
     if (!isTauri()) return;
@@ -109,6 +118,7 @@ const AgentAccessPanel = () => {
         workspace_only: next.workspaceOnly,
         trusted_roots: next.trustedRoots,
         allow_tool_install: ALLOW_TOOL_INSTALL,
+        ...(next.autoApprove !== undefined ? { auto_approve: next.autoApprove } : {}),
       });
       // Only the most recent persist may write UI state back.
       if (persistSeqRef.current === seq) {
@@ -153,6 +163,12 @@ const AgentAccessPanel = () => {
     const nextRoots = trustedRoots.filter(r => r.path !== path);
     setTrustedRoots(nextRoots);
     void persist({ level, workspaceOnly, trustedRoots: nextRoots });
+  };
+
+  const removeAutoApprove = (tool: string) => {
+    const nextList = autoApprove.filter(name => name !== tool);
+    setAutoApprove(nextList);
+    void persist({ level, workspaceOnly, trustedRoots, autoApprove: nextList });
   };
 
   return (
@@ -288,6 +304,35 @@ const AgentAccessPanel = () => {
                   {t('settings.agentAccess.add')}
                 </button>
               </div>
+            </section>
+
+            {/* "Always allow" allowlist — tools the user chose to stop being
+                prompted for, via the in-chat approval card. Read-only here with
+                a Remove action to re-enable prompting for a tool. */}
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-ink">
+                {t('settings.agentAccess.alwaysAllow')}
+              </h2>
+              <p className="text-xs text-ink-soft">{t('settings.agentAccess.alwaysAllowDesc')}</p>
+              {autoApprove.length === 0 ? (
+                <p className="text-xs text-ink-soft">{t('settings.agentAccess.alwaysAllowNone')}</p>
+              ) : (
+                <ul className="space-y-1">
+                  {autoApprove.map(tool => (
+                    <li
+                      key={tool}
+                      className="flex items-center justify-between rounded border border-line px-2 py-1">
+                      <span className="font-mono text-xs text-ink truncate">{tool}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeAutoApprove(tool)}
+                        className="text-xs text-coral hover:underline">
+                        {t('settings.agentAccess.remove')}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             {/* Auto-save status — changes persist on selection; no manual save. */}

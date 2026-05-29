@@ -1,9 +1,12 @@
-use super::types::{BudgetCheck, CostRecord, CostSummary, ModelStats, TokenUsage, UsagePeriod};
+use super::types::{
+    BudgetCheck, BudgetStatus, CostDashboard, CostRecord, CostSummary, DailyCostEntry, ModelStats,
+    TokenUsage, UsagePeriod,
+};
 use crate::openhuman::config::CostConfig;
 use anyhow::{anyhow, Context, Result};
-use chrono::{Datelike, NaiveDate, Utc};
+use chrono::{Datelike, Duration, NaiveDate, Utc};
 use parking_lot::{Mutex, MutexGuard};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -107,11 +110,23 @@ impl CostTracker {
     }
 
     /// Record a usage event.
+    ///
+    /// Honours `cost.enabled` — when budget enforcement is disabled the call
+    /// is a no-op. Use [`Self::record_usage_unconditional`] for telemetry
+    /// paths (dashboard, observability) that must capture data even when
+    /// the budget enforcement path is off, so the user can flip enforcement
+    /// on later without losing history.
     pub fn record_usage(&self, usage: TokenUsage) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
+        self.record_usage_unconditional(usage)
+    }
 
+    /// Persist a usage event ignoring `cost.enabled`. Used by the dashboard
+    /// telemetry hook so cost history is recorded regardless of whether the
+    /// budget-enforcement gate is on.
+    pub fn record_usage_unconditional(&self, usage: TokenUsage) -> Result<()> {
         if !usage.cost_usd.is_finite() || usage.cost_usd < 0.0 {
             return Err(anyhow!(
                 "Token usage cost must be a finite, non-negative value"
@@ -172,6 +187,145 @@ impl CostTracker {
     pub fn get_monthly_cost(&self, year: i32, month: u32) -> Result<f64> {
         let storage = self.lock_storage();
         storage.get_cost_for_month(year, month)
+    }
+
+    /// Get a daily cost/token history covering the last `days` calendar days,
+    /// ending on today (UTC) inclusive. Days with no recorded usage are
+    /// returned as zero-filled entries so callers can render the chart bars
+    /// without gap handling. Oldest day first.
+    ///
+    /// `days` is clamped to the range `[1, 366]` to bound the scan window.
+    pub fn get_daily_history(&self, days: u32) -> Result<Vec<DailyCostEntry>> {
+        let span = days.clamp(1, 366) as i64;
+        let today = Utc::now().date_naive();
+        let earliest = today
+            .checked_sub_signed(Duration::days(span - 1))
+            .ok_or_else(|| anyhow!("Daily history range underflowed"))?;
+
+        let mut buckets: BTreeMap<NaiveDate, DailyCostEntry> = BTreeMap::new();
+        let storage = self.lock_storage();
+        storage.for_each_record(|record| {
+            let date = record.usage.timestamp.naive_utc().date();
+            if date < earliest || date > today {
+                return;
+            }
+
+            let entry = buckets
+                .entry(date)
+                .or_insert_with(|| DailyCostEntry::empty(date));
+            entry.cost_usd += record.usage.cost_usd;
+            entry.input_tokens = entry.input_tokens.saturating_add(record.usage.input_tokens);
+            entry.output_tokens = entry
+                .output_tokens
+                .saturating_add(record.usage.output_tokens);
+            entry.total_tokens = entry.total_tokens.saturating_add(record.usage.total_tokens);
+            entry.request_count += 1;
+
+            let model_entry = entry
+                .by_model
+                .entry(record.usage.model.clone())
+                .or_insert_with(|| ModelStats {
+                    model: record.usage.model.clone(),
+                    cost_usd: 0.0,
+                    total_tokens: 0,
+                    request_count: 0,
+                });
+            model_entry.cost_usd += record.usage.cost_usd;
+            model_entry.total_tokens = model_entry
+                .total_tokens
+                .saturating_add(record.usage.total_tokens);
+            model_entry.request_count += 1;
+        })?;
+
+        let mut out = Vec::with_capacity(span as usize);
+        for offset in 0..span {
+            let date = earliest + Duration::days(offset);
+            out.push(
+                buckets
+                    .remove(&date)
+                    .unwrap_or_else(|| DailyCostEntry::empty(date)),
+            );
+        }
+        Ok(out)
+    }
+
+    /// Build the full dashboard payload: 7-day history, period total,
+    /// projected monthly pace (daily avg × 30), and budget utilisation
+    /// derived from the configured monthly limit and warn/alert thresholds.
+    ///
+    /// `warn_threshold` / `alert_threshold` are fractions of the monthly
+    /// budget — e.g. 0.8 (warn at 80%) and 0.95 (alert at 95%). When the
+    /// monthly limit is non-positive, status falls back to `Normal`.
+    pub fn get_dashboard(
+        &self,
+        currency: &str,
+        warn_threshold: f64,
+        alert_threshold: f64,
+    ) -> Result<CostDashboard> {
+        let days = self.get_daily_history(7)?;
+        let period_total_usd: f64 = days.iter().map(|d| d.cost_usd).sum();
+        let daily_average = period_total_usd / days.len().max(1) as f64;
+        let monthly_pace_usd = daily_average * 30.0;
+        let budget_limit_monthly_usd = self.config.monthly_limit_usd.max(0.0);
+
+        let now = Utc::now();
+        let month_to_date_usd = self.get_monthly_cost(now.year(), now.month())?;
+        let budget_utilization = if budget_limit_monthly_usd > 0.0 {
+            (month_to_date_usd / budget_limit_monthly_usd).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        let budget_status = if budget_limit_monthly_usd <= 0.0 {
+            BudgetStatus::Normal
+        } else {
+            let warn = warn_threshold.clamp(0.0, 1.0);
+            let alert = alert_threshold.clamp(0.0, 1.0).max(warn);
+            let utilization_raw = month_to_date_usd / budget_limit_monthly_usd;
+            if utilization_raw >= alert {
+                BudgetStatus::Exceeded
+            } else if utilization_raw >= warn {
+                BudgetStatus::Warning
+            } else {
+                BudgetStatus::Normal
+            }
+        };
+
+        let mut by_model_totals: HashMap<String, ModelStats> = HashMap::new();
+        for day in &days {
+            for (model, stats) in &day.by_model {
+                let entry = by_model_totals
+                    .entry(model.clone())
+                    .or_insert_with(|| ModelStats {
+                        model: model.clone(),
+                        cost_usd: 0.0,
+                        total_tokens: 0,
+                        request_count: 0,
+                    });
+                entry.cost_usd += stats.cost_usd;
+                entry.total_tokens = entry.total_tokens.saturating_add(stats.total_tokens);
+                entry.request_count += stats.request_count;
+            }
+        }
+        let mut by_model: Vec<ModelStats> = by_model_totals.into_values().collect();
+        by_model.sort_by(|a, b| {
+            b.cost_usd
+                .partial_cmp(&a.cost_usd)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.model.cmp(&b.model))
+        });
+
+        Ok(CostDashboard {
+            days,
+            period_total_usd,
+            monthly_pace_usd,
+            budget_limit_monthly_usd,
+            month_to_date_usd,
+            budget_utilization,
+            budget_status,
+            currency: currency.to_string(),
+            by_model,
+        })
     }
 }
 

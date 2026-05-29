@@ -132,10 +132,10 @@ mod tests {
         let kind = crate::core::observability::expected_error_kind(&wrapped);
         assert_eq!(
             kind,
-            Some(crate::core::observability::ExpectedErrorKind::NetworkUnreachable),
-            "supervision wrapper must keep transient transport phrase visible \
-             to the classifier so Sentry stays quiet for OPENHUMAN-TAURI-VP \
-             (got {kind:?} for message {wrapped:?})"
+            Some(crate::core::observability::ExpectedErrorKind::ChannelSupervisorRestart),
+            "supervision wrapper must classify as ChannelSupervisorRestart \
+             (precedence over NetworkUnreachable) so Sentry stays quiet for \
+             TAURI-RUST-15/-BB (got {kind:?} for message {wrapped:?})"
         );
     }
 }

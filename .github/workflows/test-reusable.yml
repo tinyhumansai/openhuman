@@ -128,7 +128,7 @@ jobs:
     if: inputs.run_rust_core
     name: Rust Core Tests (Windows — secrets ACL)
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       CARGO_INCREMENTAL: '0'
       SCCACHE_GHA_ENABLED: 'true'
@@ -150,10 +150,16 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Run Windows-specific secrets tests
-        # Runs the full security::secrets suite including all #[cfg(windows)]
-        # tests: self-repair ACL path (OPENHUMAN-TAURI-GN), domain-qualified
-        # icacls username, is_permission_error, repair_windows_acl.
-        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman -- security::secrets --nocapture
+        # Runs the keyring::encrypted_store suite (keyring::encrypted_store::tests),
+        # which contains the #[cfg(windows)] tests:
+        #   - self_repair_recovers_from_locked_key_file (OPENHUMAN-TAURI-GN)
+        #   - self_repair_does_not_trigger_for_corrupt_file
+        #   - is_permission_error_* (access denied, not-found, raw OS error 5)
+        #   - qualify_windows_username_* (local, domain, case, empty env vars)
+        # Note: repair_windows_acl is a helper fn, not a test.
+        # security/secrets.rs is a one-line re-export with no tests of its own;
+        # the old filter (-- security::secrets) silently matched nothing.
+        run: bash scripts/ci-cancel-aware.sh cargo test -p openhuman -- keyring::encrypted_store --nocapture
 
   rust-tauri-tests:
     if: inputs.run_rust_tauri

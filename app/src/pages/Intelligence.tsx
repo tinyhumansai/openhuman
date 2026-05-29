@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
+import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
+import { GameplayReviewWorkspace } from '../components/intelligence/GameplayReviewWorkspace';
 import IntelligenceCallsTab from '../components/intelligence/IntelligenceCallsTab';
 import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
@@ -8,13 +10,10 @@ import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTa
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
-import { useConsciousItems } from '../hooks/useConsciousItems';
 import {
   useIntelligenceSocket,
   useIntelligenceSocketManager,
 } from '../hooks/useIntelligenceSocket';
-import { useIntelligenceStats } from '../hooks/useIntelligenceStats';
-import { useMemoryIngestionStatus } from '../hooks/useMemoryIngestionStatus';
 import { useSubconscious } from '../hooks/useSubconscious';
 import { useT } from '../lib/i18n/I18nContext';
 import type {
@@ -22,22 +21,27 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'calls' | 'dreams' | 'tasks';
+type IntelligenceTab =
+  | 'memory'
+  | 'gameplay'
+  | 'subconscious'
+  | 'calls'
+  | 'dreams'
+  | 'tasks'
+  | 'diagram';
 
 export default function Intelligence() {
   const { t } = useT();
-  const { aiStatus } = useIntelligenceStats();
-  const { status: ingestionStatus } = useMemoryIngestionStatus();
 
   const [activeTab, setActiveTab] = useState<IntelligenceTab>('memory');
 
-  // `useConsciousItems` is kept solely for the `isRunning` signal that
-  // drives the system-status pill in the Memory-tab header. The items
-  // themselves used to feed the actionable-cards count badge (now hidden,
-  // and the rendering surface — IntelligenceMemoryTab — is gone). When
-  // the status pill is rewired to a memory_tree-native source, drop this
-  // hook entirely.
-  const { isRunning } = useConsciousItems();
+  // The legacy header pills (system-status + Ingesting/Queued chips) were
+  // sourced from `useConsciousItems` + `useMemoryIngestionStatus`. They are
+  // replaced by the Memory Tree status panel (#1856 Part 1), rendered inside
+  // `MemoryWorkspace`, which polls `memory_tree_pipeline_status` for a much
+  // richer dashboard. The hooks themselves still exist for any future
+  // consumers / tests; we just no longer feed them into a half-baked pill
+  // up here.
 
   // useUpdateActionableItem / useSnoozeActionableItem hooks were the
   // mutations behind handleComplete / Dismiss / Snooze. Removed along
@@ -92,48 +96,12 @@ export default function Intelligence() {
     }
   }, [socketConnected, socketManager]);
 
-  // System status — `itemsLoading` (the actionable-items + screen-items
-  // loading flag) used to feed the "loading" branch here, but both feeds
-  // are gone now. `isRunning` from useConsciousItems still surfaces the
-  // background analysis loop signal until that pill is rewired to
-  // memory_tree.
-  const systemStatus = isRunning
-    ? 'loading'
-    : socketConnected && aiStatus === 'ready'
-      ? 'ready'
-      : !socketConnected
-        ? 'disconnected'
-        : aiStatus;
-
-  const systemStatusLabel = isRunning
-    ? t('common.loading')
-    : systemStatus === 'ready'
-      ? t('common.success')
-      : systemStatus === 'loading'
-        ? t('common.loading')
-        : systemStatus === 'disconnected'
-          ? t('welcome.connecting')
-          : systemStatus === 'initializing'
-            ? t('welcome.connecting')
-            : systemStatus === 'error'
-              ? t('common.error')
-              : t('misc.rehydrating');
-
-  const systemStatusDot =
-    isRunning || systemStatus === 'loading'
-      ? 'bg-amber-400 animate-pulse'
-      : systemStatus === 'ready'
-        ? 'bg-sage-400'
-        : systemStatus === 'disconnected' || systemStatus === 'initializing'
-          ? 'bg-amber-400 animate-pulse'
-          : systemStatus === 'error'
-            ? 'bg-coral-400'
-            : 'bg-stone-600';
-
   const tabs: { id: IntelligenceTab; label: string; comingSoon?: boolean }[] = [
     { id: 'memory', label: t('memory.tab.memory') },
+    { id: 'gameplay', label: t('memory.tab.gameplay') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
     { id: 'tasks', label: 'Tasks' },
+    { id: 'diagram', label: t('memory.tab.diagram') },
     { id: 'calls', label: t('memory.tab.calls') },
     { id: 'dreams', label: t('memory.tab.dreams') },
   ];
@@ -185,49 +153,12 @@ export default function Intelligence() {
                     matches anything visible. Hidden until a memory_tree
                     -native count signal is exposed. */}
               </div>
-              <div className="flex items-center gap-3">
-                {activeTab === 'memory' && (
-                  <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${systemStatusDot}`} />
-                    <span className="text-xs text-stone-400 dark:text-neutral-500">
-                      {systemStatusLabel}
-                    </span>
-                  </div>
-                )}
-                {activeTab === 'memory' &&
-                  (ingestionStatus.running || ingestionStatus.queueDepth > 0) && (
-                    <div
-                      className="flex items-center gap-1.5 px-2 py-0.5 rounded-full border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                      title={
-                        ingestionStatus.running
-                          ? ingestionStatus.currentTitle
-                            ? t('memory.ingestingTitle').replace(
-                                '{title}',
-                                ingestionStatus.currentTitle
-                              )
-                            : t('memory.ingesting')
-                          : t('memory.ingestionQueued')
-                      }>
-                      <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                      <span className="text-[11px] font-medium">
-                        {ingestionStatus.running
-                          ? t('memory.ingesting')
-                          : t('memory.ingestionQueued')}
-                        {ingestionStatus.queueDepth > 0 && ` · ${ingestionStatus.queueDepth}`}
-                      </span>
-                    </div>
-                  )}
-                {/* Analyze Now / Refresh button removed — the new
-                    MemoryWorkspace fetches via memory_tree RPCs that
-                    don't need a manual trigger. The actionable-cards
-                    flow (handleAnalyzeNow) is no longer reachable from
-                    the Memory tab; left in scope only for the legacy
-                    subconscious/dreams tabs that still use it. */}
-              </div>
             </div>
 
             {/* Tab content */}
             {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
+
+            {activeTab === 'gameplay' && <GameplayReviewWorkspace onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
@@ -251,6 +182,8 @@ export default function Intelligence() {
             )}
 
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
+
+            {activeTab === 'diagram' && <DiagramViewerTab />}
 
             {activeTab === 'calls' && <IntelligenceCallsTab onToast={addToast} />}
 

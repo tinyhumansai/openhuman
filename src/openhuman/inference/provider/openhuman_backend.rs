@@ -15,6 +15,40 @@ use std::path::PathBuf;
 
 pub const PROVIDER_LABEL: &str = "OpenHuman";
 
+/// Normalize an inbound `model` argument before forwarding to the OpenHuman backend.
+///
+/// The backend rejects a blank `model` field with
+/// `400 {"success":false,"error":"model is required"}` (Sentry **TAURI-RUST-RS**,
+/// 163 events / 14d). Empty values reach this layer when a workload routes to
+/// `<slug>:` with no model after the colon (see the `[config][migrate]`
+/// rewrites in `src/openhuman/config/schema/load.rs:967`) or when an upstream
+/// caller passes `model_override: Some("")`.
+///
+/// Substitute the canonical default tier so the call succeeds instead of
+/// failing the wire round-trip. Mirrors the same fallback `make_openhuman_backend`
+/// already applies when `default_model` is missing
+/// (`src/openhuman/inference/provider/factory.rs:404`), so behavior stays
+/// consistent across both entry paths.
+fn resolve_model(model: &str) -> String {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        // Debug-tier on purpose: the routing-migration path
+        // (`config/schema/load.rs:967`) can hit this on every chat turn for
+        // an affected user (~163 events / 14d on Sentry pre-fix). Warn-tier
+        // here would just move the noise from Sentry to local log dashboards.
+        // Per-process throttling via `Once` was considered — debug is simpler
+        // and gives the same diagnostic when needed (set RUST_LOG=debug).
+        log::debug!(
+            "[providers][openhuman-backend] empty model passed to OpenHuman backend; \
+             substituting default `{}` (TAURI-RUST-RS)",
+            crate::openhuman::config::MODEL_REASONING_V1
+        );
+        crate::openhuman::config::MODEL_REASONING_V1.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// Routes chat to `config.api_url` + `/openai` with `Authorization: Bearer` from the `app-session` profile.
 pub struct OpenHumanBackendProvider {
     options: ProviderRuntimeOptions,
@@ -109,8 +143,9 @@ impl Provider for OpenHumanBackendProvider {
     ) -> anyhow::Result<String> {
         let token = self.resolve_bearer()?;
         let inner = self.inner(&token)?;
+        let model = resolve_model(model);
         inner
-            .chat_with_system(system_prompt, message, model, temperature)
+            .chat_with_system(system_prompt, message, &model, temperature)
             .await
     }
 
@@ -122,7 +157,8 @@ impl Provider for OpenHumanBackendProvider {
     ) -> anyhow::Result<String> {
         let token = self.resolve_bearer()?;
         let inner = self.inner(&token)?;
-        inner.chat_with_history(messages, model, temperature).await
+        let model = resolve_model(model);
+        inner.chat_with_history(messages, &model, temperature).await
     }
 
     async fn chat(
@@ -133,7 +169,8 @@ impl Provider for OpenHumanBackendProvider {
     ) -> anyhow::Result<ChatResponse> {
         let token = self.resolve_bearer()?;
         let inner = self.inner(&token)?;
-        inner.chat(request, model, temperature).await
+        let model = resolve_model(model);
+        inner.chat(request, &model, temperature).await
     }
 
     async fn warmup(&self) -> anyhow::Result<()> {
@@ -154,11 +191,59 @@ impl Provider for OpenHumanBackendProvider {
         _temperature: f64,
         _options: StreamOptions,
     ) -> futures_util::stream::BoxStream<'static, StreamResult<StreamChunk>> {
+        // TODO(stream-support): when streaming is enabled here, route
+        // `_model` through `resolve_model` before forwarding — same blank
+        // model guard as the non-streaming methods (TAURI-RUST-RS).
         stream::once(async move {
             Ok(StreamChunk::error(
                 "streaming is not supported for OpenHuman backend provider",
             ))
         })
         .boxed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // TAURI-RUST-RS regression coverage: the OpenHuman backend rejects an
+    // empty `model` field with 400 `model is required`. `resolve_model` must
+    // intercept blank / whitespace-only values before they hit the wire and
+    // substitute the canonical default tier.
+
+    #[test]
+    fn resolve_model_substitutes_default_for_empty() {
+        assert_eq!(
+            resolve_model(""),
+            crate::openhuman::config::MODEL_REASONING_V1
+        );
+    }
+
+    #[test]
+    fn resolve_model_substitutes_default_for_whitespace_only() {
+        assert_eq!(
+            resolve_model("   "),
+            crate::openhuman::config::MODEL_REASONING_V1
+        );
+        assert_eq!(
+            resolve_model("\t\n"),
+            crate::openhuman::config::MODEL_REASONING_V1
+        );
+    }
+
+    #[test]
+    fn resolve_model_trims_surrounding_whitespace() {
+        assert_eq!(resolve_model("  reasoning-v1  "), "reasoning-v1");
+    }
+
+    #[test]
+    fn resolve_model_preserves_non_empty_value_verbatim() {
+        // Non-empty values are passed through unchanged (after trim) — no
+        // canonicalisation, no remapping. The backend is authoritative over
+        // which model strings it accepts.
+        assert_eq!(resolve_model("agentic-v1"), "agentic-v1");
+        assert_eq!(resolve_model("hint:reasoning"), "hint:reasoning");
+        assert_eq!(resolve_model("some-custom-model"), "some-custom-model");
     }
 }

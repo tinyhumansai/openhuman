@@ -10,6 +10,7 @@ import { mcpClientsApi } from '../../../services/api/mcpClientsApi';
 import ConfigAssistantPanel from './ConfigAssistantPanel';
 import McpStatusBadge from './McpStatusBadge';
 import McpToolList from './McpToolList';
+import McpToolPlayground from './McpToolPlayground';
 import type { ConnStatus, InstalledServer, McpTool, ServerStatus } from './types';
 
 const log = debug('mcp-clients:detail');
@@ -33,6 +34,27 @@ const InstalledServerDetail = ({
   const [confirmUninstall, setConfirmUninstall] = useState(false);
   const [showAssistant, setShowAssistant] = useState(false);
   const [suggestedEnv, setSuggestedEnv] = useState<Record<string, string> | null>(null);
+  // When non-null, the Tool Execution Playground modal is rendered for
+  // this tool. Cleared on close. Only meaningful while the server is
+  // connected (the gate is enforced at the McpToolList rendering site).
+  const [playgroundTool, setPlaygroundTool] = useState<McpTool | null>(null);
+
+  // Poll-driven safety net: if the server leaves `connected` by ANY path —
+  // background status poll, parent prop change, auth expiry — not just the
+  // explicit disconnect/uninstall handlers, drop the staged playground so its
+  // now-unreachable tool can't be run AND doesn't spring back open when the
+  // server reconnects. Implemented via React's "adjust state while rendering"
+  // pattern (store the previous status, reset on change) rather than an
+  // effect — same result without the extra render pass or the
+  // set-state-in-effect lint. The render gate below is the belt-and-suspenders
+  // guard for the single render before this runs.
+  const [prevStatus, setPrevStatus] = useState(status);
+  if (status !== prevStatus) {
+    setPrevStatus(status);
+    if (status !== 'connected' && playgroundTool) {
+      setPlaygroundTool(null);
+    }
+  }
 
   const runBusy = useCallback(async (task: () => Promise<void>) => {
     setBusy(true);
@@ -63,6 +85,11 @@ const InstalledServerDetail = ({
       await mcpClientsApi.disconnect(server.server_id);
       // Clear stale tool list so it doesn't show after disconnection.
       setTools([]);
+      // Drop any open Tool Execution Playground — its tool is no longer
+      // reachable on this server. The render gate below ALSO enforces
+      // this, but clearing the state here releases any in-flight async
+      // work the modal was holding (history, copy timer, etc.).
+      setPlaygroundTool(null);
       log('disconnected');
     });
   }, [server.server_id, runBusy]);
@@ -71,6 +98,10 @@ const InstalledServerDetail = ({
     void runBusy(async () => {
       log('uninstalling server_id=%s', server.server_id);
       await mcpClientsApi.uninstall(server.server_id);
+      // The detail view is about to unmount via onUninstalled, but
+      // clear explicitly so there's no window during which the modal
+      // points at a now-removed server.
+      setPlaygroundTool(null);
       log('uninstalled');
       onUninstalled(server.server_id);
     });
@@ -211,12 +242,17 @@ const InstalledServerDetail = ({
         </div>
       )}
 
-      {/* Tool list — only show when connected so stale tools don't linger */}
+      {/* Tool list — only show when connected so stale tools don't linger.
+          When connected, each tool gets a "Try" button via `onTryTool`
+          that opens the Tool Execution Playground modal below. */}
       <div className="space-y-1">
         <p className="text-xs font-medium text-stone-600 dark:text-neutral-400">
           {t('mcp.detail.tools')}
         </p>
-        <McpToolList tools={status === 'connected' ? tools : []} />
+        <McpToolList
+          tools={status === 'connected' ? tools : []}
+          onTryTool={status === 'connected' ? setPlaygroundTool : undefined}
+        />
       </div>
 
       {/* Config assistant */}
@@ -227,6 +263,22 @@ const InstalledServerDetail = ({
             onApplySuggestedEnv={handleApplySuggestedEnv}
           />
         </div>
+      )}
+
+      {/* Tool Execution Playground modal. Gated on BOTH a selected tool
+          AND a live connection — a disconnected server's tool list is
+          stale by definition, and the upstream RPC will reject calls
+          anyway. The handlers above also clear `playgroundTool` on
+          explicit disconnect / uninstall; this gate is the safety net
+          for any state path that flips `status` without going through
+          those handlers (poll-driven status change, parent forcing a
+          reconnect, etc.). */}
+      {playgroundTool && status === 'connected' && (
+        <McpToolPlayground
+          serverId={server.server_id}
+          tool={playgroundTool}
+          onClose={() => setPlaygroundTool(null)}
+        />
       )}
     </div>
   );

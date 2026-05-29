@@ -214,6 +214,9 @@ struct AutonomySettingsUpdate {
     // Accept u64 to match the published schema (`TypeSchema::U64`); clamped to the
     // internal u32 at apply time. u32::MAX/hr is already effectively unlimited.
     max_actions_per_hour: Option<u64>,
+    /// Replaces the "Always allow" allowlist wholesale — tool names the agent
+    /// may run without an approval prompt. Empty list clears it.
+    auto_approve: Option<Vec<String>>,
 }
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -233,6 +236,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("workspace_onboarding_flag_set"),
         schemas("update_analytics_settings"),
         schemas("get_analytics_settings"),
+        schemas("get_dashboard_settings"),
         schemas("update_meet_settings"),
         schemas("get_meet_settings"),
         schemas("agent_server_status"),
@@ -314,6 +318,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_analytics_settings"),
             handler: handle_get_analytics_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_dashboard_settings"),
+            handler: handle_get_dashboard_settings,
         },
         RegisteredController {
             schema: schemas("update_meet_settings"),
@@ -600,6 +608,12 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Rate limit for side-effecting actions per hour.",
                     required: false,
                 },
+                FieldSchema {
+                    name: "auto_approve",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Replace the \"Always allow\" allowlist (array of tool names the agent runs without an approval prompt). Empty array clears it.",
+                    required: false,
+                },
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -757,6 +771,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "enabled",
                 ty: TypeSchema::Bool,
                 comment: "Whether anonymized analytics is enabled.",
+                required: true,
+            }],
+        },
+        "get_dashboard_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_dashboard_settings",
+            description: "Read dashboard settings, including the local architecture diagram viewer.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "dashboard",
+                ty: TypeSchema::Json,
+                comment: "Current [dashboard] config block.",
                 required: true,
             }],
         },
@@ -1212,6 +1238,7 @@ fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFutu
             max_actions_per_hour: update
                 .max_actions_per_hour
                 .map(|v| u32::try_from(v).unwrap_or(u32::MAX)),
+            auto_approve: update.auto_approve,
         };
         to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
     })
@@ -1309,6 +1336,10 @@ fn handle_get_analytics_settings(_params: Map<String, Value>) -> ControllerFutur
             vec!["analytics settings read".to_string()],
         ))
     })
+}
+
+fn handle_get_dashboard_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async { to_json(config_rpc::get_dashboard_settings().await?) })
 }
 
 fn handle_update_meet_settings(params: Map<String, Value>) -> ControllerFuture {

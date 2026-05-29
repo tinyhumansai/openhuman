@@ -164,9 +164,18 @@ fn curated_tools_contains_core_actions() {
     let p = GitHubProvider::new();
     let curated = p.curated_tools().expect("GITHUB_CURATED is registered");
     let slugs: Vec<&str> = curated.iter().map(|t| t.slug).collect();
-    assert!(slugs.contains(&"GITHUB_GET_AUTHENTICATED_USER"));
-    assert!(slugs.contains(&"GITHUB_SEARCH_ISSUES"));
+    assert!(slugs.contains(&"GITHUB_GET_THE_AUTHENTICATED_USER"));
+    assert!(slugs.contains(&"GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS"));
     assert!(slugs.contains(&"GITHUB_LIST_REPOSITORY_ISSUES"));
+    assert!(slugs.contains(&"GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER"));
+    assert!(slugs.contains(&"GITHUB_CREATE_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER"));
+    // DELETE_A_REFERENCE replaces DELETE_A_BRANCH (Composio v3 rename).
+    assert!(slugs.contains(&"GITHUB_DELETE_A_REFERENCE"));
+    // CLOSE_AN_ISSUE was removed — callers must use UPDATE_AN_ISSUE with state:"closed".
+    assert!(
+        !slugs.contains(&"GITHUB_CLOSE_AN_ISSUE"),
+        "GITHUB_CLOSE_AN_ISSUE was removed — use GITHUB_UPDATE_AN_ISSUE with state:closed"
+    );
 }
 
 #[test]
