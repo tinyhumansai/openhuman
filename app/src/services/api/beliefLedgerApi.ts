@@ -81,7 +81,9 @@ export function correctionKey(params: SaveCorrectionParams): string {
  */
 export async function saveCorrection(params: SaveCorrectionParams): Promise<void> {
   const key = correctionKey(params);
-  log('saveCorrection key=%s -> %s', key, params.correctObject);
+  // Log only the key — never the corrected value, which is exactly the kind of
+  // sensitive user fact this feature handles (no PII in local/dev logs).
+  log('saveCorrection key=%s', key);
   await memoryDocIngest({
     namespace: params.namespace,
     key,

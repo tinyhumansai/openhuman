@@ -79,8 +79,31 @@ describe('<BeliefLedger />', () => {
     fireEvent.click(screen.getByRole('button', { name: /Explain this contradiction/ }));
     expect(onExplain).toHaveBeenCalledTimes(1);
     expect(onExplain.mock.calls[0][0].current.normalizedObject).toBe('lisbon');
+    // "Set the truth" defaults to the current best belief (Lisbon).
     fireEvent.click(screen.getByRole('button', { name: /Set the truth/ }));
     expect(onCorrect).toHaveBeenCalledTimes(1);
+    expect(onCorrect.mock.calls[0][1]).toBe('Lisbon');
+  });
+
+  it('lets the user pick a NON-current value as the truth (fixes a wrong winner)', () => {
+    const onCorrect = vi.fn();
+    render(<BeliefLedger relations={contested} nowSeconds={NOW} onCorrect={onCorrect} />);
+    // The select lists the candidate values; choose the older Berlin.
+    fireEvent.change(screen.getByRole('combobox', { name: /Choose the correct value/ }), {
+      target: { value: 'Berlin' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Set the truth/ }));
+    expect(onCorrect.mock.calls[0][1]).toBe('Berlin');
+  });
+
+  it('lets the user type a brand-new value that overrides the selection', () => {
+    const onCorrect = vi.fn();
+    render(<BeliefLedger relations={contested} nowSeconds={NOW} onCorrect={onCorrect} />);
+    fireEvent.change(screen.getByLabelText('Or enter a different value'), {
+      target: { value: 'Porto' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Set the truth/ }));
+    expect(onCorrect.mock.calls[0][1]).toBe('Porto');
   });
 
   it('does not render an Explain button for a non-contested claim', () => {

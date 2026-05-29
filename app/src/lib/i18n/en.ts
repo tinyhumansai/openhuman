@@ -356,10 +356,16 @@ const en: TranslationMap = {
   'beliefLedger.setTruth': 'Set the truth',
   'beliefLedger.correctionModalTitle': 'Set the correct value',
   'beliefLedger.correctionModalMessage':
-    'Save the current best belief as the confirmed truth for this claim? The agent will treat it as authoritative going forward.',
+    'Save the selected value as the confirmed truth for this claim? The agent will treat it as authoritative going forward.',
   'beliefLedger.correctionSaved': 'Correction saved.',
   'beliefLedger.correctionFailed': 'Could not save the correction.',
   'beliefLedger.distinctValues': '{n} distinct values',
+  'beliefLedger.confidenceAria': 'Confidence: {pct}%',
+  'beliefLedger.evidenceAria': 'Evidence count: {n}',
+  'beliefLedger.explainAria': 'Explain this contradiction for {claim}',
+  'beliefLedger.setTruthAria': 'Set the truth for {claim}',
+  'beliefLedger.correctionSelectAria': 'Choose the correct value for {claim}',
+  'beliefLedger.correctionCustomLabel': 'Or enter a different value',
   'memory.analyzeNow': 'Analyze Now',
   'namespaceOverview.title': 'Namespace Overview',
   'namespaceOverview.intro':

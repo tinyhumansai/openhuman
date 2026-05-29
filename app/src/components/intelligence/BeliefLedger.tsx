@@ -24,7 +24,21 @@ interface BeliefLedgerProps {
   /** claimKey currently awaiting an explanation (shows a "explaining…" state). */
   explainingKey?: string | null;
   onExplain?: (history: BeliefHistory) => void;
-  onCorrect?: (history: BeliefHistory) => void;
+  /** Called with the claim and the value the user picked/typed as the truth. */
+  onCorrect?: (history: BeliefHistory, value: string) => void;
+}
+
+/** Distinct candidate object-values for a claim, current best belief first. */
+function distinctObjects(history: BeliefHistory): string[] {
+  const seen = new Set<string>([history.current.normalizedObject]);
+  const values = [history.current.object];
+  for (const rev of history.revisions) {
+    if (!seen.has(rev.version.normalizedObject)) {
+      seen.add(rev.version.normalizedObject);
+      values.push(rev.version.object);
+    }
+  }
+  return values;
 }
 
 // Confidence bands for the pill colour: >= HIGH is trustworthy (sage),
@@ -45,6 +59,57 @@ function revisionLabelKey(kind: RevisionKind): string {
 function formatDate(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString().slice(0, 10);
 }
+
+/**
+ * Correction control: lets the user confirm WHICH value is the truth — pick any
+ * observed candidate (defaulting to the current best belief) or type a brand-new
+ * value — instead of only re-saving the algorithm's pick. The chosen value is
+ * handed to `onCorrect`; the container confirms + persists it.
+ */
+const ClaimCorrection = ({
+  history,
+  onCorrect,
+}: {
+  history: BeliefHistory;
+  onCorrect: (history: BeliefHistory, value: string) => void;
+}) => {
+  const { t } = useT();
+  const candidates = useMemo(() => distinctObjects(history), [history]);
+  const [selected, setSelected] = useState(candidates[0]);
+  const [custom, setCustom] = useState('');
+  const claimLabel = `${history.subject} ${history.predicate}`;
+  const chosen = custom.trim() || selected;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-stone-200 dark:border-neutral-800 pt-3">
+      <select
+        value={selected}
+        onChange={e => setSelected(e.target.value)}
+        aria-label={t('beliefLedger.correctionSelectAria').replace('{claim}', claimLabel)}
+        className="rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200">
+        {candidates.map(value => (
+          <option key={value} value={value}>
+            {value}
+          </option>
+        ))}
+      </select>
+      <input
+        type="text"
+        value={custom}
+        onChange={e => setCustom(e.target.value)}
+        placeholder={t('beliefLedger.correctionCustomLabel')}
+        aria-label={t('beliefLedger.correctionCustomLabel')}
+        className="flex-1 min-w-[8rem] rounded-lg border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs text-stone-700 dark:text-neutral-200"
+      />
+      <button
+        type="button"
+        onClick={() => onCorrect(history, chosen)}
+        aria-label={t('beliefLedger.setTruthAria').replace('{claim}', claimLabel)}
+        className="shrink-0 rounded-lg border border-stone-200 dark:border-neutral-700 px-2.5 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800">
+        {t('beliefLedger.setTruth')}
+      </button>
+    </div>
+  );
+};
 
 const BeliefLedger = ({
   relations,
@@ -132,7 +197,10 @@ const BeliefLedger = ({
               )}
               <span
                 role="img"
-                aria-label={`${t('beliefLedger.confidence')} ${Math.round(history.confidence * 100)}%`}
+                aria-label={t('beliefLedger.confidenceAria').replace(
+                  '{pct}',
+                  String(Math.round(history.confidence * 100))
+                )}
                 className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${confidenceTone(
                   history.confidence
                 )}`}>
@@ -140,7 +208,10 @@ const BeliefLedger = ({
               </span>
               <span
                 role="img"
-                aria-label={`${t('beliefLedger.evidence')} ${history.current.evidenceCount}`}
+                aria-label={t('beliefLedger.evidenceAria').replace(
+                  '{n}',
+                  String(history.current.evidenceCount)
+                )}
                 className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums bg-stone-100 dark:bg-neutral-800 text-stone-500 dark:text-neutral-400">
                 x{history.current.evidenceCount}
               </span>
@@ -192,29 +263,26 @@ const BeliefLedger = ({
           </div>
 
           {/* Actions */}
-          <div className="mt-3 flex items-center gap-2">
-            {history.hasConflict && onExplain && (
+          {history.hasConflict && onExplain && (
+            <div className="mt-3 flex items-center gap-2">
               <button
                 type="button"
                 onClick={() => onExplain(history)}
                 disabled={explainingKey === history.claimKey}
-                aria-label={`${t('beliefLedger.explain')} — ${history.subject} ${history.predicate}`}
+                aria-label={t('beliefLedger.explainAria').replace(
+                  '{claim}',
+                  `${history.subject} ${history.predicate}`
+                )}
                 className="rounded-lg border border-stone-200 dark:border-neutral-700 px-2.5 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed">
                 {explainingKey === history.claimKey
                   ? t('beliefLedger.explaining')
                   : t('beliefLedger.explain')}
               </button>
-            )}
-            {onCorrect && (
-              <button
-                type="button"
-                onClick={() => onCorrect(history)}
-                aria-label={`${t('beliefLedger.setTruth')} — ${history.subject} ${history.predicate}`}
-                className="rounded-lg border border-stone-200 dark:border-neutral-700 px-2.5 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-100 dark:hover:bg-neutral-800">
-                {t('beliefLedger.setTruth')}
-              </button>
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* Correction: pick / type which value is the truth */}
+          {onCorrect && <ClaimCorrection history={history} onCorrect={onCorrect} />}
 
           {/* Inline explanation */}
           {explanationByKey?.[history.claimKey] && (

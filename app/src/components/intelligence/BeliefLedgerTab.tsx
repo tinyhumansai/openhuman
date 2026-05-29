@@ -76,13 +76,13 @@ const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
   );
 
   const runCorrection = useCallback(
-    async (history: BeliefHistory) => {
+    async (history: BeliefHistory, value: string) => {
       try {
         await saveCorrection({
           namespace: history.current.namespace ?? 'default',
           subject: history.subject,
           predicate: history.predicate,
-          correctObject: history.current.object,
+          correctObject: value,
         });
       } catch (err) {
         onToast({
@@ -102,7 +102,7 @@ const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
   );
 
   const handleCorrect = useCallback(
-    (history: BeliefHistory) => {
+    (history: BeliefHistory, value: string) => {
       setModal({
         isOpen: true,
         title: t('beliefLedger.correctionModalTitle'),
@@ -110,7 +110,7 @@ const BeliefLedgerTab = ({ onToast }: BeliefLedgerTabProps) => {
         onCancel: () => setModal(CLOSED_MODAL),
         onConfirm: () => {
           setModal(CLOSED_MODAL);
-          void runCorrection(history);
+          void runCorrection(history, value);
         },
       });
     },
