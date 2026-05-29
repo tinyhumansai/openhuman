@@ -218,4 +218,46 @@ describe('AutocompletePanel (simplified)', () => {
     await screen.findByText('Autocomplete');
     expect(screen.getByText('Advanced settings')).toBeInTheDocument();
   });
+
+  it('seeds the tuning inputs from config and saves edited values', async () => {
+    runtime.config.debounce_ms = 500;
+    runtime.config.max_chars = 800;
+    runtime.config.overlay_ttl_ms = 2000;
+
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+
+    await screen.findByText('Autocomplete');
+
+    const debounce = (await screen.findByTestId('autocomplete-debounce-ms')) as HTMLInputElement;
+    const maxChars = screen.getByTestId('autocomplete-max-chars') as HTMLInputElement;
+    const overlayTtl = screen.getByTestId('autocomplete-overlay-ttl-ms') as HTMLInputElement;
+
+    // Seeded from loaded config.
+    await waitFor(() => expect(debounce.value).toBe('500'));
+    expect(maxChars.value).toBe('800');
+    expect(overlayTtl.value).toBe('2000');
+
+    // Edit and save.
+    fireEvent.change(debounce, { target: { value: '250' } });
+    fireEvent.change(maxChars, { target: { value: '512' } });
+    fireEvent.change(overlayTtl, { target: { value: '900' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Settings' }));
+
+    await waitFor(() => {
+      expect(openhumanAutocompleteSetStyle).toHaveBeenCalledWith(
+        expect.objectContaining({ debounce_ms: 250, max_chars: 512, overlay_ttl_ms: 900 })
+      );
+    });
+  });
+
+  it('clamps non-positive tuning values to safe minimums', async () => {
+    renderWithProviders(<AutocompletePanel />, { initialEntries: ['/settings/autocomplete'] });
+
+    await screen.findByText('Autocomplete');
+
+    const maxChars = (await screen.findByTestId('autocomplete-max-chars')) as HTMLInputElement;
+    // max_chars must stay >= 1 even when the user clears the field.
+    fireEvent.change(maxChars, { target: { value: '0' } });
+    expect(maxChars.value).toBe('1');
+  });
 });

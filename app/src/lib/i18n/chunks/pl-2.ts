@@ -219,6 +219,9 @@ const pl2: TranslationMap = {
   'autocomplete.style.custom': 'Własny',
   'autocomplete.disabledApps':
     'Wyłączone aplikacje (jeden identyfikator pakietu/aplikacji w wierszu)',
+  'autocomplete.debounceMs': 'Debounce (ms)',
+  'autocomplete.maxChars': 'Max context characters',
+  'autocomplete.overlayTtlMs': 'Overlay timeout (ms)',
   'autocomplete.saveSettings': 'Zapisz ustawienia',
   'autocomplete.saving': 'Zapisywanie…',
   'autocomplete.runtime': 'Środowisko',
