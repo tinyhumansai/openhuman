@@ -160,4 +160,13 @@ named = [
     # Both are routed through the same security/approval gate as `shell`.
     "workflow_load",
     "workflow_phase",
+    # Presentation generation (#2778). Synthesises a .pptx from a
+    # structured slide spec via a bundled python-pptx helper. Output
+    # lands in the workspace artifacts directory and the tool returns
+    # the artifact id + absolute path so the orchestrator can quote
+    # it in the reply. Full agent-definition wiring + per-tier
+    # tool_filter policy lands in #2780; this entry exists so the
+    # orchestrator can drive the tool today (matches the user-facing
+    # "create slides" routing case the parent issue #1535 asks for).
+    "generate_presentation",
 ]
