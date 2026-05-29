@@ -718,30 +718,33 @@ describe('MicComposer', () => {
   it('retry counter is monotone across native + WAV paths (no double-count)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      // Native: 3 transient failures (exhausts STT_MAX_RETRIES=2 retries);
-      // WAV: 1 transient failure, then success.
-      // After the fix, onRetry receives 1, 2 (native) then 3 (WAV) — not 1,2,3,5.
-      // The displayed {max} must be STT_MAX_RETRIES * 2 = 4 (cumulative ceiling).
-      const retryArgs: number[] = [];
-      // Spy on setRetryCount to record every value the component sets.
-      // We can't spy directly on the hook, so we verify via the retry count
-      // passed to handleRetry by collecting calls to transcribeWithFactory
-      // in sequence (3 native, then 2 WAV = 5 total).
+      // 3 native failures + 2 WAV failures + 1 WAV success = 6 calls total.
+      //
+      // The double-count bug only manifests on the SECOND WAV retry callback:
+      //   fixed:  snapshot nativeRetries=2 → handleRetry(2+2)=4 → "4 of 4"
+      //   buggy:  read mutable cumulativeRetries=3 → handleRetry(3+2)=5 → "5 of 4"
+      //
+      // By the time WAV attempt 2 (call 6, the success) starts executing, React
+      // has already flushed the setRetryCount update from WAV attempt 1's retry
+      // callback (which fired synchronously before the 500ms backoff sleep that
+      // immediately preceded call 6). We read the rendered <span> text inside
+      // that mock to assert the actual value the component shows, not a literal.
+      let retryLabelAtSuccessCall = '';
       transcribeWithFactoryMock
-        .mockRejectedValueOnce(new Error('transient native 0'))
+        .mockRejectedValueOnce(new Error('native 0'))
+        .mockRejectedValueOnce(new Error('native 1'))
+        .mockRejectedValueOnce(new Error('native 2'))
+        .mockRejectedValueOnce(new Error('wav 0'))
+        .mockRejectedValueOnce(new Error('wav 1'))
         .mockImplementationOnce(async () => {
-          retryArgs.push(1); // handleRetry(1) fires before this is called
-          throw new Error('transient native 1');
-        })
-        .mockImplementationOnce(async () => {
-          retryArgs.push(2); // handleRetry(2)
-          throw new Error('transient native 2');
-        })
-        .mockImplementationOnce(async () => {
-          retryArgs.push(3); // handleRetry(3) — must be 3, not 5
-          throw new Error('transient wav 0');
-        })
-        .mockResolvedValueOnce('cross-path ok');
+          // WAV attempt 2 — the success call. At this point setRetryCount was
+          // called synchronously before the 500ms backoff that preceded this call.
+          // React flushed during that backoff (fake-timer advancement is act-wrapped),
+          // so the DOM reflects the actual retryCount value: 4 (fixed) or 5 (buggy).
+          const el = document.querySelector('span.text-xs');
+          retryLabelAtSuccessCall = el?.textContent ?? '';
+          return 'cross-path ok';
+        });
       encodeBlobToWavMock.mockResolvedValueOnce(
         new Blob([new Uint8Array([0])], { type: 'audio/wav' })
       );
@@ -755,17 +758,20 @@ describe('MicComposer', () => {
       );
       fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
 
-      // Advance through all native backoffs (500 + 1000 ms) and WAV backoffs.
+      // Drive all 6 calls to completion by advancing through backoffs.
+      // native: 500ms + 1000ms, WAV: 500ms + 1000ms.
       await vi.advanceTimersByTimeAsync(500);
       await vi.advanceTimersByTimeAsync(1000);
-      await vi.advanceTimersByTimeAsync(1500);
-      await vi.advanceTimersByTimeAsync(2000);
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1000);
 
       await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('cross-path ok'));
-      // 3 native + 2 WAV = 5 total transcribe calls.
-      expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(5);
-      // Verify the WAV retry was counted as 3, not 5 (no double-count).
-      expect(retryArgs).toEqual([1, 2, 3]);
+      expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(6);
+
+      // The label seen inside call 6 must read "Retrying... (4 of 4)", not
+      // "Retrying... (5 of 4)". If the snapshot fix is absent, cumulativeRetries
+      // would be mutated to 3 after WAV retry 0, then 3+2=5 on WAV retry 1.
+      expect(retryLabelAtSuccessCall).toMatch(/retrying.*4 of 4/i);
     } finally {
       vi.useRealTimers();
     }
