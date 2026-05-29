@@ -201,6 +201,14 @@ impl ComposioProvider for GitHubProvider {
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut newest_updated: Option<String> = None;
+        // Track whether any per-item ingest failed this pass. If so, we hold
+        // the persistent cursor — `updated:>{cursor}` on the next search
+        // would otherwise exclude the failed item, and because the new
+        // memory-tree pipeline (#2885) is delete-first, an *edited* issue
+        // that failed to re-ingest is left with neither old nor new chunks
+        // until its next edit. Already-synced items are skipped cheaply via
+        // `is_synced` on the re-fetch, so the cost of holding is minimal.
+        let mut had_ingest_failures = false;
 
         'pages: for page_num in 1..=MAX_PAGES {
             if state.budget_exhausted() {
@@ -324,6 +332,7 @@ impl ComposioProvider for GitHubProvider {
                         total_persisted += 1;
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             issue_id = %issue_id,
                             error = %e,
@@ -346,8 +355,22 @@ impl ComposioProvider for GitHubProvider {
         }
 
         // ── Step 5: advance cursor and save state ────────────────────
-        if let Some(new_cursor) = newest_updated {
-            state.advance_cursor(&new_cursor);
+        //
+        // Hold the cursor when any item failed to ingest this pass. See the
+        // `had_ingest_failures` declaration above for why this matters under
+        // the delete-first memory-tree pipeline (#2885). `set_last_sync_at_ms`
+        // still advances — that's just a heartbeat, not a fetch-window
+        // boundary, so it's safe to record that we did attempt a sync.
+        if !had_ingest_failures {
+            if let Some(new_cursor) = newest_updated {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:github] holding cursor — ingest failures this pass; next sync will \
+                 re-fetch the failed range"
+            );
         }
         state.set_last_sync_at_ms(sync::now_ms());
         state.save(&memory).await?;
