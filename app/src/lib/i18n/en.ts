@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.bundles': 'Bundles',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,26 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+
+  'predicateBundles.title': 'Predicate Bundles',
+  'predicateBundles.intro':
+    'Per ordered entity pair, how many distinct predicates link them? A pair tied by a single predicate is a thin relationship; a pair tied by three or four predicates is a THICK relationship — two entities meaningfully connected in more than one way. Neither per-predicate frequency nor neighbourhood overlap surfaces this.',
+  'predicateBundles.loading': 'Computing relationship thickness…',
+  'predicateBundles.errorPrefix': 'Could not load the graph:',
+  'predicateBundles.retry': 'Retry',
+  'predicateBundles.empty': 'No knowledge graph yet.',
+  'predicateBundles.emptyHint':
+    'As the assistant records relations about you, the thick (multi-predicate) pairs will surface here.',
+  'predicateBundles.namespaceLabel': 'Namespace',
+  'predicateBundles.namespaceAll': 'All namespaces',
+  'predicateBundles.metricPairs': 'Distinct pairs',
+  'predicateBundles.metricThick': 'Thick relationships',
+  'predicateBundles.metricMaxThickness': 'Max thickness',
+  'predicateBundles.summaryCaption': '{relations} relations across {pairs} pairs',
+  'predicateBundles.summaryCaptionOnePair': '{relations} relations across 1 pair',
+  'predicateBundles.summaryCaptionOneRelation': '1 relation across {pairs} pairs',
+  'predicateBundles.summaryCaptionOneEach': '1 relation across 1 pair',
+  'predicateBundles.rankedHeading': 'Top bundles',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
