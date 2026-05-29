@@ -492,11 +492,12 @@ impl Tool for QueritSearchTool {
         })?)?;
 
         if search_resp.error_code != 0 && search_resp.error_code != 200 {
-            anyhow::bail!(
-                "Querit returned error_code {}: {}",
-                search_resp.error_code,
-                search_resp.error_msg
+            tracing::warn!(
+                error_code = search_resp.error_code,
+                error_msg_len = search_resp.error_msg.chars().count(),
+                "[querit] application-level error from Querit"
             );
+            anyhow::bail!("Querit returned error_code {}", search_resp.error_code);
         }
 
         tracing::debug!(
@@ -772,6 +773,47 @@ mod tests {
         let message = err.to_string();
 
         assert!(message.contains("Querit returned non-2xx status 400 Bad Request"));
+        assert!(!message.contains("sensitive query context"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_app_error_does_not_expose_error_msg() {
+        use axum::{extract::Json, routing::post, Router};
+        use serde_json::Value;
+
+        let app = Router::new().route(
+            "/search",
+            post(|Json(_body): Json<Value>| async move {
+                Json(json!({
+                    "took": "3ms",
+                    "error_code": 400,
+                    "error_msg": "validation failed for sensitive query context",
+                    "search_id": 42,
+                    "query_context": { "query": "sensitive query context" },
+                    "results": { "result": [] }
+                }))
+            }),
+        );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let base_url = format!("http://127.0.0.1:{}", addr.port());
+
+        let tool = QueritSearchTool::new(Some("test-key".into()), Some(base_url), 5, 15);
+        let err = tool
+            .execute(json!({
+                "query": "sensitive query context",
+                "max_results": 3
+            }))
+            .await
+            .expect_err("application-level errors should fail");
+        let message = err.to_string();
+
+        assert_eq!(message, "Querit returned error_code 400");
+        assert!(!message.contains("validation failed"));
         assert!(!message.contains("sensitive query context"));
     }
 }
