@@ -332,7 +332,10 @@ async fn authed_json_surfaces_message_not_found_on_404() {
     let BackendApiError::MessageNotFound {
         provider,
         message_id,
-    } = typed;
+    } = typed
+    else {
+        panic!("expected MessageNotFound, got {typed:?}");
+    };
     assert_eq!(provider, "telegram");
     assert_eq!(message_id, "1103");
 
@@ -350,9 +353,98 @@ async fn authed_json_surfaces_message_not_found_on_404() {
     let BackendApiError::MessageNotFound {
         provider,
         message_id,
-    } = typed;
+    } = typed
+    else {
+        panic!("expected MessageNotFound, got {typed:?}");
+    };
     assert_eq!(provider, "discord");
     assert_eq!(message_id, "abc");
+}
+
+#[tokio::test]
+async fn authed_json_surfaces_unauthorized_on_401() {
+    // OPENHUMAN-TAURI-4K8: 401 on any authed backend endpoint must surface a
+    // typed `BackendApiError::Unauthorized` and NOT funnel into `report_error`.
+    // The mascot TTS path (`/openai/v1/audio/speech`) was the loudest reporter,
+    // but the same shape fires on every authed endpoint once a session lapses,
+    // so we cover two different paths/methods to prove the suppression is
+    // status-driven, not path-keyed.
+    let app = Router::new()
+        .route(
+            "/openai/v1/audio/speech",
+            post(|| async { (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized") }),
+        )
+        .route(
+            "/referral/stats",
+            get(|| async { (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized") }),
+        );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    // Mascot TTS path — the original reporter.
+    let err = client
+        .authed_json(
+            "mock-jwt",
+            Method::POST,
+            "/openai/v1/audio/speech",
+            Some(json!({ "text": "hello" })),
+        )
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    let BackendApiError::Unauthorized { method, path } = typed else {
+        panic!("expected Unauthorized, got {typed:?}");
+    };
+    assert_eq!(method, "POST");
+    assert_eq!(path, "/openai/v1/audio/speech");
+
+    // Generic GET on a non-TTS path — proves the suppression is per-status,
+    // not per-path. (Same root cause: expired/revoked backend session.)
+    let err = client
+        .authed_json("mock-jwt", Method::GET, "/referral/stats", None)
+        .await
+        .unwrap_err();
+    let typed = err.downcast_ref::<BackendApiError>().unwrap();
+    let BackendApiError::Unauthorized { method, path } = typed else {
+        panic!("expected Unauthorized, got {typed:?}");
+    };
+    assert_eq!(method, "GET");
+    assert_eq!(path, "/referral/stats");
+}
+
+#[tokio::test]
+async fn authed_json_403_is_not_demoted_to_unauthorized() {
+    // 403 (Forbidden) is a genuine authorization/permission problem — the
+    // token authenticated but lacked scope. That IS a code/config bug we
+    // want to keep in Sentry; only 401 (token rejected as a whole) maps
+    // to the expected-state `Unauthorized` variant.
+    let app = Router::new().route(
+        "/openai/v1/audio/speech",
+        post(|| async { (axum::http::StatusCode::FORBIDDEN, "Forbidden") }),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let base_url = format!("http://{addr}");
+    let client = BackendOAuthClient::new(&base_url).unwrap();
+
+    let err = client
+        .authed_json("mock-jwt", Method::POST, "/openai/v1/audio/speech", None)
+        .await
+        .unwrap_err();
+    assert!(
+        err.downcast_ref::<BackendApiError>().is_none(),
+        "403 must not be classified as Unauthorized"
+    );
 }
 
 #[tokio::test]
@@ -486,7 +578,10 @@ async fn authed_json_patch_404_with_base_path_prefix_does_not_report() {
     let BackendApiError::MessageNotFound {
         provider,
         message_id,
-    } = typed;
+    } = typed
+    else {
+        panic!("expected MessageNotFound, got {typed:?}");
+    };
     assert_eq!(provider, "telegram");
     assert_eq!(message_id, "9999");
 }

@@ -8,6 +8,7 @@ pub mod detect;
 pub mod docker;
 pub mod firejail;
 pub mod landlock;
+pub mod live_policy;
 pub mod pairing;
 pub mod policy;
 pub mod secrets;
@@ -35,6 +36,11 @@ pub use policy::validate_path_within_root;
 pub use policy::AutonomyLevel;
 pub use policy::SecurityPolicy;
 pub use policy::ToolOperation;
+#[allow(unused_imports)]
+pub use policy::{CommandClass, GateDecision};
+#[allow(unused_imports)]
+pub use policy::{TrustedAccess, TrustedRoot};
+pub use policy::{POLICY_BLOCKED_MARKER, POLICY_DENIED_MARKER};
 #[allow(unused_imports)]
 pub use traits::{NoopSandbox, Sandbox};
 

@@ -1,6 +1,6 @@
 use crate::openhuman::config::Config;
 use crate::openhuman::cron;
-use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolCallOptions, ToolResult};
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
@@ -37,6 +37,16 @@ impl Tool for CronRunTool {
     }
 
     fn supports_markdown(&self) -> bool {
+        true
+    }
+
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Execute
+    }
+
+    fn external_effect(&self) -> bool {
+        // Force-running a job immediately executes the stored command or
+        // agent prompt on the host.  Require approval (GHSA-f46p-6vf9-64mm).
         true
     }
 
@@ -186,5 +196,38 @@ mod tests {
             .unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("not found"));
+    }
+
+    // ── GHSA-f46p-6vf9-64mm: approval gate must fire for cron_run ────
+
+    #[test]
+    fn cron_run_is_external_effect() {
+        let tmp = TempDir::new().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let cfg = Arc::new(config);
+        let tool = CronRunTool::new(cfg);
+        assert!(
+            tool.external_effect(),
+            "cron_run must declare external_effect=true so ApprovalGate is consulted"
+        );
+    }
+
+    #[test]
+    fn cron_run_permission_level_is_execute() {
+        let tmp = TempDir::new().unwrap();
+        let config = Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..Config::default()
+        };
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let cfg = Arc::new(config);
+        let tool = CronRunTool::new(cfg);
+        assert_eq!(tool.permission_level(), PermissionLevel::Execute);
     }
 }

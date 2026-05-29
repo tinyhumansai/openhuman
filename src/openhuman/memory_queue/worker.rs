@@ -18,7 +18,7 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory_queue::handlers;
 use crate::openhuman::memory_queue::redact::scrub_for_log;
 use crate::openhuman::memory_queue::store::{
-    claim_next, mark_deferred, mark_done, mark_failed, recover_stale_locks,
+    claim_next, mark_deferred, mark_done, mark_failed, recover_stale_locks, release_running_locks,
     DEFAULT_LOCK_DURATION_MS,
 };
 use crate::openhuman::memory_queue::types::JobOutcome;
@@ -69,6 +69,36 @@ pub fn start(config: Config) {
         if let Err(err) = recover_stale_locks(&config) {
             log::warn!("[memory::jobs] recover_stale_locks failed at startup: {err:#}");
         }
+
+        // Release in-flight locks on graceful shutdown so a clean restart
+        // re-claims the work immediately instead of waiting out the lease
+        // (which surfaced as a stale-lock recovery warn on every launch).
+        // Hard kills still fall back to lease-expiry recovery at startup
+        // (bug-report-2026-05-26 I2).
+        let shutdown_cfg = config.clone();
+        crate::core::shutdown::register(move || {
+            // NOTE: `shutdown::register` is bound `F: Fn() -> Fut`, so this
+            // closure may be invoked more than once; each call must hand the
+            // returned future its own owned `Config`. Moving `shutdown_cfg`
+            // in directly is `E0507` (cannot move out of an `Fn` closure), so
+            // the per-call clone is required, not redundant.
+            let cfg = shutdown_cfg.clone();
+            async move {
+                match release_running_locks(&cfg) {
+                    Ok(n) if n > 0 => {
+                        log::info!(
+                            "[memory::jobs] released {n} in-flight job lock(s) on graceful shutdown"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::warn!(
+                            "[memory::jobs] failed to release job locks on shutdown: {err:#}"
+                        );
+                    }
+                }
+            }
+        });
 
         for idx in 0..WORKER_COUNT {
             let notify = notify.clone();

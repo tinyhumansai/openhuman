@@ -125,6 +125,12 @@ pub struct PreparedTransaction {
     pub created_at_ms: u64,
     pub expires_at_ms: u64,
     pub notes: Vec<String>,
+    /// Chat-thread owner stamped at prepare time. Present when the quote
+    /// was prepared from inside an interactive chat turn (web channel sets
+    /// `APPROVAL_CHAT_CONTEXT`); `None` for CLI / direct-RPC / background
+    /// callers. Internal gate data — never serialized over the wire.
+    #[serde(skip_serializing)]
+    pub(crate) owner: Option<QuoteOwner>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -199,6 +205,46 @@ pub(crate) fn now_ms() -> u64 {
 fn next_quote_id() -> String {
     let n = QUOTE_COUNTER.fetch_add(1, Ordering::Relaxed);
     format!("q_{}_{}", now_ms(), n)
+}
+
+/// Identity of the chat thread that prepared a quote.
+///
+/// The wallet executes prepare/execute as a two-step flow keyed by `quote_id`.
+/// `quote_id`s are visible in the shared chat broadcast (the prepared-tx
+/// summary that gets sent back into the channel), so a co-channel caller can
+/// read another caller's `quote_id` and try to drive its execute from their
+/// own (now per-sender-isolated, post-#2331) agent session. Binding the
+/// quote to the originating chat thread closes that gap: execute is only
+/// allowed when the caller's `current_owner()` equals the prepare-time owner.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct QuoteOwner {
+    pub(crate) thread_id: String,
+    pub(crate) client_id: String,
+}
+
+/// Read the per-turn chat context that scopes the agent tool loop.
+///
+/// Returns `Some(owner)` when called from inside an interactive chat turn
+/// (the web channel installs `APPROVAL_CHAT_CONTEXT` around `run_chat_task`).
+/// Returns `None` for non-chat callers (CLI, direct JSON-RPC, background
+/// triage / cron / sub-agents) — these keep the pre-binding behavior and
+/// remain executable without an owner gate, since they have no shared
+/// channel from which a `quote_id` could leak.
+///
+// SAFETY: relies on the inline `.await` chain in
+// `channels/providers/web.rs::run_chat_task`. `tokio::task_local!` propagates
+// across `.await` but **not** across `tokio::spawn`. If the chat path ever
+// detaches the tool loop onto a freshly-spawned task without wrapping it in
+// `APPROVAL_CHAT_CONTEXT.scope(...)`, this helper will silently start
+// returning `None` and the owner gate will become a no-op. Keep the
+// prepare/execute calls inline within the scope.
+pub(crate) fn current_owner() -> Option<QuoteOwner> {
+    crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+        .try_with(|ctx| QuoteOwner {
+            thread_id: ctx.thread_id.clone(),
+            client_id: ctx.client_id.clone(),
+        })
+        .ok()
 }
 
 async fn require_account(chain: WalletChain) -> Result<WalletAccount, String> {
@@ -335,13 +381,41 @@ fn get_quote(quote_id: &str) -> Result<PreparedTransaction, String> {
     Ok(quote)
 }
 
-fn take_quote(quote_id: &str) -> Result<PreparedTransaction, String> {
+/// Remove a quote from the store and return it to the caller, if and only if
+/// the caller's chat-thread owner matches the prepare-time owner.
+///
+/// On owner mismatch this returns the **exact same** "quote '…' not found"
+/// error shape that a missing-row lookup would, so cross-thread callers
+/// cannot distinguish "wrong owner" from "no such quote" — i.e. no
+/// enumeration oracle for leaked `quote_id`s.
+///
+/// Callers with no chat context (`caller_owner == None`, e.g. CLI / direct
+/// JSON-RPC / background turns) can only execute quotes that were also
+/// prepared with no chat context. This intentionally prevents privilege-drop
+/// where a background flow could pick up an interactive user's quote.
+fn take_quote_for(
+    quote_id: &str,
+    caller_owner: Option<QuoteOwner>,
+) -> Result<PreparedTransaction, String> {
+    let not_found = || format!("quote '{quote_id}' not found");
     let mut store = QUOTE_STORE.lock();
     let now = now_ms();
     let pos = store
         .iter()
         .position(|q| q.quote_id == quote_id)
-        .ok_or_else(|| format!("quote '{quote_id}' not found"))?;
+        .ok_or_else(not_found)?;
+    // Owner check happens before status / expiry checks so the error shape on
+    // mismatch can be byte-equal to the not-found path. Removing the quote
+    // only happens *after* this check passes — a mismatched caller cannot
+    // poison the store by consuming someone else's quote.
+    if store[pos].owner != caller_owner {
+        debug!(
+            "{LOG_PREFIX} take_quote_for quote_id={} owner_mismatch (caller_has_ctx={})",
+            quote_id,
+            caller_owner.is_some()
+        );
+        return Err(not_found());
+    }
     let quote = store.remove(pos);
     if quote.status == PreparedStatus::Consumed {
         return Err(format!("quote '{quote_id}' already executed"));
@@ -617,6 +691,7 @@ pub async fn prepare_transfer(
             "Prepared {} transfer on {} using default network settings.",
             asset.symbol, label
         )],
+        owner: current_owner(),
     };
     debug!(
         "{LOG_PREFIX} prepare_transfer chain={} kind={:?} quote_id={} amount={} asset={}",
@@ -692,6 +767,7 @@ pub async fn prepare_swap(
             "Swap {} -> {}, slippage {} bps. Real router quote required before signing.",
             params.from_symbol, params.to_symbol, params.slippage_bps
         )],
+        owner: current_owner(),
     };
     debug!(
         "{LOG_PREFIX} prepare_swap chain={} quote_id={} from={} to={} slippage_bps={}",
@@ -745,6 +821,7 @@ pub async fn prepare_contract_call(
         created_at_ms: now,
         expires_at_ms: now + QUOTE_TTL_MS,
         notes: vec!["Contract call prepared from caller-supplied ABI/calldata.".to_string()],
+        owner: current_owner(),
     };
     debug!(
         "{LOG_PREFIX} prepare_contract_call chain={} quote_id={} value={}",
@@ -764,10 +841,17 @@ pub async fn execute_prepared(
     if !params.confirmed {
         return Err("execute_prepared requires `confirmed: true`".to_string());
     }
+    // Bind execute to the chat-thread that prepared the quote.
+    // `current_owner()` returns the caller's `APPROVAL_CHAT_CONTEXT` (or `None`
+    // for non-chat callers). `take_quote_for` enforces equality with the
+    // prepare-time owner and returns the same "not found" error on mismatch
+    // — leaked `quote_id`s in a shared channel cannot be hijacked from a
+    // different agent session.
+    let caller = current_owner();
     // Atomically remove the quote *before* broadcasting so two concurrent
     // confirmations can't both pass get_quote() and double-submit. If signing
     // or broadcast fails we restore the quote to keep it retryable.
-    let quote = take_quote(&params.quote_id)?;
+    let quote = take_quote_for(&params.quote_id, caller)?;
     let chain = quote.chain;
     let restorable = quote.clone();
     let result = match chain {
@@ -998,16 +1082,20 @@ mod tests {
             created_at_ms: now,
             expires_at_ms: now + 60_000,
             notes: vec![],
+            owner: None,
         };
         store_quote(q.clone());
-        let taken = take_quote("q_test_1").expect("quote round-trips");
+        let taken = take_quote_for("q_test_1", None).expect("quote round-trips");
         assert_eq!(taken.quote_id, "q_test_1");
-        assert!(take_quote("q_test_1").is_err(), "second take must fail");
+        assert!(
+            take_quote_for("q_test_1", None).is_err(),
+            "second take must fail"
+        );
 
         q.quote_id = "q_test_2".to_string();
         q.expires_at_ms = now.saturating_sub(1);
         store_quote(q);
-        let err = take_quote("q_test_2").unwrap_err();
+        let err = take_quote_for("q_test_2", None).unwrap_err();
         assert!(err.contains("expired"), "got: {err}");
     }
 
@@ -1193,6 +1281,241 @@ mod tests {
         assert_eq!(executed.status, PreparedStatus::Broadcasted);
         assert_eq!(executed.evm_network, Some(EvmNetwork::BaseMainnet));
         assert_eq!(raw_txs.lock().len(), 1);
+    }
+
+    /// Build a Quote-store fixture pinned to a specific owner.
+    /// Bypasses prepare_* (which would need full wallet setup + mock RPC) so
+    /// the owner-gate behavior can be exercised in isolation.
+    fn insert_owned_quote(quote_id: &str, owner: Option<QuoteOwner>) -> PreparedTransaction {
+        let now = now_ms();
+        let q = PreparedTransaction {
+            quote_id: quote_id.to_string(),
+            kind: PreparedKind::NativeTransfer,
+            chain: WalletChain::Evm,
+            evm_network: Some(EvmNetwork::EthereumMainnet),
+            from_address: "0xfrom".to_string(),
+            to_address: "0xto".to_string(),
+            asset_symbol: "ETH".to_string(),
+            amount_raw: "1".to_string(),
+            amount_formatted: "0.000000000000000001".to_string(),
+            receive_symbol: None,
+            min_receive_raw: None,
+            calldata: None,
+            token_address: None,
+            estimated_fee_raw: "0".to_string(),
+            status: PreparedStatus::AwaitingConfirmation,
+            created_at_ms: now,
+            expires_at_ms: now + 60_000,
+            notes: vec![],
+            owner,
+        };
+        insert_quote_for_test(q)
+    }
+
+    fn owner_a() -> QuoteOwner {
+        QuoteOwner {
+            thread_id: "thread-A".into(),
+            client_id: "client-A".into(),
+        }
+    }
+
+    fn owner_b() -> QuoteOwner {
+        QuoteOwner {
+            thread_id: "thread-B".into(),
+            client_id: "client-B".into(),
+        }
+    }
+
+    fn chat_ctx_from(owner: &QuoteOwner) -> crate::openhuman::approval::ApprovalChatContext {
+        crate::openhuman::approval::ApprovalChatContext {
+            thread_id: owner.thread_id.clone(),
+            client_id: owner.client_id.clone(),
+        }
+    }
+
+    /// Cross-thread execute must fail. The quote must remain in the store
+    /// (mismatched caller cannot poison it by consuming on Alice's behalf).
+    #[tokio::test]
+    async fn execute_prepared_rejects_cross_owner_execution() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_xowner_1", Some(owner_a()));
+
+        // Bob (owner_b) tries to execute Alice's quote. The error string is
+        // intentionally identical to a not-found lookup.
+        let err = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_b()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: q.quote_id.clone(),
+                    confirmed: true,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err, format!("quote '{}' not found", q.quote_id));
+
+        // The quote must still be present and executable by Alice — Bob's
+        // failed attempt didn't poison the store.
+        let still_present = prepared_quotes_for_test();
+        assert!(
+            still_present.iter().any(|p| p.quote_id == q.quote_id),
+            "quote must survive owner-mismatch attempts"
+        );
+    }
+
+    /// Same-thread execute must pass the owner gate (it will fail later in
+    /// the chain code because there's no mock RPC set up, but the failure
+    /// must not be the "not found" oracle — that proves we got past the gate).
+    #[tokio::test]
+    async fn execute_prepared_allows_same_owner_execution() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_same_owner_1", Some(owner_a()));
+
+        let result = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_a()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: q.quote_id.clone(),
+                    confirmed: true,
+                }),
+            )
+            .await;
+        // Past the owner gate. Chain code may error (no mock RPC, no wallet
+        // setup) — but it must NOT be the "not found" shape we use for the
+        // owner-mismatch oracle.
+        if let Err(err) = &result {
+            assert_ne!(
+                err,
+                &format!("quote '{}' not found", q.quote_id),
+                "same-owner path must not return the owner-mismatch oracle"
+            );
+        }
+    }
+
+    /// No-context prepare + no-context execute must work. Keeps CLI / direct
+    /// JSON-RPC flows usable.
+    #[tokio::test]
+    async fn execute_prepared_allows_no_context_flows() {
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_no_ctx_1", None);
+
+        // No APPROVAL_CHAT_CONTEXT scope — current_owner() returns None on
+        // both prepare and execute, so the gate passes.
+        let result = execute_prepared(ExecutePreparedParams {
+            quote_id: q.quote_id.clone(),
+            confirmed: true,
+        })
+        .await;
+        if let Err(err) = &result {
+            assert_ne!(
+                err,
+                &format!("quote '{}' not found", q.quote_id),
+                "no-context path must not return the owner-mismatch oracle"
+            );
+        }
+    }
+
+    /// A quote prepared inside a chat context must NOT be executable from a
+    /// caller with no context. Prevents privilege-drop into background /
+    /// triage / cron flows that wouldn't surface UI confirmation.
+    #[tokio::test]
+    async fn execute_prepared_rejects_chat_quote_from_no_context_caller() {
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+        let q = insert_owned_quote("q_chat_to_bg_1", Some(owner_a()));
+
+        // No scope around execute → caller_owner = None ≠ Some(owner_a).
+        let err = execute_prepared(ExecutePreparedParams {
+            quote_id: q.quote_id.clone(),
+            confirmed: true,
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(err, format!("quote '{}' not found", q.quote_id));
+    }
+
+    /// Lock the error-shape invariant: cross-owner reject string MUST be
+    /// byte-equal to the not-found string. Regressions here would re-open
+    /// the enumeration-oracle gap.
+    #[tokio::test]
+    async fn execute_prepared_owner_mismatch_error_matches_not_found_shape() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        reset_quote_store_for_tests();
+
+        // Real (owner-mismatched) quote.
+        let real = insert_owned_quote("q_real_1", Some(owner_a()));
+        // Reach the mismatched-owner branch.
+        let mismatch_err = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_b()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: real.quote_id.clone(),
+                    confirmed: true,
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        // Reach the genuine not-found branch (no quote with this id in store).
+        let missing_err = APPROVAL_CHAT_CONTEXT
+            .scope(
+                chat_ctx_from(&owner_b()),
+                execute_prepared(ExecutePreparedParams {
+                    quote_id: "q_does_not_exist".into(),
+                    confirmed: true,
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        // Both branches surface the exact same template, parameterised only
+        // by quote_id. No enumeration oracle.
+        assert_eq!(mismatch_err, format!("quote '{}' not found", real.quote_id));
+        assert_eq!(missing_err, "quote 'q_does_not_exist' not found");
+    }
+
+    /// Verify that `prepare_transfer` inside an `APPROVAL_CHAT_CONTEXT` scope
+    /// actually stamps `owner` via the task-local — not just via test helpers.
+    #[tokio::test]
+    async fn prepare_stamps_owner_via_task_local() {
+        use crate::openhuman::approval::APPROVAL_CHAT_CONTEXT;
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_quote_store_for_tests();
+        let temp = TempDir::new().unwrap();
+        setup_wallet_in(&temp).await.unwrap();
+
+        let expected = owner_a();
+        let ctx = chat_ctx_from(&expected);
+
+        let prepared = APPROVAL_CHAT_CONTEXT
+            .scope(
+                ctx,
+                prepare_transfer(PrepareTransferParams {
+                    chain: WalletChain::Evm,
+                    to_address: "0x1111111111111111111111111111111111111111".into(),
+                    amount_raw: "1000".into(),
+                    asset_symbol: None,
+                    evm_network: Some(EvmNetwork::EthereumMainnet),
+                }),
+            )
+            .await
+            .unwrap()
+            .value;
+
+        assert_eq!(
+            prepared.owner,
+            Some(expected),
+            "prepare_transfer must stamp owner from APPROVAL_CHAT_CONTEXT"
+        );
     }
 
     #[tokio::test]

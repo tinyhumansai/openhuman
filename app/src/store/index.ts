@@ -11,7 +11,7 @@ import {
   REHYDRATE,
 } from 'redux-persist';
 
-import { IS_DEV } from '../utils/config';
+import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
@@ -183,10 +183,12 @@ export const store = configureStore({
 export const persistor = persistStore(store);
 
 // Expose the store on `window` so WDIO E2E specs can read Redux state directly
-// to assert backing-state changes (see app/test/e2e/specs/*.spec.ts). The store
-// holds no secrets that aren't already in the renderer's memory; this only
-// surfaces the existing handle under a stable, namespaced key.
-if (typeof window !== 'undefined') {
+// to assert backing-state changes (see app/test/e2e/specs/*.spec.ts). Gated on
+// the E2E build flag (`VITE_OPENHUMAN_E2E_RESTART_APP_AS_RELOAD`, baked by
+// `app/scripts/e2e-build.sh`) so shipped production bundles do NOT expose the
+// store handle — denying a same-origin attacker (compromised CDN, supply-chain
+// asset, XSS) a one-call read/mutate path into full Redux state.
+if (typeof window !== 'undefined' && (IS_DEV || E2E_RESTART_APP_AS_RELOAD)) {
   (window as unknown as { __OPENHUMAN_STORE__?: typeof store }).__OPENHUMAN_STORE__ = store;
 }
 

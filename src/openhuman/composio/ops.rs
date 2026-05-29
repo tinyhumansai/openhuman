@@ -8,11 +8,33 @@
 //! These ops are also callable directly from other domains (e.g. the
 //! agent harness) when they need composio data at runtime.
 
+/// Toolkits that honour the `tags` query param on the backend tool-list endpoint.
+/// Expand this list when a new toolkit gains tag support.
+const TAG_QUERYABLE_TOOLKITS: &[&str] = &["github"];
+
+/// Returns `true` when `tags` should be forwarded to the backend.
+///
+/// Tags are forwarded when no toolkit filter is active (`None` / empty slice)
+/// or when at least one requested toolkit is in [`TAG_QUERYABLE_TOOLKITS`].
+/// This is `pub(crate)` so `tools.rs` can reuse it without duplicating the list.
+pub(crate) fn should_forward_tags(toolkits: Option<&[String]>) -> bool {
+    match toolkits {
+        None => true,
+        Some(kits) => {
+            kits.is_empty()
+                || kits.iter().any(|k| {
+                    TAG_QUERYABLE_TOOLKITS
+                        .iter()
+                        .any(|t| k.trim().eq_ignore_ascii_case(t))
+                })
+        }
+    }
+}
+
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::MemoryClient;
 use crate::openhuman::memory_store::chunks::store as memory_tree_store;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
-use crate::openhuman::memory_store::content::raw::slug_account_email;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -526,6 +548,7 @@ pub async fn composio_delete_connection(
 enum MemoryCleanupTarget {
     Exact(SourceKind, String),
     Prefix(SourceKind, String),
+    Owner(SourceKind, String),
 }
 
 impl MemoryCleanupTarget {
@@ -541,6 +564,9 @@ impl MemoryCleanupTarget {
                     source_id_prefix,
                 )
             }
+            Self::Owner(source_kind, owner) => {
+                memory_tree_store::delete_chunks_by_owner(config, *source_kind, owner)
+            }
         }
     }
 
@@ -551,6 +577,9 @@ impl MemoryCleanupTarget {
             }
             Self::Prefix(source_kind, source_id_prefix) => {
                 format!("{}:{source_id_prefix}*", source_kind.as_str())
+            }
+            Self::Owner(source_kind, owner) => {
+                format!("{}:owner:{owner}", source_kind.as_str())
             }
         }
     }
@@ -581,30 +610,12 @@ async fn composio_memory_targets_for_connection(
 }
 
 fn gmail_memory_sources_for_connection(connection_id: &str) -> Vec<MemoryCleanupTarget> {
-    let normalized_connection_id =
-        super::providers::profile::normalize_connection_identifier(connection_id);
-    let mut sources = Vec::new();
-    for identity in super::providers::profile::load_connected_identities() {
-        if identity.source != "gmail" || identity.identifier != normalized_connection_id {
-            continue;
-        }
-        let Some(email) = identity
-            .email
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        let source = MemoryCleanupTarget::Exact(
-            SourceKind::Email,
-            format!("gmail:{}", slug_account_email(email)),
-        );
-        if !sources.iter().any(|existing| existing == &source) {
-            sources.push(source);
-        }
-    }
-    sources
+    vec![
+        MemoryCleanupTarget::Owner(SourceKind::Email, format!("gmail-sync:{connection_id}")),
+        MemoryCleanupTarget::Exact(SourceKind::Email, format!("gmail:{connection_id}")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}:")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}/")),
+    ]
 }
 
 async fn notion_memory_targets_for_connection(
@@ -680,8 +691,14 @@ fn dedupe_memory_targets(targets: Vec<MemoryCleanupTarget>) -> Vec<MemoryCleanup
 pub async fn composio_list_tools(
     config: &Config,
     toolkits: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
 ) -> OpResult<RpcOutcome<ComposioToolsResponse>> {
-    tracing::debug!(?toolkits, "[composio] rpc list_tools");
+    let effective_tags = if should_forward_tags(toolkits.as_deref()) {
+        tags
+    } else {
+        None
+    };
+    tracing::debug!(?toolkits, ?effective_tags, "[composio] rpc list_tools");
     // Route through the mode-aware factory. In direct mode the backend
     // tool catalogue (which is shaped by the tinyhumans-tenant
     // allowlist + curated whitelist) does NOT apply — the user's
@@ -694,10 +711,13 @@ pub async fn composio_list_tools(
     match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!("[composio] list_tools: backend variant");
-            let resp = client.list_tools(toolkits.as_deref()).await.map_err(|e| {
-                report_composio_op_error("list_tools", &e);
-                format!("[composio] list_tools failed: {e:#}")
-            })?;
+            let resp = client
+                .list_tools(toolkits.as_deref(), effective_tags.as_deref())
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("list_tools", &e);
+                    format!("[composio] list_tools failed: {e:#}")
+                })?;
             let count = resp.tools.len();
             Ok(RpcOutcome::new(
                 resp,
@@ -755,18 +775,24 @@ pub async fn composio_list_tools(
             }
             tracing::debug!(
                 toolkits = scope.len(),
+                ?effective_tags,
                 "[composio-direct] list_tools: fetching v3 tool schemas"
             );
-            let mut resp = direct_list_tools(&direct, &scope).await.map_err(|e| {
-                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
-                // branch's hook (line ~451). Direct-mode `list_tools`
-                // failures are user-state when the API key is bad. Render
-                // WITH the `[composio-direct]` anchor so the classifier
-                // arm fires.
-                let rendered = format!("[composio-direct] list_tools failed: {e:#}");
-                report_composio_op_error("list_tools", &rendered);
-                rendered
-            })?;
+            // Forward the same `effective_tags` the backend branch uses so the
+            // tag filter is honoured in direct (BYO-key) mode too — previously
+            // it was computed above and then dropped on this branch.
+            let mut resp = direct_list_tools(&direct, &scope, effective_tags.as_deref())
+                .await
+                .map_err(|e| {
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
+                    // branch's hook (line ~451). Direct-mode `list_tools`
+                    // failures are user-state when the API key is bad. Render
+                    // WITH the `[composio-direct]` anchor so the classifier
+                    // arm fires.
+                    let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                    report_composio_op_error("list_tools", &rendered);
+                    rendered
+                })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but
             // OpenHuman's curation policy isn't, and direct-mode users
@@ -1830,7 +1856,10 @@ async fn fetch_connected_integrations_uncached(
             let tools = if connected_slugs_for_tools.is_empty() {
                 Vec::new()
             } else {
-                match client.list_tools(Some(&connected_slugs_for_tools)).await {
+                match client
+                    .list_tools(Some(&connected_slugs_for_tools), None)
+                    .await
+                {
                     Ok(resp) => resp.tools,
                     Err(e) => {
                         tracing::warn!(
@@ -1898,21 +1927,23 @@ async fn fetch_connected_integrations_uncached(
             // (definitional source). Failure is non-fatal — we fall
             // back to empty tools and let lazy resolution handle it.
             let tools = match super::client::build_composio_client(config) {
-                Some(backend_client) => match backend_client.list_tools(Some(&allowlist)).await {
-                    Ok(resp) => {
-                        tracing::debug!(
+                Some(backend_client) => {
+                    match backend_client.list_tools(Some(&allowlist), None).await {
+                        Ok(resp) => {
+                            tracing::debug!(
                             count = resp.tools.len(),
                             "[composio-direct] fetch_connected_integrations: pulled tool schemas from backend (tenant-agnostic definitional source)"
                         );
-                        resp.tools
-                    }
-                    Err(e) => {
-                        tracing::info!(
+                            resp.tools
+                        }
+                        Err(e) => {
+                            tracing::info!(
                             "[composio-direct] fetch_connected_integrations: backend list_tools failed (will use lazy fallback at delegation time): {e:#}"
                         );
-                        Vec::new()
+                            Vec::new()
+                        }
                     }
-                },
+                }
                 None => {
                     tracing::info!(
                         "[composio-direct] fetch_connected_integrations: no backend session for schema fetch; lazy fallback at delegation time"
@@ -2151,6 +2182,10 @@ async fn fetch_connected_integrations_uncached(
 /// `fetch_connected_integrations_uncached`'s own namespacing rule so
 /// siblings like `github` / `git` don't leak into each other's buckets.
 ///
+/// `tags` narrows the result by Composio action tag (OR semantics). Only
+/// honoured for the GitHub toolkit; passed through to `list_tools` so the
+/// backend can skip the repo-list force-include and return a focused set.
+///
 /// Returns an empty vec when the backend has no actions for the
 /// toolkit (valid steady state for a freshly-authorised integration
 /// whose catalogue hasn't been published yet). Returns `Err` only for
@@ -2158,14 +2193,20 @@ async fn fetch_connected_integrations_uncached(
 pub async fn fetch_toolkit_actions(
     client: &ComposioClient,
     toolkit: &str,
+    tags: Option<&[String]>,
 ) -> anyhow::Result<Vec<ConnectedIntegrationTool>> {
     let toolkit_slug = toolkit.trim();
     if toolkit_slug.is_empty() {
         anyhow::bail!("fetch_toolkit_actions: toolkit must not be empty");
     }
-    tracing::debug!(toolkit = %toolkit_slug, "[composio] fetch_toolkit_actions");
+    let effective_tags = if should_forward_tags(Some(&[toolkit_slug.to_string()])) {
+        tags
+    } else {
+        None
+    };
+    tracing::debug!(toolkit = %toolkit_slug, ?effective_tags, "[composio] fetch_toolkit_actions");
     let resp = client
-        .list_tools(Some(&[toolkit_slug.to_string()]))
+        .list_tools(Some(&[toolkit_slug.to_string()]), effective_tags)
         .await
         .map_err(|e| anyhow::anyhow!("list_tools failed for toolkit `{toolkit_slug}`: {e}"))?;
     let action_prefix = format!("{}_", toolkit_slug.to_uppercase());

@@ -340,6 +340,31 @@ fn sustained_outage_for_network_unreachable_classifies_as_expected() {
     );
 }
 
+/// Regression guard for TAURI-RUST-4ZD: a TLS handshake aborted by the
+/// peer / a firewall / antivirus / corporate TLS proxy surfaces from
+/// `run_connection` as `WebSocket connect: TLS error: native-tls error:
+/// unexpected EOF during handshake`. The exact wire shape the
+/// sustained-outage escalation builds must classify as a
+/// network-unreachable expected error so an affected Windows client logs
+/// a warn breadcrumb rather than a Sentry event. The pre-existing
+/// `"tls handshake"` substring does NOT match this render (the words are
+/// not contiguous), so this pins the dedicated `"unexpected eof during
+/// handshake"` anchor to the emit site.
+#[test]
+fn sustained_outage_for_tls_handshake_eof_classifies_as_expected() {
+    use crate::core::observability::{expected_error_kind, ExpectedErrorKind};
+
+    let reason = "WebSocket connect: TLS error: native-tls error: unexpected EOF during handshake";
+    let detailed = format!(
+        "[socket] Connection failed (sustained outage after {FAIL_ESCALATE_THRESHOLD} attempts): {reason}"
+    );
+    assert_eq!(
+        expected_error_kind(&detailed),
+        Some(ExpectedErrorKind::NetworkUnreachable),
+        "TLS-handshake-EOF shape must classify as expected; got message: {detailed}"
+    );
+}
+
 /// Counterpart: a genuine outage that lacks any of the transport-level
 /// markers (e.g. a server-side HTTP 500 wrapped by tungstenite) must
 /// still surface as an actionable Sentry event — i.e. not classify as

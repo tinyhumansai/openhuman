@@ -12,7 +12,8 @@ use std::sync::{Arc, RwLock};
 use tokio::fs;
 
 /// Resolve the Telegram API base URL from an optional env value. Pure function —
-/// callers in production pass `std::env::var("OPENHUMAN_TELEGRAM_API_BASE").ok()`;
+/// callers in production pass `std::env::var("OPENHUMAN_TELEGRAM_BOT_API_BASE").ok()`
+/// (falling back to the legacy `OPENHUMAN_TELEGRAM_API_BASE`);
 /// tests can exercise this directly without mutating process env.
 pub(crate) fn resolve_api_base(raw: Option<String>) -> String {
     let base = raw
@@ -23,7 +24,11 @@ pub(crate) fn resolve_api_base(raw: Option<String>) -> String {
 
 impl TelegramChannel {
     pub fn new(bot_token: String, allowed_users: Vec<String>, mention_only: bool) -> Self {
-        let api_base = resolve_api_base(std::env::var("OPENHUMAN_TELEGRAM_API_BASE").ok());
+        let api_base = resolve_api_base(
+            std::env::var("OPENHUMAN_TELEGRAM_BOT_API_BASE")
+                .ok()
+                .or_else(|| std::env::var("OPENHUMAN_TELEGRAM_API_BASE").ok()),
+        );
         tracing::debug!(
             target: "telegram::api",
             api_base = %api_base,

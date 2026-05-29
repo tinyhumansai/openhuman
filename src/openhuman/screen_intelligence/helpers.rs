@@ -195,7 +195,7 @@ pub(crate) async fn persist_vision_summary(
         content.push_str(&format!("{}\n", summary.key_text));
     }
 
-    let key = format!("screen_intelligence_{}", summary.id);
+    let key = vision_summary_memory_key(&summary);
     let document = NamespaceDocumentInput {
         namespace: VISION_MEMORY_NAMESPACE.to_string(),
         key: key.clone(),
@@ -230,6 +230,23 @@ pub(crate) async fn persist_vision_summary(
         namespace: VISION_MEMORY_NAMESPACE.to_string(),
         key,
     })
+}
+
+pub(crate) fn vision_summary_memory_key(summary: &VisionSummary) -> String {
+    format!(
+        "screen_intelligence_{}_{}",
+        summary.captured_at_ms,
+        stable_decimal_hash(&summary.id)
+    )
+}
+
+fn stable_decimal_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 pub(crate) fn truncate_tail(text: &str, max_chars: usize) -> String {

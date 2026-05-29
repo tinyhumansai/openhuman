@@ -1,9 +1,12 @@
-import { invoke } from '@tauri-apps/api/core';
 import debug from 'debug';
 import { useEffect, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
-import { isTauri } from '../../../utils/tauriCommands/common';
+// `safeInvoke` (aliased to `invoke`) converts the CEF
+// `window.ipc.postMessage` synchronous throw — Sentry TAURI-REACT-7 /
+// TAURI-REACT-6 — into a rejected Promise that the existing try/catch sees
+// as a regular IPC failure.
+import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 

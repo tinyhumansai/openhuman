@@ -129,6 +129,13 @@ impl DailyBudget {
     pub fn record_requests(&mut self, n: u32) {
         let today = today_str();
         if self.date != today {
+            tracing::info!(
+                old_date = %self.date,
+                new_date = %today,
+                requests_used = self.requests_used,
+                limit = self.limit,
+                "[composio:sync-state] daily request budget reset"
+            );
             self.date = today;
             self.requests_used = 0;
         }

@@ -1,12 +1,15 @@
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::profiles::{AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID};
@@ -32,6 +35,89 @@ pub fn subscribe_web_channel_events() -> broadcast::Receiver<WebChannelEvent> {
 
 pub fn publish_web_channel_event(event: WebChannelEvent) {
     let _ = EVENT_BUS.send(event);
+}
+
+static APPROVAL_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
+/// Bridge a parked `ApprovalGate` request onto the web channel. When the gate
+/// publishes `ApprovalRequested` carrying a chat thread/client (set via the
+/// per-turn `ApprovalChatContext`), surface the "run X? (yes/no)" question as an
+/// `approval_request` event on that thread so the user can answer in chat.
+/// Idempotent. No-op for non-chat approvals (thread/client id absent).
+pub fn register_approval_surface_subscriber() {
+    if APPROVAL_SURFACE_HANDLE.get().is_some() {
+        return;
+    }
+    match crate::core::event_bus::subscribe_global(Arc::new(ApprovalSurfaceSubscriber)) {
+        Some(handle) => {
+            let _ = APPROVAL_SURFACE_HANDLE.set(handle);
+            log::info!(
+                "[web-channel] approval-surface subscriber registered (domain=approval) — will bridge ApprovalRequested → approval_request socket event"
+            );
+        }
+        None => {
+            log::warn!(
+                "[web-channel] failed to register approval-surface subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+struct ApprovalSurfaceSubscriber;
+
+#[async_trait]
+impl EventHandler for ApprovalSurfaceSubscriber {
+    fn name(&self) -> &str {
+        "channels::web::approval_surface"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["approval"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        if let DomainEvent::ApprovalRequested {
+            request_id,
+            tool_name,
+            action_summary,
+            args_redacted,
+            thread_id,
+            client_id,
+            ..
+        } = event
+        {
+            match (thread_id, client_id) {
+                (Some(thread_id), Some(client_id)) => {
+                    // Short, neutral description — the card renders the exact
+                    // command/args (from `args` below) and has Approve/Deny
+                    // buttons, so no "reply yes/no" instruction here.
+                    let question = format!("Run `{tool_name}` — {action_summary}");
+                    log::info!(
+                        "[web-channel] approval-surface emitting approval_request request_id={request_id} thread_id={thread_id} client_id={client_id} tool={tool_name}"
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "approval_request".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name.clone()),
+                        message: Some(question),
+                        // The exact (redacted) command/args being requested, so
+                        // the card can show precisely what will run.
+                        args: Some(args_redacted.clone()),
+                        ..Default::default()
+                    });
+                }
+                _ => {
+                    log::warn!(
+                        "[web-channel] approval-surface received ApprovalRequested request_id={request_id} tool={tool_name} but thread_id/client_id absent (thread={}, client={}) — NOT surfacing",
+                        thread_id.is_some(),
+                        client_id.is_some()
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// All inputs that the cached `SessionEntry`'s `Agent` was built from,
@@ -65,11 +151,31 @@ struct SessionCacheFingerprint {
     /// against the updated provider rather than silently reusing the
     /// stale instance.
     provider_binding: String,
+    /// Signature of the autonomy/access config (`[autonomy]`) at build time.
+    /// The cached `Agent` holds tools that each captured a `SecurityPolicy`
+    /// snapshot at construction, so a change to the agent-access tier
+    /// (`config.update_autonomy_settings` → Settings → Agent access) must
+    /// invalidate the cache — otherwise the next turn silently reuses tools
+    /// gated by the OLD policy and the setting appears to do nothing. Derived
+    /// from the on-disk autonomy block (read fresh each turn), so it flips the
+    /// moment a new tier is saved.
+    autonomy_signature: String,
 }
 
 struct SessionEntry {
     agent: Agent,
     fingerprint: SessionCacheFingerprint,
+}
+
+/// Deterministic signature of the autonomy/access config for the session cache
+/// fingerprint. Serializing the whole `[autonomy]` block (serde emits fields in
+/// stable declaration order) captures every knob that feeds `SecurityPolicy` —
+/// `level`, `workspace_only`, `trusted_roots`, `allow_tool_install`,
+/// `allowed_commands`, … — so saving any agent-access change flips the
+/// signature and forces a rebuild. On the practically-impossible serialize
+/// error we return an empty string, which just means "treat as changed".
+fn autonomy_signature(config: &Config) -> String {
+    serde_json::to_string(&config.autonomy).unwrap_or_default()
 }
 
 /// Decide which agent definition this turn should run with.
@@ -223,6 +329,98 @@ fn with_provider_detail(summary: &str, err: &str) -> String {
     }
 }
 
+/// Structured chat-error envelope produced by [`classify_inference_error`].
+///
+/// Carries the typed metadata the frontend needs to render a recovery UI
+/// (retry-after countdown, retry button, fallback CTA) without having to
+/// regex the human-readable `message`. Issue #2606.
+///
+/// `error_type` and `message` preserve the wire shape PR #2371 established
+/// — existing FE handlers that read those fields keep working. The new
+/// fields are additive and `Option`-typed where the value isn't always
+/// known at the classifier layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ClassifiedError {
+    /// Stable token: `rate_limited`, `action_budget_exceeded`,
+    /// `max_iterations`, `timeout`, `auth_error`, `budget_exhausted`,
+    /// `provider_error`, `context_overflow`, `model_unavailable`,
+    /// `inference`.
+    pub(crate) error_type: &'static str,
+    /// User-facing copy (already includes provider detail block and the
+    /// retry-after countdown sentence when available).
+    pub(crate) message: String,
+    /// Where the limit originated. One of:
+    /// - `"provider"`         — upstream LLM provider 429 / rate limit
+    /// - `"openhuman_budget"` — local SecurityPolicy per-hour action cap
+    /// - `"agent_loop"`       — agent ran out of tool iterations
+    /// - `"openhuman_billing"` — OpenHuman credit/quota exhaustion
+    /// - `"transport"`        — network / DNS / TLS / timeout
+    /// - `"config"`           — auth, model, context, generic
+    pub(crate) source: &'static str,
+    /// Can the user retry the same prompt in the same thread? `false` for
+    /// non-retryable business 429s, auth failures, model_unavailable,
+    /// context_overflow, and OpenHuman billing exhaustion.
+    pub(crate) retryable: bool,
+    /// Milliseconds the upstream asked us to wait. Surfaced verbatim from
+    /// `Retry-After:` / `retry_after:` headers when present; `None` when
+    /// the upstream didn't supply one OR the error class doesn't have a
+    /// concept of retry-after (auth, config, etc.).
+    pub(crate) retry_after_ms: Option<u64>,
+    /// Provider name extracted from the leading
+    /// `"<provider> API error (...)"` envelope emitted by
+    /// `inference::provider::ops::api_error`. `None` for non-provider
+    /// errors (OpenHuman budget cap, agent loop) and for transport
+    /// failures that don't carry an identifiable provider prefix.
+    pub(crate) provider: Option<String>,
+    /// `Some(false)` once the reliable-provider chain has exhausted every
+    /// configured `model_fallbacks` entry (the aggregate "All
+    /// providers/models failed" branch). `None` means the classifier
+    /// can't tell from the error string alone — the FE should treat it
+    /// as "unknown, don't promise a fallback".
+    pub(crate) fallback_available: Option<bool>,
+}
+
+/// Best-effort extraction of the provider name from an error string.
+///
+/// `inference::provider::ops::api_error` formats upstream failures as
+/// `"<provider> API error (<status>): <body>"`, e.g.
+/// `"openrouter API error (429 Too Many Requests): ..."`. We pull the
+/// leading word and lowercase it so the wire value is stable across
+/// providers' own capitalisation.
+///
+/// Returns `None` when:
+/// - The error string doesn't carry the `" API error"` infix.
+/// - The candidate word contains characters that wouldn't appear in a
+///   provider name (slashes, colons, etc. — guards against transport
+///   error prefixes that happen to be followed by " API error").
+fn extract_provider_name(err: &str) -> Option<String> {
+    const INFIX: &str = " API error";
+    let idx = err.find(INFIX)?;
+    let prefix = err[..idx].trim_end();
+    let candidate = prefix
+        .rsplit_once(char::is_whitespace)
+        .map_or(prefix, |(_, last)| last);
+    if candidate.is_empty()
+        || !candidate
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return None;
+    }
+    Some(candidate.to_ascii_lowercase())
+}
+
+/// Detect the reliable-provider aggregate that fires once every
+/// configured `model_fallbacks` entry has been tried.
+///
+/// `reliable.rs::format_failure_aggregate` always opens with
+/// `"All providers/models failed. Attempts:"`. When that marker is
+/// present the FE should NOT offer a fallback retry — there is none
+/// left to try.
+fn is_fallback_chain_exhausted(err: &str) -> bool {
+    err.contains("All providers/models failed")
+}
+
 /// Extract a Retry-After / retry_after seconds hint from a free-form
 /// error string. Mirrors the typed [`crate::openhuman::inference::
 /// provider::reliable::parse_retry_after_ms`] helper but operates on
@@ -303,8 +501,15 @@ fn is_action_budget_exhausted(err_lower: &str) -> bool {
         || err_lower.contains("action blocked: rate limit exceeded")
 }
 
-fn classify_inference_error(err: &str) -> (&'static str, String) {
+fn classify_inference_error(err: &str) -> ClassifiedError {
     let lower = err.to_lowercase();
+    let provider = extract_provider_name(err);
+    let fallback_available = if is_fallback_chain_exhausted(err) {
+        Some(false)
+    } else {
+        None
+    };
+
     // Order matters: the SecurityPolicy hourly cap and the
     // agent-loop max-iterations error both surface as strings that
     // contain "rate limit" / "iteration", so they MUST be checked
@@ -312,83 +517,154 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
     // a confusing "your AI provider is rate-limiting you" message
     // for limits OpenHuman itself enforced (issue #2364).
     if is_action_budget_exhausted(&lower) {
-        (
-            "action_budget_exceeded",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "action_budget_exceeded",
+            message: with_provider_detail(
                 "You've hit OpenHuman's per-hour action budget — this is a local safety cap, \
                  not your AI provider. The window decays gradually; you can keep chatting in \
                  this thread and tool-heavy steps will resume as the budget refills.",
                 err,
             ),
-        )
+            source: "openhuman_budget",
+            // The window decays gradually so the same thread CAN recover
+            // — we just can't predict the exact wait.
+            retryable: true,
+            retry_after_ms: None,
+            // OpenHuman's own cap — provider name (if any was in the
+            // surrounding error chain) is irrelevant; the limit isn't
+            // from a provider.
+            provider: None,
+            fallback_available: None,
+        }
     } else if crate::openhuman::agent::error::is_max_iterations_error(err) {
-        (
-            "max_iterations",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "max_iterations",
+            message: with_provider_detail(
                 "The agent ran the maximum number of tool steps for one turn without \
                  finishing. This usually means a tool kept failing (often a rate limit on a \
                  web fetch). You can retry the same question in this thread once the \
                  underlying limit clears.",
                 err,
             ),
-        )
+            source: "agent_loop",
+            retryable: true,
+            retry_after_ms: None,
+            provider,
+            fallback_available: None,
+        }
     } else if lower.contains("rate limit") || lower.contains("429") {
-        let retry = parse_retry_after_secs_from_str(err);
-        let summary = format!(
-            "Your AI provider is rate-limiting requests. This is a transient upstream \
-             limit, not a thread-level block — you can retry in this thread.{}",
-            retry_after_hint(retry)
-        );
-        ("rate_limited", with_provider_detail(summary.as_str(), err))
+        let retry_secs = parse_retry_after_secs_from_str(err);
+        // Non-retryable business 429s ("plan does not include", balance
+        // exhausted, known provider business codes like Z.AI 1311/1113)
+        // also surface here — mark them non-retryable so the FE can hide
+        // the "Retry" button and route the user to settings/billing.
+        let non_retryable = is_non_retryable_rate_limit_text(&lower);
+        let summary = if non_retryable {
+            "Your AI provider is rejecting requests for billing or plan reasons \
+             (out of credits, plan limit, or unavailable model). Retrying won't \
+             help — open Settings to top up, upgrade your plan, or pick a \
+             different model."
+                .to_string()
+        } else {
+            format!(
+                "Your AI provider is rate-limiting requests. This is a transient upstream \
+                 limit, not a thread-level block — you can retry in this thread.{}",
+                retry_after_hint(retry_secs)
+            )
+        };
+        ClassifiedError {
+            error_type: "rate_limited",
+            message: with_provider_detail(summary.as_str(), err),
+            source: "provider",
+            retryable: !non_retryable,
+            retry_after_ms: retry_secs.map(|s| s.saturating_mul(1000)),
+            provider,
+            fallback_available,
+        }
     } else if lower.contains("timeout") || lower.contains("timed out") {
-        (
-            "timeout",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "timeout",
+            message: with_provider_detail(
                 "The request timed out. Please check your connection and try again.",
                 err,
             ),
-        )
+            source: "transport",
+            retryable: true,
+            retry_after_ms: None,
+            provider,
+            fallback_available,
+        }
     } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
-        (
-            "auth_error",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "auth_error",
+            message: with_provider_detail(
                 "There's an authentication issue with the AI provider. Please check your API key in settings.",
                 err,
             ),
-        )
+            source: "config",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available: None,
+        }
     } else if lower.contains("402")
         || lower.contains("payment required")
         || lower.contains("insufficient balance")
     {
-        (
-            "budget_exhausted",
-            with_provider_detail("Insufficient credits. Please top up to continue.", err),
-        )
+        // `openhuman_billing` means OpenHuman's own credit/quota system —
+        // a 402 carrying the "openhuman" envelope (or no envelope at all,
+        // since OpenHuman's backend is the only origin without one in
+        // practice). When the 402 comes from an upstream provider envelope
+        // (`<provider> API error (402)`), the limit belongs to that
+        // provider, not OpenHuman billing, so tag the source as `provider`.
+        let source: &'static str = match provider.as_deref() {
+            Some("openhuman") | None => "openhuman_billing",
+            Some(_) => "provider",
+        };
+        ClassifiedError {
+            error_type: "budget_exhausted",
+            message: with_provider_detail("Insufficient credits. Please top up to continue.", err),
+            source,
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available: None,
+        }
     } else if lower.contains("500")
         || lower.contains("internal server")
         || lower.contains("service unavailable")
         || lower.contains("503")
     {
-        (
-            "provider_error",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "provider_error",
+            message: with_provider_detail(
                 "The AI provider is temporarily unavailable. Please try again later.",
                 err,
             ),
-        )
+            source: "provider",
+            retryable: true,
+            retry_after_ms: None,
+            provider,
+            fallback_available,
+        }
     } else if lower.contains("context")
         && (lower.contains("length")
             || lower.contains("limit")
             || lower.contains("exceed")
             || lower.contains("token"))
     {
-        (
-            "context_overflow",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "context_overflow",
+            message: with_provider_detail(
                 "The conversation is too long. Please start a new chat.",
                 err,
             ),
-        )
+            source: "config",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available: None,
+        }
     } else if crate::openhuman::inference::provider::is_provider_config_rejection_message(err) {
         // #2079 / #2076 / #2202: an OpenHuman abstract tier alias leaked to
         // a custom provider, a stale model pin, or a model-specific
@@ -398,33 +674,92 @@ fn classify_inference_error(err: &str) -> (&'static str, String) {
         // specific "Settings → LLM" remediation instead of the generic
         // copy. Shared predicate keeps this in lockstep with the
         // Sentry-demotion classifier.
-        (
-            "model_unavailable",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "model_unavailable",
+            message: with_provider_detail(
                 "Your AI provider rejected the request's model or temperature setting. \
                  Check your model and routing in Settings → LLM.",
                 err,
             ),
-        )
+            source: "config",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available: None,
+        }
     } else if lower.contains("model")
         && (lower.contains("not found")
             || lower.contains("unavailable")
             || lower.contains("does not exist")
             || lower.contains("does not have access"))
     {
-        (
-            "model_unavailable",
-            with_provider_detail(
+        ClassifiedError {
+            error_type: "model_unavailable",
+            message: with_provider_detail(
                 "The selected model isn't available on your provider. Check your model settings.",
                 err,
             ),
-        )
+            source: "config",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available: None,
+        }
     } else {
-        (
-            "inference",
-            with_provider_detail(generic_inference_error_user_message(), err),
-        )
+        ClassifiedError {
+            error_type: "inference",
+            message: with_provider_detail(generic_inference_error_user_message(), err),
+            source: "provider",
+            retryable: true,
+            retry_after_ms: None,
+            provider,
+            fallback_available,
+        }
     }
+}
+
+/// String-flat mirror of
+/// [`crate::openhuman::inference::provider::reliable::is_non_retryable_rate_limit`].
+///
+/// The reliable provider already classifies 429s into retryable vs
+/// non-retryable based on business-quota markers ("plan does not
+/// include", "insufficient balance", Z.AI codes 1311/1113, …) — but
+/// that typed `anyhow::Error` is collapsed to a `String` at the
+/// native-bus boundary before reaching this layer. We re-detect the
+/// same markers in the flattened string so the FE knows whether to
+/// offer a "Retry" button.
+///
+/// Caller passes the already-lowercased error string to avoid double
+/// allocation.
+fn is_non_retryable_rate_limit_text(lower: &str) -> bool {
+    const BUSINESS_HINTS: &[&str] = &[
+        "plan does not include",
+        "doesn't include",
+        "not include",
+        "insufficient balance",
+        "insufficient_balance",
+        "insufficient quota",
+        "insufficient_quota",
+        "quota exhausted",
+        "out of credits",
+        "no available package",
+        "package not active",
+        "purchase package",
+        "model not available for your plan",
+    ];
+    if BUSINESS_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return true;
+    }
+    // Known provider business codes observed for 429 where retry is
+    // futile (mirrors reliable.rs). Scan integer-like tokens.
+    for token in lower.split(|c: char| !c.is_ascii_digit()) {
+        if let Ok(code) = token.parse::<u16>() {
+            if matches!(code, 1113 | 1311) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
@@ -502,6 +837,54 @@ pub async fn start_chat(
         return Err(prompt_guard_user_message(prompt_decision.action).to_string());
     }
 
+    // Chat-native approval: if this thread has a parked approval and the message
+    // is a yes/no reply, route it to the gate (resuming the parked turn) rather
+    // than starting a new turn — which would cancel the parked approval. Any
+    // other text falls through to the normal path below, which cancels the
+    // in-flight turn and dispatches the message fresh (the intended "redirect").
+    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+        if let Some(request_id) = gate.pending_for_thread(&thread_id) {
+            if let Some(decision) = crate::openhuman::approval::parse_approval_reply(&message) {
+                match gate.decide(&request_id, decision) {
+                    Ok(Some(_)) => {
+                        log::info!(
+                            "[web-channel] routed chat reply to approval gate thread_id={} request_id={} decision={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                        return Ok(request_id);
+                    }
+                    Ok(None) => {
+                        // `decide` returns `Ok(None)` when the request is already
+                        // gone / already decided — the parked turn was NOT resumed
+                        // by this call. Don't ACK it as applied; fall through so the
+                        // reply is dispatched as a fresh turn.
+                        log::warn!(
+                            "[web-channel] approval reply targeted a non-pending/already-decided request thread_id={} request_id={} decision={} — dispatching as fresh turn",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                    }
+                    Err(err) => {
+                        // Don't claim success: the parked turn is still waiting on
+                        // its oneshot. Log and fall through so the reply is
+                        // dispatched as a fresh turn rather than silently dropped
+                        // (the stale parked request will TTL out).
+                        log::warn!(
+                            "[web-channel] failed to route chat reply to approval gate thread_id={} request_id={} decision={} err={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let map_key = key_for(&thread_id);
 
     {
@@ -516,6 +899,11 @@ pub async fn start_chat(
                 full_response: None,
                 message: Some("Cancelled by newer request".to_string()),
                 error_type: Some("cancelled".to_string()),
+                error_source: None,
+                error_retryable: None,
+                error_retry_after_ms: None,
+                error_provider: None,
+                error_fallback_available: None,
                 tool_name: None,
                 skill_id: None,
                 args: None,
@@ -542,17 +930,30 @@ pub async fn start_chat(
 
     let user_message = message.clone();
     let handle = tokio::spawn(async move {
-        let result = run_chat_task(
-            &client_id_task,
-            &thread_id_task,
-            &request_id_task,
-            &user_message,
-            model_override,
-            temperature,
-            profile_id,
-            locale,
-        )
-        .await;
+        // Scope the per-turn approval chat context so a parked `ApprovalGate`
+        // request (raised deep in the tool loop, which runs inline in this same
+        // task) carries the thread/client id — letting a yes/no chat reply be
+        // routed back to `approval_decide`. No sub-task is spawned between here
+        // and `intercept`, so the task-local propagates.
+        let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let result = crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+            .scope(
+                approval_ctx,
+                run_chat_task(
+                    &client_id_task,
+                    &thread_id_task,
+                    &request_id_task,
+                    &user_message,
+                    model_override,
+                    temperature,
+                    profile_id,
+                    locale,
+                ),
+            )
+            .await;
 
         match result {
             Ok(chat_result) => {
@@ -582,7 +983,8 @@ pub async fn start_chat(
                     "run_chat_task failed client_id={} thread_id={} request_id={} error={}",
                     client_id_task, thread_id_task, request_id_task, err
                 );
-                let (classified_type, classified_message) = classify_inference_error(&err);
+                let classified = classify_inference_error(&err);
+                let classified_type = classified.error_type;
                 let classified_type_string = classified_type.to_string();
                 // Max-tool-iterations cap is a deterministic agent-state
                 // outcome surfaced to the user via the existing
@@ -630,8 +1032,13 @@ pub async fn start_chat(
                     thread_id: thread_id_task.clone(),
                     request_id: request_id_task.clone(),
                     full_response: None,
-                    message: Some(classified_message),
+                    message: Some(classified.message),
                     error_type: Some(classified_type_string),
+                    error_source: Some(classified.source.to_string()),
+                    error_retryable: Some(classified.retryable),
+                    error_retry_after_ms: classified.retry_after_ms,
+                    error_provider: classified.provider,
+                    error_fallback_available: classified.fallback_available,
                     tool_name: None,
                     skill_id: None,
                     args: None,
@@ -739,6 +1146,11 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             full_response: None,
             message: Some("Cancelled".to_string()),
             error_type: Some("cancelled".to_string()),
+            error_source: None,
+            error_retryable: None,
+            error_retry_after_ms: None,
+            error_provider: None,
+            error_fallback_available: None,
             tool_name: None,
             skill_id: None,
             args: None,
@@ -804,6 +1216,7 @@ async fn run_chat_task(
             provider_role,
             &config,
         ),
+        autonomy_signature: autonomy_signature(&config),
     };
 
     let prior = {
@@ -1099,6 +1512,11 @@ fn spawn_progress_bridge(
                         full_response: None,
                         message: None,
                         error_type: None,
+                        error_source: None,
+                        error_retryable: None,
+                        error_retry_after_ms: None,
+                        error_provider: None,
+                        error_fallback_available: None,
                         tool_name: None,
                         skill_id: None,
                         args: None,
@@ -1129,6 +1547,11 @@ fn spawn_progress_bridge(
                         full_response: None,
                         message: Some(format!("Iteration {iteration}/{max_iterations}")),
                         error_type: None,
+                        error_source: None,
+                        error_retryable: None,
+                        error_retry_after_ms: None,
+                        error_provider: None,
+                        error_fallback_available: None,
                         tool_name: None,
                         skill_id: None,
                         args: None,

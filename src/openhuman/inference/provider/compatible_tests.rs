@@ -415,6 +415,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
             content: Some("hello".to_string()),
             tool_call_id: None,
             tool_calls: None,
+            reasoning_content: None,
         }],
         temperature: Some(0.7),
         stream: Some(true),
@@ -657,17 +658,334 @@ fn parse_native_response_preserves_tool_call_id() {
     assert_eq!(parsed.tool_calls[0].name, "shell");
 }
 
+/// DeepSeek thinking mode emits the chain-of-thought in `reasoning_content`
+/// alongside the tool call. `parse_native_response` must surface it so the
+/// agent loop can replay it on the follow-up request (Sentry TAURI-RUST-4KB).
+#[test]
+fn parse_native_response_captures_reasoning_content() {
+    let message = ResponseMessage {
+        content: None,
+        tool_calls: Some(vec![ToolCall {
+            id: Some("call_r".to_string()),
+            kind: Some("function".to_string()),
+            function: Some(Function {
+                name: Some("shell".to_string()),
+                arguments: Some(serde_json::Value::String("{}".to_string())),
+            }),
+        }]),
+        function_call: None,
+        reasoning_content: Some("  weighing the options  ".to_string()),
+    };
+
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "deepseek").unwrap();
+    assert_eq!(
+        parsed.reasoning_content.as_deref(),
+        Some("weighing the options")
+    );
+}
+
+/// Whitespace-only / empty reasoning is normalised to `None` so it never
+/// produces a spurious `reasoning_content` key on the wire.
+#[test]
+fn parse_native_response_blank_reasoning_is_none() {
+    let message = ResponseMessage {
+        content: Some("hello".to_string()),
+        tool_calls: None,
+        function_call: None,
+        reasoning_content: Some("   ".to_string()),
+    };
+
+    let parsed =
+        OpenAiCompatibleProvider::parse_native_response(wrap_message(message), "deepseek").unwrap();
+    assert!(parsed.reasoning_content.is_none());
+}
+
 #[test]
 fn convert_messages_for_native_maps_tool_result_payload() {
-    let input = vec![ChatMessage::tool(
-        r#"{"tool_call_id":"call_abc","content":"done"}"#,
+    // A `tool` result must be opened by a preceding `assistant(tool_calls)`,
+    // else the invariant sanitizer drops it as an orphan (see `tool_invariants_*`).
+    // Pair it with its opener so this test exercises payload mapping only.
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_abc","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_abc","content":"done"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    assert_eq!(converted.len(), 2);
+    assert_eq!(converted[1].role, "tool");
+    assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_abc"));
+    assert_eq!(converted[1].content.as_deref(), Some("done"));
+}
+
+/// Helper: roles in serialized order.
+fn roles(messages: &[NativeMessage]) -> Vec<&str> {
+    messages.iter().map(|m| m.role.as_str()).collect()
+}
+
+/// Mechanism (A): history tail-trimming dropped an `assistant(tool_calls)` but
+/// kept its `tool` result, orphaning the result at the head of the window. The
+/// sanitizer must drop the orphan so the wire array never starts a tool block
+/// without a preceding `tool_calls`.
+#[test]
+fn tool_invariants_drop_orphaned_tool_result_from_trim(/* A */) {
+    let input = vec![
+        ChatMessage::system("system prompt"),
+        // assistant(tool_calls=call_orphan) was sliced off by trim_history;
+        // only its result survived as the first non-system message.
+        ChatMessage::tool(r#"{"tool_call_id":"call_orphan","content":"stale result"}"#),
+        ChatMessage::user("and then?"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["system", "user"]);
+    assert!(
+        converted.iter().all(|m| m.role != "tool"),
+        "orphaned tool result must be dropped"
+    );
+}
+
+/// Mechanism (B): a persisted assistant tool-call message whose `content` no
+/// longer parses as `{tool_calls: [...]}` is emitted as plain assistant text
+/// with its `tool_calls` stripped, orphaning the following `tool` result. The
+/// assistant message stays; the now-orphaned tool result is dropped.
+#[test]
+fn tool_invariants_drop_tool_after_unparseable_assistant_call(/* B */) {
+    let input = vec![
+        // Plain text, not the JSON tool-call shape -> tool_calls stripped on convert.
+        ChatMessage::assistant("let me check that for you"),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"tool ran"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant"]);
+    assert!(converted[0].tool_calls.is_none());
+    assert!(
+        converted.iter().all(|m| m.role != "tool"),
+        "tool result with no opening tool_calls must be dropped"
+    );
+}
+
+/// Mechanism (C): an `assistant(tool_calls=[answered, missing])` whose second
+/// call never received a `tool` response (aborted / max-iteration turn, or a
+/// partially-answered multi-call cycle). The sanitizer prunes the dangling
+/// tool-call entry while keeping the answered one and its result.
+#[test]
+fn tool_invariants_prune_unanswered_tool_call(/* C */) {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_done","name":"shell","arguments":"{}"},{"id":"call_missing","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_done","content":"finished"}"#),
+        // call_missing never gets a tool response.
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    let assistant = converted
+        .iter()
+        .find(|m| m.role == "assistant")
+        .expect("assistant message present");
+    let calls = assistant
+        .tool_calls
+        .as_ref()
+        .expect("answered tool_call retained");
+    assert_eq!(calls.len(), 1, "dangling tool_call must be pruned");
+    assert_eq!(calls[0].id.as_deref(), Some("call_done"));
+    assert!(
+        converted
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id.as_deref() == Some("call_done")),
+        "answered tool result must survive"
+    );
+}
+
+/// (C) extreme: an `assistant(tool_calls)` with NO response at all collapses to
+/// a plain assistant message (tool_calls dropped) rather than a dangling block.
+#[test]
+fn tool_invariants_collapse_fully_unanswered_assistant_call() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::assistant("never mind, here's the answer"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant", "assistant"]);
+    assert!(
+        converted[0].tool_calls.is_none(),
+        "fully-unanswered tool_calls must be dropped"
+    );
+    assert_eq!(converted[0].content.as_deref(), Some("on it"));
+}
+
+/// Regression guard: a well-formed tool cycle is passed through untouched —
+/// the sanitizer must not strip or reorder valid messages.
+#[test]
+fn tool_invariants_preserve_well_formed_cycle() {
+    let input = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::user("run it"),
+        ChatMessage::assistant(
+            r#"{"content":"on it","tool_calls":[{"id":"call_ok","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_ok","content":"done"}"#),
+        ChatMessage::assistant("all set"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(
+        roles(&converted),
+        vec!["system", "user", "assistant", "tool", "assistant"]
+    );
+    assert_eq!(converted[2].tool_calls.as_ref().unwrap().len(), 1);
+    assert_eq!(
+        converted[2].tool_calls.as_ref().unwrap()[0].id.as_deref(),
+        Some("call_ok")
+    );
+    assert_eq!(converted[3].tool_call_id.as_deref(), Some("call_ok"));
+}
+
+/// Sequential tool cycles — successive agent iterations, each its own
+/// `assistant(tool_calls)` → `tool` block. Distinct ids, opened then immediately
+/// consumed. All survive untouched.
+#[test]
+fn tool_invariants_preserve_sequential_cycles() {
+    let input = vec![
+        ChatMessage::user("go"),
+        ChatMessage::assistant(
+            r#"{"content":"step 1","tool_calls":[{"id":"call_a","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"a done"}"#),
+        ChatMessage::assistant(
+            r#"{"content":"step 2","tool_calls":[{"id":"call_b","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"b done"}"#),
+        ChatMessage::assistant(
+            r#"{"content":"step 3","tool_calls":[{"id":"call_c","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_c","content":"c done"}"#),
+        ChatMessage::assistant("all done"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(
+        roles(&converted),
+        vec![
+            "user",
+            "assistant",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant",
+            "tool",
+            "assistant"
+        ]
+    );
+    for idx in [1usize, 3, 5] {
+        assert_eq!(
+            converted[idx].tool_calls.as_ref().unwrap().len(),
+            1,
+            "cycle at index {idx} must keep its call"
+        );
+    }
+}
+
+/// Parallel tool calls — one `assistant` issuing N calls, answered by N `tool`
+/// messages arriving out of order. All survive; pairing is by membership, not
+/// position, so order does not matter.
+#[test]
+fn tool_invariants_preserve_parallel_calls() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":"fanning out","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"},{"id":"call_y","name":"shell","arguments":"{}"},{"id":"call_z","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_y","content":"y"}"#),
+        ChatMessage::tool(r#"{"tool_call_id":"call_z","content":"z"}"#),
+        ChatMessage::tool(r#"{"tool_call_id":"call_x","content":"x"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant", "tool", "tool", "tool"]);
+    assert_eq!(converted[0].tool_calls.as_ref().unwrap().len(), 3);
+}
+
+/// Trim bisecting a sequence: the window opens inside cycle A (its assistant was
+/// sliced off), followed by an intact cycle B. The orphaned A result is dropped;
+/// cycle B survives — proving adjacency-pairing localizes the damage.
+#[test]
+fn tool_invariants_drop_orphan_but_keep_following_cycle() {
+    let input = vec![
+        // assistant(call_a) was sliced off by trim; only its result remains.
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"orphaned"}"#),
+        ChatMessage::assistant(
+            r#"{"content":"step 2","tool_calls":[{"id":"call_b","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_b","content":"b done"}"#),
+        ChatMessage::assistant("done"),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(roles(&converted), vec!["assistant", "tool", "assistant"]);
+    assert_eq!(converted[0].tool_calls.as_ref().unwrap().len(), 1);
+    assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_b"));
+}
+
+/// DeepSeek thinking mode (Sentry TAURI-RUST-4KB): an `assistant` turn that
+/// carries `tool_calls` must replay its `reasoning_content` on the follow-up
+/// request, otherwise DeepSeek returns
+/// `400 The reasoning_content in the thinking mode must be passed back to the
+/// API.` The history JSON written by `build_native_assistant_history` carries
+/// `reasoning_content`; `convert_messages_for_native` must lift it back onto
+/// the wire message.
+#[test]
+fn convert_preserves_reasoning_content_on_tool_call_turn() {
+    let input = vec![ChatMessage::assistant(
+        r#"{"content":null,"reasoning_content":"let me think about this","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
     )];
 
     let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
     assert_eq!(converted.len(), 1);
-    assert_eq!(converted[0].role, "tool");
-    assert_eq!(converted[0].tool_call_id.as_deref(), Some("call_abc"));
-    assert_eq!(converted[0].content.as_deref(), Some("done"));
+    assert_eq!(
+        converted[0].reasoning_content.as_deref(),
+        Some("let me think about this")
+    );
+
+    // The wire payload must actually carry the field for DeepSeek to accept it.
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+    assert_eq!(wire["reasoning_content"], "let me think about this");
+}
+
+/// Assistant tool-call turns from non-reasoning models carry no
+/// `reasoning_content`; it must never appear on the wire for them (most
+/// OpenAI-compatible providers don't recognise the field).
+#[test]
+fn convert_omits_reasoning_content_when_absent() {
+    let input = vec![ChatMessage::assistant(
+        r#"{"content":"sure","tool_calls":[{"id":"call_y","name":"shell","arguments":"{}"}]}"#,
+    )];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+
+    assert_eq!(converted.len(), 1);
+    assert!(converted[0].reasoning_content.is_none());
+
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+    assert!(
+        wire.get("reasoning_content").is_none(),
+        "reasoning_content must be omitted from the wire when absent"
+    );
 }
 
 #[test]
@@ -1328,4 +1646,221 @@ fn enrich_404_message_adds_hint_when_no_fallback() {
         result_with_fallback, "openai API error (404 Not Found): model not found",
         "must not add hint when fallback is enabled: {result_with_fallback}"
     );
+}
+
+// ── reasoning_content round-trip tests (issue #2800 / Sentry TAURI-RUST-4WC) ─
+
+/// `parse_native_response` must capture `reasoning_content` from a non-streaming
+/// `ApiChatResponse` and surface it on `ChatResponse`.
+#[test]
+fn parse_native_response_captures_reasoning_content_from_api_response() {
+    let api_resp = ApiChatResponse {
+        choices: vec![Choice {
+            message: ResponseMessage {
+                content: Some("Here is my answer.".into()),
+                reasoning_content: Some("I thought about it carefully.".into()),
+                tool_calls: None,
+                function_call: None,
+            },
+        }],
+        usage: None,
+        openhuman: None,
+    };
+    let result = OpenAiCompatibleProvider::parse_native_response(api_resp, "deepseek").unwrap();
+    assert_eq!(
+        result.reasoning_content.as_deref(),
+        Some("I thought about it carefully."),
+        "reasoning_content must be propagated to ChatResponse"
+    );
+    assert_eq!(result.text.as_deref(), Some("Here is my answer."));
+}
+
+/// When a response has no `reasoning_content`, `ChatResponse.reasoning_content`
+/// must be `None` (no spurious field emitted on the next turn).
+#[test]
+fn parse_native_response_no_reasoning_content_stays_none() {
+    let api_resp = ApiChatResponse {
+        choices: vec![Choice {
+            message: ResponseMessage {
+                content: Some("Just a plain answer.".into()),
+                reasoning_content: None,
+                tool_calls: None,
+                function_call: None,
+            },
+        }],
+        usage: None,
+        openhuman: None,
+    };
+    let result = OpenAiCompatibleProvider::parse_native_response(api_resp, "gpt-4o").unwrap();
+    assert!(
+        result.reasoning_content.is_none(),
+        "reasoning_content must be None when the provider did not return it"
+    );
+}
+
+/// `convert_messages_for_native` must echo `reasoning_content` back in the
+/// `NativeMessage` for assistant turns that have it stored in `extra_metadata`.
+/// This is the load-bearing contract: without it the API returns HTTP 400.
+#[test]
+fn convert_messages_for_native_echoes_reasoning_content_from_extra_metadata() {
+    let mut assistant_msg = ChatMessage::assistant("Here is my answer.");
+    assistant_msg.extra_metadata =
+        Some(serde_json::json!({ "reasoning_content": "I thought carefully." }));
+
+    let messages = vec![
+        ChatMessage::user("What is 2+2?"),
+        assistant_msg,
+        ChatMessage::user("Are you sure?"),
+    ];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+
+    // User messages must not carry reasoning_content.
+    assert!(
+        native[0].reasoning_content.is_none(),
+        "user message must not have reasoning_content"
+    );
+    // The assistant message with extra_metadata must have reasoning_content echoed.
+    assert_eq!(
+        native[1].reasoning_content.as_deref(),
+        Some("I thought carefully."),
+        "assistant message must echo reasoning_content from extra_metadata"
+    );
+    // Second user message must not carry reasoning_content.
+    assert!(
+        native[2].reasoning_content.is_none(),
+        "second user message must not have reasoning_content"
+    );
+}
+
+/// Assistant messages without `extra_metadata` (or without a `reasoning_content`
+/// key) must produce a `NativeMessage` with `reasoning_content = None` — the
+/// `skip_serializing_if` attribute then omits the field from the JSON body so
+/// standard providers don't reject the request.
+#[test]
+fn convert_messages_for_native_no_reasoning_content_stays_none() {
+    let messages = vec![ChatMessage::user("hello"), ChatMessage::assistant("world")];
+
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&messages);
+    assert!(
+        native[1].reasoning_content.is_none(),
+        "assistant without extra_metadata must produce reasoning_content = None"
+    );
+}
+
+/// The `reasoning_content` field must be omitted from the JSON serialized wire
+/// payload when it is `None`, so standard providers that do not understand the
+/// field are not broken.
+#[test]
+fn native_message_reasoning_content_omitted_when_none() {
+    let msg = NativeMessage {
+        role: "assistant".to_string(),
+        content: Some("hello".to_string()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    };
+    let json = serde_json::to_value(&msg).unwrap();
+    assert!(
+        json.get("reasoning_content").is_none(),
+        "reasoning_content must be absent from the wire payload when None"
+    );
+}
+
+/// When `reasoning_content` is present it must appear in the serialized payload
+/// so thinking-model providers receive it.
+#[test]
+fn native_message_reasoning_content_present_when_some() {
+    let msg = NativeMessage {
+        role: "assistant".to_string(),
+        content: Some("hello".to_string()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: Some("I thought carefully.".to_string()),
+    };
+    let json = serde_json::to_value(&msg).unwrap();
+    assert_eq!(
+        json.get("reasoning_content").and_then(|v| v.as_str()),
+        Some("I thought carefully."),
+        "reasoning_content must be present in the wire payload when Some"
+    );
+}
+
+// ── convert_tool_specs — TAURI-RUST-2E wire-boundary dedup ─────────────
+
+fn spec(name: &str) -> crate::openhuman::tools::ToolSpec {
+    crate::openhuman::tools::ToolSpec {
+        name: name.to_string(),
+        description: format!("{name} desc"),
+        parameters: serde_json::json!({"type": "object"}),
+    }
+}
+
+#[test]
+fn convert_tool_specs_none_input_returns_none() {
+    assert!(OpenAiCompatibleProvider::convert_tool_specs(None).is_none());
+}
+
+#[test]
+fn convert_tool_specs_empty_slice_returns_empty_vec() {
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&[])).unwrap();
+    assert!(out.is_empty());
+}
+
+#[test]
+fn convert_tool_specs_passes_through_unique_names() {
+    let specs = vec![spec("alpha"), spec("beta"), spec("gamma")];
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(out.len(), 3);
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+}
+
+#[test]
+fn convert_tool_specs_dedups_duplicate_names_first_wins() {
+    // First occurrence of `alpha` (with description "alpha desc") survives;
+    // the second is dropped wholesale even though its `parameters` differ.
+    let mut second_alpha = spec("alpha");
+    second_alpha.description = "should be dropped".to_string();
+    second_alpha.parameters = serde_json::json!({"different": true});
+    let specs = vec![spec("alpha"), spec("beta"), second_alpha, spec("gamma")];
+
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(
+        out.len(),
+        3,
+        "duplicate `alpha` must be dropped from wire payload"
+    );
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    assert_eq!(
+        out[0]["function"]["description"].as_str().unwrap(),
+        "alpha desc",
+        "first occurrence's description must survive (first-wins)"
+    );
+}
+
+#[test]
+fn convert_tool_specs_dedups_many_duplicates() {
+    let specs = vec![
+        spec("x"),
+        spec("x"),
+        spec("x"),
+        spec("y"),
+        spec("y"),
+        spec("z"),
+    ];
+    let out = OpenAiCompatibleProvider::convert_tool_specs(Some(&specs)).unwrap();
+    assert_eq!(out.len(), 3);
+    let names: Vec<&str> = out
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["x", "y", "z"]);
 }

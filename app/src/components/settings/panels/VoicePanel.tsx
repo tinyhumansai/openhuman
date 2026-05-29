@@ -518,54 +518,85 @@ const VoicePanel = ({ embedded = false }: VoicePanelProps = {}) => {
                 </button>
               </div>
 
-              {/* Whisper — coming soon */}
+              {/* Whisper — local STT, no API key required. Chip opens the
+                  install/enable modal (which calls voice_install_whisper and
+                  then voice_update_provider_settings on Enable). Toggling
+                  off routes STT back to the managed cloud provider. */}
               {(() => {
                 const tone = LOCAL_VOICE_PROVIDER_TONE.whisper;
+                const enabled = sttProvider === 'whisper';
                 return (
                   <div
-                    className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 opacity-60 ${tone}`}>
-                    <span>
-                      {t('voice.providers.chip.whisper')}
-                      <span className="ml-1 text-[10px] opacity-70">
-                        ({t('voice.providers.chip.comingSoon')})
-                      </span>
-                    </span>
+                    className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
+                    <span>{t('voice.providers.chip.whisper')}</span>
                     <button
                       type="button"
                       role="switch"
-                      aria-checked={false}
-                      disabled
-                      className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full bg-stone-300 dark:bg-neutral-600 disabled:cursor-not-allowed">
+                      aria-checked={enabled}
+                      data-testid="voice-provider-chip-whisper"
+                      aria-label={
+                        enabled
+                          ? `${t('voice.providers.chip.disableProvider')} ${t('voice.providers.chip.whisper')}`
+                          : `${t('voice.providers.chip.enableProvider')} ${t('voice.providers.chip.whisper')}`
+                      }
+                      // Stay disabled for the full install window: the
+                      // local RPC kickoff (`isInstallingWhisper`) ends as
+                      // soon as the start call returns, but the install
+                      // itself continues until `voice_install_status`
+                      // reports `installed` / `error`. Combining both
+                      // signals prevents routing edits mid-install.
+                      disabled={isInstallingWhisper || whisperInstall?.state === 'installing'}
+                      onClick={() => {
+                        if (enabled) {
+                          onSttProviderChange('cloud');
+                        } else {
+                          setPendingKeySlug('whisper');
+                          setPendingKeyValue('');
+                        }
+                      }}
+                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-600'}`}>
                       <span
                         aria-hidden
-                        className="inline-block h-3 w-3 transform rounded-full bg-white shadow translate-x-0.5"
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
                       />
                     </button>
                   </div>
                 );
               })()}
 
-              {/* Piper — coming soon */}
+              {/* Piper — local TTS, no API key required. Same chip flow as
+                  Whisper above; targets the TTS routing slot. */}
               {(() => {
                 const tone = LOCAL_VOICE_PROVIDER_TONE.piper;
+                const enabled = ttsProvider === 'piper';
                 return (
                   <div
-                    className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 opacity-60 ${tone}`}>
-                    <span>
-                      {t('voice.providers.chip.piper')}
-                      <span className="ml-1 text-[10px] opacity-70">
-                        ({t('voice.providers.chip.comingSoon')})
-                      </span>
-                    </span>
+                    className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
+                    <span>{t('voice.providers.chip.piper')}</span>
                     <button
                       type="button"
                       role="switch"
-                      aria-checked={false}
-                      disabled
-                      className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full bg-stone-300 dark:bg-neutral-600 disabled:cursor-not-allowed">
+                      aria-checked={enabled}
+                      data-testid="voice-provider-chip-piper"
+                      aria-label={
+                        enabled
+                          ? `${t('voice.providers.chip.disableProvider')} ${t('voice.providers.chip.piper')}`
+                          : `${t('voice.providers.chip.enableProvider')} ${t('voice.providers.chip.piper')}`
+                      }
+                      // Same install-window guard as the Whisper chip.
+                      disabled={isInstallingPiper || piperInstall?.state === 'installing'}
+                      onClick={() => {
+                        if (enabled) {
+                          onTtsProviderChange('cloud');
+                        } else {
+                          setPendingKeySlug('piper');
+                          setPendingKeyValue('');
+                        }
+                      }}
+                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${enabled ? 'bg-primary-500' : 'bg-stone-300 dark:bg-neutral-600'}`}>
                       <span
                         aria-hidden
-                        className="inline-block h-3 w-3 transform rounded-full bg-white shadow translate-x-0.5"
+                        className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-3.5' : 'translate-x-0.5'}`}
                       />
                     </button>
                   </div>

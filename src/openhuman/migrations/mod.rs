@@ -23,12 +23,16 @@
 
 use crate::openhuman::config::Config;
 
+mod expand_autonomy_defaults;
 mod phase_out_profile_md;
+mod reconcile_orphaned_providers;
+mod remove_write_auto_approve;
+mod repair_http_request_limits;
 mod retire_chat_v1_model;
 mod unify_ai_provider_settings;
 
 /// Current target schema version. Bumped alongside every new migration.
-pub const CURRENT_SCHEMA_VERSION: u32 = 3;
+pub const CURRENT_SCHEMA_VERSION: u32 = 6;
 
 /// Run any migrations whose `schema_version` gate hasn't yet been
 /// crossed for this workspace.
@@ -174,6 +178,153 @@ pub async fn run_pending(config: &mut Config) {
                      will retry on next launch"
                 );
             }
+        }
+    }
+
+    // 3 -> 4: expand autonomy defaults for existing users. PR #2500 enlarged
+    // `autonomy.allowed_commands`, `autonomy.auto_approve`, and changed
+    // `max_actions_per_hour` from 20 to u32::MAX. Existing workspaces kept
+    // the old persisted values. This migration merges the new commands/tools
+    // (additive only) and bumps `max_actions_per_hour` when it still holds
+    // the old hard-coded default of 20.
+    // Guard on `== 3` so a failed 2→3 migration doesn't skip this step.
+    if config.schema_version == 3 {
+        match expand_autonomy_defaults::run(config) {
+            Ok(stats) => {
+                let previous_version = config.schema_version;
+                config.schema_version = 4;
+                if let Err(err) = config.save().await {
+                    config.schema_version = previous_version;
+                    log::warn!(
+                        "[migrations] expand_autonomy_defaults ran but config.save failed: \
+                         {err:#} — rolled in-memory schema_version back to {previous_version}, \
+                         will retry on next launch"
+                    );
+                    return;
+                }
+                log::info!(
+                    "[migrations] schema_version bumped to 4 (expand_autonomy_defaults \
+                     commands_added={} tools_added={} max_actions_bumped={})",
+                    stats.commands_added,
+                    stats.tools_added,
+                    stats.max_actions_bumped,
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[migrations] expand_autonomy_defaults failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
+        }
+    }
+
+    // 4 -> 5: remove write tools from `autonomy.auto_approve`. A short-lived
+    // v4 default/migration let Supervised mode skip prompts for file edits.
+    // Keep those tools available, but remove the prompt bypass so normal
+    // approval gating applies again. Guard on `== 4` so earlier failed steps
+    // do not get skipped.
+    if config.schema_version == 4 {
+        match remove_write_auto_approve::run(config) {
+            Ok(stats) => {
+                let previous_version = config.schema_version;
+                config.schema_version = 5;
+                if let Err(err) = config.save().await {
+                    config.schema_version = previous_version;
+                    log::warn!(
+                        "[migrations] remove_write_auto_approve ran but config.save failed: \
+                         {err:#} — rolled in-memory schema_version back to {previous_version}, \
+                         will retry on next launch"
+                    );
+                    return;
+                }
+                log::info!(
+                    "[migrations] schema_version bumped to 5 (remove_write_auto_approve \
+                     auto_approve_removed={})",
+                    stats.auto_approve_removed,
+                );
+            }
+            Err(err) => {
+                log::warn!(
+                    "[migrations] remove_write_auto_approve failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
+        }
+    }
+
+    // 5 -> 6: repair stale-zero `[http_request]` limits. Older builds could
+    // persist `timeout_secs = 0` / `max_response_size = 0`, which the network
+    // tools apply literally — `Duration::from_secs(0)` is an instant timeout
+    // that fails every web_fetch/http_request, and a 0-byte cap truncates
+    // every body. serde defaults only fill *missing* keys, so a persisted 0
+    // survives an update. Coerce to schema defaults (30s / 1 MB). Guard on
+    // `== 5` so an earlier failed step doesn't get skipped.
+    //
+    // TWO migrations share this single 5 -> 6 transition:
+    //   * `repair_http_request_limits` — coerce stale-zero `[http_request]`
+    //     limits (a persisted `timeout_secs = 0` is an instant timeout that
+    //     fails every web_fetch; serde defaults only fill *missing* keys).
+    //   * `reconcile_orphaned_providers` — reset per-workload `*_provider`
+    //     strings (and a dangling `primary_cloud`) that point at a cloud
+    //     provider no longer in `cloud_providers`, which the inference factory
+    //     hard-errors on.
+    // Both are independent and idempotent, so they run as separate modules
+    // behind one shared version bump. Bump + save only when BOTH succeed; if
+    // either fails, leave the gate at 5 and retry next launch (re-running the
+    // one that already succeeded is a no-op). Guard on `== 5` so an earlier
+    // failed step doesn't get skipped.
+    if config.schema_version == 5 {
+        let mut all_ok = true;
+
+        match repair_http_request_limits::run(config) {
+            Ok(stats) => log::info!(
+                "[migrations] repair_http_request_limits ran (timeout_repaired={} \
+                 max_response_size_repaired={})",
+                stats.timeout_repaired,
+                stats.max_response_size_repaired,
+            ),
+            Err(err) => {
+                all_ok = false;
+                log::warn!(
+                    "[migrations] repair_http_request_limits failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
+        }
+
+        match reconcile_orphaned_providers::run(config) {
+            Ok(stats) => log::info!(
+                "[migrations] reconcile_orphaned_providers ran (workload_fields_scrubbed={} \
+                 primary_cloud_cleared={})",
+                stats.workload_fields_scrubbed,
+                stats.primary_cloud_cleared,
+            ),
+            Err(err) => {
+                all_ok = false;
+                log::warn!(
+                    "[migrations] reconcile_orphaned_providers failed: {err:#} — \
+                     will retry on next launch"
+                );
+            }
+        }
+
+        if all_ok {
+            let previous_version = config.schema_version;
+            config.schema_version = 6;
+            if let Err(err) = config.save().await {
+                config.schema_version = previous_version;
+                log::warn!(
+                    "[migrations] 5->6 migrations ran but config.save failed: {err:#} — \
+                     rolled in-memory schema_version back to {previous_version}, \
+                     will retry on next launch"
+                );
+                return;
+            }
+            log::info!(
+                "[migrations] schema_version bumped to 6 \
+                 (repair_http_request_limits + reconcile_orphaned_providers)"
+            );
         }
     }
 }

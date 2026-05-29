@@ -69,10 +69,15 @@ pub struct CoreProcessHandle {
     active_port: Arc<RwLock<u16>>,
     last_port_fallback: Arc<RwLock<Option<PortFallbackNotice>>>,
     /// Bearer token the embedded server validates on every inbound request.
-    /// Passed to the embedded server through the `OPENHUMAN_CORE_TOKEN`
-    /// process env var (set in `ensure_running` before spawn) and exposed to
-    /// the frontend via the `core_rpc_token` Tauri command so every RPC call
-    /// can include `Authorization: Bearer`.
+    ///
+    /// Handed to the embedded server **in-memory** (via the `rpc_token`
+    /// argument of [`openhuman_core::core::jsonrpc::run_server_embedded_with_ready`])
+    /// rather than through `OPENHUMAN_CORE_TOKEN` on the process environment.
+    /// Avoiding the env crossing keeps the bearer off `/proc/<pid>/environ`
+    /// (Linux) and out of `sysctl KERN_PROCARGS2` / `ps eww -p <pid>` (macOS)
+    /// where any same-UID process could otherwise read it without entitlement.
+    /// The same value is exposed to the renderer via the `core_rpc_token`
+    /// Tauri command so every RPC call can attach `Authorization: Bearer`.
     rpc_token: Arc<String>,
 }
 
@@ -80,7 +85,8 @@ impl CoreProcessHandle {
     pub fn new(port: u16) -> Self {
         // CURRENT_RPC_TOKEN is intentionally NOT set here. It is published by
         // ensure_running() only after the embedded server has been spawned
-        // with OPENHUMAN_CORE_TOKEN in scope. Setting it here would advertise
+        // with this token handed over via the in-memory `rpc_token` arg of
+        // `run_server_embedded_with_ready`. Setting it here would advertise
         // a token that an existing process listening on the port (the
         // harness-attach fast-path) has never seen, causing 401s on every
         // authenticated call.
@@ -214,11 +220,18 @@ impl CoreProcessHandle {
                 let mut guard = self.task.lock().await;
                 if guard.is_none() {
                     let port = self.preferred_port;
-                    // Set OPENHUMAN_CORE_TOKEN as a process-global env var before
-                    // spawning the embedded server. Same-process tokio task reads
-                    // the same env, matching what a child sidecar would have
-                    // received via Command::env.
-                    std::env::set_var("OPENHUMAN_CORE_TOKEN", self.rpc_token.as_str());
+                    // RPC bearer is handed to the embedded server in-memory
+                    // via the `rpc_token` argument of
+                    // run_server_embedded_with_ready (see below) — never
+                    // through OPENHUMAN_CORE_TOKEN on the process env.
+                    // Sidecar-era env-var transport was a leftover from the
+                    // PR #1061 cleanup; with the core in-process there is no
+                    // child process that needs the env crossing, and
+                    // sharing the bearer via env put it within reach of any
+                    // same-UID process that could read /proc/<pid>/environ
+                    // (Linux) or sysctl KERN_PROCARGS2 / ps eww -p <pid>
+                    // (macOS).
+                    let token_for_core = self.rpc_token.clone();
                     // Surface the Tauri shell version to the in-process core so
                     // backend-bound HTTP requests can attach `x-tauri-version`
                     // analytics headers alongside `x-core-version`.
@@ -273,12 +286,20 @@ impl CoreProcessHandle {
                             true,
                             shutdown_token,
                             ready_tx,
+                            // In-memory bearer handoff: the embedded server
+                            // seeds its auth subsystem from this value via
+                            // `auth::init_rpc_token_with_value`, so the token
+                            // never crosses OPENHUMAN_CORE_TOKEN on the
+                            // process env.
+                            Some(token_for_core),
                         )
                         .await
                     });
                     *guard = Some(task);
                     // Publish only after the embedded server has been spawned
-                    // with OPENHUMAN_CORE_TOKEN in scope.
+                    // with the in-memory bearer in scope. Setting this earlier
+                    // would advertise a token to the frontend that the server
+                    // hadn't loaded yet.
                     *CURRENT_RPC_TOKEN.write() = Some(self.rpc_token.to_string());
                     log::debug!("[auth] CURRENT_RPC_TOKEN set after embedded spawn");
                 }
@@ -367,15 +388,21 @@ impl CoreProcessHandle {
 
             let port_open = self.is_rpc_port_open().await;
             return Err(self
-                .cleanup_startup_timeout(received_ready, port_open)
+                .cleanup_startup_timeout(received_ready, port_open, startup_attempt + 1)
                 .await);
         }
 
         let port_open = self.is_rpc_port_open().await;
-        Err(self.cleanup_startup_timeout(false, port_open).await)
+        Err(self.cleanup_startup_timeout(false, port_open, 2).await)
     }
 
-    async fn cleanup_startup_timeout(&self, received_ready: bool, port_open: bool) -> String {
+    async fn cleanup_startup_timeout(
+        &self,
+        received_ready: bool,
+        port_open: bool,
+        attempt: u8,
+    ) -> String {
+        let port = self.port();
         let task_state = {
             let guard = self.task.lock().await;
             match guard.as_ref() {
@@ -386,18 +413,20 @@ impl CoreProcessHandle {
         };
         log::error!(
             "[core] startup timed out after {CORE_READY_TIMEOUT_MS}ms \
-             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state}); \
+             (port={port}, ready_signal={received_ready}, port_open={port_open}, \
+             task_state={task_state}, attempt={attempt}); \
              aborting embedded startup task before retry"
         );
         self.cancel_shutdown_token(" after startup timeout").await;
         self.abort_task(" after startup timeout").await;
         format!(
             "core process did not become ready within {CORE_READY_TIMEOUT_MS}ms \
-             (ready_signal={received_ready}, port_open={port_open}, task_state={task_state})"
+             (port={port}, ready_signal={received_ready}, port_open={port_open}, \
+             task_state={task_state}, attempt={attempt})"
         )
     }
 
-    fn apply_embedded_ready_signal(
+    pub(crate) fn apply_embedded_ready_signal(
         &self,
         ready: openhuman_core::core::jsonrpc::EmbeddedReadySignal,
     ) {
@@ -627,6 +656,61 @@ impl CoreProcessHandle {
     pub async fn send_terminate_signal(&self) {
         self.cancel_shutdown_token(" on app shutdown").await;
         self.abort_task(" on app shutdown").await;
+    }
+}
+
+/// Result returned to the frontend after a port-conflict auto-recovery attempt.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RecoveryOutcome {
+    pub success: bool,
+    pub message: String,
+    pub new_port: Option<u16>,
+}
+
+impl CoreProcessHandle {
+    /// Attempt to recover from a port conflict: reap stale OpenHuman processes,
+    /// wait briefly for the port to free, then start the embedded core.
+    ///
+    /// Called from the `recover_port_conflict` Tauri command when the frontend's
+    /// boot-check detects the core is unreachable due to a port conflict.
+    pub async fn recover_port_conflict(&self) -> RecoveryOutcome {
+        log::debug!(
+            "[core_process] recover_port_conflict: starting recovery for port {}",
+            self.preferred_port
+        );
+
+        tokio::task::spawn_blocking(crate::process_recovery::reap_stale_openhuman_processes)
+            .await
+            .unwrap_or_else(|e| {
+                log::warn!("[core_process] recover_port_conflict: reap task panicked: {e}")
+            });
+        log::debug!("[core_process] recover_port_conflict: stale process reap complete");
+
+        // Give the OS time to release the port after process termination.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        log::debug!("[core_process] recover_port_conflict: post-reap wait complete");
+
+        match self.ensure_running().await {
+            Ok(()) => {
+                let new_port = self.port();
+                log::info!(
+                    "[core_process] recover_port_conflict: recovery succeeded, core on port {new_port}"
+                );
+                RecoveryOutcome {
+                    success: true,
+                    message: format!("Core recovered on port {new_port}"),
+                    new_port: Some(new_port),
+                }
+            }
+            Err(err) => {
+                log::warn!("[core_process] recover_port_conflict: recovery failed: {err}");
+                RecoveryOutcome {
+                    success: false,
+                    message: format!("Recovery failed: {err}"),
+                    new_port: None,
+                }
+            }
+        }
     }
 }
 

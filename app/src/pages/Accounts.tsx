@@ -225,7 +225,7 @@ const Accounts = () => {
       {/* Narrow icon rail — always rendered. */}
       <aside className="z-30 flex w-16 flex-none flex-col items-center gap-2 bg-white/60 dark:bg-neutral-900/60 py-3 backdrop-blur-md my-3 ml-3 rounded-2xl border border-stone-200/70 dark:border-neutral-800/70 shadow-soft">
         <RailButton active={isAgentSelected} onClick={selectAgent} tooltip={t('accounts.agent')}>
-          <AgentIcon className="h-9 w-9 rounded-lg" />
+          <AgentIcon className="h-9 w-9 rounded-lg bg-white dark:bg-neutral-200" />
         </RailButton>
 
         {accounts.map(acct => (

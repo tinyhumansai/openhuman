@@ -135,21 +135,44 @@ impl ComposioClient {
 
     // ── Tools ───────────────────────────────────────────────────────
 
-    /// `GET /agent-integrations/composio/tools?toolkits=<csv>` — fetch
-    /// OpenAI function-calling schemas. Omit `toolkits` to get every
-    /// enabled toolkit's tools.
-    pub async fn list_tools(&self, toolkits: Option<&[String]>) -> Result<ComposioToolsResponse> {
-        let path = match toolkits {
-            Some(list) if !list.is_empty() => {
-                let joined = list
-                    .iter()
-                    .map(|t| t.trim())
-                    .filter(|t| !t.is_empty())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                format!("/agent-integrations/composio/tools?toolkits={joined}")
+    /// `GET /agent-integrations/composio/tools?toolkits=<csv>&tags=<csv>` — fetch
+    /// OpenAI function-calling schemas. Omit `toolkits` to get every enabled
+    /// toolkit's tools. `tags` narrows by Composio action tag (OR semantics —
+    /// multiple tags broaden the result).
+    pub async fn list_tools(
+        &self,
+        toolkits: Option<&[String]>,
+        tags: Option<&[String]>,
+    ) -> Result<ComposioToolsResponse> {
+        let mut params: Vec<String> = Vec::new();
+        if let Some(list) = toolkits {
+            let joined = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| urlencoding::encode(t).into_owned())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !joined.is_empty() {
+                params.push(format!("toolkits={joined}"));
             }
-            _ => "/agent-integrations/composio/tools".to_string(),
+        }
+        if let Some(list) = tags {
+            let joined = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .map(|t| urlencoding::encode(t).into_owned())
+                .collect::<Vec<_>>()
+                .join(",");
+            if !joined.is_empty() {
+                params.push(format!("tags={joined}"));
+            }
+        }
+        let path = if params.is_empty() {
+            "/agent-integrations/composio/tools".to_string()
+        } else {
+            format!("/agent-integrations/composio/tools?{}", params.join("&"))
         };
         tracing::debug!(path = %path, "[composio] list_tools");
         self.inner.get::<ComposioToolsResponse>(&path).await
@@ -939,7 +962,7 @@ pub async fn direct_list_connections(
 }
 
 /// Direct-mode counterpart to [`ComposioClient::list_tools`]. Calls
-/// Composio v3 `/tools?toolkits=<csv>` via
+/// Composio v3 `/tools?toolkits=<csv>&tags=<a>&tags=<b>` via
 /// [`crate::openhuman::tools::ComposioTool::list_tool_schemas_v3`] and
 /// reshapes each item into the same [`ComposioToolSchema`] envelope the
 /// backend-proxied path returns.
@@ -949,6 +972,12 @@ pub async fn direct_list_connections(
 /// and skips schemas the agent can't actually call). `composio_list_tools`'s
 /// direct branch passes `direct_list_connections`'s active set.
 ///
+/// `tags` mirrors the backend path's tag filter so a self-key user's
+/// `composio_list_tools(..., tags)` request narrows by Composio action tag
+/// in direct mode too (previously the tag filter was silently dropped on
+/// the direct branch). The caller is expected to have already applied
+/// [`super::ops::should_forward_tags`] before passing `tags` here.
+///
 /// Schemas surfaced here are tenant-agnostic — Composio's action
 /// definitions are the same across tenants, so direct-mode users get
 /// the same model-callable shape backend-mode does. Downstream curated-
@@ -957,13 +986,18 @@ pub async fn direct_list_connections(
 pub(super) async fn direct_list_tools(
     direct: &Arc<crate::openhuman::tools::ComposioTool>,
     toolkits: &[String],
+    tags: Option<&[String]>,
 ) -> anyhow::Result<ComposioToolsResponse> {
     let toolkit_refs: Vec<&str> = toolkits.iter().map(|s| s.as_str()).collect();
+    let tag_refs: Option<Vec<&str>> = tags.map(|t| t.iter().map(|s| s.as_str()).collect());
     tracing::debug!(
         toolkits = toolkit_refs.len(),
+        tags = tag_refs.as_ref().map(Vec::len).unwrap_or(0),
         "[composio-direct] list_tools: GET v3 /tools"
     );
-    let items = direct.list_tool_schemas_v3(&toolkit_refs).await?;
+    let items = direct
+        .list_tool_schemas_v3(&toolkit_refs, tag_refs.as_deref())
+        .await?;
     let tools: Vec<super::types::ComposioToolSchema> = items
         .into_iter()
         .filter(|item| !item.slug.is_empty())
