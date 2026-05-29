@@ -46,11 +46,18 @@ static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 ///
 /// `prime_index_if_cold` is the single exception: it takes each lock
 /// independently and never holds both at the same time — it briefly
-/// acquires `CONVERSATION_STORE_LOCK` to snapshot the thread list, then
-/// releases it before reading JSONL content, then acquires
+/// acquires `CONVERSATION_STORE_LOCK` to snapshot live thread IDs via
+/// `thread_index_unlocked` (header-only, no per-thread I/O), releases
+/// it, reads per-thread JSONL content without any lock, then acquires
 /// `CONVERSATION_INDEX_CACHE` alone to insert the built index.  This is
 /// safe because neither operation calls back into any function that
 /// would acquire the other lock.
+///
+/// `list_threads_unlocked` MUST NOT be used inside the locked snapshot —
+/// it calls `measure_messages_unlocked` per legacy thread (no Stats
+/// history), which reads every per-thread JSONL file and appends a
+/// `Stats` entry to `threads.jsonl`, reintroducing the multi-second
+/// stall under the outer lock that this design was built to avoid.
 static CONVERSATION_INDEX_CACHE: Lazy<Mutex<HashMap<PathBuf, InvertedIndex>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
@@ -202,11 +209,12 @@ impl ConversationStore {
     }
 
     /// If no index entry exists for this workspace, snapshot the live thread
-    /// list under `CONVERSATION_STORE_LOCK` (fast), release that lock, then
-    /// read all per-thread JSONL files with no lock held (safe — files are
-    /// append-only), and finally insert the built index into
-    /// `CONVERSATION_INDEX_CACHE` using `entry().or_insert()` so a
-    /// concurrent prime that finished first wins and ours is discarded.
+    /// IDs under `CONVERSATION_STORE_LOCK` (fast — reads only
+    /// `threads.jsonl`, no per-thread I/O), release that lock, read all
+    /// per-thread JSONL files with no lock held (safe — append-only), then
+    /// insert the built index into `CONVERSATION_INDEX_CACHE` using
+    /// `entry().or_insert()` so a concurrent prime that finished first wins
+    /// and ours is discarded.
     ///
     /// After this call returns, `with_index` will always find a warm entry
     /// and will not re-enter `populate_index_unlocked`.
@@ -216,33 +224,42 @@ impl ConversationStore {
         if CONVERSATION_INDEX_CACHE.lock().contains_key(&key) {
             return Ok(());
         }
-        // Snapshot the live thread list while holding the outer lock so we
-        // get a consistent view and ensure_root/threads.jsonl is readable.
-        // Release the lock immediately after so writes can proceed.
-        let threads = {
+        // Snapshot live thread IDs while holding the outer lock.
+        // `thread_index_unlocked` reads only `threads.jsonl` (header-only,
+        // O(threads), no per-thread file I/O) — the lock is released
+        // immediately after, so the slow content reads below never block
+        // concurrent writers.
+        //
+        // Do NOT call `list_threads_unlocked` here.  For workspaces where
+        // any thread has no `MessageAppended`/`Stats` history (common before
+        // the Stats log was introduced), `list_threads_unlocked` triggers
+        // `measure_messages_unlocked` + a `Stats` append per thread — all
+        // under `CONVERSATION_STORE_LOCK` — reintroducing the multi-second
+        // stall this function is designed to avoid.
+        let thread_ids: Vec<String> = {
             let _guard = CONVERSATION_STORE_LOCK.lock();
             // Re-check after acquiring: a concurrent prime may have just
             // finished while we waited for the outer lock.
             if CONVERSATION_INDEX_CACHE.lock().contains_key(&key) {
                 return Ok(());
             }
-            self.list_threads_unlocked()?
+            self.thread_index_unlocked()?.into_keys().collect()
         };
-        // Build the index with no locks held.  The JSONL files are
+        // Build the index with no locks held.  The per-thread JSONL files are
         // append-only so reads are safe without synchronisation; the worst
         // case is a message written concurrently is absent from this initial
-        // build — the append_message path always updates a warm index, so
-        // the message will be queryable from the next append onwards.
+        // build — append_message always updates a warm index, so the message
+        // becomes queryable on the next write.
         let mut idx = InvertedIndex::new();
-        for thread in &threads {
-            let path = self.thread_messages_path(&thread.id);
+        for thread_id in &thread_ids {
+            let path = self.thread_messages_path(thread_id);
             if !path.exists() {
                 continue;
             }
             match read_jsonl::<ConversationMessage>(&path) {
                 Ok(messages) => {
                     for msg in messages {
-                        idx.insert(&thread.id, msg);
+                        idx.insert(thread_id, msg);
                     }
                 }
                 Err(err) => {
@@ -254,8 +271,8 @@ impl ConversationStore {
                 }
             }
         }
-        // Insert only if the key is still absent.  A concurrent prime that
-        // raced past the double-check above and finished first wins.
+        // Insert only if the key is still absent — a concurrent prime that
+        // finished first wins; ours is discarded.
         {
             let mut cache = CONVERSATION_INDEX_CACHE.lock();
             cache.entry(key).or_insert(idx);
