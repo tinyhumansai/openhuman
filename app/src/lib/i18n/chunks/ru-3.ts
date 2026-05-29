@@ -267,6 +267,7 @@ const ru3: TranslationMap = {
   'memory.ingestingTitle': 'Загрузка {title}',
   'mic.noAudioCaptured': 'Аудио не захвачено',
   'mic.noSpeechDetected': 'Речь не обнаружена',
+  'mic.lowConfidenceResult': 'Не удалось чётко распознать аудио — попробуйте ещё раз',
   'mic.failedToStopRecording': 'Не удалось остановить запись: {message}',
   'mic.transcriptionFailed': 'Ошибка транскрипции: {message}',
   'reflections.kind.retrospective': 'Ретроспектива',

@@ -27,7 +27,7 @@ Commands in documentation assume the **repo root** unless noted: `pnpm dev` runs
 
 - **Shipped product**: desktop — Windows, macOS, Linux (see [`gitbooks/developing/architecture.md`](gitbooks/developing/architecture.md) "Platform reach").
 - **Tauri host** (`app/src-tauri`): **desktop-only**. Do not add Android/iOS branches.
-- **Core runs in-process** as a tokio task inside the Tauri host (sidecar removed in PR #1061). The host owns its lifetime via `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`. Frontend RPC still goes over HTTP to `http://127.0.0.1:<port>/rpc` authenticated with a per-launch hex bearer in `OPENHUMAN_CORE_TOKEN`; the Tauri command `core_rpc_token` exposes it to the renderer. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process for debugging.
+- **Core runs in-process** as a tokio task inside the Tauri host (sidecar removed in PR #1061). The host owns its lifetime via `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`. Frontend RPC still goes over HTTP to `http://127.0.0.1:<port>/rpc` authenticated with a per-launch hex bearer; the Tauri shell generates it in `CoreProcessHandle::new()` and hands it to the embedded server in-memory via `run_server_embedded_with_ready(rpc_token: Some(_))` — `OPENHUMAN_CORE_TOKEN` is no longer set on the process env by the desktop shell (CLI / docker / cloud env-as-config is preserved). The Tauri command `core_rpc_token` exposes the bearer to the renderer. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process for debugging.
 
 **Where logic lives**
 
@@ -301,7 +301,7 @@ Bundled prompts live under **`src/openhuman/agent/prompts/`** at the **repositor
 
 Thin desktop host. Top-level modules: `core_process`, `core_rpc`, `cdp`, `cef_preflight`, `cef_profile`, `dictation_hotkeys`, `file_logging`, `mascot_native_window`, `native_notifications`, `notification_settings`, `process_kill`, `process_recovery`, `screen_capture`, `window_state`, plus per-provider scanners (`discord_scanner`, `gmessages_scanner`, `imessage_scanner`, `meet_scanner`, `slack_scanner`, `telegram_scanner`, `whatsapp_scanner`), `meet_audio` / `meet_call` / `meet_video`, `fake_camera`, `webview_accounts`, `webview_apis`.
 
-**Core lifecycle**: `core_process::CoreProcessHandle` spawns the in-process JSON-RPC server and authenticates inbound RPC with a hex bearer (`OPENHUMAN_CORE_TOKEN`). Stale-listener policy (#1130): on conflict the handle probes `GET /`, decides if the listener is an OpenHuman core, then `kill_pid_term` → `kill_pid_force` with PID revalidation guarding against PID reuse. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
+**Core lifecycle**: `core_process::CoreProcessHandle` spawns the in-process JSON-RPC server and authenticates inbound RPC with a hex bearer that the shell hands the embedded server in-memory via `run_server_embedded_with_ready(rpc_token: Some(_))` (no env-var crossing). Stale-listener policy (#1130): on conflict the handle probes `GET /`, decides if the listener is an OpenHuman core, then `kill_pid_term` → `kill_pid_force` with PID revalidation guarding against PID reuse. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
 
 Registered IPC commands (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)) include `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, `core_rpc_token`, `start_core_process`, `restart_core_process`, window commands, and `openhuman_*` daemon helpers.
 
@@ -539,7 +539,7 @@ Follow this order so behavior is **specified**, **proven in Rust**, **proven ove
 
 - **macOS deep links**: Often require a built **`.app`** bundle; not only `tauri dev`.
 - **`window.__TAURI__`**: Not assumed at module load; use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`.
-- **Core is in-process**: `core_rpc` reaches `http://127.0.0.1:<port>/rpc` (default port `7788`) authenticated with `OPENHUMAN_CORE_TOKEN`. `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo (sidecar removed in PR #1061). For standalone debugging: `./target/debug/openhuman-core serve` writes its token to `{workspace}/core.token` (default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`); public endpoints `GET /health`, `GET /schema`, `GET /events` need no auth.
+- **Core is in-process**: `core_rpc` reaches `http://127.0.0.1:<port>/rpc` (default port `7788`) authenticated with a per-launch hex bearer. The desktop shell hands the bearer to the embedded server in-memory (no `OPENHUMAN_CORE_TOKEN` on the process env); docker / cloud / VPS operators still supply the bearer via `OPENHUMAN_CORE_TOKEN` (env-as-config). `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo (sidecar removed in PR #1061). For standalone debugging: `./target/debug/openhuman-core serve` writes its token to `{workspace}/core.token` (default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`); public endpoints `GET /health`, `GET /schema`, `GET /events` need no auth.
 
 ---
 

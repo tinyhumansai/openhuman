@@ -24,6 +24,7 @@
 use crate::openhuman::config::schema::cloud_providers::AuthStyle;
 use crate::openhuman::config::Config;
 use crate::openhuman::credentials::AuthService;
+use crate::openhuman::inference::provider::claude_agent_sdk::subprocess::ClaudeAgentSdkProvider;
 use crate::openhuman::inference::provider::compatible::{
     AuthStyle as CompatAuthStyle, OpenAiCompatibleProvider,
 };
@@ -37,6 +38,10 @@ pub const PROVIDER_OPENHUMAN: &str = "openhuman";
 pub const OLLAMA_PROVIDER_PREFIX: &str = "ollama:";
 /// Prefix for LM Studio-local providers: `"lmstudio:<model>"`.
 pub const LM_STUDIO_PROVIDER_PREFIX: &str = "lmstudio:";
+/// Prefix for the Claude Agent SDK subprocess provider: `"claude_agent_sdk:<model>"`.
+pub const CLAUDE_AGENT_SDK_PREFIX: &str = "claude_agent_sdk:";
+/// Sentinel for the Claude Agent SDK provider without a model suffix.
+pub const CLAUDE_AGENT_SDK_PROVIDER: &str = "claude_agent_sdk";
 /// Sentinel returned when a user has expressed custom/BYOK inference intent
 /// (via a non-openhuman `inference_url`) but no matching `cloud_providers`
 /// entry was found. Passed through `provider_for_role` and caught early in
@@ -291,6 +296,20 @@ pub fn create_chat_provider_from_string(
         return make_lm_studio_provider(&model, temperature_override, config);
     }
 
+    if p == CLAUDE_AGENT_SDK_PROVIDER || p.starts_with(CLAUDE_AGENT_SDK_PREFIX) {
+        let model = if let Some(m) = p.strip_prefix(CLAUDE_AGENT_SDK_PREFIX) {
+            m.trim().to_string()
+        } else {
+            config.claude_agent_sdk.default_model.clone()
+        };
+        tracing::debug!(
+            "[providers][chat-factory] creating claude_agent_sdk provider model={}",
+            model
+        );
+        let provider = ClaudeAgentSdkProvider::new(config.claude_agent_sdk.clone());
+        return Ok((Box::new(provider), model));
+    }
+
     // New grammar: "<slug>:<model>[@<temp>]"
     if let Some(colon_pos) = p.find(':') {
         let slug = p[..colon_pos].trim();
@@ -312,7 +331,8 @@ pub fn create_chat_provider_from_string(
     // than an opaque parse failure.
     anyhow::bail!(
         "[chat-factory] unrecognised provider string '{}' for role '{}'. \
-         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, <slug>:<model>. \
+         Valid forms: openhuman, ollama:<model>, lmstudio:<model>, claude_agent_sdk, \
+         claude_agent_sdk:<model>, <slug>:<model>. \
          Configured slugs: [{}]",
         p,
         role,
@@ -747,6 +767,34 @@ fn make_cloud_provider_by_slug(
     } else {
         model.to_string()
     };
+
+    // Guard: if effective_model is still empty after fallback, bail with an
+    // actionable error. Sending an empty model string to providers like
+    // nvidia-nim causes a 400 "model field is required" — a confusing error
+    // that obscures the real cause (missing model in the provider string or
+    // unset default_model on the config entry).
+    // See https://github.com/tinyhumansai/openhuman/issues/2784.
+    //
+    // OpenhumanJwt entries are exempt: they always delegate to
+    // make_openhuman_backend which derives the model from config.default_model,
+    // ignoring whatever effective_model we computed here.
+    if entry.auth_style != AuthStyle::OpenhumanJwt && effective_model.trim().is_empty() {
+        log::warn!(
+            "[nvidia-nim][chat-factory] role={} slug={} resolved to empty model — \
+             provider string must include a model id (e.g. '{}:<model-id>') or \
+             set default_model on the cloud_providers entry",
+            role,
+            slug,
+            slug,
+        );
+        anyhow::bail!(
+            "[chat-factory] role '{}' resolved to an empty model id for slug '{}'. \
+             Include a model in the provider string (e.g. '{slug}:<model-id>') or \
+             set default_model on the cloud_providers entry for slug '{slug}'.",
+            role,
+            slug,
+        );
+    }
 
     if entry.auth_style != AuthStyle::OpenhumanJwt && is_abstract_tier_model(&effective_model) {
         if let Some(default_model) = entry

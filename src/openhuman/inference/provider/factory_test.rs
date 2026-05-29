@@ -724,6 +724,7 @@ fn known_tiers_pass() {
         "agentic-v1",
         "coding-v1",
         "reasoning-quick-v1",
+        "summarization-v1",
     ] {
         assert!(
             is_known_openhuman_tier(tier),
@@ -738,6 +739,7 @@ fn known_hints_pass() {
     assert!(is_known_openhuman_tier("hint:chat"));
     assert!(is_known_openhuman_tier("hint:agentic"));
     assert!(is_known_openhuman_tier("hint:coding"));
+    assert!(is_known_openhuman_tier("hint:summarization"));
 }
 
 #[test]
@@ -748,7 +750,7 @@ fn invalid_models_fail() {
     assert!(!is_known_openhuman_tier(""));
     assert!(!is_known_openhuman_tier("reasoning-v2"));
     // Unrecognized `hint:*` values must NOT be accepted — the factory only
-    // translates the four hints above, so any other `hint:*` string would
+    // translates the known hints above, so any other `hint:*` string would
     // otherwise be forwarded to the backend and rejected with HTTP 400.
     assert!(!is_known_openhuman_tier("hint:garbage"));
     assert!(!is_known_openhuman_tier("hint:reasoning-quick"));
@@ -760,14 +762,23 @@ fn make_openhuman_backend_forwards_unknown_hint_verbatim() {
     // Unrecognised hint:* strings (e.g. hint:reaction for lightweight models)
     // must be forwarded to the backend unchanged. The backend is authoritative
     // over which hint values it accepts; the factory only translates the
-    // canonical hints (reasoning/chat/agentic/coding/summarization) — the last
-    // of which gained a dedicated tier, so it is no longer "unknown".
-    for hint in ["hint:reaction", "hint:garbage"] {
+    // canonical hints (reasoning/chat/agentic/coding/summarization).
+    // `hint:summarization` became canonical when `summarization-v1` shipped
+    // (PR #2690), so it is no longer a passthrough case.
+    for hint in ["hint:reaction", "hint:garbage", "hint:lightweight"] {
         let mut config = Config::default();
         config.default_model = Some(hint.to_string());
         let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
         assert_eq!(model, hint, "hint '{hint}' should pass through unchanged");
     }
+}
+
+#[test]
+fn make_openhuman_backend_translates_summarization_hint() {
+    let mut config = Config::default();
+    config.default_model = Some("hint:summarization".to_string());
+    let (_, model) = make_openhuman_backend(&config).expect("factory should succeed");
+    assert_eq!(model, crate::openhuman::config::MODEL_SUMMARIZATION_V1);
 }
 
 #[test]
@@ -1087,6 +1098,38 @@ fn byok_fallback_empty_string_treated_as_unset() {
     );
 }
 
+// ── claude_agent_sdk provider factory tests ───────────────────────────────────
+
+#[test]
+fn claude_agent_sdk_bare_provider_string_uses_default_model() {
+    let config = Config::default();
+    let (_, model) = create_chat_provider_from_string("reasoning", "claude_agent_sdk", &config)
+        .expect("claude_agent_sdk must build without a model suffix");
+    // Default model from ClaudeAgentSdkConfig
+    assert_eq!(
+        model, "claude-sonnet-4-6",
+        "claude_agent_sdk with no suffix must use the default model"
+    );
+}
+
+#[test]
+fn claude_agent_sdk_with_model_suffix() {
+    let config = Config::default();
+    let (_, model) =
+        create_chat_provider_from_string("reasoning", "claude_agent_sdk:claude-opus-4-7", &config)
+            .expect("claude_agent_sdk:<model> must build");
+    assert_eq!(model, "claude-opus-4-7");
+}
+
+#[test]
+fn claude_agent_sdk_with_custom_default_model_in_config() {
+    let mut config = Config::default();
+    config.claude_agent_sdk.default_model = "claude-haiku-4-5".to_string();
+    let (_, model) = create_chat_provider_from_string("chat", "claude_agent_sdk", &config)
+        .expect("claude_agent_sdk must build with config default model");
+    assert_eq!(model, "claude-haiku-4-5");
+}
+
 // ── resolve_byok_fallback_provider_string direct tests ───────────────────────
 
 #[test]
@@ -1261,5 +1304,77 @@ async fn live_ollama_provider_streams_text() {
     assert!(
         streamed_text.contains("OLLAMA_LIVE_OK"),
         "streamed text never surfaced the final answer: {streamed_text}"
+    );
+}
+
+// ── nvidia-nim / empty-model guard tests (issue #2784) ─────────────────────
+
+/// Helper: build a minimal nvidia-nim-style cloud provider entry.
+fn nvidia_nim_entry(id: &str, default_model: Option<&str>) -> CloudProviderCreds {
+    CloudProviderCreds {
+        id: id.to_string(),
+        slug: "nvidia-nim".to_string(),
+        label: "NVIDIA NIM".to_string(),
+        endpoint: "https://integrate.api.nvidia.com/v1".to_string(),
+        auth_style: AuthStyle::Bearer,
+        default_model: default_model.map(ToString::to_string),
+        ..Default::default()
+    }
+}
+
+/// When the provider string includes a model id the factory should build
+/// successfully and return that model id unchanged.
+#[test]
+fn nvidia_nim_with_explicit_model_builds_correctly() {
+    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let (_, model) = create_chat_provider_from_string(
+        "reasoning",
+        "nvidia-nim:meta/llama-3.1-8b-instruct",
+        &config,
+    )
+    .expect("nvidia-nim with explicit model must build");
+    assert_eq!(
+        model, "meta/llama-3.1-8b-instruct",
+        "model id must pass through unchanged"
+    );
+}
+
+/// When the provider string has no model id (`"nvidia-nim:"`) and no
+/// default_model is configured, the factory must fail with a clear error
+/// rather than silently sending an empty model string to the API (which
+/// triggers a 400 "model field is required" from nvidia-nim).
+///
+/// Regression test for https://github.com/tinyhumansai/openhuman/issues/2784.
+#[test]
+fn nvidia_nim_empty_model_in_provider_string_errors_clearly() {
+    let config = config_with_providers(vec![nvidia_nim_entry("p_nim", None)]);
+    let err = match create_chat_provider_from_string("reasoning", "nvidia-nim:", &config) {
+        Ok(_) => panic!("empty model string must not succeed — would send model='' to the API"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("empty model id"),
+        "error must mention empty model id, got: {msg}"
+    );
+    assert!(
+        msg.contains("nvidia-nim"),
+        "error must name the provider slug, got: {msg}"
+    );
+}
+
+/// When the provider string has no model id but the entry has a concrete
+/// default_model, that default should be used — no error.
+#[test]
+fn nvidia_nim_falls_back_to_default_model_when_no_model_in_string() {
+    let config = config_with_providers(vec![nvidia_nim_entry(
+        "p_nim",
+        Some("meta/llama-3.1-70b-instruct"),
+    )]);
+    let (_, model) = create_chat_provider_from_string("reasoning", "nvidia-nim:", &config)
+        .expect("nvidia-nim: with default_model configured must build");
+    assert_eq!(
+        model, "meta/llama-3.1-70b-instruct",
+        "should fall back to default_model from config entry"
     );
 }

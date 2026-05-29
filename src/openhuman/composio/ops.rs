@@ -35,7 +35,6 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory::MemoryClient;
 use crate::openhuman::memory_store::chunks::store as memory_tree_store;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
-use crate::openhuman::memory_store::content::raw::slug_account_email;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -549,6 +548,7 @@ pub async fn composio_delete_connection(
 enum MemoryCleanupTarget {
     Exact(SourceKind, String),
     Prefix(SourceKind, String),
+    Owner(SourceKind, String),
 }
 
 impl MemoryCleanupTarget {
@@ -564,6 +564,9 @@ impl MemoryCleanupTarget {
                     source_id_prefix,
                 )
             }
+            Self::Owner(source_kind, owner) => {
+                memory_tree_store::delete_chunks_by_owner(config, *source_kind, owner)
+            }
         }
     }
 
@@ -574,6 +577,9 @@ impl MemoryCleanupTarget {
             }
             Self::Prefix(source_kind, source_id_prefix) => {
                 format!("{}:{source_id_prefix}*", source_kind.as_str())
+            }
+            Self::Owner(source_kind, owner) => {
+                format!("{}:owner:{owner}", source_kind.as_str())
             }
         }
     }
@@ -604,30 +610,12 @@ async fn composio_memory_targets_for_connection(
 }
 
 fn gmail_memory_sources_for_connection(connection_id: &str) -> Vec<MemoryCleanupTarget> {
-    let normalized_connection_id =
-        super::providers::profile::normalize_connection_identifier(connection_id);
-    let mut sources = Vec::new();
-    for identity in super::providers::profile::load_connected_identities() {
-        if identity.source != "gmail" || identity.identifier != normalized_connection_id {
-            continue;
-        }
-        let Some(email) = identity
-            .email
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        let source = MemoryCleanupTarget::Exact(
-            SourceKind::Email,
-            format!("gmail:{}", slug_account_email(email)),
-        );
-        if !sources.iter().any(|existing| existing == &source) {
-            sources.push(source);
-        }
-    }
-    sources
+    vec![
+        MemoryCleanupTarget::Owner(SourceKind::Email, format!("gmail-sync:{connection_id}")),
+        MemoryCleanupTarget::Exact(SourceKind::Email, format!("gmail:{connection_id}")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}:")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}/")),
+    ]
 }
 
 async fn notion_memory_targets_for_connection(
@@ -787,18 +775,24 @@ pub async fn composio_list_tools(
             }
             tracing::debug!(
                 toolkits = scope.len(),
+                ?effective_tags,
                 "[composio-direct] list_tools: fetching v3 tool schemas"
             );
-            let mut resp = direct_list_tools(&direct, &scope).await.map_err(|e| {
-                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
-                // branch's hook (line ~451). Direct-mode `list_tools`
-                // failures are user-state when the API key is bad. Render
-                // WITH the `[composio-direct]` anchor so the classifier
-                // arm fires.
-                let rendered = format!("[composio-direct] list_tools failed: {e:#}");
-                report_composio_op_error("list_tools", &rendered);
-                rendered
-            })?;
+            // Forward the same `effective_tags` the backend branch uses so the
+            // tag filter is honoured in direct (BYO-key) mode too — previously
+            // it was computed above and then dropped on this branch.
+            let mut resp = direct_list_tools(&direct, &scope, effective_tags.as_deref())
+                .await
+                .map_err(|e| {
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
+                    // branch's hook (line ~451). Direct-mode `list_tools`
+                    // failures are user-state when the API key is bad. Render
+                    // WITH the `[composio-direct]` anchor so the classifier
+                    // arm fires.
+                    let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                    report_composio_op_error("list_tools", &rendered);
+                    rendered
+                })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but
             // OpenHuman's curation policy isn't, and direct-mode users

@@ -21,6 +21,7 @@ use super::transcript;
 use super::types::Agent;
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::{ParsedToolCall, ToolExecutionResult};
+use crate::openhuman::agent::error::AgentError;
 use crate::openhuman::agent::harness;
 use crate::openhuman::agent::hooks::{self, ToolCallRecord, TurnContext};
 use crate::openhuman::agent::memory_loader::collect_recall_citations;
@@ -49,6 +50,51 @@ use crate::openhuman::agent::harness::token_budget::{
 use anyhow::Result;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+/// True when `msg` is an `assistant` ChatMessage whose JSON-encoded content
+/// carries a non-empty `tool_calls` array.
+///
+/// `to_provider_messages` (in `agent/dispatcher.rs`) serialises an
+/// `AssistantToolCalls` ConversationMessage as a single `assistant` ChatMessage
+/// with a JSON body of the form `{"content": "...", "tool_calls": [...]}`. To
+/// detect those at the `ChatMessage` boundary (where `bound_cached_transcript_messages`
+/// operates) we have to peek inside the JSON. See TAURI-RUST-7 for the
+/// failure mode this guards against.
+fn assistant_message_has_tool_calls(msg: &ChatMessage) -> bool {
+    if msg.role != "assistant" {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&msg.content) else {
+        return false;
+    };
+    // CodeRabbit follow-up: only treat this as the native tool_calls envelope
+    // when the full expected shape is present:
+    //   - top-level JSON object
+    //   - `content` key present (the envelope `dispatcher.rs` emits — see
+    //     `to_provider_messages`)
+    //   - non-empty `tool_calls` array whose every element carries an `id`
+    //     string, a `name` string, and an `arguments` field
+    // This stops a legitimate assistant text reply that happens to contain
+    // the literal string `tool_calls` from being misclassified and dropped at
+    // the bound-cached-transcript boundary.
+    let Some(obj) = value.as_object() else {
+        return false;
+    };
+    if !obj.contains_key("content") {
+        return false;
+    }
+    let Some(tool_calls) = obj.get("tool_calls").and_then(|tc| tc.as_array()) else {
+        return false;
+    };
+    if tool_calls.is_empty() {
+        return false;
+    }
+    tool_calls.iter().all(|tc| {
+        tc.get("id").and_then(|v| v.as_str()).is_some()
+            && tc.get("name").and_then(|v| v.as_str()).is_some()
+            && tc.get("arguments").is_some()
+    })
+}
 
 /// Instruction appended (as a synthetic user turn) to the provider
 /// messages when a turn hits the tool-call iteration cap. Asks the model
@@ -733,6 +779,15 @@ impl Agent {
                         // the provider doesn't return usage.
                         if let Some(ref usage) = resp.usage {
                             self.context.record_usage(usage);
+                            // Feed the dashboard tracker. This always records
+                            // (model + usage) when the process-global tracker
+                            // is available — independent of `cost.enabled`,
+                            // which gates budget enforcement only. The call
+                            // is a no-op only when `init_global` has not yet
+                            // run (before bootstrap) or failed; errors are
+                            // logged and swallowed so cost telemetry never
+                            // breaks a turn.
+                            crate::openhuman::cost::record_provider_usage(&effective_model, usage);
                             cumulative_input_tokens += usage.input_tokens;
                             cumulative_output_tokens += usage.output_tokens;
                             cumulative_cached_input_tokens += usage.cached_input_tokens;
@@ -786,6 +841,14 @@ impl Agent {
                     calls.len()
                 );
                 if calls.is_empty() {
+                    // Capture reasoning_content before response.text is moved.
+                    // Thinking models (DeepSeek-R1, Qwen3, GLM-4) return
+                    // chain-of-thought in this field; the API contract requires
+                    // it to be echoed back verbatim in subsequent turns or it
+                    // returns HTTP 400. We stash it in extra_metadata so
+                    // convert_messages_for_native can include it when building
+                    // the next request's message list.
+                    let turn_reasoning_content = response.reasoning_content.clone();
                     let final_text = if text.is_empty() {
                         response.text.unwrap_or_default()
                     } else {
@@ -802,18 +865,27 @@ impl Agent {
                             "[agent_loop] provider returned an empty final response (i={}, no text, no tool calls) — surfacing as error instead of a silent blank reply",
                             iteration + 1
                         );
-                        return Err(anyhow::anyhow!(
-                            "The model returned an empty response. Please try again."
-                        ));
+                        // Typed variant so `run_single` can route this
+                        // through `AgentError::skips_sentry()` and demote
+                        // to a `log::info!` instead of escalating to
+                        // Sentry (TAURI-RUST-4JX). The `Display` impl
+                        // still renders the canonical user-facing string
+                        // for UI surfaces, so the user behaviour is
+                        // unchanged.
+                        return Err(AgentError::EmptyProviderResponse {
+                            iteration: iteration + 1,
+                        }
+                        .into());
                     }
                     log::info!(
                         "[agent] no tool calls — returning final response after {} iteration(s)",
                         iteration + 1
                     );
                     log::info!(
-                        "[agent_loop] final response i={} final_chars={}",
+                        "[agent_loop] final response i={} final_chars={} has_reasoning_content={}",
                         iteration + 1,
-                        final_text.chars().count()
+                        final_text.chars().count(),
+                        turn_reasoning_content.is_some()
                     );
 
                     self.emit_progress(AgentProgress::TurnCompleted {
@@ -821,10 +893,24 @@ impl Agent {
                     })
                     .await;
 
-                    self.history
-                        .push(ConversationMessage::Chat(ChatMessage::assistant(
-                            final_text.clone(),
-                        )));
+                    let mut assistant_msg = ChatMessage::assistant(final_text.clone());
+                    if let Some(rc) = turn_reasoning_content {
+                        // Store reasoning_content in extra_metadata so it
+                        // survives in history and is passed back to the
+                        // provider on the next turn.
+                        assistant_msg.extra_metadata =
+                            Some(serde_json::json!({ "reasoning_content": rc }));
+                        log::debug!(
+                            "[agent_loop] stored reasoning_content in extra_metadata for next turn (chars={})",
+                            assistant_msg
+                                .extra_metadata
+                                .as_ref()
+                                .and_then(|m| m.get("reasoning_content"))
+                                .and_then(|v| v.as_str())
+                                .map_or(0, |s| s.chars().count())
+                        );
+                    }
+                    self.history.push(ConversationMessage::Chat(assistant_msg));
                     self.trim_history();
 
                     // Mirror the final assistant reply into the transcript
@@ -1056,6 +1142,7 @@ impl Agent {
             // checkpoint message (mirrors the normal final-response path).
             if let Some(ref usage) = checkpoint_usage {
                 self.context.record_usage(usage);
+                crate::openhuman::cost::record_provider_usage(&effective_model, usage);
                 cumulative_input_tokens += usage.input_tokens;
                 cumulative_output_tokens += usage.output_tokens;
                 cumulative_cached_input_tokens += usage.cached_input_tokens;
@@ -1309,113 +1396,146 @@ impl Agent {
                     false,
                 )
             } else {
-                let context = ToolCallContext::session(
-                    self.event_session_id(),
-                    self.event_channel(),
-                    self.agent_definition_id.to_string(),
-                    call_id.clone(),
-                    (iteration + 1) as u32,
-                );
-                let mut policy_request =
-                    ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
-                if let Some(generated_context) = tool.generated_runtime_context(&call.arguments) {
-                    policy_request = policy_request.with_generated_tool_context(generated_context);
-                }
-                let policy_decision = self.tool_policy.check(&policy_request).await;
-                if let Some(reason) = policy_decision.blocking_reason() {
-                    let blocked_action = match &policy_decision {
-                        ToolPolicyDecision::RequireApproval { .. } => "requires approval",
-                        ToolPolicyDecision::Deny { .. } => "denied",
-                        ToolPolicyDecision::Allow => "allowed",
-                    };
+                // Per-call args-aware permission check: tools that expose
+                // multi-level actions (e.g. schedule list vs schedule create)
+                // set a low static permission_level() so the tool is visible
+                // on read-capable channels, but declare the true per-action
+                // level via permission_level_with_args.
+                let call_required = tool.permission_level_with_args(&call.arguments);
+                if call_required > session_decision.allowed_permission {
                     tracing::debug!(
                         tool = call.name.as_str(),
-                        policy = self.tool_policy.name(),
-                        action = blocked_action,
-                        reason = %reason,
-                        "[agent_loop] tool blocked by policy"
+                        call_required = %call_required,
+                        allowed = %session_decision.allowed_permission,
+                        "[agent_loop] tool action blocked by per-call permission check"
                     );
                     (
                         format!(
-                            "Tool '{}' {blocked_action} by policy '{}': {reason}",
+                            "Tool '{}' action requires {} permission, channel '{}' allows {}",
                             call.name,
-                            self.tool_policy.name()
+                            call_required,
+                            self.event_channel,
+                            session_decision.allowed_permission
                         ),
                         false,
                     )
                 } else {
-                    // Per-call options: ask the tool for markdown output when the
-                    // context manager is configured to prefer it. Tools that
-                    // implement `execute_with_options` will populate
-                    // `markdown_formatted`; others fall through to the default
-                    // implementation which forwards to `execute`.
-                    let prefer_markdown = self.context.prefer_markdown_tool_output();
-                    let options = ToolCallOptions { prefer_markdown };
-                    let outcome = tool
-                        .execute_with_options(call.arguments.clone(), options)
-                        .await;
-                    match outcome {
-                        Ok(r) => {
-                            if !r.is_error {
-                                let mut output = r.output_for_llm(prefer_markdown);
-                                if prefer_markdown && r.markdown_formatted.is_some() {
-                                    log::debug!(
+                    let context = ToolCallContext::session(
+                        self.event_session_id(),
+                        self.event_channel(),
+                        self.agent_definition_id.to_string(),
+                        call_id.clone(),
+                        (iteration + 1) as u32,
+                    );
+                    let mut policy_request =
+                        ToolPolicyRequest::new(call.name.clone(), call.arguments.clone(), context);
+                    if let Some(generated_context) = tool.generated_runtime_context(&call.arguments)
+                    {
+                        policy_request =
+                            policy_request.with_generated_tool_context(generated_context);
+                    }
+                    let policy_decision = self.tool_policy.check(&policy_request).await;
+                    if let Some(reason) = policy_decision.blocking_reason() {
+                        let blocked_action = match &policy_decision {
+                            ToolPolicyDecision::RequireApproval { .. } => "requires approval",
+                            ToolPolicyDecision::Deny { .. } => "denied",
+                            ToolPolicyDecision::Allow => "allowed",
+                        };
+                        crate::openhuman::tool_registry::denials::record(
+                            call.name.as_str(),
+                            self.tool_policy.name(),
+                            blocked_action,
+                            reason,
+                        );
+                        tracing::debug!(
+                            tool = call.name.as_str(),
+                            policy = self.tool_policy.name(),
+                            action = blocked_action,
+                            reason = %reason,
+                            "[agent_loop] tool blocked by policy"
+                        );
+                        (
+                            format!(
+                                "Tool '{}' {blocked_action} by policy '{}': {reason}",
+                                call.name,
+                                self.tool_policy.name()
+                            ),
+                            false,
+                        )
+                    } else {
+                        // Per-call options: ask the tool for markdown output when the
+                        // context manager is configured to prefer it. Tools that
+                        // implement `execute_with_options` will populate
+                        // `markdown_formatted`; others fall through to the default
+                        // implementation which forwards to `execute`.
+                        let prefer_markdown = self.context.prefer_markdown_tool_output();
+                        let options = ToolCallOptions { prefer_markdown };
+                        let outcome = tool
+                            .execute_with_options(call.arguments.clone(), options)
+                            .await;
+                        match outcome {
+                            Ok(r) => {
+                                if !r.is_error {
+                                    let mut output = r.output_for_llm(prefer_markdown);
+                                    if prefer_markdown && r.markdown_formatted.is_some() {
+                                        log::debug!(
                                         "[agent_loop] tool={} returned markdown payload bytes={}",
                                         call.name,
                                         output.len()
                                     );
-                                }
-                                // Issue #574 — if a payload summarizer is wired
-                                // in (orchestrator session only) and the output
-                                // exceeds the configured threshold, hand it to
-                                // the summarizer sub-agent before it enters
-                                // history. On any failure or below-threshold
-                                // payload, leave `output` untouched and let the
-                                // existing tool_result_budget_bytes truncation
-                                // pipeline handle it downstream.
-                                if let Some(ps) = self.payload_summarizer.as_ref() {
-                                    log::debug!(
+                                    }
+                                    // Issue #574 — if a payload summarizer is wired
+                                    // in (orchestrator session only) and the output
+                                    // exceeds the configured threshold, hand it to
+                                    // the summarizer sub-agent before it enters
+                                    // history. On any failure or below-threshold
+                                    // payload, leave `output` untouched and let the
+                                    // existing tool_result_budget_bytes truncation
+                                    // pipeline handle it downstream.
+                                    if let Some(ps) = self.payload_summarizer.as_ref() {
+                                        log::debug!(
                                     "[agent_loop] payload_summarizer intercepting tool={} bytes={}",
                                     call.name,
                                     output.len()
                                 );
-                                    match ps.maybe_summarize(&call.name, None, &output).await {
-                                        Ok(Some(payload)) => {
-                                            log::info!(
+                                        match ps.maybe_summarize(&call.name, None, &output).await {
+                                            Ok(Some(payload)) => {
+                                                log::info!(
                                             "[agent_loop] payload_summarizer compressed tool={} {}->{} bytes",
                                             call.name,
                                             payload.original_bytes,
                                             payload.summary_bytes
                                         );
-                                            output = payload.summary;
-                                        }
-                                        Ok(None) => {
-                                            log::debug!(
+                                                output = payload.summary;
+                                            }
+                                            Ok(None) => {
+                                                log::debug!(
                                             "[agent_loop] payload_summarizer pass-through tool={} bytes={}",
                                             call.name,
                                             output.len()
                                         );
-                                        }
-                                        Err(e) => {
-                                            log::warn!(
+                                            }
+                                            Err(e) => {
+                                                log::warn!(
                                             "[agent_loop] payload_summarizer error tool={} err={} (passing raw payload through)",
                                             call.name,
                                             e
                                         );
+                                            }
                                         }
                                     }
+                                    (output, true)
+                                } else {
+                                    (
+                                        format!("Error: {}", r.output_for_llm(prefer_markdown)),
+                                        false,
+                                    )
                                 }
-                                (output, true)
-                            } else {
-                                (
-                                    format!("Error: {}", r.output_for_llm(prefer_markdown)),
-                                    false,
-                                )
                             }
+                            Err(e) => (format!("Error executing {}: {e}", call.name), false),
                         }
-                        Err(e) => (format!("Error executing {}: {e}", call.name), false),
                     }
-                }
+                } // end else { // per-call permission ok
             }
         } else {
             (format!("Unknown tool: {}", call.name), false)
@@ -1656,6 +1776,30 @@ impl Agent {
             bounded.push(messages[0].clone());
         }
         bounded.extend(tail.iter().cloned());
+
+        // TAURI-RUST-7: symmetric guard to the leading-orphan strip above. A
+        // resumed transcript that ends on an `assistant` message containing
+        // `tool_calls` (because the cached transcript was captured mid-cycle,
+        // before the tool responses were persisted) is rejected by the
+        // provider with `400 An assistant message with 'tool_calls' must be
+        // followed by tool messages`. Pop any such trailing assistant
+        // tool_calls so the bounded transcript ends on a clean turn boundary.
+        let mut dropped_tail = 0usize;
+        while bounded
+            .last()
+            .map(assistant_message_has_tool_calls)
+            .unwrap_or(false)
+        {
+            bounded.pop();
+            dropped_tail += 1;
+        }
+        if dropped_tail > 0 {
+            log::debug!(
+                "[agent] bound_cached_transcript_messages stripped {dropped_tail} trailing \
+                 assistant tool_calls message(s) without paired tool responses"
+            );
+        }
+
         bounded
     }
 

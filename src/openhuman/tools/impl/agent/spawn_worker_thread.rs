@@ -310,6 +310,7 @@ mod tests {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             })
         }
         fn supports_native_tools(&self) -> bool {

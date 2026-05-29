@@ -14,6 +14,7 @@ import Invites from './pages/Invites';
 import Notifications from './pages/Notifications';
 import Onboarding from './pages/onboarding/Onboarding';
 import Rewards from './pages/Rewards';
+import Routines from './pages/Routines';
 import Settings from './pages/Settings';
 import Skills from './pages/Skills';
 import WebCallbackPage from './pages/WebCallbackPage';
@@ -122,6 +123,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Notifications />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/routines"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <Routines />
           </ProtectedRoute>
         }
       />

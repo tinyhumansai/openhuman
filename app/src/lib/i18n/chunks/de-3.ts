@@ -268,6 +268,7 @@ const de3: TranslationMap = {
   'memory.ingestingTitle': 'Einnahme von {title}',
   'mic.noAudioCaptured': 'Kein Ton aufgenommen',
   'mic.noSpeechDetected': 'Keine Sprache erkannt',
+  'mic.lowConfidenceResult': 'Audio konnte nicht klar verstanden werden — bitte erneut versuchen',
   'mic.failedToStopRecording': 'Aufzeichnung konnte nicht gestoppt werden: {message}',
   'mic.transcriptionFailed': 'Transkription fehlgeschlagen: {message}',
   'reflections.kind.retrospective': 'Retrospektive',

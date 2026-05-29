@@ -107,23 +107,43 @@ interface SourceRow {
   status: MemorySyncStatus | null;
 }
 
-function buildRows(
+export function buildRows(
   connections: ComposioConnection[],
   statuses: MemorySyncStatus[],
   syncableToolkits: ReadonlySet<string>
 ): SourceRow[] {
-  // Hide rows the user can't act on: only render identities that are
-  // (1) currently connected via Composio AND (2) whose toolkit has a
-  // memory-tree sync implementation. Orphan toolkits with chunks but
-  // no live auth, and connected toolkits without a sync provider, are
-  // both filtered out — neither offers a working Sync button so they
-  // were just clutter at the top of the Memory tab.
+  // Two-stage filter:
+  //   (1) Drop toolkits with no memory-tree sync implementation — Sync
+  //       would do nothing for them.
+  //   (2) Dedupe per (toolkit + identity) so re-authorizations don't
+  //       stack up as zombie EXPIRED rows next to the live one. Within a
+  //       group we keep the connection with the largest `createdAt` —
+  //       i.e. the user's most recent authorization for that account,
+  //       which is the actual current truth (a fresh EXPIRED supersedes
+  //       an older ACTIVE: the old row reflects an authorization the
+  //       user has since replaced, and the new EXPIRED tells them to
+  //       re-auth).
+  // When the backend doesn't surface a friendly identity (accountEmail/
+  // workspace/username — all null on the current Composio passthrough),
+  // we collapse by toolkit alone. Once identity fields land, multiple
+  // distinct accounts on the same toolkit will keep separate rows
+  // automatically.
   const statusByToolkit = new Map<string, MemorySyncStatus>();
   for (const s of statuses) statusByToolkit.set(s.provider, s);
 
-  const rows: SourceRow[] = [];
+  const latestByKey = new Map<string, ComposioConnection>();
   for (const conn of connections) {
     if (!syncableToolkits.has(conn.toolkit)) continue;
+    const identity = identityFor(conn);
+    const dedupKey = identity ? `${conn.toolkit}::${identity}` : conn.toolkit;
+    const existing = latestByKey.get(dedupKey);
+    if (!existing || isMoreRecentConnection(conn, existing)) {
+      latestByKey.set(dedupKey, conn);
+    }
+  }
+
+  const rows: SourceRow[] = [];
+  for (const conn of latestByKey.values()) {
     const label = TOOLKIT_LABEL[conn.toolkit] ?? conn.toolkit;
     const identity = identityFor(conn);
     const title = identity ? `${label} · ${identity}` : label;
@@ -136,6 +156,12 @@ function buildRows(
     });
   }
   return rows;
+}
+
+/** Pure recency: larger `createdAt` wins. A row missing `createdAt`
+ *  (empty string fallback) loses to any row that has one. */
+export function isMoreRecentConnection(a: ComposioConnection, b: ComposioConnection): boolean {
+  return (a.createdAt ?? '') > (b.createdAt ?? '');
 }
 
 export function MemorySources({

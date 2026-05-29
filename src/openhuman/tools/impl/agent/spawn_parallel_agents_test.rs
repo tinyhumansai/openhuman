@@ -113,6 +113,7 @@ impl Provider for NoopProvider {
             text: Some("ok".into()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }
@@ -479,6 +480,7 @@ fn text_response(text: impl Into<String>) -> ChatResponse {
         text: Some(text.into()),
         tool_calls: Vec::new(),
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -491,6 +493,7 @@ fn tool_response(name: &str, arguments: serde_json::Value) -> ChatResponse {
             arguments: arguments.to_string(),
         }],
         usage: None,
+        reasoning_content: None,
     }
 }
 
