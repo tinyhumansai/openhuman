@@ -4393,6 +4393,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'entityDuplicates.allClean': '중복 철자가 감지되지 않았습니다 — 엔티티가 깨끗해 보입니다.',
+  'entityDuplicates.blankEntity': '(비어 있음)',
+  'entityDuplicates.empty': '아직 지식 그래프가 없습니다.',
+  'entityDuplicates.emptyHint':
+    '어시스턴트가 엔티티를 기록함에 따라, 중복 철자가 여기에 나타납니다.',
+  'entityDuplicates.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'entityDuplicates.heading': '중복 가능성 있는 엔티티',
+  'entityDuplicates.intro':
+    '그래프는 이름을 그대로 저장하므로 같은 것이 철자(대소문자, 간격)에 따라 분할될 수 있습니다. 이 엔티티들은 같은 이름으로 정규화됩니다 — 조정할 가치가 있는 중복일 가능성이 있습니다.',
+  'entityDuplicates.loading': '중복 스캔 중…',
+  'entityDuplicates.metricAffected': '영향받음',
+  'entityDuplicates.metricClusters': '중복 집합',
+  'entityDuplicates.metricEntities': '엔티티',
+  'entityDuplicates.namespaceAll': '모든 네임스페이스',
+  'entityDuplicates.namespaceLabel': '네임스페이스',
+  'entityDuplicates.retry': '다시 시도',
+  'entityDuplicates.title': '중복 엔티티',
+  'entityDuplicates.truncated': '{total}개 중복 집합 중 {shown}개 표시 중.',
+  'entityDuplicates.variantTitle': '{degree}개 연결',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

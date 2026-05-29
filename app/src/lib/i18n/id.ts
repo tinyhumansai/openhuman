@@ -4443,6 +4443,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'entityDuplicates.allClean':
+    'Tidak ada ejaan duplikat terdeteksi — entitas Anda terlihat bersih.',
+  'entityDuplicates.blankEntity': '(kosong)',
+  'entityDuplicates.empty': 'Belum ada graf pengetahuan.',
+  'entityDuplicates.emptyHint':
+    'Saat asisten mencatat entitas, ejaan duplikat akan muncul di sini.',
+  'entityDuplicates.errorPrefix': 'Tidak dapat memuat graf:',
+  'entityDuplicates.heading': 'Entitas yang kemungkinan duplikat',
+  'entityDuplicates.intro':
+    'Graf menyimpan nama secara harfiah, sehingga hal yang sama dapat terpecah di antara ejaan (kapital, spasi). Entitas-entitas ini menormalisasi ke nama yang sama — kemungkinan duplikat yang layak direkonsiliasi.',
+  'entityDuplicates.loading': 'Memindai duplikat…',
+  'entityDuplicates.metricAffected': 'Terpengaruh',
+  'entityDuplicates.metricClusters': 'Set duplikat',
+  'entityDuplicates.metricEntities': 'Entitas',
+  'entityDuplicates.namespaceAll': 'Semua ruang nama',
+  'entityDuplicates.namespaceLabel': 'Ruang nama',
+  'entityDuplicates.retry': 'Coba lagi',
+  'entityDuplicates.title': 'Entitas Duplikat',
+  'entityDuplicates.truncated': 'Menampilkan {shown} dari {total} set duplikat.',
+  'entityDuplicates.variantTitle': '{degree} koneksi',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

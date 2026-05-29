@@ -4214,6 +4214,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'entityDuplicates.allClean': '未检测到重复拼写——你的实体看起来很干净。',
+  'entityDuplicates.blankEntity': '(空白)',
+  'entityDuplicates.empty': '暂无知识图。',
+  'entityDuplicates.emptyHint': '随着助手记录实体,任何重复拼写将在此显现。',
+  'entityDuplicates.errorPrefix': '无法加载图:',
+  'entityDuplicates.heading': '可能重复的实体',
+  'entityDuplicates.intro':
+    '图按原样存储名称,因此同一事物可能因拼写(大小写、空格)而分裂。这些实体归一化为相同名称——很可能是值得合并的重复项。',
+  'entityDuplicates.loading': '正在扫描重复项…',
+  'entityDuplicates.metricAffected': '受影响',
+  'entityDuplicates.metricClusters': '重复集合',
+  'entityDuplicates.metricEntities': '实体',
+  'entityDuplicates.namespaceAll': '所有命名空间',
+  'entityDuplicates.namespaceLabel': '命名空间',
+  'entityDuplicates.retry': '重试',
+  'entityDuplicates.title': '重复实体',
+  'entityDuplicates.truncated': '显示 {total} 个重复集合中的 {shown} 个。',
+  'entityDuplicates.variantTitle': '{degree} 个连接',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

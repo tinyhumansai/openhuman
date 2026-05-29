@@ -4350,6 +4350,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'entityDuplicates.allClean': 'لم تُكتشف إملاءات مكررة — تبدو كياناتك نظيفة.',
+  'entityDuplicates.blankEntity': '(فارغ)',
+  'entityDuplicates.empty': 'لا يوجد رسم معرفي بعد.',
+  'entityDuplicates.emptyHint': 'كلما سجّل المساعد كيانات، ستظهر هنا الإملاءات المكررة.',
+  'entityDuplicates.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'entityDuplicates.heading': 'كيانات يحتمل أنها مكررة',
+  'entityDuplicates.intro':
+    'يخزن الرسم البياني الأسماء حرفياً، فقد يتشظى الشيء نفسه عبر إملاءات (حالة الأحرف، التباعد). هذه الكيانات تتطبع للاسم نفسه — تكرارات محتملة تستحق التوفيق.',
+  'entityDuplicates.loading': 'البحث عن التكرارات…',
+  'entityDuplicates.metricAffected': 'المتأثرة',
+  'entityDuplicates.metricClusters': 'مجموعات التكرار',
+  'entityDuplicates.metricEntities': 'الكيانات',
+  'entityDuplicates.namespaceAll': 'كل مساحات الأسماء',
+  'entityDuplicates.namespaceLabel': 'مساحة الأسماء',
+  'entityDuplicates.retry': 'إعادة المحاولة',
+  'entityDuplicates.title': 'الكيانات المكررة',
+  'entityDuplicates.truncated': 'عرض {shown} من أصل {total} مجموعة تكرار.',
+  'entityDuplicates.variantTitle': '{degree} اتصالات',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

@@ -4501,6 +4501,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'entityDuplicates.allClean': 'Nessuna grafia duplicata rilevata — le tue entità sembrano pulite.',
+  'entityDuplicates.blankEntity': '(vuoto)',
+  'entityDuplicates.empty': 'Ancora nessun grafo della conoscenza.',
+  'entityDuplicates.emptyHint':
+    "Man mano che l'assistente registra entità, qui appariranno le grafie duplicate.",
+  'entityDuplicates.errorPrefix': 'Impossibile caricare il grafo:',
+  'entityDuplicates.heading': 'Entità probabilmente duplicate',
+  'entityDuplicates.intro':
+    'Il grafo memorizza i nomi letteralmente, quindi la stessa cosa può frammentarsi tra grafie diverse (maiuscole, spaziatura). Queste entità si normalizzano allo stesso nome — probabili duplicati da riconciliare.',
+  'entityDuplicates.loading': 'Scansione duplicati…',
+  'entityDuplicates.metricAffected': 'Coinvolte',
+  'entityDuplicates.metricClusters': 'Insiemi di duplicati',
+  'entityDuplicates.metricEntities': 'Entità',
+  'entityDuplicates.namespaceAll': 'Tutti gli spazi dei nomi',
+  'entityDuplicates.namespaceLabel': 'Spazio dei nomi',
+  'entityDuplicates.retry': 'Riprova',
+  'entityDuplicates.title': 'Entità duplicate',
+  'entityDuplicates.truncated': 'Mostrando {shown} di {total} insiemi di duplicati.',
+  'entityDuplicates.variantTitle': '{degree} connessioni',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

@@ -4498,6 +4498,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
+  'entityDuplicates.allClean':
+    'Nenhuma grafia duplicada detectada — suas entidades parecem limpas.',
+  'entityDuplicates.blankEntity': '(vazio)',
+  'entityDuplicates.empty': 'Ainda sem grafo de conhecimento.',
+  'entityDuplicates.emptyHint':
+    'À medida que o assistente registra entidades, grafias duplicadas aparecerão aqui.',
+  'entityDuplicates.errorPrefix': 'Não foi possível carregar o grafo:',
+  'entityDuplicates.heading': 'Entidades provavelmente duplicadas',
+  'entityDuplicates.intro':
+    'O grafo armazena nomes literalmente, então a mesma coisa pode se fragmentar entre grafias (caixa, espaçamento). Estas entidades normalizam para o mesmo nome — prováveis duplicados que valem a pena reconciliar.',
+  'entityDuplicates.loading': 'Buscando duplicados…',
+  'entityDuplicates.metricAffected': 'Afetadas',
+  'entityDuplicates.metricClusters': 'Conjuntos de duplicados',
+  'entityDuplicates.metricEntities': 'Entidades',
+  'entityDuplicates.namespaceAll': 'Todos os espaços de nomes',
+  'entityDuplicates.namespaceLabel': 'Espaço de nomes',
+  'entityDuplicates.retry': 'Tentar novamente',
+  'entityDuplicates.title': 'Entidades duplicadas',
+  'entityDuplicates.truncated': 'Mostrando {shown} de {total} conjuntos de duplicados.',
+  'entityDuplicates.variantTitle': '{degree} conexões',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

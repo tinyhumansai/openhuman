@@ -4427,6 +4427,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'entityDuplicates.allClean':
+    'কোনো ডুপ্লিকেট বানান শনাক্ত হয়নি — আপনার সত্তাগুলি পরিষ্কার দেখায়।',
+  'entityDuplicates.blankEntity': '(ফাঁকা)',
+  'entityDuplicates.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'entityDuplicates.emptyHint':
+    'সহকারী যখন সত্তা রেকর্ড করে, যেকোনো ডুপ্লিকেট বানান এখানে উঠে আসবে।',
+  'entityDuplicates.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'entityDuplicates.heading': 'সম্ভাব্য ডুপ্লিকেট সত্তা',
+  'entityDuplicates.intro':
+    'গ্রাফ নাম আক্ষরিকভাবে সংরক্ষণ করে, তাই একই জিনিস বানান (কেস, ব্যবধান) জুড়ে খণ্ডিত হতে পারে। এই সত্তাগুলি একই নামে স্বাভাবিক হয় — সম্ভাব্য ডুপ্লিকেট মিলিয়ে নেওয়ার যোগ্য।',
+  'entityDuplicates.loading': 'ডুপ্লিকেট স্ক্যান করা হচ্ছে…',
+  'entityDuplicates.metricAffected': 'প্রভাবিত',
+  'entityDuplicates.metricClusters': 'ডুপ্লিকেট সেট',
+  'entityDuplicates.metricEntities': 'সত্তা',
+  'entityDuplicates.namespaceAll': 'সমস্ত নেমস্পেস',
+  'entityDuplicates.namespaceLabel': 'নেমস্পেস',
+  'entityDuplicates.retry': 'পুনরায় চেষ্টা',
+  'entityDuplicates.title': 'ডুপ্লিকেট সত্তা',
+  'entityDuplicates.truncated': '{total} ডুপ্লিকেট সেটের মধ্যে {shown} দেখাচ্ছি।',
+  'entityDuplicates.variantTitle': '{degree} টি সংযোগ',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

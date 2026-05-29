@@ -4501,6 +4501,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'entityDuplicates.allClean': 'Nie wykryto zduplikowanych pisowni — twoje encje wyglądają czysto.',
+  'entityDuplicates.blankEntity': '(puste)',
+  'entityDuplicates.empty': 'Jeszcze brak grafu wiedzy.',
+  'entityDuplicates.emptyHint':
+    'Gdy asystent zapisuje encje, zduplikowane pisownie pojawią się tutaj.',
+  'entityDuplicates.errorPrefix': 'Nie udało się załadować grafu:',
+  'entityDuplicates.heading': 'Prawdopodobnie zduplikowane encje',
+  'entityDuplicates.intro':
+    'Graf przechowuje nazwy dosłownie, więc ta sama rzecz może rozpaść się przez różne pisownie (wielkość liter, spacje). Te encje normalizują się do tej samej nazwy — prawdopodobne duplikaty warte uzgodnienia.',
+  'entityDuplicates.loading': 'Skanowanie duplikatów…',
+  'entityDuplicates.metricAffected': 'Dotknięte',
+  'entityDuplicates.metricClusters': 'Zestawy duplikatów',
+  'entityDuplicates.metricEntities': 'Encje',
+  'entityDuplicates.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'entityDuplicates.namespaceLabel': 'Przestrzeń nazw',
+  'entityDuplicates.retry': 'Spróbuj ponownie',
+  'entityDuplicates.title': 'Zduplikowane encje',
+  'entityDuplicates.truncated': 'Pokazuję {shown} z {total} zestawów duplikatów.',
+  'entityDuplicates.variantTitle': '{degree} połączeń',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

@@ -4434,6 +4434,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'entityDuplicates.allClean': 'कोई डुप्लिकेट वर्तनी नहीं मिली — आपकी इकाइयाँ साफ दिखती हैं।',
+  'entityDuplicates.blankEntity': '(रिक्त)',
+  'entityDuplicates.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'entityDuplicates.emptyHint':
+    'जैसे-जैसे सहायक इकाइयाँ दर्ज करता है, डुप्लिकेट वर्तनी यहाँ उभरेगी।',
+  'entityDuplicates.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'entityDuplicates.heading': 'संभावित डुप्लिकेट इकाइयाँ',
+  'entityDuplicates.intro':
+    'ग्राफ नाम शब्दशः संग्रहीत करता है, इसलिए एक ही चीज़ वर्तनी (केस, स्पेसिंग) में बँट सकती है। ये इकाइयाँ एक ही नाम में सामान्य होती हैं — संभावित डुप्लिकेट जो मेल करने योग्य हैं।',
+  'entityDuplicates.loading': 'डुप्लिकेट के लिए स्कैन हो रहा है…',
+  'entityDuplicates.metricAffected': 'प्रभावित',
+  'entityDuplicates.metricClusters': 'डुप्लिकेट सेट',
+  'entityDuplicates.metricEntities': 'इकाइयाँ',
+  'entityDuplicates.namespaceAll': 'सभी नेमस्पेस',
+  'entityDuplicates.namespaceLabel': 'नेमस्पेस',
+  'entityDuplicates.retry': 'पुनः प्रयास',
+  'entityDuplicates.title': 'डुप्लिकेट इकाइयाँ',
+  'entityDuplicates.truncated': '{total} डुप्लिकेट सेट में से {shown} दिखा रहे हैं।',
+  'entityDuplicates.variantTitle': '{degree} कनेक्शन',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

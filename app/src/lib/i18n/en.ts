@@ -376,6 +376,8 @@ const en: TranslationMap = {
   'entityDuplicates.loading': 'Scanning for duplicates…',
   'entityDuplicates.errorPrefix': 'Could not load the graph:',
   'entityDuplicates.retry': 'Retry',
+  'entityDuplicates.namespaceLabel': 'Namespace',
+  'entityDuplicates.namespaceAll': 'All namespaces',
   'entityDuplicates.empty': 'No knowledge graph yet.',
   'entityDuplicates.emptyHint':
     'As the assistant records entities, any duplicate spellings will surface here.',
@@ -2518,7 +2520,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',

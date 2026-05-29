@@ -4524,6 +4524,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'entityDuplicates.allClean':
+    'Aucune orthographe en doublon détectée — vos entités semblent propres.',
+  'entityDuplicates.blankEntity': '(vide)',
+  'entityDuplicates.empty': 'Pas encore de graphe de connaissances.',
+  'entityDuplicates.emptyHint':
+    "À mesure que l'assistant enregistre des entités, les orthographes en doublon apparaîtront ici.",
+  'entityDuplicates.errorPrefix': 'Impossible de charger le graphe :',
+  'entityDuplicates.heading': 'Entités probablement en doublon',
+  'entityDuplicates.intro':
+    'Le graphe stocke les noms tels quels, donc la même chose peut se fragmenter à travers les orthographes (casse, espacement). Ces entités se normalisent au même nom — probablement des doublons à réconcilier.',
+  'entityDuplicates.loading': 'Recherche de doublons…',
+  'entityDuplicates.metricAffected': 'Concernés',
+  'entityDuplicates.metricClusters': 'Ensembles de doublons',
+  'entityDuplicates.metricEntities': 'Entités',
+  'entityDuplicates.namespaceAll': 'Tous les espaces de noms',
+  'entityDuplicates.namespaceLabel': 'Espace de noms',
+  'entityDuplicates.retry': 'Réessayer',
+  'entityDuplicates.title': 'Entités en doublon',
+  'entityDuplicates.truncated': 'Affichage de {shown} sur {total} ensembles de doublons.',
+  'entityDuplicates.variantTitle': '{degree} connexions',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

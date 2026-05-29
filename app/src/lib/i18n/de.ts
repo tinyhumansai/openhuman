@@ -4543,6 +4543,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'entityDuplicates.allClean':
+    'Keine doppelten Schreibweisen erkannt — Ihre Entitäten sehen sauber aus.',
+  'entityDuplicates.blankEntity': '(leer)',
+  'entityDuplicates.empty': 'Noch kein Wissensgraph.',
+  'entityDuplicates.emptyHint':
+    'Während der Assistent Entitäten erfasst, erscheinen hier doppelte Schreibweisen.',
+  'entityDuplicates.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'entityDuplicates.heading': 'Wahrscheinlich doppelte Entitäten',
+  'entityDuplicates.intro':
+    'Der Graph speichert Namen wörtlich, sodass dieselbe Sache über Schreibweisen (Groß-/Kleinschreibung, Leerzeichen) fragmentieren kann. Diese Entitäten normalisieren sich zum gleichen Namen — wahrscheinliche Duplikate, die abzugleichen sind.',
+  'entityDuplicates.loading': 'Suche nach Duplikaten…',
+  'entityDuplicates.metricAffected': 'Betroffen',
+  'entityDuplicates.metricClusters': 'Duplikat-Mengen',
+  'entityDuplicates.metricEntities': 'Entitäten',
+  'entityDuplicates.namespaceAll': 'Alle Namensräume',
+  'entityDuplicates.namespaceLabel': 'Namensraum',
+  'entityDuplicates.retry': 'Wiederholen',
+  'entityDuplicates.title': 'Doppelte Entitäten',
+  'entityDuplicates.truncated': 'Zeige {shown} von {total} Duplikat-Mengen.',
+  'entityDuplicates.variantTitle': '{degree} Verbindungen',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

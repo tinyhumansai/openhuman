@@ -4509,6 +4509,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  'entityDuplicates.allClean':
+    'No se detectaron ortografías duplicadas — sus entidades se ven limpias.',
+  'entityDuplicates.blankEntity': '(en blanco)',
+  'entityDuplicates.empty': 'Aún no hay grafo de conocimiento.',
+  'entityDuplicates.emptyHint':
+    'A medida que el asistente registra entidades, las ortografías duplicadas aparecerán aquí.',
+  'entityDuplicates.errorPrefix': 'No se pudo cargar el grafo:',
+  'entityDuplicates.heading': 'Entidades probablemente duplicadas',
+  'entityDuplicates.intro':
+    'El grafo almacena nombres literalmente, por lo que la misma cosa puede fragmentarse a través de ortografías (mayúsculas, espaciado). Estas entidades se normalizan al mismo nombre — probables duplicados que merecen reconciliación.',
+  'entityDuplicates.loading': 'Buscando duplicados…',
+  'entityDuplicates.metricAffected': 'Afectadas',
+  'entityDuplicates.metricClusters': 'Conjuntos de duplicados',
+  'entityDuplicates.metricEntities': 'Entidades',
+  'entityDuplicates.namespaceAll': 'Todos los espacios de nombres',
+  'entityDuplicates.namespaceLabel': 'Espacio de nombres',
+  'entityDuplicates.retry': 'Reintentar',
+  'entityDuplicates.title': 'Entidades duplicadas',
+  'entityDuplicates.truncated': 'Mostrando {shown} de {total} conjuntos de duplicados.',
+  'entityDuplicates.variantTitle': '{degree} conexiones',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;

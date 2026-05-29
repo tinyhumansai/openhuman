@@ -4469,6 +4469,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'entityDuplicates.allClean':
+    'Дублирующихся написаний не обнаружено — ваши сущности выглядят чисто.',
+  'entityDuplicates.blankEntity': '(пусто)',
+  'entityDuplicates.empty': 'Пока нет графа знаний.',
+  'entityDuplicates.emptyHint':
+    'По мере того как ассистент фиксирует сущности, здесь появятся дублирующиеся написания.',
+  'entityDuplicates.errorPrefix': 'Не удалось загрузить граф:',
+  'entityDuplicates.heading': 'Вероятные дубликаты сущностей',
+  'entityDuplicates.intro':
+    'Граф хранит имена дословно, поэтому одно и то же может разделиться по написаниям (регистр, пробелы). Эти сущности нормализуются к одному имени — вероятные дубликаты, которые стоит согласовать.',
+  'entityDuplicates.loading': 'Поиск дубликатов…',
+  'entityDuplicates.metricAffected': 'Затронутые',
+  'entityDuplicates.metricClusters': 'Группы дубликатов',
+  'entityDuplicates.metricEntities': 'Сущности',
+  'entityDuplicates.namespaceAll': 'Все пространства имён',
+  'entityDuplicates.namespaceLabel': 'Пространство имён',
+  'entityDuplicates.retry': 'Повторить',
+  'entityDuplicates.title': 'Дубликаты сущностей',
+  'entityDuplicates.truncated': 'Показано {shown} из {total} групп дубликатов.',
+  'entityDuplicates.variantTitle': '{degree} связей',
+  'memory.tab.duplicates': 'Duplicates',
 };
 
 export default messages;
