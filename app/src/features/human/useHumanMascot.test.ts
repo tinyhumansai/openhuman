@@ -403,7 +403,9 @@ describe('useHumanMascot state machine', () => {
     expect(result.current.face).toBe('listening');
     // The hold timer should have been cancelled — advancing past its deadline
     // must not flip the face back to idle.
-    act(() => { vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1); });
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
     expect(result.current.face).toBe('listening');
   });
 

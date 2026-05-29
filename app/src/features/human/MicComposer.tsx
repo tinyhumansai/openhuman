@@ -608,11 +608,7 @@ export function MicComposer({
     const handleRetry = (attempt: number) => {
       cumulativeRetries = attempt;
       setRetryCount(cumulativeRetries);
-      composerLog(
-        '[session:%d] stt retry overall=%d',
-        sessionIdRef.current,
-        cumulativeRetries
-      );
+      composerLog('[session:%d] stt retry overall=%d', sessionIdRef.current, cumulativeRetries);
     };
     try {
       const text = await transcribeWithRetry(blob, 'native', handleRetry);

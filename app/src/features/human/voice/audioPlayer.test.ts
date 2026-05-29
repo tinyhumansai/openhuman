@@ -158,7 +158,13 @@ describe('playBase64Audio', () => {
       const handle = await playBase64Audio('AAA=', 'audio/mpeg', { maxDurationMs: 1000 });
       // Before the deadline, ended is still pending.
       let settled: 'resolved' | 'rejected' | null = null;
-      handle.ended.then(() => { settled = 'resolved'; }).catch(() => { settled = 'rejected'; });
+      handle.ended
+        .then(() => {
+          settled = 'resolved';
+        })
+        .catch(() => {
+          settled = 'rejected';
+        });
       await Promise.resolve();
       expect(settled).toBeNull();
       // Advance past the deadline.
