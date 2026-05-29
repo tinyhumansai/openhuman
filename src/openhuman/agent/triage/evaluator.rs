@@ -473,7 +473,18 @@ async fn try_arm(
         silent: true,
         channel_name: "triage".to_string(),
         multimodal: MultimodalConfig::default(),
-        multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
+        // Triage receives untrusted text from third-party channel
+        // payloads (Slack/Telegram/Discord). Disable file-marker
+        // resolution outright so an attacker can't smuggle
+        // `[FILE:/etc/passwd]` (or any other local-path marker) into
+        // an inbound message and have triage exfiltrate the contents
+        // into an LLM call. max_files=0 makes
+        // prepare_messages_for_provider reject any [FILE:…] in the
+        // turn with TooManyFiles before any disk read happens.
+        multimodal_files: crate::openhuman::config::MultimodalFileConfig {
+            max_files: 0,
+            ..Default::default()
+        },
         max_tool_iterations: 1,
         on_delta: None,
         target_agent_id: Some("trigger_triage".to_string()),
