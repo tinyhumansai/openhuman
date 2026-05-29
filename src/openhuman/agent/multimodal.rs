@@ -271,7 +271,7 @@ pub async fn prepare_messages_for_provider(
         .into());
     }
 
-    tracing::debug!(
+    tracing::info!(
         target: "multimodal",
         found_images,
         found_files,
@@ -739,7 +739,7 @@ async fn normalize_file_reference(
 
     let size_bytes = bytes.len();
 
-    tracing::debug!(
+    tracing::info!(
         target: "multimodal",
         file = %name,
         mime = %mime,
