@@ -255,9 +255,9 @@ fn decode_access_token_payload(access_token: &str) -> Option<serde_json::Value> 
         0 => payload.to_string(),
         n => format!("{}{}", payload, "=".repeat(4 - n)),
     };
-    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    let bytes = base64::engine::general_purpose::URL_SAFE
         .decode(padded.as_bytes())
-        .or_else(|_| base64::engine::general_purpose::STANDARD.decode(padded.as_bytes()))
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.as_bytes()))
         .ok()?;
     serde_json::from_slice(&bytes).ok()
 }

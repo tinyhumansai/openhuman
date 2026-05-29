@@ -375,6 +375,38 @@ fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
 }
 
 #[test]
+fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let payload = "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF9wYWRkZWQifSwibm9uY2UiOiI-In0=";
+    assert!(
+        (payload.contains('-') || payload.contains('_')) && payload.ends_with('='),
+        "test fixture must exercise padded base64url input"
+    );
+    let access_token = format!("e30.{payload}.");
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": "codex-refresh"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_padded")
+    );
+}
+
+#[test]
 fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
