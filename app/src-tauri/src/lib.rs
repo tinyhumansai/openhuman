@@ -1997,9 +1997,10 @@ fn linux_is_root_uid(uid: u32) -> bool {
 /// driver passthrough, Fedora, etc.) can opt back into hardware
 /// acceleration by setting `OPENHUMAN_FORCE_GPU=1`.
 ///
-/// Mirrors the truthy/falsy parsing in [`cef_prewarm_enabled`]: any of
-/// `1` / `true` / `yes` / `on` (case-insensitive) opts in; anything else
-/// (including unset) preserves the default disable.
+/// Uses the same recognized truthy tokens as [`cef_prewarm_enabled`], but
+/// this control is explicit opt-in: `1` / `true` / `yes` / `on`
+/// (case-insensitive) enables the override, and anything else (including
+/// unset) preserves the default disable.
 fn cef_force_gpu_enabled(env_override: Option<&str>) -> bool {
     match env_override {
         Some(v) => {
