@@ -4469,6 +4469,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'Пока нет графа знаний.',
+  'predicateBundles.emptyHint':
+    'По мере того как ассистент фиксирует связи о вас, здесь появятся плотные (много-предикатные) пары.',
+  'predicateBundles.errorPrefix': 'Не удалось загрузить граф:',
+  'predicateBundles.intro':
+    'Для каждой упорядоченной пары сущностей: сколько различных предикатов их связывает? Пара, связанная одним предикатом, — тонкое отношение; пара, связанная тремя или четырьмя предикатами, — ПЛОТНОЕ отношение — две сущности, осмысленно связанные более чем одним способом. Ни частота по предикатам, ни перекрытие окрестностей этого не вскрывают.',
+  'predicateBundles.loading': 'Вычисление плотности связей…',
+  'predicateBundles.metricMaxThickness': 'Макс. плотность',
+  'predicateBundles.metricPairs': 'Различных пар',
+  'predicateBundles.metricThick': 'Плотные отношения',
+  'predicateBundles.namespaceAll': 'Все пространства имён',
+  'predicateBundles.namespaceLabel': 'Пространство имён',
+  'predicateBundles.rankedHeading': 'Топ пучков',
+  'predicateBundles.retry': 'Повторить',
+  'predicateBundles.summaryCaption': '{relations} связей в {pairs} парах',
+  'predicateBundles.summaryCaptionOneEach': '1 связь в 1 паре',
+  'predicateBundles.summaryCaptionOnePair': '{relations} связей в 1 паре',
+  'predicateBundles.summaryCaptionOneRelation': '1 связь в {pairs} парах',
+  'predicateBundles.title': 'Пучки предикатов',
 };
 
 export default messages;

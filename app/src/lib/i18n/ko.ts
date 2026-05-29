@@ -4393,6 +4393,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': '아직 지식 그래프가 없습니다.',
+  'predicateBundles.emptyHint':
+    '어시스턴트가 당신에 관한 관계들을 기록함에 따라, 두꺼운(다중 술어) 쌍들이 여기에 드러납니다.',
+  'predicateBundles.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'predicateBundles.intro':
+    '순서가 정해진 엔티티 쌍별로, 몇 개의 서로 다른 술어가 이들을 연결합니까? 단일 술어로 묶인 쌍은 얇은 관계이며, 3~4개의 술어로 묶인 쌍은 두꺼운 관계입니다 — 두 엔티티가 둘 이상의 방식으로 의미 있게 연결된 것입니다. 술어별 빈도나 이웃 중복으로는 드러나지 않습니다.',
+  'predicateBundles.loading': '관계 두께 계산 중…',
+  'predicateBundles.metricMaxThickness': '최대 두께',
+  'predicateBundles.metricPairs': '고유 쌍',
+  'predicateBundles.metricThick': '두꺼운 관계',
+  'predicateBundles.namespaceAll': '모든 네임스페이스',
+  'predicateBundles.namespaceLabel': '네임스페이스',
+  'predicateBundles.rankedHeading': '상위 묶음',
+  'predicateBundles.retry': '다시 시도',
+  'predicateBundles.summaryCaption': '쌍 {pairs}개에 걸친 관계 {relations}개',
+  'predicateBundles.summaryCaptionOneEach': '쌍 1개에 걸친 관계 1개',
+  'predicateBundles.summaryCaptionOnePair': '쌍 1개에 걸친 관계 {relations}개',
+  'predicateBundles.summaryCaptionOneRelation': '쌍 {pairs}개에 걸친 관계 1개',
+  'predicateBundles.title': '술어 묶음',
 };
 
 export default messages;

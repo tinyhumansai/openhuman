@@ -4524,6 +4524,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'Pas encore de graphe de connaissances.',
+  'predicateBundles.emptyHint':
+    "À mesure que l'assistant enregistre des relations à votre sujet, les paires denses (à prédicats multiples) apparaîtront ici.",
+  'predicateBundles.errorPrefix': 'Impossible de charger le graphe :',
+  'predicateBundles.intro':
+    "Par paire ordonnée d'entités, combien de prédicats distincts les relient ? Une paire reliée par un seul prédicat est une relation mince ; une paire reliée par trois ou quatre prédicats est une relation DENSE — deux entités significativement connectées de plus d'une manière. Ni la fréquence par prédicat ni le chevauchement de voisinage ne le révèlent.",
+  'predicateBundles.loading': 'Calcul de la densité des relations…',
+  'predicateBundles.metricMaxThickness': 'Densité max',
+  'predicateBundles.metricPairs': 'Paires distinctes',
+  'predicateBundles.metricThick': 'Relations denses',
+  'predicateBundles.namespaceAll': 'Tous les espaces de noms',
+  'predicateBundles.namespaceLabel': 'Espace de noms',
+  'predicateBundles.rankedHeading': 'Faisceaux principaux',
+  'predicateBundles.retry': 'Réessayer',
+  'predicateBundles.summaryCaption': '{relations} relations sur {pairs} paires',
+  'predicateBundles.summaryCaptionOneEach': '1 relation sur 1 paire',
+  'predicateBundles.summaryCaptionOnePair': '{relations} relations sur 1 paire',
+  'predicateBundles.summaryCaptionOneRelation': '1 relation sur {pairs} paires',
+  'predicateBundles.title': 'Faisceaux de prédicats',
 };
 
 export default messages;

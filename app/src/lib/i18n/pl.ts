@@ -4501,6 +4501,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'Jeszcze brak grafu wiedzy.',
+  'predicateBundles.emptyHint':
+    'W miarę jak asystent zapisuje relacje o Tobie, gęste (wielo-predykatowe) pary pojawią się tutaj.',
+  'predicateBundles.errorPrefix': 'Nie udało się załadować grafu:',
+  'predicateBundles.intro':
+    'Dla każdej uporządkowanej pary encji: ile odrębnych predykatów je łączy? Para związana jednym predykatem to cienka relacja; para związana trzema lub czterema predykatami to GĘSTA relacja — dwie encje znacząco połączone na więcej niż jeden sposób. Ani częstotliwość per predykat, ani nakładanie się sąsiedztw tego nie ujawni.',
+  'predicateBundles.loading': 'Obliczanie gęstości relacji…',
+  'predicateBundles.metricMaxThickness': 'Maks. gęstość',
+  'predicateBundles.metricPairs': 'Różne pary',
+  'predicateBundles.metricThick': 'Gęste relacje',
+  'predicateBundles.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'predicateBundles.namespaceLabel': 'Przestrzeń nazw',
+  'predicateBundles.rankedHeading': 'Najlepsze pakiety',
+  'predicateBundles.retry': 'Spróbuj ponownie',
+  'predicateBundles.summaryCaption': '{relations} relacji w {pairs} parach',
+  'predicateBundles.summaryCaptionOneEach': '1 relacja w 1 parze',
+  'predicateBundles.summaryCaptionOnePair': '{relations} relacji w 1 parze',
+  'predicateBundles.summaryCaptionOneRelation': '1 relacja w {pairs} parach',
+  'predicateBundles.title': 'Pakiety predykatów',
 };
 
 export default messages;

@@ -4543,6 +4543,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'Noch kein Wissensgraph.',
+  'predicateBundles.emptyHint':
+    'Während der Assistent Relationen über Sie erfasst, erscheinen hier dichte (mehrfach-prädikative) Paare.',
+  'predicateBundles.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'predicateBundles.intro':
+    'Pro geordnetem Entitätspaar: wie viele verschiedene Prädikate verbinden sie? Ein Paar mit nur einem Prädikat ist eine dünne Beziehung; ein Paar mit drei oder vier Prädikaten ist eine DICHTE Beziehung — zwei Entitäten, die auf mehr als eine Weise sinnvoll verbunden sind. Weder Prädikat-Häufigkeit noch Nachbarschaftsüberlappung deckt das auf.',
+  'predicateBundles.loading': 'Berechne Beziehungsdichte…',
+  'predicateBundles.metricMaxThickness': 'Maximale Dichte',
+  'predicateBundles.metricPairs': 'Verschiedene Paare',
+  'predicateBundles.metricThick': 'Dichte Beziehungen',
+  'predicateBundles.namespaceAll': 'Alle Namensräume',
+  'predicateBundles.namespaceLabel': 'Namensraum',
+  'predicateBundles.rankedHeading': 'Top-Bündel',
+  'predicateBundles.retry': 'Wiederholen',
+  'predicateBundles.summaryCaption': '{relations} Relationen über {pairs} Paare',
+  'predicateBundles.summaryCaptionOneEach': '1 Relation über 1 Paar',
+  'predicateBundles.summaryCaptionOnePair': '{relations} Relationen über 1 Paar',
+  'predicateBundles.summaryCaptionOneRelation': '1 Relation über {pairs} Paare',
+  'predicateBundles.title': 'Prädikat-Bündel',
 };
 
 export default messages;

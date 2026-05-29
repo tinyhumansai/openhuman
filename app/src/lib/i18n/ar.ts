@@ -4350,6 +4350,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'لا يوجد رسم معرفة بعد.',
+  'predicateBundles.emptyHint':
+    'كلما سجّل المساعد علاقات عنك، ستظهر هنا الأزواج الكثيفة (متعددة المسندات).',
+  'predicateBundles.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'predicateBundles.intro':
+    'لكل زوج كيانات مرتّب: كم عدد المسندات المتمايزة التي تربطه؟ زوج يربطه مسند واحد علاقة رقيقة؛ زوج يربطه ثلاثة أو أربعة مسندات علاقة كثيفة — كيانان مرتبطان بشكل ذي معنى بأكثر من طريقة. لا تكشف لا تكرارات المسند ولا تداخل الجوار عن ذلك.',
+  'predicateBundles.loading': 'يجري حساب كثافة العلاقات…',
+  'predicateBundles.metricMaxThickness': 'أقصى كثافة',
+  'predicateBundles.metricPairs': 'أزواج متمايزة',
+  'predicateBundles.metricThick': 'علاقات كثيفة',
+  'predicateBundles.namespaceAll': 'كل مساحات الأسماء',
+  'predicateBundles.namespaceLabel': 'مساحة الأسماء',
+  'predicateBundles.rankedHeading': 'أعلى الحزم',
+  'predicateBundles.retry': 'إعادة المحاولة',
+  'predicateBundles.summaryCaption': '{relations} علاقات عبر {pairs} أزواج',
+  'predicateBundles.summaryCaptionOneEach': 'علاقة واحدة عبر زوج واحد',
+  'predicateBundles.summaryCaptionOnePair': '{relations} علاقات عبر زوج واحد',
+  'predicateBundles.summaryCaptionOneRelation': 'علاقة واحدة عبر {pairs} أزواج',
+  'predicateBundles.title': 'حزم المسندات',
 };
 
 export default messages;

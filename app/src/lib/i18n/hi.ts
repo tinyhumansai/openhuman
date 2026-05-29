@@ -4434,6 +4434,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'अभी तक कोई नॉलेज ग्राफ नहीं।',
+  'predicateBundles.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में संबंध दर्ज करता है, सघन (बहु-विधेय) जोड़ियाँ यहाँ उभरेंगी।',
+  'predicateBundles.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'predicateBundles.intro':
+    'हर क्रमित इकाई-जोड़ी के लिए: कितने भिन्न विधेय उन्हें जोड़ते हैं? एक विधेय से बंधी जोड़ी पतला संबंध है; तीन या चार विधेयों से बंधी जोड़ी सघन संबंध है — दो इकाइयाँ जो एक से अधिक तरीके से सार्थक रूप से जुड़ी हैं। न प्रति-विधेय आवृत्ति और न पड़ोस ओवरलैप इसे दिखाते हैं।',
+  'predicateBundles.loading': 'संबंध सघनता गणना हो रही है…',
+  'predicateBundles.metricMaxThickness': 'अधिकतम सघनता',
+  'predicateBundles.metricPairs': 'विशिष्ट जोड़ियाँ',
+  'predicateBundles.metricThick': 'सघन संबंध',
+  'predicateBundles.namespaceAll': 'सभी नेमस्पेस',
+  'predicateBundles.namespaceLabel': 'नेमस्पेस',
+  'predicateBundles.rankedHeading': 'शीर्ष बंडल',
+  'predicateBundles.retry': 'पुनः प्रयास',
+  'predicateBundles.summaryCaption': '{pairs} जोड़ियों में {relations} संबंध',
+  'predicateBundles.summaryCaptionOneEach': '1 जोड़ी में 1 संबंध',
+  'predicateBundles.summaryCaptionOnePair': '1 जोड़ी में {relations} संबंध',
+  'predicateBundles.summaryCaptionOneRelation': '{pairs} जोड़ियों में 1 संबंध',
+  'predicateBundles.title': 'विधेय बंडल',
 };
 
 export default messages;

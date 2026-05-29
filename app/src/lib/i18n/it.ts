@@ -4501,6 +4501,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'memory.tab.bundles': 'Fasci',
+  'predicateBundles.empty': 'Ancora nessun grafo della conoscenza.',
+  'predicateBundles.emptyHint':
+    "Man mano che l'assistente registra relazioni su di te, qui appariranno le coppie dense (multi-predicato).",
+  'predicateBundles.errorPrefix': 'Impossibile caricare il grafo:',
+  'predicateBundles.intro':
+    'Per ogni coppia ordinata di entità, quanti predicati distinti le collegano? Una coppia legata da un solo predicato è una relazione sottile; una coppia legata da tre o quattro predicati è una relazione DENSA — due entità connesse in modo significativo in più modi. Né la frequenza per predicato né la sovrapposizione di vicinato lo rivelano.',
+  'predicateBundles.loading': 'Calcolo della densità delle relazioni…',
+  'predicateBundles.metricMaxThickness': 'Densità massima',
+  'predicateBundles.metricPairs': 'Coppie distinte',
+  'predicateBundles.metricThick': 'Relazioni dense',
+  'predicateBundles.namespaceAll': 'Tutti gli spazi dei nomi',
+  'predicateBundles.namespaceLabel': 'Spazio dei nomi',
+  'predicateBundles.rankedHeading': 'Fasci principali',
+  'predicateBundles.retry': 'Riprova',
+  'predicateBundles.summaryCaption': '{relations} relazioni su {pairs} coppie',
+  'predicateBundles.summaryCaptionOneEach': '1 relazione su 1 coppia',
+  'predicateBundles.summaryCaptionOnePair': '{relations} relazioni su 1 coppia',
+  'predicateBundles.summaryCaptionOneRelation': '1 relazione su {pairs} coppie',
+  'predicateBundles.title': 'Fasci di predicati',
 };
 
 export default messages;

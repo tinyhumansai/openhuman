@@ -4443,6 +4443,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'Belum ada graf pengetahuan.',
+  'predicateBundles.emptyHint':
+    'Saat asisten mencatat relasi tentang Anda, pasangan tebal (multi-predikat) akan muncul di sini.',
+  'predicateBundles.errorPrefix': 'Tidak dapat memuat graf:',
+  'predicateBundles.intro':
+    'Per pasangan entitas terurut, berapa banyak predikat berbeda yang menghubungkan mereka? Pasangan yang diikat oleh satu predikat adalah hubungan tipis; pasangan yang diikat oleh tiga atau empat predikat adalah hubungan TEBAL — dua entitas yang terhubung secara bermakna dengan lebih dari satu cara. Baik frekuensi per predikat maupun tumpang tindih lingkungan tidak mengungkap hal ini.',
+  'predicateBundles.loading': 'Menghitung kepadatan hubungan…',
+  'predicateBundles.metricMaxThickness': 'Kepadatan maks.',
+  'predicateBundles.metricPairs': 'Pasangan berbeda',
+  'predicateBundles.metricThick': 'Hubungan tebal',
+  'predicateBundles.namespaceAll': 'Semua ruang nama',
+  'predicateBundles.namespaceLabel': 'Ruang nama',
+  'predicateBundles.rankedHeading': 'Bundel teratas',
+  'predicateBundles.retry': 'Coba lagi',
+  'predicateBundles.summaryCaption': '{relations} relasi pada {pairs} pasang',
+  'predicateBundles.summaryCaptionOneEach': '1 relasi pada 1 pasang',
+  'predicateBundles.summaryCaptionOnePair': '{relations} relasi pada 1 pasang',
+  'predicateBundles.summaryCaptionOneRelation': '1 relasi pada {pairs} pasang',
+  'predicateBundles.title': 'Bundel Predikat',
 };
 
 export default messages;

@@ -4214,6 +4214,25 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': '暂无知识图。',
+  'predicateBundles.emptyHint': '随着助手记录有关你的关系,稠密(多谓词)对将在此呈现。',
+  'predicateBundles.errorPrefix': '无法加载图:',
+  'predicateBundles.intro':
+    '对每对有序实体而言,有多少不同的谓词在连接它们?以单一谓词相连的对是薄关系;以三到四个谓词相连的对是稠密关系——两个实体在不止一种意义上相连。按谓词的频率或邻域重叠都无法揭示这一点。',
+  'predicateBundles.loading': '正在计算关系稠度…',
+  'predicateBundles.metricMaxThickness': '最大稠度',
+  'predicateBundles.metricPairs': '不同对',
+  'predicateBundles.metricThick': '稠密关系',
+  'predicateBundles.namespaceAll': '所有命名空间',
+  'predicateBundles.namespaceLabel': '命名空间',
+  'predicateBundles.rankedHeading': '顶尖束',
+  'predicateBundles.retry': '重试',
+  'predicateBundles.summaryCaption': '在 {pairs} 对上有 {relations} 个关系',
+  'predicateBundles.summaryCaptionOneEach': '在 1 对上有 1 个关系',
+  'predicateBundles.summaryCaptionOnePair': '在 1 对上有 {relations} 个关系',
+  'predicateBundles.summaryCaptionOneRelation': '在 {pairs} 对上有 1 个关系',
+  'predicateBundles.title': '谓词束',
 };
 
 export default messages;

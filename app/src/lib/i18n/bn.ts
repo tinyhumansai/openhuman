@@ -4427,6 +4427,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'predicateBundles.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সম্পর্কগুলো রেকর্ড করে, ঘন (বহু-বিধেয়) জোড়াগুলো এখানে উঠে আসবে।',
+  'predicateBundles.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'predicateBundles.intro':
+    'প্রতিটি ক্রমিক সত্তা-জোড়ার জন্য, কতগুলো ভিন্ন বিধেয় তাদের যুক্ত করে? একটিমাত্র বিধেয়ে বাঁধা জোড়া হলো পাতলা সম্পর্ক; তিন বা চারটি বিধেয়ে বাঁধা জোড়া হলো ঘন সম্পর্ক — দুটি সত্তা একাধিক উপায়ে অর্থপূর্ণভাবে সংযুক্ত। প্রতি-বিধেয় ফ্রিকোয়েন্সি বা প্রতিবেশ ওভারল্যাপ কোনটিই এটি উন্মোচন করে না।',
+  'predicateBundles.loading': 'সম্পর্কের ঘনত্ব গণনা করা হচ্ছে…',
+  'predicateBundles.metricMaxThickness': 'সর্বোচ্চ ঘনত্ব',
+  'predicateBundles.metricPairs': 'স্বতন্ত্র জোড়া',
+  'predicateBundles.metricThick': 'ঘন সম্পর্ক',
+  'predicateBundles.namespaceAll': 'সমস্ত নেমস্পেস',
+  'predicateBundles.namespaceLabel': 'নেমস্পেস',
+  'predicateBundles.rankedHeading': 'শীর্ষ বান্ডিল',
+  'predicateBundles.retry': 'পুনরায় চেষ্টা',
+  'predicateBundles.summaryCaption': '{pairs}টি জোড়ায় {relations}টি সম্পর্ক',
+  'predicateBundles.summaryCaptionOneEach': '১টি জোড়ায় ১টি সম্পর্ক',
+  'predicateBundles.summaryCaptionOnePair': '১টি জোড়ায় {relations}টি সম্পর্ক',
+  'predicateBundles.summaryCaptionOneRelation': '{pairs}টি জোড়ায় ১টি সম্পর্ক',
+  'predicateBundles.title': 'বিধেয় বান্ডিল',
 };
 
 export default messages;

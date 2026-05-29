@@ -4498,6 +4498,26 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
+  'memory.tab.bundles': 'Bundles',
+  'predicateBundles.empty': 'Ainda sem grafo de conhecimento.',
+  'predicateBundles.emptyHint':
+    'À medida que o assistente registra relações sobre você, os pares densos (multi-predicado) aparecerão aqui.',
+  'predicateBundles.errorPrefix': 'Não foi possível carregar o grafo:',
+  'predicateBundles.intro':
+    'Por par ordenado de entidades, quantos predicados distintos os ligam? Um par ligado por um único predicado é uma relação tênue; um par ligado por três ou quatro predicados é uma relação DENSA — duas entidades significativamente conectadas de mais de uma forma. Nem a frequência por predicado nem a sobreposição de vizinhança revelam isso.',
+  'predicateBundles.loading': 'Calculando densidade dos relacionamentos…',
+  'predicateBundles.metricMaxThickness': 'Densidade máxima',
+  'predicateBundles.metricPairs': 'Pares distintos',
+  'predicateBundles.metricThick': 'Relações densas',
+  'predicateBundles.namespaceAll': 'Todos os espaços de nomes',
+  'predicateBundles.namespaceLabel': 'Espaço de nomes',
+  'predicateBundles.rankedHeading': 'Principais pacotes',
+  'predicateBundles.retry': 'Tentar novamente',
+  'predicateBundles.summaryCaption': '{relations} relações em {pairs} pares',
+  'predicateBundles.summaryCaptionOneEach': '1 relação em 1 par',
+  'predicateBundles.summaryCaptionOnePair': '{relations} relações em 1 par',
+  'predicateBundles.summaryCaptionOneRelation': '1 relação em {pairs} pares',
+  'predicateBundles.title': 'Pacotes de predicados',
 };
 
 export default messages;
