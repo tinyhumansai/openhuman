@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
+import GraphCohesionTab from '../components/intelligence/GraphCohesionTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
@@ -20,7 +21,7 @@ import type {
 } from '../types/intelligence';
 import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'diagram' | 'centrality';
+type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'diagram' | 'centrality' | 'cohesion';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -100,6 +101,7 @@ export default function Intelligence() {
       },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
+      { id: 'cohesion', label: t('memory.tab.cohesion') },
     ];
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
@@ -190,6 +192,8 @@ export default function Intelligence() {
             {activeTab === 'diagram' && <DiagramViewerTab />}
 
             {activeTab === 'centrality' && <GraphCentralityTab />}
+
+            {activeTab === 'cohesion' && <GraphCohesionTab />}
           </div>
         </div>
       </div>
