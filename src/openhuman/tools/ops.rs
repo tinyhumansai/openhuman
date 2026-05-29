@@ -251,6 +251,21 @@ pub fn all_tools_with_runtime(
         )),
     ];
 
+    // Presentation generation (#2778). Gated on
+    // `runtime_python.enabled` because the tool calls into a managed
+    // Python venv (python-pptx). When the runtime is disabled the
+    // tool is hidden from the agent so the LLM never even suggests it.
+    if root_config.runtime_python.enabled {
+        tools.push(Box::new(PresentationTool::new(
+            Arc::clone(&config),
+            workspace_dir.to_path_buf(),
+        )));
+    } else {
+        tracing::debug!(
+            "[tools::ops] runtime_python disabled — generate_presentation tool not registered"
+        );
+    }
+
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the
         // browser tool shares the single `http_request.allowed_domains` host
