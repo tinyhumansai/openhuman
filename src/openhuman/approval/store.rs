@@ -181,11 +181,7 @@ fn with_connection<T>(config: &Config, f: impl FnOnce(&Connection) -> Result<T>)
 /// the gate hands in — it is written into the durable column for
 /// internal correlation only and is never re-exposed on
 /// [`PendingApproval`] (see that type's doc-comment).
-pub fn insert_pending(
-    config: &Config,
-    pending: &PendingApproval,
-    session_id: &str,
-) -> Result<()> {
+pub fn insert_pending(config: &Config, pending: &PendingApproval, session_id: &str) -> Result<()> {
     with_connection(config, |conn| {
         let args = serde_json::to_string(&pending.args_redacted)
             .context("[approval::store] serialize args_redacted")?;
@@ -1060,7 +1056,12 @@ mod tests {
     #[test]
     fn expire_stale_leaves_non_expiring_rows_pending() {
         let (config, _dir) = test_config();
-        insert_pending(&config, &sample_with_expiry("no-ttl", "sess-A", None), "sess-A").unwrap();
+        insert_pending(
+            &config,
+            &sample_with_expiry("no-ttl", "sess-A", None),
+            "sess-A",
+        )
+        .unwrap();
 
         assert_eq!(expire_stale(&config).unwrap(), 0);
         let rows = list_pending(&config).unwrap();
