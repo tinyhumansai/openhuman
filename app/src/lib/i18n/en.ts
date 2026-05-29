@@ -376,6 +376,8 @@ const en: TranslationMap = {
   'knowledgeGaps.loading': 'Finding gaps…',
   'knowledgeGaps.errorPrefix': 'Could not load the graph:',
   'knowledgeGaps.retry': 'Retry',
+  'knowledgeGaps.namespaceLabel': 'Namespace',
+  'knowledgeGaps.namespaceAll': 'All namespaces',
   'knowledgeGaps.empty': 'No knowledge graph yet.',
   'knowledgeGaps.emptyHint':
     'As the assistant records facts, sparsely-connected entities will surface here.',
