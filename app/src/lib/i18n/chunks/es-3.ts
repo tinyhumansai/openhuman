@@ -269,6 +269,7 @@ const es3: TranslationMap = {
   'memory.ingestingTitle': 'Ingiriendo {title}',
   'mic.noAudioCaptured': 'No se capturó audio',
   'mic.noSpeechDetected': 'No se detectó habla',
+  'mic.lowConfidenceResult': 'No se pudo entender el audio con claridad — intenta de nuevo',
   'mic.failedToStopRecording': 'No se pudo detener la grabación: {message}',
   'mic.transcriptionFailed': 'Transcripción fallida: {message}',
   'reflections.kind.retrospective': 'Retrospectiva',

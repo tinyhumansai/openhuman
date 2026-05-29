@@ -668,6 +668,10 @@ jobs:
               // Linux desktop installer consumed by scripts/install.sh and
               // advertised in latest.json as linux-x86_64.
               /OpenHuman_.*_amd64\.AppImage$/,
+              // Linux arm64 desktop installer consumed by scripts/install.sh
+              // and advertised in latest.json as linux-aarch64.
+              /OpenHuman_.*_(arm64|aarch64)\.AppImage$/,
+              /OpenHuman_.*_(arm64|aarch64)\.deb$/,
               // Auto-updater manifest — without this, installed clients can't
               // discover new releases via plugins.updater.endpoints.
               /^latest\.json$/,

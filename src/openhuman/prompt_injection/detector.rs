@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use regex::Regex;
+use regex::{Regex, RegexSet};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::env;
@@ -63,12 +63,12 @@ pub struct PromptEnforcementContext<'a> {
     pub session_id: Option<&'a str>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct DetectionRule {
     code: &'static str,
     message: &'static str,
     score: f32,
-    regex: Regex,
+    pattern: &'static str,
 }
 
 trait OptionalClassifier: Send + Sync {
@@ -124,87 +124,76 @@ static BASE64_RE: Lazy<Regex> = Lazy::new(|| {
         .expect("prompt injection normalization base64 detection regex")
 });
 
-static DETECTION_RULES: Lazy<Vec<DetectionRule>> = Lazy::new(|| {
-    vec![
-        DetectionRule {
-            code: "override.ignore_previous",
-            message: "Attempts to override existing safety or system instructions.",
-            score: 0.44,
-            regex: Regex::new(
-                r"(ignore|disregard|forget|bypass)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|rules|constraints|prompts?)",
-            )
-            .expect("override.ignore_previous regex"),
-        },
-        DetectionRule {
-            code: "override.role_hijack",
-            message: "Attempts to redefine assistant role or policy scope.",
-            score: 0.30,
-            regex: Regex::new(
-                r"(you\s+are\s+now|developer\s+mode|jailbreak|unrestricted\s+mode|(you\s+are|pretend\s+you\s+are|act\s+as)\s+dan\b|(no\s+restrictions|unrestricted)\s+.*\bdan\b|\bdan\b\s+.*(no\s+restrictions|unrestricted))",
-            )
-            .expect("override.role_hijack regex"),
-        },
-        DetectionRule {
-            code: "exfiltrate.system_prompt",
-            message: "Attempts to reveal hidden prompts or developer instructions.",
-            score: 0.42,
-            regex: Regex::new(
-                r"(reveal|show|print|dump|leak|display)\s+((the|your)\s+)?(system|developer|hidden)\s+(prompt|instructions|rules|message)",
-            )
-            .expect("exfiltrate.system_prompt regex"),
-        },
-        // Weak signal: a credential noun appearing anywhere. Common in
-        // benign questions like "how do I rotate my api key" or "what does
-        // JWT stand for", so the weight stays well below the Review
-        // threshold on its own. The companion rule `exfiltrate.credentials_with_intent`
-        // adds the extra score when an extraction verb actually targets the noun.
-        DetectionRule {
-            code: "exfiltrate.secrets",
-            message: "Mentions secret-bearing nouns (potentially benign on its own).",
-            score: 0.18,
-            regex: Regex::new(
-                r"(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
-            )
-            .expect("exfiltrate.secrets regex"),
-        },
-        // Strong signal: extraction verb directly targeting a credential noun.
-        // The window between verb and noun is bounded so that a long phrase
-        // separating them (e.g. "reveal how to configure my api key") does NOT
-        // match. Up to 2 filler words are allowed between verb and determiner
-        // so common attack phrasings still trip. The determiner is required,
-        // which is what excludes the benign "reveal how to set ..." case
-        // from issue #1940.
-        //
-        // Verb list intentionally excludes high-false-positive verbs that
-        // appear constantly in benign technical questions:
-        //   - "show" → "Show me the password reset flow" (TAURI-140)
-        //   - "give" → "Give me the environment token for CI"
-        //   - "tell" → "Tell me the token format / expiry"
-        //   - "fetch" → extremely common in API / code contexts
-        //   - "return" → extremely common in function / code contexts
-        //   - "output" → common in logging / code contexts
-        // The remaining verbs ("dump", "leak", "expose", "exfiltrate", etc.)
-        // are rarely used in benign technical writing and strongly imply
-        // adversarial intent when paired with a credential noun.
-        DetectionRule {
-            code: "exfiltrate.credentials_with_intent",
-            message: "Attempts to extract credentials, secrets, or tokens (verb + target).",
-            score: 0.46,
-            regex: Regex::new(
-                r"(reveal|print|dump|leak|display|share|expose|exfiltrate)\s+(\S+\s+){0,2}(the|your|my|all|stored|active|internal|hidden|configured|saved|env|environment)\s+(\S+\s+){0,3}(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
-            )
-            .expect("exfiltrate.credentials_with_intent regex"),
-        },
-        DetectionRule {
-            code: "tool.abuse",
-            message: "Attempts to force unsafe tool usage or policy bypass.",
-            score: 0.30,
-            regex: Regex::new(
-                r"(call|use|run|execute)\s+(the\s+)?(tool|tools?|function|functions?)\s+.*(without\s+approval|even\s+if\s+forbidden|no\s+matter\s+what)",
-            )
-            .expect("tool.abuse regex"),
-        },
-    ]
+// Detection rules are declared as `(code, message, score, pattern)` tuples.
+// The patterns are compiled into a single `RegexSet` once (`DETECTION_RULE_SET`)
+// so the hot path runs a *single* DFA pass per normalized variant instead of
+// N independent regex matches — the set returns indices into this slice.
+//
+// Notes per rule:
+//   - exfiltrate.secrets: weak signal — a credential noun appearing anywhere.
+//     Common in benign questions like "how do I rotate my api key", so weight
+//     stays well below the Review threshold on its own. The companion rule
+//     `exfiltrate.credentials_with_intent` adds the extra score when an
+//     extraction verb actually targets the noun.
+//   - exfiltrate.credentials_with_intent: strong signal — extraction verb
+//     directly targeting a credential noun, with a bounded window between
+//     verb and noun (so long separating phrases like
+//     "reveal how to configure my api key" do NOT match). Up to 2 filler
+//     words between verb and determiner; determiner is required, which
+//     excludes the benign "reveal how to set ..." case from issue #1940.
+//     Verb list intentionally excludes high-false-positive verbs that appear
+//     constantly in benign technical questions: "show"
+//     ("Show me the password reset flow", TAURI-140), "give", "tell",
+//     "fetch", "return", "output". The remaining verbs ("dump", "leak",
+//     "expose", "exfiltrate", etc.) are rarely used in benign technical
+//     writing and strongly imply adversarial intent.
+static DETECTION_RULES: &[DetectionRule] = &[
+    DetectionRule {
+        code: "override.ignore_previous",
+        message: "Attempts to override existing safety or system instructions.",
+        score: 0.44,
+        pattern: r"(ignore|disregard|forget|bypass)\s+(all\s+)?(previous|prior|above|system)\s+(instructions|rules|constraints|prompts?)",
+    },
+    DetectionRule {
+        code: "override.role_hijack",
+        message: "Attempts to redefine assistant role or policy scope.",
+        score: 0.30,
+        pattern: r"(you\s+are\s+now|developer\s+mode|jailbreak|unrestricted\s+mode|(you\s+are|pretend\s+you\s+are|act\s+as)\s+dan\b|(no\s+restrictions|unrestricted)\s+.*\bdan\b|\bdan\b\s+.*(no\s+restrictions|unrestricted))",
+    },
+    DetectionRule {
+        code: "exfiltrate.system_prompt",
+        message: "Attempts to reveal hidden prompts or developer instructions.",
+        score: 0.42,
+        pattern: r"(reveal|show|print|dump|leak|display)\s+((the|your)\s+)?(system|developer|hidden)\s+(prompt|instructions|rules|message)",
+    },
+    DetectionRule {
+        code: "exfiltrate.secrets",
+        message: "Mentions secret-bearing nouns (potentially benign on its own).",
+        score: 0.18,
+        pattern: r"(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
+    },
+    DetectionRule {
+        code: "exfiltrate.credentials_with_intent",
+        message: "Attempts to extract credentials, secrets, or tokens (verb + target).",
+        score: 0.46,
+        pattern: r"(reveal|print|dump|leak|display|share|expose|exfiltrate)\s+(\S+\s+){0,2}(the|your|my|all|stored|active|internal|hidden|configured|saved|env|environment)\s+(\S+\s+){0,3}(api\s*key|secret|token|password|private\s+key|credentials?|session\s+cookie|jwt|bearer)",
+    },
+    DetectionRule {
+        code: "tool.abuse",
+        message: "Attempts to force unsafe tool usage or policy bypass.",
+        score: 0.30,
+        pattern: r"(call|use|run|execute)\s+(the\s+)?(tool|tools?|function|functions?)\s+.*(without\s+approval|even\s+if\s+forbidden|no\s+matter\s+what)",
+    },
+];
+
+/// Single compiled DFA over all detection rule patterns. Matching against
+/// this set returns the indices of every rule whose regex matches the
+/// haystack, replacing what used to be N independent `Regex::is_match`
+/// passes per normalized variant. The index space is `0..DETECTION_RULES.len()`
+/// and lines up positionally with `DETECTION_RULES`.
+static DETECTION_RULE_SET: Lazy<RegexSet> = Lazy::new(|| {
+    RegexSet::new(DETECTION_RULES.iter().map(|r| r.pattern))
+        .expect("prompt_injection detection rule set compiled")
 });
 
 static OPTIONAL_CLASSIFIER: Lazy<Option<Box<dyn OptionalClassifier>>> = Lazy::new(|| {
@@ -250,9 +239,14 @@ fn is_obfuscation_char(ch: char) -> bool {
 
 fn normalize_prompt(input: &str) -> NormalizedPrompt {
     let lowered = input.to_lowercase();
-    let had_zwsp = lowered.chars().any(is_obfuscation_char);
     let has_base64_marker = BASE64_RE.is_match(&lowered);
 
+    // `had_zwsp` is detected inline as we walk the string for normalization,
+    // saving a separate `lowered.chars().any(...)` pass. The flag is set as
+    // soon as the first obfuscation char is seen; the same char is then
+    // dropped by the `is_obfuscation_char` arm below (single source of truth
+    // via the shared predicate).
+    let mut had_zwsp = false;
     let mut buffer = String::with_capacity(lowered.len());
     for ch in lowered.chars() {
         let mapped = match ch {
@@ -278,8 +272,11 @@ fn normalize_prompt(input: &str) -> NormalizedPrompt {
             '\u{0455}' => 's', // ѕ → s
             '\u{04bb}' => 'h', // һ → h
             '\u{0501}' => 'd', // ԁ → d
-            // Zero-width and formatting characters → strip
-            ch if is_obfuscation_char(ch) => continue,
+            // Zero-width and formatting characters → strip (and flag).
+            ch if is_obfuscation_char(ch) => {
+                had_zwsp = true;
+                continue;
+            }
             // Fullwidth ASCII → normal ASCII (U+FF01..U+FF5E → U+0021..U+007E)
             '\u{ff01}'..='\u{ff5e}' => {
                 let ascii = (ch as u32 - 0xff00 + 0x20) as u8 as char;
@@ -367,11 +364,20 @@ fn analyze_prompt(input: &str) -> (PromptInjectionVerdict, f32, Vec<PromptInject
         });
     }
 
-    for rule in DETECTION_RULES.iter() {
-        if rule.regex.is_match(&normalized.lowered)
-            || rule.regex.is_match(&normalized.collapsed)
-            || rule.regex.is_match(&normalized.compact)
-        {
+    // Match all rules in three batched DFA passes (one per normalized variant)
+    // instead of N×variants independent `is_match` calls. The `compact`
+    // (whitespace-stripped) variant is required: not every pattern relies on
+    // `\s+` between tokens — `override.role_hijack` has a single-token
+    // `jailbreak` branch, and `exfiltrate.secrets` has several
+    // (`secret`, `token`, `password`, `credentials?`, `jwt`, `bearer`, plus
+    // `api\s*key` whose `\s*` matches zero spaces). Without the compact
+    // scan, spacing-obfuscated attacks (`j a i l b r e a k`, `j w t`)
+    // would silently stop contributing to score/reasons.
+    let lowered_hits = DETECTION_RULE_SET.matches(&normalized.lowered);
+    let collapsed_hits = DETECTION_RULE_SET.matches(&normalized.collapsed);
+    let compact_hits = DETECTION_RULE_SET.matches(&normalized.compact);
+    for (idx, rule) in DETECTION_RULES.iter().enumerate() {
+        if lowered_hits.matched(idx) || collapsed_hits.matched(idx) || compact_hits.matched(idx) {
             score += rule.score;
             reasons.push(PromptInjectionReason {
                 code: rule.code.to_string(),

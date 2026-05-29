@@ -166,7 +166,13 @@ async fn pick_listen_port_with_policy(
     fallback_ports: &[u16],
     retry_policy: RetryPolicy,
 ) -> Result<PickListenPortResult, PickListenPortError> {
-    match TcpListener::bind((host, preferred)).await {
+    // `None`  → preferred port is occupied (AddrInUse): probe for a stale
+    //           OpenHuman listener to take over before falling back.
+    // `Some`  → preferred port is OS-excluded (Windows WSAEACCES / os error
+    //           10013): nothing is listening, so skip the takeover probe and
+    //           go straight to the fallback ports. The string is the bind
+    //           error rendered for the warn / NoAvailablePort surfaces.
+    let excluded_reason: Option<String> = match TcpListener::bind((host, preferred)).await {
         Ok(listener) => {
             return Ok(PickListenPortResult {
                 listener,
@@ -188,6 +194,18 @@ async fn pick_listen_port_with_policy(
                         });
                     }
                     Err(retry_err) if retry_err.kind() == ErrorKind::AddrInUse => {}
+                    Err(retry_err) if is_port_excluded_bind_error(&retry_err) => {
+                        // Raced from in-use into an OS exclusion — treat as
+                        // excluded and skip straight to fallbacks.
+                        return pick_fallback_port(
+                            host,
+                            preferred,
+                            fallback_ports,
+                            retry_policy,
+                            format!("port excluded by OS ({retry_err})"),
+                        )
+                        .await;
+                    }
                     Err(retry_err) => {
                         return Err(PickListenPortError::BindFailed {
                             port: preferred,
@@ -196,6 +214,17 @@ async fn pick_listen_port_with_policy(
                     }
                 }
             }
+            None
+        }
+        // Sentry OPENHUMAN-TAURI-500 (Windows): WSAEACCES / os error 10013 —
+        // the preferred port sits inside a system-reserved/excluded range
+        // (Hyper-V / WinNAT / WSL2 / Docker). Nothing is listening, so there
+        // is no takeover to do, but a neighbour port outside the reserved
+        // block typically binds. Previously this fell into the catch-all arm
+        // below and gave up immediately with `BindFailed`, leaving the core
+        // unable to start. Route it to the fallback ports instead.
+        Err(err) if is_port_excluded_bind_error(&err) => {
+            Some(format!("port excluded by OS ({err})"))
         }
         Err(err) => {
             return Err(PickListenPortError::BindFailed {
@@ -203,16 +232,46 @@ async fn pick_listen_port_with_policy(
                 reason: err.to_string(),
             });
         }
-    }
+    };
 
-    let fingerprint = identify_listener(host, preferred).await;
-    if matches!(fingerprint, ListenerFingerprint::OpenHumanCore) {
-        return Err(PickListenPortError::WouldTakeOver {
-            preferred,
-            fingerprint: fingerprint.as_human_readable(),
-        });
-    }
+    // Stale-listener takeover only applies when something is actually
+    // listening (AddrInUse). An OS-excluded port has no listener to identify,
+    // so skip the probe and synthesize a human-readable reason instead.
+    let fingerprint_label = match excluded_reason {
+        None => {
+            let fingerprint = identify_listener(host, preferred).await;
+            if matches!(fingerprint, ListenerFingerprint::OpenHumanCore) {
+                return Err(PickListenPortError::WouldTakeOver {
+                    preferred,
+                    fingerprint: fingerprint.as_human_readable(),
+                });
+            }
+            fingerprint.as_human_readable()
+        }
+        Some(reason) => reason,
+    };
 
+    pick_fallback_port(
+        host,
+        preferred,
+        fallback_ports,
+        retry_policy,
+        fingerprint_label,
+    )
+    .await
+}
+
+/// Try each fallback port in turn, retrying transient `AddrInUse` races on
+/// each candidate. `unusable_label` describes why `preferred` was rejected
+/// (stale-listener fingerprint, or an OS port-exclusion reason) and is used
+/// only for the warn / `NoAvailablePort` diagnostic surfaces.
+async fn pick_fallback_port(
+    host: &str,
+    preferred: u16,
+    fallback_ports: &[u16],
+    retry_policy: RetryPolicy,
+    unusable_label: String,
+) -> Result<PickListenPortResult, PickListenPortError> {
     for fallback in fallback_ports {
         // Retry each fallback candidate on transient AddrInUse so a brief
         // race on 7789–7798 (AV scanner / prior-instance teardown) doesn't
@@ -241,10 +300,8 @@ async fn pick_listen_port_with_policy(
         }
         if let Some(listener) = bound {
             warn!(
-                "[CORE] preferred port {} in use by {}; bound to {}",
-                preferred,
-                fingerprint.as_human_readable(),
-                fallback
+                "[CORE] preferred port {} unusable ({}); bound to {}",
+                preferred, unusable_label, fallback
             );
             return Ok(PickListenPortResult {
                 listener,
@@ -254,11 +311,41 @@ async fn pick_listen_port_with_policy(
         }
     }
 
+    // When an OS-exclusion blocked the preferred port *and* every fallback is
+    // also unavailable, surface the Windows diagnostic command so users can
+    // identify the reserved range without waiting for a support escalation.
+    if unusable_label.contains("excluded by OS") {
+        warn!(
+            "[CORE] preferred port {} and all fallbacks {:?} are unavailable. \
+             On Windows, run `netsh interface ipv4 show excludedportrange protocol=tcp` \
+             to inspect system-reserved port ranges (Hyper-V / WinNAT / WSL2 / Docker).",
+            preferred, fallback_ports
+        );
+    }
+
     Err(PickListenPortError::NoAvailablePort {
         preferred,
-        fingerprint: fingerprint.as_human_readable(),
+        fingerprint: unusable_label,
         attempted: fallback_ports.to_vec(),
     })
+}
+
+/// Returns `true` when a preferred-port bind failure means *that specific
+/// port* is unusable but a different port likely works — so the caller should
+/// try the fallback ports rather than give up.
+///
+/// Targets Windows `WSAEACCES` (os error 10013): the port sits inside a
+/// system-reserved/excluded range (Hyper-V / WinNAT / WSL2 / Docker — visible
+/// via `netsh interface ipv4 show excludedportrange protocol=tcp`). Nothing is
+/// listening on it, so there is no takeover to perform, but a neighbour port
+/// outside the reserved block binds fine.
+///
+/// We match on `raw_os_error()` directly because Rust's `ErrorKind` mapping
+/// for `10013` is not stable across releases (mirrors the raw-code approach in
+/// [`crate::openhuman::util::is_transient_fs_error`]); the `PermissionDenied`
+/// kind is accepted too in case a future Rust maps it.
+fn is_port_excluded_bind_error(err: &std::io::Error) -> bool {
+    err.raw_os_error() == Some(10013) || err.kind() == ErrorKind::PermissionDenied
 }
 
 async fn identify_listener(host: &str, port: u16) -> ListenerFingerprint {
@@ -631,6 +718,116 @@ mod tests {
         release_task.await.expect("release task");
         assert_eq!(result.port, preferred);
         assert_eq!(result.fallback_from, None);
+    }
+
+    // ── is_port_excluded_bind_error (Sentry OPENHUMAN-TAURI-500) ─────────────
+
+    #[test]
+    fn port_excluded_error_matches_wsaeacces_raw_code() {
+        // WSAEACCES (os error 10013) — the Windows port-exclusion code from
+        // the Sentry event. Must classify as "try a different port" even on
+        // non-Windows runners, where 10013 has no special ErrorKind, because
+        // we match on the raw code directly.
+        let err = std::io::Error::from_raw_os_error(10013);
+        assert!(
+            is_port_excluded_bind_error(&err),
+            "WSAEACCES (10013) must route to the fallback ports"
+        );
+    }
+
+    #[test]
+    fn port_excluded_error_matches_permission_denied_kind() {
+        let err = std::io::Error::new(ErrorKind::PermissionDenied, "access denied");
+        assert!(
+            is_port_excluded_bind_error(&err),
+            "PermissionDenied kind must route to the fallback ports"
+        );
+    }
+
+    #[test]
+    fn port_excluded_error_rejects_addr_in_use_and_others() {
+        // AddrInUse has its own takeover path and must NOT be treated as an
+        // OS exclusion. Unrelated kinds (and unrelated raw codes) must fall
+        // through to the existing BindFailed arm so genuine bind bugs surface.
+        for err in [
+            std::io::Error::new(ErrorKind::AddrInUse, "in use"),
+            std::io::Error::new(ErrorKind::ConnectionRefused, "refused"),
+            std::io::Error::from_raw_os_error(5), // EIO on unix / not WSAEACCES
+        ] {
+            assert!(
+                !is_port_excluded_bind_error(&err),
+                "non-exclusion error must not route to fallback: {err:?}"
+            );
+        }
+    }
+
+    // ── pick_fallback_port (the path WSAEACCES routes into) ──────────────────
+
+    #[tokio::test]
+    async fn pick_fallback_port_binds_first_free_candidate() {
+        // Simulates the post-classification path: the preferred port was
+        // unusable (e.g. WSAEACCES), so we try the fallbacks. A free fallback
+        // must bind and report `fallback_from: Some(preferred)`.
+        let preferred_holder = reserve_port();
+        let preferred = preferred_holder.local_addr().unwrap().port();
+        let busy_holder = reserve_port();
+        let busy = busy_holder.local_addr().unwrap().port();
+        let free_holder = reserve_port();
+        let free = free_holder.local_addr().unwrap().port();
+        drop(free_holder);
+
+        let result = pick_fallback_port(
+            "127.0.0.1",
+            preferred,
+            &[busy, free],
+            RetryPolicy {
+                attempts: 1,
+                backoff: Duration::from_millis(10),
+            },
+            "port excluded by OS (simulated WSAEACCES)".to_string(),
+        )
+        .await
+        .expect("a free fallback must bind");
+
+        assert_eq!(result.port, free);
+        assert_eq!(result.fallback_from, Some(preferred));
+    }
+
+    #[tokio::test]
+    async fn pick_fallback_port_all_busy_reports_label() {
+        // When every fallback is occupied, NoAvailablePort must carry the
+        // unusable label (here the OS-exclusion reason) so the diagnostic
+        // surface explains *why* the preferred port was skipped.
+        let preferred_holder = reserve_port();
+        let preferred = preferred_holder.local_addr().unwrap().port();
+        let f1_holder = reserve_port();
+        let f1 = f1_holder.local_addr().unwrap().port();
+        let f2_holder = reserve_port();
+        let f2 = f2_holder.local_addr().unwrap().port();
+
+        let err = pick_fallback_port(
+            "127.0.0.1",
+            preferred,
+            &[f1, f2],
+            RetryPolicy {
+                attempts: 1,
+                backoff: Duration::from_millis(10),
+            },
+            "port excluded by OS (simulated WSAEACCES)".to_string(),
+        )
+        .await
+        .expect_err("all-busy fallbacks must fail");
+
+        assert!(
+            matches!(
+                err,
+                PickListenPortError::NoAvailablePort { preferred: p, ref fingerprint, ref attempted }
+                    if p == preferred
+                        && attempted == &vec![f1, f2]
+                        && fingerprint.contains("excluded by OS")
+            ),
+            "expected NoAvailablePort carrying the exclusion label, got: {err:?}"
+        );
     }
 
     #[test]

@@ -33,6 +33,7 @@ impl Provider for StubProvider {
             text: Some("ok".into()),
             tool_calls: Vec::new(),
             usage: None,
+            reasoning_content: None,
         })
     }
 }

@@ -528,19 +528,33 @@ impl OpenAiCompatibleProvider {
         tools: Option<&[crate::openhuman::tools::ToolSpec]>,
     ) -> Option<Vec<serde_json::Value>> {
         tools.map(|items| {
-            items
-                .iter()
-                .map(|tool| {
-                    serde_json::json!({
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        }
-                    })
-                })
-                .collect()
+            let mut seen: std::collections::HashSet<&str> =
+                std::collections::HashSet::with_capacity(items.len());
+            let mut dropped: Vec<&str> = Vec::new();
+            let mut out: Vec<serde_json::Value> = Vec::with_capacity(items.len());
+            for tool in items {
+                if !seen.insert(tool.name.as_str()) {
+                    dropped.push(tool.name.as_str());
+                    continue;
+                }
+                out.push(serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.parameters,
+                    }
+                }));
+            }
+            if !dropped.is_empty() {
+                log::warn!(
+                    "[providers][compatible] dropped {} duplicate tool spec(s) at wire \
+                     boundary (TAURI-RUST-2E): {:?}",
+                    dropped.len(),
+                    dropped
+                );
+            }
+            out
         })
     }
 
@@ -549,6 +563,21 @@ impl OpenAiCompatibleProvider {
             messages
                 .iter()
                 .map(|message| {
+                    // Extract reasoning_content stored in extra_metadata by the
+                    // agent harness after each assistant turn. Thinking models
+                    // (DeepSeek-R1, Qwen3, GLM-4) require this to be echoed back
+                    // verbatim in subsequent requests, or the API returns HTTP 400.
+                    let reasoning_content = if message.role == "assistant" {
+                        message
+                            .extra_metadata
+                            .as_ref()
+                            .and_then(|m| m.get("reasoning_content"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(ToString::to_string)
+                    } else {
+                        None
+                    };
+
                     if message.role == "assistant" {
                         if let Ok(value) =
                             serde_json::from_str::<serde_json::Value>(&message.content)
@@ -578,11 +607,28 @@ impl OpenAiCompatibleProvider {
                                         .and_then(serde_json::Value::as_str)
                                         .map(ToString::to_string);
 
+                                    // Replay the assistant's reasoning so
+                                    // DeepSeek thinking mode accepts the
+                                    // tool-call turn on the follow-up request
+                                    // (Sentry TAURI-RUST-4KB). Prefer the value
+                                    // embedded in the JSON content (written by
+                                    // `build_native_assistant_history` in the
+                                    // tool-loop path); fall back to the value
+                                    // stored in `extra_metadata` (written by the
+                                    // main session-turn path).
+                                    let reasoning_content = value
+                                        .get("reasoning_content")
+                                        .and_then(serde_json::Value::as_str)
+                                        .filter(|s| !s.trim().is_empty())
+                                        .map(ToString::to_string)
+                                        .or_else(|| reasoning_content.clone());
+
                                     return NativeMessage {
                                         role: "assistant".to_string(),
                                         content,
                                         tool_call_id: None,
                                         tool_calls: Some(tool_calls),
+                                        reasoning_content,
                                     };
                                 }
                             }
@@ -608,6 +654,7 @@ impl OpenAiCompatibleProvider {
                                 content,
                                 tool_call_id,
                                 tool_calls: None,
+                                reasoning_content: None,
                             };
                         }
                     }
@@ -617,6 +664,7 @@ impl OpenAiCompatibleProvider {
                         content: Some(message.content.clone()),
                         tool_call_id: None,
                         tool_calls: None,
+                        reasoning_content,
                     }
                 })
                 .collect();
@@ -769,6 +817,17 @@ impl OpenAiCompatibleProvider {
             .ok_or_else(|| anyhow::anyhow!("No choices in response from {}", provider_name))?;
 
         let mut text = message.effective_content_optional();
+        // Capture reasoning_content before the message fields are moved into
+        // the tool-call extractors below. This must be passed back verbatim on
+        // the next turn for thinking models (e.g. DeepSeek-R1, Qwen3) whose APIs
+        // return HTTP 400 ("reasoning_content in thinking mode must be passed back")
+        // when the field is omitted from subsequent assistant messages.
+        let reasoning_content = message
+            .reasoning_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned);
         let mut tool_calls = message
             .tool_calls
             .unwrap_or_default()
@@ -813,10 +872,17 @@ impl OpenAiCompatibleProvider {
             }
         }
 
+        tracing::debug!(
+            has_reasoning_content = reasoning_content.is_some(),
+            reasoning_content_chars = reasoning_content.as_ref().map_or(0, |r| r.chars().count()),
+            "[provider:parse_native_response] reasoning_content capture"
+        );
+
         Ok(ProviderChatResponse {
             text,
             tool_calls,
             usage,
+            reasoning_content,
         })
     }
 
@@ -1448,7 +1514,20 @@ impl Provider for OpenAiCompatibleProvider {
                 format!("{} API error ({status}): {sanitized}", self.name),
                 status,
             );
-            if super::is_budget_exhausted_http_400(status, &error) {
+            if super::is_backend_auth_failure(self.name.as_str(), status) {
+                // Backend rejected the app session JWT (401/403): expected
+                // session-expiry (token expired/revoked/rotated), not a code
+                // bug. Publish SessionExpired so the credentials subscriber
+                // drives reauth and the scheduler-gate halts downstream LLM
+                // work, and skip the Sentry report (TAURI-RUST-N). Mirrors the
+                // `is_backend_auth_failure` arm in `super::api_error`.
+                super::publish_backend_session_expired(
+                    "chat_completions",
+                    self.name.as_str(),
+                    status,
+                    &message,
+                );
+            } else if super::is_budget_exhausted_http_400(status, &error) {
                 super::log_budget_exhausted_http_400(
                     "chat_completions",
                     self.name.as_str(),
@@ -1676,6 +1755,7 @@ impl Provider for OpenAiCompatibleProvider {
                     text: Some(text),
                     tool_calls: vec![],
                     usage: None,
+                    reasoning_content: None,
                 });
             }
         };
@@ -1694,6 +1774,15 @@ impl Provider for OpenAiCompatibleProvider {
             .ok_or_else(|| anyhow::anyhow!("No response from {}", self.name))?;
 
         let text = choice.message.effective_content_optional();
+        // See `parse_native_response`: replay reasoning on the follow-up
+        // request so DeepSeek thinking mode accepts the tool-call turn.
+        let reasoning_content = choice
+            .message
+            .reasoning_content
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
         let tool_calls = choice
             .message
             .tool_calls
@@ -1715,6 +1804,7 @@ impl Provider for OpenAiCompatibleProvider {
             text,
             tool_calls,
             usage,
+            reasoning_content,
         })
     }
 
@@ -1849,6 +1939,7 @@ impl Provider for OpenAiCompatibleProvider {
                             text: Some(text),
                             tool_calls: vec![],
                             usage: None,
+                            reasoning_content: None,
                         })
                         .map_err(|responses_err| {
                             let fb = super::format_anyhow_chain(&responses_err);
@@ -1878,6 +1969,7 @@ impl Provider for OpenAiCompatibleProvider {
                     text: Some(text),
                     tool_calls: vec![],
                     usage: None,
+                    reasoning_content: None,
                 });
             }
 
@@ -1889,6 +1981,7 @@ impl Provider for OpenAiCompatibleProvider {
                         text: Some(text),
                         tool_calls: vec![],
                         usage: None,
+                        reasoning_content: None,
                     })
                     .map_err(|responses_err| {
                         let fb = super::format_anyhow_chain(&responses_err);

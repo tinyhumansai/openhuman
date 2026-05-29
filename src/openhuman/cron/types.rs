@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -57,7 +57,18 @@ pub struct ActiveHours {
     pub end: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// A cron-job schedule.
+///
+/// Serializes as an internally-tagged object (`{"kind": "cron", ...}`).
+/// Deserializes from **either** that object form **or** a bare cron-expression
+/// string like `"0 9 * * 1"` — the bare-string form is treated as
+/// `Schedule::Cron { expr, tz: None, active_hours: None }`.
+///
+/// The bare-string shorthand exists because agents and some older frontend
+/// callers pass `schedule: "0 9 * * 1"` directly instead of the structured
+/// object.  Accepting it here prevents Sentry issue CORE-RUST-FY
+/// ("invalid type: string, expected internally tagged enum Schedule").
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Schedule {
     Cron {
@@ -73,6 +84,97 @@ pub enum Schedule {
     Every {
         every_ms: u64,
     },
+}
+
+impl<'de> Deserialize<'de> for Schedule {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::{self, MapAccess, Visitor};
+        use std::fmt;
+
+        struct ScheduleVisitor;
+
+        impl<'de> Visitor<'de> for ScheduleVisitor {
+            type Value = Schedule;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(
+                    f,
+                    "a cron-schedule object ({{\"kind\":\"cron\",\"expr\":\"...\"}}) \
+                     or a bare cron-expression string"
+                )
+            }
+
+            /// Accept a bare string as `Schedule::Cron { expr, .. }`.
+            /// This handles callers that send `schedule: "0 9 * * 1"` directly
+            /// instead of the structured form.
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                tracing::debug!(
+                    "[cron] Schedule::deserialize: got bare string '{}', \
+                     coercing to Cron variant",
+                    value
+                );
+                Ok(Schedule::Cron {
+                    expr: value.to_owned(),
+                    tz: None,
+                    active_hours: None,
+                })
+            }
+
+            fn visit_string<E: de::Error>(self, value: String) -> Result<Self::Value, E> {
+                tracing::debug!(
+                    "[cron] Schedule::deserialize: got bare string '{}', \
+                     coercing to Cron variant",
+                    value
+                );
+                Ok(Schedule::Cron {
+                    expr: value,
+                    tz: None,
+                    active_hours: None,
+                })
+            }
+
+            /// Accept the standard internally-tagged object form.
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+                // Delegate to the serde-derived tagged-enum logic by
+                // deserializing from a collected map value.
+                #[derive(Deserialize)]
+                #[serde(tag = "kind", rename_all = "lowercase")]
+                enum ScheduleTagged {
+                    Cron {
+                        expr: String,
+                        #[serde(default)]
+                        tz: Option<String>,
+                        #[serde(default)]
+                        active_hours: Option<ActiveHours>,
+                    },
+                    At {
+                        at: DateTime<Utc>,
+                    },
+                    Every {
+                        every_ms: u64,
+                    },
+                }
+
+                let tagged =
+                    ScheduleTagged::deserialize(de::value::MapAccessDeserializer::new(map))?;
+                Ok(match tagged {
+                    ScheduleTagged::Cron {
+                        expr,
+                        tz,
+                        active_hours,
+                    } => Schedule::Cron {
+                        expr,
+                        tz,
+                        active_hours,
+                    },
+                    ScheduleTagged::At { at } => Schedule::At { at },
+                    ScheduleTagged::Every { every_ms } => Schedule::Every { every_ms },
+                })
+            }
+        }
+
+        deserializer.deserialize_any(ScheduleVisitor)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -281,6 +383,67 @@ mod tests {
         assert_eq!(v["every_ms"], 60_000);
         let back: Schedule = serde_json::from_value(v).unwrap();
         assert_eq!(back, s);
+    }
+
+    // ── Schedule bare-string deserialization (CORE-RUST-FY fix) ──────
+    // Callers (agents, older frontend) sometimes pass a bare cron
+    // expression string like `"0 9 * * 1"` instead of the structured
+    // `{"kind":"cron","expr":"0 9 * * 1"}` form.  Both must parse.
+
+    #[test]
+    fn schedule_deserializes_bare_cron_string() {
+        let s: Schedule = serde_json::from_value(json!("0 9 * * 1")).unwrap();
+        assert_eq!(
+            s,
+            Schedule::Cron {
+                expr: "0 9 * * 1".into(),
+                tz: None,
+                active_hours: None,
+            }
+        );
+    }
+
+    #[test]
+    fn schedule_deserializes_bare_5_field_cron_string() {
+        let s: Schedule = serde_json::from_str("\"*/5 * * * *\"").unwrap();
+        assert_eq!(
+            s,
+            Schedule::Cron {
+                expr: "*/5 * * * *".into(),
+                tz: None,
+                active_hours: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cron_job_patch_accepts_bare_schedule_string() {
+        // This is the exact payload shape that triggered CORE-RUST-FY:
+        // {"schedule": "0 9 * * 1"}
+        let raw = json!({ "schedule": "0 9 * * 1" });
+        let patch: CronJobPatch = serde_json::from_value(raw).unwrap();
+        assert_eq!(
+            patch.schedule,
+            Some(Schedule::Cron {
+                expr: "0 9 * * 1".into(),
+                tz: None,
+                active_hours: None,
+            })
+        );
+    }
+
+    #[test]
+    fn cron_job_patch_still_accepts_structured_schedule_object() {
+        let raw = json!({ "schedule": { "kind": "cron", "expr": "0 9 * * 1" } });
+        let patch: CronJobPatch = serde_json::from_value(raw).unwrap();
+        assert_eq!(
+            patch.schedule,
+            Some(Schedule::Cron {
+                expr: "0 9 * * 1".into(),
+                tz: None,
+                active_hours: None,
+            })
+        );
     }
 
     // ── DeliveryConfig ─────────────────────────────────────────────

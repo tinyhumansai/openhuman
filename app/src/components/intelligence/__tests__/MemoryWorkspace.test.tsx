@@ -34,6 +34,11 @@ vi.mock('../../../utils/openUrl', () => ({ openUrl: vi.fn().mockResolvedValue(un
 vi.mock('../../../utils/tauriCommands/workspacePaths', () => ({
   openWorkspacePath: vi.fn().mockResolvedValue(undefined),
   revealWorkspacePath: vi.fn().mockResolvedValue(undefined),
+  // #2492: the Obsidian deep link now resolves the vault's absolute path
+  // through the shared workspace-link layer instead of trusting the
+  // `content_root_abs` field returned from the graph export RPC. Return the
+  // same path the prop carries so the existing `openUrl` assertion is stable.
+  resolveWorkspaceAbsolutePath: vi.fn().mockResolvedValue('/tmp/workspace/memory_tree/content'),
   previewWorkspaceText: vi
     .fn()
     .mockResolvedValue({

@@ -354,21 +354,69 @@ describe('VoicePanel', () => {
     expect(cloudSwitch).toBeDisabled();
   });
 
-  it('renders Whisper and Piper chips as coming-soon and disabled', async () => {
+  it('renders Whisper and Piper chips as enabled and clickable (regression #2788)', async () => {
     renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
 
     await screen.findByTestId('voice-providers-section');
-    // Both local provider chips are disabled (coming soon).
-    const switches = screen.getAllByRole('switch');
-    // Cloud, Whisper, Piper, plus any external provider chips.
-    const whisperSwitch = switches.find(s =>
-      s.closest('div')?.textContent?.toLowerCase().includes('whisper')
-    );
-    const piperSwitch = switches.find(s =>
-      s.closest('div')?.textContent?.toLowerCase().includes('piper')
-    );
-    expect(whisperSwitch).toBeDisabled();
-    expect(piperSwitch).toBeDisabled();
+    // The Whisper / Piper chips must be reachable so users can install and
+    // route to the local STT/TTS engines without editing config.toml by
+    // hand. The chip is "off" until the engine is selected as the active
+    // STT (whisper) / TTS (piper) routing target.
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    expect(whisperChip).not.toBeDisabled();
+    expect(piperChip).not.toBeDisabled();
+    expect(whisperChip).toHaveAttribute('aria-checked', 'false');
+    expect(piperChip).toHaveAttribute('aria-checked', 'false');
+  });
+
+  it('opens the install modal when the Whisper chip is clicked', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    fireEvent.click(whisperChip);
+
+    // The existing local-provider modal opens with the whisper slug — it
+    // contains the install button and Whisper model selector that route
+    // through `voice_install_whisper` + `voice_update_provider_settings`.
+    expect(await screen.findByTestId('voice-provider-key-modal')).toBeInTheDocument();
+  });
+
+  it('opens the install modal when the Piper chip is clicked', async () => {
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    fireEvent.click(piperChip);
+
+    expect(await screen.findByTestId('voice-provider-key-modal')).toBeInTheDocument();
+  });
+
+  it('renders the Whisper chip as on when STT routing is set to whisper', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'local', engine: 'whisper', model: 'medium' },
+      ttsProvider: { kind: 'cloud' },
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const whisperChip = await screen.findByTestId('voice-provider-chip-whisper');
+    await waitFor(() => expect(whisperChip).toHaveAttribute('aria-checked', 'true'));
+  });
+
+  it('renders the Piper chip as on when TTS routing is set to piper', async () => {
+    runtime.voiceSettings = makeVoiceSettings({
+      sttProvider: { kind: 'cloud' },
+      ttsProvider: { kind: 'local', engine: 'piper', model: '' },
+    });
+
+    renderWithProviders(<VoicePanel />, { initialEntries: ['/settings/voice'] });
+
+    await screen.findByTestId('voice-providers-section');
+    const piperChip = await screen.findByTestId('voice-provider-chip-piper');
+    await waitFor(() => expect(piperChip).toHaveAttribute('aria-checked', 'true'));
   });
 
   it('renders the ElevenLabs chip as off when no provider is registered', async () => {

@@ -38,6 +38,7 @@ async fn keyword_provider_records_forced_then_fallback_turns() {
         text: Some("forced reply".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let messages = vec![ChatMessage::user("nothing should match here")];
@@ -942,6 +943,7 @@ async fn run_tool_call_loop_returns_max_iterations_error() {
         text: Some("<tool_call>{\"name\":\"echo\",\"arguments\":{}}</tool_call>".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     });
 
     let (echo_tool, _) = RecordingTool::echo("echo");

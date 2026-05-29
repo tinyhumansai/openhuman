@@ -261,6 +261,7 @@ const ar3: TranslationMap = {
   'memory.ingestingTitle': 'جارٍ استيعاب {title}',
   'mic.noAudioCaptured': 'لم يُلتقط أي صوت',
   'mic.noSpeechDetected': 'لم يُكتشف أي كلام',
+  'mic.lowConfidenceResult': 'تعذّر فهم الصوت بوضوح — يرجى المحاولة مرة أخرى',
   'mic.failedToStopRecording': 'فشل إيقاف التسجيل: {message}',
   'mic.transcriptionFailed': 'فشل النسخ: {message}',
   'reflections.kind.retrospective': 'مراجعة',

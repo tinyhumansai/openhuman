@@ -464,6 +464,7 @@ mod tests {
             created_at_ms: now,
             expires_at_ms: now + 60_000,
             notes: vec![],
+            owner: None,
         };
         insert_quote_for_test(quote.clone());
 
@@ -518,6 +519,7 @@ mod tests {
             created_at_ms: now,
             expires_at_ms: now + 60_000,
             notes: vec![],
+            owner: None,
         };
         insert_quote_for_test(quote.clone());
 
@@ -596,6 +598,7 @@ mod tests {
             created_at_ms: now,
             expires_at_ms: now + 60_000,
             notes: vec![],
+            owner: None,
         };
         let err = execute_tron_quote(quote).await.unwrap_err();
         assert!(err.contains("BANDWIDTH_ERROR"), "got: {err}");
