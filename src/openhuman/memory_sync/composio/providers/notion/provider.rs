@@ -18,10 +18,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    extract_item_id, persist_single_item, SyncState,
-};
+use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
     pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
     SyncReason,
@@ -277,21 +276,26 @@ impl ComposioProvider for NotionProvider {
                 // Build a title from the page's properties.
                 let title_text = sync::extract_page_title(page)
                     .unwrap_or_else(|| format!("Notion page {page_id}"));
-                let doc_id = format!("composio-notion-page-{page_id}");
                 let title = format!("Notion: {title_text}");
 
-                match persist_single_item(
-                    &memory,
-                    "notion",
-                    &doc_id,
+                // Route into the memory-tree pipeline (#2885). The prior
+                // implementation called `persist_single_item` →
+                // `MemoryClient::store_skill_sync` → UnifiedMemory
+                // `memory_docs`, which the modern retrieval surfaces
+                // (`memory.search`, `tree.read_chunk`, `tree.browse`,
+                // summary trees, MCP tools) don't read from — the data
+                // was invisible to every agent recall path.
+                match ingest_page_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &page_id,
                     &title,
+                    edited_time.as_deref(),
                     page,
-                    "notion",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_chunks_written) => {
                         state.mark_synced(&sync_key);
                         total_persisted += 1;
                     }
@@ -299,7 +303,7 @@ impl ComposioProvider for NotionProvider {
                         tracing::warn!(
                             page_id = %page_id,
                             error = %e,
-                            "[composio:notion] failed to persist page (continuing)"
+                            "[composio:notion] failed to ingest page into memory_tree (continuing)"
                         );
                     }
                 }
