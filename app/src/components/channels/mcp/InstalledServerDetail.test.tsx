@@ -280,4 +280,31 @@ describe('InstalledServerDetail', () => {
     );
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
+
+  it('clears playground STATE on external status flip, so it does not reappear on reconnect', async () => {
+    const { rerender, connectedStatus } = await setupOpenPlayground();
+    // Poll-driven flip away from connected. The render gate hides the modal,
+    // and the status-watching effect must additionally clear playgroundTool.
+    rerender(
+      <InstalledServerDetail
+        server={BASE_SERVER}
+        connStatus={{ ...connectedStatus, status: 'error', last_error: 'boom' }}
+        onUninstalled={() => {}}
+      />
+    );
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+    // Reconnect. If the effect only relied on the render gate (state still
+    // set), the modal would spring back open here. With the state cleared it
+    // must stay closed until the user explicitly clicks Try again.
+    rerender(
+      <InstalledServerDetail
+        server={BASE_SERVER}
+        connStatus={connectedStatus}
+        onUninstalled={() => {}}
+      />
+    );
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
 });

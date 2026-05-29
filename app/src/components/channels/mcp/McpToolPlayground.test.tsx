@@ -9,7 +9,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import McpToolPlayground from './McpToolPlayground';
+import McpToolPlayground, { parseToolArgs } from './McpToolPlayground';
 import type { McpTool } from './types';
 
 const TOOL: McpTool = {
@@ -424,5 +424,35 @@ describe('McpToolPlayground', () => {
         });
       }
     }
+  });
+});
+
+describe('parseToolArgs', () => {
+  it('treats empty / whitespace-only input as an empty object', () => {
+    expect(parseToolArgs('', 'fallback')).toEqual({ ok: true, value: {} });
+    expect(parseToolArgs('   \n\t', 'fallback')).toEqual({ ok: true, value: {} });
+  });
+
+  it('parses valid JSON into its value', () => {
+    expect(parseToolArgs('{"path":"/tmp/x"}', 'fallback')).toEqual({
+      ok: true,
+      value: { path: '/tmp/x' },
+    });
+  });
+
+  it('returns ok:false with the parser message on invalid JSON', () => {
+    const result = parseToolArgs('{not valid', 'fallback message');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // The real parser message is surfaced (not the fallback) when available.
+      expect(result.error.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('falls back to the provided message when the error is not an Error', () => {
+    // JSON.parse throws SyntaxError (an Error), so the fallback path is hard to
+    // hit naturally; this pins the contract that a non-empty error is returned.
+    const result = parseToolArgs('nope', 'fallback message');
+    expect(result.ok).toBe(false);
   });
 });

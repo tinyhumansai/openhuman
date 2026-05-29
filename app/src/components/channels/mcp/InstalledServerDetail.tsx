@@ -39,6 +39,23 @@ const InstalledServerDetail = ({
   // connected (the gate is enforced at the McpToolList rendering site).
   const [playgroundTool, setPlaygroundTool] = useState<McpTool | null>(null);
 
+  // Poll-driven safety net: if the server leaves `connected` by ANY path —
+  // background status poll, parent prop change, auth expiry — not just the
+  // explicit disconnect/uninstall handlers, drop the staged playground so its
+  // now-unreachable tool can't be run AND doesn't spring back open when the
+  // server reconnects. Implemented via React's "adjust state while rendering"
+  // pattern (store the previous status, reset on change) rather than an
+  // effect — same result without the extra render pass or the
+  // set-state-in-effect lint. The render gate below is the belt-and-suspenders
+  // guard for the single render before this runs.
+  const [prevStatus, setPrevStatus] = useState(status);
+  if (status !== prevStatus) {
+    setPrevStatus(status);
+    if (status !== 'connected' && playgroundTool) {
+      setPlaygroundTool(null);
+    }
+  }
+
   const runBusy = useCallback(async (task: () => Promise<void>) => {
     setBusy(true);
     setError(null);

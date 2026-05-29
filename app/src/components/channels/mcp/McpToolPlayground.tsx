@@ -72,6 +72,23 @@ const formatArgs = (raw: string): string => {
   }
 };
 
+/**
+ * Parse the args textarea into a value for the tool call. Empty input is
+ * treated as `{}`. Returns a discriminated result rather than throwing so the
+ * caller can keep JSON-parse failures (user input) cleanly separate from RPC
+ * failures (the actual tool call) — they surface to the user differently.
+ */
+export type ParsedToolArgs = { ok: true; value: unknown } | { ok: false; error: string };
+
+export const parseToolArgs = (argsJson: string, fallbackMessage: string): ParsedToolArgs => {
+  if (argsJson.trim() === '') return { ok: true, value: {} };
+  try {
+    return { ok: true, value: JSON.parse(argsJson) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : fallbackMessage };
+  }
+};
+
 const stringifyResult = (value: unknown): string => {
   try {
     return JSON.stringify(value, null, 2);
@@ -132,11 +149,9 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
   const handleRun = useCallback(async () => {
     if (isRunning) return;
     // Parse args first; refuse to call the RPC with bad input.
-    let parsed: unknown;
-    try {
-      parsed = argsJson.trim() === '' ? {} : JSON.parse(argsJson);
-    } catch (err) {
-      setParseError(err instanceof Error ? err.message : t('mcp.playground.invalidJson'));
+    const parsed = parseToolArgs(argsJson, t('mcp.playground.invalidJson'));
+    if (!parsed.ok) {
+      setParseError(parsed.error);
       setResultText(null);
       return;
     }
@@ -155,7 +170,7 @@ const McpToolPlayground = ({ serverId, tool, onClose }: McpToolPlaygroundProps) 
       const callResult = await mcpClientsApi.toolCall({
         server_id: serverId,
         tool_name: tool.name,
-        arguments: parsed,
+        arguments: parsed.value,
       });
       const text = stringifyResult(callResult.result);
       const isError = Boolean(callResult.is_error);
