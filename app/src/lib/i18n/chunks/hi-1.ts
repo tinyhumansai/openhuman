@@ -1611,6 +1611,29 @@ const hi1: TranslationMap = {
   'graphCentrality.bridgeBadge': 'connector',
   'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
   'graphCentrality.degreeTitle': '{in} in · {out} out',
+  'memory.tab.path': 'Paths',
+  'connectionPath.title': 'Connection Path',
+  'connectionPath.intro':
+    'Trace the shortest chain of relations linking any two entities — how the graph connects them, even across several hops.',
+  'connectionPath.loading': 'Loading the graph…',
+  'connectionPath.errorPrefix': 'Could not load the graph:',
+  'connectionPath.retry': 'Retry',
+  'connectionPath.namespaceLabel': 'Namespace',
+  'connectionPath.namespaceAll': 'All namespaces',
+  'connectionPath.sourceLabel': 'From',
+  'connectionPath.targetLabel': 'To',
+  'connectionPath.sourcePlaceholder': 'Start entity',
+  'connectionPath.targetPlaceholder': 'End entity',
+  'connectionPath.prompt': 'Pick two entities to trace how they are connected.',
+  'connectionPath.empty': 'No knowledge graph yet.',
+  'connectionPath.emptyHint':
+    'Once the assistant records related facts, you can trace connections here.',
+  'connectionPath.resultHeading': 'Shortest path',
+  'connectionPath.pathSummary': '{length} hop(s) apart',
+  'connectionPath.sameMessage': 'Pick two different entities.',
+  'connectionPath.missingSource': '"{entity}" is not in the graph.',
+  'connectionPath.missingTarget': '"{entity}" is not in the graph.',
+  'connectionPath.noPath': 'No connection found between "{source}" and "{target}".',
 };
 
 export default hi1;
