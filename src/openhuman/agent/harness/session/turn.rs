@@ -678,6 +678,30 @@ impl Agent {
                     }
                 }
 
+                // Resolve [IMAGE:…] / [FILE:…] markers in user messages
+                // BEFORE the provider request. Without this, marker text
+                // reaches the LLM verbatim and the model has no way to
+                // act on the referenced asset. The pipeline is no-op when
+                // the latest user turn has no markers (fast-path early
+                // return inside `prepare_messages_for_provider`).
+                let image_cfg = self
+                    .integration_runtime_config
+                    .as_ref()
+                    .map(|c| c.multimodal.clone())
+                    .unwrap_or_default();
+                let file_cfg = self
+                    .integration_runtime_config
+                    .as_ref()
+                    .map(|c| c.multimodal_files.clone())
+                    .unwrap_or_default();
+                let prepared = crate::openhuman::agent::multimodal::prepare_messages_for_provider(
+                    &messages,
+                    &image_cfg,
+                    &file_cfg,
+                )
+                .await?;
+                let mut messages = prepared.messages;
+
                 last_provider_messages = Some(messages.clone());
 
                 log::info!(
