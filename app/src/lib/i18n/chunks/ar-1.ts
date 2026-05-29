@@ -1354,6 +1354,7 @@ const ar1: TranslationMap = {
   'mcp.health.disconnectConfirm.cancel': 'Cancel',
   'mcp.health.disconnectConfirm.confirm': 'Disconnect all',
   'mcp.health.opErrorGeneric': 'Bulk operation failed. See logs.',
+  'mcp.health.bulkPartialFailure': '{failed} of {total} servers failed. See logs.',
   'mcp.installed.search.landmarkAria': 'Search installed MCP servers',
   'mcp.installed.search.inputAria': 'Filter installed MCP servers by name',
   'mcp.installed.search.placeholder': 'Filter servers…',

@@ -140,18 +140,39 @@ const McpServersTab = () => {
     [loadInstalled, fetchStatuses]
   );
 
-  // Bulk Retry — iterate through errored servers, swallow per-server
-  // failures via `Promise.allSettled` so one bad apple doesn't abort the
-  // batch, then refresh statuses once at the end. The toolbar shows its
-  // own disabled state during the await; the next poll tick reconciles
-  // any drift.
+  // Count rejected settlements and, if any, throw a descriptive error so the
+  // toolbar surfaces it through its `role="alert"` region — otherwise a bulk
+  // action that partially (or wholly) fails looks identical to success and
+  // the user is left re-scanning the status dots. The status refresh still
+  // runs first so the dots reconcile regardless of the partial failure.
+  const reportBulkFailures = useCallback(
+    (results: PromiseSettledResult<unknown>[], total: number) => {
+      const failed = results.filter(r => r.status === 'rejected').length;
+      if (failed > 0) {
+        log('bulk op partial failure: %d/%d failed', failed, total);
+        throw new Error(
+          t('mcp.health.bulkPartialFailure')
+            .replace('{failed}', String(failed))
+            .replace('{total}', String(total))
+        );
+      }
+    },
+    [t]
+  );
+
+  // Bulk Retry — iterate through errored servers, collect per-server outcomes
+  // via `Promise.allSettled` so one bad apple doesn't abort the batch, then
+  // refresh statuses once at the end. The toolbar shows its own disabled state
+  // during the await; the next poll tick reconciles any drift. Partial/total
+  // failures are surfaced via `reportBulkFailures`.
   const handleBulkReconnect = useCallback(
     async (serverIds: string[]) => {
       log('bulk reconnect ids=%o', serverIds);
-      await Promise.allSettled(serverIds.map(id => mcpClientsApi.connect(id)));
+      const results = await Promise.allSettled(serverIds.map(id => mcpClientsApi.connect(id)));
       await fetchStatuses();
+      reportBulkFailures(results, serverIds.length);
     },
-    [fetchStatuses]
+    [fetchStatuses, reportBulkFailures]
   );
 
   // Bulk Disconnect — same shape as bulk reconnect. The toolbar gates this
@@ -159,10 +180,11 @@ const McpServersTab = () => {
   const handleBulkDisconnect = useCallback(
     async (serverIds: string[]) => {
       log('bulk disconnect ids=%o', serverIds);
-      await Promise.allSettled(serverIds.map(id => mcpClientsApi.disconnect(id)));
+      const results = await Promise.allSettled(serverIds.map(id => mcpClientsApi.disconnect(id)));
       await fetchStatuses();
+      reportBulkFailures(results, serverIds.length);
     },
-    [fetchStatuses]
+    [fetchStatuses, reportBulkFailures]
   );
 
   const selectedServerId = rightPane.mode === 'detail' ? rightPane.serverId : null;
