@@ -463,7 +463,13 @@ describe('useHumanMascot state machine', () => {
     act(() => {
       capturedListeners?.onInferenceStart?.(fakeEvent({}));
       capturedListeners?.onSubagentDone?.(
-        fakeEvent({ tool_name: 'researcher', skill_id: 'sa1', message: 'done', success: true, round: 1 })
+        fakeEvent({
+          tool_name: 'researcher',
+          skill_id: 'sa1',
+          message: 'done',
+          success: true,
+          round: 1,
+        })
       );
       capturedListeners?.onDone?.(
         fakeEvent({
@@ -482,7 +488,13 @@ describe('useHumanMascot state machine', () => {
     const { result } = renderHook(() => useHumanMascot());
     act(() => {
       capturedListeners?.onSubagentDone?.(
-        fakeEvent({ tool_name: 'researcher', skill_id: 'sa1', message: 'failed', success: false, round: 1 })
+        fakeEvent({
+          tool_name: 'researcher',
+          skill_id: 'sa1',
+          message: 'failed',
+          success: false,
+          round: 1,
+        })
       );
     });
     expect(result.current.face).toBe('concerned');
@@ -507,7 +519,9 @@ describe('useHumanMascot state machine', () => {
       );
     });
     expect(result.current.face).toBe('proud');
-    act(() => { vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1); });
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
     // Turn 2: no tool work → happy
     act(() => {
       capturedListeners?.onInferenceStart?.(fakeEvent({}));

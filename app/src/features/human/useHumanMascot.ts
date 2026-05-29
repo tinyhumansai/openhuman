@@ -254,7 +254,10 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
           mascotLog('voice-session subagent_done success tool=%s', e.tool_name);
           subagentSucceededRef.current = true;
         } else {
-          mascotLog('voice-session transition → concerned (subagent_done failed tool=%s)', e.tool_name);
+          mascotLog(
+            'voice-session transition → concerned (subagent_done failed tool=%s)',
+            e.tool_name
+          );
           setFace('concerned');
         }
       },
@@ -283,7 +286,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         const ackFace: ConversationAckFace =
           (explicitAck === 'happy' || explicitAck === null) && didMeaningfulWork
             ? 'proud'
-            : explicitAck ?? 'happy';
+            : (explicitAck ?? 'happy');
         toolSucceededRef.current = false;
         subagentSucceededRef.current = false;
         mascotLog(
