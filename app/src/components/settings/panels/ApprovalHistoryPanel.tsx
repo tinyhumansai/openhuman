@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -9,11 +10,7 @@ import {
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
-const debug = (...args: unknown[]) => {
-  if (import.meta.env?.DEV) {
-    console.debug('[ui-flow:approval-history]', ...args);
-  }
-};
+const log = debug('ui:approval-history');
 
 /** Render a decided timestamp as a locale string; fall back to the raw value. */
 const formatDateTime = (value: string): string => {
@@ -52,20 +49,20 @@ const ApprovalHistoryPanel = () => {
   // Refresh event handler below, where synchronous setState is expected.
   const runLoad = useCallback(
     async (seq: number) => {
-      debug('load start', { seq });
+      log('load start %o', { seq });
       try {
         const rows = await fetchRecentApprovalDecisions();
         if (seq !== loadSeqRef.current) {
-          debug('stale response discarded', { seq, latest: loadSeqRef.current });
+          log('stale response discarded %o', { seq, latest: loadSeqRef.current });
           return;
         }
         setEntries(rows);
         setError(null);
-        debug('load ok', { seq, count: rows.length });
+        log('load ok %o', { seq, count: rows.length });
       } catch (e) {
         if (seq !== loadSeqRef.current) return;
         // Never leak raw backend error text into the UI; localized fallback only.
-        debug('load failed', e);
+        log('load failed %o', e);
         setError(t('settings.approvalHistory.errorGeneric'));
       } finally {
         if (seq === loadSeqRef.current) setIsLoading(false);
@@ -141,7 +138,10 @@ const ApprovalHistoryPanel = () => {
                 </div>
                 <p className="text-xs text-ink-soft">{entry.action_summary}</p>
                 <p className="text-[11px] text-ink-soft">
-                  {t('settings.approvalHistory.decidedAt')} {formatDateTime(entry.decided_at)}
+                  {t('settings.approvalHistory.decidedAt').replace(
+                    '{date}',
+                    formatDateTime(entry.decided_at)
+                  )}
                 </p>
               </li>
             ))}

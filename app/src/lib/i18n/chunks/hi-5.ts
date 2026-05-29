@@ -871,7 +871,7 @@ const hi5: TranslationMap = {
   'settings.approvalHistory.retry': 'Retry',
   'settings.approvalHistory.emptyState': 'No approval decisions recorded yet.',
   'settings.approvalHistory.errorGeneric': 'Unable to load approval history. Try again.',
-  'settings.approvalHistory.decidedAt': 'Decided',
+  'settings.approvalHistory.decidedAt': 'Decided {date}',
   'settings.approvalHistory.decision.approveOnce': 'Approved once',
   'settings.approvalHistory.decision.approveAlways': 'Always allowed',
   'settings.approvalHistory.decision.deny': 'Denied',
