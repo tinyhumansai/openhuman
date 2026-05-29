@@ -4443,6 +4443,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'graphExport.countLabel': '{count} fakta siap diekspor.',
+  'graphExport.downloadButton': 'Unduh {format}',
+  'graphExport.empty': 'Belum ada graf pengetahuan untuk diekspor.',
+  'graphExport.emptyHint':
+    'Setelah asisten mencatat fakta tentang Anda, Anda dapat mengekspornya di sini.',
+  'graphExport.errorPrefix': 'Tidak dapat memuat graf:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'Format',
+  'graphExport.intro':
+    'Bawa graf pengetahuan Anda. Unduh setiap fakta yang tercatat sebagai JSON atau CSV — data Anda, portabel dan milik Anda.',
+  'graphExport.loading': 'Memuat graf…',
+  'graphExport.title': 'Ekspor Graf',
+  'memory.tab.export': 'Export',
+  'graphExport.retry': 'Coba lagi',
 };
 
 export default messages;

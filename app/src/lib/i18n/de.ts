@@ -4543,6 +4543,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'graphExport.countLabel': '{count} Fakten bereit zum Export.',
+  'graphExport.downloadButton': '{format} herunterladen',
+  'graphExport.empty': 'Noch kein Wissensgraph zum Exportieren.',
+  'graphExport.emptyHint':
+    'Sobald der Assistent Fakten über Sie erfasst, können Sie sie hier exportieren.',
+  'graphExport.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'Format',
+  'graphExport.intro':
+    'Nehmen Sie Ihren Wissensgraphen mit. Laden Sie jeden erfassten Fakt als JSON oder CSV herunter — Ihre Daten, portabel und Ihnen gehörend.',
+  'graphExport.loading': 'Lade den Graphen…',
+  'graphExport.retry': 'Wiederholen',
+  'graphExport.title': 'Graph-Export',
+  'memory.tab.export': 'Export',
 };
 
 export default messages;

@@ -4350,6 +4350,20 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'graphExport.countLabel': '{count} حقيقة جاهزة للتصدير.',
+  'graphExport.downloadButton': 'تنزيل {format}',
+  'graphExport.empty': 'لا يوجد رسم معرفي للتصدير بعد.',
+  'graphExport.emptyHint': 'بمجرد أن يسجل المساعد حقائق عنك، يمكنك تصديرها هنا.',
+  'graphExport.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'التنسيق',
+  'graphExport.intro':
+    'خذ رسمك المعرفي معك. نزّل كل حقيقة مسجلة بصيغة JSON أو CSV — بياناتك، محمولة وملك لك.',
+  'graphExport.loading': 'جاري تحميل الرسم البياني…',
+  'graphExport.retry': 'إعادة المحاولة',
+  'graphExport.title': 'تصدير الرسم البياني',
+  'memory.tab.export': 'Export',
 };
 
 export default messages;

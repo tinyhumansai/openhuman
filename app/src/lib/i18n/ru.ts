@@ -4469,6 +4469,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'graphExport.countLabel': '{count} фактов готово к экспорту.',
+  'graphExport.downloadButton': 'Скачать {format}',
+  'graphExport.empty': 'Пока нет графа знаний для экспорта.',
+  'graphExport.emptyHint':
+    'Как только ассистент зафиксирует факты о вас, вы сможете экспортировать их здесь.',
+  'graphExport.errorPrefix': 'Не удалось загрузить граф:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'Формат',
+  'graphExport.intro':
+    'Возьмите свой граф знаний с собой. Скачайте каждый зафиксированный факт в JSON или CSV — ваши данные, переносимые и принадлежащие вам.',
+  'graphExport.loading': 'Загрузка графа…',
+  'memory.tab.export': 'Export',
+  'graphExport.retry': 'Повторить',
+  'graphExport.title': 'Экспорт графа',
 };
 
 export default messages;

@@ -4524,6 +4524,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'graphExport.countLabel': '{count} faits prêts à exporter.',
+  'graphExport.downloadButton': 'Télécharger {format}',
+  'graphExport.empty': 'Pas encore de graphe de connaissances à exporter.',
+  'graphExport.emptyHint':
+    "Une fois que l'assistant aura enregistré des faits à votre sujet, vous pourrez les exporter ici.",
+  'graphExport.errorPrefix': 'Impossible de charger le graphe :',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'Format',
+  'graphExport.intro':
+    'Emportez votre graphe de connaissances. Téléchargez chaque fait enregistré en JSON ou CSV — vos données, portables et bien à vous.',
+  'graphExport.loading': 'Chargement du graphe…',
+  'graphExport.title': 'Export du graphe',
+  'memory.tab.export': 'Export',
+  'graphExport.retry': 'Réessayer',
 };
 
 export default messages;

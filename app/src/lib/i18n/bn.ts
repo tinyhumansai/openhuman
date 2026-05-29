@@ -4427,6 +4427,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'graphExport.countLabel': '{count} টি তথ্য রপ্তানির জন্য প্রস্তুত।',
+  'graphExport.downloadButton': '{format} ডাউনলোড করুন',
+  'graphExport.empty': 'এখনও রপ্তানি করার মতো কোনো জ্ঞান গ্রাফ নেই।',
+  'graphExport.emptyHint':
+    'সহকারী আপনার সম্পর্কে তথ্য রেকর্ড করার পরে, আপনি সেগুলি এখানে রপ্তানি করতে পারেন।',
+  'graphExport.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'ফর্ম্যাট',
+  'graphExport.intro':
+    'আপনার জ্ঞান গ্রাফ নিয়ে যান। প্রতিটি রেকর্ড করা তথ্য JSON বা CSV হিসাবে ডাউনলোড করুন — আপনার ডেটা, পোর্টেবল এবং আপনার রাখার জন্য।',
+  'graphExport.loading': 'গ্রাফ লোড হচ্ছে…',
+  'graphExport.retry': 'পুনরায় চেষ্টা',
+  'graphExport.title': 'গ্রাফ রপ্তানি',
+  'memory.tab.export': 'Export',
 };
 
 export default messages;

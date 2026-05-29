@@ -3,9 +3,14 @@
  * format, and performs the file download (Blob + anchor) in the click handler —
  * never during render. Serialization is delegated to the pure engine.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { type ExportFormat, exportMimeType, serializeGraph } from '../../lib/memory/graphExport';
+import {
+  type ExportFormat,
+  exportMimeType,
+  serializeGraph,
+  toExportRows,
+} from '../../lib/memory/graphExport';
 import { loadGraphRelations } from '../../services/api/graphExportApi';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
 import GraphExportPanel from './GraphExportPanel';
@@ -19,6 +24,13 @@ const GraphExportTab = () => {
   const [format, setFormat] = useState<ExportFormat>('json');
   // Monotonic token: ignore a response if a newer load has since started.
   const latestRequestId = useRef(0);
+
+  // The count shown must reflect EXPORTABLE rows: toExportRows drops malformed
+  // relations, so a raw relations.length would over-report what the file holds.
+  const exportableCount = useMemo(
+    () => (relations === null ? null : toExportRows(relations).length),
+    [relations]
+  );
 
   const load = useCallback(async () => {
     const requestId = (latestRequestId.current += 1);
@@ -51,12 +63,14 @@ const GraphExportTab = () => {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    URL.revokeObjectURL(url);
+    // Defer revocation: revoking synchronously can cancel the download before
+    // the browser has started reading the Blob.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }, [relations, format]);
 
   return (
     <GraphExportPanel
-      count={relations === null ? null : relations.length}
+      count={exportableCount}
       format={format}
       onFormatChange={setFormat}
       onDownload={handleDownload}

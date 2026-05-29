@@ -4393,6 +4393,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'graphExport.countLabel': '{count}개 사실 내보내기 준비 완료.',
+  'graphExport.downloadButton': '{format} 다운로드',
+  'graphExport.empty': '아직 내보낼 지식 그래프가 없습니다.',
+  'graphExport.emptyHint':
+    '어시스턴트가 사용자에 대한 사실을 기록하면, 여기에서 내보낼 수 있습니다.',
+  'graphExport.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': '형식',
+  'graphExport.intro':
+    '지식 그래프를 가져가세요. 기록된 모든 사실을 JSON 또는 CSV로 다운로드하세요 — 사용자의 데이터, 휴대 가능하며 사용자 소유입니다.',
+  'graphExport.loading': '그래프 불러오는 중…',
+  'graphExport.title': '그래프 내보내기',
+  'memory.tab.export': 'Export',
+  'graphExport.retry': '다시 시도',
 };
 
 export default messages;

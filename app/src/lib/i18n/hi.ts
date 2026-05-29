@@ -4434,6 +4434,21 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'graphExport.countLabel': '{count} तथ्य निर्यात के लिए तैयार।',
+  'graphExport.downloadButton': '{format} डाउनलोड करें',
+  'graphExport.empty': 'अभी कोई नॉलेज ग्राफ निर्यात के लिए नहीं।',
+  'graphExport.emptyHint':
+    'जैसे ही सहायक आपके बारे में तथ्य दर्ज करता है, आप उन्हें यहाँ निर्यात कर सकते हैं।',
+  'graphExport.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': 'प्रारूप',
+  'graphExport.intro':
+    'अपना नॉलेज ग्राफ अपने साथ ले जाएँ। हर दर्ज तथ्य को JSON या CSV के रूप में डाउनलोड करें — आपका डेटा, पोर्टेबल और आपका रखने योग्य।',
+  'graphExport.loading': 'ग्राफ लोड हो रहा है…',
+  'graphExport.title': 'ग्राफ निर्यात',
+  'memory.tab.export': 'Export',
+  'graphExport.retry': 'पुनः प्रयास',
 };
 
 export default messages;

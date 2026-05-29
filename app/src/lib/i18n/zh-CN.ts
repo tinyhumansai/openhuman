@@ -4214,6 +4214,20 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'graphExport.countLabel': '{count} 条事实准备导出。',
+  'graphExport.downloadButton': '下载 {format}',
+  'graphExport.empty': '暂无可导出的知识图。',
+  'graphExport.emptyHint': '助手记录你的相关事实后,你可在此导出它们。',
+  'graphExport.errorPrefix': '无法加载图:',
+  'graphExport.formatCsv': 'CSV',
+  'graphExport.formatJson': 'JSON',
+  'graphExport.formatLabel': '格式',
+  'graphExport.intro':
+    '带上你的知识图。将每条已记录的事实下载为 JSON 或 CSV——你的数据,便于携带,归你所有。',
+  'graphExport.loading': '正在加载图…',
+  'memory.tab.export': 'Export',
+  'graphExport.retry': '重试',
+  'graphExport.title': '图导出',
 };
 
 export default messages;
