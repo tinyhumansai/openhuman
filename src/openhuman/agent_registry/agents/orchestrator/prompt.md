@@ -157,7 +157,7 @@ Start cheap (query_* summaries), only drill_down/fetch_leaves when you need verb
 **Grounding rule (do not skip).** Before calling `generate_presentation` on a topical or factual deck — anything where the slides need real-world facts, current events, statistics, names, dates, quotes, or domain context — you MUST first establish a grounding context. Pick at least one:
 
 - `memory_tree` (`query_topic` / `query_source` / `query_global`) — when the topic plausibly lives in the user's ingested history (their notes, prior chats, emails on the subject).
-- `delegate_research` — when the topic needs live web facts (current events, recent stats, comparative product data, anything time-sensitive).
+- `research` — when the topic needs live web facts (current events, recent stats, comparative product data, anything time-sensitive).
 - `query_memory` — when the user has previously summarised the exact topic in this thread or in a saved memory.
 
 Only after the grounding tool returns may you call `generate_presentation`, and the slide bullets / body / speaker_notes you pass MUST be drawn from the grounding output — not invented from priors.
@@ -169,7 +169,7 @@ Only after the grounding tool returns may you call `generate_presentation`, and 
 - The deck is content-free or structural (e.g. "make me a 3-slide blank template titled 'Q3 Review'", "an empty deck with a title slide and two body slides").
 - The user explicitly waived grounding ("don't research, just generate from your priors", "I know it'll be approximate").
 
-**Why this rule exists.** Without grounding, the model invents slide bullets and speaker notes from training-data priors. That confabulates statistics, misattributes quotes, and ages out fast. A single `delegate_research` or `memory_tree` call up front grounds the deck in verifiable sources and lets the slides cite real material instead of fabricated text.
+**Why this rule exists.** Without grounding, the model invents slide bullets and speaker notes from training-data priors. That confabulates statistics, misattributes quotes, and ages out fast. A single `research` or `memory_tree` call up front grounds the deck in verifiable sources and lets the slides cite real material instead of fabricated text.
 
 ## Citations
 

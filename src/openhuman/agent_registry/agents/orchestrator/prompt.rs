@@ -328,12 +328,17 @@ mod tests {
     #[test]
     fn build_requires_grounding_before_generate_presentation() {
         // #2780 grounding rule: orchestrator must ground a topical/factual
-        // deck via `memory_tree` / `delegate_research` / `query_memory`
-        // before dispatching `generate_presentation`. The rule is
-        // expressed in `prompt.md` and must reach the assembled body
-        // verbatim — the test pins both the section header and the
-        // load-bearing "do not skip" instruction so a future prompt
-        // refactor can't quietly drop the guardrail.
+        // deck via `memory_tree` / `research` / `query_memory` before
+        // dispatching `generate_presentation`. The rule is expressed in
+        // `prompt.md` and must reach the assembled body verbatim — the
+        // test pins both the section header and the load-bearing "do
+        // not skip" instruction so a future prompt refactor can't
+        // quietly drop the guardrail. The live-web grounding option is
+        // named `research` (the researcher agent's `delegate_name`
+        // override, not the default `delegate_researcher` /
+        // `delegate_research`); it must match the actual tool name the
+        // orchestrator exposes so the model can dispatch it instead of
+        // hallucinating a non-tool.
         let body = build(&ctx_with(&[])).unwrap();
         assert!(
             body.contains("## Presentation generation"),
@@ -350,7 +355,16 @@ mod tests {
         // Each of the three permitted grounding tools must be named so
         // the model knows the menu, not just the constraint.
         assert!(body.contains("`memory_tree`"));
-        assert!(body.contains("`delegate_research`"));
+        assert!(
+            body.contains("`research`"),
+            "grounding rule must name the researcher tool by its actual \
+             delegate_name (`research`), not `delegate_research`"
+        );
+        assert!(
+            !body.contains("`delegate_research`"),
+            "stale `delegate_research` reference — researcher's \
+             delegate_name override is `research`"
+        );
         assert!(body.contains("`query_memory`"));
         // The waiver list must keep the "user pasted source material"
         // escape hatch — without it the rule blocks legitimate
