@@ -146,4 +146,10 @@ named = [
     # `src/openhuman/update/` end-to-end — no parallel release logic.
     "update_check",
     "update_apply",
+    # Workflow tools — let the orchestrator inspect and activate installed
+    # WORKFLOW.md bundles.  `workflow_load` is read-only (inspect a workflow);
+    # `workflow_phase` activates a phase (runs gated scripts, surfaces guidance).
+    # Both are routed through the same security/approval gate as `shell`.
+    "workflow_load",
+    "workflow_phase",
 ]

@@ -238,6 +238,17 @@ pub fn all_tools_with_runtime(
             security.clone(),
         )),
         Box::new(GmailUnsubscribeTool),
+        // Workflow tools — let the agent load and activate installed agent
+        // workflows (WORKFLOW.md bundles). `workflow_load` is read-only;
+        // `workflow_phase` runs gated scripts and is Execute-class so the
+        // harness routes it through the ApprovalGate identically to `shell`.
+        Box::new(WorkflowLoadTool),
+        Box::new(WorkflowPhaseTool::new(
+            workspace_dir.to_path_buf(),
+            security.clone(),
+            Arc::clone(&runtime),
+            Arc::clone(&audit),
+        )),
     ];
 
     if browser_config.enabled {

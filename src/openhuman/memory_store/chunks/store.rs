@@ -1291,7 +1291,8 @@ fn add_column_if_missing(conn: &Connection, table: &str, name: &str, sql_type: &
 mod embeddings;
 pub use embeddings::{
     clear_chunk_reembed_skipped, clear_reembed_skipped_for_signature, get_chunk_embedding,
-    get_chunk_embedding_for_signature, mark_chunk_reembed_skipped, set_chunk_embedding,
+    get_chunk_embedding_for_signature, get_chunk_embeddings_batch,
+    get_chunk_embeddings_for_signature_batch, mark_chunk_reembed_skipped, set_chunk_embedding,
     set_chunk_embedding_for_signature,
 };
 #[cfg(test)]
@@ -1300,6 +1301,7 @@ pub(crate) use embeddings::{
     has_uncovered_reembed_work, set_chunk_embedding_for_signature_tx, tree_active_signature,
     validate_reembed_skip_key,
 };
+// ── Phase 2: embedding column accessors ─────────────────────────────────
 
 #[cfg(test)]
 #[path = "store_tests.rs"]

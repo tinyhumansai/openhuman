@@ -144,6 +144,7 @@ impl TurnStateMirror {
                 task_id,
                 mode,
                 dedicated_thread,
+                worker_thread_id,
                 ..
             } => {
                 self.state.phase = Some(TurnPhase::Subagent);
@@ -167,6 +168,7 @@ impl TurnStateMirror {
                         iterations: None,
                         elapsed_ms: None,
                         output_chars: None,
+                        worker_thread_id: worker_thread_id.clone(),
                         tool_calls: Vec::new(),
                     }),
                 });
@@ -263,6 +265,17 @@ impl TurnStateMirror {
                         }
                     }
                 }
+                false
+            }
+            AgentProgress::SubagentTextDelta { .. }
+            | AgentProgress::SubagentThinkingDelta { .. } => {
+                // Sub-agent streaming text/thinking is display-only: it is
+                // rendered live in the parent thread's subagent transcript
+                // but intentionally **not** persisted to the turn-state
+                // snapshot. The child's final assistant text lands in the
+                // thread on completion, so replaying partial deltas after a
+                // reconnect would add weight without value. Acknowledge
+                // without mutating the snapshot or flushing.
                 false
             }
             AgentProgress::TaskBoardUpdated { board } => {

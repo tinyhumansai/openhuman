@@ -130,6 +130,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Local procedural operating experience for agent self-learning
     controllers
         .extend(crate::openhuman::agent_experience::all_agent_experience_registered_controllers());
+    // Agent workflows — phase-keyed guidance bound to task lifecycle
+    controllers
+        .extend(crate::openhuman::agent_workflows::all_agent_workflows_registered_controllers());
     // System and process health monitoring
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
     // Diagnostic tools
@@ -305,6 +308,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
+    schemas.extend(crate::openhuman::agent_workflows::all_agent_workflows_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());

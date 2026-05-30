@@ -7,6 +7,7 @@ import PublicRoute from './components/PublicRoute';
 import HumanPage from './features/human/HumanPage';
 import { getIsMobile } from './lib/platform';
 import Accounts from './pages/Accounts';
+import AgentWorkflows from './pages/AgentWorkflows';
 import Channels from './pages/Channels';
 import Home from './pages/Home';
 import Intelligence from './pages/Intelligence';
@@ -170,6 +171,15 @@ const AppRoutes = () => {
         element={
           <ProtectedRoute requireAuth={true}>
             <Rewards />
+          </ProtectedRoute>
+        }
+      />
+
+      <Route
+        path="/workflows"
+        element={
+          <ProtectedRoute requireAuth={true}>
+            <AgentWorkflows />
           </ProtectedRoute>
         }
       />
