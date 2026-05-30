@@ -444,7 +444,10 @@ describe('<VaultPanel />', () => {
     await waitFor(() => expect(mockOpenUrl).toHaveBeenCalled());
     await waitFor(() => expect(mockRevealPath).toHaveBeenCalledWith('/Users/me/notes'));
     expect(onToast).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'info', title: 'Obsidian not found — opened in file manager' })
+      expect.objectContaining({
+        type: 'info',
+        title: 'Obsidian not found — opened in file manager',
+      })
     );
   });
 
