@@ -2066,6 +2066,7 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         // case. Without this, the gate parks and publishes but nothing reaches the
         // frontend → every prompt dies at the TTL. Idempotent (Once-guarded).
         crate::openhuman::channels::providers::web::register_approval_surface_subscriber();
+        crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
     } else {
         log::info!(
             "[runtime] approval gate disabled (OPENHUMAN_APPROVAL_GATE=0) — \
