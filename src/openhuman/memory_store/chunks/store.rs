@@ -322,7 +322,9 @@ CREATE TABLE IF NOT EXISTS mem_tree_jobs (
     last_error             TEXT,
     created_at_ms          INTEGER NOT NULL,
     started_at_ms          INTEGER,
-    completed_at_ms        INTEGER
+    completed_at_ms        INTEGER,
+    failure_reason         TEXT,
+    failure_class          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_mem_tree_jobs_ready

@@ -131,7 +131,8 @@ pub fn claim_next(config: &Config, lock_duration_ms: i64) -> Result<Option<Job>>
                   )
               RETURNING id, kind, payload_json, dedupe_key, status, attempts,
                         max_attempts, available_at_ms, locked_until_ms, last_error,
-                        created_at_ms, started_at_ms, completed_at_ms",
+                        created_at_ms, started_at_ms, completed_at_ms,
+                        failure_reason, failure_class",
                 params![now_ms, lock_until],
                 row_to_job,
             )
@@ -412,7 +413,8 @@ pub fn get_job(config: &Config, id: &str) -> Result<Option<Job>> {
             .query_row(
                 "SELECT id, kind, payload_json, dedupe_key, status, attempts, max_attempts,
                         available_at_ms, locked_until_ms, last_error,
-                        created_at_ms, started_at_ms, completed_at_ms
+                        created_at_ms, started_at_ms, completed_at_ms,
+                        failure_reason, failure_class
                    FROM mem_tree_jobs WHERE id = ?1",
                 params![id],
                 row_to_job,
@@ -436,6 +438,8 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let created_at_ms: i64 = row.get(10)?;
     let started_at_ms: Option<i64> = row.get(11)?;
     let completed_at_ms: Option<i64> = row.get(12)?;
+    let failure_reason: Option<String> = row.get(13)?;
+    let failure_class: Option<String> = row.get(14)?;
 
     let kind = JobKind::parse(&kind_s).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, e.into())
@@ -455,6 +459,8 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
         available_at_ms,
         locked_until_ms,
         last_error,
+        failure_reason,
+        failure_class,
         created_at_ms,
         started_at_ms,
         completed_at_ms,
@@ -513,6 +519,28 @@ mod tests {
         assert_eq!(row.status, JobStatus::Done);
         assert!(row.completed_at_ms.is_some());
         assert!(row.locked_until_ms.is_none());
+    }
+
+    /// T006/T007: the new `failure_reason`/`failure_class` columns must exist
+    /// (migration ran) and round-trip through `claim_next` (RETURNING) and
+    /// `get_job` (SELECT) as `None` until a classified failure is recorded
+    /// (T012 wires the write side).
+    #[test]
+    fn typed_failure_columns_roundtrip_as_none_by_default() {
+        let (_tmp, cfg) = test_config();
+        let nj = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "c-typed-fail".into(),
+        })
+        .unwrap();
+        let id = enqueue(&cfg, &nj).unwrap().expect("inserted");
+
+        let claimed = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        assert_eq!(claimed.failure_reason, None);
+        assert_eq!(claimed.failure_class, None);
+
+        let row = get_job(&cfg, &id).unwrap().unwrap();
+        assert_eq!(row.failure_reason, None);
+        assert_eq!(row.failure_class, None);
     }
 
     #[test]
