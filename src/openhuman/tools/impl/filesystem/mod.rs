@@ -11,6 +11,7 @@ mod read_diff;
 mod run_linter;
 mod run_tests;
 mod update_memory_md;
+mod vault_write_markdown;
 
 pub use apply_patch::ApplyPatchTool;
 pub use csv_export::CsvExportTool;
@@ -25,3 +26,4 @@ pub use read_diff::ReadDiffTool;
 pub use run_linter::RunLinterTool;
 pub use run_tests::RunTestsTool;
 pub use update_memory_md::UpdateMemoryMdTool;
+pub use vault_write_markdown::VaultWriteMarkdownTool;

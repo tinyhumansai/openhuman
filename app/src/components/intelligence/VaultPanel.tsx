@@ -359,6 +359,12 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
         <ul className="divide-y divide-stone-100 dark:divide-neutral-800" data-testid="vault-list">
           {vaults.map(v => {
             const state = busy[v.id];
+            const writeStateReason = v.write_state_reason
+              ? t(
+                  `vault.writeState.reasons.${v.write_state_reason}`,
+                  t('vault.writeState.unknownReason')
+                )
+              : t('vault.writeState.unknownReason');
             return (
               <li key={v.id} className="flex items-center justify-between gap-3 py-2">
                 <div className="min-w-0 flex-1">
@@ -378,6 +384,17 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                           formatRelative(v.last_synced_at, t)
                         )
                       : t('vault.neverSynced')}
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={writeStateBadgeClass(v.write_state)}
+                      title={writeStateReason}
+                      data-testid={`vault-write-state-${v.id}`}>
+                      {t(`vault.writeState.${v.write_state}`)}
+                    </span>
+                    <span className="text-[11px] text-stone-400 dark:text-neutral-500">
+                      {writeStateReason}
+                    </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -423,6 +440,19 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
       )}
     </div>
   );
+}
+
+function writeStateBadgeClass(state: CoreVault['write_state']): string {
+  const base = 'inline-flex h-5 items-center rounded px-1.5 text-[10px] font-semibold';
+  switch (state) {
+    case 'writable':
+      return `${base} bg-sage-50 text-sage-700 dark:bg-sage-500/10 dark:text-sage-300`;
+    case 'read_only':
+      return `${base} bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300`;
+    case 'unavailable':
+    default:
+      return `${base} bg-coral-50 text-coral-700 dark:bg-coral-500/10 dark:text-coral-300`;
+  }
 }
 
 function formatRelative(iso: string, translate: (key: string) => string): string {

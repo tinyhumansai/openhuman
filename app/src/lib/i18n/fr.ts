@@ -378,6 +378,29 @@ const messages: TranslationMap = {
   'memoryFreshness.statusStale': 'stale',
   'memoryFreshness.ageLabel': '{days}d old',
   'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
+  'memory.tab.path': 'Chemins',
+  'connectionPath.title': 'Chemin de connexion',
+  'connectionPath.intro':
+    'Retracez la plus courte chaîne de relations reliant deux entités — comment le graphe les connecte, même à travers plusieurs sauts.',
+  'connectionPath.loading': 'Chargement du graphe…',
+  'connectionPath.errorPrefix': 'Impossible de charger le graphe :',
+  'connectionPath.retry': 'Réessayer',
+  'connectionPath.namespaceLabel': 'Espace de noms',
+  'connectionPath.namespaceAll': 'Tous les espaces de noms',
+  'connectionPath.sourceLabel': 'De',
+  'connectionPath.targetLabel': 'À',
+  'connectionPath.sourcePlaceholder': 'Entité de départ',
+  'connectionPath.targetPlaceholder': "Entité d'arrivée",
+  'connectionPath.prompt': 'Choisissez deux entités pour retracer leur connexion.',
+  'connectionPath.empty': "Aucun graphe de connaissances pour l'instant.",
+  'connectionPath.emptyHint':
+    "Une fois que l'assistant aura enregistré des faits liés, vous pourrez retracer les connexions ici.",
+  'connectionPath.resultHeading': 'Chemin le plus court',
+  'connectionPath.pathSummary': "{length} saut(s) d'écart",
+  'connectionPath.sameMessage': 'Choisissez deux entités différentes.',
+  'connectionPath.missingSource': '« {entity} » ne figure pas dans le graphe.',
+  'connectionPath.missingTarget': '« {entity} » ne figure pas dans le graphe.',
+  'connectionPath.noPath': 'Aucune connexion trouvée entre « {source} » et « {target} ».',
   'memoryTree.status.title': 'Arbre de mémoire',
   'memoryTree.status.autoSyncLabel': 'Auto-synchronisation',
   'memoryTree.status.autoSyncDescription':
@@ -1782,6 +1805,10 @@ const messages: TranslationMap = {
   'mic.unavailable': "Le microphone n'est pas disponible",
   'mic.permissionDenied': 'Permission microphone refusée',
   'mic.failedToStartRecorder': "Échec du démarrage de l'enregistreur",
+  'mic.deviceUnavailable':
+    "Le microphone sélectionné n'est pas disponible — essayez un autre appareil.",
+  'mic.deviceInUse': 'Le microphone est utilisé par une autre application.',
+  'mic.error': 'Erreur de microphone',
   'mic.transcribing': 'Transcription…',
   'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Appuie pour envoyer',
@@ -4175,6 +4202,18 @@ const messages: TranslationMap = {
   'vault.fileCount': '{count} fichier(s)',
   'vault.syncedRelative': 'synchronisés {time}',
   'vault.neverSynced': 'jamais synchronisés',
+  'vault.writeState.writable': 'Modifiable',
+  'vault.writeState.read_only': 'Lecture seule',
+  'vault.writeState.unavailable': 'Indisponible',
+  'vault.writeState.unknownReason': "L'état d'écriture est inconnu.",
+  'vault.writeState.reasons.writable':
+    'Les écritures Markdown/wiki approuvées peuvent être enregistrées dans ce coffre.',
+  'vault.writeState.reasons.read_only':
+    'Le dossier du coffre est en lecture seule sur cet appareil.',
+  'vault.writeState.reasons.unavailable':
+    "Le dossier du coffre n'est pas disponible sur cet appareil.",
+  'vault.writeState.reasons.not_directory': "Le chemin du coffre n'est pas un dossier.",
+  'vault.writeState.reasons.empty_path': 'Le chemin du dossier du coffre est vide.',
   'vault.syncingProgress': 'Synchronisation… {ingested}/{total}',
   'vault.removing': 'Suppression…',
   'vault.relative.sec': 'il y a {count}s',
@@ -4217,6 +4256,35 @@ const messages: TranslationMap = {
   'walletBalances.rawBalance': 'Brut : {raw}',
   'walletBalances.errorGeneric':
     'Impossible de charger les soldes du portefeuille. Configurez votre portefeuille dans Phrase de récupération et réessayez.',
+  'walletBalances.setupHint':
+    'Votre phrase de récupération n’est pas encore configurée. Configurez-la pour activer votre portefeuille et voir les soldes en direct.',
+  'walletBalances.setupCta': 'Configurer la phrase de récupération',
+  'walletBalances.notSetUp': 'Non configuré',
+  'walletBalances.send': 'Envoyer',
+  'walletBalances.receive': 'Recevoir',
+  'walletReceive.scanHint':
+    'Scannez ce code ou copiez l’adresse ci-dessous pour recevoir des fonds.',
+  'walletReceive.addressLabel': 'Adresse {network}',
+  'walletReceive.onlyChainWarning':
+    'N’envoyez que des actifs {network} à cette adresse. Envoyer des actifs d’un autre réseau peut entraîner une perte définitive.',
+  'walletSend.available': 'Disponible',
+  'walletSend.recipient': 'Adresse du destinataire',
+  'walletSend.recipientPlaceholder': 'Collez l’adresse de destination',
+  'walletSend.recipientRequired': 'Saisissez une adresse de destinataire',
+  'walletSend.amount': 'Montant',
+  'walletSend.invalidAmount': 'Saisissez un montant valide',
+  'walletSend.review': 'Vérifier',
+  'walletSend.preparing': 'Préparation…',
+  'walletSend.confirmHint':
+    'Vérifiez les détails ci-dessous. La signature a lieu localement ; rien n’est diffusé tant que vous ne confirmez pas.',
+  'walletSend.estimatedFee': 'Frais de réseau estimés',
+  'walletSend.confirmSend': 'Confirmer et envoyer',
+  'walletSend.sending': 'Envoi…',
+  'walletSend.sent': 'Transaction envoyée',
+  'walletSend.txHash': 'Hash de la transaction',
+  'walletSend.viewExplorer': 'Voir dans l’explorateur',
+  'walletSend.done': 'Terminé',
+  'walletSend.genericError': 'Impossible de finaliser le transfert. Veuillez réessayer.',
   'settings.taskSources.title': 'Sources de tâches',
   'settings.taskSources.subtitle':
     "Tirez les tâches de vos outils sur le tableau des tâches de l'agent",
@@ -4362,6 +4430,17 @@ const messages: TranslationMap = {
   'settings.agentsSection.description':
     'Gérez vos agents, leur autonomie et ce à quoi ils peuvent accéder sur cet ordinateur.',
   'settings.agentsSection.menuDesc': 'Registre, autonomie et accès au système',
+  'settings.cryptoSection.title': 'Crypto',
+  'settings.cryptoSection.description':
+    'Gérez votre phrase de récupération et consultez les soldes de vos comptes de portefeuille.',
+  'settings.cryptoSection.menuDesc': 'Phrase de récupération et soldes du portefeuille',
+  'settings.notificationsHub.title': 'Notifications',
+  'settings.notificationsHub.description':
+    'Consultez votre boîte de réception des alertes et gérez les préférences de notification et le routage.',
+  'settings.notificationsHub.menuDesc':
+    'Boîte de réception des alertes et préférences de notification',
+  'settings.notificationsHub.settingsItem': 'Paramètres de notification',
+  'settings.notificationsHub.settingsItemDesc': 'Préférences et routage',
   'settings.agents.editor.notFound': 'Agent introuvable.',
   'settings.agents.editor.modelInherit': 'Hériter (défaut de la plateforme)',
   'settings.agents.editor.modelHints': 'Conseils de routage',
@@ -4384,6 +4463,9 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Les agents intégrés ne peuvent pas être modifiés. Vous pouvez les activer, les désactiver ou les réinitialiser depuis la liste des agents.',
+  'autocomplete.debounceMs': 'Anti-rebond (ms)',
+  'autocomplete.maxChars': 'Caractères de contexte maximum',
+  'autocomplete.overlayTtlMs': "Délai d'affichage (ms)",
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
   'modelCouncil.intro':

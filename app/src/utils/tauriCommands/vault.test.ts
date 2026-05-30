@@ -21,6 +21,7 @@ describe('tauriCommands/vault', () => {
   let openhumanVaultCreate: typeof import('./vault').openhumanVaultCreate;
   let openhumanVaultGet: typeof import('./vault').openhumanVaultGet;
   let openhumanVaultFiles: typeof import('./vault').openhumanVaultFiles;
+  let openhumanVaultWriteMarkdown: typeof import('./vault').openhumanVaultWriteMarkdown;
   let openhumanVaultRemove: typeof import('./vault').openhumanVaultRemove;
   let openhumanVaultSync: typeof import('./vault').openhumanVaultSync;
   let openhumanVaultSyncStatus: typeof import('./vault').openhumanVaultSyncStatus;
@@ -33,6 +34,7 @@ describe('tauriCommands/vault', () => {
     openhumanVaultCreate = actual.openhumanVaultCreate;
     openhumanVaultGet = actual.openhumanVaultGet;
     openhumanVaultFiles = actual.openhumanVaultFiles;
+    openhumanVaultWriteMarkdown = actual.openhumanVaultWriteMarkdown;
     openhumanVaultRemove = actual.openhumanVaultRemove;
     openhumanVaultSync = actual.openhumanVaultSync;
     openhumanVaultSyncStatus = actual.openhumanVaultSyncStatus;
@@ -123,6 +125,44 @@ describe('tauriCommands/vault', () => {
       expect(mockCallCoreRpc).toHaveBeenCalledWith({
         method: 'openhuman.vault_files',
         params: { vault_id: 'v-1' },
+      });
+    });
+  });
+
+  describe('openhumanVaultWriteMarkdown', () => {
+    test('throws when not running in Tauri', async () => {
+      mockIsTauri.mockReturnValue(false);
+      await expect(
+        openhumanVaultWriteMarkdown({
+          vaultId: 'v-1',
+          relPath: 'wiki/a.md',
+          content: '# A',
+          approved: true,
+        })
+      ).rejects.toThrow('Not running in Tauri');
+    });
+
+    test('dispatches openhuman.vault_write_markdown with approval state', async () => {
+      mockCallCoreRpc.mockResolvedValue({
+        result: { vault_id: 'v-1', rel_path: 'wiki/a.md', bytes_written: 3, created: true },
+        logs: [],
+      });
+      await openhumanVaultWriteMarkdown({
+        vaultId: 'v-1',
+        relPath: 'wiki/a.md',
+        content: '# A',
+        overwrite: true,
+        approved: true,
+      });
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.vault_write_markdown',
+        params: {
+          vault_id: 'v-1',
+          rel_path: 'wiki/a.md',
+          content: '# A',
+          overwrite: true,
+          approved: true,
+        },
       });
     });
   });

@@ -192,6 +192,16 @@ describe('MicComposer', () => {
     );
   });
 
+  it('surfaces a generic error for an unrecognized DOMException name', async () => {
+    getUserMediaMock.mockRejectedValueOnce(new DOMException('boom', 'AbortError'));
+    const onError = vi.fn();
+    render(<MicComposer disabled={false} onSubmit={vi.fn()} onError={onError} />);
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() =>
+      expect(onError).toHaveBeenCalledWith(expect.stringMatching(/microphone error/i))
+    );
+  });
+
   it('falls back to wav re-encode when the native attempt fails', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     // Native path: all 3 attempts (initial + 2 retries) fail, then WAV succeeds.

@@ -169,12 +169,12 @@ pub fn wallet_schemas(function: &str) -> ControllerSchema {
             namespace: "wallet",
             function: "balances",
             description:
-                "List native-asset balances for every derived wallet account. EVM balances are read live from the configured/default RPC; other chains remain placeholder-zero until provider support lands.",
+                "List native-asset balances for every derived wallet account. The EVM account fans out into one row per displayed network (Ethereum, Base, BNB Chain), each read live from the configured/default RPC; BTC/Solana/Tron return one row each.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "result",
                 ty: TypeSchema::Json,
-                comment: "Array of balance rows: {chain, address, assetSymbol, decimals, raw, formatted, providerStatus}.",
+                comment: "Array of balance rows: {chain, evmNetwork?, address, assetSymbol, decimals, raw, formatted, providerStatus}.",
                 required: true,
             }],
         },

@@ -133,6 +133,10 @@ pub fn all_tools_with_runtime(
         shell,
         Box::new(FileReadTool::new(security.clone())),
         Box::new(FileWriteTool::new(security.clone())),
+        Box::new(VaultWriteMarkdownTool::new(
+            config.clone(),
+            security.clone(),
+        )),
         // Coding-harness baseline tools (issue #1205): file navigation
         // + atomic editing primitives. Use these instead of falling
         // through to `shell` for grep/find/sed work.

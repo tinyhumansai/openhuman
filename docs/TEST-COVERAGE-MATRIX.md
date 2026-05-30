@@ -422,6 +422,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 11.1.6 | SearXNG MCP search         | RU    | `src/openhuman/integrations/searxng.rs`, `src/openhuman/mcp_server/tools.rs`, `src/openhuman/tools/schemas.rs`      | ✅     | Self-hosted search config, normalized results, MCP argument validation, and mocked HTTP execution |
 | 11.1.7 | Bundled prompt resources   | RU    | `src/openhuman/mcp_server/resources.rs`, `src/openhuman/mcp_server/protocol.rs`                                     | ✅     | `resources/list` catalog + `resources/read` happy path, -32002 unknown URI, -32602 missing param, catalog-mirrors-BUILTINS parity test |
 | 11.1.8 | Resource templates list    | RU    | `src/openhuman/mcp_server/resources.rs`, `src/openhuman/mcp_server/protocol.rs`                                     | ✅     | `resources/templates/list` returns `{resourceTemplates: []}` (static catalog), tolerates unknown/cursor params |
+| 11.1.9 | Vault Markdown Writes      | RU/VU | `src/openhuman/vault/tests.rs`, `app/src/components/intelligence/VaultPanel.test.tsx`, `app/src/utils/tauriCommands/vault.test.ts` | ✅     | User-added vaults expose writable/read-only/unavailable state; approved markdown writes reject missing approval, path escapes, and non-markdown targets |
 
 ### 11.2 Insights Dashboard
 

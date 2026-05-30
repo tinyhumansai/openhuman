@@ -25,7 +25,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::Arc;
 use std::time::Duration;
@@ -535,6 +535,78 @@ pub fn get_chunk(config: &Config, id: &str) -> Result<Option<Chunk>> {
             .optional()
             .context("Failed to query chunk by id")?;
         Ok(row)
+    })
+}
+
+/// Defensive cap for batched `IN (?,?,…)` reads.
+///
+/// SQLite's compile-time limit on bound parameters in a single statement
+/// (`SQLITE_MAX_VARIABLE_NUMBER`) has been **32 766** since 3.32 (2020),
+/// so 500 leaves a ~65× safety margin. The current call-site
+/// (`memory_tree::retrieval::fetch::fetch_leaves`) is capped at 20 ids,
+/// so the chunked loop runs exactly once today. The window exists so
+/// future call-sites passing larger id lists do not blow up against a
+/// host with a lower compile-time SQLite cap (older builds, custom
+/// embeddings, etc.).
+///
+/// Volume is **not** reduced: all input ids in → all matching rows out.
+/// The loop only splits the SQL; the merged `HashMap` is byte-identical
+/// to what one giant query would return.
+const MAX_FETCH_BATCH: usize = 500;
+
+/// Batched read of full chunk rows by id.
+///
+/// Contract mirror of looping [`get_chunk`] per id, but in
+/// `O(ceil(n / MAX_FETCH_BATCH))` SQLite round-trips instead of `O(n)`.
+/// The returned map contains only ids that exist in `mem_tree_chunks`;
+/// missing ids are silently absent (same as `get_chunk` returning
+/// `Ok(None)`). Callers that depend on input order must iterate their
+/// own id slice and look each id up in the map.
+///
+/// Reuses [`row_to_chunk`] so decoding stays bit-identical to the
+/// per-row helper — no risk of decoder drift.
+pub fn get_chunks_batch(config: &Config, chunk_ids: &[String]) -> Result<HashMap<String, Chunk>> {
+    if chunk_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    log::debug!(
+        "[memory::chunk_store] get_chunks_batch: n={} windows={}",
+        chunk_ids.len(),
+        chunk_ids.len().div_ceil(MAX_FETCH_BATCH)
+    );
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, Chunk> = HashMap::with_capacity(chunk_ids.len());
+        for window in chunk_ids.chunks(MAX_FETCH_BATCH) {
+            // Build the placeholder list `?1, ?2, …, ?n` matching the
+            // window length; rusqlite assigns positional binds 1..n in
+            // the order the values are passed.
+            let placeholders = (1..=window.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT id, source_kind, source_id, source_ref, owner,
+                        timestamp_ms, time_range_start_ms, time_range_end_ms,
+                        tags_json, content, token_count, seq_in_source, created_at_ms
+                   FROM mem_tree_chunks WHERE id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql).context("prepare get_chunks_batch")?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                window.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(params.as_slice(), row_to_chunk)
+                .context("query get_chunks_batch")?;
+            for row in rows {
+                let chunk = row.context("decode get_chunks_batch row")?;
+                out.insert(chunk.id.clone(), chunk);
+            }
+        }
+        log::debug!(
+            "[memory::chunk_store] get_chunks_batch: matched {}/{} ids",
+            out.len(),
+            chunk_ids.len()
+        );
+        Ok(out)
     })
 }
 

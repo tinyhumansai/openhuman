@@ -963,6 +963,53 @@ fn validate_reembed_skip_key_rejects_empty_and_oversized() {
     );
 }
 
+// ---------- get_chunks_batch ----------
+//
+// Contract: equivalent to looping `get_chunk` per id but in
+// `O(ceil(n / MAX_FETCH_BATCH))` SQLite round-trips. The map carries
+// only ids that exist; missing ids are silently absent (same as the
+// per-row helper returning Ok(None)).
+
+#[test]
+fn get_chunks_batch_returns_present_ids_in_map() {
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#eng", 1, 1_700_000_000_000);
+    let c3 = sample_chunk("slack:#ops", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+
+    let ids = vec![c1.id.clone(), c2.id.clone(), c3.id.clone()];
+    let map = get_chunks_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 3);
+    assert_eq!(map.get(&c1.id), Some(&c1));
+    assert_eq!(map.get(&c2.id), Some(&c2));
+    assert_eq!(map.get(&c3.id), Some(&c3));
+}
+
+#[test]
+fn get_chunks_batch_empty_input_and_missing_ids() {
+    // Empty input: empty map (no SQL issued).
+    let (_tmp, cfg) = test_config();
+    let empty = get_chunks_batch(&cfg, &[]).unwrap();
+    assert!(empty.is_empty());
+
+    // Missing ids: silently absent (mirrors per-row Ok(None)).
+    // `fetch_leaves` relies on this so partial-result detection
+    // (`hits.len() < ids.len()`) keeps working unchanged.
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+    let ids = vec![
+        c.id.clone(),
+        "ghost:no-such-1".into(),
+        "ghost:no-such-2".into(),
+    ];
+    let map = get_chunks_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get(&c.id), Some(&c));
+    assert!(map.get("ghost:no-such-1").is_none());
+    assert!(map.get("ghost:no-such-2").is_none());
+}
+
 // ---------- get_chunk_embeddings_for_signature_batch ----------
 //
 // Contract: equivalent to looping `get_chunk_embedding_for_signature`

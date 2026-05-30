@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 
 import CostDashboardPanel from '../components/dashboard/CostDashboardPanel';
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
@@ -146,6 +146,16 @@ const ToolsIcon = (
     />
   </svg>
 );
+const NotificationSettingsIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+    />
+  </svg>
+);
 const LlmIcon = (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -229,6 +239,7 @@ const WrappedSettingsPage = ({
 
 const Settings = () => {
   const { t } = useT();
+  const navigate = useNavigate();
 
   const wrapSettingsPage = (element: ReactNode, opts?: { maxWidthClass?: string }) => (
     <WrappedSettingsPage maxWidthClass={opts?.maxWidthClass}>
@@ -240,13 +251,6 @@ const Settings = () => {
   );
 
   const accountSettingsItems = [
-    {
-      id: 'recovery-phrase',
-      title: t('pages.settings.account.recoveryPhrase'),
-      description: t('pages.settings.account.recoveryPhraseDesc'),
-      route: 'recovery-phrase',
-      icon: RecoveryPhraseIcon,
-    },
     {
       id: 'team',
       title: t('pages.settings.account.team'),
@@ -267,6 +271,37 @@ const Settings = () => {
       description: t('pages.settings.account.migrationDesc'),
       route: 'migration',
       icon: MigrationIcon,
+    },
+  ];
+
+  // Notifications hub (lives under Advanced) — gathers the Alerts inbox and the
+  // notification preferences/routing panel under one section page.
+  const notificationsHubItems = [
+    {
+      id: 'alerts',
+      title: t('nav.alerts'),
+      description: t('settings.alertsDesc'),
+      // Alerts is the top-level inbox at `/notifications`, outside the settings
+      // tree, so navigate explicitly instead of via `navigateToSettings`.
+      onClick: () => navigate('/notifications'),
+      icon: NotificationsIcon,
+    },
+    {
+      id: 'notification-settings',
+      title: t('settings.notificationsHub.settingsItem'),
+      description: t('settings.notificationsHub.settingsItemDesc'),
+      route: 'notifications',
+      icon: NotificationSettingsIcon,
+    },
+  ];
+
+  const cryptoSettingsItems = [
+    {
+      id: 'recovery-phrase',
+      title: t('pages.settings.account.recoveryPhrase'),
+      description: t('pages.settings.account.recoveryPhraseDesc'),
+      route: 'recovery-phrase',
+      icon: RecoveryPhraseIcon,
     },
     {
       id: 'wallet-balances',
@@ -482,6 +517,26 @@ const Settings = () => {
               title={t('settings.agentsSection.title')}
               description={t('settings.agentsSection.description')}
               items={agentsSettingsItems}
+            />
+          )}
+        />
+        <Route
+          path="crypto"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.cryptoSection.title')}
+              description={t('settings.cryptoSection.description')}
+              items={cryptoSettingsItems}
+            />
+          )}
+        />
+        <Route
+          path="notifications-hub"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.notificationsHub.title')}
+              description={t('settings.notificationsHub.description')}
+              items={notificationsHubItems}
             />
           )}
         />

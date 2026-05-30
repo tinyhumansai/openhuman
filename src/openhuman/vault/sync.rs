@@ -702,6 +702,7 @@ mod sync_tests {
     use super::*;
     use crate::openhuman::memory_store::chunks::store::{count_chunks, is_source_ingested};
     use crate::openhuman::vault::ops;
+    use crate::openhuman::vault::VaultWriteState;
     use tempfile::TempDir;
 
     /// Test-config pattern mirrors `memory::sync_pipeline_e2e_test::test_config`:
@@ -730,6 +731,8 @@ mod sync_tests {
             created_at: Utc::now(),
             last_synced_at: None,
             file_count: 0,
+            write_state: VaultWriteState::Writable,
+            write_state_reason: None,
         }
     }
 

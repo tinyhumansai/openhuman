@@ -378,6 +378,29 @@ const messages: TranslationMap = {
   'memoryFreshness.statusStale': 'stale',
   'memoryFreshness.ageLabel': '{days}d old',
   'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
+  'memory.tab.path': 'Percorsi',
+  'connectionPath.title': 'Percorso di connessione',
+  'connectionPath.intro':
+    'Traccia la catena più breve di relazioni che collega due entità qualsiasi — come il grafo le connette, anche attraverso più passaggi.',
+  'connectionPath.loading': 'Caricamento del grafo…',
+  'connectionPath.errorPrefix': 'Impossibile caricare il grafo:',
+  'connectionPath.retry': 'Riprova',
+  'connectionPath.namespaceLabel': 'Namespace',
+  'connectionPath.namespaceAll': 'Tutti i namespace',
+  'connectionPath.sourceLabel': 'Da',
+  'connectionPath.targetLabel': 'A',
+  'connectionPath.sourcePlaceholder': 'Entità di partenza',
+  'connectionPath.targetPlaceholder': 'Entità di arrivo',
+  'connectionPath.prompt': 'Scegli due entità per tracciare come sono collegate.',
+  'connectionPath.empty': 'Nessun grafo della conoscenza ancora.',
+  'connectionPath.emptyHint':
+    "Una volta che l'assistente registra fatti correlati, potrai tracciare le connessioni qui.",
+  'connectionPath.resultHeading': 'Percorso più breve',
+  'connectionPath.pathSummary': 'Distanti {length} passaggio/i',
+  'connectionPath.sameMessage': 'Scegli due entità diverse.',
+  'connectionPath.missingSource': '«{entity}» non è presente nel grafo.',
+  'connectionPath.missingTarget': '«{entity}» non è presente nel grafo.',
+  'connectionPath.noPath': 'Nessuna connessione trovata tra «{source}» e «{target}».',
   'memoryTree.status.title': 'Albero della memoria',
   'memoryTree.status.autoSyncLabel': 'Sincronizzazione automatica',
   'memoryTree.status.autoSyncDescription':
@@ -1767,6 +1790,10 @@ const messages: TranslationMap = {
   'mic.unavailable': 'Microfono non disponibile',
   'mic.permissionDenied': 'Permesso microfono negato',
   'mic.failedToStartRecorder': 'Avvio del registratore fallito',
+  'mic.deviceUnavailable':
+    'Il microfono selezionato non è disponibile — prova un altro dispositivo.',
+  'mic.deviceInUse': "Il microfono è in uso da un'altra applicazione.",
+  'mic.error': 'Errore del microfono',
   'mic.transcribing': 'Trascrizione...',
   'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Tocca per inviare',
@@ -4151,6 +4178,18 @@ const messages: TranslationMap = {
   'vault.fileCount': '{count} file',
   'vault.syncedRelative': 'sincronizzato {time}',
   'vault.neverSynced': 'mai sincronizzato',
+  'vault.writeState.writable': 'Scrivibile',
+  'vault.writeState.read_only': 'Sola lettura',
+  'vault.writeState.unavailable': 'Non disponibile',
+  'vault.writeState.unknownReason': 'Stato di scrittura sconosciuto.',
+  'vault.writeState.reasons.writable':
+    'Le scritture Markdown/wiki approvate possono essere salvate in questo deposito.',
+  'vault.writeState.reasons.read_only':
+    'La cartella del deposito è in sola lettura su questo dispositivo.',
+  'vault.writeState.reasons.unavailable':
+    'La cartella del deposito non è disponibile su questo dispositivo.',
+  'vault.writeState.reasons.not_directory': 'Il percorso del deposito non è una cartella.',
+  'vault.writeState.reasons.empty_path': 'Il percorso della cartella del deposito è vuoto.',
   'vault.syncingProgress': 'Sincronizzazione… {ingested}/{total}',
   'vault.removing': 'Rimozione in corso…',
   'vault.relative.sec': '{count}s fa',
@@ -4193,6 +4232,35 @@ const messages: TranslationMap = {
   'walletBalances.rawBalance': 'Grezzo: {raw}',
   'walletBalances.errorGeneric':
     'Impossibile caricare i saldi del portafoglio. Configura il tuo portafoglio in Frase di recupero e riprova.',
+  'walletBalances.setupHint':
+    'La tua frase di recupero non è ancora configurata. Configurala per attivare il tuo wallet e vedere i saldi in tempo reale.',
+  'walletBalances.setupCta': 'Configura la frase di recupero',
+  'walletBalances.notSetUp': 'Non configurato',
+  'walletBalances.send': 'Invia',
+  'walletBalances.receive': 'Ricevi',
+  'walletReceive.scanHint':
+    'Scansiona questo codice o copia l’indirizzo qui sotto per ricevere fondi.',
+  'walletReceive.addressLabel': 'Indirizzo {network}',
+  'walletReceive.onlyChainWarning':
+    'Invia solo asset {network} a questo indirizzo. Inviare asset da un’altra rete può causare una perdita permanente.',
+  'walletSend.available': 'Disponibile',
+  'walletSend.recipient': 'Indirizzo del destinatario',
+  'walletSend.recipientPlaceholder': 'Incolla l’indirizzo di destinazione',
+  'walletSend.recipientRequired': 'Inserisci un indirizzo del destinatario',
+  'walletSend.amount': 'Importo',
+  'walletSend.invalidAmount': 'Inserisci un importo valido',
+  'walletSend.review': 'Rivedi',
+  'walletSend.preparing': 'Preparazione…',
+  'walletSend.confirmHint':
+    'Rivedi i dettagli qui sotto. La firma avviene localmente: nulla viene trasmesso finché non confermi.',
+  'walletSend.estimatedFee': 'Commissione di rete stimata',
+  'walletSend.confirmSend': 'Conferma e invia',
+  'walletSend.sending': 'Invio…',
+  'walletSend.sent': 'Transazione inviata',
+  'walletSend.txHash': 'Hash della transazione',
+  'walletSend.viewExplorer': 'Vedi nell’explorer',
+  'walletSend.done': 'Fatto',
+  'walletSend.genericError': 'Impossibile completare il trasferimento. Riprova.',
   'settings.taskSources.title': 'Fonti del compito',
   'settings.taskSources.subtitle':
     "Estrai le attività dai tuoi strumenti sulla lavagna delle cose da fare dell'agente",
@@ -4339,6 +4407,16 @@ const messages: TranslationMap = {
   'settings.agentsSection.description':
     'Gestisci i tuoi agenti, la loro autonomia e a cosa possono accedere su questo computer.',
   'settings.agentsSection.menuDesc': 'Registro, autonomia e accesso al sistema operativo',
+  'settings.cryptoSection.title': 'Cripto',
+  'settings.cryptoSection.description':
+    'Gestisci la tua frase di recupero e visualizza i saldi dei tuoi account wallet.',
+  'settings.cryptoSection.menuDesc': 'Frase di recupero e saldi del wallet',
+  'settings.notificationsHub.title': 'Notifiche',
+  'settings.notificationsHub.description':
+    'Visualizza la tua casella degli avvisi e gestisci le preferenze di notifica e l’instradamento.',
+  'settings.notificationsHub.menuDesc': 'Casella degli avvisi e preferenze di notifica',
+  'settings.notificationsHub.settingsItem': 'Impostazioni di notifica',
+  'settings.notificationsHub.settingsItemDesc': 'Preferenze e instradamento',
   'settings.agents.editor.notFound': 'Agente non trovato.',
   'settings.agents.editor.modelInherit': 'Eredita (predefinito della piattaforma)',
   'settings.agents.editor.modelHints': 'Suggerimenti di instradamento',
@@ -4361,6 +4439,9 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     "Gli agenti integrati non possono essere modificati. Puoi abilitarli, disabilitarli o reimpostarli dall'elenco degli agenti.",
+  'autocomplete.debounceMs': 'Debounce (ms)',
+  'autocomplete.maxChars': 'Caratteri massimi di contesto',
+  'autocomplete.overlayTtlMs': 'Timeout overlay (ms)',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
   'modelCouncil.intro':
