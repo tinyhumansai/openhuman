@@ -1782,7 +1782,9 @@ fn cargo_build_success_compacts_output() {
         lines.push(format!("   Compiling dep-{} v0.{}.0", i, i));
     }
     lines.push("   Compiling my-project v0.1.0 (/home/user/project)".to_owned());
-    lines.push("    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.34s".to_owned());
+    lines.push(
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.34s".to_owned(),
+    );
     let stdout = lines.join("\n");
 
     let input = ToolExecutionInput {
@@ -1809,4 +1811,3 @@ fn cargo_build_success_compacts_output() {
         result.stats.raw_chars
     );
 }
-
