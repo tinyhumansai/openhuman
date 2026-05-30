@@ -4165,6 +4165,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'Tampilkan di folder',
   'chat.artifact.show_more': 'Tampilkan selengkapnya',
   'chat.artifact.show_less': 'Tampilkan lebih sedikit',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '{count} file di chat ini',
+  'chat.files.panel.aria': 'File di chat ini',
+  'chat.files.panel.title': 'File ({count})',
+  'chat.files.panel.empty': 'Belum ada file. Minta agen membuatnya.',
+  'chat.files.panel.close': 'Tutup panel file',
+  'chat.files.delete.aria': 'Hapus {title}',
+  'chat.files.delete.confirm': 'Hapus file ini?',
+  'chat.files.delete.cancel': 'Batal',
+  'chat.files.delete.action': 'Hapus',
+  'chat.files.delete.failed': 'Tidak bisa menghapus file. Coba lagi.',
 };
 
 export default messages;

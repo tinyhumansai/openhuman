@@ -4118,6 +4118,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': '폴더에서 보기',
   'chat.artifact.show_more': '더 보기',
   'chat.artifact.show_less': '간단히 보기',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '이 채팅의 파일 {count}개',
+  'chat.files.panel.aria': '이 채팅의 파일',
+  'chat.files.panel.title': '파일 ({count})',
+  'chat.files.panel.empty': '아직 파일이 없습니다. 에이전트에 생성을 요청하세요.',
+  'chat.files.panel.close': '파일 패널 닫기',
+  'chat.files.delete.aria': '{title} 삭제',
+  'chat.files.delete.confirm': '이 파일을 삭제할까요?',
+  'chat.files.delete.cancel': '취소',
+  'chat.files.delete.action': '삭제',
+  'chat.files.delete.failed': '파일을 삭제하지 못했습니다. 다시 시도해주세요.',
 };
 
 export default messages;

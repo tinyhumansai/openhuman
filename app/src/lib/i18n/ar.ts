@@ -4076,6 +4076,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'عرض في المجلد',
   'chat.artifact.show_more': 'عرض المزيد',
   'chat.artifact.show_less': 'عرض أقل',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '{count} ملفات في هذه المحادثة',
+  'chat.files.panel.aria': 'ملفات في هذه المحادثة',
+  'chat.files.panel.title': 'الملفات ({count})',
+  'chat.files.panel.empty': 'لا توجد ملفات بعد. اطلب من الوكيل إنشاء واحد.',
+  'chat.files.panel.close': 'إغلاق لوحة الملفات',
+  'chat.files.delete.aria': 'حذف {title}',
+  'chat.files.delete.confirm': 'هل تريد حذف هذا الملف؟',
+  'chat.files.delete.cancel': 'إلغاء',
+  'chat.files.delete.action': 'حذف',
+  'chat.files.delete.failed': 'تعذّر حذف الملف. حاول مرة أخرى.',
 };
 
 export default messages;

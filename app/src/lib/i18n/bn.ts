@@ -4148,6 +4148,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'ফোল্ডারে দেখান',
   'chat.artifact.show_more': 'আরও দেখুন',
   'chat.artifact.show_less': 'কম দেখুন',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': 'এই চ্যাটে {count}টি ফাইল',
+  'chat.files.panel.aria': 'এই চ্যাটের ফাইল',
+  'chat.files.panel.title': 'ফাইল ({count})',
+  'chat.files.panel.empty': 'এখনো কোনো ফাইল নেই। এজেন্টকে একটি তৈরি করতে বলুন।',
+  'chat.files.panel.close': 'ফাইল প্যানেল বন্ধ করুন',
+  'chat.files.delete.aria': '{title} মুছুন',
+  'chat.files.delete.confirm': 'এই ফাইলটি মুছবেন?',
+  'chat.files.delete.cancel': 'বাতিল',
+  'chat.files.delete.action': 'মুছুন',
+  'chat.files.delete.failed': 'ফাইল মোছা যায়নি। আবার চেষ্টা করুন।',
 };
 
 export default messages;

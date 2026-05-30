@@ -4220,6 +4220,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'Mostra nella cartella',
   'chat.artifact.show_more': 'Mostra altro',
   'chat.artifact.show_less': 'Mostra meno',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '{count} file in questa chat',
+  'chat.files.panel.aria': 'File in questa chat',
+  'chat.files.panel.title': 'File ({count})',
+  'chat.files.panel.empty': 'Ancora nessun file. Chiedi all’agente di generarne uno.',
+  'chat.files.panel.close': 'Chiudi pannello file',
+  'chat.files.delete.aria': 'Elimina {title}',
+  'chat.files.delete.confirm': 'Eliminare questo file?',
+  'chat.files.delete.cancel': 'Annulla',
+  'chat.files.delete.action': 'Elimina',
+  'chat.files.delete.failed': 'Impossibile eliminare il file. Riprova.',
 };
 
 export default messages;

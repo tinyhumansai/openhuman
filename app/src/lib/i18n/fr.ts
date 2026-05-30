@@ -4242,6 +4242,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'Afficher dans le dossier',
   'chat.artifact.show_more': 'Voir plus',
   'chat.artifact.show_less': 'Voir moins',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '{count} fichiers dans cette discussion',
+  'chat.files.panel.aria': 'Fichiers dans cette discussion',
+  'chat.files.panel.title': 'Fichiers ({count})',
+  'chat.files.panel.empty': 'Aucun fichier pour l’instant. Demandez à l’agent d’en générer un.',
+  'chat.files.panel.close': 'Fermer le panneau de fichiers',
+  'chat.files.delete.aria': 'Supprimer {title}',
+  'chat.files.delete.confirm': 'Supprimer ce fichier ?',
+  'chat.files.delete.cancel': 'Annuler',
+  'chat.files.delete.action': 'Supprimer',
+  'chat.files.delete.failed': 'Impossible de supprimer le fichier. Réessayez.',
 };
 
 export default messages;

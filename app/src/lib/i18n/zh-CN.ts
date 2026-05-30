@@ -3951,6 +3951,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': '在文件夹中显示',
   'chat.artifact.show_more': '显示更多',
   'chat.artifact.show_less': '收起',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '本聊天中有 {count} 个文件',
+  'chat.files.panel.aria': '本聊天中的文件',
+  'chat.files.panel.title': '文件 ({count})',
+  'chat.files.panel.empty': '暂无文件。请让智能体生成一个。',
+  'chat.files.panel.close': '关闭文件面板',
+  'chat.files.delete.aria': '删除 {title}',
+  'chat.files.delete.confirm': '要删除此文件吗？',
+  'chat.files.delete.cancel': '取消',
+  'chat.files.delete.action': '删除',
+  'chat.files.delete.failed': '无法删除文件。请重试。',
 };
 
 export default messages;

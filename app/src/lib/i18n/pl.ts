@@ -4221,6 +4221,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'Pokaż w folderze',
   'chat.artifact.show_more': 'Pokaż więcej',
   'chat.artifact.show_less': 'Pokaż mniej',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': '{count} plików w tej rozmowie',
+  'chat.files.panel.aria': 'Pliki w tej rozmowie',
+  'chat.files.panel.title': 'Pliki ({count})',
+  'chat.files.panel.empty': 'Brak plików. Poproś agenta o wygenerowanie.',
+  'chat.files.panel.close': 'Zamknij panel plików',
+  'chat.files.delete.aria': 'Usuń {title}',
+  'chat.files.delete.confirm': 'Usunąć ten plik?',
+  'chat.files.delete.cancel': 'Anuluj',
+  'chat.files.delete.action': 'Usuń',
+  'chat.files.delete.failed': 'Nie udało się usunąć pliku. Spróbuj ponownie.',
 };
 
 export default messages;

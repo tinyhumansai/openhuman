@@ -4155,6 +4155,18 @@ const messages: TranslationMap = {
   'chat.artifact.reveal': 'फ़ोल्डर में दिखाएं',
   'chat.artifact.show_more': 'और दिखाएं',
   'chat.artifact.show_less': 'कम दिखाएं',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria': 'इस चैट में {count} फ़ाइलें',
+  'chat.files.panel.aria': 'इस चैट की फ़ाइलें',
+  'chat.files.panel.title': 'फ़ाइलें ({count})',
+  'chat.files.panel.empty': 'अभी कोई फ़ाइल नहीं। एजेंट से एक बनाने को कहें।',
+  'chat.files.panel.close': 'फ़ाइल पैनल बंद करें',
+  'chat.files.delete.aria': '{title} हटाएं',
+  'chat.files.delete.confirm': 'यह फ़ाइल हटाएं?',
+  'chat.files.delete.cancel': 'रद्द करें',
+  'chat.files.delete.action': 'हटाएं',
+  'chat.files.delete.failed': 'फ़ाइल हटाई नहीं जा सकी। पुनः प्रयास करें।',
 };
 
 export default messages;
