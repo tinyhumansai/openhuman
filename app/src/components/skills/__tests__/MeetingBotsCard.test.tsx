@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MeetCallRecord } from '../../../services/meetCallService';
+import { renderWithProviders } from '../../../test/test-utils';
 import MeetingBotsCard, { MeetingBotsModal } from '../MeetingBotsCard';
 
 const joinMock = vi.fn();
@@ -32,26 +33,26 @@ describe('MeetingBotsCard', () => {
   afterEach(() => cleanup());
 
   it('renders the banner and hides the modal by default', () => {
-    render(<MeetingBotsCard />);
+    renderWithProviders(<MeetingBotsCard />);
     expect(screen.getByTestId('meeting-bots-banner')).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('opens the modal when the banner is clicked', () => {
-    render(<MeetingBotsCard />);
+    renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('closes the modal on Cancel', () => {
-    render(<MeetingBotsCard />);
+    renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('closes the modal on Escape', () => {
-    render(<MeetingBotsCard />);
+    renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -60,7 +61,7 @@ describe('MeetingBotsCard', () => {
   it('submits to joinMeetCall and fires a success toast', async () => {
     joinMock.mockResolvedValueOnce({ requestId: 'req-1' });
     const onToast = vi.fn();
-    render(<MeetingBotsCard onToast={onToast} />);
+    renderWithProviders(<MeetingBotsCard onToast={onToast} />);
 
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
@@ -105,7 +106,7 @@ describe('MeetingBotsCard', () => {
   it('surfaces a join error inline + as an error toast', async () => {
     joinMock.mockRejectedValueOnce(new Error('Bad URL'));
     const onToast = vi.fn();
-    render(<MeetingBotsCard onToast={onToast} />);
+    renderWithProviders(<MeetingBotsCard onToast={onToast} />);
 
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     fireEvent.change(screen.getByLabelText(/meeting link/i), {
@@ -125,12 +126,35 @@ describe('MeetingBotsCard', () => {
   });
 
   it('disables the submit when the active platform is coming-soon', () => {
-    render(<MeetingBotsCard />);
+    renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     // Pick Zoom (coming soon)
     fireEvent.click(screen.getByRole('button', { name: /Zoom/ }));
     const submit = screen.getByRole('button', { name: /coming soon/i });
     expect(submit).toBeDisabled();
+  });
+
+  // Issue #2945: users were being asked to retype "your name in the call"
+  // every meeting. When the Persona display name (Settings → Persona) is
+  // set, the owner-name field pre-fills from it so the user can submit
+  // without retyping.
+  it('pre-fills the owner display name from the Persona slice', () => {
+    const { store } = renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: { persona: { displayName: 'Hemanth', description: '' } },
+    });
+    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
+    const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
+    expect(ownerInput.value).toBe('Hemanth');
+    // Sanity: the slice is wired so the assertion above isn't a no-op.
+    expect(store.getState().persona.displayName).toBe('Hemanth');
+  });
+
+  it('leaves the owner display name empty when no Persona name is set', () => {
+    // Default preloadedState — persona slice initial state is { displayName: '' }.
+    renderWithProviders(<MeetingBotsCard />);
+    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
+    const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
+    expect(ownerInput.value).toBe('');
   });
 });
 
@@ -160,7 +184,7 @@ describe('MeetingBotsModal — recent calls section', () => {
     // Never resolves during this test — simulates a slow fetch.
     listMock.mockReturnValue(new Promise(() => {}));
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     expect(screen.getByText(/loading…/i)).toBeInTheDocument();
   });
@@ -168,7 +192,7 @@ describe('MeetingBotsModal — recent calls section', () => {
   it('shows an empty-state message when listMeetCalls returns an empty array', async () => {
     listMock.mockResolvedValueOnce([]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/no previous calls yet/i)).toBeInTheDocument();
@@ -182,7 +206,7 @@ describe('MeetingBotsModal — recent calls section', () => {
     ];
     listMock.mockResolvedValueOnce(records);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText('aaa-bbbb-ccc')).toBeInTheDocument();
@@ -196,7 +220,7 @@ describe('MeetingBotsModal — recent calls section', () => {
   it('shows the count badge when there is at least one record', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord()]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       // The "(1)" count badge next to the "Recent calls" heading.
@@ -207,7 +231,7 @@ describe('MeetingBotsModal — recent calls section', () => {
   it('shows an error hint and an empty list when listMeetCalls rejects', async () => {
     listMock.mockRejectedValueOnce(new Error('Network timeout'));
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/network timeout/i)).toBeInTheDocument();
@@ -221,7 +245,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ meet_url: 'https://meet.google.com/xyz-1234-abc' }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText('xyz-1234-abc')).toBeInTheDocument();
@@ -235,7 +259,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ spoken_seconds: 40, listened_seconds: 20 }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/60s on call/i)).toBeInTheDocument();
@@ -248,7 +272,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ started_at_ms: Date.now() - 5 * 60 * 1000 }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/\dm ago/)).toBeInTheDocument();
@@ -258,7 +282,7 @@ describe('MeetingBotsModal — recent calls section', () => {
   it('shows "—" for a zero started_at_ms timestamp', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord({ started_at_ms: 0 })]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText('—')).toBeInTheDocument();
@@ -270,7 +294,7 @@ describe('MeetingBotsModal — recent calls section', () => {
   it('shows singular "turn" (not "turns") when turn_count is 1', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord({ turn_count: 1 })]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/1 turn$/)).toBeInTheDocument();
@@ -281,7 +305,7 @@ describe('MeetingBotsModal — recent calls section', () => {
   it('falls back to the raw URL when it cannot be parsed', async () => {
     listMock.mockResolvedValueOnce([makeCallRecord({ meet_url: 'not-a-valid-url' })]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText('not-a-valid-url')).toBeInTheDocument();
@@ -293,7 +317,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ started_at_ms: Date.now() - 3 * 60 * 60 * 1000 }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/3h ago/)).toBeInTheDocument();
@@ -305,7 +329,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ started_at_ms: Date.now() - 25 * 60 * 60 * 1000 }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText('yesterday')).toBeInTheDocument();
@@ -317,7 +341,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ started_at_ms: Date.now() - 3 * 24 * 60 * 60 * 1000 }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       expect(screen.getByText(/3d ago/)).toBeInTheDocument();
@@ -329,7 +353,7 @@ describe('MeetingBotsModal — recent calls section', () => {
       makeCallRecord({ started_at_ms: Date.now() - 10 * 24 * 60 * 60 * 1000 }),
     ]);
 
-    render(<MeetingBotsModal onClose={() => {}} />);
+    renderWithProviders(<MeetingBotsModal onClose={() => {}} />);
 
     await waitFor(() => {
       // toLocaleDateString returns "Month Day" — just check it's not a relative label.

@@ -16,6 +16,8 @@ import {
   type MascotMeetPlatform,
   type MeetCallRecord,
 } from '../../services/meetCallService';
+import { useAppSelector } from '../../store/hooks';
+import { selectPersonaDisplayName } from '../../store/personaSlice';
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
 
@@ -131,7 +133,19 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
   // remote participant from issuing tool calls in the owner's
   // name. Empty fails closed; the submit handler will surface an
   // explicit error before opening the CEF window.
-  const [ownerDisplayName, setOwnerDisplayName] = useState('');
+  //
+  // Seed from the user's Persona display name (Settings → Persona)
+  // so repeat callers don't have to retype it every meeting — the
+  // "name prompt" UX complaint in #2945. Stays empty when no Persona
+  // name is set, preserving the prior fail-closed behavior.
+  const personaDisplayName = useAppSelector(selectPersonaDisplayName);
+  const [ownerDisplayName, setOwnerDisplayName] = useState(personaDisplayName);
+  // Pick up a Persona name set after the modal opened (e.g. user
+  // edited Settings in another window), but never clobber a value
+  // the user has already typed here.
+  useEffect(() => {
+    setOwnerDisplayName(prev => (prev.trim() === '' ? personaDisplayName : prev));
+  }, [personaDisplayName]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Recent-calls history loaded from core when the modal opens.
