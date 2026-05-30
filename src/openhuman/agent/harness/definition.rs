@@ -167,8 +167,8 @@ pub struct AgentDefinition {
     /// so that reading a TOML makes the distinction obvious: `tools` is
     /// "what I execute directly", `subagents` is "what I can delegate to".
     ///
-    /// [`ArchetypeDelegationTool`]: crate::openhuman::agent_registry::tools::ArchetypeDelegationTool
-    /// [`SkillDelegationTool`]: crate::openhuman::agent_registry::tools::SkillDelegationTool
+    /// [`ArchetypeDelegationTool`]: crate::openhuman::agent_orchestration::tools::ArchetypeDelegationTool
+    /// [`SkillDelegationTool`]: crate::openhuman::agent_orchestration::tools::SkillDelegationTool
     #[serde(default)]
     pub subagents: Vec<SubagentEntry>,
 

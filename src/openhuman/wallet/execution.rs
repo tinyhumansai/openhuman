@@ -87,8 +87,6 @@ pub struct BalanceInfo {
 pub enum PreparedKind {
     NativeTransfer,
     TokenTransfer,
-    Swap,
-    ContractCall,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -147,6 +145,83 @@ pub struct ExecutionResult {
     pub transaction: PreparedTransaction,
 }
 
+/// Result of a low-level "sign this unsigned transaction and broadcast it"
+/// primitive. Unlike [`ExecutionResult`], this carries no `PreparedTransaction`
+/// — it is the minimal output the `web3` layer needs after handing the wallet
+/// an externally-built (e.g. deBridge) unsigned transaction to sign+broadcast.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RawBroadcastResult {
+    pub transaction_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explorer_url: Option<String>,
+    /// Simulated fee in the chain's smallest unit. `None` when the fee is not
+    /// known at broadcast time (e.g. Solana's dynamic base+priority fee, which
+    /// must be read back from the confirmed transaction).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee_raw: Option<String>,
+}
+
+/// Normalized lifecycle state of a broadcast transaction.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TxState {
+    /// Seen by the node but not yet included in a block.
+    Pending,
+    /// Included in a block and succeeded.
+    Confirmed,
+    /// Included in a block but reverted/failed.
+    Failed,
+    /// The node has no record of this hash.
+    NotFound,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxStatusInfo {
+    pub chain: WalletChain,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_network: Option<EvmNetwork>,
+    pub hash: String,
+    pub state: TxState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmations: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_number: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxReceiptInfo {
+    pub chain: WalletChain,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_network: Option<EvmNetwork>,
+    pub hash: String,
+    pub found: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub success: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block_number: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gas_used: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fee_raw: Option<String>,
+    /// Raw provider receipt payload, passed through unchanged.
+    pub raw: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TxLookupInfo {
+    pub chain: WalletChain,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evm_network: Option<EvmNetwork>,
+    pub hash: String,
+    pub found: bool,
+    /// Raw provider transaction payload, passed through unchanged.
+    pub raw: serde_json::Value,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareTransferParams {
@@ -161,38 +236,9 @@ pub struct PrepareTransferParams {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PrepareSwapParams {
-    pub chain: WalletChain,
-    pub from_symbol: String,
-    pub to_symbol: String,
-    pub amount_in_raw: String,
-    pub slippage_bps: u32,
-    pub router_address: String,
-    #[serde(default)]
-    pub evm_network: Option<EvmNetwork>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PrepareContractCallParams {
-    pub chain: WalletChain,
-    pub contract_address: String,
-    pub calldata: String,
-    #[serde(default = "zero_string")]
-    pub value_raw: String,
-    #[serde(default)]
-    pub evm_network: Option<EvmNetwork>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ExecutePreparedParams {
     pub quote_id: String,
     pub confirmed: bool,
-}
-
-fn zero_string() -> String {
-    "0".to_string()
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -245,6 +291,13 @@ pub(crate) fn current_owner() -> Option<QuoteOwner> {
             client_id: ctx.client_id.clone(),
         })
         .ok()
+}
+
+/// Resolve the derived EVM account address, erroring if the wallet is not
+/// configured. Used by the `web3` signing primitives that operate on the
+/// single shared EVM address.
+pub(crate) async fn require_evm_account() -> Result<String, String> {
+    Ok(require_account(WalletChain::Evm).await?.address)
 }
 
 async fn require_account(chain: WalletChain) -> Result<WalletAccount, String> {
@@ -328,15 +381,10 @@ fn estimated_fee_raw(chain: WalletChain, kind: PreparedKind) -> String {
     let base = match (chain, kind) {
         (WalletChain::Evm, PreparedKind::NativeTransfer) => 21_000u128 * 30_000_000_000,
         (WalletChain::Evm, PreparedKind::TokenTransfer) => 65_000u128 * 30_000_000_000,
-        (WalletChain::Evm, PreparedKind::Swap) => 200_000u128 * 30_000_000_000,
-        (WalletChain::Evm, PreparedKind::ContractCall) => 100_000u128 * 30_000_000_000,
         (WalletChain::Btc, _) => 5_000,
-        (WalletChain::Solana, PreparedKind::NativeTransfer) => 5_000,
-        (WalletChain::Solana, PreparedKind::TokenTransfer) => 5_000,
         (WalletChain::Solana, _) => 5_000,
         (WalletChain::Tron, PreparedKind::NativeTransfer) => 1_000_000,
         (WalletChain::Tron, PreparedKind::TokenTransfer) => 15_000_000,
-        (WalletChain::Tron, _) => 1_000_000,
     };
     base.to_string()
 }
@@ -707,132 +755,122 @@ pub async fn prepare_transfer(
     ))
 }
 
-pub async fn prepare_swap(
-    params: PrepareSwapParams,
-) -> Result<RpcOutcome<PreparedTransaction>, String> {
-    if params.from_symbol.trim().is_empty() || params.to_symbol.trim().is_empty() {
-        return Err("swap requires non-empty from_symbol and to_symbol".to_string());
-    }
-    if params.from_symbol.eq_ignore_ascii_case(&params.to_symbol) {
-        return Err("swap from_symbol and to_symbol must differ".to_string());
-    }
-    if params.slippage_bps > 5_000 {
-        return Err("slippage_bps too high (cap 5000 = 50%)".to_string());
-    }
-    let amount = validate_amount(&params.amount_in_raw)?;
-    if amount == 0 {
-        return Err("swap amount_in_raw must be greater than zero".to_string());
-    }
-    let router = validate_address(params.chain, &params.router_address)?;
-    let account = require_account(params.chain).await?;
-    let network = if params.chain == WalletChain::Evm {
-        Some(params.evm_network.unwrap_or(EvmNetwork::EthereumMainnet))
+/// Resolve the EVM network for a tx read, defaulting to Ethereum mainnet.
+fn read_network(chain: WalletChain, evm_network: Option<EvmNetwork>) -> Option<EvmNetwork> {
+    if chain == WalletChain::Evm {
+        Some(evm_network.unwrap_or(EvmNetwork::EthereumMainnet))
     } else {
         None
-    };
-    let native_decimals = if let Some(net) = network {
-        evm_asset_catalog(net)
-            .into_iter()
-            .find(|value| value.native)
-            .map(|value| value.decimals)
-            .unwrap_or(18)
-    } else {
-        super::defaults::asset_catalog(params.chain)
-            .into_iter()
-            .find(|value| value.native)
-            .map(|value| value.decimals)
-            .unwrap_or(18)
-    };
-    let min_out = amount.saturating_mul((10_000 - params.slippage_bps) as u128) / 10_000;
-    let now = now_ms();
-    let quote = PreparedTransaction {
-        quote_id: next_quote_id(),
-        kind: PreparedKind::Swap,
-        chain: params.chain,
-        evm_network: network,
-        from_address: account.address.clone(),
-        to_address: router,
-        asset_symbol: params.from_symbol.clone(),
-        amount_raw: amount.to_string(),
-        amount_formatted: format_amount(amount, native_decimals),
-        receive_symbol: Some(params.to_symbol.clone()),
-        min_receive_raw: Some(min_out.to_string()),
-        calldata: None,
-        token_address: None,
-        estimated_fee_raw: estimated_fee_raw(params.chain, PreparedKind::Swap),
-        status: PreparedStatus::AwaitingConfirmation,
-        created_at_ms: now,
-        expires_at_ms: now + QUOTE_TTL_MS,
-        notes: vec![format!(
-            "Swap {} -> {}, slippage {} bps. Real router quote required before signing.",
-            params.from_symbol, params.to_symbol, params.slippage_bps
-        )],
-        owner: current_owner(),
+    }
+}
+
+/// Check the on-chain lifecycle state of a previously broadcast transaction.
+pub async fn tx_status(
+    chain: WalletChain,
+    evm_network: Option<EvmNetwork>,
+    hash: &str,
+) -> Result<RpcOutcome<TxStatusInfo>, String> {
+    let hash = hash.trim();
+    if hash.is_empty() {
+        return Err("tx hash is empty".to_string());
+    }
+    let info = match chain {
+        WalletChain::Evm => {
+            chain_evm::tx_status(read_network(chain, evm_network).unwrap(), hash).await?
+        }
+        WalletChain::Btc => chain_btc::tx_status(hash).await?,
+        WalletChain::Solana => chain_sol::tx_status(hash).await?,
+        WalletChain::Tron => chain_tron::tx_status(hash).await?,
     };
     debug!(
-        "{LOG_PREFIX} prepare_swap chain={} quote_id={} from={} to={} slippage_bps={}",
-        chain_str(params.chain),
-        quote.quote_id,
-        params.from_symbol,
-        params.to_symbol,
-        params.slippage_bps
+        "{LOG_PREFIX} tx_status chain={} hash={} state={:?}",
+        chain_str(chain),
+        hash,
+        info.state
     );
     Ok(RpcOutcome::new(
-        store_quote(quote),
-        vec!["wallet swap prepared".to_string()],
+        info,
+        vec!["wallet tx status fetched".to_string()],
     ))
 }
 
-pub async fn prepare_contract_call(
-    params: PrepareContractCallParams,
-) -> Result<RpcOutcome<PreparedTransaction>, String> {
-    if params.chain != WalletChain::Evm {
-        return Err(format!(
-            "contract calls are currently implemented only for EVM; got '{}'",
-            chain_str(params.chain)
-        ));
+/// Fetch the receipt of a broadcast transaction (success flag, fee, block).
+pub async fn tx_receipt(
+    chain: WalletChain,
+    evm_network: Option<EvmNetwork>,
+    hash: &str,
+) -> Result<RpcOutcome<TxReceiptInfo>, String> {
+    let hash = hash.trim();
+    if hash.is_empty() {
+        return Err("tx hash is empty".to_string());
     }
-    let contract = validate_address(params.chain, &params.contract_address)?;
-    let calldata = validate_calldata(&params.calldata)?;
-    let value = validate_amount(&params.value_raw)?;
-    let account = require_account(params.chain).await?;
-    let network = params.evm_network.unwrap_or(EvmNetwork::EthereumMainnet);
-    let native = evm_asset_catalog(network)
-        .into_iter()
-        .find(|value| value.native)
-        .ok_or_else(|| "missing native asset metadata for evm".to_string())?;
-    let now = now_ms();
-    let quote = PreparedTransaction {
-        quote_id: next_quote_id(),
-        kind: PreparedKind::ContractCall,
-        chain: params.chain,
-        evm_network: Some(network),
-        from_address: account.address.clone(),
-        to_address: contract,
-        asset_symbol: native.symbol,
-        amount_raw: value.to_string(),
-        amount_formatted: format_amount(value, native.decimals),
-        receive_symbol: None,
-        min_receive_raw: None,
-        calldata: Some(calldata),
-        token_address: None,
-        estimated_fee_raw: estimated_fee_raw(params.chain, PreparedKind::ContractCall),
-        status: PreparedStatus::AwaitingConfirmation,
-        created_at_ms: now,
-        expires_at_ms: now + QUOTE_TTL_MS,
-        notes: vec!["Contract call prepared from caller-supplied ABI/calldata.".to_string()],
-        owner: current_owner(),
+    let info = match chain {
+        WalletChain::Evm => {
+            chain_evm::tx_receipt(read_network(chain, evm_network).unwrap(), hash).await?
+        }
+        WalletChain::Btc => chain_btc::tx_receipt(hash).await?,
+        WalletChain::Solana => chain_sol::tx_receipt(hash).await?,
+        WalletChain::Tron => chain_tron::tx_receipt(hash).await?,
     };
     debug!(
-        "{LOG_PREFIX} prepare_contract_call chain={} quote_id={} value={}",
-        chain_str(params.chain),
-        quote.quote_id,
-        quote.amount_raw
+        "{LOG_PREFIX} tx_receipt chain={} hash={} found={}",
+        chain_str(chain),
+        hash,
+        info.found
     );
     Ok(RpcOutcome::new(
-        store_quote(quote),
-        vec!["wallet contract call prepared".to_string()],
+        info,
+        vec!["wallet tx receipt fetched".to_string()],
     ))
+}
+
+/// Look up the raw transaction payload by hash.
+pub async fn lookup_tx(
+    chain: WalletChain,
+    evm_network: Option<EvmNetwork>,
+    hash: &str,
+) -> Result<RpcOutcome<TxLookupInfo>, String> {
+    let hash = hash.trim();
+    if hash.is_empty() {
+        return Err("tx hash is empty".to_string());
+    }
+    let info = match chain {
+        WalletChain::Evm => {
+            chain_evm::lookup_tx(read_network(chain, evm_network).unwrap(), hash).await?
+        }
+        WalletChain::Btc => chain_btc::lookup_tx(hash).await?,
+        WalletChain::Solana => chain_sol::lookup_tx(hash).await?,
+        WalletChain::Tron => chain_tron::lookup_tx(hash).await?,
+    };
+    debug!(
+        "{LOG_PREFIX} lookup_tx chain={} hash={} found={}",
+        chain_str(chain),
+        hash,
+        info.found
+    );
+    Ok(RpcOutcome::new(
+        info,
+        vec!["wallet tx looked up".to_string()],
+    ))
+}
+
+/// Crate-internal: sign+broadcast an externally-built unsigned EVM transaction
+/// (deBridge swap/bridge or generic dapp calldata). See [`chain_evm::sign_and_broadcast_evm`].
+pub(crate) async fn sign_and_broadcast_evm(
+    network: EvmNetwork,
+    to: &str,
+    data_hex: Option<String>,
+    value_raw: &str,
+) -> Result<RawBroadcastResult, String> {
+    chain_evm::sign_and_broadcast_evm(network, to, data_hex, value_raw).await
+}
+
+/// Crate-internal: sign+broadcast an externally-built hex `VersionedTransaction`
+/// (deBridge Solana swap/bridge). See [`chain_sol::sign_and_broadcast_versioned`].
+pub(crate) async fn sign_and_broadcast_solana(
+    tx_blob_hex: &str,
+) -> Result<RawBroadcastResult, String> {
+    chain_sol::sign_and_broadcast_versioned(tx_blob_hex).await
 }
 
 pub async fn execute_prepared(

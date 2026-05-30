@@ -7,6 +7,7 @@ import { teamApi } from '../../../services/api/teamApi';
 import { CoreRpcError } from '../../../services/coreRpcClient';
 import type { TeamWithRole } from '../../../types/team';
 import { sanitizeError } from '../../../utils/sanitize';
+import { CenteredLoadingState, ErrorBanner } from '../../ui';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -262,34 +263,9 @@ const TeamPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          {error && (
-            <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
-              <p className="text-xs text-coral-400">{error}</p>
-            </div>
-          )}
+          {error && <ErrorBanner message={error} />}
 
-          {isLoading && teams.length === 0 && (
-            <div className="flex items-center justify-center py-8">
-              <svg
-                className="w-5 h-5 text-stone-500 dark:text-neutral-400 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-            </div>
-          )}
+          {isLoading && teams.length === 0 && <CenteredLoadingState />}
 
           {teams.length > 0 && (
             <div className="space-y-3">

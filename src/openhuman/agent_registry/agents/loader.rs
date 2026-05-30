@@ -652,15 +652,24 @@ mod tests {
                         "crypto_agent needs read tool `{required}`"
                     );
                 }
-                // Quote / prepare surface.
+                // Quote / prepare surface: native+token transfers on the
+                // wallet, swaps/bridges/dapp calls on the web3 layer.
                 for required in [
                     "wallet_prepare_transfer",
-                    "wallet_prepare_swap",
-                    "wallet_prepare_contract_call",
+                    "web3_swap_quote",
+                    "web3_bridge_quote",
+                    "web3_dapp_call",
                 ] {
                     assert!(
                         tools.iter().any(|t| t == required),
                         "crypto_agent needs prepare tool `{required}`"
+                    );
+                }
+                // Transaction inspection surface.
+                for required in ["wallet_tx_status", "wallet_tx_receipt", "wallet_lookup_tx"] {
+                    assert!(
+                        tools.iter().any(|t| t == required),
+                        "crypto_agent needs tx-read tool `{required}`"
                     );
                 }
                 // Execute surface — gated by the prepared blob from a
@@ -805,7 +814,9 @@ mod tests {
                     "delegate_plan",
                     "wallet_execute_prepared",
                     "wallet_prepare_transfer",
-                    "wallet_prepare_swap",
+                    "web3_swap_execute",
+                    "web3_bridge_execute",
+                    "web3_dapp_execute",
                 ] {
                     assert!(
                         !tools.iter().any(|t| t == forbidden),

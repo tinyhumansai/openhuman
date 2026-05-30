@@ -562,6 +562,16 @@ async fn mock_wallet_evm_rpc(
             )
         }
         "eth_getBalance" => Value::String("0x0".to_string()),
+        "eth_blockNumber" => Value::String("0x14".to_string()),
+        "eth_getTransactionByHash" => {
+            json!({"hash": params.first().cloned().unwrap_or(Value::Null)})
+        }
+        "eth_getTransactionReceipt" => json!({
+            "status": "0x1",
+            "blockNumber": "0x10",
+            "gasUsed": "0x5208",
+            "effectiveGasPrice": "0x3b9aca00"
+        }),
         _ => Value::Null,
     };
     Json(json!({"jsonrpc":"2.0","id":1,"result":result}))
@@ -1498,6 +1508,45 @@ async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
             .and_then(|agent| agent.get("enabled"))
             .and_then(Value::as_bool),
         Some(true)
+    );
+
+    // The agent editor's tool picker is fed by available_tools — every entry is
+    // a {name, description} pair whose name is a valid tool_allowlist value.
+    let available_tools = post_json_rpc(
+        &rpc_base,
+        2862_24,
+        "openhuman.agent_registry_available_tools",
+        json!({}),
+    )
+    .await;
+    let tools = assert_no_jsonrpc_error(&available_tools, "agent_registry_available_tools")
+        .get("tools")
+        .and_then(Value::as_array)
+        .cloned()
+        .expect("available_tools should return a tools array");
+    assert!(
+        !tools.is_empty(),
+        "the orchestrator should expose at least one built-in tool"
+    );
+    let first = tools.first().expect("non-empty tools");
+    assert!(
+        first.get("name").and_then(Value::as_str).is_some(),
+        "each tool should have a string name: {first}"
+    );
+    assert!(
+        first.get("description").and_then(Value::as_str).is_some(),
+        "each tool should have a string description: {first}"
+    );
+    // The catalog is the full built-in surface (wildcard agent), not the
+    // orchestrator's curated `named` subset — so a core read tool like
+    // `file_read`, which the orchestrator does not list directly, must appear.
+    let names: Vec<&str> = tools
+        .iter()
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+        .collect();
+    assert!(
+        names.contains(&"file_read"),
+        "available_tools should expose the full catalog (file_read missing): {names:?}"
     );
 
     rpc_join.abort();
@@ -3902,6 +3951,7 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
         "arbitrum_one",
         "optimism_mainnet",
         "polygon_mainnet",
+        "bsc_mainnet",
     ] {
         assert!(
             list.iter()
@@ -3938,8 +3988,8 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     let body = assert_no_jsonrpc_error(&cs, "wallet_chain_status");
     let result = body.get("result").unwrap_or(&body);
     let rows = result.as_array().expect("chain_status array");
-    // 5 EVM rows (one per L2 / mainnet) + 3 non-EVM chains.
-    assert_eq!(rows.len(), 8);
+    // 6 EVM rows (one per L2 / mainnet, incl. BNB Chain) + 3 non-EVM chains.
+    assert_eq!(rows.len(), 9);
     assert!(
         rows.iter()
             .all(|r| r.get("providerStatus").and_then(Value::as_str) == Some("ready")),
@@ -4046,6 +4096,121 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
     assert!(
         dup.get("error").is_some(),
         "expected error re-executing consumed quote: {dup}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// Wallet tx-read surface (tx_status / tx_receipt / lookup_tx) plus the web3
+/// surface gates (routes/quote require auth; same-chain bridge + unsignable
+/// chain are rejected before any network call).
+#[tokio::test]
+async fn json_rpc_wallet_tx_reads_and_web3_gates_round_trip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let (wallet_rpc_addr, _raw_txs) = start_mock_wallet_evm_rpc().await;
+    let _evm_provider_guard = EnvVarGuard::set(
+        "OPENHUMAN_WALLET_RPC_EVM",
+        &format!("http://{wallet_rpc_addr}"),
+    );
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // tx_status against the mock EVM node → confirmed with derived confirmations.
+    let status = post_json_rpc(
+        &rpc_base,
+        2101,
+        "openhuman.wallet_tx_status",
+        json!({ "chain": "evm", "hash": "0xdeadbeef" }),
+    )
+    .await;
+    let body = assert_no_jsonrpc_error(&status, "wallet_tx_status");
+    let result = body.get("result").unwrap_or(&body);
+    assert_eq!(
+        result.get("state").and_then(Value::as_str),
+        Some("confirmed")
+    );
+
+    // tx_receipt extracts gasUsed + computed fee.
+    let receipt = post_json_rpc(
+        &rpc_base,
+        2102,
+        "openhuman.wallet_tx_receipt",
+        json!({ "chain": "evm", "hash": "0xdeadbeef" }),
+    )
+    .await;
+    let body = assert_no_jsonrpc_error(&receipt, "wallet_tx_receipt");
+    let result = body.get("result").unwrap_or(&body);
+    assert_eq!(result.get("success").and_then(Value::as_bool), Some(true));
+    assert_eq!(result.get("gasUsed").and_then(Value::as_str), Some("21000"));
+
+    // lookup_tx reports found.
+    let lookup = post_json_rpc(
+        &rpc_base,
+        2103,
+        "openhuman.wallet_lookup_tx",
+        json!({ "chain": "evm", "hash": "0xdeadbeef" }),
+    )
+    .await;
+    let body = assert_no_jsonrpc_error(&lookup, "wallet_lookup_tx");
+    let result = body.get("result").unwrap_or(&body);
+    assert_eq!(result.get("found").and_then(Value::as_bool), Some(true));
+
+    // web3_bridge rejects same-chain requests. This gate runs *before* any
+    // auth / backend call, so no session setup is needed — assert the
+    // gate-specific message (not just any error) to rule out auth false-positives.
+    let same_chain = post_json_rpc(
+        &rpc_base,
+        2104,
+        "openhuman.web3_bridge_quote",
+        json!({
+            "srcChainId": 1, "srcChainTokenIn": "0x0", "srcChainTokenInAmount": "1",
+            "dstChainId": 1, "dstChainTokenOut": "0x1"
+        }),
+    )
+    .await;
+    let same_chain_msg = same_chain
+        .get("error")
+        .and_then(|e| e.get("message").or_else(|| e.get("data")))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        same_chain_msg.contains("different source and destination"),
+        "expected same-chain bridge gate rejection, got: {same_chain}"
+    );
+
+    // web3_swap rejects a chain id the wallet can't sign for — also a pre-auth gate.
+    let unsignable = post_json_rpc(
+        &rpc_base,
+        2105,
+        "openhuman.web3_swap_quote",
+        json!({
+            "chainId": 999999, "tokenIn": "0x0", "tokenInAmount": "1", "tokenOut": "0x1"
+        }),
+    )
+    .await;
+    let unsignable_msg = unsignable
+        .get("error")
+        .and_then(|e| e.get("message").or_else(|| e.get("data")))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        unsignable_msg.contains("not signable"),
+        "expected unsignable-chain swap gate rejection, got: {unsignable}"
     );
 
     mock_join.abort();

@@ -510,6 +510,13 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
 }
 
 fn is_embedding_backend_auth_failure(lower: &str) -> bool {
+    // Skip the OpenHuman-backend envelope shape `{"success":false,"error":"invalid token"}`
+    // (TAURI-RUST-4K5) — that's a SessionExpired wire shape, not a BYO-key auth failure.
+    // `is_session_expired_message` claims it via the conjunctive
+    // `Embedding API error (401` + `"error":"Invalid token"` anchors.
+    if lower.contains("\"error\":\"invalid token\"") {
+        return false;
+    }
     lower.contains("embedding api error")
         && lower.contains("401")
         && lower.contains("invalid token")
@@ -625,15 +632,18 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         // actionable in Sentry).
         || (msg.contains("OpenHuman API error (401")
             && msg.contains("\"error\":\"Invalid token\""))
-        // TAURI-RUST-4K5 — same OpenHuman backend "Invalid token" envelope
+        // TAURI-RUST-4K5 / -T — same OpenHuman backend "Invalid token" envelope
         // wrapped by `src/openhuman/embeddings/openai.rs:139` with the
         // `"Embedding API error"` prefix instead of `"OpenHuman API error"`.
-        // Same conjunctive-anchor pattern as 4P0: the embedding-scoped
-        // prefix gates the match so a third-party BYO-key embedding 401
-        // (e.g. OpenAI/Voyage/Cohere rejecting the user's own API key)
-        // stays actionable — guarded by
+        // Both parenthesized (`Embedding API error (401`) and bare-status
+        // (`Embedding API error 401`) wire shapes are observed in production
+        // and must classify identically. Same conjunctive-anchor pattern as
+        // 4P0: the embedding-scoped prefix gates the match so a third-party
+        // BYO-key embedding 401 (e.g. OpenAI/Voyage/Cohere rejecting the
+        // user's own API key) stays actionable — guarded by
         // `does_not_classify_embedding_byo_key_401_as_session_expired`.
-        || (msg.contains("Embedding API error (401")
+        || ((msg.contains("Embedding API error (401")
+             || msg.contains("Embedding API error 401"))
             && msg.contains("\"error\":\"Invalid token\""))
         // TAURI-RUST-1EE — same OpenHuman backend "Invalid token" envelope
         // wrapped by the streaming-chat path at

@@ -34,7 +34,7 @@ Multi-agent orchestration domain. Owns the LLM tool-calling loop, sub-agent disp
 - `src/openhuman/composio/bus.rs` — Composio trigger envelopes go through `agent::triage`.
 - `src/openhuman/notifications/rpc.rs` — surfaces agent runs to the UI.
 - `src/openhuman/learning/{reflection,tool_tracker,user_profile}.rs` — read transcripts + tool outcomes.
-- `src/openhuman/agent_registry/tools/{dispatch,spawn_subagent}.rs` — `spawn_subagent` tool delegates here.
+- `src/openhuman/agent_orchestration/tools/{dispatch,spawn_subagent}.rs` — `spawn_subagent` tool delegates here.
 - `src/core/all.rs` — controller registry wires `all_agent_registered_controllers`.
 
 ## Tests

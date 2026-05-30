@@ -78,6 +78,12 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
 
   const ENGINES: EngineOption[] = [
     {
+      id: 'disabled',
+      label: t('settings.search.engineDisabledLabel'),
+      description: t('settings.search.engineDisabledDesc'),
+      requiresKey: false,
+    },
+    {
       id: 'managed',
       label: t('settings.search.engineManagedLabel'),
       description: t('settings.search.engineManagedDesc'),
@@ -206,6 +212,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
 
   const isConfigured = (engine: SearchEngineId): boolean => {
     if (!settings) return false;
+    if (engine === 'disabled') return true;
     if (engine === 'managed') return true;
     if (engine === 'parallel') return settings.parallel_configured;
     if (engine === 'brave') return settings.brave_configured;
@@ -214,7 +221,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
   };
 
   return (
-    <div className="z-10 relative">
+    <div className="z-10 relative" data-testid="search-settings-panel">
       {!embedded && (
         <SettingsHeader
           title={t('settings.search.title')}
@@ -255,6 +262,7 @@ const SearchPanel = ({ embedded = false }: { embedded?: boolean }) => {
                   <button
                     key={opt.id}
                     type="button"
+                    data-testid={`search-engine-${opt.id}`}
                     role="radio"
                     aria-checked={selected}
                     onClick={() => void persistEngine(opt.id)}

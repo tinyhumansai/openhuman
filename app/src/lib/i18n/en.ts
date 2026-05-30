@@ -792,8 +792,11 @@ const en: TranslationMap = {
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    'Pick the search engine the agent uses. Managed uses OpenHuman’s backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.',
+    'Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman’s backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.',
   'settings.search.engineAria': 'Search engine',
+  'settings.search.engineDisabledLabel': 'Disabled',
+  'settings.search.engineDisabledDesc':
+    'Remove search tools from the agent context and available tool list.',
   'settings.search.engineManagedLabel': 'OpenHuman Managed',
   'settings.search.engineManagedDesc':
     'Default. Routed through the OpenHuman backend — no API key required.',
@@ -4179,6 +4182,20 @@ const en: TranslationMap = {
   'settings.appearanceDesc': 'Pick light, dark, or match your system theme',
   'settings.mascot': 'Mascot',
   'settings.mascotDesc': 'Pick the mascot color used across the app',
+  // Settings > Account > Wallet Balances
+  'pages.settings.account.walletBalances': 'Wallet Balances',
+  'pages.settings.account.walletBalancesDesc': 'View multi-chain balances for your local wallet',
+  // WalletBalancesPanel strings
+  'walletBalances.title': 'Wallet Balances',
+  'walletBalances.refresh': 'Refresh',
+  'walletBalances.loading': 'Loading balances…',
+  'walletBalances.retry': 'Retry',
+  'walletBalances.emptyState': 'No wallet accounts yet — set up a wallet in Recovery Phrase.',
+  'walletBalances.copyAddress': 'Copy address',
+  'walletBalances.providerMissing': 'provider unavailable',
+  'walletBalances.rawBalance': 'Raw: {raw}',
+  'walletBalances.errorGeneric':
+    'Unable to load wallet balances. Set up your wallet in Recovery Phrase and try again.',
   // Task sources (#task-sources)
   'settings.taskSources.title': 'Task Sources',
   'settings.taskSources.subtitle': 'Pull tasks from your tools onto the agent todo board',
@@ -4281,6 +4298,31 @@ const en: TranslationMap = {
   'settings.agents.editor.save': 'Save',
   'settings.agents.editor.create': 'Create agent',
   'settings.agents.editor.saving': 'Saving…',
+  'settings.agentsSection.title': 'Agents',
+  'settings.agentsSection.description':
+    'Manage your agents, their autonomy, and what they can access on this computer.',
+  'settings.agentsSection.menuDesc': 'Registry, autonomy & OS access',
+  'settings.agents.editor.notFound': 'Agent not found.',
+  'settings.agents.editor.modelInherit': 'Inherit (platform default)',
+  'settings.agents.editor.modelHints': 'Route hints',
+  'settings.agents.editor.modelTiers': 'Model tiers',
+  'settings.agents.editor.modelCustom': 'Custom model id…',
+  'settings.agents.editor.modelCustomPlaceholder': 'e.g. anthropic/claude-sonnet-4',
+  'settings.agents.editor.selectTools': 'Add tools',
+  'settings.agents.editor.toolsAllSelected': 'All tools',
+  'settings.agents.editor.toolsNoneSelected': 'No tools selected',
+  'settings.agents.editor.removeToolAria': 'Remove {tool}',
+  'settings.agents.editor.toolsModalTitle': 'Allowed tools',
+  'settings.agents.editor.toolsSelectedCount': '{count} selected',
+  'settings.agents.editor.toolsSearchPlaceholder': 'Search tools…',
+  'settings.agents.editor.toolsAllowAll': 'Allow all tools (*)',
+  'settings.agents.editor.toolsAllowAllHint': 'This agent can use every available tool.',
+  'settings.agents.editor.toolsLoading': 'Loading tools…',
+  'settings.agents.editor.toolsLoadError': 'Couldn’t load tools',
+  'settings.agents.editor.toolsEmpty': 'No tools match your search.',
+  'settings.agents.editor.toolsDone': 'Done',
+  'settings.agents.editor.builtInReadonly':
+    'Built-in agents can’t be edited. You can enable, disable, or reset them from the agents list.',
 };
 
 export default en;

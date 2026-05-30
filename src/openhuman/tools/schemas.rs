@@ -11,8 +11,8 @@ use serde_json::{json, Map, Value};
 use crate::core::all::{ControllerFuture, RegisteredController};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::config::rpc as config_rpc;
+use crate::openhuman::search::tools::SEARXNG_MAX_RESULTS;
 use crate::openhuman::tools::traits::Tool;
-use crate::openhuman::tools::SEARXNG_MAX_RESULTS;
 use crate::rpc::RpcOutcome;
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -517,7 +517,7 @@ fn handle_web_search(params: Map<String, Value>) -> ControllerFuture {
         });
 
         let resp = client
-            .post::<crate::openhuman::tools::SearchResponse>(
+            .post::<crate::openhuman::search::tools::SearchResponse>(
                 "/agent-integrations/parallel/search",
                 &body,
             )
@@ -568,7 +568,7 @@ fn handle_seltz_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.seltz_search] start"
         );
 
-        let tool = crate::openhuman::tools::SeltzSearchTool::new(
+        let tool = crate::openhuman::search::tools::SeltzSearchTool::new(
             config.seltz.api_key.clone(),
             config.seltz.api_url.clone(),
             max_results,
@@ -650,7 +650,7 @@ fn handle_querit_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.querit_search] start"
         );
 
-        let tool = crate::openhuman::tools::QueritSearchTool::new(
+        let tool = crate::openhuman::search::tools::QueritSearchTool::new(
             config.search.querit.api_key.clone(),
             None,
             max_results,
@@ -729,7 +729,7 @@ fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
             "[rpc][tools.searxng_search] start"
         );
 
-        let tool = crate::openhuman::tools::SearxngSearchTool::new(
+        let tool = crate::openhuman::search::tools::SearxngSearchTool::new(
             config.searxng.base_url.clone(),
             config.searxng.max_results,
             config.searxng.default_language.clone(),
@@ -737,7 +737,7 @@ fn handle_searxng_search(params: Map<String, Value>) -> ControllerFuture {
         );
 
         let response = tool
-            .search(crate::openhuman::tools::SearxngSearchArgs {
+            .search(crate::openhuman::search::tools::SearxngSearchArgs {
                 query,
                 categories,
                 language,

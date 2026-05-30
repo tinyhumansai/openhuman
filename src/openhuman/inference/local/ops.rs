@@ -200,7 +200,7 @@ pub async fn local_ai_summarize(
         service.bootstrap(config).await;
     }
     let summary = service
-        .summarize(config, text, max_tokens)
+        .summarize_interactive(config, text, max_tokens)
         .await
         .map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(

@@ -76,6 +76,35 @@ pub enum DomainEvent {
         agent_id: String,
         error: String,
     },
+    /// High-level orchestration accepted a child agent for execution.
+    AgentOrchestrationSpawned {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        parent_agent_id: Option<String>,
+    },
+    /// High-level orchestration observed a child agent completion.
+    AgentOrchestrationCompleted {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        elapsed_ms: u64,
+        output_chars: usize,
+        iterations: usize,
+    },
+    /// High-level orchestration observed a child agent failure.
+    AgentOrchestrationFailed {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        error: String,
+    },
+    /// High-level orchestration closed or cancelled a child agent.
+    AgentOrchestrationClosed {
+        session_id: String,
+        orchestration_id: String,
+        reason: Option<String>,
+    },
 
     // ── Memory ──────────────────────────────────────────────────────────
     /// The configured embedding provider is unreachable or the requested model
@@ -679,7 +708,11 @@ impl DomainEvent {
             | Self::AgentError { .. }
             | Self::SubagentSpawned { .. }
             | Self::SubagentCompleted { .. }
-            | Self::SubagentFailed { .. } => "agent",
+            | Self::SubagentFailed { .. }
+            | Self::AgentOrchestrationSpawned { .. }
+            | Self::AgentOrchestrationCompleted { .. }
+            | Self::AgentOrchestrationFailed { .. }
+            | Self::AgentOrchestrationClosed { .. } => "agent",
 
             Self::EmbeddingModelUnhealthy { .. }
             | Self::MemoryStored { .. }
@@ -780,6 +813,10 @@ impl DomainEvent {
             Self::SubagentSpawned { .. } => "SubagentSpawned",
             Self::SubagentCompleted { .. } => "SubagentCompleted",
             Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::AgentOrchestrationSpawned { .. } => "AgentOrchestrationSpawned",
+            Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
+            Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
+            Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
             Self::MemoryStored { .. } => "MemoryStored",
             Self::MemoryRecalled { .. } => "MemoryRecalled",
             Self::MemorySyncRequested { .. } => "MemorySyncRequested",
@@ -863,7 +900,13 @@ impl DomainEvent {
             | Self::AgentError { session_id, .. } => Some(session_id.as_str()),
             Self::SubagentSpawned { agent_id, .. }
             | Self::SubagentCompleted { agent_id, .. }
-            | Self::SubagentFailed { agent_id, .. } => Some(agent_id.as_str()),
+            | Self::SubagentFailed { agent_id, .. }
+            | Self::AgentOrchestrationSpawned { agent_id, .. }
+            | Self::AgentOrchestrationCompleted { agent_id, .. }
+            | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),
+            Self::AgentOrchestrationClosed {
+                orchestration_id, ..
+            } => Some(orchestration_id.as_str()),
             Self::ChannelMessageReceived { channel, .. }
             | Self::ChannelConnected { channel, .. }
             | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),
