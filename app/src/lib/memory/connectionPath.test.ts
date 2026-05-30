@@ -47,9 +47,30 @@ describe('findConnectionPath', () => {
     expect(r.hops).toEqual([]);
   });
 
+  it('reports same before missing when identical endpoints are absent from the graph', () => {
+    // Two identical (even nonexistent) inputs should prompt "pick two different",
+    // not a misleading missing-node message.
+    const r = findConnectionPath([rel('A', 'B')], 'Z', 'Z');
+    expect(r.reason).toBe('same');
+    expect(r.found).toBe(true);
+    expect(r.length).toBe(0);
+    expect(r.hops).toEqual([]);
+  });
+
+  it('returns same with no BFS even on an empty graph', () => {
+    const r = findConnectionPath([], 'A', 'A');
+    expect(r.reason).toBe('same');
+    expect(r.found).toBe(true);
+    expect(r.hops).toEqual([]);
+  });
+
   it('flags a missing source or target', () => {
     expect(findConnectionPath([rel('A', 'B')], 'Z', 'B').reason).toBe('missing-source');
     expect(findConnectionPath([rel('A', 'B')], 'A', 'Z').reason).toBe('missing-target');
+  });
+
+  it('returns missing-source/target on an empty graph for distinct endpoints', () => {
+    expect(findConnectionPath([], 'A', 'B').reason).toBe('missing-source');
   });
 
   it('reports no-path across disconnected components', () => {

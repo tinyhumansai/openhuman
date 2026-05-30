@@ -85,9 +85,11 @@ export function findConnectionPath(
     add(object, subject, label, false);
   }
 
+  // Self-path is reported before node-existence so two identical inputs always
+  // prompt "pick two different entities" rather than a misleading "missing".
+  if (source === target) return result(source, target, true, [], 'same');
   if (!nodes.has(source)) return result(source, target, false, [], 'missing-source');
   if (!nodes.has(target)) return result(source, target, false, [], 'missing-target');
-  if (source === target) return result(source, target, true, [], 'same');
 
   // 2. Deterministic neighbour order: a node is discovered via its
   //    lexicographically smallest (to, predicate, direction) edge.
