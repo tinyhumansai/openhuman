@@ -788,12 +788,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
       const raw = payload as {
         thread_id: string;
         client_id?: string;
-        args?: {
-          artifact_id?: string;
-          kind?: ArtifactKind;
-          title?: string;
-          error?: string;
-        };
+        args?: { artifact_id?: string; kind?: ArtifactKind; title?: string; error?: string };
       };
       const args = raw.args ?? {};
       if (!args.artifact_id || !args.kind || !args.title || !args.error) {

@@ -4240,7 +4240,6 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Échec du téléchargement : {reason}',
   'chat.artifact.retry': 'Réessayer',
   'chat.artifact.reveal': 'Afficher dans le Finder',
-
 };
 
 export default messages;

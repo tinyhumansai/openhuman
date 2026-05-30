@@ -375,17 +375,15 @@ pub async fn finalize_artifact(
     log::debug!("[artifacts] finalize_artifact: id={artifact_id} -> Ready size={size_bytes}");
 
     let (thread_id, client_id) = current_chat_context();
-    crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::ArtifactReady {
-            artifact_id: meta.id.clone(),
-            kind: meta.kind.as_str().to_string(),
-            title: meta.title.clone(),
-            path: meta.path.clone(),
-            size_bytes: meta.size_bytes,
-            thread_id,
-            client_id,
-        },
-    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactReady {
+        artifact_id: meta.id.clone(),
+        kind: meta.kind.as_str().to_string(),
+        title: meta.title.clone(),
+        path: meta.path.clone(),
+        size_bytes: meta.size_bytes,
+        thread_id,
+        client_id,
+    });
     Ok(meta)
 }
 
@@ -409,16 +407,14 @@ pub async fn fail_artifact(
     log::warn!("[artifacts] fail_artifact: id={artifact_id} -> Failed reason={reason:?}");
 
     let (thread_id, client_id) = current_chat_context();
-    crate::core::event_bus::publish_global(
-        crate::core::event_bus::DomainEvent::ArtifactFailed {
-            artifact_id: meta.id.clone(),
-            kind: meta.kind.as_str().to_string(),
-            title: meta.title.clone(),
-            error: reason.to_string(),
-            thread_id,
-            client_id,
-        },
-    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactFailed {
+        artifact_id: meta.id.clone(),
+        kind: meta.kind.as_str().to_string(),
+        title: meta.title.clone(),
+        error: reason.to_string(),
+        thread_id,
+        client_id,
+    });
     Ok(meta)
 }
 

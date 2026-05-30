@@ -4257,7 +4257,6 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Download fehlgeschlagen: {reason}',
   'chat.artifact.retry': 'Erneut versuchen',
   'chat.artifact.reveal': 'Im Finder anzeigen',
-
 };
 
 export default messages;

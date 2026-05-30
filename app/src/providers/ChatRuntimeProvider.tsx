@@ -35,11 +35,11 @@ import {
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
-  upsertArtifactFailedForThread,
-  upsertArtifactReadyForThread,
   type StreamingAssistantState,
   type ToolTimelineEntry,
   type ToolTimelineEntryStatus,
+  upsertArtifactFailedForThread,
+  upsertArtifactReadyForThread,
 } from '../store/chatRuntimeSlice';
 import { useAppDispatch, useAppSelector } from '../store/hooks';
 import { selectSocketStatus } from '../store/socketSelectors';

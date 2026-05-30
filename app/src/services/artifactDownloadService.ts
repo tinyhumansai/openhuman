@@ -16,7 +16,6 @@
  * No-ops outside Tauri (browser dev preview) — the download flow only
  * makes sense in the desktop shell.
  */
-
 import { safeInvoke as invoke, isTauri } from '../utils/tauriCommands/common';
 import { callCoreRpc } from './coreRpcClient';
 
@@ -37,13 +36,7 @@ export interface DownloadArtifactOutcome {
 interface AiGetArtifactData {
   absolute_path?: string;
   /** Full ArtifactMeta nested under this key on the core RPC response. */
-  meta?: {
-    id?: string;
-    title?: string;
-    path?: string;
-    kind?: string;
-    status?: string;
-  };
+  meta?: { id?: string; title?: string; path?: string; kind?: string; status?: string };
 }
 
 /**
@@ -89,10 +82,7 @@ export async function downloadArtifact(
   const filename = ext ? `${title}.${ext}` : title;
 
   try {
-    const dest = await invoke<string>('download_artifact_to_downloads', {
-      sourcePath,
-      filename,
-    });
+    const dest = await invoke<string>('download_artifact_to_downloads', { sourcePath, filename });
     return { ok: true, path: dest };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
