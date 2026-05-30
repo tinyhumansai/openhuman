@@ -7,9 +7,11 @@ use crate::openhuman::config::Config;
 use crate::openhuman::credentials::profiles::{
     AuthProfile, AuthProfileKind, AuthProfilesStore, TokenSet,
 };
-use crate::openhuman::inference::openai_oauth::lookup_openai_bearer_token;
 use crate::openhuman::inference::openai_oauth::store::{
-    OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
+    import_codex_cli_auth_from_path, OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY,
+};
+use crate::openhuman::inference::openai_oauth::{
+    lookup_openai_bearer_token, lookup_openai_oauth_credentials,
 };
 use crate::openhuman::inference::provider::factory::lookup_key_for_slug;
 use chrono::{Duration, Utc};
@@ -285,6 +287,134 @@ fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
     let data = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
     let stored = data.profiles.get(&profile.id).unwrap();
     assert_eq!(stored.id, profile.id);
+}
+
+#[test]
+fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let access_token = unsigned_jwt(serde_json::json!({
+        "sub": "acct_from_jwt",
+        "exp": (Utc::now() + Duration::hours(1)).timestamp(),
+    }));
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token.clone(),
+                "refresh_token": "codex-refresh",
+                "id_token": "codex-id",
+                "account_id": "acct_from_file",
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(profile.kind, AuthProfileKind::OAuth);
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_from_file")
+    );
+    let token_set = profile.token_set.as_ref().unwrap();
+    assert_eq!(token_set.access_token, access_token);
+    assert_eq!(token_set.refresh_token.as_deref(), Some("codex-refresh"));
+    assert_eq!(token_set.id_token.as_deref(), Some("codex-id"));
+    assert!(token_set.expires_at.is_some());
+
+    let credentials = lookup_openai_oauth_credentials(&config)
+        .unwrap()
+        .expect("imported oauth credentials");
+    assert_eq!(credentials.access_token, access_token);
+    assert_eq!(credentials.account_id.as_deref(), Some("acct_from_file"));
+    assert_eq!(
+        lookup_key_for_slug("openai", &config).unwrap(),
+        access_token
+    );
+}
+
+#[test]
+fn import_codex_cli_auth_extracts_nested_chatgpt_account_id() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let access_token = unsigned_jwt(serde_json::json!({
+        "https://api.openai.com/auth": {
+            "chatgpt_account_id": "acct_nested"
+        },
+        "sub": "acct_subject",
+        "exp": (Utc::now() + Duration::hours(1)).timestamp(),
+    }));
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": "codex-refresh"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_nested")
+    );
+    let credentials = lookup_openai_oauth_credentials(&config)
+        .unwrap()
+        .expect("imported oauth credentials");
+    assert_eq!(credentials.account_id.as_deref(), Some("acct_nested"));
+}
+
+#[test]
+fn import_codex_cli_auth_decodes_padded_base64url_access_token() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let payload = "eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoiYWNjdF9wYWRkZWQifSwibm9uY2UiOiI-In0=";
+    assert!(
+        (payload.contains('-') || payload.contains('_')) && payload.ends_with('='),
+        "test fixture must exercise padded base64url input"
+    );
+    let access_token = format!("e30.{payload}.");
+    let auth_path = tmp.path().join("codex-auth.json");
+    std::fs::write(
+        &auth_path,
+        serde_json::json!({
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": access_token,
+                "refresh_token": "codex-refresh"
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let profile = import_codex_cli_auth_from_path(&config, &auth_path).unwrap();
+
+    assert_eq!(
+        profile.metadata.get("account_id").map(String::as_str),
+        Some("acct_padded")
+    );
+}
+
+#[test]
+fn import_codex_cli_auth_file_reports_missing_file_with_login_hint() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let err = import_codex_cli_auth_from_path(&config, &tmp.path().join("missing-auth.json"))
+        .unwrap_err();
+
+    assert!(err.contains("Could not read Codex CLI auth"));
+    assert!(err.contains("codex login"));
 }
 
 #[test]

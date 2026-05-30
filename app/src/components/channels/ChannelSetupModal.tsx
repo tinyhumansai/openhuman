@@ -5,8 +5,10 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
+import { CloseIcon } from '../ui';
 import { renderChannelIcon } from './channelIcon';
 import DiscordConfig from './DiscordConfig';
 import TelegramConfig from './TelegramConfig';
@@ -40,13 +42,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
   const { t } = useT();
   const modalRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement;
@@ -99,14 +95,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
             <button
               onClick={onClose}
               className="p-1 text-stone-400 dark:text-neutral-500 hover:text-stone-900 dark:hover:text-neutral-100 dark:text-neutral-100 dark:hover:text-neutral-100 transition-colors rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 flex-shrink-0">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              <CloseIcon className="w-5 h-5" />
             </button>
           </div>
         </div>

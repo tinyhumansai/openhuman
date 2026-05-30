@@ -1451,8 +1451,9 @@ impl Config {
             }
         }
 
-        // Unified search engine selector. `OPENHUMAN_SEARCH_ENGINE` picks
-        // the active engine; per-engine API keys auto-route to BYO once set.
+        // Unified search engine selector. `OPENHUMAN_SEARCH_ENGINE` picks the
+        // active engine (`disabled` suppresses search tools); per-engine API
+        // keys auto-route to BYO once set.
         if let Some(engine) = env.get_any(&["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"]) {
             let engine = engine.trim().to_ascii_lowercase();
             if !engine.is_empty() {

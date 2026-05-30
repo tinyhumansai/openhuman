@@ -9,7 +9,6 @@ mod polymarket;
 mod polymarket_orders;
 mod url_guard;
 mod web_fetch;
-mod web_search;
 
 pub use curl::CurlTool;
 pub use gitbooks::{GitbooksGetPageTool, GitbooksSearchTool};
@@ -22,4 +21,3 @@ pub use mcp_setup::{
 };
 pub use polymarket::PolymarketTool;
 pub use web_fetch::WebFetchTool;
-pub use web_search::WebSearchTool;

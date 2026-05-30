@@ -22,12 +22,15 @@ pub use defaults::{
     rpc_url_for_evm_network, EvmNetwork, RpcSource, WalletAssetDefinition, WalletNetworkDefaults,
 };
 pub use execution::{
-    balances, chain_status, execute_prepared, network_defaults as wallet_network_defaults,
-    prepare_contract_call, prepare_swap, prepare_transfer, prepared_quotes_for_test,
-    supported_assets, BalanceInfo, ChainStatus, ExecutePreparedParams, ExecutionResult,
-    PrepareContractCallParams, PrepareSwapParams, PrepareTransferParams, PreparedKind,
-    PreparedStatus, PreparedTransaction, ProviderStatus, SupportedAsset,
+    balances, chain_status, execute_prepared, lookup_tx,
+    network_defaults as wallet_network_defaults, prepare_transfer, prepared_quotes_for_test,
+    supported_assets, tx_receipt, tx_status, BalanceInfo, ChainStatus, ExecutePreparedParams,
+    ExecutionResult, PrepareTransferParams, PreparedKind, PreparedStatus, PreparedTransaction,
+    ProviderStatus, SupportedAsset, TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
 };
+/// Crate-internal signing primitives the `web3` layer builds on. Not part of
+/// the agent / RPC surface.
+pub(crate) use execution::{sign_and_broadcast_evm, sign_and_broadcast_solana};
 pub(crate) use ops::secret_material;
 pub use ops::{
     setup, status, WalletAccount, WalletChain, WalletSetupParams, WalletSetupSource, WalletStatus,

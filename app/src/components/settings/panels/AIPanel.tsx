@@ -9,7 +9,7 @@
  * per row, so the resolved provider+model is always rendered inline.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LuCheck, LuCircleAlert } from 'react-icons/lu';
+import { LuCheck, LuCircleAlert, LuKeyRound } from 'react-icons/lu';
 
 import { listConnections as listComposioConnections } from '../../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../../lib/composio/types';
@@ -20,11 +20,14 @@ import {
   clearCloudProviderKey,
   type CloudProviderView,
   flushCloudProviders,
+  importOpenAiCodexCliAuth,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   type LocalProviderSnapshot,
   type ModelInfo,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
   setCloudProviderKey,
   testProviderModel,
@@ -598,7 +601,7 @@ const ProviderKeyDialog = ({
   label: string;
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
-  oauthAction?: { label: string; onClick: () => Promise<void> | void } | null;
+  oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
   onCancel: () => void;
   /** Returns the entered value. For local runtimes this is the endpoint URL;
    *  for cloud providers it's the API key. */
@@ -727,7 +730,7 @@ const ProviderKeyDialog = ({
               {t('settings.ai.or')}
             </div>
             <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
-              {t('settings.ai.openRouterOauthDescription')}
+              {oauthAction.description ?? t('settings.ai.openRouterOauthDescription')}
             </p>
             <button
               type="button"
@@ -2575,6 +2578,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
   const installed = useInstalledModels(ollama.snapshot);
   const [editing, setEditing] = useState<CloudProvider | 'new' | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [codexAuthError, setCodexAuthError] = useState<string | null>(null);
   // Which workload's "Custom" dialog is currently open (null = closed).
   const [customDialogFor, setCustomDialogFor] = useState<WorkloadId | null>(null);
   const [routingEditorMode, setRoutingEditorMode] = useState<'own' | 'custom' | null>(null);
@@ -2596,9 +2600,10 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
       slug: string;
       localLabel?: string | null;
       value: string;
-      credentialMode: 'api_key' | 'oauth' | 'endpoint';
+      credentialMode: 'api_key' | 'oauth' | 'codex_oauth' | 'endpoint';
     }) => {
       const isLocalRuntime = credentialMode === 'endpoint';
+      const isCodexOAuth = credentialMode === 'codex_oauth';
       setBusyAction(`toggle-${localLabel ? localLabel.toLowerCase().replace(/\s/g, '') : slug}`);
 
       try {
@@ -2633,7 +2638,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           auth_style: p.authStyle,
         }));
 
-        if (!isLocalRuntime && slug !== 'openhuman') {
+        if (!isLocalRuntime && !isCodexOAuth && slug !== 'openhuman') {
           await setCloudProviderKey(slug, trimmed);
         } else if (isLocalRuntime && slug === 'ollama') {
           const baseUrl = endpoint.replace(/\/v1\/?$/, '');
@@ -2664,15 +2669,17 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
             },
           ];
           await flushCloudProviders(nextWireProviders);
-          try {
-            await listProviderModels(slug);
-          } catch (probeErr) {
-            await flushCloudProviders(priorWireProviders).catch(() => {});
-            if (!isLocalRuntime && slug !== 'openhuman') {
-              await clearCloudProviderKey(slug).catch(() => {});
+          if (!isCodexOAuth) {
+            try {
+              await listProviderModels(slug);
+            } catch (probeErr) {
+              await flushCloudProviders(priorWireProviders).catch(() => {});
+              if (!isLocalRuntime && slug !== 'openhuman') {
+                await clearCloudProviderKey(slug).catch(() => {});
+              }
+              const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
+              throw new Error(`Could not reach ${upserted.label}: ${msg}`);
             }
-            const msg = probeErr instanceof Error ? probeErr.message : String(probeErr);
-            throw new Error(`Could not reach ${upserted.label}: ${msg}`);
           }
         }
 
@@ -2681,6 +2688,12 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           cloudProviders: [...draft.cloudProviders.filter(p => p.slug !== slug), upserted],
         };
         await persist(nextDraft);
+        if (isCodexOAuth && slug === 'openai') {
+          await clearCloudProviderKey(slug);
+        }
+        if (slug === 'openai') {
+          setCodexAuthError(null);
+        }
         setKeyDialogFor(null);
         setPendingLocalLabel(null);
       } finally {
@@ -2689,6 +2702,29 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
     },
     [draft, persist, saved.cloudProviders]
   );
+
+  const connectOpenAiViaCodexAuth = useCallback(async () => {
+    setCodexAuthError(null);
+    setBusyAction('codex-auth');
+    try {
+      await importOpenAiCodexCliAuth();
+      await connectProvider({ slug: 'openai', value: 'oauth', credentialMode: 'codex_oauth' });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const localizedMessage =
+        message === OPENAI_CODEX_OAUTH_MISSING_AUTH_URL
+          ? t('settings.ai.codexOauthMissingAuthUrl')
+          : message === OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL
+            ? t('settings.ai.codexOauthMissingCallbackUrl')
+            : message;
+      console.warn('[ai-settings] codex auth import failed', {
+        summary: presentProviderSetupError(localizedMessage, t).summary,
+      });
+      setCodexAuthError(localizedMessage);
+    } finally {
+      setBusyAction(null);
+    }
+  }, [connectProvider, t]);
 
   // applyPreset removed alongside the Cloud / Local / Mixed preset pills —
   // the new Default/Custom binary toggle handles routing per workload.
@@ -2913,6 +2949,28 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                   </div>
                 );
               })}
+            </div>
+
+            <div className="flex flex-col gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void connectOpenAiViaCodexAuth()}
+                  disabled={busyAction === 'codex-auth' || busyAction === 'toggle-openai'}
+                  className="inline-flex items-center gap-2 rounded-lg border border-stone-200 bg-white px-3 py-2 text-xs font-medium text-stone-900 transition-colors hover:bg-stone-50 disabled:cursor-wait disabled:opacity-60 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800">
+                  <LuKeyRound className="h-3.5 w-3.5" />
+                  {busyAction === 'codex-auth' || busyAction === 'toggle-openai'
+                    ? t('settings.ai.connecting')
+                    : t('settings.ai.codexAuthButton', 'Codex 인증')}
+                </button>
+                <span className="text-xs text-stone-500 dark:text-neutral-400">
+                  {t(
+                    'settings.ai.codexAuthHelper',
+                    'Uses the existing Codex CLI login from ~/.codex/auth.json.'
+                  )}
+                </span>
+              </div>
+              {codexAuthError ? <ProviderSetupErrorNotice error={codexAuthError} /> : null}
             </div>
 
             <div className="pt-1">

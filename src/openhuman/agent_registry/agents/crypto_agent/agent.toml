@@ -19,15 +19,15 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-# Narrow allowlist. Wallet + market primitives only — no shell, no
-# file_write, no broad HTTP, no integration delegation. Names line up
+# Narrow allowlist. Wallet + web3 + market primitives only — no shell, no
+# file_write, no broad HTTP, no integration delegation. Wallet names line up
 # with the wallet RPC controllers in `src/openhuman/wallet/schemas.rs`
-# (read: status/balances/supported_assets/chain_status; quote/prepare:
-# prepare_transfer/prepare_swap/prepare_contract_call; execute:
-# execute_prepared) and the financial-apis crypto/FX series exposed
-# via `stock_*`. Tools that aren't yet registered are silently dropped
-# by the tool filter at spawn time, so this list also describes the
-# agent's *intended* tool surface as wallet + exchange tools land.
+# (read: status/balances/supported_assets/chain_status + tx_status/tx_receipt/
+# lookup_tx; quote/prepare: prepare_transfer; execute: execute_prepared). The
+# higher-level swap/bridge/dapp surface lives in the `web3_*` tools, which
+# build on the wallet's signing primitives. Tools that aren't yet registered
+# are silently dropped by the tool filter at spawn time, so this list also
+# describes the agent's *intended* tool surface as wallet + exchange tools land.
 named = [
     # Read-only wallet inspection.
     "wallet_status",
@@ -36,16 +36,28 @@ named = [
     "wallet_supported_assets",
     "wallet_chain_status",
     "wallet_encode_erc20_transfer",
-    # Quote / prepare. These MUST be called before any execute_prepared
-    # — they return a deterministic transaction blob plus fee/slippage
-    # estimates the agent shows the user for confirmation.
+    # Transaction inspection — status / receipt / raw lookup by hash.
+    "wallet_tx_status",
+    "wallet_tx_receipt",
+    "wallet_lookup_tx",
+    # Quote / prepare a native or token transfer. MUST be called before
+    # wallet_execute_prepared — returns a deterministic transaction blob
+    # plus fee estimate the agent shows the user for confirmation.
     "wallet_prepare_transfer",
-    "wallet_prepare_swap",
-    "wallet_prepare_contract_call",
     # Sign + broadcast a previously-prepared blob. Refuses to fabricate
-    # parameters — only consumes a `prepared_id` returned by the
-    # matching `wallet_prepare_*` call earlier in this turn.
+    # parameters — only consumes a `quoteId` returned by the matching
+    # wallet_prepare_* call earlier in this turn.
     "wallet_execute_prepared",
+    # High-level web3: swaps (same-chain), bridges (cross-chain), and
+    # generic EVM dapp calls. Each quote/call returns a quoteId that MUST
+    # be confirmed via the matching web3_*_execute before broadcast.
+    "web3_swap_routes",
+    "web3_swap_quote",
+    "web3_swap_execute",
+    "web3_bridge_quote",
+    "web3_bridge_execute",
+    "web3_dapp_call",
+    "web3_dapp_execute",
     # Market data — crypto series, FX rates, commodities — for grounding
     # quote sanity checks and price questions before any execute step.
     "stock_quote",

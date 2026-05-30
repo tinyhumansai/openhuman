@@ -6,7 +6,7 @@ use serde_json::Value;
 use crate::rpc::RpcOutcome;
 
 use super::ops;
-use super::types::{AgentRegistryEntry, AgentRegistryPatch, AgentRegistrySource};
+use super::types::{AgentRegistryEntry, AgentRegistryPatch, AgentRegistrySource, AgentToolInfo};
 
 #[derive(Debug, Deserialize)]
 pub struct ListRequest {
@@ -23,6 +23,25 @@ pub async fn list_rpc(req: ListRequest) -> Result<RpcOutcome<ListResponse>, Stri
     Ok(RpcOutcome::new(
         ListResponse {
             agents: ops::list_agents(req.include_disabled).await?,
+        },
+        vec![],
+    ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct AvailableToolsRequest {}
+
+#[derive(Debug, Serialize)]
+pub struct AvailableToolsResponse {
+    pub tools: Vec<AgentToolInfo>,
+}
+
+pub async fn available_tools_rpc(
+    _req: AvailableToolsRequest,
+) -> Result<RpcOutcome<AvailableToolsResponse>, String> {
+    Ok(RpcOutcome::new(
+        AvailableToolsResponse {
+            tools: ops::available_tools().await?,
         },
         vec![],
     ))

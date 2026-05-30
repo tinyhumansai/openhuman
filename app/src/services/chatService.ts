@@ -196,6 +196,8 @@ export interface SubagentProgressDetail {
   elapsed_ms?: number;
   iterations?: number;
   output_chars?: number;
+  /** Persistent worker sub-thread id backing the delegation (on `subagent_spawned`). */
+  worker_thread_id?: string;
 }
 
 /** Extended payload for `subagent_spawned`. */
@@ -247,6 +249,37 @@ export interface ChatSubagentToolResultEvent {
   success: boolean;
   /** Stringified JSON `{ output_chars, elapsed_ms }` matching `tool_result`. */
   output?: string;
+  subagent?: SubagentProgressDetail;
+}
+
+/**
+ * Emitted for each chunk of a sub-agent's streamed assistant text while
+ * the child iteration is in flight. Distinct from `text_delta` (which is
+ * the parent's own output) so the UI attributes the token to the running
+ * subagent row via `subagent.task_id` / `subagent.agent_id` and renders
+ * it in that row's live transcript. Concatenating `delta`s in order
+ * yields the child's visible text for the iteration.
+ */
+export interface ChatSubagentTextDeltaEvent {
+  thread_id: string;
+  request_id: string;
+  /** Parent iteration index (inherited from the parent context). */
+  round: number;
+  /** Text fragment from the sub-agent. */
+  delta: string;
+  subagent?: SubagentProgressDetail;
+}
+
+/**
+ * Emitted for each chunk of a sub-agent's streamed reasoning / thinking
+ * output. Counterpart to `thinking_delta` scoped to a child run — only
+ * sent by models that expose `reasoning_content`.
+ */
+export interface ChatSubagentThinkingDeltaEvent {
+  thread_id: string;
+  request_id: string;
+  round: number;
+  delta: string;
   subagent?: SubagentProgressDetail;
 }
 
@@ -309,6 +342,8 @@ export interface ChatEventListeners {
   onSubagentIterationStart?: (event: ChatSubagentIterationStartEvent) => void;
   onSubagentToolCall?: (event: ChatSubagentToolCallEvent) => void;
   onSubagentToolResult?: (event: ChatSubagentToolResultEvent) => void;
+  onSubagentTextDelta?: (event: ChatSubagentTextDeltaEvent) => void;
+  onSubagentThinkingDelta?: (event: ChatSubagentThinkingDeltaEvent) => void;
   onSegment?: (event: ChatSegmentEvent) => void;
   onTextDelta?: (event: ChatTextDeltaEvent) => void;
   onThinkingDelta?: (event: ChatThinkingDeltaEvent) => void;
@@ -339,6 +374,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     subagentIterationStart: 'subagent_iteration_start',
     subagentToolCall: 'subagent_tool_call',
     subagentToolResult: 'subagent_tool_result',
+    subagentTextDelta: 'subagent_text_delta',
+    subagentThinkingDelta: 'subagent_thinking_delta',
     segment: 'chat_segment',
     textDelta: 'text_delta',
     thinkingDelta: 'thinking_delta',
@@ -511,6 +548,40 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.subagentToolResult, cb);
     handlers.push([EVENTS.subagentToolResult, cb]);
+  }
+
+  if (listeners.onSubagentTextDelta) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatSubagentTextDeltaEvent;
+      chatLog(
+        '%s thread_id=%s task=%s child_round=%s chars=%d',
+        EVENTS.subagentTextDelta,
+        e.thread_id,
+        e.subagent?.task_id,
+        e.subagent?.child_iteration,
+        e.delta?.length ?? 0
+      );
+      listeners.onSubagentTextDelta?.(e);
+    };
+    socket.on(EVENTS.subagentTextDelta, cb);
+    handlers.push([EVENTS.subagentTextDelta, cb]);
+  }
+
+  if (listeners.onSubagentThinkingDelta) {
+    const cb = (payload: unknown) => {
+      const e = payload as ChatSubagentThinkingDeltaEvent;
+      chatLog(
+        '%s thread_id=%s task=%s child_round=%s chars=%d',
+        EVENTS.subagentThinkingDelta,
+        e.thread_id,
+        e.subagent?.task_id,
+        e.subagent?.child_iteration,
+        e.delta?.length ?? 0
+      );
+      listeners.onSubagentThinkingDelta?.(e);
+    };
+    socket.on(EVENTS.subagentThinkingDelta, cb);
+    handlers.push([EVENTS.subagentThinkingDelta, cb]);
   }
 
   if (listeners.onSegment) {

@@ -347,6 +347,31 @@ pub fn update_status(
     id: &str,
     status: TaskCardStatus,
 ) -> Result<TodosSnapshot, String> {
+    // [workflows][phase] auto-detection hook — emit a debug marker when a card
+    // transitions to a lifecycle status that a workflow phase could react to.
+    //
+    // TODO(v2): wire a full `workflow_phase` tool call here once the session
+    // handle is injectable at this layer. For now the log acts as the trigger
+    // anchor so operators can grep `[workflows][phase]` and see status events
+    // in context alongside any agent-tool–initiated phase runs.
+    match status {
+        TaskCardStatus::InProgress => {
+            log::debug!(
+                "[workflows][phase] auto-detected on_pick_up_task: \
+                 task id={id} transitioned to InProgress — \
+                 agent should call workflow_phase(id, \"on_pick_up_task\") if a workflow is active"
+            );
+        }
+        TaskCardStatus::Done => {
+            log::debug!(
+                "[workflows][phase] auto-detected on_close_task: \
+                 task id={id} transitioned to Done — \
+                 agent should call workflow_phase(id, \"on_close_task\") if a workflow is active"
+            );
+        }
+        _ => {}
+    }
+
     edit(
         location,
         id,

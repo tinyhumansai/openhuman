@@ -74,6 +74,16 @@ impl AgentRegistryEntry {
     }
 }
 
+/// One available agent tool, surfaced to the agent editor so users can pick
+/// `tool_allowlist` entries from a searchable catalog with descriptions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentToolInfo {
+    /// Tool name — the exact identifier used in `tool_allowlist`.
+    pub name: String,
+    /// Human-readable description of what the tool does.
+    pub description: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AgentRegistryConfig {
     /// User-authored agents plus persisted overrides for shipped default agents.

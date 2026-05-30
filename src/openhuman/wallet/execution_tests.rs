@@ -251,17 +251,9 @@ async fn prepare_transfer_rejects_unknown_asset_symbol() {
 }
 
 #[tokio::test]
-async fn prepare_contract_call_rejects_non_evm_chain() {
-    let err = prepare_contract_call(PrepareContractCallParams {
-        chain: WalletChain::Btc,
-        contract_address: "addr".into(),
-        calldata: "0x".into(),
-        value_raw: "0".into(),
-        evm_network: None,
-    })
-    .await
-    .unwrap_err();
-    assert!(err.contains("only for EVM"), "got: {err}");
+async fn tx_status_rejects_empty_hash() {
+    let err = tx_status(WalletChain::Evm, None, "   ").await.unwrap_err();
+    assert!(err.contains("tx hash is empty"), "got: {err}");
 }
 
 #[tokio::test]

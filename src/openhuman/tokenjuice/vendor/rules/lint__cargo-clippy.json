@@ -1,0 +1,58 @@
+{
+  "id": "lint/cargo-clippy",
+  "family": "lint-results",
+  "description": "Compact cargo clippy output while preserving lint diagnostics and summary counts.",
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["cargo"],
+    "argvIncludes": [["clippy"]]
+  },
+  "onEmpty": "clippy: no warnings",
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^\\s*Compiling .+",
+      "^\\s*Checking .+",
+      "^\\s*Finished .+",
+      "^\\s*Downloading .+",
+      "^\\s*Downloaded .+",
+      "^\\s*Locking .+",
+      "^\\s*Fresh .+",
+      "^\\s+\\|\\s*$",
+      "^\\s*For more information about this error",
+      "^\\s*Some errors have detailed explanations",
+      "^\\s*= help: for further information visit"
+    ]
+  },
+  "summarize": {
+    "head": 14,
+    "tail": 10
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 20,
+    "tail": 20
+  },
+  "counters": [
+    {
+      "name": "warning",
+      "pattern": "^warning(\\[.+\\])?:",
+      "flags": "i"
+    },
+    {
+      "name": "error",
+      "pattern": "^error(\\[.+\\])?:",
+      "flags": "i"
+    }
+  ],
+  "matchOutput": [
+    {
+      "pattern": "^\\s*$",
+      "message": "clippy: no warnings"
+    }
+  ]
+}
