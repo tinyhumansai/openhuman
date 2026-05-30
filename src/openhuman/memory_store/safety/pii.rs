@@ -1042,18 +1042,46 @@ Phone +15551234567.";
     }
 
     /// `redact_pii` (content scrubbing path — NOT the boundary check)
-    /// must still redact bare NANP / E.164 phone numbers found inside
-    /// document bodies. False positives there only blur substring bytes;
-    /// they do not reject the write.
+    /// must still redact formatted NANP and E.164 phone numbers found
+    /// inside document bodies. False positives in the content path only
+    /// blur substring bytes; they do not reject the write — which is the
+    /// asymmetry this PR preserves vs. the boundary check.
+    ///
+    /// Note: bare 10-digit NANP runs (`2025551234` with no separators)
+    /// are NOT reached by `redact_pii` at all — the SCREEN fast-path
+    /// requires either `\d{11,}`, a separator, or `+`, so a bare 10-digit
+    /// run short-circuits as "no candidate". That pre-existed this PR; a
+    /// pinning sentinel for it lives below.
     #[test]
-    fn redact_pii_still_blurs_bare_phone_in_content() {
+    fn redact_pii_still_blurs_formatted_and_e164_phone_in_content() {
         let out = redact_pii("call me at 202-555-1234 or +12025551234");
+        let n_phone = out.value.matches(PII_PHONE).count();
         assert!(
-            out.value.contains(PII_PHONE),
-            "redact_pii must still blur bare phones in content, got: {}",
+            n_phone >= 2,
+            "redact_pii must still blur both formatted NANP and E.164 phones in content, \
+             got {n_phone} PII_PHONE token(s) in: {}",
             out.value
         );
-        assert!(out.report.pii_redactions >= 1);
+        assert!(out.report.pii_redactions >= 2);
+    }
+
+    /// Sentinel pinning a pre-existing SCREEN limitation: a bare 10-digit
+    /// NANP run (`2025551234` with no separators) is short-circuited by
+    /// the `SCREEN` fast-path because no `SCREEN` regex matches a 10-digit
+    /// bare run (`\d{11,}` is the closest, but it needs 11+). This is the
+    /// status quo on `main` — this PR does not change it. The test exists
+    /// so any future widening of `SCREEN` (e.g. to catch bare NANP) trips
+    /// here as a deliberate review checkpoint, NOT a regression.
+    #[test]
+    fn redact_pii_does_not_reach_bare_10_digit_nanp_today() {
+        let out = redact_pii("call me at 2025551234 thanks");
+        assert!(
+            !out.value.contains(PII_PHONE),
+            "SCREEN fast-path historically skips bare 10-digit NANP — \
+             if this test fails, SCREEN was widened; revisit the boundary-check \
+             behavior in `has_likely_pii` before adjusting. Got: {}",
+            out.value
+        );
     }
 
     #[test]
