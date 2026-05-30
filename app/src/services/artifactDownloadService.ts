@@ -30,6 +30,13 @@ export interface DownloadArtifactOutcome {
   error?: string;
 }
 
+/** Outcome surfaced to the UI for a single delete attempt (#3024). */
+export interface DeleteArtifactOutcome {
+  ok: boolean;
+  /** Short, user-facing error string when `ok === false`. */
+  error?: string;
+}
+
 /**
  * Shape of the `data` field returned by the
  * `openhuman.ai_get_artifact` JSON-RPC method. We pull only the
@@ -98,6 +105,33 @@ export async function downloadArtifact(
  * no new permission needed. Returns `false` when not in Tauri or the
  * invoke fails (caller usually ignores the result).
  */
+/**
+ * Delete the artifact and its on-disk blob via the core RPC (#3024).
+ * Caller is expected to optimistically remove the slice row first and
+ * re-insert on `{ ok: false }`. Distinct from the runtime in-memory
+ * slice ledger — this drops the file on disk and the persistent
+ * `ArtifactMeta` row in the workspace registry.
+ *
+ * Returns `{ ok: false, error }` on any transport or RPC error
+ * (network drop, core gone, unknown id, file vanished). The core
+ * treats "missing meta" / "file already gone" as success.
+ */
+export async function deleteArtifact(artifactId: string): Promise<DeleteArtifactOutcome> {
+  if (!artifactId.trim()) {
+    return { ok: false, error: 'artifact id missing' };
+  }
+  try {
+    await callCoreRpc<unknown>({
+      method: 'openhuman.ai_delete_artifact',
+      params: { artifact_id: artifactId },
+    });
+    return { ok: true };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: reason };
+  }
+}
+
 export async function revealArtifactInFileManager(absolutePath: string): Promise<boolean> {
   if (!isTauri()) return false;
   if (!absolutePath.trim()) return false;
@@ -110,7 +144,6 @@ export async function revealArtifactInFileManager(absolutePath: string): Promise
     return true;
   } catch (err) {
     // Swallow — reveal is best-effort, the file is already saved.
-    // eslint-disable-next-line no-console
     console.warn('[artifact] revealItemInDir failed:', err);
     return false;
   }
