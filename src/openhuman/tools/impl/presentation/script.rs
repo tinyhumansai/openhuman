@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::OnceCell;
 
 /// The bundled Python source. Compiled into the binary.
@@ -30,14 +31,30 @@ pub(super) async fn materialise_script() -> Result<PathBuf> {
 }
 
 async fn write_script_once() -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("openhuman-presentation-{}", std::process::id()));
+    let dir = std::env::temp_dir().join("openhuman-presentation");
     tokio::fs::create_dir_all(&dir)
         .await
         .with_context(|| format!("creating script tempdir {}", dir.display()))?;
-    let path = dir.join("generate_pptx.py");
-    tokio::fs::write(&path, GENERATE_PPTX_PY)
+    // Unpredictable per-process filename + O_EXCL open so a
+    // pre-created path or dangling symlink in the shared temp dir
+    // cannot redirect or clobber the materialised script.
+    let path = dir.join(format!(
+        "generate_pptx-{}-{}.py",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .await
+        .with_context(|| format!("creating bundled script file {}", path.display()))?;
+    file.write_all(GENERATE_PPTX_PY.as_bytes())
         .await
         .with_context(|| format!("writing bundled script to {}", path.display()))?;
+    file.flush()
+        .await
+        .with_context(|| format!("flushing bundled script to {}", path.display()))?;
     tracing::debug!(
         path = %path.display(),
         bytes = GENERATE_PPTX_PY.len(),
