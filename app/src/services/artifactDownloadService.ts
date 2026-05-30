@@ -16,6 +16,8 @@
  * No-ops outside Tauri (browser dev preview) — the download flow only
  * makes sense in the desktop shell.
  */
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
+
 import { safeInvoke as invoke, isTauri } from '../utils/tauriCommands/common';
 import { callCoreRpc } from './coreRpcClient';
 
@@ -100,12 +102,16 @@ export async function revealArtifactInFileManager(absolutePath: string): Promise
   if (!isTauri()) return false;
   if (!absolutePath.trim()) return false;
   try {
-    await invoke('plugin:opener|reveal_item_in_dir', { path: absolutePath });
+    // Use the plugin's typed binding — the raw `invoke('plugin:opener|
+    // reveal_item_in_dir', { path })` shape silently no-ops because the
+    // plugin expects `{ paths: [absolutePath] }` (array). The binding
+    // handles the wrap.
+    await revealItemInDir(absolutePath);
     return true;
   } catch (err) {
     // Swallow — reveal is best-effort, the file is already saved.
     // eslint-disable-next-line no-console
-    console.warn('[artifact] reveal_item_in_dir failed:', err);
+    console.warn('[artifact] revealItemInDir failed:', err);
     return false;
   }
 }
