@@ -2704,6 +2704,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'Titik akhir harus dimulai dengan http:// atau https://.',
   'settings.ai.connectProviderDialog': 'Hubungkan {label}',
   'settings.ai.or': 'Atau',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth tidak mengembalikan URL otorisasi. Coba masuk lagi.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Tempel URL pengalihan dari browser Anda setelah masuk.',
   'settings.ai.openRouterOauthDescription':
     'Masuk dengan kunci OpenRouter dan impor sebuah user yang dikendalikan API menggunakan PKCE.',
   'settings.ai.connecting': 'Menghubungkan...',

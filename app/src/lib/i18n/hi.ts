@@ -2699,6 +2699,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'समापन बिंदु http:// या https://. से शुरू होना चाहिए',
   'settings.ai.connectProviderDialog': 'कनेक्ट करें {label}',
   'settings.ai.or': 'या',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth ने कोई प्राधिकरण URL नहीं लौटाया। फिर से साइन इन करने का प्रयास करें।',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'साइन इन करने के बाद अपने ब्राउज़र से रीडायरेक्ट URL पेस्ट करें।',
   'settings.ai.openRouterOauthDescription':
     'OpenRouter के साथ साइन इन करें और PKCE का उपयोग करके उपयोगकर्ता नियंत्रित API कुंजी आयात करें।',
   'settings.ai.connecting': 'कनेक्ट हो रहा है...',

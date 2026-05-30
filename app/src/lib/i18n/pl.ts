@@ -2742,6 +2742,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'Endpoint musi zaczynać się od http:// lub https://.',
   'settings.ai.connectProviderDialog': 'Połącz {label}',
   'settings.ai.or': 'lub',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth nie zwrócił adresu URL autoryzacji. Spróbuj zalogować się ponownie.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Wklej adres URL przekierowania z przeglądarki po zalogowaniu.',
   'settings.ai.openRouterOauthDescription':
     'Zaloguj się przez OpenRouter i zaimportuj kontrolowany przez użytkownika klucz API z użyciem PKCE.',
   'settings.ai.connecting': 'Łączenie...',

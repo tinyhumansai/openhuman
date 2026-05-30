@@ -2645,6 +2645,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'يجب أن تبدأ نقطة النهاية بـ http:// أو https://.',
   'settings.ai.connectProviderDialog': 'الاتصال {label}',
   'settings.ai.or': 'أو',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'لم يُرجع Codex OAuth عنوان URL للتفويض. حاول تسجيل الدخول مرة أخرى.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'الصق عنوان URL لإعادة التوجيه من متصفحك بعد تسجيل الدخول.',
   'settings.ai.openRouterOauthDescription':
     'وقع مع OpenRouter وإستيراد مفتاح ×xxxxx متحكم به مستخدماً',
   'settings.ai.connecting': 'جارٍ الاتصال...',

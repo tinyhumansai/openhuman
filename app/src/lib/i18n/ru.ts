@@ -2714,6 +2714,10 @@ const messages: TranslationMap = {
     'Конечная точка должна начинаться с http:// или https://..',
   'settings.ai.connectProviderDialog': 'Подключиться {label}',
   'settings.ai.or': 'Или',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth не вернул URL авторизации. Попробуйте войти снова.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Вставьте URL перенаправления из браузера после входа.',
   'settings.ai.openRouterOauthDescription':
     'Войдите в систему с помощью OpenRouter и импортируйте управляемый пользователем ключ API с помощью PKCE.',
   'settings.ai.connecting': 'Подключение...',

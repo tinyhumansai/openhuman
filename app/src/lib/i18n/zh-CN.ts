@@ -2571,6 +2571,8 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': '端点必须以 http:// 或 https:// 开头。',
   'settings.ai.connectProviderDialog': '连接 {label}',
   'settings.ai.or': '或者',
+  'settings.ai.codexOauthMissingAuthUrl': 'Codex OAuth 未返回授权 URL。请重试登录。',
+  'settings.ai.codexOauthMissingCallbackUrl': '登录后请粘贴浏览器中的重定向 URL。',
   'settings.ai.openRouterOauthDescription':
     '使用 OpenRouter 登录，并通过 PKCE 导入由用户控制的 API 密钥。',
   'settings.ai.connecting': '正在连接...',

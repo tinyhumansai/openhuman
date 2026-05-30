@@ -2753,6 +2753,10 @@ const messages: TranslationMap = {
     'Le point de terminaison doit commencer par http:// ou https://.',
   'settings.ai.connectProviderDialog': 'Connectez-vous {label}',
   'settings.ai.or': 'Ou',
+  'settings.ai.codexOauthMissingAuthUrl':
+    "Codex OAuth n'a pas renvoyé d'URL d'autorisation. Essayez de vous reconnecter.",
+  'settings.ai.codexOauthMissingCallbackUrl':
+    "Collez l'URL de redirection de votre navigateur après vous être connecté.",
   'settings.ai.openRouterOauthDescription':
     "Connectez-vous avec OpenRouter et importez une clé API contrôlée par l'utilisateur en utilisant PKCE.",
   'settings.ai.connecting': 'Connexion...',

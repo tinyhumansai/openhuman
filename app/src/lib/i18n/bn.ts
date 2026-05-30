@@ -2694,6 +2694,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'সমাপ্তির তারিখ / http://wxqxqxkx/x উচিত',
   'settings.ai.connectProviderDialog': 'সংযোগ করুন {label}',
   'settings.ai.or': 'অথবা',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth কোনো অনুমোদন URL ফেরত দেয়নি। আবার সাইন ইন করার চেষ্টা করুন।',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'সাইন ইন করার পরে আপনার ব্রাউজার থেকে রিডাইরেক্ট URL পেস্ট করুন।',
   'settings.ai.openRouterOauthDescription':
     'xqxqxx সহযোগে সাইন করুন এবং xqxyqx ব্যবহার করে একটি ব্যবহারকারী xxqx কী ইম্পোর্ট করুন',
   'settings.ai.connecting': 'সংযোগ করা হচ্ছে...',
