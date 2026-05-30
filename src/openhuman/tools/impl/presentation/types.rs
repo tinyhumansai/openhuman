@@ -141,6 +141,14 @@ pub(super) fn validate_input(input: &GeneratePresentationInput) -> Result<(), Pr
             });
         }
     }
+    if let Some(theme) = input.theme.as_deref() {
+        if theme.chars().count() > MAX_TEXT_CHARS {
+            return Err(PresentationError::InvalidInput {
+                field: "theme".to_string(),
+                reason: format!("must be ≤ {MAX_TEXT_CHARS} chars"),
+            });
+        }
+    }
     if input.slides.is_empty() {
         return Err(PresentationError::InvalidInput {
             field: "slides".to_string(),
