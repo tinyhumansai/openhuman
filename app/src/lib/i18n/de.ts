@@ -4543,6 +4543,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Top-Prädikat',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Spezialisierung',
+  'subjectPredicateMI.colSubject': 'Subjekt',
+  'subjectPredicateMI.empty': 'Noch kein Wissensgraph.',
+  'subjectPredicateMI.emptyHint':
+    'Während der Assistent Relationen über Sie erfasst, erscheint hier das Spezialisierungsprofil pro Subjekt.',
+  'subjectPredicateMI.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'subjectPredicateMI.intro':
+    'Wechselseitige Information zwischen Subjekten und Prädikaten: wie viel sagt das Wissen über die Entität voraus, welche Relationsart sie verwendet? Global zeigt sie, ob Subjekte in festen Rollen sprechen oder ein freies Vokabular teilen. Pro Entität rankt sie Spezialisten (Subjekte mit Konzentration auf ein einziges Prädikat) über Generalisten (Subjekte mit gleichmäßig verteilten Prädikaten).',
+  'subjectPredicateMI.loading': 'Berechne Spezialisierungsprofil…',
+  'subjectPredicateMI.metricMI': 'Wechselseitige Information (Bits)',
+  'subjectPredicateMI.metricNMI': 'Normalisierte MI',
+  'subjectPredicateMI.metricSubjects': 'Subjekte',
+  'subjectPredicateMI.namespaceAll': 'Alle Namensräume',
+  'subjectPredicateMI.namespaceLabel': 'Namensraum',
+  'subjectPredicateMI.rankedHeading': 'Subjekte von am stärksten bis am wenigsten spezialisiert',
+  'subjectPredicateMI.retry': 'Wiederholen',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} Bits · H(P) = {hp} Bits',
+  'subjectPredicateMI.title': 'Subjekt-Prädikat-Spezialisierung',
 };
 
 export default messages;

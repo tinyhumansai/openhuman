@@ -4498,6 +4498,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Predicado principal',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Especialização',
+  'subjectPredicateMI.colSubject': 'Sujeito',
+  'subjectPredicateMI.empty': 'Ainda sem grafo de conhecimento.',
+  'subjectPredicateMI.emptyHint':
+    'À medida que o assistente registra relações sobre você, o perfil de especialização por sujeito aparecerá aqui.',
+  'subjectPredicateMI.errorPrefix': 'Não foi possível carregar o grafo:',
+  'subjectPredicateMI.intro':
+    'Informação mútua entre sujeitos e predicados: quanto conhecer a entidade prevê qual tipo de relação ela usará? Globalmente revela se os sujeitos falam em papéis fixos ou compartilham um vocabulário livre. Por entidade, classifica os especialistas (sujeitos que se concentram em um único predicado) acima dos generalistas (sujeitos cujos predicados são distribuídos uniformemente).',
+  'subjectPredicateMI.loading': 'Calculando perfil de especialização…',
+  'subjectPredicateMI.metricMI': 'Informação mútua (bits)',
+  'subjectPredicateMI.metricNMI': 'IM normalizada',
+  'subjectPredicateMI.metricSubjects': 'Sujeitos',
+  'subjectPredicateMI.namespaceAll': 'Todos os espaços de nomes',
+  'subjectPredicateMI.namespaceLabel': 'Espaço de nomes',
+  'subjectPredicateMI.rankedHeading': 'Sujeitos do mais ao menos especializado',
+  'subjectPredicateMI.retry': 'Tentar novamente',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bits · H(P) = {hp} bits',
+  'subjectPredicateMI.title': 'Especialização sujeito-predicado',
 };
 
 export default messages;

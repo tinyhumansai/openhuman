@@ -4443,6 +4443,29 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Predikat teratas',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Spesialisasi',
+  'subjectPredicateMI.colSubject': 'Subjek',
+  'subjectPredicateMI.empty': 'Belum ada graf pengetahuan.',
+  'subjectPredicateMI.emptyHint':
+    'Saat asisten mencatat relasi tentang Anda, profil spesialisasi per subjek akan muncul di sini.',
+  'subjectPredicateMI.errorPrefix': 'Tidak dapat memuat graf:',
+  'subjectPredicateMI.intro':
+    'Informasi mutual antara subjek dan predikat: seberapa besar mengetahui entitas memprediksi jenis relasi yang akan digunakannya? Secara global, ini mengungkap apakah subjek berbicara dalam peran tetap atau berbagi kosakata bebas. Per entitas, ini memeringkat spesialis (subjek yang berkonsentrasi pada satu predikat) di atas generalis (subjek yang predikatnya tersebar merata).',
+  'subjectPredicateMI.loading': 'Menghitung profil spesialisasi…',
+  'subjectPredicateMI.metricMI': 'Informasi mutual (bit)',
+  'subjectPredicateMI.metricNMI': 'IM dinormalisasi',
+  'subjectPredicateMI.metricSubjects': 'Subjek',
+  'subjectPredicateMI.namespaceAll': 'Semua ruang nama',
+  'subjectPredicateMI.namespaceLabel': 'Ruang nama',
+  'subjectPredicateMI.rankedHeading':
+    'Subjek dari yang paling hingga paling sedikit terspesialisasi',
+  'subjectPredicateMI.retry': 'Coba lagi',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bit · H(P) = {hp} bit',
+  'subjectPredicateMI.title': 'Spesialisasi subjek-predikat',
 };
 
 export default messages;

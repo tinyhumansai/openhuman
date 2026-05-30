@@ -4350,6 +4350,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'أعلى مسند',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'علاقات',
+  'subjectPredicateMI.colSpecialisation': 'التخصص',
+  'subjectPredicateMI.colSubject': 'الموضوع',
+  'subjectPredicateMI.empty': 'لا يوجد رسم معرفي بعد.',
+  'subjectPredicateMI.emptyHint': 'كلما سجّل المساعد علاقات عنك، سيظهر هنا ملف التخصص لكل موضوع.',
+  'subjectPredicateMI.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'subjectPredicateMI.intro':
+    'المعلومات المتبادلة بين المواضيع والمسندات: كم تنبئنا معرفة الكيان بنوع العلاقة التي سيستخدمها؟ عالمياً تكشف ما إذا كانت المواضيع تتحدث بأدوار ثابتة أم تتشارك مفردات حرة. لكل كيان، ترتب المتخصصين (مواضيع تركز على مسند واحد) فوق الموسوعيين (مواضيع مسنداتها موزعة بالتساوي).',
+  'subjectPredicateMI.loading': 'حساب ملف التخصص…',
+  'subjectPredicateMI.metricMI': 'المعلومات المتبادلة (بت)',
+  'subjectPredicateMI.metricNMI': 'MI معيارية',
+  'subjectPredicateMI.metricSubjects': 'المواضيع',
+  'subjectPredicateMI.namespaceAll': 'كل مساحات الأسماء',
+  'subjectPredicateMI.namespaceLabel': 'مساحة الأسماء',
+  'subjectPredicateMI.rankedHeading': 'المواضيع من الأكثر إلى الأقل تخصصاً',
+  'subjectPredicateMI.retry': 'إعادة المحاولة',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} بت · H(P) = {hp} بت',
+  'subjectPredicateMI.title': 'تخصص الموضوع-المسند',
 };
 
 export default messages;

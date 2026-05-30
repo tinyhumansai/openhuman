@@ -4393,6 +4393,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': '상위 술어',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': '관계',
+  'subjectPredicateMI.colSpecialisation': '전문화',
+  'subjectPredicateMI.colSubject': '주어',
+  'subjectPredicateMI.empty': '아직 지식 그래프가 없습니다.',
+  'subjectPredicateMI.emptyHint':
+    '어시스턴트가 사용자에 대한 관계를 기록함에 따라, 주제별 전문화 프로필이 여기에 나타납니다.',
+  'subjectPredicateMI.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'subjectPredicateMI.intro':
+    '주어와 술어 간의 상호 정보: 엔티티를 아는 것이 어떤 종류의 관계를 사용할지 얼마나 예측하는가? 전역적으로 주어가 고정된 역할로 말하는지 자유 어휘를 공유하는지 드러냅니다. 엔티티별로, 전문가(단일 술어에 집중하는 주어)를 일반론자(술어가 고르게 퍼진 주어) 위에 순위 매깁니다.',
+  'subjectPredicateMI.loading': '전문화 프로필 계산 중…',
+  'subjectPredicateMI.metricMI': '상호 정보 (비트)',
+  'subjectPredicateMI.metricNMI': '정규화 MI',
+  'subjectPredicateMI.metricSubjects': '주어',
+  'subjectPredicateMI.namespaceAll': '모든 네임스페이스',
+  'subjectPredicateMI.namespaceLabel': '네임스페이스',
+  'subjectPredicateMI.rankedHeading': '가장에서 가장 적게 전문화된 주제',
+  'subjectPredicateMI.retry': '다시 시도',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} 비트 · H(P) = {hp} 비트',
+  'subjectPredicateMI.title': '주어-술어 전문화',
 };
 
 export default messages;

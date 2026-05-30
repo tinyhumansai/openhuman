@@ -4434,6 +4434,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'शीर्ष विधेय',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'सं.',
+  'subjectPredicateMI.colSpecialisation': 'विशेषज्ञता',
+  'subjectPredicateMI.colSubject': 'विषय',
+  'subjectPredicateMI.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'subjectPredicateMI.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में संबंध दर्ज करता है, प्रति-विषय विशेषज्ञता प्रोफ़ाइल यहाँ उभरेगी।',
+  'subjectPredicateMI.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'subjectPredicateMI.intro':
+    'विषयों और विधेयों के बीच पारस्परिक सूचना: इकाई को जानना कितना भविष्यवाणी करता है कि वह किस तरह का संबंध उपयोग करेगी? वैश्विक रूप से यह दिखाती है कि विषय निश्चित भूमिकाओं में बोलते हैं या मुक्त शब्दावली साझा करते हैं। प्रति इकाई, यह विशेषज्ञों (एक ही विधेय पर केंद्रित विषय) को सामान्यविदों (समान रूप से फैले विधेयों वाले विषय) से ऊपर रैंक करती है।',
+  'subjectPredicateMI.loading': 'विशेषज्ञता प्रोफ़ाइल गणना हो रही है…',
+  'subjectPredicateMI.metricMI': 'पारस्परिक सूचना (बिट्स)',
+  'subjectPredicateMI.metricNMI': 'सामान्यीकृत MI',
+  'subjectPredicateMI.metricSubjects': 'विषय',
+  'subjectPredicateMI.namespaceAll': 'सभी नेमस्पेस',
+  'subjectPredicateMI.namespaceLabel': 'नेमस्पेस',
+  'subjectPredicateMI.rankedHeading': 'सबसे अधिक से सबसे कम विशेषज्ञ विषय',
+  'subjectPredicateMI.retry': 'पुनः प्रयास',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} बिट · H(P) = {hp} बिट',
+  'subjectPredicateMI.title': 'विषय-विधेय विशेषज्ञता',
 };
 
 export default messages;

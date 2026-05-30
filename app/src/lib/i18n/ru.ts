@@ -4469,6 +4469,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Топ-предикат',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Отн.',
+  'subjectPredicateMI.colSpecialisation': 'Специализация',
+  'subjectPredicateMI.colSubject': 'Субъект',
+  'subjectPredicateMI.empty': 'Пока нет графа знаний.',
+  'subjectPredicateMI.emptyHint':
+    'По мере того как ассистент фиксирует отношения о вас, здесь появится профиль специализации по субъекту.',
+  'subjectPredicateMI.errorPrefix': 'Не удалось загрузить граф:',
+  'subjectPredicateMI.intro':
+    'Взаимная информация между субъектами и предикатами: насколько знание сущности предсказывает, какой тип отношения она будет использовать? Глобально она вскрывает, говорят ли субъекты в фиксированных ролях или делят свободный словарь. На сущность она ранжирует специалистов (субъекты, сосредоточенные на одном предикате) выше универсалов (субъекты, чьи предикаты распределены равномерно).',
+  'subjectPredicateMI.loading': 'Вычисление профиля специализации…',
+  'subjectPredicateMI.metricMI': 'Взаимная информация (биты)',
+  'subjectPredicateMI.metricNMI': 'Нормализованная ВИ',
+  'subjectPredicateMI.metricSubjects': 'Субъекты',
+  'subjectPredicateMI.namespaceAll': 'Все пространства имён',
+  'subjectPredicateMI.namespaceLabel': 'Пространство имён',
+  'subjectPredicateMI.rankedHeading': 'Субъекты от самых до наименее специализированных',
+  'subjectPredicateMI.retry': 'Повторить',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} бит · H(P) = {hp} бит',
+  'subjectPredicateMI.title': 'Специализация субъект-предикат',
 };
 
 export default messages;

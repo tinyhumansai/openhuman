@@ -4509,6 +4509,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Predicado principal',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Especialización',
+  'subjectPredicateMI.colSubject': 'Sujeto',
+  'subjectPredicateMI.empty': 'Aún no hay grafo de conocimiento.',
+  'subjectPredicateMI.emptyHint':
+    'A medida que el asistente registra relaciones sobre usted, el perfil de especialización por sujeto aparecerá aquí.',
+  'subjectPredicateMI.errorPrefix': 'No se pudo cargar el grafo:',
+  'subjectPredicateMI.intro':
+    'Información mutua entre sujetos y predicados: ¿cuánto predice conocer la entidad qué tipo de relación usará? Globalmente revela si los sujetos hablan en roles fijos o comparten un vocabulario libre. Por entidad, clasifica a los especialistas (sujetos que se concentran en un solo predicado) por encima de los generalistas (sujetos cuyos predicados están distribuidos uniformemente).',
+  'subjectPredicateMI.loading': 'Calculando perfil de especialización…',
+  'subjectPredicateMI.metricMI': 'Información mutua (bits)',
+  'subjectPredicateMI.metricNMI': 'IM normalizada',
+  'subjectPredicateMI.metricSubjects': 'Sujetos',
+  'subjectPredicateMI.namespaceAll': 'Todos los espacios de nombres',
+  'subjectPredicateMI.namespaceLabel': 'Espacio de nombres',
+  'subjectPredicateMI.rankedHeading': 'Sujetos de más a menos especializado',
+  'subjectPredicateMI.retry': 'Reintentar',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bits · H(P) = {hp} bits',
+  'subjectPredicateMI.title': 'Especialización sujeto-predicado',
 };
 
 export default messages;

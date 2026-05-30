@@ -4427,6 +4427,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'শীর্ষ বিধেয়',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'সম্প.',
+  'subjectPredicateMI.colSpecialisation': 'বিশেষীকরণ',
+  'subjectPredicateMI.colSubject': 'বিষয়',
+  'subjectPredicateMI.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'subjectPredicateMI.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সম্পর্ক রেকর্ড করে, প্রতি-বিষয় বিশেষীকরণ প্রোফাইল এখানে উঠে আসবে।',
+  'subjectPredicateMI.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'subjectPredicateMI.intro':
+    'বিষয় এবং বিধেয়ের মধ্যে পারস্পরিক তথ্য: সত্তাটি জানা কতটা ভবিষ্যদ্বাণী করে যে এটি কোন ধরনের সম্পর্ক ব্যবহার করবে? বৈশ্বিকভাবে এটি প্রকাশ করে বিষয়গুলি স্থির ভূমিকায় কথা বলে নাকি একটি মুক্ত শব্দভাণ্ডার ভাগ করে। প্রতি সত্তা, এটি বিশেষজ্ঞদের (একক বিধেয়ে মনোনিবেশকারী বিষয়) সাধারণজ্ঞদের (যাদের বিধেয় সমানভাবে ছড়িয়ে আছে) উপরে স্থান দেয়।',
+  'subjectPredicateMI.loading': 'বিশেষীকরণ প্রোফাইল গণনা করা হচ্ছে…',
+  'subjectPredicateMI.metricMI': 'পারস্পরিক তথ্য (বিট)',
+  'subjectPredicateMI.metricNMI': 'স্বাভাবিকীকৃত MI',
+  'subjectPredicateMI.metricSubjects': 'বিষয়',
+  'subjectPredicateMI.namespaceAll': 'সমস্ত নেমস্পেস',
+  'subjectPredicateMI.namespaceLabel': 'নেমস্পেস',
+  'subjectPredicateMI.rankedHeading': 'সর্বাধিক থেকে স্বল্পতম বিশেষায়িত বিষয়',
+  'subjectPredicateMI.retry': 'পুনরায় চেষ্টা',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} বিট · H(P) = {hp} বিট',
+  'subjectPredicateMI.title': 'বিষয়-বিধেয় বিশেষীকরণ',
 };
 
 export default messages;

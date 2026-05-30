@@ -4524,6 +4524,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Prédicat principal',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Spécialisation',
+  'subjectPredicateMI.colSubject': 'Sujet',
+  'subjectPredicateMI.empty': 'Pas encore de graphe de connaissances.',
+  'subjectPredicateMI.emptyHint':
+    "À mesure que l'assistant enregistre des relations à votre sujet, le profil de spécialisation par sujet apparaîtra ici.",
+  'subjectPredicateMI.errorPrefix': 'Impossible de charger le graphe :',
+  'subjectPredicateMI.intro':
+    "Information mutuelle entre sujets et prédicats : à quel point connaître l'entité prédit-il le type de relation qu'elle utilisera ? Globalement, elle révèle si les sujets parlent dans des rôles fixes ou partagent un vocabulaire libre. Par entité, elle classe les spécialistes (sujets qui se concentrent sur un seul prédicat) au-dessus des généralistes (sujets dont les prédicats sont répartis uniformément).",
+  'subjectPredicateMI.loading': 'Calcul du profil de spécialisation…',
+  'subjectPredicateMI.metricMI': 'Information mutuelle (bits)',
+  'subjectPredicateMI.metricNMI': 'IM normalisée',
+  'subjectPredicateMI.metricSubjects': 'Sujets',
+  'subjectPredicateMI.namespaceAll': 'Tous les espaces de noms',
+  'subjectPredicateMI.namespaceLabel': 'Espace de noms',
+  'subjectPredicateMI.rankedHeading': 'Sujets du plus au moins spécialisé',
+  'subjectPredicateMI.retry': 'Réessayer',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bits · H(P) = {hp} bits',
+  'subjectPredicateMI.title': 'Spécialisation sujet-prédicat',
 };
 
 export default messages;

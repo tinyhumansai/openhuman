@@ -4501,6 +4501,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Najlepszy predykat',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Specjalizacja',
+  'subjectPredicateMI.colSubject': 'Podmiot',
+  'subjectPredicateMI.empty': 'Jeszcze brak grafu wiedzy.',
+  'subjectPredicateMI.emptyHint':
+    'Gdy asystent zapisuje relacje o tobie, profil specjalizacji na podmiot pojawi się tutaj.',
+  'subjectPredicateMI.errorPrefix': 'Nie udało się załadować grafu:',
+  'subjectPredicateMI.intro':
+    'Informacja wzajemna między podmiotami a predykatami: o ile znajomość encji przewiduje, jakiego rodzaju relacji użyje? Globalnie ujawnia, czy podmioty mówią w stałych rolach, czy dzielą wolny słownik. Per encja klasyfikuje specjalistów (podmioty skupione na jednym predykacie) ponad generalistami (podmioty, których predykaty są rozłożone równomiernie).',
+  'subjectPredicateMI.loading': 'Obliczanie profilu specjalizacji…',
+  'subjectPredicateMI.metricMI': 'Informacja wzajemna (bity)',
+  'subjectPredicateMI.metricNMI': 'Znormalizowana IM',
+  'subjectPredicateMI.metricSubjects': 'Podmioty',
+  'subjectPredicateMI.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'subjectPredicateMI.namespaceLabel': 'Przestrzeń nazw',
+  'subjectPredicateMI.rankedHeading': 'Podmioty od najbardziej do najmniej wyspecjalizowanych',
+  'subjectPredicateMI.retry': 'Spróbuj ponownie',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bitów · H(P) = {hp} bitów',
+  'subjectPredicateMI.title': 'Specjalizacja podmiot-predykat',
 };
 
 export default messages;

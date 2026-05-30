@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.specialisation': 'Specialisation',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,28 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+
+  'subjectPredicateMI.title': 'Subject-Predicate Specialisation',
+  'subjectPredicateMI.intro':
+    'Mutual information between subjects and predicates: how much does knowing the entity predict which relation kind it will use? Globally it surfaces whether subjects speak in fixed roles or share a free vocabulary. Per entity, it ranks the specialists (subjects who concentrate on a single predicate) above the generalists (subjects whose predicates are evenly spread).',
+  'subjectPredicateMI.loading': 'Computing specialisation profile…',
+  'subjectPredicateMI.errorPrefix': 'Could not load the graph:',
+  'subjectPredicateMI.retry': 'Retry',
+  'subjectPredicateMI.empty': 'No knowledge graph yet.',
+  'subjectPredicateMI.emptyHint':
+    'As the assistant records relations about you, the per-subject specialisation profile will surface here.',
+  'subjectPredicateMI.namespaceLabel': 'Namespace',
+  'subjectPredicateMI.namespaceAll': 'All namespaces',
+  'subjectPredicateMI.metricMI': 'Mutual information (bits)',
+  'subjectPredicateMI.metricNMI': 'Normalised MI',
+  'subjectPredicateMI.metricSubjects': 'Subjects',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bits · H(P) = {hp} bits',
+  'subjectPredicateMI.rankedHeading': 'Most-to-least specialised subjects',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colSubject': 'Subject',
+  'subjectPredicateMI.colSpecialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Top predicate',
+  'subjectPredicateMI.colRelations': 'Rels',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -2500,7 +2523,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',

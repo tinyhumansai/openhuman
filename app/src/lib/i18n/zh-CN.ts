@@ -4214,6 +4214,27 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': '首位谓词',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': '关系',
+  'subjectPredicateMI.colSpecialisation': '专门化',
+  'subjectPredicateMI.colSubject': '主体',
+  'subjectPredicateMI.empty': '暂无知识图。',
+  'subjectPredicateMI.emptyHint': '随着助手记录你的相关关系,按主体的专门化画像将在此显现。',
+  'subjectPredicateMI.errorPrefix': '无法加载图:',
+  'subjectPredicateMI.intro':
+    '主体与谓词之间的互信息:知道实体在多大程度上预测它将使用何种关系?在全局层面,揭示主体是以固定角色发声还是共享自由词汇。在每个实体层面,将专才(集中于单一谓词的主体)排在通才(谓词分布均匀的主体)之上。',
+  'subjectPredicateMI.loading': '正在计算专门化画像…',
+  'subjectPredicateMI.metricMI': '互信息(比特)',
+  'subjectPredicateMI.metricNMI': '归一化 MI',
+  'subjectPredicateMI.metricSubjects': '主体',
+  'subjectPredicateMI.namespaceAll': '所有命名空间',
+  'subjectPredicateMI.namespaceLabel': '命名空间',
+  'subjectPredicateMI.rankedHeading': '从最专门到最不专门的主体',
+  'subjectPredicateMI.retry': '重试',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} 比特 · H(P) = {hp} 比特',
+  'subjectPredicateMI.title': '主体-谓词专门化',
 };
 
 export default messages;

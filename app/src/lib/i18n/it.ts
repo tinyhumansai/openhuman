@@ -4501,6 +4501,28 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'memory.tab.specialisation': 'Specialisation',
+  'subjectPredicateMI.colDominant': 'Predicato principale',
+  'subjectPredicateMI.colRank': '#',
+  'subjectPredicateMI.colRelations': 'Rel.',
+  'subjectPredicateMI.colSpecialisation': 'Specializzazione',
+  'subjectPredicateMI.colSubject': 'Soggetto',
+  'subjectPredicateMI.empty': 'Ancora nessun grafo della conoscenza.',
+  'subjectPredicateMI.emptyHint':
+    "Man mano che l'assistente registra relazioni su di te, qui apparirà il profilo di specializzazione per soggetto.",
+  'subjectPredicateMI.errorPrefix': 'Impossibile caricare il grafo:',
+  'subjectPredicateMI.intro':
+    "Informazione mutua tra soggetti e predicati: quanto conoscere l'entità predice quale tipo di relazione userà? Globalmente rivela se i soggetti parlano in ruoli fissi o condividono un vocabolario libero. Per entità, classifica gli specialisti (soggetti che si concentrano su un solo predicato) sopra i generalisti (soggetti i cui predicati sono distribuiti uniformemente).",
+  'subjectPredicateMI.loading': 'Calcolo profilo di specializzazione…',
+  'subjectPredicateMI.metricMI': 'Informazione mutua (bit)',
+  'subjectPredicateMI.metricNMI': 'IM normalizzata',
+  'subjectPredicateMI.metricSubjects': 'Soggetti',
+  'subjectPredicateMI.namespaceAll': 'Tutti gli spazi dei nomi',
+  'subjectPredicateMI.namespaceLabel': 'Spazio dei nomi',
+  'subjectPredicateMI.rankedHeading': 'Soggetti dal più al meno specializzato',
+  'subjectPredicateMI.retry': 'Riprova',
+  'subjectPredicateMI.summaryCaption': 'H(S) = {hs} bit · H(P) = {hp} bit',
+  'subjectPredicateMI.title': 'Specializzazione soggetto-predicato',
 };
 
 export default messages;
