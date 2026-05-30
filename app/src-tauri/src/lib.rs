@@ -5,6 +5,7 @@ compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobi
 
 mod cdp;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+mod artifact_commands;
 mod cef_preflight;
 mod cef_profile;
 mod companion_commands;
@@ -3066,6 +3067,7 @@ pub fn run() {
             core_rpc_token,
             overlay_parent_rpc_url,
             process_diagnostics_list_owned,
+            artifact_commands::download_artifact_to_downloads,
             check_core_update,
             apply_core_update,
             check_app_update,
