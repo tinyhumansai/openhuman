@@ -537,6 +537,7 @@ fn datetime_section_output_matches_iso8601_date_and_utc_offset_pattern() {
         personality_soul_md: None,
         personality_memory_md: None,
         personality_roster: vec![],
+        workflows: &[],
     };
 
     let rendered = DateTimeSection.build(&ctx).unwrap();

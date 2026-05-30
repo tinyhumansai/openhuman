@@ -686,3 +686,151 @@ fn scope_slug_non_gmail_uses_full_scope() {
         "slugifying the full 'gmail:...' scope must differ from the participants-only slug"
     );
 }
+
+/// `hydrate_summary_inputs` was rewritten to do one batched
+/// `get_summaries_batch` SELECT instead of N per-id `get_summary`
+/// round-trips. This test pins three behavioural invariants the per-id
+/// loop used to give us for free, and which the HashMap-walk now has to
+/// reproduce:
+///
+/// 1. **Input order preservation.** We iterate the caller's
+///    `summary_ids` slice (not the HashMap) so the `SummaryInput`s come
+///    out in the order the caller asked for, even though `HashMap`
+///    iteration is not insertion-ordered.
+/// 2. **Per-id field propagation by id, not by index.** Distinct field
+///    values per summary (content, token_count, score) prove the
+///    map.get() is keyed by id — not by enumerate().
+/// 3. **Missing id → silent skip + warn.** Mirrors the per-id
+///    `Ok(None)` → continue contract; the request does not error out.
+#[tokio::test]
+async fn hydrate_summary_inputs_batch_preserves_order_and_skips_missing_ids() {
+    use crate::openhuman::memory_store::content::atomic::stage_summary;
+    use crate::openhuman::memory_store::content::SummaryComposeInput;
+    use crate::openhuman::memory_store::content::SummaryTreeKind;
+    use crate::openhuman::memory_store::trees::store::insert_tree;
+    use crate::openhuman::memory_store::trees::types::{SummaryNode, Tree, TreeKind, TreeStatus};
+    use crate::openhuman::memory_tree::tree::store::insert_summary_tx;
+    use chrono::TimeZone;
+
+    let (_tmp, cfg) = test_config();
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+
+    let tree = Tree {
+        id: "tree-hydrate".into(),
+        kind: TreeKind::Source,
+        scope: "slack:#eng".into(),
+        root_id: None,
+        max_level: 0,
+        status: TreeStatus::Active,
+        created_at: ts,
+        last_sealed_at: None,
+    };
+    insert_tree(&cfg, &tree).unwrap();
+
+    // Two summaries with distinct content / token_count / score so we
+    // can prove the per-id HashMap lookup keys by id and not by
+    // enumerate() over `summary_ids`.
+    let sum_a = SummaryNode {
+        id: "sum-a".into(),
+        tree_id: tree.id.clone(),
+        tree_kind: TreeKind::Source,
+        level: 1,
+        parent_id: None,
+        child_ids: vec!["leaf-a".into()],
+        content: "BODY-A".into(),
+        token_count: 11,
+        entities: vec!["entity:alice".into()],
+        topics: vec!["#a".into()],
+        time_range_start: ts,
+        time_range_end: ts,
+        score: 0.11,
+        sealed_at: ts,
+        deleted: false,
+        embedding: None,
+    };
+    let sum_b = SummaryNode {
+        id: "sum-b".into(),
+        tree_id: tree.id.clone(),
+        tree_kind: TreeKind::Source,
+        level: 1,
+        parent_id: None,
+        child_ids: vec!["leaf-b".into()],
+        content: "BODY-B".into(),
+        token_count: 22,
+        entities: vec!["entity:bob".into()],
+        topics: vec!["#b".into()],
+        time_range_start: ts,
+        time_range_end: ts,
+        score: 0.22,
+        sealed_at: ts,
+        deleted: false,
+        embedding: None,
+    };
+
+    // Stage bodies to disk + record content pointers so
+    // `read_summary_body` (called per-id inside `hydrate_summary_inputs`)
+    // can resolve the path. Mirrors the production seal write path.
+    let content_root = cfg.memory_tree_content_root();
+    std::fs::create_dir_all(&content_root).expect("create content_root");
+    let stage = |n: &SummaryNode| {
+        stage_summary(
+            &content_root,
+            &SummaryComposeInput {
+                summary_id: &n.id,
+                tree_kind: SummaryTreeKind::Source,
+                tree_id: &tree.id,
+                tree_scope: &tree.scope,
+                level: n.level,
+                child_ids: &n.child_ids,
+                child_basenames: None,
+                child_count: n.child_ids.len(),
+                time_range_start: n.time_range_start,
+                time_range_end: n.time_range_end,
+                sealed_at: n.sealed_at,
+                body: &n.content,
+            },
+            "slack-eng",
+            None,
+        )
+        .unwrap()
+    };
+    let staged_a = stage(&sum_a);
+    let staged_b = stage(&sum_b);
+    crate::openhuman::memory_store::chunks::store::with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &sum_a, Some(&staged_a), "test")?;
+        insert_summary_tx(&tx, &sum_b, Some(&staged_b), "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    // Interleaved order with a ghost id in the middle: if the function
+    // ever regresses to indexing by position into the batch result or
+    // returns the HashMap's iteration order, this assertion will catch
+    // it. `sum-b` deliberately comes first so a naive "iterate the map"
+    // implementation that happens to land on `sum-a` first would fail.
+    let ids = vec![
+        "sum-b".to_string(),
+        "ghost:no-such".to_string(),
+        "sum-a".to_string(),
+    ];
+    let out = hydrate_summary_inputs(&cfg, &ids).unwrap();
+
+    // Missing id silently skipped → 2 inputs, not 3.
+    assert_eq!(out.len(), 2, "ghost id must be skipped, not error");
+    // Input order preserved across the gap.
+    assert_eq!(out[0].id, "sum-b");
+    assert_eq!(out[1].id, "sum-a");
+    // Per-id field propagation: each input's score/token_count/content
+    // comes from its own row, not from its sibling.
+    assert_eq!(out[0].token_count, 22);
+    assert!((out[0].score - 0.22).abs() < 1e-6);
+    assert_eq!(out[0].content, "BODY-B");
+    assert_eq!(out[1].token_count, 11);
+    assert!((out[1].score - 0.11).abs() < 1e-6);
+    assert_eq!(out[1].content, "BODY-A");
+    // Entities and topics tracked per id too.
+    assert_eq!(out[0].entities, vec!["entity:bob".to_string()]);
+    assert_eq!(out[1].entities, vec!["entity:alice".to_string()]);
+}

@@ -251,6 +251,11 @@ pub struct SubagentProgressDetail {
     /// (on `subagent_tool_result`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_chars: Option<u64>,
+    /// Persistent worker sub-thread id backing the delegation (on
+    /// `subagent_spawned`). The frontend stores it on the subagent row and
+    /// uses it to reopen the full parent↔subagent conversation from memory.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_thread_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
