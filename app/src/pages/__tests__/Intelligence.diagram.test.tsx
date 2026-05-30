@@ -16,14 +16,6 @@ vi.mock('../../components/intelligence/IntelligenceTasksTab', () => ({
   default: () => <div>Tasks tab</div>,
 }));
 
-vi.mock('../../components/intelligence/IntelligenceCallsTab', () => ({
-  default: () => <div>Calls tab</div>,
-}));
-
-vi.mock('../../components/intelligence/IntelligenceDreamsTab', () => ({
-  default: () => <div>Dreams tab</div>,
-}));
-
 vi.mock('../../hooks/useConsciousItems', () => ({
   useConsciousItems: () => ({ isRunning: false }),
 }));

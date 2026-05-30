@@ -218,6 +218,7 @@ struct AutonomySettingsUpdate {
     /// Replaces the "Always allow" allowlist wholesale — tool names the agent
     /// may run without an approval prompt. Empty list clears it.
     auto_approve: Option<Vec<String>>,
+    require_task_plan_approval: Option<bool>,
 }
 
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
@@ -615,6 +616,7 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     comment: "Replace the \"Always allow\" allowlist (array of tool names the agent runs without an approval prompt). Empty array clears it.",
                     required: false,
                 },
+                optional_bool("require_task_plan_approval", "Require approval before an agent executes a task-board plan."),
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
@@ -1244,6 +1246,7 @@ fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFutu
                 .max_actions_per_hour
                 .map(|v| u32::try_from(v).unwrap_or(u32::MAX)),
             auto_approve: update.auto_approve,
+            require_task_plan_approval: update.require_task_plan_approval,
         };
         to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
     })

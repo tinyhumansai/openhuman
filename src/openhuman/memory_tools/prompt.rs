@@ -243,6 +243,9 @@ mod tests {
             include_memory_md: false,
             curated_snapshot: None,
             user_identity: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            personality_roster: vec![],
         };
         let built = section.build(&ctx).unwrap();
         assert!(built.contains("never email Sarah"));

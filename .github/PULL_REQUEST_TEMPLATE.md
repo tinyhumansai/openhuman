@@ -18,7 +18,7 @@
 > If a section does not apply to this change, mark the item as `N/A` with a one-line reason. Do not delete items.
 
 - [ ] Tests added or updated (happy path + at least one failure / edge case) per [Testing Strategy](../gitbooks/developing/testing-strategy.md#failure-path-requirement)
-- [ ] **Diff coverage ≥ 80%** — changed lines (Vitest + cargo-llvm-cov merged via `diff-cover`) meet the gate enforced by [`.github/workflows/coverage.yml`](../.github/workflows/coverage.yml). Run `pnpm test:coverage` and `pnpm test:rust` locally; PRs below 80% on changed lines will not merge.
+- [ ] **Diff coverage ≥ 80%** — changed lines (Vitest + cargo-llvm-cov merged via `diff-cover`) meet the gate enforced by [`.github/workflows/pr-ci.yml`](../.github/workflows/pr-ci.yml). Run `pnpm test:coverage` and `pnpm test:rust` locally; PRs below 80% on changed lines will not merge.
 - [ ] Coverage matrix updated — added/removed/renamed feature rows in [`docs/TEST-COVERAGE-MATRIX.md`](../docs/TEST-COVERAGE-MATRIX.md) reflect this change (or `N/A: behaviour-only change`)
 - [ ] All affected feature IDs from the matrix are listed in the PR description under `## Related`
 - [ ] No new external network dependencies introduced (mock backend used per [Testing Strategy](../gitbooks/developing/testing-strategy.md#mock-policy))
@@ -51,14 +51,17 @@ A bare "#123" reference is just a link — it does NOT close the issue.
 > Keep this section for AI-authored PRs. For human-only PRs, mark each field `N/A`.
 
 ### Linear Issue
+
 - Key:
 - URL:
 
 ### Commit & Branch
+
 - Branch:
 - Commit SHA:
 
 ### Validation Run
+
 - [ ] `pnpm --filter openhuman-app format:check`
 - [ ] `pnpm typecheck`
 - [ ] Focused tests:
@@ -66,19 +69,23 @@ A bare "#123" reference is just a link — it does NOT close the issue.
 - [ ] Tauri fmt/check (if changed):
 
 ### Validation Blocked
+
 - `command:`
 - `error:`
 - `impact:`
 
 ### Behavior Changes
+
 - Intended behavior change:
 - User-visible effect:
 
 ### Parity Contract
+
 - Legacy behavior preserved:
 - Guard/fallback/dispatch parity checks:
 
 ### Duplicate / Superseded PR Handling
+
 - Duplicate PR(s):
 - Canonical PR:
 - Resolution (closed/superseded/updated):

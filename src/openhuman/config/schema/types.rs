@@ -152,6 +152,12 @@ pub struct Config {
     #[serde(default)]
     pub cron: CronConfig,
 
+    /// Task-sources domain defaults — master switch + new-source
+    /// defaults. Per-source records live in the domain's SQLite store.
+    /// See [`crate::openhuman::task_sources`].
+    #[serde(default)]
+    pub task_sources: TaskSourcesConfig,
+
     #[serde(default)]
     pub channels_config: ChannelsConfig,
 
@@ -216,6 +222,17 @@ pub struct Config {
 
     #[serde(default)]
     pub cost: CostConfig,
+
+    /// User-configured memory sources — each `[[memory_sources]]` entry
+    /// describes a data connector (Composio OAuth, local folder, GitHub
+    /// repo, RSS feed, Twitter query, web page) that feeds memory.
+    #[serde(default)]
+    pub memory_sources: Vec<crate::openhuman::memory_sources::types::MemorySourceEntry>,
+
+    /// User-facing agent registry — shipped default agents plus user-authored
+    /// custom agents and persisted enable/disable/tool-policy overrides.
+    #[serde(default)]
+    pub agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig,
 
     #[serde(default)]
     pub computer_control: ComputerControlConfig,
@@ -634,6 +651,7 @@ impl Default for Config {
             embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
+            task_sources: TaskSourcesConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             memory_tree: MemoryTreeConfig::default(),
@@ -653,6 +671,8 @@ impl Default for Config {
             search: SearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
+            memory_sources: Vec::new(),
+            agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig::default(),
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),

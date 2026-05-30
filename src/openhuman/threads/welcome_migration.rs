@@ -410,6 +410,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00Z".to_string(),
             parent_thread_id: None,
             labels: Some(labels),
+            personality_id: None,
         }
     }
 
