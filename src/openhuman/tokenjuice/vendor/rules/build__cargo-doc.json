@@ -36,6 +36,11 @@
   },
   "counters": [
     {
+      "name": "error",
+      "pattern": "^error(\\[E\\d+\\])?:",
+      "flags": "i"
+    },
+    {
       "name": "warning",
       "pattern": "^warning:",
       "flags": "i"
