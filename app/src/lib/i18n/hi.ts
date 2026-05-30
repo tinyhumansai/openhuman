@@ -323,6 +323,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': 'कनेक्टर',
   'graphCentrality.bridgeTitle': 'कनेक्टर - इसके लिंक गिनती से अधिक प्रभावशाली सुझाव देते हैं',
   'graphCentrality.degreeTitle': '{in}',
+  'memory.tab.freshness': 'Freshness',
+  'memoryFreshness.title': 'Knowledge Freshness',
+  'memoryFreshness.intro':
+    'Facts the assistant has not reconfirmed lately decay along a forgetting curve. This surfaces what is going stale and worth re-checking, so old facts are not treated as still-certain.',
+  'memoryFreshness.loading': 'Scoring freshness…',
+  'memoryFreshness.errorPrefix': 'Could not load the graph:',
+  'memoryFreshness.retry': 'Retry',
+  'memoryFreshness.empty': 'No knowledge graph yet.',
+  'memoryFreshness.emptyHint':
+    'As the assistant records facts about you, their freshness will be tracked here.',
+  'memoryFreshness.namespaceLabel': 'Namespace',
+  'memoryFreshness.namespaceAll': 'All namespaces',
+  'memoryFreshness.metricFresh': 'Fresh',
+  'memoryFreshness.metricFading': 'Fading',
+  'memoryFreshness.metricStale': 'Stale',
+  'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
+  'memoryFreshness.queueHeading': 'Re-confirm queue',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
+  'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
+  'memoryFreshness.statusFading': 'fading',
+  'memoryFreshness.statusStale': 'stale',
+  'memoryFreshness.ageLabel': '{days}d old',
+  'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
   'memoryTree.status.title': 'मेमोरी ट्री',
   'memoryTree.status.autoSyncLabel': 'ऑटो सिंक',
   'memoryTree.status.autoSyncDescription':
@@ -1683,6 +1706,7 @@ const messages: TranslationMap = {
   'mic.permissionDenied': 'माइक्रोफोन की अनुमति नहीं मिली',
   'mic.failedToStartRecorder': 'रिकॉर्डर शुरू नहीं हो पाया',
   'mic.transcribing': 'ट्रांसक्राइब हो रहा है...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'भेजने के लिए टैप करें',
   'mic.waitingForAgent': 'एजेंट का इंतज़ार है...',
   'mic.tapAndSpeak': 'टैप करें और बोलें',
@@ -2694,6 +2718,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'समापन बिंदु http:// या https://. से शुरू होना चाहिए',
   'settings.ai.connectProviderDialog': 'कनेक्ट करें {label}',
   'settings.ai.or': 'या',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth ने कोई प्राधिकरण URL नहीं लौटाया। फिर से साइन इन करने का प्रयास करें।',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'साइन इन करने के बाद अपने ब्राउज़र से रीडायरेक्ट URL पेस्ट करें।',
   'settings.ai.openRouterOauthDescription':
     'OpenRouter के साथ साइन इन करें और PKCE का उपयोग करके उपयोगकर्ता नियंत्रित API कुंजी आयात करें।',
   'settings.ai.connecting': 'कनेक्ट हो रहा है...',

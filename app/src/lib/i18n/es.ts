@@ -334,6 +334,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': 'conector',
   'graphCentrality.bridgeTitle': 'Conector: más influyente de lo que sugiere su número de enlaces',
   'graphCentrality.degreeTitle': '{in} entra · {out} sale',
+  'memory.tab.freshness': 'Freshness',
+  'memoryFreshness.title': 'Knowledge Freshness',
+  'memoryFreshness.intro':
+    'Facts the assistant has not reconfirmed lately decay along a forgetting curve. This surfaces what is going stale and worth re-checking, so old facts are not treated as still-certain.',
+  'memoryFreshness.loading': 'Scoring freshness…',
+  'memoryFreshness.errorPrefix': 'Could not load the graph:',
+  'memoryFreshness.retry': 'Retry',
+  'memoryFreshness.empty': 'No knowledge graph yet.',
+  'memoryFreshness.emptyHint':
+    'As the assistant records facts about you, their freshness will be tracked here.',
+  'memoryFreshness.namespaceLabel': 'Namespace',
+  'memoryFreshness.namespaceAll': 'All namespaces',
+  'memoryFreshness.metricFresh': 'Fresh',
+  'memoryFreshness.metricFading': 'Fading',
+  'memoryFreshness.metricStale': 'Stale',
+  'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
+  'memoryFreshness.queueHeading': 'Re-confirm queue',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
+  'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
+  'memoryFreshness.statusFading': 'fading',
+  'memoryFreshness.statusStale': 'stale',
+  'memoryFreshness.ageLabel': '{days}d old',
+  'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
   'memoryTree.status.title': 'Árbol de la memoria',
   'memoryTree.status.autoSyncLabel': 'Auto-sincronización',
   'memoryTree.status.autoSyncDescription':
@@ -1719,6 +1742,7 @@ const messages: TranslationMap = {
   'mic.permissionDenied': 'Permiso de micrófono denegado',
   'mic.failedToStartRecorder': 'No se pudo iniciar la grabadora',
   'mic.transcribing': 'Transcribiendo...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Toca para enviar',
   'mic.waitingForAgent': 'Esperando al agente...',
   'mic.tapAndSpeak': 'Toca y habla',
@@ -2738,6 +2762,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'El punto final debe comenzar con http:// o https://.',
   'settings.ai.connectProviderDialog': 'Conectar {label}',
   'settings.ai.or': 'O',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth no devolvió una URL de autorización. Intenta iniciar sesión de nuevo.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Pega la URL de redirección de tu navegador después de iniciar sesión.',
   'settings.ai.openRouterOauthDescription':
     'Inicia sesión con OpenRouter e importa una clave API controlada por el usuario usando PKCE.',
   'settings.ai.connecting': 'Conectando...',

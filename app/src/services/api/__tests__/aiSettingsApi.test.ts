@@ -11,17 +11,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type AISettings,
   clearCloudProviderKey,
+  completeOpenAiCodexOAuth,
   flushCloudProviders,
+  importOpenAiCodexCliAuth,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
   localProvider,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   parseProviderString,
   type ProviderRef,
   saveAISettings,
   serializeProviderRef,
   setCloudProviderKey,
   setLocalRuntimeEnabled,
+  startOpenAiCodexOAuth,
   testProviderModel,
 } from '../aiSettingsApi';
 
@@ -696,6 +701,60 @@ describe('clearCloudProviderKey', () => {
   it('is a no-op for "openhuman" (session-managed, no key to clear)', async () => {
     await clearCloudProviderKey('openhuman');
     expect(mockAuthRemoveProviderCredentials).not.toHaveBeenCalled();
+  });
+});
+
+// ─── OpenAI Codex OAuth helpers ──────────────────────────────────────────────
+
+describe('OpenAI Codex OAuth helpers', () => {
+  beforeEach(() => {
+    mockCallCoreRpc.mockReset();
+  });
+
+  it('throws a stable code when OAuth start returns no authorization URL', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await expect(startOpenAiCodexOAuth()).rejects.toThrow(OPENAI_CODEX_OAUTH_MISSING_AUTH_URL);
+  });
+
+  it('returns the OAuth start payload when an authorization URL is present', async () => {
+    mockCallCoreRpc.mockResolvedValue({
+      result: { authUrl: '  https://auth.openai.com/oauth/authorize?client_id=test  ' },
+    });
+
+    await expect(startOpenAiCodexOAuth()).resolves.toEqual({
+      authUrl: '  https://auth.openai.com/oauth/authorize?client_id=test  ',
+    });
+  });
+
+  it('throws a stable code when OAuth completion is missing the callback URL', async () => {
+    await expect(completeOpenAiCodexOAuth('  ')).rejects.toThrow(
+      OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL
+    );
+
+    expect(mockCallCoreRpc).not.toHaveBeenCalled();
+  });
+
+  it('completes OAuth with a trimmed callback URL', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await completeOpenAiCodexOAuth('  openhuman://oauth/callback?code=abc  ');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_openai_oauth_complete',
+      params: { callback_url: 'openhuman://oauth/callback?code=abc' },
+    });
+  });
+
+  it('imports Codex CLI auth through core RPC', async () => {
+    mockCallCoreRpc.mockResolvedValue({ result: {} });
+
+    await importOpenAiCodexCliAuth();
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.inference_openai_oauth_import_codex_cli',
+      params: {},
+    });
   });
 });
 

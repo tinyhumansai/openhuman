@@ -130,6 +130,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("diagnostics"),
         schemas("openai_oauth_start"),
         schemas("openai_oauth_complete"),
+        schemas("openai_oauth_import_codex_cli"),
         schemas("openai_oauth_status"),
         schemas("openai_oauth_disconnect"),
         schemas("summarize"),
@@ -186,6 +187,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("openai_oauth_complete"),
             handler: handle_inference_openai_oauth_complete,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_import_codex_cli"),
+            handler: handle_inference_openai_oauth_import_codex_cli,
         },
         RegisteredController {
             schema: schemas("openai_oauth_status"),
@@ -340,6 +345,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "Redirect URL after sign-in (http://127.0.0.1:1455/auth/callback?...).",
             )],
             outputs: vec![json_output("result", "OAuth completion payload.")],
+        },
+        "openai_oauth_import_codex_cli" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_import_codex_cli",
+            description: "Import the existing Codex CLI ChatGPT login from ~/.codex/auth.json.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "OAuth import payload.")],
         },
         "openai_oauth_status" => ControllerSchema {
             namespace: "inference",
@@ -676,6 +688,16 @@ fn handle_inference_openai_oauth_complete(params: Map<String, Value>) -> Control
                 payload.callback_url.trim(),
             )
             .await?,
+        )
+    })
+}
+
+fn handle_inference_openai_oauth_import_codex_cli(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_openai_oauth_import_codex_cli(&config)
+                .await?,
         )
     })
 }

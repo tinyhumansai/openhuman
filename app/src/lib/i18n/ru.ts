@@ -326,6 +326,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Коннектор — более влиятельный, чем предполагает количество ссылок.',
   'graphCentrality.degreeTitle': '{in} вход · {out} выход',
+  'memory.tab.freshness': 'Freshness',
+  'memoryFreshness.title': 'Knowledge Freshness',
+  'memoryFreshness.intro':
+    'Facts the assistant has not reconfirmed lately decay along a forgetting curve. This surfaces what is going stale and worth re-checking, so old facts are not treated as still-certain.',
+  'memoryFreshness.loading': 'Scoring freshness…',
+  'memoryFreshness.errorPrefix': 'Could not load the graph:',
+  'memoryFreshness.retry': 'Retry',
+  'memoryFreshness.empty': 'No knowledge graph yet.',
+  'memoryFreshness.emptyHint':
+    'As the assistant records facts about you, their freshness will be tracked here.',
+  'memoryFreshness.namespaceLabel': 'Namespace',
+  'memoryFreshness.namespaceAll': 'All namespaces',
+  'memoryFreshness.metricFresh': 'Fresh',
+  'memoryFreshness.metricFading': 'Fading',
+  'memoryFreshness.metricStale': 'Stale',
+  'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
+  'memoryFreshness.queueHeading': 'Re-confirm queue',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
+  'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
+  'memoryFreshness.statusFading': 'fading',
+  'memoryFreshness.statusStale': 'stale',
+  'memoryFreshness.ageLabel': '{days}d old',
+  'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
   'memoryTree.status.title': 'Дерево памяти',
   'memoryTree.status.autoSyncLabel': 'Автосинхронизация',
   'memoryTree.status.autoSyncDescription':
@@ -1696,6 +1719,7 @@ const messages: TranslationMap = {
   'mic.permissionDenied': 'Доступ к микрофону запрещён',
   'mic.failedToStartRecorder': 'Не удалось запустить запись',
   'mic.transcribing': 'Транскрипция...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Нажми для отправки',
   'mic.waitingForAgent': 'Ожидание агента...',
   'mic.tapAndSpeak': 'Нажми и говори',
@@ -2709,6 +2733,10 @@ const messages: TranslationMap = {
     'Конечная точка должна начинаться с http:// или https://..',
   'settings.ai.connectProviderDialog': 'Подключиться {label}',
   'settings.ai.or': 'Или',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth не вернул URL авторизации. Попробуйте войти снова.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Вставьте URL перенаправления из браузера после входа.',
   'settings.ai.openRouterOauthDescription':
     'Войдите в систему с помощью OpenRouter и импортируйте управляемый пользователем ключ API с помощью PKCE.',
   'settings.ai.connecting': 'Подключение...',

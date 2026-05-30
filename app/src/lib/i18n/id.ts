@@ -326,6 +326,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Konektor - lebih berpengaruh daripada jumlah link yang menunjukkan',
   'graphCentrality.degreeTitle': '{in} keluar',
+  'memory.tab.freshness': 'Freshness',
+  'memoryFreshness.title': 'Knowledge Freshness',
+  'memoryFreshness.intro':
+    'Facts the assistant has not reconfirmed lately decay along a forgetting curve. This surfaces what is going stale and worth re-checking, so old facts are not treated as still-certain.',
+  'memoryFreshness.loading': 'Scoring freshness…',
+  'memoryFreshness.errorPrefix': 'Could not load the graph:',
+  'memoryFreshness.retry': 'Retry',
+  'memoryFreshness.empty': 'No knowledge graph yet.',
+  'memoryFreshness.emptyHint':
+    'As the assistant records facts about you, their freshness will be tracked here.',
+  'memoryFreshness.namespaceLabel': 'Namespace',
+  'memoryFreshness.namespaceAll': 'All namespaces',
+  'memoryFreshness.metricFresh': 'Fresh',
+  'memoryFreshness.metricFading': 'Fading',
+  'memoryFreshness.metricStale': 'Stale',
+  'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
+  'memoryFreshness.queueHeading': 'Re-confirm queue',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
+  'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
+  'memoryFreshness.statusFading': 'fading',
+  'memoryFreshness.statusStale': 'stale',
+  'memoryFreshness.ageLabel': '{days}d old',
+  'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
   'memoryTree.status.title': 'Pohon Memori',
   'memoryTree.status.autoSyncLabel': 'Sinkronisasi otomatis',
   'memoryTree.status.autoSyncDescription':
@@ -1686,6 +1709,7 @@ const messages: TranslationMap = {
   'mic.permissionDenied': 'Izin mikrofon ditolak',
   'mic.failedToStartRecorder': 'Gagal memulai perekam',
   'mic.transcribing': 'Mentranskripsi...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Ketuk untuk mengirim',
   'mic.waitingForAgent': 'Menunggu agen...',
   'mic.tapAndSpeak': 'Ketuk dan bicara',
@@ -2699,6 +2723,10 @@ const messages: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'Titik akhir harus dimulai dengan http:// atau https://.',
   'settings.ai.connectProviderDialog': 'Hubungkan {label}',
   'settings.ai.or': 'Atau',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth tidak mengembalikan URL otorisasi. Coba masuk lagi.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Tempel URL pengalihan dari browser Anda setelah masuk.',
   'settings.ai.openRouterOauthDescription':
     'Masuk dengan kunci OpenRouter dan impor sebuah user yang dikendalikan API menggunakan PKCE.',
   'settings.ai.connecting': 'Menghubungkan...',
