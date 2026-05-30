@@ -171,11 +171,7 @@ export function computeGraphCohesion(relations: GraphRelation[]): CohesionResult
  * disconnected. Sorted clustering ASC, then degree DESC (a bigger gap brokered
  * matters more), then id ASC. Pure; derived entirely from the result.
  */
-<<<<<<< HEAD
 export function findBrokers(result: CohesionResult, limit = 100): CohesionNode[] {
-=======
-export function findBrokers(result: CohesionResult, limit = 25): CohesionNode[] {
->>>>>>> upstream/main
   return result.nodes
     .filter(node => node.degree >= 2)
     .sort((a, b) => {

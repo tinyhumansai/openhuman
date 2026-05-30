@@ -219,8 +219,6 @@ export default function Intelligence() {
             {activeTab === 'centrality' && <GraphCentralityTab />}
 
             {activeTab === 'cohesion' && <GraphCohesionTab />}
-<<<<<<< HEAD
-=======
 
             {activeTab === 'associations' && <EntityAssociationsTab />}
 
@@ -233,7 +231,6 @@ export default function Intelligence() {
             {activeTab === 'namespaces' && <NamespaceOverviewTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
->>>>>>> upstream/main
           </div>
         </div>
       </div>
