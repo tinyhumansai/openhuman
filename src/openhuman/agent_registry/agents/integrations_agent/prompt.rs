@@ -48,6 +48,16 @@ pub fn build(ctx: &PromptContext<'_>) -> Result<String> {
         out.push_str("\n\n");
     }
 
+    let workflows = crate::openhuman::agent_workflows::render_available_workflows(ctx.workflows);
+    if !workflows.trim().is_empty() {
+        log::debug!(
+            "[workflows][phase] injecting {} workflow(s) into integrations_agent prompt",
+            ctx.workflows.len()
+        );
+        out.push_str(workflows.trim_end());
+        out.push_str("\n\n");
+    }
+
     let integrations = render_connected_integrations(ctx.connected_integrations);
     if !integrations.trim().is_empty() {
         out.push_str(integrations.trim_end());
@@ -230,6 +240,7 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            workflows: &[],
         }
     }
 

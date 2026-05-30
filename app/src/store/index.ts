@@ -28,6 +28,7 @@ import socketReducer from './socketSlice';
 import themeReducer from './themeSlice';
 import threadReducer from './threadSlice';
 import { userScopedStorage } from './userScopedStorage';
+import workflowsReducer from './workflowsSlice';
 
 // Persisted slices write through `userScopedStorage` so each user's blob
 // lives at `${userId}:persist:<key>` instead of a single per-device blob
@@ -166,6 +167,7 @@ export const store = configureStore({
     mascot: persistedMascotReducer,
     persona: persistedPersonaReducer,
     theme: persistedThemeReducer,
+    workflows: workflowsReducer,
   },
   middleware: getDefaultMiddleware => {
     const middleware = getDefaultMiddleware({

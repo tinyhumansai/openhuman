@@ -224,6 +224,7 @@ fn subagent_lifecycle_records_and_clears_active() {
         mode: "typed".into(),
         dedicated_thread: false,
         prompt_chars: 42,
+        worker_thread_id: None,
     });
     let s = m.snapshot();
     assert_eq!(s.active_subagent.as_deref(), Some("researcher"));

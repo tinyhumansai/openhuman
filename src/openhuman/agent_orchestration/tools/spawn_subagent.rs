@@ -392,6 +392,25 @@ impl Tool for SpawnSubagentTool {
             .unwrap_or_else(|| "standalone".into());
         let task_id = format!("sub-{}", uuid::Uuid::new_v4());
 
+        // Persist this delegation as a reopenable worker sub-thread, seeded
+        // with the prompt, so the parent↔subagent conversation survives
+        // navigation and restarts — the same machinery `spawn_worker_thread`
+        // uses. Best-effort: with no parent context or thread store the run
+        // still proceeds live-only (`worker_thread_id: None`).
+        let worker_thread_id = current_parent().and_then(|p| {
+            let parent_thread_id =
+                crate::openhuman::inference::provider::thread_context::current_thread_id()?;
+            let title: String = prompt.chars().take(60).collect();
+            super::worker_thread::create_worker_thread(
+                p.workspace_dir.clone(),
+                &parent_thread_id,
+                &definition.id,
+                &title,
+                &prompt,
+            )
+            .ok()
+        });
+
         publish_global(DomainEvent::SubagentSpawned {
             parent_session: parent_session.clone(),
             agent_id: definition.id.clone(),
@@ -413,6 +432,7 @@ impl Tool for SpawnSubagentTool {
                     mode: "typed".to_string(),
                     dedicated_thread,
                     prompt_chars: prompt.chars().count(),
+                    worker_thread_id: worker_thread_id.clone(),
                 })
                 .await;
         }
@@ -424,7 +444,7 @@ impl Tool for SpawnSubagentTool {
             context,
             model_override,
             task_id: Some(task_id.clone()),
-            worker_thread_id: None,
+            worker_thread_id: worker_thread_id.clone(),
         };
 
         let progress_sink = current_parent().and_then(|p| p.on_progress.clone());

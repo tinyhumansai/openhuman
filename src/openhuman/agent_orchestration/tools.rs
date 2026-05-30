@@ -13,6 +13,8 @@ pub mod spawn_worker_thread;
 #[cfg(test)]
 #[path = "tools/tools_e2e_tests.rs"]
 mod tools_e2e_tests;
+#[path = "tools/worker_thread.rs"]
+mod worker_thread;
 
 pub(crate) use dispatch::dispatch_subagent;
 
