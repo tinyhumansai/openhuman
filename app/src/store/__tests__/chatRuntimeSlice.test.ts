@@ -13,11 +13,14 @@ import reducer, {
   endInferenceTurn,
   hydrateRuntimeFromSnapshot,
   markInferenceTurnStreaming,
+  removeArtifactForThread,
   setInferenceStatusForThread,
   setPendingApprovalForThread,
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
+  upsertArtifactInProgressForThread,
+  upsertArtifactReadyForThread,
 } from '../chatRuntimeSlice';
 
 describe('chatRuntimeSlice', () => {
@@ -317,6 +320,104 @@ describe('chatRuntimeSlice', () => {
       );
       const cleared = reducer(withApproval, clearAllChatRuntime());
       expect(cleared.pendingApprovalByThread).toEqual({});
+    });
+  });
+
+  describe('removeArtifactForThread (#3024)', () => {
+    it('removes a single artifact from a bucket while leaving siblings intact', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'b',
+          kind: 'document',
+          title: 'B',
+          path: 'artifacts/b.pdf',
+          sizeBytes: 200,
+        })
+      );
+      const next = reducer(state, removeArtifactForThread({ threadId: 't1', artifactId: 'a' }));
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      expect(next.artifactsByThread['t1'][0].artifactId).toBe('b');
+    });
+
+    it('drops the thread key entirely when the last artifact is removed', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      const next = reducer(seeded, removeArtifactForThread({ threadId: 't1', artifactId: 'a' }));
+      expect(next.artifactsByThread['t1']).toBeUndefined();
+    });
+
+    it('is a no-op for an unknown thread or unknown id', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      const noThread = reducer(
+        seeded,
+        removeArtifactForThread({ threadId: 'nope', artifactId: 'a' })
+      );
+      expect(noThread.artifactsByThread['t1']).toHaveLength(1);
+
+      const noId = reducer(
+        seeded,
+        removeArtifactForThread({ threadId: 't1', artifactId: 'missing' })
+      );
+      expect(noId.artifactsByThread['t1']).toHaveLength(1);
+    });
+
+    it('coexists with in_progress siblings without disturbing them', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactInProgressForThread({
+          threadId: 't1',
+          artifactId: 'in-flight',
+          kind: 'presentation',
+          title: 'Live',
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'done',
+          kind: 'presentation',
+          title: 'Done',
+          path: 'artifacts/done.pptx',
+          sizeBytes: 1,
+        })
+      );
+      const next = reducer(state, removeArtifactForThread({ threadId: 't1', artifactId: 'done' }));
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      expect(next.artifactsByThread['t1'][0].artifactId).toBe('in-flight');
+      expect(next.artifactsByThread['t1'][0].status).toBe('in_progress');
     });
   });
 });
