@@ -263,11 +263,12 @@ mod tests {
     // degraded flag is a process-global atomic, so the flag-sensitive tests
     // serialize on a shared mutex to avoid stomping each other under cargo's
     // parallel test runner.
+    // Delegate to the health module's shared guard so factory tests serialise
+    // against the rpc/extract tests that touch the SAME process-global flags
+    // (a factory-local mutex would only serialise within this module, leaving
+    // a cross-module race). The guard also resets the flags on entry.
     fn degraded_flag_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        crate::openhuman::memory_tree::health::test_guard()
     }
 
     #[test]

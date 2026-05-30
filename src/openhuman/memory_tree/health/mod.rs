@@ -380,6 +380,26 @@ pub fn clear_structure_degraded() {
     }
 }
 
+/// Test-only serialization + reset for the process-global degraded flags.
+///
+/// The flags are a single process-wide signal, so tests across *different*
+/// modules (factory, extract::llm, tree::rpc) that set or read them race under
+/// cargo's parallel runner. Any such test must `let _g = test_guard();` at the
+/// top: it takes a shared mutex (serialising all flag-touching tests) and
+/// resets both flags to a clean baseline so the test starts deterministic.
+#[cfg(test)]
+pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let g = LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    SEMANTIC_RECALL_DEGRADED.store(false, Ordering::Relaxed);
+    STRUCTURE_DEGRADED.store(false, Ordering::Relaxed);
+    DEGRADED_CAUSE.store(0, Ordering::Relaxed);
+    g
+}
+
 /// Snapshot the current process-global [`DegradedState`] for the status /
 /// doctor surface. The `cause` is populated from the last recorded
 /// [`FailureCode`] when either flag is set.

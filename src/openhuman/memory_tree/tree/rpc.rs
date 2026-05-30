@@ -7,6 +7,7 @@
 //! - `openhuman.memory_tree_list_chunks` — listing with filters.
 //! - `openhuman.memory_tree_get_chunk` — single chunk fetch.
 
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -301,6 +302,21 @@ pub struct PipelineStatusResponse {
     /// Convenience flag: scheduler-gate is in `off` mode, so all LLM-bound
     /// background work is paused cooperatively.
     pub is_paused: bool,
+    /// #002 (FR-002/FR-004): "the pipeline ran but output quality is reduced"
+    /// — `semantic_recall` true when embeddings were skipped (no usable
+    /// provider, so recall falls back to recency), `structure` true when
+    /// extraction yielded nothing across the board (empty wiki). Carries the
+    /// typed `cause` so the UI can render an actionable remediation. Additive:
+    /// `#[serde(default)]` keeps older clients deserialising the response.
+    #[serde(default)]
+    pub degraded: crate::openhuman::memory_tree::health::DegradedState,
+    /// #002 (FR-004): the single first blocking/most-significant cause, as a
+    /// typed failure with an i18n remediation key. Populated from a failed
+    /// job's classified reason or the active degradation cause; `None` when
+    /// the pipeline is healthy. The frontend renders this verbatim (resolving
+    /// `remediation_key`) instead of re-deriving a cause from raw counters.
+    #[serde(default)]
+    pub first_blocking_cause: Option<crate::openhuman::memory_tree::health::PipelineFailure>,
 }
 
 /// `memory_tree_pipeline_status` RPC handler (#1856 Part 1).
@@ -382,13 +398,27 @@ pub async fn pipeline_status_rpc(
     let is_paused = config.scheduler_gate.mode == SchedulerGateMode::Off;
     let is_syncing = pipeline_jobs.running > 0;
 
+    // #002: read the process-global degradation snapshot (set by the embed /
+    // extract stages) so a half-working sync surfaces as `degraded` with a
+    // cause rather than a misleading `running`.
+    let degraded = crate::openhuman::memory_tree::health::current_degraded_state();
+
     let (status, reason) = derive_pipeline_status(
         is_paused,
         config.scheduler_gate.mode,
         is_syncing,
         pipeline_jobs.failed,
         total_chunks,
+        &degraded,
     );
+
+    // #002 (FR-004): the first blocking cause the UI renders verbatim. The
+    // most-recent failed job's classified reason wins (a hard failure is more
+    // urgent than a soft degradation); otherwise fall back to the active
+    // degradation cause. `None` when healthy.
+    let first_blocking_cause = latest_failed_job_failure(config)
+        .unwrap_or(None)
+        .or_else(|| degraded.cause.clone());
 
     let payload = PipelineStatusResponse {
         status: status.clone(),
@@ -399,6 +429,8 @@ pub async fn pipeline_status_rpc(
         pipeline_jobs,
         is_syncing,
         is_paused,
+        degraded,
+        first_blocking_cause,
     };
 
     log::debug!(
@@ -414,6 +446,50 @@ pub async fn pipeline_status_rpc(
             "memory_tree: pipeline_status status={status} total_chunks={total_chunks} is_paused={is_paused} is_syncing={is_syncing}",
         ),
     ))
+}
+
+/// #002 (FR-004): the typed [`PipelineFailure`] of the most-recently-failed
+/// `mem_tree_jobs` row, when it carries a classified `failure_reason`. Returns
+/// `Ok(None)` when there is no failed job with a typed reason (older failures
+/// predating the typed-failure columns, or none at all). Best-effort: the
+/// status panel is a UI convenience, so a DB error degrades to `Ok(None)`
+/// rather than failing the whole status RPC.
+fn latest_failed_job_failure(
+    config: &Config,
+) -> Result<Option<crate::openhuman::memory_tree::health::PipelineFailure>, String> {
+    use crate::openhuman::memory_tree::health::{FailureClass, FailureCode, PipelineFailure};
+
+    let row: Option<(Option<String>, Option<String>)> = chunk_store::with_connection(config, |conn| {
+        conn.query_row(
+            "SELECT failure_reason, failure_class FROM mem_tree_jobs
+              WHERE status = 'failed' AND failure_reason IS NOT NULL
+              ORDER BY completed_at_ms DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(Into::into)
+    })
+    .map_err(|e| format!("latest_failed_job_failure: {e:#}"))?;
+
+    let Some((Some(reason), class)) = row else {
+        return Ok(None);
+    };
+    let Some(code) = FailureCode::from_str(&reason) else {
+        return Ok(None);
+    };
+    // Trust the persisted class when present and parseable; otherwise derive
+    // from the code (keeps a forward-compatible default if the column is NULL
+    // on an older row).
+    let mut failure = PipelineFailure::new(code);
+    if let Some(c) = class.as_deref() {
+        if c == "transient" {
+            failure.class = FailureClass::Transient;
+        } else if c == "unrecoverable" {
+            failure.class = FailureClass::Unrecoverable;
+        }
+    }
+    Ok(Some(failure))
 }
 
 /// Recursive byte-count of files under `root`. Returns `0` when the root
@@ -459,6 +535,7 @@ fn derive_pipeline_status(
     is_syncing: bool,
     failed: u64,
     total_chunks: u64,
+    degraded: &crate::openhuman::memory_tree::health::DegradedState,
 ) -> (String, Option<String>) {
     if is_paused {
         return (
@@ -471,6 +548,20 @@ fn derive_pipeline_status(
             "error".to_string(),
             Some(format!("{failed} failed job(s) in pipeline")),
         );
+    }
+    // #002 (FR-005): "degraded" sits below error but above syncing/running —
+    // the pipeline is making progress, but recall/structure is reduced and the
+    // user should be told why. Beats syncing/running so a half-working sync
+    // isn't reported as plain "running"/"syncing".
+    if degraded.is_degraded() {
+        let mut parts = Vec::new();
+        if degraded.semantic_recall {
+            parts.push("semantic recall disabled");
+        }
+        if degraded.structure {
+            parts.push("wiki structure incomplete");
+        }
+        return ("degraded".to_string(), Some(parts.join("; ")));
     }
     if is_syncing {
         return ("syncing".to_string(), None);
@@ -790,28 +881,68 @@ mod tests {
     #[test]
     fn derive_pipeline_status_precedence_matches_spec() {
         use crate::openhuman::config::SchedulerGateMode;
+        use crate::openhuman::memory_tree::health::{DegradedState, FailureCode, PipelineFailure};
 
-        // paused beats everything else
-        let (s, reason) = derive_pipeline_status(true, SchedulerGateMode::Off, true, 5, 100);
+        let healthy = DegradedState::default();
+        let recall_degraded = DegradedState {
+            semantic_recall: true,
+            structure: false,
+            cause: Some(PipelineFailure::new(FailureCode::EmbeddingsUnconfigured)),
+        };
+        let structure_degraded = DegradedState {
+            semantic_recall: false,
+            structure: true,
+            cause: Some(PipelineFailure::new(FailureCode::ExtractionTimeout)),
+        };
+
+        // paused beats everything else (even degradation)
+        let (s, reason) =
+            derive_pipeline_status(true, SchedulerGateMode::Off, true, 5, 100, &recall_degraded);
         assert_eq!(s, "paused");
         assert!(reason.unwrap().contains("off"));
 
-        // error beats syncing / running / idle
-        let (s, reason) = derive_pipeline_status(false, SchedulerGateMode::Auto, true, 2, 100);
+        // error beats degraded / syncing / running / idle
+        let (s, reason) =
+            derive_pipeline_status(false, SchedulerGateMode::Auto, true, 2, 100, &recall_degraded);
         assert_eq!(s, "error");
         assert!(reason.unwrap().contains("2 failed"));
 
-        // syncing beats running / idle
-        let (s, reason) = derive_pipeline_status(false, SchedulerGateMode::Auto, true, 0, 100);
+        // #002: degraded beats syncing / running / idle (but loses to paused/error)
+        let (s, reason) = derive_pipeline_status(
+            false,
+            SchedulerGateMode::Auto,
+            true, // syncing
+            0,
+            100,
+            &recall_degraded,
+        );
+        assert_eq!(s, "degraded", "degraded must beat syncing");
+        assert!(reason.unwrap().contains("semantic recall disabled"));
+
+        let (s, reason) = derive_pipeline_status(
+            false,
+            SchedulerGateMode::Auto,
+            false,
+            0,
+            100,
+            &structure_degraded,
+        );
+        assert_eq!(s, "degraded");
+        assert!(reason.unwrap().contains("wiki structure incomplete"));
+
+        // syncing beats running / idle (when healthy)
+        let (s, reason) =
+            derive_pipeline_status(false, SchedulerGateMode::Auto, true, 0, 100, &healthy);
         assert_eq!(s, "syncing");
         assert!(reason.is_none());
 
         // running when chunks exist but nothing in flight
-        let (s, _) = derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 100);
+        let (s, _) =
+            derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 100, &healthy);
         assert_eq!(s, "running");
 
         // idle when the store is empty and nothing is in flight
-        let (s, _) = derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 0);
+        let (s, _) = derive_pipeline_status(false, SchedulerGateMode::Auto, false, 0, 0, &healthy);
         assert_eq!(s, "idle");
     }
 
@@ -820,6 +951,10 @@ mod tests {
     /// "no memory yet" state.
     #[tokio::test]
     async fn pipeline_status_returns_idle_for_empty_store() {
+        // #002: the degraded flags are process-global; reset+serialise so a
+        // parallel test (factory None-path, extract transport-fail) can't leak
+        // a "degraded" signal into this fresh-workspace assertion.
+        let _g = crate::openhuman::memory_tree::health::test_guard();
         let (_tmp, cfg) = test_config();
         let out = pipeline_status_rpc(&cfg).await.unwrap().value;
         assert_eq!(out.status, "idle");
@@ -855,6 +990,9 @@ mod tests {
     /// timestamp from `mem_tree_chunks`.
     #[tokio::test]
     async fn pipeline_status_reports_chunk_aggregates_after_ingest() {
+        // #002: reset+serialise the process-global degraded flags so this
+        // "running" assertion isn't flipped to "degraded" by a parallel test.
+        let _g = crate::openhuman::memory_tree::health::test_guard();
         let (_tmp, cfg) = test_config();
 
         // Seed one document so `mem_tree_chunks` is non-empty.
