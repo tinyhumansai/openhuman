@@ -446,6 +446,49 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     assert!(collect_tree_root_summaries(agent.workspace_dir(), 8_000, 32_000).is_empty());
 }
 
+#[test]
+fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
+    // #2944: the wrapper must carry the root node's `updated_at` from the
+    // store tuple into the `NamespaceSummary` the prompt renderer stamps.
+    use crate::openhuman::config::Config;
+    use crate::openhuman::memory_tree::tree_runtime::store::write_node;
+    use crate::openhuman::memory_tree::tree_runtime::types::{
+        derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let config = Config {
+        workspace_dir: workspace.clone(),
+        ..Config::default()
+    };
+
+    let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-25T09:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let summary = "Distilled activities summary.";
+    let node = TreeNode {
+        node_id: "root".to_string(),
+        namespace: "activities".to_string(),
+        level: level_from_node_id("root"),
+        parent_id: derive_parent_id("root"),
+        summary: summary.to_string(),
+        token_count: estimate_tokens(summary),
+        child_count: 0,
+        created_at: updated_at,
+        updated_at,
+        metadata: None,
+    };
+    write_node(&config, &node).unwrap();
+
+    let summaries = collect_tree_root_summaries(&workspace, 8_000, 32_000);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].namespace, "activities");
+    assert_eq!(summaries[0].body, summary);
+    assert_eq!(summaries[0].updated_at, updated_at);
+}
+
 #[tokio::test]
 async fn transcript_roundtrip_work() {
     let mut agent = make_agent(None);

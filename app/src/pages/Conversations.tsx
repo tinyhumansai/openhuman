@@ -85,6 +85,7 @@ import {
   getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
 } from './conversations/composerSendDecision';
+import { runDecidePlan } from './conversations/taskPlanActions';
 import {
   type AgentBubblePosition,
   buildAcceptedInlineCompletion,
@@ -1626,6 +1627,16 @@ const Conversations = ({
                   }}
                   onUpdateCard={(card, nextCard) => {
                     void handleUpdateTaskCard(card, nextCard);
+                  }}
+                  onDecidePlan={(card, approve) => {
+                    void runDecidePlan({
+                      threadId: selectedThreadId,
+                      card,
+                      approve,
+                      dispatch,
+                      notify: setSendAdvisory,
+                      t,
+                    });
                   }}
                 />
               )}

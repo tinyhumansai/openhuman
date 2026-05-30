@@ -140,4 +140,33 @@ describe('threadApi', () => {
     });
     expect(result).toEqual(thread);
   });
+
+  it('approves a plan via the todos_decide_plan RPC and rebuilds the board', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      data: { threadId: 'thread-1', cards: [{ id: 'card-1', title: 'T', status: 'ready' }] },
+    });
+
+    const { threadApi } = await import('./threadApi');
+    const board = await threadApi.decidePlan('thread-1', 'card-1', true);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.todos_decide_plan',
+      params: { thread_id: 'thread-1', id: 'card-1', approve: true },
+    });
+    expect(board?.threadId).toBe('thread-1');
+    expect(board?.cards[0].status).toBe('ready');
+  });
+
+  it('returns null from decidePlan when the snapshot has no cards', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
+
+    const { threadApi } = await import('./threadApi');
+    const board = await threadApi.decidePlan('thread-1', 'card-1', false);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.todos_decide_plan',
+      params: { thread_id: 'thread-1', id: 'card-1', approve: false },
+    });
+    expect(board).toBeNull();
+  });
 });

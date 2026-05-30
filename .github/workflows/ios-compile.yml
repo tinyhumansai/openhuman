@@ -2,15 +2,6 @@
 name: iOS Compile Sanity
 
 on:
-  pull_request:
-    paths:
-      - 'app/src-tauri-mobile/**'
-      - 'packages/tauri-plugin-ptt/**'
-      - 'src/openhuman/devices/**'
-      - 'app/src/services/transport/**'
-      - 'app/src/lib/tunnel/**'
-      - 'app/src/pages/ios/**'
-      - '.github/workflows/ios-compile.yml'
   workflow_dispatch:
 
 permissions:
@@ -29,7 +20,7 @@ jobs:
       # Pin the deployment target so swift-rs invokes the Swift compiler with
       # `-target arm64-apple-ios16.0`. Matches Package.swift in
       # packages/tauri-plugin-ptt/ios/, which uses iOS 14+ APIs (OSLog).
-      IPHONEOS_DEPLOYMENT_TARGET: '16.0'
+      IPHONEOS_DEPLOYMENT_TARGET: "16.0"
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,7 +35,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.93.0'
+          toolchain: "1.93.0"
           targets: aarch64-apple-ios
 
       - name: Cache Rust build artifacts
@@ -62,8 +53,8 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'pnpm'
+          node-version: "24"
+          cache: "pnpm"
 
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile

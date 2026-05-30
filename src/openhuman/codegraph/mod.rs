@@ -20,6 +20,7 @@
 pub mod index;
 pub mod search;
 pub mod store;
+pub mod tools;
 
 pub use index::{
     code_tokens, count_code_files, current_ref, index_ref, structural_doc, IndexMode, IndexReport,

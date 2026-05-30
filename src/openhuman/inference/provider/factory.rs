@@ -1088,5 +1088,5 @@ fn redact_endpoint(url: &str) -> String {
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[path = "factory_test.rs"]
-mod factory_test;
+#[path = "factory_tests.rs"]
+mod factory_tests;

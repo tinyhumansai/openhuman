@@ -26,6 +26,7 @@ pub mod read_rpc;
 pub mod remember;
 pub mod schema;
 pub mod sync;
+pub mod tools;
 pub mod util;
 
 // Tree instances — policy and orchestration over the generic memory_tree engine.
@@ -35,9 +36,9 @@ pub mod tree_source;
 pub mod tree_topic;
 
 #[cfg(test)]
-mod sync_pipeline_e2e_test;
+mod sync_pipeline_e2e_tests;
 #[cfg(test)]
-mod tree_e2e_test;
+mod tree_e2e_tests;
 pub use ingestion::{
     ExtractedEntity, ExtractedRelation, ExtractionMode, IngestionJob, IngestionQueue,
     IngestionState, IngestionStatusSnapshot, MemoryIngestionConfig, MemoryIngestionRequest,

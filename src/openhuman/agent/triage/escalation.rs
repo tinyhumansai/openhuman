@@ -27,7 +27,7 @@ use crate::openhuman::agent::Agent;
 use crate::openhuman::config::Config;
 
 use super::decision::TriageAction;
-use super::envelope::TriggerEnvelope;
+use super::envelope::{TaskCardLink, TriggerEnvelope};
 use super::evaluator::TriageRun;
 use super::events;
 
@@ -57,6 +57,13 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 reason = %run.decision.reason,
                 "[triage::escalation] DROP — no downstream work"
             );
+            // A dropped trigger that carries a board card (proactive
+            // task-source ingest) must be terminally gated, or the board
+            // poller — which dispatches any `Todo`/`Ready` card regardless of
+            // the triage verdict — would re-run it on the next tick, silently
+            // breaking the noise-gating contract documented on
+            // `SourceTarget::AgentTodoProactive`.
+            gate_linked_card_terminal(envelope, "drop");
         }
         TriageAction::Acknowledge => {
             tracing::info!(
@@ -65,6 +72,9 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 reason = %run.decision.reason,
                 "[triage::escalation] ACKNOWLEDGE — logged (memory-write is a future addition)"
             );
+            // Acknowledge means "seen, no autonomous action needed" — same as
+            // drop, the linked card must not be picked up by the board poller.
+            gate_linked_card_terminal(envelope, "acknowledge");
         }
         TriageAction::React | TriageAction::Escalate => {
             let target = run
@@ -84,6 +94,44 @@ pub async fn apply_decision(run: TriageRun, envelope: &TriggerEnvelope) -> anyho
                 reason = %run.decision.reason,
                 "[triage::escalation] dispatching sub-agent"
             );
+
+            // ── Unified task-board path ───────────────────────
+            // A trigger linked to a board card is handed to the deterministic
+            // dispatcher (claim → autonomous run → write-back). The claim
+            // (todo→in_progress) deduplicates against the board poller, so
+            // firing both is safe. Non-card triggers (composio/webhook/cron)
+            // fall through to the one-shot triage sub-agent below.
+            if let Some(link) = &envelope.card_link {
+                use crate::openhuman::agent::task_dispatcher::DispatchOutcome;
+                match dispatch_linked_card(link).await {
+                    Ok(DispatchOutcome::Running { run_id }) => {
+                        tracing::info!(
+                            card_id = %link.card_id,
+                            run_id = %run_id,
+                            "[triage::escalation] task-card dispatched to deterministic runner"
+                        );
+                        events::publish_escalated(envelope, "task_dispatcher");
+                    }
+                    Ok(DispatchOutcome::AwaitingApproval) => {
+                        // Parked for plan approval (autonomy gate). Not an
+                        // escalation yet — the approval flow resumes it.
+                        tracing::info!(
+                            card_id = %link.card_id,
+                            "[triage::escalation] task-card parked awaiting plan approval"
+                        );
+                    }
+                    Err(reason) => {
+                        // A failed claim (another card already in progress, or
+                        // the card vanished) is benign — the poller retries.
+                        tracing::info!(
+                            card_id = %link.card_id,
+                            reason = %reason,
+                            "[triage::escalation] task-card dispatch skipped (claim failed?)"
+                        );
+                    }
+                }
+                return Ok(());
+            }
 
             // ── External-effect approval gate (#1339) ─────────
             // React / Escalate fire a sub-agent that may call
@@ -268,6 +316,77 @@ async fn dispatch_target_agent(agent_id: &str, prompt: &str) -> anyhow::Result<S
     Ok(outcome.output)
 }
 
+/// Load the linked card from its board and hand it to the deterministic task
+/// dispatcher (claim → autonomous run → write-back). Errors (card not found,
+/// or claim rejected because another card is already in progress) propagate to
+/// the caller, which treats them as benign skips.
+async fn dispatch_linked_card(
+    link: &TaskCardLink,
+) -> Result<crate::openhuman::agent::task_dispatcher::DispatchOutcome, String> {
+    let snapshot = crate::openhuman::todos::ops::list(&link.location)?;
+    let card = snapshot
+        .cards
+        .into_iter()
+        .find(|c| c.id == link.card_id)
+        .ok_or_else(|| format!("card `{}` not found on board", link.card_id))?;
+    crate::openhuman::agent::task_dispatcher::dispatch_card(link.location.clone(), card).await
+}
+
+/// Terminally gate a card-linked trigger that triage decided to `drop` /
+/// `acknowledge`, so the board poller (which dispatches any pending
+/// `Todo`/`Ready` card) won't re-run it. Only a still-pending card is gated;
+/// if it already advanced (the poller claimed it, or it's already terminal)
+/// it is left untouched. Best-effort: a missing card or write failure is
+/// logged, never propagated — the trigger was already evaluated.
+fn gate_linked_card_terminal(envelope: &TriggerEnvelope, decision: &str) {
+    use crate::openhuman::agent::task_board::TaskCardStatus;
+    use crate::openhuman::todos::ops;
+
+    let Some(link) = &envelope.card_link else {
+        return;
+    };
+
+    let current = match ops::list(&link.location) {
+        Ok(snapshot) => snapshot
+            .cards
+            .into_iter()
+            .find(|c| c.id == link.card_id)
+            .map(|c| c.status),
+        Err(e) => {
+            tracing::warn!(
+                card_id = %link.card_id,
+                error = %e,
+                "[triage::escalation] reload before gating linked card failed"
+            );
+            return;
+        }
+    };
+
+    match current {
+        Some(TaskCardStatus::Todo | TaskCardStatus::Ready | TaskCardStatus::AwaitingApproval) => {
+            match ops::update_status(&link.location, &link.card_id, TaskCardStatus::Rejected) {
+                Ok(_) => tracing::info!(
+                    card_id = %link.card_id,
+                    decision = %decision,
+                    "[triage::escalation] gated task-card → rejected (poller will skip)"
+                ),
+                Err(e) => tracing::warn!(
+                    card_id = %link.card_id,
+                    decision = %decision,
+                    error = %e,
+                    "[triage::escalation] failed to gate task-card (poller may re-dispatch)"
+                ),
+            }
+        }
+        other => tracing::debug!(
+            card_id = %link.card_id,
+            decision = %decision,
+            status = ?other,
+            "[triage::escalation] linked task-card not pending; no gating needed"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,6 +543,75 @@ mod tests {
                 | DomainEvent::TriggerEscalationFailed { external_id, .. }
                 if external_id == "esc-ack"
         )));
+    }
+
+    fn seed_task_card() -> (
+        tempfile::TempDir,
+        crate::openhuman::todos::ops::BoardLocation,
+        String,
+    ) {
+        use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
+        let dir = tempfile::tempdir().unwrap();
+        let location = BoardLocation::Thread {
+            workspace_dir: dir.path().to_path_buf(),
+            thread_id: "task-sources".to_string(),
+        };
+        let card_id = ops::add(&location, "ingested issue", CardPatch::default())
+            .unwrap()
+            .cards[0]
+            .id
+            .clone();
+        (dir, location, card_id)
+    }
+
+    #[tokio::test]
+    async fn apply_decision_drop_gates_linked_card_to_rejected() {
+        use crate::openhuman::agent::task_board::TaskCardStatus;
+        use crate::openhuman::todos::ops;
+
+        let _events_guard = test_events_guard().await;
+        let _ = init_global(32);
+        let (_dir, location, card_id) = seed_task_card();
+
+        let envelope = envelope("esc-drop-card").with_task_card(card_id.clone(), location.clone());
+        apply_decision(run(TriageAction::Drop), &envelope)
+            .await
+            .expect("drop should not fail");
+
+        let status = ops::list(&location)
+            .unwrap()
+            .cards
+            .into_iter()
+            .find(|c| c.id == card_id)
+            .map(|c| c.status);
+        assert_eq!(
+            status,
+            Some(TaskCardStatus::Rejected),
+            "a dropped card-linked trigger must be gated terminally so the board poller skips it"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_decision_acknowledge_gates_linked_card_to_rejected() {
+        use crate::openhuman::agent::task_board::TaskCardStatus;
+        use crate::openhuman::todos::ops;
+
+        let _events_guard = test_events_guard().await;
+        let _ = init_global(32);
+        let (_dir, location, card_id) = seed_task_card();
+
+        let envelope = envelope("esc-ack-card").with_task_card(card_id.clone(), location.clone());
+        apply_decision(run(TriageAction::Acknowledge), &envelope)
+            .await
+            .expect("acknowledge should not fail");
+
+        let status = ops::list(&location)
+            .unwrap()
+            .cards
+            .into_iter()
+            .find(|c| c.id == card_id)
+            .map(|c| c.status);
+        assert_eq!(status, Some(TaskCardStatus::Rejected));
     }
 
     #[tokio::test]
