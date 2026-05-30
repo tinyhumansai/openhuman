@@ -63,6 +63,8 @@ Set your default under **Settings → Automation & Channels → Messaging Channe
 
 Beyond third-party services, OpenHuman has **skills**, small sandboxed modules that run inside the app, fetch external data, run on a schedule, transform information, and respond to events. Each runs with enforced resource limits. Skills install from the Skills tab and integrate with the same Memory Tree as everything else.
 
+For package decisions, OpenHuman can evaluate [Nipmod](nipmod.md) as a read-only package intelligence layer before an agent installs a package, pulls a repository, uses a model, or connects an MCP server. The integration does not require installing a remote skill file from a moving branch.
+
 ## Native voice and tools
 
 Two capabilities ship native rather than as integrations because they're load-bearing for the desktop experience:
