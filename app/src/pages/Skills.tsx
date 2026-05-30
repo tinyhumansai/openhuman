@@ -47,6 +47,7 @@ import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 import { isLocalSessionToken } from '../utils/localSession';
 import { openhumanComposioGetMode, subconsciousEscalationsDismiss } from '../utils/tauriCommands';
+import SkillsDashboard from './SkillsDashboard';
 
 function channelStatusLabel(status: ChannelConnectionStatus, t: (key: string) => string): string {
   switch (status) {
@@ -350,7 +351,7 @@ interface SkillItem {
 
 // ─── Main Skills Page ──────────────────────────────────────────────────────────
 
-type ConnectionsTab = 'channels' | 'composio' | 'mcp';
+type ConnectionsTab = 'channels' | 'composio' | 'mcp' | 'runners';
 
 export default function Skills() {
   const { t } = useT();
@@ -358,7 +359,16 @@ export default function Skills() {
   const location = useLocation();
   const navigate = useNavigate();
   const isLocalSession = isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken);
-  const [activeTab, setActiveTab] = useState<ConnectionsTab>('composio');
+  // Honour `?tab=<runners|composio|channels|mcp>` so `/skills?tab=runners`
+  // lands directly on the Runners sub-tab (used by SkillsRun's back button
+  // so closing the runner returns to the dashboard, not Composio).
+  const initialTab: ConnectionsTab = (() => {
+    const params = new URLSearchParams(location.search);
+    const t = params.get('tab');
+    if (t === 'runners' || t === 'composio' || t === 'channels' || t === 'mcp') return t;
+    return 'composio';
+  })();
+  const [activeTab, setActiveTab] = useState<ConnectionsTab>(initialTab);
   const dispatch = useAppDispatch();
   const [defaultChannelBusy, setDefaultChannelBusy] = useState<ChannelType | null>(null);
   const handleSetDefaultChannel = useCallback(
@@ -935,10 +945,22 @@ export default function Skills() {
                 { value: 'composio', label: t('skills.tabs.composio') },
                 { value: 'channels', label: t('skills.tabs.channels') },
                 { value: 'mcp', label: t('skills.tabs.mcp') },
+                { value: 'runners', label: t('skills.tabs.runners') },
               ]}
             />
             {
               <>
+                {activeTab === 'runners' && (
+                  <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft animate-fade-up">
+                    {/* The Runners sub-tab IS the scheduled-skills dashboard:
+                        header + [+ Create a Skill] + [▷ Run a Skill] CTAs
+                        plus the list of enable/disable cards. The picker +
+                        runner UX itself lives at /skills/run (a focused
+                        single-purpose page reached via the "Run a Skill"
+                        button or a card click). */}
+                    <SkillsDashboard />
+                  </div>
+                )}
                 {activeTab === 'channels' && channelsGroup && (
                   <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-3 shadow-soft animate-fade-up">
                     <div className="px-1 pb-3 pt-1">

@@ -30,6 +30,7 @@
 //! | `extract_tool.rs` | `extract_from_result` tool (direct provider extraction)     |
 //! | `tool_prep.rs`    | Tool filtering + prompt loading + text-mode protocol block  |
 
+mod autonomous;
 mod extract_tool;
 mod handoff;
 mod ops;
@@ -37,6 +38,7 @@ mod tool_prep;
 mod types;
 
 // Public API — the entry point and the shapes it returns.
+pub use autonomous::{autonomous_iter_cap, with_autonomous_iter_cap};
 pub use ops::run_subagent;
 pub use types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 

@@ -33,6 +33,11 @@ const FACE_TO_POSE: Record<MascotFace, string> = {
   speaking: 'idle',
   happy: 'idle',
   concerned: 'idle',
+  // New emotional states — map to the nearest available Rive pose until
+  // dedicated animations are added to the .riv asset.
+  curious: 'thinking',
+  proud: 'idle',
+  cautious: 'idle',
 };
 
 const RIVE_LAYOUT = new Layout({ fit: Fit.Contain });

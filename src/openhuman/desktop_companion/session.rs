@@ -338,6 +338,23 @@ pub(crate) fn reset_for_test() {
     *guard = None;
 }
 
+/// Process-wide serialization lock for tests that mutate the global
+/// `ACTIVE_SESSION`. Both `session_tests` and `pipeline_tests` exercise the
+/// same process-global state; without a *shared* lock each module's local
+/// mutex only serializes its own tests, letting a reset/transition in one
+/// module race a transition in the other (e.g. observing `Idle` mid-turn and
+/// rejecting `Idle -> Thinking`). Lock this in every test that touches session
+/// state so the whole binary serializes those tests.
+#[cfg(test)]
+pub(crate) static TEST_STATE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the shared session-state test lock, recovering from poisoning so a
+/// panicking test doesn't cascade into spurious failures in the rest.
+#[cfg(test)]
+pub(crate) fn lock_test_state() -> std::sync::MutexGuard<'static, ()> {
+    TEST_STATE_MUTEX.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;

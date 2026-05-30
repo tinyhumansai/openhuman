@@ -234,6 +234,7 @@ async fn build_new_session_response(ctx: &ChannelRuntimeContext, msg: &ChannelMe
             created_at,
             parent_thread_id: None,
             labels: Some(vec!["telegram".to_string(), "remote".to_string()]),
+            personality_id: None,
         },
     ) {
         tracing::warn!("{LOG_PREFIX} new: ensure_thread failed: {error}");

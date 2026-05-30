@@ -20,7 +20,7 @@
 //!   published as `TriggerEvaluated` / `TriggerEscalated` events on
 //!   the bus.
 //!
-//! [trigger_triage]: crate::openhuman::agent::agents
+//! [trigger_triage]: crate::openhuman::agent_registry::agents
 //!
 //! ## Feature flag
 //!
@@ -591,6 +591,24 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 // timestamp so the periodic scheduler doesn't
                 // immediately re-fire for this connection.
                 super::periodic::record_sync_success(&toolkit, &connection_id);
+            }
+
+            // Auto-register this connection in the memory_sources
+            // registry so it appears in the unified sources list.
+            let label = format!("{toolkit} connection");
+            if let Err(e) = crate::openhuman::memory_sources::upsert_composio_source(
+                &toolkit,
+                &connection_id,
+                &label,
+            )
+            .await
+            {
+                tracing::warn!(
+                    toolkit = %toolkit,
+                    connection_id = %connection_id,
+                    error = %e,
+                    "[composio:bus] memory_sources auto-register failed (non-fatal)"
+                );
             }
         });
     }

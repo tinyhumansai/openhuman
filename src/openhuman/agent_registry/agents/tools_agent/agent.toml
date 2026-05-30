@@ -1,0 +1,31 @@
+id = "tools_agent"
+display_name = "Tools Agent"
+when_to_use = "Generalist for heavyweight ad-hoc execution that does NOT touch a code repository — host shell, HTTP/web fetch, web search, memory helpers, file READS (`file_read` / `grep` / `glob`). Lacks `edit` / `apply_patch` / `file_write` / `git_operations` / `codegraph_search` — do **not** use for any task scoped to a code repo (cloning, locating, modifying, building, testing, git, push, PR); those route to `delegate_run_code` end-to-end. Do not use for managed Composio OAuth integrations either — those route to `integrations_agent` with a `toolkit` argument."
+temperature = 0.4
+max_iterations = 10
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+# Prediction-market venues (#2427) own their own specialist
+# (`markets_agent` → `delegate_do_prediction_markets`) with a venue-aware
+# approval-gate prompt. Disallow them here so the generalist's wildcard
+# inventory doesn't surface a second, weaker route to the same
+# capability. `tools_agent` retains every other built-in tool through
+# the wildcard.
+disallowed_tools = ["polymarket", "kalshi"]
+
+[model]
+hint = "agentic"
+
+[tools]
+# Wildcard — the agent inherits the orchestrator's full built-in tool
+# surface. Composio meta-tools and dynamic `<TOOLKIT>_*` action tools
+# are stripped at runtime (see `filter_non_composio_indices` in the
+# subagent runner), so the LLM never sees integration-specific tools
+# here; those belong to `integrations_agent`. Trading venues are also
+# stripped via `disallowed_tools` above so they route through
+# `markets_agent` exclusively.
+wildcard = {}

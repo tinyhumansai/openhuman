@@ -30,7 +30,7 @@ pub mod types;
 #[cfg(test)]
 mod benchmarks;
 #[cfg(test)]
-mod integration_test;
+mod integration_tests;
 
 pub use drill_down::drill_down;
 pub use fetch::fetch_leaves;

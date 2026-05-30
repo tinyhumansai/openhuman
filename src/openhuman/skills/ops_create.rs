@@ -1,12 +1,47 @@
 //! Skill creation: scaffolding new SKILL.md-based skills on disk.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 use super::ops_discover::{discover_skills_inner, is_workspace_trusted};
 use super::ops_types::{
     Skill, SkillScope, MAX_DESCRIPTION_LEN, MAX_NAME_LEN, RESOURCE_DIRS, SKILL_MD,
 };
+
+/// One declared `[[inputs]]` entry as supplied at create time by the
+/// Create-a-Skill form.
+///
+/// Wire shape (kebab-case-free, mirrors what
+/// `crate::openhuman::skills::registry::SkillInput` expects when the
+/// emitted `skill.toml` is parsed back at run time):
+///
+/// ```json
+/// { "name": "repo", "description": "owner/name", "required": true, "type": "string" }
+/// ```
+///
+/// `description` and `type` are optional; when omitted the on-disk
+/// `[[inputs]]` entry leaves them absent (the registry's
+/// `SkillInput` defaults already cover this — `description = ""`,
+/// `kind = None`). `required` defaults to `true` because that is the
+/// only sensible default for a user who bothered to add a row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SkillCreateInputDef {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_required")]
+    pub required: bool,
+    /// Type hint — accepted values are `"string"` (default), `"integer"`,
+    /// and `"boolean"`. The registry parser stores this verbatim in
+    /// `SkillInput.kind`; it is the Skills Runner that uses it to pick
+    /// the right form control (text / number / checkbox).
+    #[serde(default, rename = "type")]
+    pub type_: Option<String>,
+}
+
+fn default_required() -> bool {
+    true
+}
 
 /// Input for [`create_skill`]. Mirrors the `skills.create` JSON-RPC payload.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -30,6 +65,12 @@ pub struct CreateSkillParams {
     /// Optional tool hints (written to frontmatter `allowed-tools`).
     #[serde(default, rename = "allowed-tools", alias = "allowed_tools")]
     pub allowed_tools: Vec<String>,
+    /// Declared `[[inputs]]` for the skill. When non-empty,
+    /// `create_skill_inner` writes a sibling `skill.toml` next to the
+    /// generated `SKILL.md` so the Skills Runner can render dynamic
+    /// form controls for the inputs at run time.
+    #[serde(default)]
+    pub inputs: Vec<SkillCreateInputDef>,
 }
 
 /// Scaffold a new SKILL.md-based skill on disk.
@@ -68,7 +109,7 @@ pub fn create_skill(workspace_dir: &Path, params: CreateSkillParams) -> Result<S
 pub(crate) fn create_skill_inner(
     home_dir: Option<&Path>,
     workspace_dir: &Path,
-    params: CreateSkillParams,
+    mut params: CreateSkillParams,
 ) -> Result<Skill, String> {
     tracing::debug!(
         name = %params.name,
@@ -76,6 +117,8 @@ pub(crate) fn create_skill_inner(
         workspace = %workspace_dir.display(),
         "[skills] create_skill: entry"
     );
+
+    validate_inputs(&mut params.inputs)?;
 
     let display_name = params.name.trim();
     if display_name.is_empty() {
@@ -161,6 +204,18 @@ pub(crate) fn create_skill_inner(
     std::fs::write(&skill_md_path, skill_md)
         .map_err(|e| format!("failed to write {}: {e}", skill_md_path.display()))?;
 
+    // Emit a sibling skill.toml when the user declared `[[inputs]]` at
+    // create time. The Skills Runner reads this to render dynamic form
+    // controls (text / number / checkbox) per declared input. Skills
+    // without inputs don't need a skill.toml — the registry happily
+    // parses SKILL.md-only skills.
+    if !params.inputs.is_empty() {
+        let skill_toml_path = skill_dir.join("skill.toml");
+        let skill_toml = render_skill_toml(&slug, description, &params.inputs);
+        std::fs::write(&skill_toml_path, skill_toml)
+            .map_err(|e| format!("failed to write {}: {e}", skill_toml_path.display()))?;
+    }
+
     for sub in RESOURCE_DIRS {
         let sub_path = skill_dir.join(sub);
         std::fs::create_dir_all(&sub_path)
@@ -180,6 +235,29 @@ pub(crate) fn create_skill_inner(
         .find(|s| s.name == slug)
         .ok_or_else(|| format!("created skill '{slug}' but failed to re-discover"))?;
     Ok(created)
+}
+
+/// Validate the declared `[[inputs]]` before any on-disk write.
+///
+/// For each entry this trims the `name` in place, rejects empty /
+/// whitespace-only names, and enforces case-insensitive uniqueness across
+/// all input names so the emitted `skill.toml` never carries a blank or
+/// duplicate `[[inputs]]` key. Names are trimmed in place so every later
+/// consumer (e.g. [`render_skill_toml`]) sees the validated value.
+fn validate_inputs(inputs: &mut [SkillCreateInputDef]) -> Result<(), String> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for input in inputs.iter_mut() {
+        let trimmed = input.name.trim();
+        if trimmed.is_empty() {
+            return Err("input name must not be empty".to_string());
+        }
+        if !seen.insert(trimmed.to_ascii_lowercase()) {
+            return Err(format!("duplicate input name '{trimmed}'"));
+        }
+        let trimmed = trimmed.to_string();
+        input.name = trimmed;
+    }
+    Ok(())
 }
 
 /// Convert a human-readable skill name to a filesystem-safe slug.
@@ -302,4 +380,127 @@ pub(crate) fn yaml_scalar(s: &str) -> String {
         .replace('\r', "\\r")
         .replace('\t', "\\t");
     format!("\"{escaped}\"")
+}
+
+/// Render the sibling `skill.toml` next to a freshly scaffolded SKILL.md
+/// when the user declared `[[inputs]]` at create time. Emits the
+/// minimal set the registry parser needs to discover and render the
+/// inputs at run time: `id`, `when_to_use`, plus one `[[inputs]]` entry
+/// per declared input. Field shape mirrors the existing bundled skills
+/// (e.g. `src/openhuman/skills/defaults/github-issue-crusher/skill.toml`)
+/// so `discover_skills_inner` parses the new file identically.
+pub(crate) fn render_skill_toml(
+    slug: &str,
+    description: &str,
+    inputs: &[SkillCreateInputDef],
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("id = {}\n", toml_string_literal(slug)));
+    out.push_str(&format!(
+        "when_to_use = {}\n",
+        toml_string_literal(description)
+    ));
+    for input in inputs {
+        out.push_str("\n[[inputs]]\n");
+        out.push_str(&format!("name = {}\n", toml_string_literal(&input.name)));
+        if let Some(d) = input.description.as_deref().filter(|s| !s.is_empty()) {
+            out.push_str(&format!("description = {}\n", toml_string_literal(d)));
+        }
+        out.push_str(&format!("required = {}\n", input.required));
+        if let Some(t) = input.type_.as_deref().filter(|s| !s.is_empty()) {
+            out.push_str(&format!("type = {}\n", toml_string_literal(t)));
+        }
+    }
+    out
+}
+
+/// Emit a TOML basic-string literal: wraps in `"..."` and escapes the
+/// minimum set TOML requires inside basic strings (`\`, `"`, control
+/// chars). Multi-line strings are not used; new-lines inside a value
+/// are escaped to `\n` so the literal stays single-line and round-trips
+/// through the TOML parser unchanged.
+fn toml_string_literal(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len() + 2);
+    for ch in s.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            c => escaped.push(c),
+        }
+    }
+    format!("\"{escaped}\"")
+}
+
+#[cfg(test)]
+mod render_skill_toml_tests {
+    use super::*;
+
+    #[test]
+    fn no_inputs_returns_header_only() {
+        let out = render_skill_toml("my-skill", "Does the thing.", &[]);
+        assert!(out.contains("id = \"my-skill\""));
+        assert!(out.contains("when_to_use = \"Does the thing.\""));
+        assert!(!out.contains("[[inputs]]"));
+    }
+
+    #[test]
+    fn one_input_with_all_fields_roundtrips() {
+        let inputs = vec![SkillCreateInputDef {
+            name: "repo".into(),
+            description: Some("owner/name".into()),
+            required: true,
+            type_: Some("string".into()),
+        }];
+        let out = render_skill_toml("my-skill", "Does the thing.", &inputs);
+        // Parse it back through the actual TOML parser to prove the
+        // output is well-formed — the registry uses `toml::from_str` so
+        // any round-trip failure here would surface at skill discovery.
+        let parsed: toml::Value = toml::from_str(&out).expect("emitted skill.toml must parse");
+        let inputs_arr = parsed["inputs"].as_array().expect("[[inputs]] is an array");
+        assert_eq!(inputs_arr.len(), 1);
+        let entry = &inputs_arr[0];
+        assert_eq!(entry["name"].as_str(), Some("repo"));
+        assert_eq!(entry["description"].as_str(), Some("owner/name"));
+        assert_eq!(entry["required"].as_bool(), Some(true));
+        assert_eq!(entry["type"].as_str(), Some("string"));
+    }
+
+    #[test]
+    fn optional_fields_omitted_when_empty() {
+        let inputs = vec![SkillCreateInputDef {
+            name: "n".into(),
+            description: None,
+            required: false,
+            type_: None,
+        }];
+        let out = render_skill_toml("my-skill", "x", &inputs);
+        let parsed: toml::Value = toml::from_str(&out).expect("parse");
+        let entry = &parsed["inputs"].as_array().unwrap()[0];
+        assert_eq!(entry["name"].as_str(), Some("n"));
+        assert_eq!(entry["required"].as_bool(), Some(false));
+        assert!(entry.get("description").is_none());
+        assert!(entry.get("type").is_none());
+    }
+
+    #[test]
+    fn escapes_dangerous_chars_in_strings() {
+        let inputs = vec![SkillCreateInputDef {
+            name: "n".into(),
+            description: Some("has \"quotes\" and \\ backslash\nand newline".into()),
+            required: true,
+            type_: None,
+        }];
+        let out = render_skill_toml("my-skill", "x", &inputs);
+        // Must still parse cleanly — the escape logic is what we're
+        // exercising here; the round-trip assertion below is the contract.
+        let parsed: toml::Value = toml::from_str(&out).expect("escaped strings must parse");
+        let entry = &parsed["inputs"].as_array().unwrap()[0];
+        assert_eq!(
+            entry["description"].as_str(),
+            Some("has \"quotes\" and \\ backslash\nand newline")
+        );
+    }
 }

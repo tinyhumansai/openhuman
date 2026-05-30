@@ -21,6 +21,7 @@
   * [Local AI (optional)](features/model-routing/local-ai.md)
 * [Available Tools](features/native-tools/README.md)
   * [Web Search](features/native-tools/web-search.md)
+  * [Image Tools](features/native-tools/image-tools.md)
   * [Web Scraper](features/native-tools/web-scraper.md)
   * [Coder](features/native-tools/coder.md)
   * [Browser & Computer Control](features/native-tools/browser-and-computer.md)

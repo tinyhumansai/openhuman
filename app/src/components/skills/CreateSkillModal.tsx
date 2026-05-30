@@ -8,110 +8,40 @@
  * Escape/click-out to close, focus capture) — see
  * `.claude/rules/15-settings-modal-system.md`.
  *
- * Form fields mirror `SkillsCreateParams` on the Rust side:
- *   - name          (required) — display name; also slugified into the
- *                   on-disk skill directory. A live preview surfaces the
- *                   slug so users can see what will hit the filesystem.
- *   - description   (required) — short prose; persisted as the
- *                   `description:` field in the generated YAML frontmatter.
- *   - scope         (user | project) — where SKILL.md is written. The UI
- *                   hides the `legacy` scope since that layout is read-only
- *                   and being phased out.
- *   - license       (optional) — free-form SPDX string (e.g. `MIT`,
- *                   `Apache-2.0`). Forwarded verbatim.
- *   - tags          (optional, CSV) — normalized client-side into an array;
- *                   empty entries are dropped.
- *   - allowedTools  (optional, CSV) — rekeyed to `allowed-tools` on the
- *                   wire by `skillsApi.createSkill`.
- *
- * On success `onCreated(skill)` fires with the freshly-discovered
- * `SkillSummary` so the parent grid can insert the new row without a
- * full refetch. On failure the Rust error string is surfaced verbatim
- * at the bottom of the form and the submit button re-enables.
+ * The form fields + submit pipeline live in `CreateSkillForm` so the
+ * `/skills/new` page can share the exact same body. This file is the
+ * modal chrome: header, close-button, backdrop, Escape handler,
+ * focus-return, submit/cancel footer. The footer's submit button is
+ * wired to the form via the standard HTML `form=` attribute so we
+ * don't need an imperative handle here.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import debug from 'debug';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
-import {
-  skillsApi,
-  type CreateSkillInput,
-  type SkillScope,
-  type SkillSummary,
-} from '../../services/api/skillsApi';
+import { type SkillSummary } from '../../services/api/skillsApi';
+import CreateSkillForm from './CreateSkillForm';
 
 const log = debug('skills:create-modal');
+
+const CREATE_FORM_ID = 'create-skill-modal-form';
 
 interface Props {
   onClose: () => void;
   onCreated: (skill: SkillSummary) => void;
 }
 
-const INITIAL_SCOPE: SkillScope = 'user';
-
-/**
- * Client-side slug preview — mirrors the Rust `slugify_skill_name`
- * heuristic (lowercase, ASCII alphanumerics + `-`, collapse repeats,
- * trim hyphens at the edges). The preview is advisory only; the Rust
- * side is authoritative when the skill is persisted.
- */
-function previewSlug(name: string): string {
-  const lower = name.normalize('NFKD').toLowerCase();
-  let out = '';
-  let prevHyphen = false;
-  for (const ch of lower) {
-    // ASCII alnum pass-through
-    if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
-      out += ch;
-      prevHyphen = false;
-      continue;
-    }
-    if ((ch === '-' || ch === '_' || /\s/.test(ch)) && !prevHyphen) {
-      out += '-';
-      prevHyphen = true;
-    }
-  }
-  // Trim leading/trailing hyphens
-  return out.replace(/^-+|-+$/g, '');
-}
-
-function splitCsv(raw: string): string[] {
-  return raw
-    .split(',')
-    .map(s => s.trim())
-    .filter(s => s.length > 0);
-}
-
 export default function CreateSkillModal({ onClose, onCreated }: Props) {
   const { t } = useT();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [scope, setScope] = useState<SkillScope>(INITIAL_SCOPE);
-  const [license, setLicense] = useState('');
-  const [author, setAuthor] = useState('');
-  const [tagsCsv, setTagsCsv] = useState('');
-  const [allowedToolsCsv, setAllowedToolsCsv] = useState('');
+  const [formValid, setFormValid] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const firstFieldRef = useRef<HTMLInputElement | null>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
-
-  const slug = useMemo(() => previewSlug(name), [name]);
-
-  const nameValid = slug.length > 0;
-  const descriptionValid = description.trim().length > 0;
-  const formValid = nameValid && descriptionValid && !submitting;
 
   useEffect(() => {
     previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const raf = window.requestAnimationFrame(() => {
-      firstFieldRef.current?.focus();
-    });
     log('mount');
     return () => {
-      window.cancelAnimationFrame(raf);
       previousFocusRef.current?.focus?.();
       log('unmount');
     };
@@ -128,50 +58,24 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
     return () => document.removeEventListener('keydown', handler);
   }, [onClose, submitting]);
 
-  const handleSubmit = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!formValid) {
-        return;
-      }
-      const payload: CreateSkillInput = {
-        name: name.trim(),
-        description: description.trim(),
-        scope,
-      };
-      if (license.trim()) payload.license = license.trim();
-      if (author.trim()) payload.author = author.trim();
-      const tags = splitCsv(tagsCsv);
-      if (tags.length > 0) payload.tags = tags;
-      const allowedTools = splitCsv(allowedToolsCsv);
-      if (allowedTools.length > 0) payload.allowedTools = allowedTools;
-
-      log('submit name=%s scope=%s', payload.name, payload.scope);
-      setSubmitting(true);
-      setError(null);
-      try {
-        const created = await skillsApi.createSkill(payload);
-        log('submit-ok id=%s', created.id);
-        onCreated(created);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        log('submit-err %s', message);
-        setError(message);
-        setSubmitting(false);
-      }
+  const handleStateChange = useCallback(
+    (state: { valid: boolean; submitting: boolean }) => {
+      setFormValid(state.valid);
+      setSubmitting(state.submitting);
     },
-    [allowedToolsCsv, author, description, formValid, license, name, onCreated, scope, tagsCsv]
+    []
   );
 
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={e => {
+      onClick={(e) => {
         if (e.target === e.currentTarget && !submitting) {
           log('backdrop-click close');
           onClose();
         }
-      }}>
+      }}
+    >
       <div
         aria-hidden="true"
         className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-fade-in"
@@ -187,229 +91,73 @@ export default function CreateSkillModal({ onClose, onCreated }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-skill-title"
-        className="relative w-full max-w-[520px] rounded-2xl bg-white dark:bg-neutral-900 shadow-2xl animate-fade-in">
-        <form onSubmit={handleSubmit}>
-          {/* Header */}
-          <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
-            <div className="min-w-0 flex-1">
-              <h2
-                id="create-skill-title"
-                className="text-base font-semibold text-stone-900 dark:text-neutral-100 font-sans">
-                {t('skills.create.title')}
-              </h2>
-              <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
-                {t('skills.create.subtitle')}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                if (!submitting) {
-                  log('close-button');
-                  onClose();
-                }
-              }}
-              disabled={submitting}
-              aria-label={t('common.close')}
-              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
-            </button>
+        className="relative w-full max-w-[520px] rounded-2xl bg-white dark:bg-neutral-900 shadow-2xl animate-fade-in"
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-stone-100 dark:border-neutral-800 px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <h2
+              id="create-skill-title"
+              className="text-base font-semibold text-stone-900 dark:text-neutral-100 font-sans"
+            >
+              {t('skills.create.title')}
+            </h2>
+            <p className="mt-0.5 text-xs text-stone-500 dark:text-neutral-400">
+              {t('skills.create.subtitle')}
+            </p>
           </div>
-
-          {/* Body */}
-          <div className="max-h-[70vh] space-y-4 overflow-y-auto px-5 py-4">
-            {/* Name */}
-            <div>
-              <label
-                htmlFor="create-skill-name"
-                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
-                {t('skills.create.name')}<span className="text-coral-500"> *</span>
-              </label>
-              <input
-                id="create-skill-name"
-                ref={firstFieldRef}
-                type="text"
-                value={name}
-                onChange={e => setName(e.target.value)}
-                required
-                maxLength={128}
-                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder={t('skills.create.namePlaceholder')}
+          <button
+            type="button"
+            onClick={() => {
+              if (!submitting) {
+                log('close-button');
+                onClose();
+              }
+            }}
+            disabled={submitting}
+            aria-label={t('common.close')}
+            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-stone-400 dark:text-neutral-500 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 hover:text-stone-600 dark:hover:text-neutral-300 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40"
+          >
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
               />
-              <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                {t('skills.create.slugLabel')}{' '}
-                <code className="rounded bg-stone-100 dark:bg-neutral-800 px-1 py-[1px] font-mono text-stone-700 dark:text-neutral-200">
-                  {slug || '—'}
-                </code>
-              </p>
-            </div>
+            </svg>
+          </button>
+        </div>
 
-            {/* Description */}
-            <div>
-              <label
-                htmlFor="create-skill-description"
-                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
-                {t('skills.create.description')}<span className="text-coral-500"> *</span>
-              </label>
-              <textarea
-                id="create-skill-description"
-                value={description}
-                onChange={e => setDescription(e.target.value)}
-                required
-                rows={3}
-                maxLength={500}
-                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder={t('skills.create.descriptionPlaceholder')}
-              />
-            </div>
+        {/* Body — shared form component */}
+        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
+          <CreateSkillForm
+            formId={CREATE_FORM_ID}
+            onCreated={onCreated}
+            onStateChange={handleStateChange}
+            autoFocus
+          />
+        </div>
 
-            {/* Scope */}
-            <fieldset>
-              <legend className="block text-xs font-medium text-stone-600 dark:text-neutral-300">{t('skills.create.scope')}</legend>
-              <div className="mt-1 flex gap-2">
-                {(['user', 'project'] as const).map(s => {
-                  const selected = scope === s;
-                  return (
-                    <label
-                      key={s}
-                      className={`flex flex-1 cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
-                        selected
-                          ? 'border-primary-500 bg-primary-50 text-primary-900'
-                          : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-700 dark:text-neutral-200 hover:border-stone-300 dark:border-neutral-700'
-                      }`}>
-                      <input
-                        type="radio"
-                        name="create-skill-scope"
-                        value={s}
-                        checked={selected}
-                        onChange={() => setScope(s)}
-                        className="h-3 w-3 accent-primary-500"
-                      />
-                      <span>{t(`scope.${s}`)}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                {scope === 'user'
-                  ? t('skills.create.scopeUserHint')
-                  : t('skills.create.scopeProjectHint')}
-              </p>
-            </fieldset>
-
-            {/* License / Author */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="create-skill-license"
-                  className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
-                  {t('skills.create.license')}
-                </label>
-                <input
-                  id="create-skill-license"
-                  type="text"
-                  value={license}
-                  onChange={e => setLicense(e.target.value)}
-                  maxLength={64}
-                  className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                  placeholder={t('skills.create.licensePlaceholder')}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="create-skill-author"
-                  className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
-                  {t('skills.create.author')}
-                </label>
-                <input
-                  id="create-skill-author"
-                  type="text"
-                  value={author}
-                  onChange={e => setAuthor(e.target.value)}
-                  maxLength={128}
-                  className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                  placeholder={t('skills.create.authorPlaceholder')}
-                />
-              </div>
-            </div>
-
-            {/* Tags */}
-            <div>
-              <label
-                htmlFor="create-skill-tags"
-                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
-                {t('skills.create.tags')}
-                <span className="ml-1 font-normal text-stone-400 dark:text-neutral-500">{t('skills.create.commaSeparated')}</span>
-              </label>
-              <input
-                id="create-skill-tags"
-                type="text"
-                value={tagsCsv}
-                onChange={e => setTagsCsv(e.target.value)}
-                maxLength={256}
-                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder={t('skills.create.tagsPlaceholder')}
-              />
-            </div>
-
-            {/* Allowed tools */}
-            <div>
-              <label
-                htmlFor="create-skill-tools"
-                className="block text-xs font-medium text-stone-600 dark:text-neutral-300">
-                {t('skills.create.allowedTools')}
-                <span className="ml-1 font-normal text-stone-400 dark:text-neutral-500">{t('skills.create.commaSeparated')}</span>
-              </label>
-              <input
-                id="create-skill-tools"
-                type="text"
-                value={allowedToolsCsv}
-                onChange={e => setAllowedToolsCsv(e.target.value)}
-                maxLength={512}
-                className="mt-1 w-full rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 shadow-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-500/30"
-                placeholder={t('skills.create.allowedToolsPlaceholder')}
-              />
-              <p className="mt-1 text-[11px] text-stone-500 dark:text-neutral-400">
-                {t('skills.create.allowedToolsHelp')}{' '}
-                <code className="font-mono">allowed-tools:</code>.
-              </p>
-            </div>
-
-            {/* Error */}
-            {error ? (
-              <div
-                role="alert"
-                className="rounded-xl border border-coral-200 bg-coral-50 p-3 text-xs text-coral-900">
-                <p className="font-semibold">{t('skills.create.createError')}</p>
-                <p className="mt-1 whitespace-pre-wrap font-mono">{error}</p>
-              </div>
-            ) : null}
-          </div>
-
-          {/* Footer */}
-          <div className="flex items-center justify-end gap-2 border-t border-stone-100 dark:border-neutral-800 px-5 py-3">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40">
-              {t('common.cancel')}
-            </button>
-            <button
-              type="submit"
-              disabled={!formValid}
-              className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50">
-              {submitting ? t('skills.create.creating') : t('skills.create.createBtn')}
-            </button>
-          </div>
-        </form>
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-stone-100 dark:border-neutral-800 px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 dark:text-neutral-300 transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:opacity-40"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            type="submit"
+            form={CREATE_FORM_ID}
+            disabled={!formValid || submitting}
+            className="rounded-lg bg-primary-500 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? t('skills.create.creating') : t('skills.create.createBtn')}
+          </button>
+        </div>
       </div>
     </div>,
     document.body

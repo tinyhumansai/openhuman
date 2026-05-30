@@ -41,6 +41,10 @@ pub struct AutonomyConfig {
     /// Intended to be enabled only in Full access mode.
     #[serde(default)]
     pub allow_tool_install: bool,
+    /// When enabled, an agent-authored task brief must be approved before an
+    /// assigned agent treats it as executable work.
+    #[serde(default = "default_true")]
+    pub require_task_plan_approval: bool,
 }
 
 fn default_true() -> bool {
@@ -161,6 +165,7 @@ impl Default for AutonomyConfig {
             auto_approve: default_auto_approve(),
             trusted_roots: Vec::new(),
             allow_tool_install: false,
+            require_task_plan_approval: default_true(),
         }
     }
 }

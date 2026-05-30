@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 
+use super::retry_after::{backoff_ms_for_attempt, MAX_429_RETRIES};
 use super::EmbeddingProvider;
 
 /// Embedding provider for OpenAI and compatible APIs (e.g., LocalAI, Ollama).
@@ -89,18 +90,18 @@ impl EmbeddingProvider for OpenAiEmbedding {
     }
 
     /// Sends a POST request to the embedding API.
+    ///
+    /// On 429 (Too Many Requests) or 503 (Service Unavailable) the call is
+    /// retried up to `MAX_429_RETRIES` times with exponential backoff.  When
+    /// the server supplies a `Retry-After` header its value (delta-seconds) is
+    /// preferred over the computed backoff.  After all retries are exhausted the
+    /// canonical error message is returned so the `TransientUpstreamHttp`
+    /// classifier in `core::observability` demotes it to a warning breadcrumb
+    /// instead of a Sentry error event.
     async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
-
-        // Proactively gate the outbound request against the per-endpoint rate
-        // budget so cloud backends (OpenHuman/Voyage, OpenAI, custom remote
-        // endpoints) stay under their account quota instead of tripping 429s.
-        // This is the single chokepoint every cloud embed funnels through —
-        // the `cloud` provider delegates here, and `openai`/`custom:` use it
-        // directly. Loopback endpoints are exempt (see `rate_limit`).
-        super::rate_limit::acquire_embedding_slot(&self.base_url).await;
 
         let url = self.embeddings_url();
 
@@ -115,98 +116,152 @@ impl EmbeddingProvider for OpenAiEmbedding {
             "input": texts,
         });
 
-        let mut req = self
-            .http_client()
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .json(&body);
+        // Retry loop: handles 429 Too Many Requests and 503 Service Unavailable
+        // with Retry-After–aware exponential backoff.
+        for attempt in 0..=MAX_429_RETRIES {
+            let mut req = self
+                .http_client()
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&body);
 
-        // Only set Authorization header when an API key is configured.
-        if !self.api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {}", self.api_key));
-        }
-
-        let resp = req.send().await?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let status_str = status.as_u16().to_string();
-            let text = resp.text().await.unwrap_or_default();
-            tracing::debug!(
-                target: "openai::embed",
-                "[openai] embed error: status={status}, body={text}"
-            );
-            let message = format!("Embedding API error ({status}): {text}");
-            // Use `report_error_or_expected` so transient upstream HTTP failures
-            // (e.g. 429 Too Many Requests, which the memory_tree job runner
-            // already retries with backoff) log a warning breadcrumb instead of
-            // firing a Sentry error event per attempt.
-            crate::core::observability::report_error_or_expected(
-                message.as_str(),
-                "embeddings",
-                "openai_embed",
-                &[
-                    ("model", self.model.as_str()),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-            anyhow::bail!(message);
-        }
-
-        let json: serde_json::Value = resp.json().await?;
-        let data = json
-            .get("data")
-            .and_then(|d| d.as_array())
-            .ok_or_else(|| anyhow::anyhow!("Invalid embedding response: missing 'data'"))?;
-
-        // Validate that the response count matches the input count.
-        if data.len() != texts.len() {
-            anyhow::bail!(
-                "openai embed count mismatch: sent {} texts, got {} items in 'data'",
-                texts.len(),
-                data.len()
-            );
-        }
-
-        let mut embeddings = Vec::with_capacity(data.len());
-        for (i, item) in data.iter().enumerate() {
-            let embedding = item
-                .get("embedding")
-                .and_then(|e| e.as_array())
-                .ok_or_else(|| {
-                    anyhow::anyhow!("Invalid embedding item at index {i}: missing 'embedding'")
-                })?;
-
-            let mut vec = Vec::with_capacity(embedding.len());
-            for (j, v) in embedding.iter().enumerate() {
-                #[allow(clippy::cast_possible_truncation)]
-                let f = v.as_f64().ok_or_else(|| {
-                    anyhow::anyhow!("non-numeric value at data[{i}].embedding[{j}]: {v}")
-                })? as f32;
-                vec.push(f);
+            // Only set Authorization header when an API key is configured.
+            if !self.api_key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", self.api_key));
             }
 
-            // Validate dimensions.
-            if self.dims > 0 && vec.len() != self.dims {
+            // Proactively gate every outbound attempt (initial + retries) against
+            // the per-endpoint rate budget so cloud backends (OpenHuman/Voyage,
+            // OpenAI, custom remote endpoints) stay under their account quota
+            // instead of tripping 429s. The chokepoint must sit inside the loop:
+            // a single pre-loop acquire would let retried 429/503 attempts bypass
+            // token consumption and let concurrent callers blow past the cap,
+            // ironically triggering more 429s. Token consumption tracks the number
+            // of HTTP attempts (1 + retries actually executed). Loopback endpoints
+            // are exempt (see `rate_limit`).
+            super::rate_limit::acquire_embedding_slot(&self.base_url).await;
+
+            let resp = req.send().await?;
+
+            let status = resp.status();
+
+            // Retry on 429 and 503 — both can carry a Retry-After header.
+            let is_retryable = status.as_u16() == 429 || status.as_u16() == 503;
+
+            if is_retryable && attempt < MAX_429_RETRIES {
+                // Read Retry-After before consuming the body.
+                let retry_after_val = resp
+                    .headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_owned());
+
+                let body_text = resp.text().await.unwrap_or_default();
+                tracing::debug!(
+                    target: "openai::embed",
+                    "[embeddings] openai {} body on retry: {body_text}",
+                    status.as_u16()
+                );
+
+                let delay_ms = backoff_ms_for_attempt(attempt, retry_after_val.as_deref());
+
+                tracing::debug!(
+                    target: "openai::embed",
+                    "[embeddings] openai {}, retrying in {}ms (attempt {}/{})",
+                    status.as_u16(), delay_ms, attempt + 1, MAX_429_RETRIES
+                );
+
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                continue;
+            }
+
+            if !status.is_success() {
+                let status_str = status.as_u16().to_string();
+                let text = resp.text().await.unwrap_or_default();
+                tracing::debug!(
+                    target: "openai::embed",
+                    "[openai] embed error: status={status}, body={text}"
+                );
+                let message = format!("Embedding API error ({status}): {text}");
+                // Use `report_error_or_expected` so transient upstream HTTP
+                // failures (e.g. 429 Too Many Requests after retry cap) log a
+                // warning breadcrumb instead of firing a Sentry error event.
+                crate::core::observability::report_error_or_expected(
+                    message.as_str(),
+                    "embeddings",
+                    "openai_embed",
+                    &[
+                        ("model", self.model.as_str()),
+                        ("status", status_str.as_str()),
+                        ("failure", "non_2xx"),
+                    ],
+                );
+                anyhow::bail!(message);
+            }
+
+            let json: serde_json::Value = resp.json().await?;
+            let data = json
+                .get("data")
+                .and_then(|d| d.as_array())
+                .ok_or_else(|| anyhow::anyhow!("Invalid embedding response: missing 'data'"))?;
+
+            // Validate that the response count matches the input count.
+            if data.len() != texts.len() {
                 anyhow::bail!(
-                    "openai embed dimension mismatch at index {i}: expected {}, got {}",
-                    self.dims,
-                    vec.len()
+                    "openai embed count mismatch: sent {} texts, got {} items in 'data'",
+                    texts.len(),
+                    data.len()
                 );
             }
 
-            embeddings.push(vec);
+            let mut embeddings = Vec::with_capacity(data.len());
+            for (i, item) in data.iter().enumerate() {
+                let embedding = item
+                    .get("embedding")
+                    .and_then(|e| e.as_array())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("Invalid embedding item at index {i}: missing 'embedding'")
+                    })?;
+
+                let mut vec = Vec::with_capacity(embedding.len());
+                for (j, v) in embedding.iter().enumerate() {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let f = v.as_f64().ok_or_else(|| {
+                        anyhow::anyhow!("non-numeric value at data[{i}].embedding[{j}]: {v}")
+                    })? as f32;
+                    vec.push(f);
+                }
+
+                // Validate dimensions.
+                if self.dims > 0 && vec.len() != self.dims {
+                    anyhow::bail!(
+                        "openai embed dimension mismatch at index {i}: expected {}, got {}",
+                        self.dims,
+                        vec.len()
+                    );
+                }
+
+                embeddings.push(vec);
+            }
+
+            tracing::debug!(
+                target: "openai::embed",
+                "[openai] embed success: model={}, count={}, dims={}",
+                self.model, embeddings.len(),
+                embeddings.first().map(|v| v.len()).unwrap_or(0)
+            );
+
+            return Ok(embeddings);
         }
 
-        tracing::debug!(
-            target: "openai::embed",
-            "[openai] embed success: model={}, count={}, dims={}",
-            self.model, embeddings.len(),
-            embeddings.first().map(|v| v.len()).unwrap_or(0)
-        );
-
-        Ok(embeddings)
+        // The loop always exits via `return Ok(...)`, `bail!(...)`, or
+        // `continue`; this point is structurally unreachable.  On the final
+        // attempt (`attempt == MAX_429_RETRIES`) the retryable guard is false
+        // and execution falls into the non-2xx branch above, which bails with
+        // the body-bearing format "Embedding API error (429 ...): <body>" —
+        // that format preserves the "(429 " substring required by the
+        // TransientUpstreamHttp classifier in core::observability.
+        unreachable!("embed retry loop must exit via return or bail")
     }
 }
 

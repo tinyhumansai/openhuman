@@ -45,6 +45,10 @@ use super::providers::{
 };
 use super::types::ComposioToolsResponse;
 
+mod direct;
+
+pub use direct::{ComposioAction, ComposioConnectedAccount, ComposioTool};
+
 /// Decision returned by [`evaluate_tool_visibility`].
 enum ToolDecision {
     /// Action is curated for this toolkit and user scope allows it.

@@ -820,4 +820,23 @@ mod tests {
             .to_string();
         assert!(err.contains("local/private"));
     }
+
+    #[test]
+    fn wildcard_allows_any_host() {
+        let any = vec!["*".to_string()];
+        assert!(host_matches_allowlist("docs.rs", &any));
+        assert!(host_matches_allowlist("api.github.com", &any));
+        assert!(host_matches_allowlist("whatever.example.org", &any));
+    }
+
+    #[tokio::test]
+    async fn wildcard_still_blocks_private_hosts() {
+        // `*` opens public hosts only — SSRF block on private/local hosts stays.
+        let any = vec!["*".to_string()];
+        let err = validate_url_with_dns_check("https://127.0.0.1", &any)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("local/private"), "got: {err}");
+    }
 }

@@ -39,10 +39,12 @@ pub mod action_tool;
 pub mod auth_retry;
 pub mod bus;
 pub mod client;
+mod connected_integrations;
 pub mod error_mapping;
 pub mod execute_dispatch;
 pub mod execute_prepare;
 pub mod googlecalendar_args;
+pub mod identity;
 pub mod oauth_handoff;
 pub mod ops;
 pub mod periodic;
@@ -66,6 +68,7 @@ pub use crate::openhuman::memory_sync::composio::providers::{
 };
 pub use action_tool::ComposioActionTool;
 pub use client::ComposioClient;
+pub use identity::connection_identity;
 pub use ops::{
     cached_active_integrations, connected_set_hash, fetch_connected_integrations,
     fetch_connected_integrations_status, fetch_toolkit_actions,

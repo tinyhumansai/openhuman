@@ -96,6 +96,8 @@ enum ThreadLogEntry {
         parent_thread_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         labels: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        personality_id: Option<String>,
     },
     Delete {
         thread_id: String,
@@ -142,6 +144,7 @@ impl ConversationStore {
                 updated_at: now,
                 parent_thread_id: request.parent_thread_id.clone(),
                 labels: request.labels.clone(),
+                personality_id: request.personality_id.clone(),
             },
         )?;
         debug!(
@@ -448,6 +451,7 @@ impl ConversationStore {
                 updated_at: updated_at.to_string(),
                 parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(entry.labels.clone()),
+                personality_id: entry.personality_id.clone(),
             },
         )?;
         debug!(
@@ -482,6 +486,7 @@ impl ConversationStore {
                 updated_at: updated_at.to_string(),
                 parent_thread_id: entry.parent_thread_id.clone(),
                 labels: Some(labels),
+                personality_id: entry.personality_id.clone(),
             },
         )?;
         debug!(
@@ -683,6 +688,7 @@ impl ConversationStore {
                     created_at: entry.created_at.clone(),
                     parent_thread_id: entry.parent_thread_id.clone(),
                     labels: entry.labels.clone(),
+                    personality_id: entry.personality_id.clone(),
                 }
             })
             .collect();
@@ -742,6 +748,7 @@ impl ConversationStore {
             created_at: entry.created_at.clone(),
             parent_thread_id: entry.parent_thread_id.clone(),
             labels: entry.labels.clone(),
+            personality_id: entry.personality_id.clone(),
         }))
     }
 
@@ -761,6 +768,7 @@ impl ConversationStore {
                     created_at,
                     parent_thread_id,
                     labels,
+                    personality_id,
                     ..
                 } => {
                     let (
@@ -769,6 +777,7 @@ impl ConversationStore {
                         labels_value,
                         message_count_value,
                         last_message_at_value,
+                        personality_id_value,
                     ) = match index.get(&thread_id) {
                         Some(existing) => (
                             existing.created_at.clone(),
@@ -776,10 +785,18 @@ impl ConversationStore {
                             labels.unwrap_or_else(|| existing.labels.clone()),
                             existing.message_count,
                             existing.last_message_at.clone(),
+                            personality_id.or_else(|| existing.personality_id.clone()),
                         ),
                         None => {
                             let inferred = labels.unwrap_or_else(|| infer_labels(&thread_id));
-                            (created_at, parent_thread_id, inferred, None, None)
+                            (
+                                created_at,
+                                parent_thread_id,
+                                inferred,
+                                None,
+                                None,
+                                personality_id,
+                            )
                         }
                     };
                     index.insert(
@@ -791,6 +808,7 @@ impl ConversationStore {
                             labels: labels_value,
                             message_count: message_count_value,
                             last_message_at: last_message_at_value,
+                            personality_id: personality_id_value,
                         },
                     );
                 }
@@ -851,6 +869,7 @@ struct ThreadIndexEntry {
     message_count: Option<usize>,
     /// Timestamp of the newest message, or `None` if unknown (legacy).
     last_message_at: Option<String>,
+    personality_id: Option<String>,
 }
 
 fn infer_labels(thread_id: &str) -> Vec<String> {
