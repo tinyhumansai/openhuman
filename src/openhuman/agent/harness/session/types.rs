@@ -45,7 +45,10 @@ pub struct Agent {
     pub(super) visible_tool_names: std::collections::HashSet<String>,
     pub(super) tool_policy_session: ToolPolicySession,
     pub(super) memory: Arc<dyn Memory>,
-    pub(super) tool_dispatcher: Box<dyn ToolDispatcher>,
+    // `Arc` (not `Box`) so the turn engine's parser seam can hold a cheap clone
+    // of the dispatcher without borrowing the `Agent` (which the turn observer
+    // borrows mutably) — see `engine::DispatcherParser`.
+    pub(super) tool_dispatcher: Arc<dyn ToolDispatcher>,
     pub(super) memory_loader: Box<dyn MemoryLoader>,
     pub(super) config: crate::openhuman::config::AgentConfig,
     pub(super) model_name: String,

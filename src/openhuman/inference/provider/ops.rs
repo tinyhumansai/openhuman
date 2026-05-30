@@ -3,6 +3,12 @@ use super::*;
 use serde::Serialize;
 use std::path::PathBuf;
 
+use super::openai_codex::{
+    openai_codex_client_version, openai_codex_user_agent, resolve_openai_codex_routing,
+    OpenAiCodexRouting, OPENAI_CODEX_ACCOUNT_HEADER, OPENAI_CODEX_MODEL_HINTS,
+    OPENAI_CODEX_ORIGINATOR, OPENAI_CODEX_ORIGINATOR_HEADER,
+};
+
 const MAX_API_ERROR_CHARS: usize = 200;
 
 /// Fixed id for the single inference backend (OpenHuman API).
@@ -57,19 +63,32 @@ async fn list_configured_models_from_config(
         .or_else(|| synthesize_local_runtime_entry(&provider_id, config))
         .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
-    let base = entry.endpoint.trim_end_matches('/');
-    let models_url = format!("{}/models", base);
-
-    log::debug!(
-        "[providers][list_models] fetching url={} slug={}",
-        models_url,
-        entry.slug
-    );
-
     let api_key =
         crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
             .unwrap_or_default();
     let api_key = api_key.trim().to_string();
+
+    let routing = resolve_openai_codex_routing(config, &entry.slug, &entry.endpoint, &api_key)
+        .unwrap_or_else(|err| {
+            log::warn!(
+                "[providers][list_models] openai codex routing unavailable; continuing with configured endpoint: {err}"
+            );
+            OpenAiCodexRouting::standard(&entry.endpoint)
+        });
+
+    let mut models_url = format!("{}/models", routing.endpoint);
+    if routing.using_oauth {
+        models_url =
+            append_query_param(&models_url, "client_version", openai_codex_client_version());
+    }
+
+    log::debug!(
+        "[providers][list_models] fetching url={} slug={} codex_oauth={} account_id_header={}",
+        models_url,
+        entry.slug,
+        routing.using_oauth,
+        routing.account_id.is_some()
+    );
 
     let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
         "providers.list_models",
@@ -79,15 +98,24 @@ async fn list_configured_models_from_config(
 
     use crate::openhuman::config::schema::cloud_providers::AuthStyle;
     if is_openrouter_provider(&entry) {
-        validate_openrouter_api_key(&client, base, &api_key).await?;
+        validate_openrouter_api_key(&client, &routing.endpoint, &api_key).await?;
     }
 
     let mut request = client.get(&models_url);
+    if routing.using_oauth {
+        request = request
+            .header(reqwest::header::USER_AGENT, openai_codex_user_agent())
+            .header(OPENAI_CODEX_ORIGINATOR_HEADER, OPENAI_CODEX_ORIGINATOR);
+    }
 
     request = match entry.auth_style {
         AuthStyle::Bearer => {
             if !api_key.is_empty() {
-                request.header("Authorization", format!("Bearer {}", api_key))
+                let mut r = request.header("Authorization", format!("Bearer {}", api_key));
+                if let Some(account_id) = routing.account_id.as_deref() {
+                    r = r.header(OPENAI_CODEX_ACCOUNT_HEADER, account_id);
+                }
+                r
             } else {
                 request
             }
@@ -188,8 +216,12 @@ async fn list_configured_models_from_config(
     // Parse the OpenAI-compatible `/models` envelope into typed model
     // entries. See `parse_models_response` for the distinct error shapes
     // returned for "missing field" vs "field present but wrong type"
-    // (TAURI-RUST-4Y).
-    let models = parse_models_response(&body)?;
+    // (TAURI-RUST-4Y). The ChatGPT Codex backend uses a sibling `models`
+    // array keyed by `slug`, so that shape is accepted here too.
+    let mut models = parse_models_response(&body)?;
+    if routing.using_oauth {
+        merge_openai_codex_model_hints(&mut models);
+    }
 
     log::info!(
         "[providers][list_models] slug={} fetched {} models",
@@ -203,29 +235,25 @@ async fn list_configured_models_from_config(
     ))
 }
 
-/// Parse the OpenAI-compatible `/models` response envelope into typed
-/// [`ModelInfo`] entries.
+/// Parse the OpenAI-compatible `/models` response envelope, or the ChatGPT
+/// Codex backend's sibling `models` envelope, into typed [`ModelInfo`] entries.
 ///
 /// Returns distinct errors for the three failure modes the wild has
 /// produced in `inference_list_models` Sentry events:
 ///
-/// 1. **Missing `data` field** — endpoint isn't `/models`-compatible
+/// 1. **Missing `data`/`models` field** — endpoint isn't `/models`-compatible
 ///    (user typo'd the base URL, pointed at a vector-DB host, etc.).
-///    Original TAURI-RUST-4Y wire shape, preserved verbatim so the
-///    Sentry fingerprint stays stable for that population.
-/// 2. **`data` field present but wrong type** — provider returned
-///    `{"object":"error","data":{…}}` or `{"data":null}` or similar
-///    non-array. The pre-fix code conflated this with case (1), emitting
-///    a misleading `"missing 'data' array (got keys: data, object)"`
-///    message; the new shape names the actual JSON type so triage knows
-///    what the provider sent.
+/// 2. **`data`/`models` field present but wrong type** — provider returned
+///    `{"object":"error","data":{…}}`, `{"data":null}`, or similar
+///    non-array. The error names the actual JSON type so triage knows what
+///    the provider sent.
 /// 3. **Non-object top-level body** — provider returned a bare array,
 ///    string, etc. Caught explicitly so the parser doesn't silently
 ///    drop into the missing-data arm with a `<non-object>` keys list.
 ///
-/// Per-entry parsing ignores entries that don't have a string `id` (lax
-/// on purpose — many OpenAI-compatible servers include malformed rows
-/// for capabilities they don't fully implement).
+/// Per-entry parsing ignores entries that don't have a usable string id/slug
+/// (lax on purpose — many OpenAI-compatible servers include malformed rows for
+/// capabilities they don't fully implement).
 fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>, String> {
     let obj = body.as_object().ok_or_else(|| {
         format!(
@@ -234,10 +262,14 @@ fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>, Str
         )
     })?;
 
-    let data_value = obj.get("data").ok_or_else(|| {
+    let (field_name, data_value) = obj
+        .get("data")
+        .map(|value| ("data", value))
+        .or_else(|| obj.get("models").map(|value| ("models", value)))
+        .ok_or_else(|| {
         let keys = obj.keys().cloned().collect::<Vec<_>>().join(", ");
         format!(
-            "provider response missing `data` field — endpoint is not OpenAI-compatible (got keys: {})",
+                "provider response missing `data` or `models` field — endpoint is not OpenAI-compatible (got keys: {})",
             keys
         )
     })?;
@@ -252,7 +284,8 @@ fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>, Str
             .map(|v| v.to_string())
             .unwrap_or_else(|| "<absent>".to_string());
         format!(
-            "provider response has `data` field but it is {}, expected array — endpoint may be returning an error envelope (\"object\" = {})",
+            "provider response has `{}` field but it is {}, expected array — endpoint may be returning an error envelope (\"object\" = {})",
+            field_name,
             json_value_kind(data_value),
             object_field,
         )
@@ -260,22 +293,7 @@ fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>, Str
 
     Ok(data
         .iter()
-        .filter_map(|item| {
-            let id = item.get("id")?.as_str()?.to_string();
-            let owned_by = item
-                .get("owned_by")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            let context_window = item
-                .get("context_length")
-                .or_else(|| item.get("context_window"))
-                .and_then(|v| v.as_u64());
-            Some(ModelInfo {
-                id,
-                owned_by,
-                context_window,
-            })
-        })
+        .filter_map(model_info_from_catalog_item)
         .collect())
 }
 
@@ -348,6 +366,23 @@ fn synthesize_local_runtime_entry(
     })
 }
 
+fn merge_openai_codex_model_hints(models: &mut Vec<ModelInfo>) {
+    let mut seen = models
+        .iter()
+        .map(|model| model.id.to_ascii_lowercase())
+        .collect::<std::collections::HashSet<_>>();
+
+    for id in OPENAI_CODEX_MODEL_HINTS {
+        if seen.insert(id.to_ascii_lowercase()) {
+            models.push(ModelInfo {
+                id: (*id).to_string(),
+                owned_by: Some("openai-codex".to_string()),
+                context_window: None,
+            });
+        }
+    }
+}
+
 fn is_openrouter_provider(
     entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
 ) -> bool {
@@ -359,6 +394,57 @@ fn is_openrouter_provider(
         .ok()
         .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
         .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+}
+
+fn append_query_param(url: &str, key: &str, value: &str) -> String {
+    if let Ok(mut parsed) = reqwest::Url::parse(url) {
+        parsed.query_pairs_mut().append_pair(key, value);
+        return parsed.to_string();
+    }
+
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{separator}{key}={value}")
+}
+
+fn model_items_from_body(body: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    body.get("data")
+        .and_then(|d| d.as_array())
+        .or_else(|| body.get("models").and_then(|d| d.as_array()))
+        .cloned()
+}
+
+fn model_info_from_catalog_item(item: &serde_json::Value) -> Option<ModelInfo> {
+    if let Some(id) = item.as_str().map(str::trim).filter(|id| !id.is_empty()) {
+        return Some(ModelInfo {
+            id: id.to_string(),
+            owned_by: None,
+            context_window: None,
+        });
+    }
+
+    let id = item
+        .get("id")
+        .or_else(|| item.get("slug"))
+        .or_else(|| item.get("name"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())?
+        .to_string();
+    let owned_by = item
+        .get("owned_by")
+        .or_else(|| item.get("owned_by_organization"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let context_window = item
+        .get("context_length")
+        .or_else(|| item.get("context_window"))
+        .or_else(|| item.get("max_context_window"))
+        .and_then(|v| v.as_u64());
+    Some(ModelInfo {
+        id,
+        owned_by,
+        context_window,
+    })
 }
 
 async fn validate_openrouter_api_key(

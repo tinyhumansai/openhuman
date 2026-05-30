@@ -175,9 +175,9 @@ async fn rerank_by_semantic_similarity(
     query: &str,
     hits: Vec<RetrievalHit>,
 ) -> Result<Vec<RetrievalHit>> {
-    use crate::openhuman::memory_store::chunks::store::get_chunk_embedding;
+    use crate::openhuman::memory_store::chunks::store::get_chunk_embeddings_batch;
+    use crate::openhuman::memory_store::trees::store::get_summary_embeddings_batch;
     use crate::openhuman::memory_tree::retrieval::types::NodeKind;
-    use crate::openhuman::memory_tree::tree::store as src_store;
 
     let embedder = build_embedder_from_config(config)?;
     let query_vec = embedder.embed(query).await?;
@@ -187,28 +187,69 @@ async fn rerank_by_semantic_similarity(
         hits.len()
     );
 
-    // Resolve each hit's embedding. spawn_blocking around the DB reads
-    // so the event loop stays healthy even for larger headroom pulls.
-    let mut decorated: Vec<(f32, bool, RetrievalHit)> = Vec::with_capacity(hits.len());
-    for h in hits {
-        let node_id = h.node_id.clone();
-        let node_kind = h.node_kind;
-        let config_owned = config.clone();
-        let emb = tokio::task::spawn_blocking(move || -> Result<Option<Vec<f32>>> {
-            match node_kind {
-                NodeKind::Summary => src_store::get_summary_embedding(&config_owned, &node_id),
-                NodeKind::Leaf => get_chunk_embedding(&config_owned, &node_id),
-            }
+    // Partition hit ids by node kind so each table gets a single batched
+    // `IN (...)` lookup. Summary embeddings live in
+    // `mem_tree_summary_embeddings`, leaf/chunk embeddings in
+    // `mem_tree_chunk_embeddings` — two tables, two batched queries.
+    //
+    // Why partition + batch instead of one query per hit:
+    //
+    // Previously this function looped over `hits` and ran
+    // `spawn_blocking(get_*_embedding).await` per element. That `.await`
+    // inside the `for` was *sequential* — N round-trips to SQLite, each
+    // paying its own prepare + bind + busy-wait. With LOOKUP_HEADROOM=200
+    // the rerank path could fire 200 sequential SQL statements on every
+    // entity-scoped query carrying a `query=` arg, which is the common
+    // per-turn shape.
+    //
+    // The batched helpers (see `chunks::store::
+    // get_chunk_embeddings_for_signature_batch` and `trees::store::
+    // get_summary_embeddings_for_signature_batch`) collapse all
+    // same-kind lookups into one `IN (?,?,?,...) AND model_signature = ?`
+    // query (chunked internally to stay below SQLite's variable cap so
+    // large future headroom values stay safe). The hit list is decorated
+    // in its original order from the resulting maps, so sort stability,
+    // tie-break behaviour, and the existing `(NEG_INFINITY, false)`
+    // handling for missing embeddings are all preserved bit-for-bit.
+    let mut summary_ids: Vec<String> = Vec::new();
+    let mut chunk_ids: Vec<String> = Vec::new();
+    for h in &hits {
+        match h.node_kind {
+            NodeKind::Summary => summary_ids.push(h.node_id.clone()),
+            NodeKind::Leaf => chunk_ids.push(h.node_id.clone()),
+        }
+    }
+
+    // Both fetches run under one `spawn_blocking` to keep the event loop
+    // free while the SQLite reads happen on the blocking pool.
+    let config_owned = config.clone();
+    let (summary_embeddings, chunk_embeddings) =
+        tokio::task::spawn_blocking(move || -> Result<(_, _)> {
+            let s = get_summary_embeddings_batch(&config_owned, &summary_ids)?;
+            let c = get_chunk_embeddings_batch(&config_owned, &chunk_ids)?;
+            Ok((s, c))
         })
         .await
-        .map_err(|e| anyhow::anyhow!("embedding fetch join error: {e}"))??;
+        .map_err(|e| anyhow::anyhow!("embedding batch join error: {e}"))??;
 
-        match emb {
+    let mut decorated: Vec<(f32, bool, RetrievalHit)> = Vec::with_capacity(hits.len());
+    for h in hits {
+        // Decorate in the original `hits` iteration order so two hits
+        // that tie on every ranked dimension still produce the same
+        // relative ordering as before this refactor.
+        let emb_lookup = match h.node_kind {
+            NodeKind::Summary => summary_embeddings.get(&h.node_id),
+            NodeKind::Leaf => chunk_embeddings.get(&h.node_id),
+        };
+        match emb_lookup {
             Some(v) => {
-                let sim = cosine_similarity(&query_vec, &v);
+                let sim = cosine_similarity(&query_vec, v);
                 decorated.push((sim, true, h));
             }
             None => {
+                // Identical to the pre-batch path: absent embedding
+                // sinks the hit to the bottom of the rerank without
+                // dropping it from the result set.
                 decorated.push((f32::NEG_INFINITY, false, h));
             }
         }
