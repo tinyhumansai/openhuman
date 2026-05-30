@@ -62,6 +62,7 @@ import Button from '../../ui/Button';
 import SettingsBackButton from '../components/SettingsBackButton';
 import { SettingsSelect, SettingsStatusLine, SettingsSwitch, SettingsTextField } from '../controls';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import OpenAiOAuthConnect from '../oauth/OpenAiOAuthConnect';
 import { ClaudeCodeConnect } from './ai/ClaudeCodeStatusCard';
 import { routingWithProviderRemoved, toSelectableChatModels } from './aiRouting';
 import {
@@ -667,6 +668,7 @@ const ProviderKeyDialog = ({
   initialValue,
   initialKeyValue,
   oauthAction,
+  openAiOAuth,
   onCancel,
   onSubmit,
 }: {
@@ -685,6 +687,9 @@ const ProviderKeyDialog = ({
   /** Pre-populate the API key field in `endpointKeyMode`. */
   initialKeyValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
+  /** When set, render the OpenAI "Sign in with ChatGPT" surface; `onConnected`
+   *  fires once the OAuth round-trip succeeds so the parent can refresh + close. */
+  openAiOAuth?: { onConnected: () => void } | null;
   onCancel: () => void;
   /** Returns the entered value(s). For plain local runtimes this is the
    *  endpoint URL; for cloud providers it's the API key. In `endpointKeyMode`
@@ -869,6 +874,18 @@ const ProviderKeyDialog = ({
           ) : null}
           {error ? <ProviderSetupErrorNotice error={error} /> : null}
         </div>
+
+        {openAiOAuth ? (
+          <div className="mt-4">
+            <OpenAiOAuthConnect
+              testIdPrefix="settings-openai-oauth"
+              allowDisconnect
+              onConnectedChange={isConnected => {
+                if (isConnected) openAiOAuth.onConnected();
+              }}
+            />
+          </div>
+        ) : null}
 
         {oauthAction ? (
           <div className="mt-4 rounded-xl border border-line bg-surface-muted dark:bg-surface-muted/50 p-3">
@@ -3711,6 +3728,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     }
                   },
                 }
+              : null
+          }
+          openAiOAuth={
+            keyDialogFor === 'openai' && !pendingLocalLabel
+              ? { onConnected: () => void reload() }
               : null
           }
           onCancel={() => {

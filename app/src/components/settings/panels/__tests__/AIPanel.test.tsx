@@ -466,6 +466,8 @@ describe('AIPanel', () => {
     expect(
       within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
     ).not.toBeInTheDocument();
+    expect(within(dialog).getByTestId('settings-openai-oauth-section')).toBeInTheDocument();
+    expect(within(dialog).getByTestId('settings-openai-oauth-connect')).toBeInTheDocument();
   });
 
   it('shows a localized Kimi platform link and opens the supported .ai platform', async () => {
