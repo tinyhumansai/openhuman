@@ -10,6 +10,7 @@ mod execution;
 mod ops;
 mod rpc;
 mod schemas;
+pub mod tools;
 
 #[cfg(test)]
 pub(crate) mod test_support;

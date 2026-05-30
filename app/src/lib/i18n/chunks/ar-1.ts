@@ -175,6 +175,9 @@ const ar1: TranslationMap = {
   'memory.noResults': 'لم يتم العثور على ذكريات',
   'memory.empty': 'لا توجد ذكريات بعد. تُنشأ الذكريات تلقائيًا أثناء تفاعلك.',
   'memory.tab.memory': 'الذاكرة',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'اللاوعي',
   'memory.tab.dreams': 'الأحلام',
   'memory.tab.calls': 'المكالمات',

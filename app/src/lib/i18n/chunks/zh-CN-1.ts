@@ -171,6 +171,9 @@ const zhCN1: TranslationMap = {
   'memory.noResults': '未找到记忆',
   'memory.empty': '暂无记忆。记忆将在你交互时自动创建。',
   'memory.tab.memory': '记忆',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': '潜意识',
   'memory.tab.dreams': '梦境',
   'memory.tab.calls': '调用记录',

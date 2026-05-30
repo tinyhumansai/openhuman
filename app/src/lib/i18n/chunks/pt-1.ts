@@ -182,6 +182,9 @@ const pt1: TranslationMap = {
   'memory.empty':
     'Nenhuma memória ainda. As memórias são criadas automaticamente conforme você interage.',
   'memory.tab.memory': 'Memória',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Subconsciente',
   'memory.tab.dreams': 'Sonhos',
   'memory.tab.calls': 'Chamadas',

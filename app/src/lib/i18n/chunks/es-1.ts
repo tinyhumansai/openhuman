@@ -183,6 +183,9 @@ const es1: TranslationMap = {
   'memory.noResults': 'No se encontraron recuerdos',
   'memory.empty': 'Sin recuerdos aún. Los recuerdos se crean automáticamente mientras interactúas.',
   'memory.tab.memory': 'Memoria',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Subconsciente',
   'memory.tab.dreams': 'Sueños',
   'memory.tab.calls': 'Llamadas',

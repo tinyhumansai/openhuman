@@ -181,6 +181,9 @@ const it1: TranslationMap = {
   'memory.empty':
     'Nessuna memoria ancora. Le memorie vengono create automaticamente mentre interagisci.',
   'memory.tab.memory': 'Memoria',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Subconscio',
   'memory.tab.dreams': 'Sogni',
   'memory.tab.calls': 'Chiamate',

@@ -1846,6 +1846,9 @@ fn register_domain_subscribers(
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();
+        // Board poller: dispatch the highest-urgency `todo` card on the
+        // task-sources board (catch-all for cards without a proactive trigger).
+        crate::openhuman::agent::task_dispatcher::start_board_poller();
         // Seed memory_sources with active Composio connections so the
         // user sees their connected integrations as memory sources by
         // default. Best-effort: failure is logged but does not block startup.

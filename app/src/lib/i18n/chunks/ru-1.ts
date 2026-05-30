@@ -176,6 +176,9 @@ const ru1: TranslationMap = {
   'memory.noResults': 'Воспоминания не найдены',
   'memory.empty': 'Воспоминаний пока нет. Они создаются автоматически в процессе общения.',
   'memory.tab.memory': 'Память',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Подсознание',
   'memory.tab.dreams': 'Сны',
   'memory.tab.calls': 'Звонки',

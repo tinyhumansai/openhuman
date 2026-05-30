@@ -176,6 +176,9 @@ const id1: TranslationMap = {
   'memory.noResults': 'Memori tidak ditemukan',
   'memory.empty': 'Belum ada memori. Memori dibuat otomatis saat Anda berinteraksi.',
   'memory.tab.memory': 'Memori',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Bawah sadar',
   'memory.tab.dreams': 'Mimpi',
   'memory.tab.calls': 'Panggilan',

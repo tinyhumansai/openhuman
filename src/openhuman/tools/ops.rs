@@ -388,34 +388,24 @@ pub fn all_tools_with_runtime(
                 // pick it up once direct Parallel routing lands.
                 let client = crate::openhuman::integrations::build_client(root_config);
                 if let Some(client) = client {
+                    tools.push(Box::new(crate::openhuman::tools::ParallelSearchTool::new(
+                        Arc::clone(&client),
+                    )));
+                    tools.push(Box::new(crate::openhuman::tools::ParallelExtractTool::new(
+                        Arc::clone(&client),
+                    )));
+                    tools.push(Box::new(crate::openhuman::tools::ParallelChatTool::new(
+                        Arc::clone(&client),
+                    )));
                     tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelSearchTool::new(Arc::clone(
-                            &client,
-                        )),
+                        crate::openhuman::tools::ParallelResearchTool::new(Arc::clone(&client)),
                     ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelExtractTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelChatTool::new(Arc::clone(&client)),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelResearchTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelEnrichTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
-                    tools.push(Box::new(
-                        crate::openhuman::integrations::ParallelDatasetTool::new(Arc::clone(
-                            &client,
-                        )),
-                    ));
+                    tools.push(Box::new(crate::openhuman::tools::ParallelEnrichTool::new(
+                        Arc::clone(&client),
+                    )));
+                    tools.push(Box::new(crate::openhuman::tools::ParallelDatasetTool::new(
+                        Arc::clone(&client),
+                    )));
                     // Layer the unified web_search slot too so the
                     // agent's default research path keeps working.
                     tools.push(Box::new(WebSearchTool::new(
@@ -437,29 +427,25 @@ pub fn all_tools_with_runtime(
             SearchEngine::Brave => {
                 tracing::debug!("[search] active engine = brave (BYO direct API)");
                 let api_key = search.brave.api_key.clone();
+                tools.push(Box::new(crate::openhuman::tools::BraveWebSearchTool::new(
+                    api_key.clone(),
+                    max_results,
+                    timeout_secs,
+                )));
+                tools.push(Box::new(crate::openhuman::tools::BraveNewsSearchTool::new(
+                    api_key.clone(),
+                    max_results,
+                    timeout_secs,
+                )));
                 tools.push(Box::new(
-                    crate::openhuman::integrations::BraveWebSearchTool::new(
+                    crate::openhuman::tools::BraveImageSearchTool::new(
                         api_key.clone(),
                         max_results,
                         timeout_secs,
                     ),
                 ));
                 tools.push(Box::new(
-                    crate::openhuman::integrations::BraveNewsSearchTool::new(
-                        api_key.clone(),
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
-                tools.push(Box::new(
-                    crate::openhuman::integrations::BraveImageSearchTool::new(
-                        api_key.clone(),
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
-                tools.push(Box::new(
-                    crate::openhuman::integrations::BraveVideoSearchTool::new(
+                    crate::openhuman::tools::BraveVideoSearchTool::new(
                         api_key,
                         max_results,
                         timeout_secs,
@@ -469,21 +455,19 @@ pub fn all_tools_with_runtime(
             SearchEngine::Querit => {
                 tracing::debug!("[search] active engine = querit (BYO direct API)");
                 tools.push(Box::new(
-                    crate::openhuman::integrations::QueritSearchTool::new_web_search_tool(
+                    crate::openhuman::tools::QueritSearchTool::new_web_search_tool(
                         search.querit.api_key.clone(),
                         None,
                         max_results,
                         timeout_secs,
                     ),
                 ));
-                tools.push(Box::new(
-                    crate::openhuman::integrations::QueritSearchTool::new(
-                        search.querit.api_key.clone(),
-                        None,
-                        max_results,
-                        timeout_secs,
-                    ),
-                ));
+                tools.push(Box::new(crate::openhuman::tools::QueritSearchTool::new(
+                    search.querit.api_key.clone(),
+                    None,
+                    max_results,
+                    timeout_secs,
+                )));
             }
         }
     }
@@ -552,14 +536,14 @@ pub fn all_tools_with_runtime(
     if let Some(client) = crate::openhuman::integrations::build_client(root_config) {
         tracing::debug!("[integrations] client built successfully");
         if root_config.integrations.apify.is_active() {
+            tools.push(Box::new(crate::openhuman::tools::ApifyRunActorTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::ApifyRunActorTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::ApifyGetRunStatusTool::new(Arc::clone(&client)),
             ));
             tools.push(Box::new(
-                crate::openhuman::integrations::ApifyGetRunStatusTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::ApifyGetRunResultsTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::ApifyGetRunResultsTool::new(Arc::clone(&client)),
             ));
             tracing::debug!("[integrations] registered apify tools");
         } else {
@@ -567,10 +551,10 @@ pub fn all_tools_with_runtime(
         }
         if root_config.integrations.google_places.is_active() {
             tools.push(Box::new(
-                crate::openhuman::integrations::GooglePlacesSearchTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::GooglePlacesSearchTool::new(Arc::clone(&client)),
             ));
             tools.push(Box::new(
-                crate::openhuman::integrations::GooglePlacesDetailsTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::GooglePlacesDetailsTool::new(Arc::clone(&client)),
             ));
             tracing::debug!("[integrations] registered google_places tools");
         } else {
@@ -586,43 +570,43 @@ pub fn all_tools_with_runtime(
             );
         }
         if root_config.integrations.tinyfish.is_active() {
+            tools.push(Box::new(crate::openhuman::tools::TinyFishSearchTool::new(
+                Arc::clone(&client),
+            )));
+            tools.push(Box::new(crate::openhuman::tools::TinyFishFetchTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::TinyFishSearchTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::TinyFishFetchTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::TinyFishAgentRunTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::TinyFishAgentRunTool::new(Arc::clone(&client)),
             ));
             tracing::debug!("[integrations] registered tinyfish tools");
         } else {
             tracing::debug!("[integrations] tinyfish disabled — skipping");
         }
         if root_config.integrations.stock_prices.is_active() {
+            tools.push(Box::new(crate::openhuman::tools::StockQuoteTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::StockQuoteTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::StockExchangeRateTool::new(Arc::clone(&client)),
             ));
+            tools.push(Box::new(crate::openhuman::tools::StockOptionsTool::new(
+                Arc::clone(&client),
+            )));
             tools.push(Box::new(
-                crate::openhuman::integrations::StockExchangeRateTool::new(Arc::clone(&client)),
+                crate::openhuman::tools::StockCryptoSeriesTool::new(Arc::clone(&client)),
             ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::StockOptionsTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::StockCryptoSeriesTool::new(Arc::clone(&client)),
-            ));
-            tools.push(Box::new(
-                crate::openhuman::integrations::StockCommodityTool::new(Arc::clone(&client)),
-            ));
+            tools.push(Box::new(crate::openhuman::tools::StockCommodityTool::new(
+                Arc::clone(&client),
+            )));
             tracing::debug!("[integrations] registered stock_prices tools");
         } else {
             tracing::debug!("[integrations] stock_prices disabled — skipping");
         }
         if root_config.integrations.twilio.is_active() {
-            tools.push(Box::new(
-                crate::openhuman::integrations::TwilioCallTool::new(Arc::clone(&client)),
-            ));
+            tools.push(Box::new(crate::openhuman::tools::TwilioCallTool::new(
+                Arc::clone(&client),
+            )));
             tracing::debug!("[integrations] registered twilio tools");
         } else {
             tracing::debug!("[integrations] twilio disabled — skipping");

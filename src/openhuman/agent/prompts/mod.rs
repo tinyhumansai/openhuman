@@ -6,7 +6,7 @@ pub use connected_identities::render_connected_identities;
 use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -734,6 +734,20 @@ impl PromptSection for UserReflectionsSection {
     }
 }
 
+/// Format a memory item's `updated_at` as an absolute UTC date label
+/// for prompt injection, e.g. `2026-05-25`.
+///
+/// Absolute (not relative "N days ago") on purpose: memory sections sit
+/// near the front of the KV-cache-stable system prompt, so a label that
+/// changes daily would bust the cached prefix for everything after it.
+/// An absolute date only changes when the underlying memory does. The
+/// model judges staleness by comparing this against the injected current
+/// date. Shared by [`UserMemorySection`] and the working-memory block in
+/// `agent::memory_loader`. (#2944)
+pub(crate) fn memory_date_label(updated_at: DateTime<Utc>) -> String {
+    updated_at.format("%Y-%m-%d").to_string()
+}
+
 impl PromptSection for UserMemorySection {
     fn name(&self) -> &str {
         "user_memory"
@@ -749,16 +763,34 @@ impl PromptSection for UserMemorySection {
             "Long-term memory distilled by the tree summarizer. \
              Each section is the root summary for a memory namespace, \
              representing everything we've learned about that domain over time. \
-             Treat this as durable context: the model has seen these facts before, \
-             they should not need to be re-discovered.\n\n",
+             Treat this as durable background context, but NOT as fresh, \
+             present-tense fact: each section header shows when that memory \
+             was last updated. Compare those dates against the `## Current \
+             Date & Time` section below before answering time-sensitive \
+             questions (today's briefing, daily summary, reminders, calendar, \
+             notifications, \"today/tomorrow/this week\"). If a summary predates \
+             the period the user is asking about, treat it as potentially \
+             stale — say so explicitly and never present older memory as \
+             today's update.\n\n",
         );
 
-        for (namespace, body) in &ctx.learned.tree_root_summaries {
+        for NamespaceSummary {
+            namespace,
+            body,
+            updated_at,
+        } in &ctx.learned.tree_root_summaries
+        {
             let trimmed = body.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let _ = writeln!(out, "### {namespace}\n");
+            // Absolute date (not "N days ago") keeps this front-of-prompt
+            // section byte-stable for KV-cache reuse — see `NamespaceSummary`.
+            let _ = writeln!(
+                out,
+                "### {namespace} (last updated {})\n",
+                memory_date_label(*updated_at)
+            );
             out.push_str(trimmed);
             out.push_str("\n\n");
         }

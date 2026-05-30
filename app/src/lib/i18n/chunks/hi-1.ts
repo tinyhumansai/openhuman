@@ -175,6 +175,9 @@ const hi1: TranslationMap = {
   'memory.noResults': 'कोई मेमोरी नहीं मिली',
   'memory.empty': 'अभी कोई मेमोरी नहीं है। बातचीत के दौरान मेमोरी अपने आप बनती है।',
   'memory.tab.memory': 'मेमोरी',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'सबकॉन्शस',
   'memory.tab.dreams': 'ड्रीम्स',
   'memory.tab.calls': 'कॉल्स',

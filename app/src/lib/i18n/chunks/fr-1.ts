@@ -183,6 +183,9 @@ const fr1: TranslationMap = {
   'memory.empty':
     "Aucun souvenir pour l'instant. Les souvenirs sont créés automatiquement au fil de tes interactions.",
   'memory.tab.memory': 'Mémoire',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Subconscient',
   'memory.tab.dreams': 'Rêves',
   'memory.tab.calls': 'Appels',

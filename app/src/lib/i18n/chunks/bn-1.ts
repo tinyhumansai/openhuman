@@ -177,6 +177,9 @@ const bn1: TranslationMap = {
   'memory.empty':
     'এখনো কোনো মেমোরি নেই। আপনি যত ইন্টারঅ্যাক্ট করবেন, মেমোরি স্বয়ংক্রিয়ভাবে তৈরি হবে।',
   'memory.tab.memory': 'মেমোরি',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'সাবকনশাস',
   'memory.tab.dreams': 'স্বপ্ন',
   'memory.tab.calls': 'কল',

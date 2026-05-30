@@ -14,7 +14,7 @@ pub mod types;
 pub mod decision_log;
 
 #[cfg(test)]
-mod integration_test;
+mod integration_tests;
 
 pub use engine::SubconsciousEngine;
 pub use reflection::{Reflection, ReflectionKind, MAX_REFLECTIONS_PER_TICK};
