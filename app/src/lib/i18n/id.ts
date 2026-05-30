@@ -4167,7 +4167,8 @@ const messages: TranslationMap = {
   'chat.artifact.show_less': 'Tampilkan lebih sedikit',
 
   // Chat — files panel (#3024)
-  'chat.files.chip.aria': '{count} file di chat ini',
+  'chat.files.chip.aria.one': '{count} file di chat ini',
+  'chat.files.chip.aria.other': '{count} file di chat ini',
   'chat.files.panel.aria': 'File di chat ini',
   'chat.files.panel.title': 'File ({count})',
   'chat.files.panel.empty': 'Belum ada file. Minta agen membuatnya.',

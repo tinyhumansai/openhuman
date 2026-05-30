@@ -3953,7 +3953,8 @@ const messages: TranslationMap = {
   'chat.artifact.show_less': '收起',
 
   // Chat — files panel (#3024)
-  'chat.files.chip.aria': '本聊天中有 {count} 个文件',
+  'chat.files.chip.aria.one': '本聊天中有 {count} 个文件',
+  'chat.files.chip.aria.other': '本聊天中有 {count} 个文件',
   'chat.files.panel.aria': '本聊天中的文件',
   'chat.files.panel.title': '文件 ({count})',
   'chat.files.panel.empty': '暂无文件。请让智能体生成一个。',

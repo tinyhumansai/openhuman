@@ -42,7 +42,9 @@ export default function ChatFilesChip({ threadId }: ChatFilesChipProps) {
         onClick={() => setOpen(prev => !prev)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        aria-label={t('chat.files.chip.aria').replace('{count}', String(count))}
+        aria-label={t(
+          count === 1 ? 'chat.files.chip.aria.one' : 'chat.files.chip.aria.other'
+        ).replace('{count}', String(count))}
         data-testid="chat-files-chip"
         className="h-7 inline-flex items-center gap-1.5 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:bg-stone-50 dark:hover:bg-neutral-800/60 text-xs font-medium text-stone-600 dark:text-neutral-300 transition-colors px-2">
         <svg

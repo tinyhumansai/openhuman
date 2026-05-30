@@ -4120,7 +4120,8 @@ const messages: TranslationMap = {
   'chat.artifact.show_less': '간단히 보기',
 
   // Chat — files panel (#3024)
-  'chat.files.chip.aria': '이 채팅의 파일 {count}개',
+  'chat.files.chip.aria.one': '이 채팅의 파일 {count}개',
+  'chat.files.chip.aria.other': '이 채팅의 파일 {count}개',
   'chat.files.panel.aria': '이 채팅의 파일',
   'chat.files.panel.title': '파일 ({count})',
   'chat.files.panel.empty': '아직 파일이 없습니다. 에이전트에 생성을 요청하세요.',

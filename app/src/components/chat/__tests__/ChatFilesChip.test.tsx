@@ -73,6 +73,36 @@ describe('ChatFilesChip', () => {
     expect(screen.getByTestId('chat-files-chip-count')).toHaveTextContent('3');
   });
 
+  it('renders the singular aria-label when exactly one ready artifact exists', () => {
+    const store = mkStore();
+    store.dispatch(upsertArtifactReadyForThread({ threadId: THREAD, ...readyArtifact(1) }));
+    render(
+      <Provider store={store}>
+        <ChatFilesChip threadId={THREAD} />
+      </Provider>
+    );
+    // Singular form — no trailing "s" on "file".
+    expect(screen.getByTestId('chat-files-chip')).toHaveAttribute(
+      'aria-label',
+      '1 file in this chat'
+    );
+  });
+
+  it('renders the plural aria-label when the count is greater than one', () => {
+    const store = mkStore();
+    store.dispatch(upsertArtifactReadyForThread({ threadId: THREAD, ...readyArtifact(1) }));
+    store.dispatch(upsertArtifactReadyForThread({ threadId: THREAD, ...readyArtifact(2) }));
+    render(
+      <Provider store={store}>
+        <ChatFilesChip threadId={THREAD} />
+      </Provider>
+    );
+    expect(screen.getByTestId('chat-files-chip')).toHaveAttribute(
+      'aria-label',
+      '2 files in this chat'
+    );
+  });
+
   it('opens the panel on chip click and exposes per-row download/delete actions', () => {
     const store = mkStore();
     store.dispatch(upsertArtifactReadyForThread({ threadId: THREAD, ...readyArtifact(1) }));

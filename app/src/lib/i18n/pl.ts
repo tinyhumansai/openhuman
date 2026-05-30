@@ -4223,7 +4223,8 @@ const messages: TranslationMap = {
   'chat.artifact.show_less': 'Pokaż mniej',
 
   // Chat — files panel (#3024)
-  'chat.files.chip.aria': '{count} plików w tej rozmowie',
+  'chat.files.chip.aria.one': '{count} plik w tej rozmowie',
+  'chat.files.chip.aria.other': '{count} plików w tej rozmowie',
   'chat.files.panel.aria': 'Pliki w tej rozmowie',
   'chat.files.panel.title': 'Pliki ({count})',
   'chat.files.panel.empty': 'Brak plików. Poproś agenta o wygenerowanie.',

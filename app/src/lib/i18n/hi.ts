@@ -4157,7 +4157,8 @@ const messages: TranslationMap = {
   'chat.artifact.show_less': 'कम दिखाएं',
 
   // Chat — files panel (#3024)
-  'chat.files.chip.aria': 'इस चैट में {count} फ़ाइलें',
+  'chat.files.chip.aria.one': 'इस चैट में {count} फ़ाइल',
+  'chat.files.chip.aria.other': 'इस चैट में {count} फ़ाइलें',
   'chat.files.panel.aria': 'इस चैट की फ़ाइलें',
   'chat.files.panel.title': 'फ़ाइलें ({count})',
   'chat.files.panel.empty': 'अभी कोई फ़ाइल नहीं। एजेंट से एक बनाने को कहें।',

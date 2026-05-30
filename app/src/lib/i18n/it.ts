@@ -4222,7 +4222,8 @@ const messages: TranslationMap = {
   'chat.artifact.show_less': 'Mostra meno',
 
   // Chat — files panel (#3024)
-  'chat.files.chip.aria': '{count} file in questa chat',
+  'chat.files.chip.aria.one': '{count} file in questa chat',
+  'chat.files.chip.aria.other': '{count} file in questa chat',
   'chat.files.panel.aria': 'File in questa chat',
   'chat.files.panel.title': 'File ({count})',
   'chat.files.panel.empty': 'Ancora nessun file. Chiedi all’agente di generarne uno.',
