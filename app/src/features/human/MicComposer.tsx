@@ -111,6 +111,12 @@ export interface MicComposerProps {
 type RecordingState = 'idle' | 'recording' | 'transcribing';
 
 /**
+ * Exported so tests can assert on the retry ceiling without duplicating the
+ * constant.
+ */
+export { STT_MAX_RETRIES };
+
+/**
  * Tap-to-toggle mic composer for the mascot page. Captures audio via the
  * browser's `MediaRecorder`, hands the resulting Blob to the factory-
  * dispatched STT RPC (`openhuman.voice_stt_dispatch`), then forwards the
@@ -133,6 +139,13 @@ export function MicComposer({
 }: MicComposerProps) {
   const { t } = useT();
   const [state, setState] = useState<RecordingState>('idle');
+  // Tracks how many STT retry attempts have been made for the current
+  // recording, so the label can change from "Transcribing…" to
+  // "Retrying… (1 of 2)" while the user waits.
+  const [retryCount, setRetryCount] = useState(0);
+  // Monotonic session counter — lets log lines across startRecording /
+  // stopRecording / finalizeRecording be correlated without a UUID.
+  const sessionIdRef = useRef(0);
   const [devices, setDevices] = useState<AudioInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [deviceMenuOpen, setDeviceMenuOpen] = useState(false);
@@ -413,9 +426,16 @@ export function MicComposer({
     recorderRef.current = recorder;
     recorder.start();
     setState('recording');
+    setRetryCount(0);
     startInFlightRef.current = false;
     startRecordingTimer();
-    composerLog('recording started mime=%s', recorder.mimeType || '(default)');
+    const sessionId = ++sessionIdRef.current;
+    composerLog(
+      '[session:%d] recording started mime=%s device=%s',
+      sessionId,
+      recorder.mimeType || '(default)',
+      selectedDeviceId || 'default'
+    );
   }
 
   function stopRecording() {
@@ -423,6 +443,7 @@ export function MicComposer({
     if (!recorder || recorder.state === 'inactive') return;
     clearRecordingTimer();
     setState('transcribing');
+    composerLog('[session:%d] recording stopped — transcribing', sessionIdRef.current);
     try {
       recorder.stop();
     } catch (err) {
@@ -495,8 +516,15 @@ export function MicComposer({
    * Retry a transcription call up to `STT_MAX_RETRIES` times with
    * exponential backoff for transient errors. Permanent errors (stale
    * sidecar, empty blob) are rethrown immediately.
+   *
+   * `onRetry` is called before each retry attempt with the 1-based attempt
+   * number so the UI can reflect progress (e.g. "Retrying… 1 of 2").
    */
-  async function transcribeWithRetry(blob: Blob, label: string): Promise<string> {
+  async function transcribeWithRetry(
+    blob: Blob,
+    label: string,
+    onRetry?: (attempt: number) => void
+  ): Promise<string> {
     const opts = language ? { language } : undefined;
     let lastErr: unknown;
     const throwIfDisposed = () => {
@@ -506,7 +534,8 @@ export function MicComposer({
       throwIfDisposed();
       try {
         composerLog(
-          'transcribe attempt=%s/%d bytes=%d mime=%s lang=%s',
+          '[session:%d] transcribe attempt=%s/%d bytes=%d mime=%s lang=%s',
+          sessionIdRef.current,
           label,
           attempt,
           blob.size,
@@ -515,28 +544,48 @@ export function MicComposer({
         );
         const transcript = await transcribeWithFactory(blob, opts);
         throwIfDisposed();
+        composerLog(
+          '[session:%d] transcribe ok path=%s attempt=%d',
+          sessionIdRef.current,
+          label,
+          attempt
+        );
         return transcript;
       } catch (err) {
         if (isTranscriptionCancelledError(err)) throw err;
         lastErr = err;
         const msg = err instanceof Error ? err.message : String(err);
         if (!isTransientError(err)) {
-          composerLog('transcribe permanent failure attempt=%s/%d: %s', label, attempt, msg);
+          composerLog(
+            '[session:%d] transcribe permanent failure path=%s attempt=%d: %s',
+            sessionIdRef.current,
+            label,
+            attempt,
+            msg
+          );
           throw err;
         }
         if (attempt < STT_MAX_RETRIES) {
           const delay = STT_RETRY_BASE_MS * Math.pow(2, attempt);
           composerLog(
-            'transcribe transient failure attempt=%s/%d, retrying in %dms: %s',
+            '[session:%d] transcribe transient failure path=%s attempt=%d retrying in %dms: %s',
+            sessionIdRef.current,
             label,
             attempt,
             delay,
             msg
           );
+          onRetry?.(attempt + 1);
           await new Promise(r => setTimeout(r, delay));
           throwIfDisposed();
         } else {
-          composerLog('transcribe exhausted retries attempt=%s/%d: %s', label, attempt, msg);
+          composerLog(
+            '[session:%d] transcribe exhausted retries path=%s attempt=%d: %s',
+            sessionIdRef.current,
+            label,
+            attempt,
+            msg
+          );
         }
       }
     }
@@ -553,26 +602,49 @@ export function MicComposer({
    */
   async function transcribeWithFallback(blob: Blob): Promise<string> {
     const startedAt = Date.now();
+    // Track the cumulative retry number across both codec paths so the label
+    // always shows "Retrying… N of M" relative to the overall attempt count.
+    let cumulativeRetries = 0;
+    const handleRetry = (attempt: number) => {
+      cumulativeRetries = attempt;
+      setRetryCount(cumulativeRetries);
+      composerLog('[session:%d] stt retry overall=%d', sessionIdRef.current, cumulativeRetries);
+    };
     try {
-      const text = await transcribeWithRetry(blob, 'native');
-      composerLog('transcribe ok path=native ms=%d', Math.round(Date.now() - startedAt));
+      const text = await transcribeWithRetry(blob, 'native', handleRetry);
+      composerLog(
+        '[session:%d] transcribe ok path=native ms=%d',
+        sessionIdRef.current,
+        Math.round(Date.now() - startedAt)
+      );
       return text;
     } catch (err) {
       if (isTranscriptionCancelledError(err)) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       // Permanent errors don't benefit from a WAV re-encode — bail early.
       if (!isTransientError(err)) throw err;
-      composerLog('transcribe native path exhausted — falling back to wav: %s', msg);
+      composerLog(
+        '[session:%d] transcribe native path exhausted — falling back to wav: %s',
+        sessionIdRef.current,
+        msg
+      );
       const reEncodeStart = Date.now();
       const wav = await encodeBlobToWav(blob);
       composerLog(
-        'wav fallback bytes=%d encode_ms=%d',
+        '[session:%d] wav fallback bytes=%d encode_ms=%d',
+        sessionIdRef.current,
         wav.size,
         Math.round(Date.now() - reEncodeStart)
       );
-      const text = await transcribeWithRetry(wav, 'wav');
+      // Snapshot before the WAV path so the WAV callback doesn't compound
+      // against a value that handleRetry already mutated on native retries.
+      const nativeRetries = cumulativeRetries;
+      const text = await transcribeWithRetry(wav, 'wav', attempt => {
+        handleRetry(nativeRetries + attempt);
+      });
       composerLog(
-        'transcribe ok path=wav-fallback total_ms=%d',
+        '[session:%d] transcribe ok path=wav-fallback total_ms=%d',
+        sessionIdRef.current,
         Math.round(Date.now() - startedAt)
       );
       return text;
@@ -584,7 +656,11 @@ export function MicComposer({
   const buttonDisabled = disabled || isBusy;
 
   const label = isBusy
-    ? t('mic.transcribing')
+    ? retryCount > 0
+      ? t('mic.retryingTranscription')
+          .replace('{attempt}', String(retryCount))
+          .replace('{max}', String(STT_MAX_RETRIES * 2))
+      : t('mic.transcribing')
     : isRecording
       ? remainingSecs != null && remainingSecs <= 10
         ? t('mic.tapToSendCountdown').replace('{seconds}', String(remainingSecs))

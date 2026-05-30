@@ -22,10 +22,9 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::ingest::ingest_issue_into_memory_tree;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    persist_single_item, SyncState,
-};
+use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
     merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask, ProviderContext,
     ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
@@ -202,6 +201,14 @@ impl ComposioProvider for GitHubProvider {
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut newest_updated: Option<String> = None;
+        // Track whether any per-item ingest failed this pass. If so, we hold
+        // the persistent cursor — `updated:>{cursor}` on the next search
+        // would otherwise exclude the failed item, and because the new
+        // memory-tree pipeline (#2885) is delete-first, an *edited* issue
+        // that failed to re-ingest is left with neither old nor new chunks
+        // until its next edit. Already-synced items are skipped cheaply via
+        // `is_synced` on the re-fetch, so the cost of holding is minimal.
+        let mut had_ingest_failures = false;
 
         'pages: for page_num in 1..=MAX_PAGES {
             if state.budget_exhausted() {
@@ -302,28 +309,34 @@ impl ComposioProvider for GitHubProvider {
 
                 let title_text = sync::extract_issue_title(issue)
                     .unwrap_or_else(|| format!("GitHub issue {issue_id}"));
-                let doc_id = format!("composio-github-issue-{issue_id}");
 
-                match persist_single_item(
-                    &memory,
-                    "github",
-                    &doc_id,
+                // Route into the memory-tree pipeline (#2885). The prior
+                // implementation called `persist_single_item` →
+                // `MemoryClient::store_skill_sync` → UnifiedMemory
+                // `memory_docs`, which the modern retrieval surfaces
+                // (`memory.search`, `tree.read_chunk`, `tree.browse`,
+                // summary trees, MCP tools) don't read from — the data
+                // was invisible to every agent recall path.
+                match ingest_issue_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &issue_id,
                     &title_text,
+                    updated.as_deref(),
                     issue,
-                    "github",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_chunks_written) => {
                         state.mark_synced(&sync_key);
                         total_persisted += 1;
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             issue_id = %issue_id,
                             error = %e,
-                            "[composio:github] failed to persist issue (continuing)"
+                            "[composio:github] failed to ingest issue into memory_tree (continuing)"
                         );
                     }
                 }
@@ -342,8 +355,22 @@ impl ComposioProvider for GitHubProvider {
         }
 
         // ── Step 5: advance cursor and save state ────────────────────
-        if let Some(new_cursor) = newest_updated {
-            state.advance_cursor(&new_cursor);
+        //
+        // Hold the cursor when any item failed to ingest this pass. See the
+        // `had_ingest_failures` declaration above for why this matters under
+        // the delete-first memory-tree pipeline (#2885). `set_last_sync_at_ms`
+        // still advances — that's just a heartbeat, not a fetch-window
+        // boundary, so it's safe to record that we did attempt a sync.
+        if !had_ingest_failures {
+            if let Some(new_cursor) = newest_updated {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:github] holding cursor — ingest failures this pass; next sync will \
+                 re-fetch the failed range"
+            );
         }
         state.set_last_sync_at_ms(sync::now_ms());
         state.save(&memory).await?;

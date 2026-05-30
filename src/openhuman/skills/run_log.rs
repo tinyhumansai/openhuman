@@ -168,6 +168,8 @@ pub fn format_event(ev: &AgentProgress) -> Option<String> {
         | AgentProgress::ToolCallArgsDelta { .. }
         | AgentProgress::TurnCostUpdated { .. }
         | AgentProgress::TaskBoardUpdated { .. }
+        | AgentProgress::SubagentTextDelta { .. }
+        | AgentProgress::SubagentThinkingDelta { .. }
         | AgentProgress::SubagentIterationStarted { .. } => return None,
     };
     Some(format!(
