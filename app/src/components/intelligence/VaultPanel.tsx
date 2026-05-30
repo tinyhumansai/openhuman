@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
+import { openUrl, revealPath } from '../../utils/openUrl';
 import {
   type CoreVault,
   type CoreVaultSyncState,
@@ -240,6 +241,26 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
     [onToast, reload, t]
   );
 
+  const handleOpenVault = useCallback(
+    async (rootPath: string) => {
+      try {
+        await openUrl(`obsidian://open?path=${encodeURIComponent(rootPath)}`);
+        onToast?.({ type: 'info', title: t('vault.openSuccess'), message: rootPath });
+        return;
+      } catch (err) {
+        console.error('[ui-flow][vault-panel] obsidian deep link failed', err);
+      }
+      try {
+        await revealPath(rootPath);
+        onToast?.({ type: 'info', title: t('vault.openFallback'), message: rootPath });
+      } catch (err) {
+        console.error('[ui-flow][vault-panel] reveal vault failed', err);
+        onToast?.({ type: 'error', title: t('vault.openError'), message: String(err) });
+      }
+    },
+    [onToast, t]
+  );
+
   return (
     <div
       className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm"
@@ -360,6 +381,16 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleOpenVault(v.root_path)}
+                    disabled={state === 'sync' || state === 'remove'}
+                    className="rounded-md border border-stone-300 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
+                               font-semibold text-stone-700 dark:text-neutral-200 shadow-sm transition-colors
+                               hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    data-testid="vault-open">
+                    {t('vault.openButton')}
+                  </button>
                   <button
                     type="button"
                     onClick={() => void handleSync(v)}

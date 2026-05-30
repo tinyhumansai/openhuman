@@ -10,6 +10,7 @@ import AgentEditorPage from '../components/settings/panels/AgentEditorPage';
 import AgentsPanel from '../components/settings/panels/AgentsPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
+import ApprovalHistoryPanel from '../components/settings/panels/ApprovalHistoryPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import AutonomyPanel from '../components/settings/panels/AutonomyPanel';
@@ -512,6 +513,7 @@ const Settings = () => {
         <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
+        <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
         <Route path="agents" element={wrapSettingsPage(<AgentsPanel />)} />
         <Route path="agents/new" element={wrapSettingsPage(<AgentEditorPage />)} />
         <Route path="agents/edit/:id" element={wrapSettingsPage(<AgentEditorPage />)} />

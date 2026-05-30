@@ -309,6 +309,12 @@ pub enum DomainEvent {
     /// Agent attempted a tool call that produces an external side
     /// effect; awaiting user approval. Published by `ApprovalGate`
     /// before parking the tool-call future. Issue #1339.
+    ///
+    /// Note: this variant intentionally does not carry a `session_id`.
+    /// Session provenance is internal to `ApprovalGate`; downstream
+    /// surfaces (frontend approval card, audit log readers, web channel
+    /// bridge) only need the request correlation id plus optional chat
+    /// thread/client routing.
     ApprovalRequested {
         /// Unique id used to correlate the decision back to the
         /// parked future.
@@ -320,9 +326,6 @@ pub enum DomainEvent {
         action_summary: String,
         /// Redacted JSON arguments — also stripped of raw user content.
         args_redacted: serde_json::Value,
-        /// Session id binding the request to the current core launch
-        /// so stale approvals cannot be replayed after restart.
-        session_id: String,
         /// Chat thread the gated call belongs to, when the turn originated
         /// from a chat channel — lets the web channel route a `yes`/`no`
         /// reply back to this request. `None` for non-chat callers.

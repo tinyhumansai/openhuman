@@ -469,6 +469,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 13.1.2 | Linked Accounts    | WD    | `auth-access-control.spec.ts`                                        | 🟡     | UI surface unasserted |
 | 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` (this PR) | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
 | 13.1.4 | Wallet Balances Panel | VU | `app/src/components/settings/panels/__tests__/WalletBalancesPanel.test.tsx`, `app/src/services/walletApi.test.ts` | ✅ | Loading/error/empty/loaded states; Retry + Refresh re-invocation; chain badges; truncated address; providerStatus chip |
+| 13.1.5 | Approval History | VU | `app/src/components/settings/panels/__tests__/ApprovalHistoryPanel.test.tsx`, `app/src/services/api/approvalApi.test.ts` (this PR) | ✅ | Was ❌ — read-only audit surface over `approval_list_recent_decisions`; covers loaded/empty/error/refresh states, per-decision badge, and the bare-array vs `{result,logs}` envelope normalization |
 
 ### 13.2 Automation & Channels
 

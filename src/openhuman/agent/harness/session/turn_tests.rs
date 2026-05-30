@@ -112,6 +112,27 @@ impl Tool for EchoTool {
     }
 }
 
+struct CronAddProbeTool;
+
+#[async_trait]
+impl Tool for CronAddProbeTool {
+    fn name(&self) -> &str {
+        "cron_add"
+    }
+
+    fn description(&self) -> &str {
+        "cron add probe"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        Ok(ToolResult::success(format!("cron_add_args={args}")))
+    }
+}
+
 struct CountingTool {
     calls: Arc<AtomicUsize>,
 }
@@ -604,6 +625,40 @@ async fn execute_tool_call_reports_unknown_tool() {
     assert!(result.output.contains("Unknown tool: missing"));
     assert_eq!(record.name, "missing");
     assert!(!record.success);
+}
+
+#[tokio::test]
+async fn execute_tool_call_rewrites_legacy_run_skill_for_builtin_cron_tools() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(CronAddProbeTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+    let call = ParsedToolCall {
+        name: "run_skill".into(),
+        arguments: serde_json::json!({
+            "skill_id": "cron_add",
+            "inputs": {
+              "name": "water-reminder",
+              "schedule": { "kind": "every", "every_ms": 60000 },
+              "job_type": "agent",
+              "prompt": "remind me to drink water"
+            }
+        }),
+        tool_call_id: Some("tc-run-skill-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(result.success, "{}", result.output);
+    assert_eq!(result.name, "cron_add");
+    assert_eq!(record.name, "cron_add");
+    assert!(result.output.contains("\"every_ms\":60000"));
 }
 
 #[tokio::test]

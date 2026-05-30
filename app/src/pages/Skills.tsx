@@ -33,7 +33,7 @@ import { useAutocompleteSkillStatus } from '../features/autocomplete/useAutocomp
 import { useScreenIntelligenceSkillStatus } from '../features/screen-intelligence/useScreenIntelligenceSkillStatus';
 import { useVoiceSkillStatus } from '../features/voice/useVoiceSkillStatus';
 import { useChannelDefinitions } from '../hooks/useChannelDefinitions';
-import { useComposioIntegrations } from '../lib/composio/hooks';
+import { useAgentReadyComposioToolkits, useComposioIntegrations } from '../lib/composio/hooks';
 import { canonicalizeComposioToolkitSlug } from '../lib/composio/toolkitSlug';
 import { type ComposioConnection, deriveComposioState } from '../lib/composio/types';
 import { getCoreStateSnapshot } from '../lib/coreState/store';
@@ -132,6 +132,7 @@ interface ComposioConnectorTileProps {
   meta: ComposioToolkitMeta;
   connection: ComposioConnection | undefined;
   hasComposioError: boolean;
+  agentUnsupported: boolean;
   testId?: string;
   onOpen: () => void;
   onRetryGlobal: () => void;
@@ -141,15 +142,20 @@ function ComposioConnectorTile({
   meta,
   connection,
   hasComposioError,
+  agentUnsupported,
   testId,
   onOpen,
   onRetryGlobal,
 }: ComposioConnectorTileProps) {
   const { t } = useT();
-  const state = hasComposioError ? 'error' : deriveComposioState(connection);
+  const rawState = deriveComposioState(connection);
+  const state = hasComposioError ? 'error' : rawState;
+  const isPreview = !hasComposioError && agentUnsupported && rawState === 'connected';
   const statusLabel = hasComposioError
     ? t('composio.statusUnavailable')
-    : composioStatusLabel(connection, t);
+    : isPreview
+      ? t('composio.previewBadge')
+      : composioStatusLabel(connection, t);
   const ctaLabel = hasComposioError
     ? t('common.retry')
     : state === 'connected'
@@ -162,7 +168,7 @@ function ComposioConnectorTile({
             ? t('common.retry')
             : t('skills.connect');
 
-  const isConnected = state === 'connected';
+  const isConnected = state === 'connected' && !isPreview;
   const isPending = state === 'pending';
   const isExpired = state === 'expired';
   const isError = state === 'error' || hasComposioError;
@@ -180,17 +186,27 @@ function ComposioConnectorTile({
       type="button"
       data-testid={testId}
       onClick={handleClick}
-      title={`${meta.name} — ${meta.description}`}
+      title={`${meta.name} — ${isPreview ? t('composio.previewTooltip') : meta.description}`}
       aria-label={`${meta.name}, ${statusLabel}. ${ctaLabel}.`}
-      className={`group flex h-full w-full flex-col justify-center items-center rounded-2xl border p-3 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
+      className={`group relative flex h-full w-full flex-col justify-center items-center rounded-2xl border p-3 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 ${
         isConnected
           ? 'border-sage-300 bg-sage-50/80 shadow-[0_0_0_1px_rgba(34,197,94,0.12)] hover:bg-sage-50 dark:border-sage-500/30 dark:bg-sage-500/10 dark:hover:bg-sage-500/15'
-          : isPending
-            ? 'border-amber-200 bg-amber-50/40 hover:bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
-            : isExpired || isError
-              ? 'border-coral-200 bg-coral-50/30 hover:bg-coral-50/50 dark:border-coral-500/30 dark:bg-coral-500/10 dark:hover:bg-coral-500/15'
-              : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800/60'
+          : isPreview
+            ? 'border-amber-200 bg-amber-50/60 shadow-[0_0_0_1px_rgba(245,158,11,0.12)] hover:bg-amber-50/80 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
+            : isPending
+              ? 'border-amber-200 bg-amber-50/40 hover:bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/10 dark:hover:bg-amber-500/15'
+              : isExpired || isError
+                ? 'border-coral-200 bg-coral-50/30 hover:bg-coral-50/50 dark:border-coral-500/30 dark:bg-coral-500/10 dark:hover:bg-coral-500/15'
+                : 'border-stone-200 bg-white hover:bg-stone-50 dark:border-neutral-800 dark:bg-neutral-900 dark:hover:bg-neutral-800/60'
       }`}>
+      {isPreview && (
+        <span
+          data-testid={`composio-preview-badge-${meta.slug}`}
+          className="absolute right-1.5 top-1.5 max-w-[4.5rem] truncate rounded-full border border-amber-200 bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase leading-none text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/15 dark:text-amber-200"
+          title={t('composio.previewTooltip')}>
+          {t('composio.previewBadge')}
+        </span>
+      )}
       <div className="relative flex h-12 w-12 flex-shrink-0 items-center justify-center text-stone-700 dark:text-neutral-200 [&_img]:max-h-10 [&_img]:max-w-10 [&_svg]:h-8 [&_svg]:w-8">
         {meta.icon}
       </div>
@@ -202,7 +218,9 @@ function ComposioConnectorTile({
           className={`line-clamp-1 text-[10px] font-medium ${
             hasComposioError
               ? 'text-amber-700 dark:text-amber-300'
-              : composioStatusColor(connection)
+              : isPreview
+                ? 'text-amber-700 dark:text-amber-300'
+                : composioStatusColor(connection)
           }`}>
           {statusLabel}
         </span>
@@ -400,6 +418,12 @@ export default function Skills() {
     error: composioError,
     refresh: refreshComposio,
   } = useComposioIntegrations();
+  const {
+    agentReady: agentReadyComposioToolkits,
+    loading: agentReadyComposioLoading,
+    error: agentReadyComposioError,
+  } = useAgentReadyComposioToolkits();
+  const agentReadinessKnown = !agentReadyComposioLoading && agentReadyComposioError === null;
 
   const [channelModalDef, setChannelModalDef] = useState<ChannelDefinition | null>(null);
   const [composioModalToolkit, setComposioModalToolkit] = useState<ComposioToolkitMeta | null>(
@@ -1074,6 +1098,11 @@ export default function Skills() {
                                 meta={meta}
                                 connection={connection}
                                 hasComposioError={Boolean(composioError)}
+                                agentUnsupported={
+                                  agentReadinessKnown &&
+                                  deriveComposioState(connection) === 'connected' &&
+                                  !agentReadyComposioToolkits.has(meta.slug)
+                                }
                                 testId={`skill-install-composio-${meta.slug}`}
                                 onOpen={() => setComposioModalToolkit(meta)}
                                 onRetryGlobal={() => void refreshComposio()}
@@ -1133,6 +1162,9 @@ export default function Skills() {
         <ComposioConnectModal
           toolkit={composioModalToolkit}
           connection={composioConnectionByToolkit.get(composioModalToolkit.slug)}
+          agentUnsupported={
+            agentReadinessKnown && !agentReadyComposioToolkits.has(composioModalToolkit.slug)
+          }
           onChanged={() => {
             void refreshComposio();
             void dismissPendingEscalationIfResolved(`composio:${composioModalToolkit.slug}`);
