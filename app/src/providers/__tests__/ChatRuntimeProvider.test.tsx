@@ -125,6 +125,114 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(timeline[0]?.status).toBe('running');
     });
 
+    it('collapses a spawn_subagent tool-call row into the subagent row', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        // Parent invokes the delegation tool — creates a "spawn_subagent" row.
+        listeners.onToolCall?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'spawn_subagent',
+          skill_id: 'orchestration',
+          args: {},
+          tool_call_id: 'call-spawn',
+        });
+        // The delegation prompt streams in as the tool's args JSON.
+        listeners.onToolArgsDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_call_id: 'call-spawn',
+          tool_name: 'spawn_subagent',
+          delta: '{"prompt":"Research Q3 revenue."}',
+        });
+        // The child spawns — should REPLACE the tool-call row, not add a second.
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          subagent: { mode: 'typed' },
+        });
+      });
+
+      const timeline = store.getState().chatRuntime.toolTimelineByThread['t1'] ?? [];
+      expect(timeline).toHaveLength(1);
+      expect(timeline[0]?.name).toBe('subagent:researcher');
+      // The parent's delegation prompt is carried onto the subagent so the
+      // drawer can open the conversation with it.
+      expect(timeline[0]?.subagent?.prompt).toContain('Research Q3 revenue');
+    });
+
+    it('appends streamed subagent text & thinking deltas to the subagent transcript', () => {
+      const listeners = renderProvider();
+
+      act(() => {
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          subagent: { mode: 'typed' },
+        });
+        listeners.onSubagentThinkingDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          delta: 'let me think',
+          subagent: { task_id: 'sub-1', agent_id: 'researcher', child_iteration: 1 },
+        });
+        listeners.onSubagentTextDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          delta: 'the answer',
+          subagent: { task_id: 'sub-1', agent_id: 'researcher', child_iteration: 1 },
+        });
+      });
+
+      const row = (store.getState().chatRuntime.toolTimelineByThread['t1'] ?? []).find(
+        e => e.subagent?.taskId === 'sub-1'
+      );
+      expect(row?.subagent?.transcript).toEqual([
+        { kind: 'thinking', iteration: 1, text: 'let me think' },
+        { kind: 'text', iteration: 1, text: 'the answer' },
+      ]);
+    });
+
+    it('ignores subagent deltas missing task/agent/delta', () => {
+      const listeners = renderProvider();
+      act(() => {
+        listeners.onSubagentSpawned?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          tool_name: 'researcher',
+          skill_id: 'sub-1',
+          message: 'spawned',
+          subagent: { mode: 'typed' },
+        });
+        // No agent_id → dropped.
+        listeners.onSubagentTextDelta?.({
+          thread_id: 't1',
+          request_id: 'r1',
+          round: 0,
+          delta: 'x',
+          subagent: { task_id: 'sub-1' },
+        });
+      });
+      const row = (store.getState().chatRuntime.toolTimelineByThread['t1'] ?? []).find(
+        e => e.subagent?.taskId === 'sub-1'
+      );
+      expect(row?.subagent?.transcript).toEqual([]);
+    });
+
     it('drops duplicate chat_done events with the same thread/request', async () => {
       const listeners = renderProvider();
 

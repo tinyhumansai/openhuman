@@ -174,7 +174,7 @@ fn append_subagent_role_contract_is_idempotent() {
 
 use crate::openhuman::agent::harness::fork_context::with_parent_context;
 use crate::openhuman::inference::provider::{
-    ChatRequest as PChatRequest, ChatResponse, Provider, ToolCall,
+    ChatRequest as PChatRequest, ChatResponse, Provider, ProviderDelta, ToolCall,
 };
 use parking_lot::Mutex;
 use std::sync::Arc;
@@ -225,16 +225,45 @@ impl Provider for ScriptedProvider {
             tool_count: request.tools.map_or(0, |tools| tools.len()),
             model: model.to_string(),
         });
-        let mut q = self.responses.lock();
-        if q.is_empty() {
-            return Ok(ChatResponse {
-                text: Some(String::new()),
-                tool_calls: vec![],
-                usage: None,
-                reasoning_content: None,
-            });
+        let response = {
+            let mut q = self.responses.lock();
+            if q.is_empty() {
+                ChatResponse {
+                    text: Some(String::new()),
+                    tool_calls: vec![],
+                    usage: None,
+                    reasoning_content: None,
+                }
+            } else {
+                q.remove(0)
+            }
+        };
+        // Mirror a real streaming provider: when the caller attached a
+        // `stream` sink, forward this response's reasoning then visible
+        // text as `ProviderDelta`s before returning the aggregate. Lets
+        // the subagent runner's per-iteration sink exercise the
+        // `SubagentThinkingDelta` / `SubagentTextDelta` forwarding path.
+        if let Some(sink) = request.stream {
+            if let Some(reasoning) = response.reasoning_content.as_deref() {
+                if !reasoning.is_empty() {
+                    let _ = sink
+                        .send(ProviderDelta::ThinkingDelta {
+                            delta: reasoning.to_string(),
+                        })
+                        .await;
+                }
+            }
+            if let Some(text) = response.text.as_deref() {
+                if !text.is_empty() {
+                    let _ = sink
+                        .send(ProviderDelta::TextDelta {
+                            delta: text.to_string(),
+                        })
+                        .await;
+                }
+            }
         }
-        Ok(q.remove(0))
+        Ok(response)
     }
 
     fn supports_native_tools(&self) -> bool {
@@ -248,6 +277,15 @@ fn text_response(text: &str) -> ChatResponse {
         tool_calls: vec![],
         usage: None,
         reasoning_content: None,
+    }
+}
+
+fn text_response_with_reasoning(text: &str, reasoning: &str) -> ChatResponse {
+    ChatResponse {
+        text: Some(text.into()),
+        tool_calls: vec![],
+        usage: None,
+        reasoning_content: Some(reasoning.into()),
     }
 }
 
@@ -857,6 +895,91 @@ async fn typed_mode_emits_child_progress_events_when_sink_attached() {
     assert_eq!(tool_done[0].0, tool_starts[0].0, "matching call_id pair");
     assert!(tool_done[0].1, "stub tool returns ok");
     assert_eq!(tool_done[0].2, 1);
+}
+
+/// A sub-agent's streamed visible text and reasoning are forwarded to the
+/// parent's progress sink as `SubagentTextDelta` / `SubagentThinkingDelta`
+/// events tagged with the child's `agent_id` / `task_id`, in order, and
+/// the concatenated text deltas reconstruct the final assistant text. The
+/// web-channel bridge turns these into `subagent_text_delta` /
+/// `subagent_thinking_delta` socket events the parent thread renders live.
+#[tokio::test]
+async fn typed_mode_forwards_child_text_and_thinking_deltas() {
+    use crate::openhuman::agent::progress::AgentProgress;
+
+    let provider = ScriptedProvider::new(vec![text_response_with_reasoning(
+        "the final answer",
+        "let me reason about this",
+    )]);
+    let mut parent = make_parent(provider, vec![]);
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<AgentProgress>(64);
+    parent.on_progress = Some(tx);
+
+    let def = make_def_named_tools(&[]);
+    let outcome = with_parent_context(parent, async {
+        run_subagent(&def, "answer me", SubagentRunOptions::default()).await
+    })
+    .await
+    .expect("runner should succeed");
+    assert_eq!(outcome.output, "the final answer");
+
+    let mut events = Vec::new();
+    while let Some(ev) = rx.recv().await {
+        events.push(ev);
+    }
+
+    let thinking: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentProgress::SubagentThinkingDelta {
+                agent_id,
+                task_id,
+                delta,
+                iteration,
+            } => Some((agent_id.clone(), task_id.clone(), delta.clone(), *iteration)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(thinking.len(), 1, "one thinking delta forwarded");
+    assert_eq!(thinking[0].2, "let me reason about this");
+    assert_eq!(thinking[0].3, 1, "tagged with the child iteration");
+    assert!(!thinking[0].1.is_empty(), "carries the child task id");
+
+    let text: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            AgentProgress::SubagentTextDelta {
+                agent_id,
+                task_id,
+                delta,
+                iteration,
+            } => Some((agent_id.clone(), task_id.clone(), delta.clone(), *iteration)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(text.len(), 1, "one text delta forwarded");
+    assert_eq!(text[0].2, "the final answer");
+    assert_eq!(text[0].3, 1);
+    // Same child identity on both delta kinds so the UI attributes them to
+    // one subagent row.
+    assert_eq!(text[0].0, thinking[0].0, "same agent_id");
+    assert_eq!(text[0].1, thinking[0].1, "same task_id");
+
+    // Ordering: the thinking delta precedes the text delta within the
+    // iteration, matching the provider's emission order.
+    let thinking_pos = events
+        .iter()
+        .position(|e| matches!(e, AgentProgress::SubagentThinkingDelta { .. }))
+        .unwrap();
+    let text_pos = events
+        .iter()
+        .position(|e| matches!(e, AgentProgress::SubagentTextDelta { .. }))
+        .unwrap();
+    assert!(
+        thinking_pos < text_pos,
+        "thinking streams before visible text"
+    );
 }
 
 /// Runs without an attached sink must remain backwards compatible — the

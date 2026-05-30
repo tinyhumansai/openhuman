@@ -13,6 +13,7 @@ pub mod compatible_stream;
 pub mod compatible_types;
 pub mod config_rejection;
 pub mod factory;
+mod openai_codex;
 pub mod openhuman_backend;
 pub mod ops;
 pub mod reliable;

@@ -6,6 +6,8 @@
 mod compatible_dump;
 #[path = "compatible_parse.rs"]
 mod compatible_parse;
+#[path = "compatible_request.rs"]
+mod compatible_request;
 #[path = "compatible_stream.rs"]
 mod compatible_stream;
 #[path = "compatible_types.rs"]
@@ -25,10 +27,6 @@ use crate::openhuman::inference::provider::traits::{
 };
 use async_trait::async_trait;
 use futures_util::{stream, StreamExt};
-use reqwest::{
-    header::{HeaderMap, HeaderValue, USER_AGENT},
-    Client,
-};
 
 use compatible_dump::{dump_prompt_if_enabled, dump_response_if_enabled, reserve_dump_seq};
 use compatible_parse::{
@@ -53,7 +51,12 @@ pub struct OpenAiCompatibleProvider {
     /// When false, do not fall back to /v1/responses on chat completions 404.
     /// GLM/Zhipu does not support the responses API.
     supports_responses_fallback: bool,
+    /// When true, call the Responses API directly instead of first trying
+    /// chat completions. Required for ChatGPT-account Codex OAuth.
+    responses_api_primary: bool,
     user_agent: Option<String>,
+    extra_headers: Vec<(String, String)>,
+    extra_query_params: Vec<(String, String)>,
     /// When true, collect all `system` messages and prepend their content
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
@@ -184,7 +187,10 @@ impl OpenAiCompatibleProvider {
             credential: credential.map(ToString::to_string),
             auth_header: auth_style,
             supports_responses_fallback,
+            responses_api_primary: false,
             user_agent: user_agent.map(ToString::to_string),
+            extra_headers: Vec::new(),
+            extra_query_params: Vec::new(),
             merge_system_into_user,
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
@@ -207,232 +213,41 @@ impl OpenAiCompatibleProvider {
         self
     }
 
-    /// Resolve the effective temperature for `model`. Returns `None` when the
-    /// model matches a pattern in `temperature_unsupported_models` (causing the
-    /// field to be omitted from the serialised request). Otherwise yields the
-    /// per-workload override if one was configured, else the caller's value.
-    fn effective_temperature(&self, model: &str, temperature: f64) -> Option<f64> {
-        if self
-            .temperature_unsupported_models
-            .iter()
-            .any(|pat| super::temperature::glob_match(pat, model))
-        {
-            tracing::debug!(
-                "[provider:{}] model='{}' matched temperature_unsupported_models — omitting temperature",
-                self.name,
-                model
-            );
-            None
-        } else {
-            Some(self.temperature_override.unwrap_or(temperature))
+    pub fn with_extra_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        let name = name.into();
+        let value = value.into();
+        if !name.trim().is_empty() && !value.trim().is_empty() {
+            self.extra_headers
+                .push((name.trim().to_string(), value.trim().to_string()));
         }
+        self
     }
 
-    /// Read the ambient `thread_id` only when this provider has been
-    /// opted in via [`with_openhuman_thread_id`]. Returns `None` for
-    /// every third-party provider so the field is omitted by
-    /// `skip_serializing_if`.
-    fn outbound_thread_id(&self) -> Option<String> {
-        if self.emit_openhuman_thread_id {
-            super::thread_context::current_thread_id()
-        } else {
-            None
+    pub fn with_user_agent(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !value.trim().is_empty() {
+            self.user_agent = Some(value.trim().to_string());
         }
+        self
     }
 
-    /// Collect all `system` role messages, concatenate their content,
-    /// and prepend to the first `user` message. Drop all system messages.
-    /// Used for providers (e.g. MiniMax) that reject `role: system`.
-    fn flatten_system_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
-        let system_content: String = messages
-            .iter()
-            .filter(|m| m.role == "system")
-            .map(|m| m.content.as_str())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        if system_content.is_empty() {
-            return messages.to_vec();
-        }
-
-        let mut result: Vec<ChatMessage> = messages
-            .iter()
-            .filter(|m| m.role != "system")
-            .cloned()
-            .collect();
-
-        if let Some(first_user) = result.iter_mut().find(|m| m.role == "user") {
-            first_user.content = format!("{system_content}\n\n{}", first_user.content);
-        } else {
-            // No user message found: insert a synthetic user message with system content
-            result.insert(0, ChatMessage::user(&system_content));
-        }
-
-        result
+    pub fn with_responses_api_primary(mut self) -> Self {
+        self.responses_api_primary = true;
+        self
     }
 
-    fn http_client(&self) -> Client {
-        if let Some(ua) = self.user_agent.as_deref() {
-            let mut headers = HeaderMap::new();
-            if let Ok(value) = HeaderValue::from_str(ua) {
-                headers.insert(USER_AGENT, value);
-            }
-
-            // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
-            let builder = crate::openhuman::tls::tls_client_builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .default_headers(headers);
-            let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
-                builder,
-                "provider.compatible",
-            );
-
-            return builder.build().unwrap_or_else(|error| {
-                tracing::warn!("Failed to build proxied timeout client with user-agent: {error}");
-                crate::openhuman::tls::tls_client_builder()
-                    .build()
-                    .unwrap_or_default()
-            });
+    pub fn with_extra_query_param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        let value = value.into();
+        if !name.trim().is_empty() && !value.trim().is_empty() {
+            self.extra_query_params
+                .push((name.trim().to_string(), value.trim().to_string()));
         }
-
-        // Platform-appropriate TLS backend — see [`crate::openhuman::tls`].
-        let builder = crate::openhuman::tls::tls_client_builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .connect_timeout(std::time::Duration::from_secs(10));
-        let builder = crate::openhuman::config::apply_runtime_proxy_to_builder(
-            builder,
-            "provider.compatible",
-        );
-        builder.build().unwrap_or_else(|error| {
-            tracing::warn!("Failed to build proxied timeout client: {error}");
-            crate::openhuman::tls::tls_client_builder()
-                .build()
-                .unwrap_or_default()
-        })
-    }
-
-    /// Build the full URL for chat completions, detecting if base_url already includes the path.
-    /// This allows custom providers with non-standard endpoints (e.g., VolcEngine ARK uses
-    /// `/api/coding/v3/chat/completions` instead of `/v1/chat/completions`).
-    fn chat_completions_url(&self) -> String {
-        let has_full_endpoint = reqwest::Url::parse(&self.base_url)
-            .map(|url| {
-                url.path()
-                    .trim_end_matches('/')
-                    .ends_with("/chat/completions")
-            })
-            .unwrap_or_else(|_| {
-                self.base_url
-                    .trim_end_matches('/')
-                    .ends_with("/chat/completions")
-            });
-
-        let url = if has_full_endpoint {
-            self.base_url.clone()
-        } else {
-            format!("{}/chat/completions", self.base_url)
-        };
-        log::info!(
-            "[provider:{}] outbound chat/completions -> {}",
-            self.name,
-            url
-        );
-        url
-    }
-
-    fn path_ends_with(&self, suffix: &str) -> bool {
-        if let Ok(url) = reqwest::Url::parse(&self.base_url) {
-            return url.path().trim_end_matches('/').ends_with(suffix);
-        }
-
-        self.base_url.trim_end_matches('/').ends_with(suffix)
-    }
-
-    fn has_explicit_api_path(&self) -> bool {
-        let Ok(url) = reqwest::Url::parse(&self.base_url) else {
-            return false;
-        };
-
-        let path = url.path().trim_end_matches('/');
-        !path.is_empty() && path != "/"
-    }
-
-    /// Build the full URL for responses API, detecting if base_url already includes the path.
-    fn responses_url(&self) -> String {
-        if self.path_ends_with("/responses") {
-            return self.base_url.clone();
-        }
-
-        let normalized_base = self.base_url.trim_end_matches('/');
-
-        // If chat endpoint is explicitly configured, derive sibling responses endpoint.
-        if let Some(prefix) = normalized_base.strip_suffix("/chat/completions") {
-            return format!("{prefix}/responses");
-        }
-
-        // If an explicit API path already exists (e.g. /v1, /openai, /api/coding/v3),
-        // append responses directly to avoid duplicate /v1 segments.
-        if self.has_explicit_api_path() {
-            format!("{normalized_base}/responses")
-        } else {
-            format!("{normalized_base}/v1/responses")
-        }
-    }
-
-    fn tool_specs_to_openai_format(
-        tools: &[crate::openhuman::tools::ToolSpec],
-    ) -> Vec<serde_json::Value> {
-        tools
-            .iter()
-            .map(|tool| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters
-                    }
-                })
-            })
-            .collect()
-    }
-
-    fn credential_for_request(&self) -> anyhow::Result<Option<&str>> {
-        if matches!(&self.auth_header, AuthStyle::None) {
-            return Ok(None);
-        }
-
-        self.credential
-            .as_deref()
-            .map(str::trim)
-            .filter(|credential| !credential.is_empty())
-            .map(Some)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "{} API key not set. Configure via the web UI or set the appropriate env var.",
-                    self.name
-                )
-            })
-    }
-
-    fn apply_auth_header(
-        &self,
-        req: reqwest::RequestBuilder,
-        credential: Option<&str>,
-    ) -> reqwest::RequestBuilder {
-        match (&self.auth_header, credential) {
-            (AuthStyle::None, _) => req,
-            (_, None) => req,
-            (AuthStyle::Bearer, Some(credential)) => {
-                req.header("Authorization", format!("Bearer {credential}"))
-            }
-            (AuthStyle::XApiKey, Some(credential)) => req.header("x-api-key", credential),
-            (AuthStyle::Anthropic, Some(credential)) => req
-                .header("x-api-key", credential)
-                .header("anthropic-version", "2023-06-01"),
-            (AuthStyle::Custom(header), Some(credential)) => req.header(header, credential),
-        }
+        self
     }
 
     async fn chat_via_responses(
@@ -1476,6 +1291,12 @@ impl Provider for OpenAiCompatibleProvider {
             fallback_messages
         };
 
+        if self.responses_api_primary {
+            return self
+                .chat_via_responses(credential, &fallback_messages, model)
+                .await;
+        }
+
         let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
@@ -1639,6 +1460,12 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
+        if self.responses_api_primary {
+            return self
+                .chat_via_responses(credential, &effective_messages, model)
+                .await;
+        }
+
         let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
@@ -1832,6 +1659,32 @@ impl Provider for OpenAiCompatibleProvider {
         } else {
             request.messages.to_vec()
         };
+
+        if self.responses_api_primary {
+            let response_messages = if request.tools.is_some() {
+                Self::with_prompt_guided_tool_instructions(request.messages, request.tools)
+            } else {
+                effective_messages.clone()
+            };
+            let text = self
+                .chat_via_responses(credential, &response_messages, model)
+                .await?;
+            if let Some(tx) = request.stream {
+                let _ = tx
+                    .send(
+                        crate::openhuman::inference::provider::ProviderDelta::TextDelta {
+                            delta: text.clone(),
+                        },
+                    )
+                    .await;
+            }
+            return Ok(ProviderChatResponse {
+                text: Some(text),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            });
+        }
 
         // ── Streaming branch ─────────────────────────────────────────
         // When the caller supplied a `ProviderDelta` sender, request
@@ -2110,6 +1963,7 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
+        let extra_headers = self.extra_headers.clone();
         let provider_name = self.name.clone();
         let model_owned = model.to_string();
 
@@ -2136,6 +1990,10 @@ impl Provider for OpenAiCompatibleProvider {
                     req_builder.header(header, credential)
                 }
             };
+
+            for (name, value) in &extra_headers {
+                req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
 
             // Set accept header for streaming
             req_builder = req_builder.header("Accept", "text/event-stream");

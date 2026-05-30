@@ -9,6 +9,10 @@
 pub enum ComposioErrorClass {
     Validation,
     InsufficientScope,
+    /// The connection lacks permission to enable/manage triggers — a 403 whose
+    /// body does **not** mention "scope" (so [`Self::InsufficientScope`] never
+    /// matches it). Distinct so the user gets reconnect guidance. See #2913.
+    TriggerPermission,
     RateLimited,
     UpstreamProvider,
     ComposioPlatform,
@@ -21,6 +25,7 @@ impl ComposioErrorClass {
         match self {
             Self::Validation => "validation",
             Self::InsufficientScope => "insufficient_scope",
+            Self::TriggerPermission => "trigger_permission",
             Self::RateLimited => "rate_limited",
             Self::UpstreamProvider => "upstream_provider",
             Self::ComposioPlatform => "composio_platform",
@@ -36,6 +41,8 @@ pub fn classify_composio_error(tool: &str, message: &str) -> ComposioErrorClass 
         ComposioErrorClass::Validation
     } else if is_insufficient_scope_shape(&lower) {
         ComposioErrorClass::InsufficientScope
+    } else if is_trigger_permission_shape(&lower) {
+        ComposioErrorClass::TriggerPermission
     } else if is_rate_limited_shape(&lower) {
         ComposioErrorClass::RateLimited
     } else if is_gateway_transport_shape(&lower) && !is_embedded_provider_failure(&lower) {
@@ -65,6 +72,7 @@ pub fn format_provider_error(tool: &str, raw: &str) -> String {
     let body = match class {
         ComposioErrorClass::Validation => format!("Invalid arguments for `{tool}`: {detail}"),
         ComposioErrorClass::InsufficientScope => format_insufficient_scope_message(tool, detail),
+        ComposioErrorClass::TriggerPermission => format_trigger_permission_message(tool),
         ComposioErrorClass::RateLimited => format_rate_limited_message(tool, detail),
         ComposioErrorClass::UpstreamProvider => {
             format!("`{tool}` failed at the connected provider: {detail}")
@@ -91,6 +99,7 @@ pub fn remap_transport_error(tool: &str, raw: &str) -> String {
     };
     let body = match class {
         ComposioErrorClass::InsufficientScope => format_insufficient_scope_message(tool, &detail),
+        ComposioErrorClass::TriggerPermission => format_trigger_permission_message(tool),
         ComposioErrorClass::RateLimited => format_rate_limited_message(tool, &detail),
         ComposioErrorClass::Gateway => format!(
             "Temporary gateway error while calling `{tool}`: {}",
@@ -125,6 +134,24 @@ fn format_insufficient_scope_message(tool: &str, detail: &str) -> String {
     )
 }
 
+/// Build the trigger-permission guidance message (issue #2913).
+///
+/// The toolkit slug is derived from the tool/trigger identifier the same way
+/// [`format_insufficient_scope_message`] does (e.g. `GMAIL_NEW_GMAIL_MESSAGE`
+/// → `gmail`), so the copy is branded and points the user at reconnecting.
+fn format_trigger_permission_message(tool: &str) -> String {
+    let toolkit = tool
+        .split('_')
+        .next()
+        .unwrap_or("integration")
+        .to_ascii_lowercase();
+    format!(
+        "Couldn't enable this trigger: the connected {toolkit} account doesn't have \
+         permission to manage triggers. Reconnect {toolkit} in Settings → Connections → \
+         {toolkit} and grant the permissions requested during OAuth, then try again."
+    )
+}
+
 fn format_rate_limited_message(tool: &str, detail: &str) -> String {
     format!(
         "`{tool}` hit an upstream rate limit ({detail}). Wait a minute and retry, or reduce \
@@ -150,6 +177,24 @@ fn is_insufficient_scope_shape(lower: &str) -> bool {
         || lower.contains("insufficient permissions")
         || (lower.contains("403") && lower.contains("scope"))
         || lower.contains("invalid oauth scope")
+}
+
+/// Heuristic for a trigger-permission denial (issue #2913).
+///
+/// The backend 403 body reads "You do not have permission to enable triggers on
+/// this connection" — note it has **no** "scope" token, so
+/// [`is_insufficient_scope_shape`] never matches. We require a forbidden signal
+/// (`403`/`forbidden`) AND a permission-denied phrase AND trigger context, so a
+/// generic 403 won't be miscategorised.
+fn is_trigger_permission_shape(lower: &str) -> bool {
+    let forbidden = lower.contains("403") || lower.contains("forbidden");
+    let permission_denied = lower.contains("do not have permission")
+        || lower.contains("not have permission")
+        || lower.contains("permission denied")
+        || lower.contains("not permitted")
+        || lower.contains("not allowed");
+    let trigger_context = lower.contains("trigger");
+    forbidden && permission_denied && trigger_context
 }
 
 fn is_rate_limited_shape(lower: &str) -> bool {
@@ -180,6 +225,7 @@ fn is_gateway_transport_shape(lower: &str) -> bool {
 fn is_embedded_provider_failure(lower: &str) -> bool {
     is_validation_shape(lower)
         || is_insufficient_scope_shape(lower)
+        || is_trigger_permission_shape(lower)
         || is_rate_limited_shape(lower)
         || is_composio_platform_shape(lower)
         || lower.contains("composio")

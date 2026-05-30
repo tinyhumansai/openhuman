@@ -393,6 +393,46 @@ async fn apply_search_settings_sets_and_clears_allowed_domains() {
 }
 
 #[tokio::test]
+async fn apply_search_settings_accepts_disabled_engine() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("disabled".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("apply disabled search engine");
+
+    assert_eq!(cfg.search.engine, "disabled");
+    assert_eq!(
+        cfg.search.effective_engine(),
+        crate::openhuman::config::SearchEngine::Disabled
+    );
+}
+
+#[tokio::test]
+async fn apply_search_settings_rejects_unknown_search_engine() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    let err = apply_search_settings(
+        &mut cfg,
+        SearchSettingsPatch {
+            engine: Some("unknown".to_string()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect_err("unknown engine should be rejected");
+
+    assert!(err.contains("disabled/managed/parallel/brave/querit"));
+}
+
+#[tokio::test]
 async fn apply_model_settings_stores_api_key_and_clears_when_empty() {
     // #1342: custom OpenAI-compatible providers — api_key must round-trip
     // through `apply_model_settings` and clear when an empty string is sent.

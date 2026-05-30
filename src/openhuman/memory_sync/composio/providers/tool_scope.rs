@@ -85,26 +85,25 @@ pub fn find_curated<'a>(catalog: &'a [CuratedTool], slug: &str) -> Option<&'a Cu
 
 /// Extract the toolkit slug from a Composio action slug.
 ///
-/// All Composio action slugs follow the convention `<TOOLKIT>_<VERB>_…`
-/// (e.g. `GMAIL_SEND_EMAIL` → `gmail`). Returns the lowercased prefix
-/// before the first underscore, or `None` if the slug has no underscore.
-///
-/// **Assumption:** toolkit identifiers themselves do not contain
-/// underscores. Composio honours this for every action we curate today
-/// (`gmail`, `notion`, `googlecalendar`, …). The one historical
-/// exception — `MICROSOFT_TEAMS_*` — extracts to `"microsoft"`, and
-/// [`super::catalog_for_toolkit`] handles the alias by mapping both
-/// `"microsoft"` and `"microsoft_teams"` to the same catalog.
-///
-/// If a future toolkit ships with a multi-word slug containing an
-/// underscore in the *toolkit* portion (e.g. a hypothetical
-/// `FOO_BAR_LIST_ITEMS` whose toolkit is `foo_bar`), this naive split
-/// must be revised — either by consulting a known-toolkits map or by
-/// taking the longest-matching prefix from the registered catalogs.
+/// Most Composio action slugs follow `<TOOLKIT>_<VERB>_…`
+/// (e.g. `GMAIL_SEND_EMAIL` → `gmail`). A few toolkit identifiers contain
+/// underscores themselves; those need known-prefix handling so connected
+/// toolkit checks do not drop actions such as `ZOHO_MAIL_*`.
 pub fn toolkit_from_slug(slug: &str) -> Option<String> {
     let trimmed = slug.trim();
     if trimmed.is_empty() {
         return None;
+    }
+    const MULTI_SEGMENT_TOOLKIT_PREFIXES: &[(&str, &str)] = &[
+        ("MICROSOFT_TEAMS_", "microsoft_teams"),
+        ("ONE_DRIVE_", "one_drive"),
+        ("ZOHO_MAIL_", "zoho_mail"),
+    ];
+    let upper = trimmed.to_ascii_uppercase();
+    for (prefix, toolkit) in MULTI_SEGMENT_TOOLKIT_PREFIXES {
+        if upper.starts_with(prefix) {
+            return Some((*toolkit).to_string());
+        }
     }
     let prefix = trimmed.split('_').next()?;
     if prefix.is_empty() {
@@ -160,6 +159,22 @@ mod tests {
         assert_eq!(
             toolkit_from_slug("noUnderscore"),
             Some("nounderscore".into())
+        );
+    }
+
+    #[test]
+    fn toolkit_from_slug_handles_known_multi_segment_toolkits() {
+        assert_eq!(
+            toolkit_from_slug("ZOHO_MAIL_SEND_EMAIL"),
+            Some("zoho_mail".to_string())
+        );
+        assert_eq!(
+            toolkit_from_slug("ONE_DRIVE_GET_FILE"),
+            Some("one_drive".to_string())
+        );
+        assert_eq!(
+            toolkit_from_slug("MICROSOFT_TEAMS_SEND_MESSAGE"),
+            Some("microsoft_teams".to_string())
         );
     }
 

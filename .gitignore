@@ -36,6 +36,9 @@ dist-web
 # pnpm local store (created when --store-dir points into the repo)
 .pnpm-store/
 
+# sccache local compiler cache (used by CI and act)
+.sccache/
+
 # E2E test artifacts (screenshots, logs, traces — never checked in)
 app/test/e2e/artifacts/
 
