@@ -2,6 +2,7 @@ import createDebug from 'debug';
 import { useCallback, useEffect, useState } from 'react';
 
 import { execute as composioExecute, listConnections } from '../../../lib/composio/composioApi';
+import { SCHEDULE_PRESETS } from '../../../lib/cron/schedulePresets';
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
   CoreCronJob,
@@ -41,14 +42,6 @@ interface ForkInfo {
 interface GhBranch {
   name: string;
 }
-
-const SCHEDULE_PRESETS = [
-  { labelKey: 'settings.devWorkflow.schedule.every30min' as const, value: '*/30 * * * *' },
-  { labelKey: 'settings.devWorkflow.schedule.everyHour' as const, value: '0 * * * *' },
-  { labelKey: 'settings.devWorkflow.schedule.every2hours' as const, value: '0 */2 * * *' },
-  { labelKey: 'settings.devWorkflow.schedule.every6hours' as const, value: '0 */6 * * *' },
-  { labelKey: 'settings.devWorkflow.schedule.onceDaily' as const, value: '0 9 * * *' },
-];
 
 // ── Component ──────────────────────────────────────────────────────────
 
