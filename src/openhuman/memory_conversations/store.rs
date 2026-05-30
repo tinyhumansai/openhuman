@@ -292,15 +292,23 @@ impl ConversationStore {
             }
         }
         // Insert only if the key is still absent — a concurrent prime that
-        // finished first wins; ours is discarded.
+        // finished first wins; ours is discarded. Log the discard so
+        // duplicate-build churn under load is diagnosable.
         {
             let mut cache = CONVERSATION_INDEX_CACHE.lock();
-            cache.entry(key).or_insert(idx);
+            if cache.contains_key(&key) {
+                debug!(
+                    "{LOG_PREFIX} discarded freshly-built index; concurrent prime won workspace={}",
+                    key.display()
+                );
+            } else {
+                cache.insert(key.clone(), idx);
+                debug!(
+                    "{LOG_PREFIX} inverted index primed workspace={}",
+                    key.display()
+                );
+            }
         }
-        debug!(
-            "{LOG_PREFIX} inverted index primed workspace={}",
-            self.root_dir().display()
-        );
         Ok(())
     }
 
@@ -329,6 +337,11 @@ impl ConversationStore {
     /// case outside the outer lock. The JSONL files are the source of truth
     /// so a rebuild after a process crash is always safe.
     fn populate_index_unlocked(&self, idx: &mut InvertedIndex) -> Result<(), String> {
+        // Caller (`with_index`) already holds `CONVERSATION_STORE_LOCK`, so we
+        // must NOT re-acquire it here — `parking_lot::Mutex` is not reentrant
+        // and doing so would deadlock. Use the `_unlocked` thread reader
+        // directly.
+        //
         // `list_threads_unlocked` already handles a fresh workspace:
         // `ensure_root` creates the directory + threads log if missing, and
         // `read_jsonl` returns an empty Vec for an empty file. Anything that
@@ -336,15 +349,6 @@ impl ConversationStore {
         // propagate — silently returning Ok would mask it and make search
         // appear to return zero results for an undiagnosed reason.
         let threads = self.list_threads_unlocked()?;
-        // Cold path: build the index. Snapshot the thread list under the
-        // store lock (brief), then release it so concurrent writes aren't
-        // blocked during the potentially-long JSONL file reads.
-        let threads = {
-            let _guard = CONVERSATION_STORE_LOCK.lock();
-            self.list_threads_unlocked()?
-        };
-
-        let mut idx = InvertedIndex::new();
         for thread in threads {
             let path = self.thread_messages_path(&thread.id);
             if !path.exists() {
@@ -369,14 +373,7 @@ impl ConversationStore {
             "{LOG_PREFIX} inverted index populated workspace={}",
             self.root_dir().display()
         );
-
-        // Insert the newly-built index and run the search. Another thread
-        // may have raced and already inserted — prefer the existing index
-        // if present (it may have more recent messages from concurrent
-        // append_message calls).
-        let mut cache = CONVERSATION_INDEX_CACHE.lock();
-        let entry = cache.entry(self.root_dir()).or_insert(idx);
-        Ok(entry.search(query, limit, exclude_thread_id))
+        Ok(())
     }
 
     /// Append a message to the thread's JSONL file. Errors if the thread is missing.
