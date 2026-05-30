@@ -108,4 +108,24 @@ describe('ApprovalHistoryPanel', () => {
     fireEvent.click(screen.getByTestId('approval-history-refresh'));
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
   });
+
+  it('keeps the latest result when a refresh supersedes the initial load', async () => {
+    // Drives the `loadSeqRef` last-request-wins path: the mount load resolves
+    // with one set of rows, a refresh fetches a different set, and the newer
+    // response is what remains on screen.
+    mockFetch
+      .mockResolvedValueOnce([auditRow({ request_id: 'old', tool_name: 'old-tool' })])
+      .mockResolvedValueOnce([auditRow({ request_id: 'new', tool_name: 'new-tool' })]);
+
+    renderWithProviders(<ApprovalHistoryPanel />, {
+      initialEntries: ['/settings/approval-history'],
+    });
+
+    await screen.findByText('old-tool');
+
+    fireEvent.click(screen.getByTestId('approval-history-refresh'));
+
+    await screen.findByText('new-tool');
+    expect(screen.queryByText('old-tool')).not.toBeInTheDocument();
+  });
 });
