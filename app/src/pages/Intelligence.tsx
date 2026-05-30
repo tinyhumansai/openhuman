@@ -6,6 +6,7 @@ import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
+import MemoryFreshnessTab from '../components/intelligence/MemoryFreshnessTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
@@ -20,7 +21,18 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
+<<<<<<< HEAD
 type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'diagram' | 'centrality' | 'path';
+=======
+type IntelligenceTab =
+  | 'memory'
+  | 'subconscious'
+  | 'tasks'
+  | 'workflows'
+  | 'diagram'
+  | 'centrality'
+  | 'freshness';
+>>>>>>> upstream/main
 
 export default function Intelligence() {
   const { t } = useT();
@@ -95,7 +107,11 @@ export default function Intelligence() {
       { id: 'subconscious', label: t('memory.tab.subconscious') },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
+<<<<<<< HEAD
       { id: 'path', label: t('memory.tab.path') },
+=======
+      { id: 'freshness', label: t('memory.tab.freshness') },
+>>>>>>> upstream/main
     ];
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
@@ -185,7 +201,11 @@ export default function Intelligence() {
 
             {activeTab === 'centrality' && <GraphCentralityTab />}
 
+<<<<<<< HEAD
             {activeTab === 'path' && <ConnectionPathTab />}
+=======
+            {activeTab === 'freshness' && <MemoryFreshnessTab />}
+>>>>>>> upstream/main
           </div>
         </div>
       </div>
