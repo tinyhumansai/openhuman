@@ -738,6 +738,14 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   // touching ~10 existing call sites with `..Default::default()`).
   // Flatten back into the typed `ArtifactReadyEvent` /
   // `ArtifactFailedEvent` shape so listeners get a clean contract.
+  const validArtifactKinds: ReadonlySet<ArtifactKind> = new Set([
+    'presentation',
+    'document',
+    'image',
+    'other',
+  ]);
+  const isValidArtifactKind = (k: unknown): k is ArtifactKind =>
+    typeof k === 'string' && validArtifactKinds.has(k as ArtifactKind);
   if (listeners.onArtifactReady) {
     const cb = (payload: unknown) => {
       const raw = payload as {
@@ -752,7 +760,13 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         };
       };
       const args = raw.args ?? {};
-      if (!args.artifact_id || !args.kind || !args.title || !args.path || args.size_bytes == null) {
+      if (
+        !args.artifact_id ||
+        !isValidArtifactKind(args.kind) ||
+        !args.title ||
+        !args.path ||
+        args.size_bytes == null
+      ) {
         chatLog(
           '%s thread_id=%s — skipping malformed payload (missing args)',
           EVENTS.artifactReady,
@@ -791,7 +805,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         args?: { artifact_id?: string; kind?: ArtifactKind; title?: string; error?: string };
       };
       const args = raw.args ?? {};
-      if (!args.artifact_id || !args.kind || !args.title || !args.error) {
+      if (!args.artifact_id || !isValidArtifactKind(args.kind) || !args.title || !args.error) {
         chatLog(
           '%s thread_id=%s — skipping malformed payload (missing args)',
           EVENTS.artifactFailed,
@@ -807,13 +821,16 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         title: args.title,
         error: args.error,
       };
+      // Defence-in-depth: producer is expected to pre-truncate, but
+      // cap the log preview again so a leaky producer cannot blast
+      // unbounded provider stderr into client telemetry.
       chatLog(
         '%s thread_id=%s artifact_id=%s kind=%s err=%s',
         EVENTS.artifactFailed,
         event.thread_id,
         event.artifact_id,
         event.kind,
-        event.error
+        event.error.slice(0, 80)
       );
       listeners.onArtifactFailed?.(event);
     };
