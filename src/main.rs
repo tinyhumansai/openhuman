@@ -66,6 +66,21 @@ fn main() {
             if openhuman_core::core::observability::is_budget_event(&event) {
                 return None;
             }
+            // CORE-RUST-EK (~827 events): drop all HTTP 401 responses from the
+            // embeddings call path (domain=embeddings, failure=non_2xx,
+            // status=401). The primary suppression for the OpenHuman-backend
+            // "Invalid token" shape lives in `expected_error_kind` /
+            // `is_session_expired_message`. This is defense-in-depth that also
+            // catches third-party provider 401s (e.g. OpenAI `invalid_api_key`
+            // body) that don't carry the OpenHuman envelope and therefore fall
+            // through the string-based classifier to Sentry.
+            if openhuman_core::core::observability::is_embeddings_api_key_401_event(&event) {
+                log::debug!(
+                    "[sentry-embeddings-401-filter] dropping embeddings api-key 401 event_id={:?}",
+                    event.event_id
+                );
+                return None;
+            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,

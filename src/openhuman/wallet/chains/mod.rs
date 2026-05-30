@@ -7,9 +7,14 @@
 //! `execution.rs`; chain modules only run when a quote is being broadcast.
 //!
 //! Every chain exposes a small surface:
-//! - `execute(quote: PreparedTransaction) -> Result<ExecutionResult, String>`
+//! - `execute_*_quote(quote: PreparedTransaction) -> Result<ExecutionResult, String>`
 //! - `native_balance(address: &str) -> Result<u128, String>`
-//! - `validate_address(addr: &str) -> Result<String, String>`
+//! - `validate_*_address(addr: &str) -> Result<String, String>`
+//! - `tx_status` / `tx_receipt` / `lookup_tx` — read-only inspection by hash.
+//!
+//! EVM and Solana additionally expose crate-internal `sign_and_broadcast_*`
+//! primitives (sign+broadcast an externally-built unsigned transaction) that the
+//! [`crate::openhuman::web3`] layer builds on.
 
 pub(super) mod btc;
 pub(super) mod evm;

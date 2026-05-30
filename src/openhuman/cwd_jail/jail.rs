@@ -72,6 +72,19 @@ impl Jail {
         }
         Ok(())
     }
+
+    /// Best-effort canonicalize that swallows errors and logs them. Most
+    /// callers should use the validating [`Jail::canonicalize`] path that
+    /// [`crate::openhuman::cwd_jail::spawn`] runs automatically.
+    pub fn canonicalize_or_log(&mut self) {
+        if let Err(e) = self.canonicalize() {
+            log::warn!(
+                "[cwd_jail] failed to canonicalize jail root {}: {}",
+                self.root.display(),
+                e
+            );
+        }
+    }
 }
 
 /// OS-specific enforcement of a [`Jail`].

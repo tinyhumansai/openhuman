@@ -22,8 +22,13 @@ impl UnifiedMemory {
     ) -> anyhow::Result<String> {
         let docs_dir = self.namespace_dir(namespace).join("docs");
         tokio::fs::create_dir_all(&docs_dir).await?;
+        let memory_subdir = self
+            .memory_dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("memory");
         let rel_path = format!(
-            "memory/namespaces/{}/docs/{doc_id}.md",
+            "{memory_subdir}/namespaces/{}/docs/{doc_id}.md",
             Self::sanitize_namespace(namespace)
         );
         let abs_path = self.workspace_dir.join(&rel_path);

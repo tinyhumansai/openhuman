@@ -608,6 +608,36 @@ fn legacy_custom_inference_provider_string(config: &Config) -> Option<String> {
         .map(|entry| cloud_entry_provider_string(entry, config))
 }
 
+/// Resolve the slug of the cloud-provider entry that represents the legacy
+/// direct-inference route — the entry whose endpoint matches the configured
+/// custom `inference_url`.
+///
+/// Top-level `config.api_key` was historically paired with `inference_url`
+/// for direct endpoint routing, so it is scoped to this single provider. The
+/// `lookup_key_for_slug` fallback uses this to avoid leaking the global key to
+/// any other provider slug whose auth-profile lookup returned empty.
+fn legacy_inference_slug(config: &Config) -> Option<&str> {
+    let inference_url = config
+        .inference_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())?;
+
+    if looks_like_openhuman_backend(inference_url) {
+        return None;
+    }
+
+    let normalized_inference = normalize_endpoint_for_compare(inference_url);
+    config
+        .cloud_providers
+        .iter()
+        .find(|entry| {
+            !is_openhuman_cloud_entry(entry)
+                && normalize_endpoint_for_compare(&entry.endpoint) == normalized_inference
+        })
+        .map(|entry| entry.slug.as_str())
+}
+
 fn cloud_entry_provider_string(
     entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
     config: &Config,
@@ -949,6 +979,28 @@ pub fn lookup_key_for_slug(slug: &str, config: &Config) -> anyhow::Result<String
         }
     }
 
+    // Fallback: read from top-level config.api_key (direct config.toml api_key).
+    // This handles the case where a key was set in config.toml but not saved
+    // through the UI into auth-profiles.json.
+    //
+    // Scoped to the legacy direct-inference provider only — the cloud-provider
+    // slug whose endpoint matches `config.inference_url`. `config.api_key` was
+    // historically paired with `inference_url` for direct endpoint routing, so
+    // an unscoped fallback would leak this global key to any other provider
+    // whose auth-profile lookup returned empty (cross-provider credential leak
+    // flagged by CodeRabbit + maintainers on #2724).
+    if legacy_inference_slug(config) == Some(slug) {
+        if let Some(config_key) = config.api_key.as_ref() {
+            if !config_key.trim().is_empty() {
+                log::debug!(
+                    "[providers][chat-factory] auth lookup slug={} key_present=true (config.toml fallback for legacy inference_url)",
+                    slug
+                );
+                return Ok(config_key.trim().to_string());
+            }
+        }
+    }
+
     log::debug!(
         "[providers][chat-factory] auth lookup slug={} key_present=false",
         slug
@@ -1036,5 +1088,5 @@ fn redact_endpoint(url: &str) -> String {
 // ── Unit tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[path = "factory_test.rs"]
-mod factory_test;
+#[path = "factory_tests.rs"]
+mod factory_tests;

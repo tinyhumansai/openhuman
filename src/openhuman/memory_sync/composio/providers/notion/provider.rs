@@ -18,17 +18,17 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    extract_item_id, persist_single_item, SyncState,
-};
+use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
+    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
 };
 
 pub(crate) const ACTION_GET_ABOUT_ME: &str = "NOTION_GET_ABOUT_ME";
 pub(crate) const ACTION_FETCH_DATA: &str = "NOTION_FETCH_DATA";
+pub(crate) const ACTION_QUERY_DATABASE: &str = "NOTION_QUERY_DATABASE";
 
 /// Page size per API call.
 const PAGE_SIZE: u32 = 25;
@@ -182,6 +182,14 @@ impl ComposioProvider for NotionProvider {
         let mut total_persisted: usize = 0;
         let mut newest_edited_time: Option<String> = None;
         let mut notion_cursor: Option<String> = None;
+        // Track whether any per-item ingest failed this pass. If so, we hold
+        // the persistent cursor — `last_edited_time > {cursor}` on the next
+        // sync would otherwise exclude the failed item, and because the new
+        // memory-tree pipeline (#2885) is delete-first, an *edited* page that
+        // failed to re-ingest is left with neither old nor new chunks until
+        // its next edit. Already-synced items are skipped cheaply via
+        // `is_synced` on the re-fetch, so the cost of holding is minimal.
+        let mut had_ingest_failures = false;
 
         for page_num in 0..MAX_PAGES_PER_SYNC {
             if state.budget_exhausted() {
@@ -277,29 +285,35 @@ impl ComposioProvider for NotionProvider {
                 // Build a title from the page's properties.
                 let title_text = sync::extract_page_title(page)
                     .unwrap_or_else(|| format!("Notion page {page_id}"));
-                let doc_id = format!("composio-notion-page-{page_id}");
                 let title = format!("Notion: {title_text}");
 
-                match persist_single_item(
-                    &memory,
-                    "notion",
-                    &doc_id,
+                // Route into the memory-tree pipeline (#2885). The prior
+                // implementation called `persist_single_item` →
+                // `MemoryClient::store_skill_sync` → UnifiedMemory
+                // `memory_docs`, which the modern retrieval surfaces
+                // (`memory.search`, `tree.read_chunk`, `tree.browse`,
+                // summary trees, MCP tools) don't read from — the data
+                // was invisible to every agent recall path.
+                match ingest_page_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &page_id,
                     &title,
+                    edited_time.as_deref(),
                     page,
-                    "notion",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_chunks_written) => {
                         state.mark_synced(&sync_key);
                         total_persisted += 1;
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             page_id = %page_id,
                             error = %e,
-                            "[composio:notion] failed to persist page (continuing)"
+                            "[composio:notion] failed to ingest page into memory_tree (continuing)"
                         );
                     }
                 }
@@ -322,8 +336,20 @@ impl ComposioProvider for NotionProvider {
         }
 
         // ── Step 5: advance cursor and save state ───────────────────
-        if let Some(new_cursor) = newest_edited_time {
-            state.advance_cursor(&new_cursor);
+        //
+        // Hold the cursor when any item failed to ingest this pass. See the
+        // `had_ingest_failures` declaration above for why this matters under
+        // the delete-first memory-tree pipeline (#2885).
+        if !had_ingest_failures {
+            if let Some(new_cursor) = newest_edited_time {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:notion] holding cursor — ingest failures this pass; next sync will \
+                 re-fetch the failed range"
+            );
         }
         state.save(&memory).await?;
 
@@ -361,6 +387,92 @@ impl ComposioProvider for NotionProvider {
         })
     }
 
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let max = filter.effective_max();
+        let database_id = filter
+            .database_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            max,
+            has_database = database_id.is_some(),
+            "[composio:notion] fetch_tasks"
+        );
+
+        // A configured board (database) uses NOTION_QUERY_DATABASE;
+        // otherwise fall back to NOTION_FETCH_DATA (recent pages), the
+        // same action the periodic sync uses.
+        let (action, mut args) = match database_id {
+            Some(db) => (
+                ACTION_QUERY_DATABASE,
+                json!({
+                    "database_id": db,
+                    "page_size": max.min(100) as u32,
+                    "sorts": [ { "timestamp": "last_edited_time", "direction": "descending" } ],
+                }),
+            ),
+            None => (
+                ACTION_FETCH_DATA,
+                json!({
+                    "page_size": max.min(100) as u32,
+                    "filter": { "value": "page", "property": "object" },
+                    "sort": { "direction": "descending", "timestamp": "last_edited_time" },
+                }),
+            ),
+        };
+        merge_extra(&mut args, &filter.extra);
+
+        let resp = ctx
+            .execute(action, Some(args))
+            .await
+            .map_err(|e| format!("[composio:notion] {action}: {e:#}"))?;
+        if !resp.successful {
+            return Err(format!(
+                "[composio:notion] {action}: {}",
+                resp.error.unwrap_or_else(|| "provider failure".into())
+            ));
+        }
+
+        // Optional client-side status filter — Notion status properties
+        // are user-defined, so we match on the normalized status rather
+        // than building a server-side property filter.
+        let want_status = filter
+            .status
+            .as_deref()
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty());
+
+        let mut out: Vec<NormalizedTask> = Vec::new();
+        for page in sync::extract_results(&resp.data) {
+            if out.len() >= max {
+                break;
+            }
+            let Some(nt) = normalize_notion_page(&page) else {
+                continue;
+            };
+            if let Some(ref want) = want_status {
+                let matches = nt
+                    .status
+                    .as_deref()
+                    .map(|s| s.to_ascii_lowercase() == *want)
+                    .unwrap_or(false);
+                if !matches {
+                    continue;
+                }
+            }
+            out.push(nt);
+        }
+        tracing::debug!(count = out.len(), "[composio:notion] fetch_tasks complete");
+        Ok(out)
+    }
+
     async fn on_trigger(
         &self,
         ctx: &ProviderContext,
@@ -380,4 +492,57 @@ impl ComposioProvider for NotionProvider {
         }
         Ok(())
     }
+}
+
+/// Map a raw Notion page payload into a [`NormalizedTask`].
+///
+/// Notion databases are user-defined, so property extraction is
+/// best-effort against common property names (`Status`, `Assignee`,
+/// `Due`). Anything unmatched is simply left `None` — the raw payload is
+/// preserved for enrichment.
+fn normalize_notion_page(page: &serde_json::Value) -> Option<NormalizedTask> {
+    let external_id = extract_item_id(page, PAGE_ID_PATHS)?;
+    let title =
+        sync::extract_page_title(page).unwrap_or_else(|| format!("Notion page {external_id}"));
+    Some(NormalizedTask {
+        external_id,
+        source_id: String::new(),
+        provider: "notion".to_string(),
+        title,
+        body: None,
+        url: pick_str(page, &["url", "data.url"]),
+        status: pick_str(
+            page,
+            &[
+                "properties.Status.status.name",
+                "properties.Status.select.name",
+                "data.properties.Status.status.name",
+            ],
+        ),
+        assignee: first_array_str(
+            page,
+            &[
+                "properties.Assignee.people",
+                "data.properties.Assignee.people",
+            ],
+            &["name"],
+        ),
+        due: pick_str(
+            page,
+            &[
+                "properties.Due.date.start",
+                "data.properties.Due.date.start",
+            ],
+        ),
+        labels: Vec::new(),
+        priority: pick_str(
+            page,
+            &[
+                "properties.Priority.select.name",
+                "data.properties.Priority.select.name",
+            ],
+        ),
+        updated_at: extract_item_id(page, PAGE_EDITED_PATHS),
+        raw: page.clone(),
+    })
 }

@@ -92,21 +92,6 @@ pub fn spawn_with(backend: &dyn JailBackend, jail: &Jail, cmd: Command) -> std::
     backend.spawn(&jail, cmd)
 }
 
-impl Jail {
-    /// Best-effort canonicalize that swallows errors and logs them. Most
-    /// callers should use the validating [`Jail::canonicalize`] path that
-    /// [`jail`] runs automatically.
-    pub fn canonicalize_or_log(&mut self) {
-        if let Err(e) = self.canonicalize() {
-            log::warn!(
-                "[cwd_jail] failed to canonicalize jail root {}: {}",
-                self.root.display(),
-                e
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

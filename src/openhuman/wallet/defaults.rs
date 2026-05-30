@@ -12,6 +12,7 @@ const BASESCAN_TX_BASE: &str = "https://basescan.org/tx/";
 const ARBISCAN_TX_BASE: &str = "https://arbiscan.io/tx/";
 const OPTIMISTIC_TX_BASE: &str = "https://optimistic.etherscan.io/tx/";
 const POLYGONSCAN_TX_BASE: &str = "https://polygonscan.com/tx/";
+const BSCSCAN_TX_BASE: &str = "https://bscscan.com/tx/";
 const BLOCKSTREAM_TX_BASE: &str = "https://blockstream.info/tx/";
 const SOLSCAN_TX_BASE: &str = "https://solscan.io/tx/";
 const TRONSCAN_TX_BASE: &str = "https://tronscan.org/#/transaction/";
@@ -29,15 +30,17 @@ pub enum EvmNetwork {
     ArbitrumOne,
     OptimismMainnet,
     PolygonMainnet,
+    BscMainnet,
 }
 
 impl EvmNetwork {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::EthereumMainnet,
         Self::BaseMainnet,
         Self::ArbitrumOne,
         Self::OptimismMainnet,
         Self::PolygonMainnet,
+        Self::BscMainnet,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -47,6 +50,7 @@ impl EvmNetwork {
             Self::ArbitrumOne => "arbitrum_one",
             Self::OptimismMainnet => "optimism_mainnet",
             Self::PolygonMainnet => "polygon_mainnet",
+            Self::BscMainnet => "bsc_mainnet",
         }
     }
 
@@ -57,6 +61,7 @@ impl EvmNetwork {
             Self::ArbitrumOne => 42161,
             Self::OptimismMainnet => 10,
             Self::PolygonMainnet => 137,
+            Self::BscMainnet => 56,
         }
     }
 
@@ -67,6 +72,7 @@ impl EvmNetwork {
             Self::ArbitrumOne => "OPENHUMAN_WALLET_RPC_ARBITRUM",
             Self::OptimismMainnet => "OPENHUMAN_WALLET_RPC_OPTIMISM",
             Self::PolygonMainnet => "OPENHUMAN_WALLET_RPC_POLYGON",
+            Self::BscMainnet => "OPENHUMAN_WALLET_RPC_BSC",
         }
     }
 
@@ -77,6 +83,7 @@ impl EvmNetwork {
             Self::ArbitrumOne => "https://arb1.arbitrum.io/rpc",
             Self::OptimismMainnet => "https://mainnet.optimism.io",
             Self::PolygonMainnet => "https://polygon-rpc.com",
+            Self::BscMainnet => "https://bsc-dataseed.binance.org",
         }
     }
 
@@ -87,6 +94,7 @@ impl EvmNetwork {
             Self::ArbitrumOne => ARBISCAN_TX_BASE,
             Self::OptimismMainnet => OPTIMISTIC_TX_BASE,
             Self::PolygonMainnet => POLYGONSCAN_TX_BASE,
+            Self::BscMainnet => BSCSCAN_TX_BASE,
         }
     }
 
@@ -97,6 +105,7 @@ impl EvmNetwork {
             Self::ArbitrumOne => "arbitrum-one",
             Self::OptimismMainnet => "optimism-mainnet",
             Self::PolygonMainnet => "polygon-mainnet",
+            Self::BscMainnet => "bsc-mainnet",
         }
     }
 
@@ -286,26 +295,28 @@ pub fn asset_catalog(chain: WalletChain) -> Vec<WalletAssetDefinition> {
 }
 
 pub fn evm_asset_catalog(network: EvmNetwork) -> Vec<WalletAssetDefinition> {
+    let (native_symbol, native_name) = match network {
+        EvmNetwork::PolygonMainnet => ("POL", "Polygon"),
+        EvmNetwork::BscMainnet => ("BNB", "BNB"),
+        _ => ("ETH", "Ether"),
+    };
     let mut assets = vec![WalletAssetDefinition {
         chain: WalletChain::Evm,
         evm_network: Some(network),
-        symbol: "ETH".to_string(),
-        name: if network == EvmNetwork::PolygonMainnet {
-            "Polygon (MATIC)".to_string()
-        } else {
-            "Ether".to_string()
-        },
+        symbol: native_symbol.to_string(),
+        name: native_name.to_string(),
         native: true,
         decimals: 18,
         contract_address: None,
     }];
-    // Per-L2 USDC native addresses.
+    // Per-L2 USDC native addresses. BSC is handled below (18-decimal tokens).
     if let Some(usdc) = match network {
         EvmNetwork::EthereumMainnet => Some("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"),
         EvmNetwork::BaseMainnet => Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
         EvmNetwork::ArbitrumOne => Some("0xaf88d065e77c8cC2239327C5EDb3A432268e5831"),
         EvmNetwork::OptimismMainnet => Some("0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"),
         EvmNetwork::PolygonMainnet => Some("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
+        EvmNetwork::BscMainnet => None,
     } {
         assets.push(WalletAssetDefinition {
             chain: WalletChain::Evm,
@@ -316,6 +327,30 @@ pub fn evm_asset_catalog(network: EvmNetwork) -> Vec<WalletAssetDefinition> {
             decimals: 6,
             contract_address: Some(usdc.to_string()),
         });
+    }
+    // BNB Chain BEP20 stablecoins use 18 decimals (unlike the 6-decimal USDC on
+    // other EVM chains), so they are catalogued separately.
+    if matches!(network, EvmNetwork::BscMainnet) {
+        assets.extend([
+            WalletAssetDefinition {
+                chain: WalletChain::Evm,
+                evm_network: Some(network),
+                symbol: "USDT".to_string(),
+                name: "Tether USD (BEP20)".to_string(),
+                native: false,
+                decimals: 18,
+                contract_address: Some("0x55d398326f99059fF775485246999027B3197955".to_string()),
+            },
+            WalletAssetDefinition {
+                chain: WalletChain::Evm,
+                evm_network: Some(network),
+                symbol: "USDC".to_string(),
+                name: "USD Coin (BEP20)".to_string(),
+                native: false,
+                decimals: 18,
+                contract_address: Some("0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d".to_string()),
+            },
+        ]);
     }
     if matches!(network, EvmNetwork::EthereumMainnet) {
         assets.extend([

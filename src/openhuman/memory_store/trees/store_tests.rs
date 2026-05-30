@@ -287,3 +287,63 @@ fn list_stale_buffers_orders_by_age() {
     assert_eq!(only_oldest[0].level, 0);
     assert_eq!(only_oldest[0].tree_id, "tree-1");
 }
+
+// ── get_summaries_batch ────────────────────────────────────────────────
+//
+// Same shape as `chunks::store::get_chunks_batch` /
+// `score::store::get_scores_batch`: present ids decode through the same
+// `row_to_summary` path as the per-id `get_summary` and land in a
+// `HashMap` keyed by id; missing ids are silently absent so the
+// `hydrate_summary_inputs` "missing row → warn + skip" contract keeps
+// working without an extra Ok(None) sentinel.
+
+#[test]
+fn get_summaries_batch_returns_present_ids_in_map() {
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let a = sample_summary("sum-a", "tree-1", 1);
+    let b = sample_summary("sum-b", "tree-1", 1);
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &a, None, "test")?;
+        insert_summary_tx(&tx, &b, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let ids = vec!["sum-a".to_string(), "sum-b".to_string()];
+    let map = get_summaries_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 2);
+    // Each decoded row must match the per-id `get_summary` path bit-for-bit
+    // — same `row_to_summary` decoder under the hood, so the structs are
+    // equal including the deserialised JSON columns.
+    assert_eq!(map.get("sum-a").unwrap(), &a);
+    assert_eq!(map.get("sum-b").unwrap(), &b);
+}
+
+#[test]
+fn get_summaries_batch_empty_input_and_missing_ids() {
+    // Empty input: empty map (no SQL issued).
+    let (_tmp, cfg) = test_config();
+    let empty = get_summaries_batch(&cfg, &[]).unwrap();
+    assert!(empty.is_empty());
+
+    // Missing ids: silently absent so `hydrate_summary_inputs` can warn
+    // + skip without an extra `Ok(None)` sentinel per id.
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let a = sample_summary("sum-a", "tree-1", 1);
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &a, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let ids = vec!["sum-a".to_string(), "ghost:no-such".to_string()];
+    let map = get_summaries_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("sum-a").unwrap(), &a);
+    assert!(map.get("ghost:no-such").is_none());
+}

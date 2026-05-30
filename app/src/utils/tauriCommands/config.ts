@@ -318,6 +318,8 @@ export interface AutonomySettings {
   max_actions_per_hour: number;
   /** "Always allow" allowlist — tool names the agent runs without a prompt. */
   auto_approve: string[];
+  /** Require approval before an agent executes a task-board plan. */
+  require_task_plan_approval?: boolean;
 }
 
 /** Partial update — omitted fields are left unchanged. */
@@ -331,6 +333,7 @@ export interface AutonomySettingsUpdate {
   max_actions_per_hour?: number;
   /** Replaces the "Always allow" allowlist wholesale. */
   auto_approve?: string[];
+  require_task_plan_approval?: boolean;
 }
 
 export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
@@ -412,7 +415,7 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
-export type SearchEngineId = 'managed' | 'parallel' | 'brave' | 'querit';
+export type SearchEngineId = 'disabled' | 'managed' | 'parallel' | 'brave' | 'querit';
 
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;

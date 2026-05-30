@@ -16,6 +16,8 @@
 //! writes populate it via [`insert_summary_tx`]; reads decode it when
 //! present.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -466,6 +468,64 @@ pub fn get_summary(config: &Config, id: &str) -> Result<Option<SummaryNode>> {
             .optional()
             .context("Failed to query summary by id")?;
         Ok(row)
+    })
+}
+
+/// Defensive upper bound on the number of `?` placeholders per batched
+/// `SELECT … WHERE id IN (?,?,…)` query. SQLite's compile-time
+/// `SQLITE_MAX_VARIABLE_NUMBER` has been ≥ 32 766 since 3.32 — 500 leaves
+/// a ~65× safety margin. The current call-site (`hydrate_summary_inputs`)
+/// passes at most a single seal's fan-in (typically 5–20 ids), so the
+/// loop runs exactly once. The window exists so future callers with
+/// larger id slices do not blow up against a host with a lower
+/// compile-time SQLite cap. No volume reduction: all input ids in → all
+/// matching rows out; the merged `HashMap` is byte-identical to one
+/// giant query.
+const MAX_FETCH_BATCH: usize = 500;
+
+/// Fetch many summaries by id in a single SQL round-trip per
+/// [`MAX_FETCH_BATCH`] window. Replaces the per-id `get_summary` loop
+/// inside hot paths like `hydrate_summary_inputs` (sealing L≥1 levels)
+/// where N can grow to the seal fan-in and the loop fires on every seal
+/// during ingest. Soft-deleted rows are returned with `deleted = true`
+/// just like [`get_summary`]; missing ids are silently absent from the
+/// map so callers can preserve the existing
+/// "row missing → skip with warn" contract.
+pub fn get_summaries_batch(
+    config: &Config,
+    summary_ids: &[String],
+) -> Result<HashMap<String, SummaryNode>> {
+    if summary_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, SummaryNode> = HashMap::with_capacity(summary_ids.len());
+        for window in summary_ids.chunks(MAX_FETCH_BATCH) {
+            let placeholders = (1..=window.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT id, tree_id, tree_kind, level, parent_id,
+                        child_ids_json, content, token_count,
+                        entities_json, topics_json,
+                        time_range_start_ms, time_range_end_ms,
+                        score, sealed_at_ms, deleted, embedding
+                   FROM mem_tree_summaries
+                  WHERE id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                window.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(params.as_slice(), row_to_summary)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("Failed to collect summaries batch")?;
+            for s in rows {
+                out.insert(s.id.clone(), s);
+            }
+        }
+        Ok(out)
     })
 }
 

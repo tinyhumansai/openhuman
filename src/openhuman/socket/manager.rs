@@ -19,6 +19,7 @@ use tokio::time::Duration;
 use crate::api::models::socket::{ConnectionStatus, SocketState};
 use crate::openhuman::webhooks::WebhookRouter;
 
+use super::token_provider::{static_token_provider, TokenProvider};
 use super::ws_loop::ws_loop;
 
 // ---------------------------------------------------------------------------
@@ -139,7 +140,59 @@ impl SocketManager {
             log::error!("[socket] connect: refusing to start — empty session token");
             return Err("empty session token — authenticate first".to_string());
         }
+        // Wrap the static token in a provider closure. Existing callers that
+        // pass a concrete token value continue to work unchanged; the provider
+        // returns that same token on every call (static semantics). For
+        // live-session refresh, callers should use `connect_with_session` which
+        // builds a provider via `token_provider_from_config`.
+        let provider = static_token_provider(token.to_string());
+        self.spawn_loop(url, provider).await
+    }
 
+    /// Connect using a **live-refresh token provider**.
+    ///
+    /// Unlike [`connect`] which wraps a single static token, this method
+    /// accepts a [`TokenProvider`] closure that is called before every
+    /// reconnect attempt. Use this when the token may change between retries
+    /// (e.g. after a session refresh or re-login) so the loop always sends the
+    /// freshest available credential.
+    ///
+    /// The provider is called immediately to validate that a token is available
+    /// before the background task is spawned — callers receive an actionable
+    /// `Err` if no token is stored rather than spawning a doomed retry loop.
+    pub async fn connect_with_provider(
+        &self,
+        url: &str,
+        token_provider: TokenProvider,
+    ) -> Result<(), String> {
+        // Validate that a token is available right now before spawning. This
+        // mirrors the empty-token guard in `connect()` and ensures callers
+        // see an immediate error if the session store is empty.
+        match token_provider() {
+            Ok(t) if !t.trim().is_empty() => {}
+            Ok(_) => {
+                log::error!(
+                    "[socket] connect_with_provider: refusing to start — provider returned empty token"
+                );
+                return Err("empty session token — authenticate first".to_string());
+            }
+            Err(e) => {
+                log::error!(
+                    "[socket] connect_with_provider: refusing to start — provider error: {e}"
+                );
+                return Err(e);
+            }
+        }
+        self.spawn_loop(url, token_provider).await
+    }
+
+    /// Shared spawn path used by both [`connect`] and [`connect_with_provider`].
+    ///
+    /// Installs the rustls crypto provider, tears down any existing connection,
+    /// constructs the channel pair, and spawns the background `ws_loop` task.
+    /// Entry-point-specific validation (empty-token guard, provider pre-check)
+    /// is done by the callers before this is called.
+    async fn spawn_loop(&self, url: &str, provider: TokenProvider) -> Result<(), String> {
         // Ensure the rustls crypto provider is installed (needed for wss:// TLS).
         // This is a no-op if already installed.
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -160,11 +213,10 @@ impl SocketManager {
         *self.shutdown_tx.lock().await = Some(shutdown_tx);
 
         let url = url.to_string();
-        let token = token.to_string();
         let shared = Arc::clone(&self.shared);
 
         let handle = tokio::spawn(async move {
-            ws_loop(url, token, shared, emit_rx, shutdown_rx, internal_tx).await;
+            ws_loop(url, provider, shared, emit_rx, shutdown_rx, internal_tx).await;
         });
 
         *self.loop_handle.lock().await = Some(handle);

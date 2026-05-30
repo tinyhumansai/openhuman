@@ -438,6 +438,82 @@ async fn diagnostics_ok_when_expected_models_are_present() {
 }
 
 #[tokio::test]
+async fn diagnostics_reports_broken_runner_even_when_models_are_present() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let config = Config::default();
+    let chat = crate::openhuman::inference::model_ids::effective_chat_model_id(&config);
+    let embedding = crate::openhuman::inference::model_ids::effective_embedding_model_id(&config);
+    let chat_tag = format!("{}:latest", chat);
+    let embed_tag = format!("{}:latest", embedding);
+    let app = Router::new()
+        .route(
+            "/api/tags",
+            get(move || {
+                let chat_tag = chat_tag.clone();
+                let embed_tag = embed_tag.clone();
+                async move {
+                    Json(json!({
+                        "models": [
+                            { "name": chat_tag, "modified_at": "", "size": 1u64, "digest": "d" },
+                            { "name": embed_tag, "modified_at": "", "size": 2u64, "digest": "e" },
+                        ]
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/api/show",
+            axum::routing::post(|Json(body): Json<serde_json::Value>| async move {
+                let model = body["name"]
+                    .as_str()
+                    .or_else(|| body["model"].as_str())
+                    .unwrap_or_default();
+                if model == "___nonexistent_probe___" {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "fork/exec /broken/ollama: no such file or directory".to_string(),
+                    );
+                }
+                (
+                    axum::http::StatusCode::OK,
+                    json!({
+                        "model_info": {
+                            "general.architecture": "bert",
+                            "bert.context_length": 8192,
+                        },
+                        "capabilities": ["embedding"],
+                    })
+                    .to_string(),
+                )
+            }),
+        );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let service = LocalAiService::new(&config);
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+
+    assert_eq!(diag["ollama_running"], true);
+    assert_eq!(diag["ok"], false);
+    let issues = diag["issues"].as_array().cloned().unwrap_or_default();
+    assert!(
+        issues.iter().any(|issue| issue
+            .as_str()
+            .unwrap_or_default()
+            .contains("cannot execute models")),
+        "diagnostics should report the broken Ollama runner, got: {:?}",
+        issues
+    );
+}
+
+#[tokio::test]
 async fn resolve_binary_path_finds_binary_via_ollama_bin_env() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
