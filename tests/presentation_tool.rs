@@ -18,13 +18,19 @@ use serde_json::json;
 
 #[tokio::test]
 async fn end_to_end_generates_real_pptx_when_python_pptx_available() {
-    if !python_available() {
+    // Resolve a single python binary up-front so the availability
+    // check and the `import pptx` probe can't disagree on which
+    // interpreter is being validated (e.g. python3 advertises
+    // availability but only `python` actually has python-pptx, or
+    // vice versa — which would make the real tool invocation fail
+    // nondeterministically below).
+    let Some(python) = resolved_python() else {
         eprintln!("skipping: no python3 on PATH");
         return;
-    }
-    if !python_pptx_importable() {
+    };
+    if !python_pptx_importable(python) {
         eprintln!(
-            "skipping: python3 cannot `import pptx` — install with `pip install python-pptx==1.0.2`"
+            "skipping: {python} cannot `import pptx` — install with `pip install python-pptx==1.0.2`"
         );
         return;
     }
@@ -109,24 +115,25 @@ async fn end_to_end_rejects_invalid_input_without_spawning_python() {
     assert!(result.text().contains("title"));
 }
 
-fn python_available() -> bool {
+/// First `python3` / `python` on PATH that exits 0 for `--version`,
+/// returned as a stable name string. Used so both the availability
+/// probe and the `import pptx` probe pin to the same interpreter.
+fn resolved_python() -> Option<&'static str> {
     for name in ["python3", "python"] {
         if let Ok(output) = Command::new(name).arg("--version").output() {
             if output.status.success() {
-                return true;
+                return Some(name);
             }
         }
     }
-    false
+    None
 }
 
-fn python_pptx_importable() -> bool {
-    for name in ["python3", "python"] {
-        if let Ok(output) = Command::new(name).arg("-c").arg("import pptx").output() {
-            if output.status.success() {
-                return true;
-            }
-        }
-    }
-    false
+fn python_pptx_importable(python: &str) -> bool {
+    Command::new(python)
+        .arg("-c")
+        .arg("import pptx")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
