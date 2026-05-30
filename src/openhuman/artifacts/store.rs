@@ -404,7 +404,14 @@ pub async fn fail_artifact(
     meta.status = ArtifactStatus::Failed;
     meta.error = Some(reason.to_string());
     save_artifact_meta(workspace_dir, &meta).await?;
-    log::warn!("[artifacts] fail_artifact: id={artifact_id} -> Failed reason={reason:?}");
+    // Log only the size of the reason — it can carry provider stderr
+    // / user-derived content, which we don't want flushed verbatim
+    // into structured logs. The full payload is still persisted on
+    // `meta.error` for the UI surface and the chat event below.
+    log::warn!(
+        "[artifacts] fail_artifact: id={artifact_id} -> Failed reason_len={}",
+        reason.len()
+    );
 
     let (thread_id, client_id) = current_chat_context();
     crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::ArtifactFailed {

@@ -155,7 +155,8 @@ impl EventHandler for ArtifactSurfaceSubscriber {
                     return;
                 };
                 log::warn!(
-                    "[web-channel] artifact-surface emitting artifact_failed id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id} error={error:?}"
+                    "[web-channel] artifact-surface emitting artifact_failed id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id} error_len={}",
+                    error.len()
                 );
                 publish_web_channel_event(WebChannelEvent {
                     event: "artifact_failed".to_string(),
