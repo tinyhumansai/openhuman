@@ -4202,6 +4202,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'Отмена',
   'chat.files.delete.action': 'Удалить',
   'chat.files.delete.failed': 'Не удалось удалить файл. Попробуйте ещё раз.',
+  'chat.files.error.not_desktop': 'Загрузки доступны только в настольном приложении.',
+  'chat.files.error.missing_artifact_id': 'Отсутствует идентификатор артефакта.',
+  'chat.files.error.missing_artifact_path': 'В ответе ядра отсутствует путь к артефакту.',
+  'chat.files.error.resolve_failed': 'Не удалось получить артефакт. Попробуйте ещё раз.',
+  'chat.files.error.download_failed': 'Не удалось загрузить файл. Попробуйте ещё раз.',
+  'chat.files.error.delete_failed': 'Не удалось удалить файл. Попробуйте ещё раз.',
 };
 
 export default messages;

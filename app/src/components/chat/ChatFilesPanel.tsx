@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { formatFileSize } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
 import {
+  type ArtifactErrorCode,
   deleteArtifact,
   downloadArtifact,
   revealArtifactInFileManager,
@@ -33,6 +34,41 @@ export interface ChatFilesPanelProps {
   threadId: string;
   artifacts: ArtifactSnapshot[];
   onClose: () => void;
+}
+
+/**
+ * Map a structured {@link ArtifactErrorCode} to a localized headline.
+ * Caller passes the raw `outcome.error` as a fallback — if the service
+ * returns no code (e.g. older callers), the raw text wins. Routing all
+ * codes through `t(...)` keeps non-English locales from leaking English
+ * error copy into the panel.
+ */
+function localizeErrorCode(
+  t: (key: string, fallback?: string) => string,
+  code: ArtifactErrorCode | undefined,
+  fallback: string | undefined
+): string {
+  if (!code) return fallback ?? '';
+  switch (code) {
+    case 'NOT_DESKTOP':
+      return t('chat.files.error.not_desktop');
+    case 'MISSING_ARTIFACT_ID':
+      return t('chat.files.error.missing_artifact_id');
+    case 'MISSING_ARTIFACT_PATH':
+      return t('chat.files.error.missing_artifact_path');
+    case 'RESOLVE_FAILED':
+      return t('chat.files.error.resolve_failed');
+    case 'DOWNLOAD_FAILED':
+      return t('chat.files.error.download_failed');
+    case 'DELETE_FAILED':
+      return t('chat.files.error.delete_failed');
+    default: {
+      // Exhaustive guard: a new code added to ArtifactErrorCode without a
+      // matching arm here will fail to type-check.
+      const _exhaustive: never = code;
+      return _exhaustive;
+    }
+  }
 }
 
 function extensionFor(kind: ArtifactSnapshot['kind'], title: string): string {
@@ -118,6 +154,7 @@ function KindIcon({ kind }: { kind: ArtifactSnapshot['kind'] }) {
 interface RowDownloadState {
   state: 'idle' | 'downloading' | 'done' | 'error';
   path?: string;
+  /** Already-localized error headline ready for direct render. */
   error?: string;
 }
 
@@ -168,7 +205,13 @@ export default function ChatFilesPanel({ threadId, artifacts, onClose }: ChatFil
       ...prev,
       [artifact.artifactId]: outcome.ok
         ? { state: 'done', path: outcome.path }
-        : { state: 'error', error: outcome.error },
+        : {
+            state: 'error',
+            // Prefer the localized headline; only fall back to the raw
+            // detail when the service didn't supply a code (defensive —
+            // every documented failure path returns one).
+            error: localizeErrorCode(t, outcome.code, outcome.error),
+          },
     }));
   };
 
@@ -197,7 +240,10 @@ export default function ChatFilesPanel({ threadId, artifacts, onClose }: ChatFil
           sizeBytes: artifact.sizeBytes ?? 0,
         })
       );
-      setDeleteError(outcome.error ?? t('chat.files.delete.failed'));
+      // Prefer the localized headline mapped from `code`; if neither
+      // code nor a raw detail came back, fall back to the generic
+      // delete-failed copy so the user always sees something.
+      setDeleteError(localizeErrorCode(t, outcome.code, outcome.error) || t('chat.files.delete.failed'));
     }
   };
 

@@ -4233,6 +4233,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'Annulla',
   'chat.files.delete.action': 'Elimina',
   'chat.files.delete.failed': 'Impossibile eliminare il file. Riprova.',
+  'chat.files.error.not_desktop': 'I download sono disponibili solo nell’app desktop.',
+  'chat.files.error.missing_artifact_id': 'ID dell’artefatto mancante.',
+  'chat.files.error.missing_artifact_path': 'Percorso dell’artefatto mancante nella risposta del core.',
+  'chat.files.error.resolve_failed': 'Impossibile risolvere l’artefatto. Riprova.',
+  'chat.files.error.download_failed': 'Download non riuscito. Riprova.',
+  'chat.files.error.delete_failed': 'Impossibile eliminare il file. Riprova.',
 };
 
 export default messages;

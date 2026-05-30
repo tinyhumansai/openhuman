@@ -3964,6 +3964,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': '取消',
   'chat.files.delete.action': '删除',
   'chat.files.delete.failed': '无法删除文件。请重试。',
+  'chat.files.error.not_desktop': '下载仅在桌面应用中可用。',
+  'chat.files.error.missing_artifact_id': '缺少 artifact id。',
+  'chat.files.error.missing_artifact_path': '核心响应中缺少 artifact 路径。',
+  'chat.files.error.resolve_failed': '无法解析 artifact。请重试。',
+  'chat.files.error.download_failed': '下载失败。请重试。',
+  'chat.files.error.delete_failed': '无法删除文件。请重试。',
 };
 
 export default messages;

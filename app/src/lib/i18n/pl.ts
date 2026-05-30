@@ -4234,6 +4234,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'Anuluj',
   'chat.files.delete.action': 'Usuń',
   'chat.files.delete.failed': 'Nie udało się usunąć pliku. Spróbuj ponownie.',
+  'chat.files.error.not_desktop': 'Pobieranie jest dostępne tylko w aplikacji desktopowej.',
+  'chat.files.error.missing_artifact_id': 'Brak identyfikatora artefaktu.',
+  'chat.files.error.missing_artifact_path': 'Brak ścieżki artefaktu w odpowiedzi z core.',
+  'chat.files.error.resolve_failed': 'Nie udało się rozpoznać artefaktu. Spróbuj ponownie.',
+  'chat.files.error.download_failed': 'Pobieranie nie powiodło się. Spróbuj ponownie.',
+  'chat.files.error.delete_failed': 'Nie udało się usunąć pliku. Spróbuj ponownie.',
 };
 
 export default messages;

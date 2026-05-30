@@ -202,4 +202,70 @@ describe('ChatFilesPanel', () => {
     expect(store.getState().chatRuntime.artifactsByThread[THREAD]).toHaveLength(1);
     expect(store.getState().chatRuntime.artifactsByThread[THREAD][0].artifactId).toBe('art-1');
   });
+
+  it('Delete → typed code surfaces the localized headline, not the raw detail', async () => {
+    const a = readyArtifact('art-1', 'Climate Deck');
+    // Service returns the new shape: structured code + raw RPC string.
+    // UI must prefer the localized headline mapped from `code`.
+    vi.mocked(deleteArtifact).mockResolvedValueOnce({
+      ok: false,
+      code: 'DELETE_FAILED',
+      error: 'rpc transport closed',
+    });
+    const store = mkStore([
+      {
+        threadId: THREAD,
+        artifactId: a.artifactId,
+        kind: a.kind,
+        title: a.title,
+        path: a.path!,
+        sizeBytes: a.sizeBytes!,
+      },
+    ]);
+    render(
+      <Provider store={store}>
+        <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={() => {}} />
+      </Provider>
+    );
+    fireEvent.click(screen.getByTestId('chat-files-delete-art-1'));
+    fireEvent.click(screen.getByTestId('chat-files-confirm-art-1'));
+    await waitFor(() => {
+      // Localized headline from chat.files.error.delete_failed (en).
+      expect(screen.getByText('Couldn’t delete the file. Please try again.')).toBeInTheDocument();
+    });
+    // Raw detail MUST NOT leak into the user-facing surface.
+    expect(screen.queryByText('rpc transport closed')).toBeNull();
+  });
+
+  it('Download → typed code surfaces the localized headline in the row error', async () => {
+    const a = readyArtifact('art-1', 'Climate Deck');
+    vi.mocked(downloadArtifact).mockResolvedValueOnce({
+      ok: false,
+      code: 'NOT_DESKTOP',
+      error: 'Downloads are only available in the desktop app',
+    });
+    const store = mkStore([
+      {
+        threadId: THREAD,
+        artifactId: a.artifactId,
+        kind: a.kind,
+        title: a.title,
+        path: a.path!,
+        sizeBytes: a.sizeBytes!,
+      },
+    ]);
+    render(
+      <Provider store={store}>
+        <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={() => {}} />
+      </Provider>
+    );
+    fireEvent.click(screen.getByTestId('chat-files-download-art-1'));
+    await waitFor(() => {
+      // The download_failed copy is wrapped by the chat.artifact.download_failed
+      // template (`{reason}`), which renders the localized inner text.
+      expect(
+        screen.getByText(/Downloads are only available in the desktop app/)
+      ).toBeInTheDocument();
+    });
+  });
 });

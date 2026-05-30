@@ -4161,6 +4161,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'বাতিল',
   'chat.files.delete.action': 'মুছুন',
   'chat.files.delete.failed': 'ফাইল মোছা যায়নি। আবার চেষ্টা করুন।',
+  'chat.files.error.not_desktop': 'ডাউনলোড শুধুমাত্র ডেস্কটপ অ্যাপে উপলব্ধ।',
+  'chat.files.error.missing_artifact_id': 'আর্টিফ্যাক্ট আইডি অনুপস্থিত।',
+  'chat.files.error.missing_artifact_path': 'কোর প্রতিক্রিয়া থেকে আর্টিফ্যাক্ট পথ অনুপস্থিত।',
+  'chat.files.error.resolve_failed': 'আর্টিফ্যাক্ট সমাধান করা যায়নি। আবার চেষ্টা করুন।',
+  'chat.files.error.download_failed': 'ডাউনলোড ব্যর্থ হয়েছে। আবার চেষ্টা করুন।',
+  'chat.files.error.delete_failed': 'ফাইল মোছা যায়নি। আবার চেষ্টা করুন।',
 };
 
 export default messages;

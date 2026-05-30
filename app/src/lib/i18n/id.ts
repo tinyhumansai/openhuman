@@ -4178,6 +4178,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'Batal',
   'chat.files.delete.action': 'Hapus',
   'chat.files.delete.failed': 'Tidak bisa menghapus file. Coba lagi.',
+  'chat.files.error.not_desktop': 'Unduhan hanya tersedia di aplikasi desktop.',
+  'chat.files.error.missing_artifact_id': 'ID artefak tidak ada.',
+  'chat.files.error.missing_artifact_path': 'Jalur artefak tidak ada dalam respons core.',
+  'chat.files.error.resolve_failed': 'Tidak dapat memuat artefak. Coba lagi.',
+  'chat.files.error.download_failed': 'Unduhan gagal. Coba lagi.',
+  'chat.files.error.delete_failed': 'Tidak bisa menghapus file. Coba lagi.',
 };
 
 export default messages;

@@ -4168,6 +4168,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'रद्द करें',
   'chat.files.delete.action': 'हटाएं',
   'chat.files.delete.failed': 'फ़ाइल हटाई नहीं जा सकी। पुनः प्रयास करें।',
+  'chat.files.error.not_desktop': 'डाउनलोड केवल डेस्कटॉप ऐप में उपलब्ध हैं।',
+  'chat.files.error.missing_artifact_id': 'आर्टिफैक्ट आईडी अनुपस्थित है।',
+  'chat.files.error.missing_artifact_path': 'कोर प्रतिक्रिया से आर्टिफैक्ट पथ गायब है।',
+  'chat.files.error.resolve_failed': 'आर्टिफैक्ट को हल नहीं किया जा सका। पुनः प्रयास करें।',
+  'chat.files.error.download_failed': 'डाउनलोड विफल रहा। पुनः प्रयास करें।',
+  'chat.files.error.delete_failed': 'फ़ाइल हटाई नहीं जा सकी। पुनः प्रयास करें।',
 };
 
 export default messages;

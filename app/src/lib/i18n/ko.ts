@@ -4131,6 +4131,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': '취소',
   'chat.files.delete.action': '삭제',
   'chat.files.delete.failed': '파일을 삭제하지 못했습니다. 다시 시도해주세요.',
+  'chat.files.error.not_desktop': '다운로드는 데스크톱 앱에서만 사용할 수 있습니다.',
+  'chat.files.error.missing_artifact_id': '아티팩트 ID가 없습니다.',
+  'chat.files.error.missing_artifact_path': '코어 응답에 아티팩트 경로가 없습니다.',
+  'chat.files.error.resolve_failed': '아티팩트를 해석할 수 없습니다. 다시 시도해주세요.',
+  'chat.files.error.download_failed': '다운로드에 실패했습니다. 다시 시도해주세요.',
+  'chat.files.error.delete_failed': '파일을 삭제하지 못했습니다. 다시 시도해주세요.',
 };
 
 export default messages;

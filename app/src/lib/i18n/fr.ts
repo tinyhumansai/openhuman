@@ -4255,6 +4255,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'Annuler',
   'chat.files.delete.action': 'Supprimer',
   'chat.files.delete.failed': 'Impossible de supprimer le fichier. Réessayez.',
+  'chat.files.error.not_desktop': 'Les téléchargements sont uniquement disponibles dans l’application bureau.',
+  'chat.files.error.missing_artifact_id': 'Identifiant d’artefact manquant.',
+  'chat.files.error.missing_artifact_path': 'Le chemin de l’artefact est absent de la réponse du cœur.',
+  'chat.files.error.resolve_failed': 'Impossible de résoudre l’artefact. Réessayez.',
+  'chat.files.error.download_failed': 'Échec du téléchargement. Réessayez.',
+  'chat.files.error.delete_failed': 'Impossible de supprimer le fichier. Réessayez.',
 };
 
 export default messages;

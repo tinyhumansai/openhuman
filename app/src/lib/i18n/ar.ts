@@ -4089,6 +4089,12 @@ const messages: TranslationMap = {
   'chat.files.delete.cancel': 'إلغاء',
   'chat.files.delete.action': 'حذف',
   'chat.files.delete.failed': 'تعذّر حذف الملف. حاول مرة أخرى.',
+  'chat.files.error.not_desktop': 'التنزيلات متاحة فقط في تطبيق سطح المكتب.',
+  'chat.files.error.missing_artifact_id': 'معرّف الملف مفقود.',
+  'chat.files.error.missing_artifact_path': 'مسار الملف مفقود من استجابة النظام.',
+  'chat.files.error.resolve_failed': 'تعذّر تحديد الملف. حاول مرة أخرى.',
+  'chat.files.error.download_failed': 'فشل التنزيل. حاول مرة أخرى.',
+  'chat.files.error.delete_failed': 'تعذّر حذف الملف. حاول مرة أخرى.',
 };
 
 export default messages;

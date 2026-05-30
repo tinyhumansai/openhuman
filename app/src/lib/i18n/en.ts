@@ -4387,6 +4387,14 @@ const en: TranslationMap = {
   'chat.files.delete.cancel': 'Cancel',
   'chat.files.delete.action': 'Delete',
   'chat.files.delete.failed': 'Couldn’t delete the file. Try again.',
+  // Error labels for download/delete outcomes (#3024). Keyed off
+  // `ArtifactErrorCode` returned by artifactDownloadService.
+  'chat.files.error.not_desktop': 'Downloads are only available in the desktop app.',
+  'chat.files.error.missing_artifact_id': 'Missing artifact id.',
+  'chat.files.error.missing_artifact_path': 'The artifact path is missing from the core response.',
+  'chat.files.error.resolve_failed': 'Couldn’t resolve the artifact. Please try again.',
+  'chat.files.error.download_failed': 'Download failed. Please try again.',
+  'chat.files.error.delete_failed': 'Couldn’t delete the file. Please try again.',
 };
 
 export default en;
