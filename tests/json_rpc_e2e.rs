@@ -993,6 +993,517 @@ async fn json_rpc_tool_registry_lists_and_gets_entries() {
 }
 
 #[tokio::test]
+async fn json_rpc_agent_registry_manages_defaults_and_custom_agents() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    write_min_config(&openhuman_home, "http://127.0.0.1:9");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    let list = post_json_rpc(
+        &rpc_base,
+        2862_1,
+        "openhuman.agent_registry_list",
+        json!({ "include_disabled": true }),
+    )
+    .await;
+    let list_result = assert_no_jsonrpc_error(&list, "agent_registry_list");
+    let agents = list_result
+        .get("agents")
+        .and_then(Value::as_array)
+        .expect("agent registry list should return agents array");
+    let orchestrator = agents
+        .iter()
+        .find(|agent| agent.get("id").and_then(Value::as_str) == Some("orchestrator"))
+        .expect("default registry should include orchestrator");
+    assert_eq!(
+        orchestrator.get("source").and_then(Value::as_str),
+        Some("default")
+    );
+    assert_eq!(
+        orchestrator.get("enabled").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let missing = post_json_rpc(
+        &rpc_base,
+        2862_10,
+        "openhuman.agent_registry_get",
+        json!({ "id": "does_not_exist" }),
+    )
+    .await;
+    assert!(
+        assert_no_jsonrpc_error(&missing, "agent_registry_get missing")["agent"].is_null(),
+        "missing agents should return agent:null"
+    );
+
+    let update_default = post_json_rpc(
+        &rpc_base,
+        2862_11,
+        "openhuman.agent_registry_update",
+        json!({
+            "id": "researcher",
+            "name": "Research Specialist",
+            "description": "Workspace-specific research specialist.",
+            "model": "reasoning-v1",
+            "tool_allowlist": ["tools.web_search", "memory.search"],
+            "tool_denylist": ["wallet.execute_prepared"],
+            "tags": ["research", "workspace"],
+            "metadata": { "pinned_by": "json_rpc_e2e" }
+        }),
+    )
+    .await;
+    let update_default_agent =
+        assert_no_jsonrpc_error(&update_default, "agent_registry_update default")
+            .get("agent")
+            .expect("update default should return agent");
+    assert_eq!(
+        update_default_agent.get("name").and_then(Value::as_str),
+        Some("Research Specialist")
+    );
+    assert_eq!(
+        update_default_agent
+            .get("metadata")
+            .and_then(|metadata| metadata.get("pinned_by"))
+            .and_then(Value::as_str),
+        Some("json_rpc_e2e")
+    );
+
+    let update_missing = post_json_rpc(
+        &rpc_base,
+        2862_12,
+        "openhuman.agent_registry_update",
+        json!({ "id": "missing_agent", "enabled": false }),
+    )
+    .await;
+    let update_missing_error =
+        assert_jsonrpc_error(&update_missing, "agent_registry_update missing");
+    assert!(
+        update_missing_error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("not found"),
+        "unexpected missing-update error: {update_missing_error}"
+    );
+
+    let disabled = post_json_rpc(
+        &rpc_base,
+        2862_2,
+        "openhuman.agent_registry_set_enabled",
+        json!({ "id": "code_executor", "enabled": false }),
+    )
+    .await;
+    let disabled_result = assert_no_jsonrpc_error(&disabled, "agent_registry_set_enabled");
+    assert_eq!(
+        disabled_result
+            .get("agent")
+            .and_then(|agent| agent.get("id"))
+            .and_then(Value::as_str),
+        Some("code_executor")
+    );
+    assert_eq!(
+        disabled_result
+            .get("agent")
+            .and_then(|agent| agent.get("enabled"))
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let visible = post_json_rpc(
+        &rpc_base,
+        2862_3,
+        "openhuman.agent_registry_list",
+        json!({}),
+    )
+    .await;
+    let visible_result = assert_no_jsonrpc_error(&visible, "agent_registry_list visible");
+    let visible_agents = visible_result
+        .get("agents")
+        .and_then(Value::as_array)
+        .expect("agent registry list should return visible agents array");
+    assert!(
+        !visible_agents
+            .iter()
+            .any(|agent| agent.get("id").and_then(Value::as_str) == Some("code_executor")),
+        "disabled default agent should be hidden unless include_disabled=true"
+    );
+
+    let all_after_disable = post_json_rpc(
+        &rpc_base,
+        2862_13,
+        "openhuman.agent_registry_list",
+        json!({ "include_disabled": true }),
+    )
+    .await;
+    let all_after_disable_result =
+        assert_no_jsonrpc_error(&all_after_disable, "agent_registry_list include disabled");
+    let disabled_code_executor = all_after_disable_result
+        .get("agents")
+        .and_then(Value::as_array)
+        .and_then(|agents| {
+            agents
+                .iter()
+                .find(|agent| agent.get("id").and_then(Value::as_str) == Some("code_executor"))
+        })
+        .expect("include_disabled should retain disabled code_executor");
+    assert_eq!(
+        disabled_code_executor
+            .get("enabled")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let reenabled = post_json_rpc(
+        &rpc_base,
+        2862_14,
+        "openhuman.agent_registry_set_enabled",
+        json!({ "id": "code_executor", "enabled": true }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&reenabled, "agent_registry_set_enabled reenable")
+            .get("agent")
+            .and_then(|agent| agent.get("enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let disabled_orchestrator = post_json_rpc(
+        &rpc_base,
+        2862_31,
+        "openhuman.agent_registry_set_enabled",
+        json!({ "id": "orchestrator", "enabled": false }),
+    )
+    .await;
+    let disabled_orchestrator_error = assert_jsonrpc_error(
+        &disabled_orchestrator,
+        "agent_registry_set_enabled orchestrator",
+    );
+    assert!(
+        disabled_orchestrator_error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("orchestrator agent cannot be disabled"),
+        "unexpected orchestrator-disable error: {disabled_orchestrator_error}"
+    );
+
+    let update_orchestrator_disabled = post_json_rpc(
+        &rpc_base,
+        2862_32,
+        "openhuman.agent_registry_update",
+        json!({ "id": "orchestrator", "enabled": false }),
+    )
+    .await;
+    let update_orchestrator_error = assert_jsonrpc_error(
+        &update_orchestrator_disabled,
+        "agent_registry_update orchestrator disabled",
+    );
+    assert!(
+        update_orchestrator_error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("orchestrator agent cannot be disabled"),
+        "unexpected orchestrator-update error: {update_orchestrator_error}"
+    );
+
+    let created = post_json_rpc(
+        &rpc_base,
+        2862_4,
+        "openhuman.agent_registry_create_custom",
+        json!({
+            "id": "custom_writer",
+            "name": "Custom Writer",
+            "description": "Drafts polished workspace updates.",
+            "model": "reasoning-v1",
+            "system_prompt": "Write concise, accurate updates.",
+            "tool_allowlist": ["memory.search", "tools.web_search"],
+            "tool_denylist": ["wallet.execute_prepared"],
+            "tags": ["writing", "custom"],
+            "metadata": { "created_by": "json_rpc_e2e" }
+        }),
+    )
+    .await;
+    let created_result = assert_no_jsonrpc_error(&created, "agent_registry_create_custom");
+    let custom = created_result
+        .get("agent")
+        .expect("create_custom should return agent");
+    assert_eq!(
+        custom.get("id").and_then(Value::as_str),
+        Some("custom_writer")
+    );
+    assert_eq!(custom.get("source").and_then(Value::as_str), Some("custom"));
+    assert_eq!(custom.get("enabled").and_then(Value::as_bool), Some(true));
+    assert_eq!(
+        custom
+            .get("tool_allowlist")
+            .and_then(Value::as_array)
+            .and_then(|tools| tools.first())
+            .and_then(Value::as_str),
+        Some("memory.search")
+    );
+
+    let get_custom = post_json_rpc(
+        &rpc_base,
+        2862_5,
+        "openhuman.agent_registry_get",
+        json!({ "id": "custom_writer" }),
+    )
+    .await;
+    let get_custom_result = assert_no_jsonrpc_error(&get_custom, "agent_registry_get custom");
+    assert_eq!(
+        get_custom_result
+            .get("agent")
+            .and_then(|agent| agent.get("metadata"))
+            .and_then(|metadata| metadata.get("created_by"))
+            .and_then(Value::as_str),
+        Some("json_rpc_e2e")
+    );
+
+    let updated_custom = post_json_rpc(
+        &rpc_base,
+        2862_15,
+        "openhuman.agent_registry_update",
+        json!({
+            "id": "custom_writer",
+            "name": "Custom Writer v2",
+            "description": "Drafts polished workspace updates and summaries.",
+            "enabled": false,
+            "model": "coding-v1",
+            "system_prompt": "Write concise updates with citations when available.",
+            "tool_allowlist": ["memory.search"],
+            "tool_denylist": ["shell"],
+            "subagents": ["researcher"],
+            "tags": ["writing", "custom", "disabled"],
+            "metadata": { "updated_by": "json_rpc_e2e" }
+        }),
+    )
+    .await;
+    let updated_custom_agent =
+        assert_no_jsonrpc_error(&updated_custom, "agent_registry_update custom")
+            .get("agent")
+            .expect("custom update should return agent");
+    assert_eq!(
+        updated_custom_agent.get("name").and_then(Value::as_str),
+        Some("Custom Writer v2")
+    );
+    assert_eq!(
+        updated_custom_agent.get("enabled").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        updated_custom_agent
+            .get("subagents")
+            .and_then(Value::as_array)
+            .and_then(|subagents| subagents.first())
+            .and_then(Value::as_str),
+        Some("researcher")
+    );
+
+    let reenabled_custom = post_json_rpc(
+        &rpc_base,
+        2862_16,
+        "openhuman.agent_registry_set_enabled",
+        json!({ "id": "custom_writer", "enabled": true }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&reenabled_custom, "agent_registry_set_enabled custom")
+            .get("agent")
+            .and_then(|agent| agent.get("enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let full_upsert = post_json_rpc(
+        &rpc_base,
+        2862_17,
+        "openhuman.agent_registry_upsert_custom",
+        json!({
+            "agent": {
+                "id": "custom_reviewer",
+                "name": "Custom Reviewer",
+                "description": "Reviews agent plans before execution.",
+                "source": "default",
+                "enabled": false,
+                "model": "reasoning-v1",
+                "system_prompt": "Review plans for missing validation.",
+                "tool_allowlist": ["memory.search"],
+                "tool_denylist": ["shell", "file_write"],
+                "subagents": ["critic"],
+                "tags": ["review"],
+                "metadata": { "entry_shape": "full" }
+            }
+        }),
+    )
+    .await;
+    let full_upsert_agent = assert_no_jsonrpc_error(&full_upsert, "agent_registry_upsert_custom")
+        .get("agent")
+        .expect("upsert_custom should return agent");
+    assert_eq!(
+        full_upsert_agent.get("id").and_then(Value::as_str),
+        Some("custom_reviewer")
+    );
+    assert_eq!(
+        full_upsert_agent.get("source").and_then(Value::as_str),
+        Some("custom"),
+        "upsert_custom should force source=custom even if caller sends another source"
+    );
+    assert_eq!(
+        full_upsert_agent.get("enabled").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let visible_after_custom_disable = post_json_rpc(
+        &rpc_base,
+        2862_18,
+        "openhuman.agent_registry_list",
+        json!({}),
+    )
+    .await;
+    let visible_after_custom_disable_result = assert_no_jsonrpc_error(
+        &visible_after_custom_disable,
+        "agent_registry_list hides disabled custom",
+    );
+    assert!(
+        !visible_after_custom_disable_result
+            .get("agents")
+            .and_then(Value::as_array)
+            .expect("agent_registry_list should return agents array")
+            .iter()
+            .any(|agent| agent.get("id").and_then(Value::as_str) == Some("custom_reviewer")),
+        "disabled custom agent should be hidden from default list"
+    );
+
+    let default_collision = post_json_rpc(
+        &rpc_base,
+        2862_6,
+        "openhuman.agent_registry_create_custom",
+        json!({
+            "id": "orchestrator",
+            "name": "Bad Override",
+            "description": "Should not replace default agents through custom create."
+        }),
+    )
+    .await;
+    let collision_error = assert_jsonrpc_error(
+        &default_collision,
+        "agent_registry_create_custom default collision",
+    );
+    assert!(
+        collision_error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .contains("default agent"),
+        "unexpected default-collision error: {collision_error}"
+    );
+
+    let removed_reviewer = post_json_rpc(
+        &rpc_base,
+        2862_19,
+        "openhuman.agent_registry_remove",
+        json!({ "id": "custom_reviewer" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&removed_reviewer, "agent_registry_remove custom reviewer")
+            .get("removed")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let removed_custom = post_json_rpc(
+        &rpc_base,
+        2862_7,
+        "openhuman.agent_registry_remove",
+        json!({ "id": "custom_writer" }),
+    )
+    .await;
+    let removed_custom_result =
+        assert_no_jsonrpc_error(&removed_custom, "agent_registry_remove custom");
+    assert_eq!(
+        removed_custom_result
+            .get("removed")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let removed_missing = post_json_rpc(
+        &rpc_base,
+        2862_20,
+        "openhuman.agent_registry_remove",
+        json!({ "id": "missing_agent" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&removed_missing, "agent_registry_remove missing")
+            .get("removed")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+
+    let reset_default = post_json_rpc(
+        &rpc_base,
+        2862_21,
+        "openhuman.agent_registry_remove",
+        json!({ "id": "researcher" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&reset_default, "agent_registry_remove default override")
+            .get("removed")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let reset_code_executor = post_json_rpc(
+        &rpc_base,
+        2862_22,
+        "openhuman.agent_registry_remove",
+        json!({ "id": "code_executor" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(
+            &reset_code_executor,
+            "agent_registry_remove code_executor override"
+        )
+        .get("removed")
+        .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let code_executor = post_json_rpc(
+        &rpc_base,
+        2862_23,
+        "openhuman.agent_registry_get",
+        json!({ "id": "code_executor" }),
+    )
+    .await;
+    assert_eq!(
+        assert_no_jsonrpc_error(&code_executor, "agent_registry_get reset default")
+            .get("agent")
+            .and_then(|agent| agent.get("enabled"))
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_protocol_auth_and_agent_hello() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");
@@ -1315,6 +1826,120 @@ async fn json_rpc_thread_labels_create_and_update() {
             .collect::<Vec<_>>(),
         vec!["work", "briefing"],
         "threads_list must reflect the updated labels"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
+async fn json_rpc_todos_crud_on_personal_board() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // The Tasks-tab create flow targets a reserved, conversation-less board
+    // id. The `todos_*` handlers never require the thread to exist, so a
+    // user can manage a personal task list backed by this sentinel id.
+    let board = "user-tasks";
+
+    // 1. Add a user-created card.
+    let add = post_json_rpc(
+        &rpc_base,
+        9101,
+        "openhuman.todos_add",
+        json!({ "thread_id": board, "content": "Buy milk", "status": "todo" }),
+    )
+    .await;
+    let add_result = assert_no_jsonrpc_error(&add, "todos_add");
+    let cards = add_result
+        .get("cards")
+        .and_then(Value::as_array)
+        .expect("cards array in add response");
+    assert_eq!(cards.len(), 1, "exactly one card after add");
+    assert_eq!(
+        cards[0].get("title").and_then(Value::as_str),
+        Some("Buy milk"),
+        "added card title"
+    );
+    assert_eq!(
+        add_result.get("threadId").and_then(Value::as_str),
+        Some(board),
+        "snapshot echoes the board id"
+    );
+    let card_id = cards[0]
+        .get("id")
+        .and_then(Value::as_str)
+        .expect("card id")
+        .to_string();
+
+    // 2. List reflects the new card.
+    let list = post_json_rpc(
+        &rpc_base,
+        9102,
+        "openhuman.todos_list",
+        json!({ "thread_id": board }),
+    )
+    .await;
+    let list_result = assert_no_jsonrpc_error(&list, "todos_list");
+    assert_eq!(
+        list_result
+            .get("cards")
+            .and_then(Value::as_array)
+            .map(|c| c.len()),
+        Some(1),
+        "list returns the persisted card"
+    );
+
+    // 3. Move it to done.
+    let upd = post_json_rpc(
+        &rpc_base,
+        9103,
+        "openhuman.todos_update_status",
+        json!({ "thread_id": board, "id": card_id, "status": "done" }),
+    )
+    .await;
+    let upd_result = assert_no_jsonrpc_error(&upd, "todos_update_status");
+    let upd_cards = upd_result
+        .get("cards")
+        .and_then(Value::as_array)
+        .expect("cards in update response");
+    assert_eq!(
+        upd_cards[0].get("status").and_then(Value::as_str),
+        Some("done"),
+        "status updated to done"
+    );
+
+    // 4. Remove it — the board is empty again.
+    let rem = post_json_rpc(
+        &rpc_base,
+        9104,
+        "openhuman.todos_remove",
+        json!({ "thread_id": board, "id": card_id }),
+    )
+    .await;
+    let rem_result = assert_no_jsonrpc_error(&rem, "todos_remove");
+    assert!(
+        rem_result
+            .get("cards")
+            .and_then(Value::as_array)
+            .expect("cards in remove response")
+            .is_empty(),
+        "board empty after remove"
     );
 
     api_join.abort();

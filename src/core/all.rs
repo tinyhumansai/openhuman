@@ -124,6 +124,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::webview_apis::all_webview_apis_registered_controllers());
     // Agent definition and prompt inspection
     controllers.extend(crate::openhuman::agent::all_agent_registered_controllers());
+    // User-facing agent registry: defaults, enablement, custom agents, tool policy.
+    controllers
+        .extend(crate::openhuman::agent_registry::all_agent_registry_registered_controllers());
     // Local procedural operating experience for agent self-learning
     controllers
         .extend(crate::openhuman::agent_experience::all_agent_experience_registered_controllers());
@@ -175,9 +178,6 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
     );
-    // Desktop gameplay review workflow
-    controllers
-        .extend(crate::openhuman::gameplay_review::all_gameplay_review_registered_controllers());
     // Backend Socket.IO bridge + related runtime plumbing
     controllers.extend(crate::openhuman::socket::all_socket_registered_controllers());
     // Managed Node.js runtime bridge (tool listing + dispatch)
@@ -301,6 +301,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::mcp_registry::all_mcp_registry_controller_schemas());
     schemas.extend(crate::openhuman::webview_apis::all_webview_apis_controller_schemas());
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
+    schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
@@ -315,7 +316,6 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas
         .extend(crate::openhuman::channels::providers::web::all_web_channel_controller_schemas());
     schemas.extend(crate::openhuman::channels::controllers::all_channels_controller_schemas());
-    schemas.extend(crate::openhuman::gameplay_review::all_gameplay_review_controller_schemas());
     schemas.extend(crate::openhuman::config::all_config_controller_schemas());
     schemas.extend(crate::openhuman::connectivity::all_connectivity_controller_schemas());
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());

@@ -18,7 +18,10 @@ import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
 import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
-import chatRuntimeReducer from '../../store/chatRuntimeSlice';
+import chatRuntimeReducer, {
+  setInferenceStatusForThread,
+  setToolTimelineForThread,
+} from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
 import type { Thread } from '../../types/thread';
@@ -791,6 +794,124 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
 
       // After the safety timeout, typing should re-enable Send — proves the
       // pending guard was reset inside the timeout callback.
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rearms the silence timer on sub-agent tool-timeline updates', async () => {
+    // Regression: when a delegated sub-agent (`Research`, `Tools Agent`,
+    // …) is running, the parent thread's `inferenceStatusByThread` and
+    // `streamingAssistantByThread` references can stay put while
+    // `toolTimelineByThread` and `taskBoardByThread` tick. The rearm
+    // effect must watch all four — otherwise a long sub-agent loop
+    // trips the 120s safety timer even though the user can see tools
+    // firing in the timeline.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'kick off a sub-agent loop' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Two-thirds of the way through the safety window, the parent
+      // status is already in `subagent` phase and a delegated tool
+      // posts a timeline update. After the fix this re-arms the timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: thread.id,
+            status: { phase: 'subagent', iteration: 1, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: thread.id,
+            entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Advance another 80s (total elapsed 160s, well past the 120s
+      // window). The tool-timeline dispatch should have re-armed the
+      // timer at the 80s mark, so the silence timer is now at 80s of
+      // its fresh 120s budget and has NOT fired. The pending guard
+      // therefore still holds and Send stays disabled — proof the
+      // rearm effect ran on a toolTimelineByThread change.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'still typing while sub-agent runs' } });
+      });
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT rearm the silence timer on an unrelated thread’s updates', async () => {
+    // Regression for the per-thread dependency scoping: the rearm effect must
+    // react only to the SENDING thread's slices. A different thread churning
+    // (background triage, another conversation) must not keep the foreground
+    // turn's 120s timer alive — otherwise a truly hung send never fails fast.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'send on the foreground thread' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Churn an UNRELATED thread the whole time the foreground send is open.
+      // None of these dispatches target the sending thread ('send-thread'),
+      // so they must not rearm its timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: 'some-other-thread',
+            status: { phase: 'subagent', iteration: 3, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: 'some-other-thread',
+            entries: [{ id: 'other-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Cross the original 120s deadline (80s + 50s = 130s). Because the
+      // unrelated-thread churn did NOT rearm, the safety timer fires: the
+      // pending guard is released and Send re-enables once the user types.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50_000);
+      });
       await act(async () => {
         fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
       });

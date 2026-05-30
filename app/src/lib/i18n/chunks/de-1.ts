@@ -216,10 +216,9 @@ const de1: TranslationMap = {
   'memory.empty':
     'Noch keine Erinnerungen. Erinnerungen werden automatisch erstellt, während du interagierst.',
   'memory.tab.memory': 'Erinnerung',
-  'memory.tab.gameplay': 'Gameplay',
-  'gameplay.spoiler.off': 'Spoiler-safe',
-  'gameplay.spoiler.light': 'Light spoilers',
-  'gameplay.spoiler.full': 'Full spoilers',
+  'memory.tab.tasks': 'Agent Tasks',
+  'memory.tab.tasksDescription':
+    'Create and track tasks — your own to-dos plus the boards your agents build across conversations.',
   'memory.tab.subconscious': 'Unterbewusstsein',
   'memory.tab.dreams': 'Träume',
   'memory.tab.calls': 'Anrufe',

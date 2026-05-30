@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 export type SettingsRoute =
   | 'home'
+  | 'agents'
   | 'account'
   | 'features'
   | 'messaging'
@@ -119,6 +120,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
+    if (path.includes('/settings/agents')) return 'agents';
     if (path.includes('/settings/mcp-server')) return 'mcp-server';
     if (path.includes('/settings/dev-workflow')) return 'dev-workflow';
     return 'home';

@@ -793,5 +793,5 @@ pub async fn spawn_fake_integration_backend() -> FakeIntegrationBackend {
 }
 
 #[cfg(test)]
-#[path = "test_support_test.rs"]
+#[path = "test_support_tests.rs"]
 mod tests;

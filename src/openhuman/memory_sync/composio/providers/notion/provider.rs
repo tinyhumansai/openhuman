@@ -18,10 +18,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use super::ingest::ingest_page_into_memory_tree;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    extract_item_id, persist_single_item, SyncState,
-};
+use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
     first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
     ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
@@ -183,6 +182,14 @@ impl ComposioProvider for NotionProvider {
         let mut total_persisted: usize = 0;
         let mut newest_edited_time: Option<String> = None;
         let mut notion_cursor: Option<String> = None;
+        // Track whether any per-item ingest failed this pass. If so, we hold
+        // the persistent cursor — `last_edited_time > {cursor}` on the next
+        // sync would otherwise exclude the failed item, and because the new
+        // memory-tree pipeline (#2885) is delete-first, an *edited* page that
+        // failed to re-ingest is left with neither old nor new chunks until
+        // its next edit. Already-synced items are skipped cheaply via
+        // `is_synced` on the re-fetch, so the cost of holding is minimal.
+        let mut had_ingest_failures = false;
 
         for page_num in 0..MAX_PAGES_PER_SYNC {
             if state.budget_exhausted() {
@@ -278,29 +285,35 @@ impl ComposioProvider for NotionProvider {
                 // Build a title from the page's properties.
                 let title_text = sync::extract_page_title(page)
                     .unwrap_or_else(|| format!("Notion page {page_id}"));
-                let doc_id = format!("composio-notion-page-{page_id}");
                 let title = format!("Notion: {title_text}");
 
-                match persist_single_item(
-                    &memory,
-                    "notion",
-                    &doc_id,
+                // Route into the memory-tree pipeline (#2885). The prior
+                // implementation called `persist_single_item` →
+                // `MemoryClient::store_skill_sync` → UnifiedMemory
+                // `memory_docs`, which the modern retrieval surfaces
+                // (`memory.search`, `tree.read_chunk`, `tree.browse`,
+                // summary trees, MCP tools) don't read from — the data
+                // was invisible to every agent recall path.
+                match ingest_page_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &page_id,
                     &title,
+                    edited_time.as_deref(),
                     page,
-                    "notion",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_chunks_written) => {
                         state.mark_synced(&sync_key);
                         total_persisted += 1;
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             page_id = %page_id,
                             error = %e,
-                            "[composio:notion] failed to persist page (continuing)"
+                            "[composio:notion] failed to ingest page into memory_tree (continuing)"
                         );
                     }
                 }
@@ -323,8 +336,20 @@ impl ComposioProvider for NotionProvider {
         }
 
         // ── Step 5: advance cursor and save state ───────────────────
-        if let Some(new_cursor) = newest_edited_time {
-            state.advance_cursor(&new_cursor);
+        //
+        // Hold the cursor when any item failed to ingest this pass. See the
+        // `had_ingest_failures` declaration above for why this matters under
+        // the delete-first memory-tree pipeline (#2885).
+        if !had_ingest_failures {
+            if let Some(new_cursor) = newest_edited_time {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:notion] holding cursor — ingest failures this pass; next sync will \
+                 re-fetch the failed range"
+            );
         }
         state.save(&memory).await?;
 

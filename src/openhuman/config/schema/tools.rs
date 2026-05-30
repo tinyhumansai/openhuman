@@ -734,7 +734,7 @@ mod search_config_tests {
 /// (the async push surface that the backend currently mediates via
 /// socket.io) do not work in direct mode — the user has to enable them
 /// out-of-band on Composio's dashboard and configure their own webhook
-/// sink. See `tools/impl/network/composio.rs` for the underlying client.
+/// sink. See `composio/tools/direct.rs` for the underlying client.
 pub const COMPOSIO_MODE_BACKEND: &str = "backend";
 pub const COMPOSIO_MODE_DIRECT: &str = "direct";
 

@@ -11,7 +11,14 @@ export type PersistedTurnPhase = 'thinking' | 'tool_use' | 'subagent';
 
 export type PersistedToolStatus = 'running' | 'success' | 'error';
 
-export type TaskBoardCardStatus = 'todo' | 'in_progress' | 'blocked' | 'done';
+export type TaskBoardCardStatus =
+  | 'todo'
+  | 'awaiting_approval'
+  | 'ready'
+  | 'in_progress'
+  | 'blocked'
+  | 'done'
+  | 'rejected';
 export type TaskApprovalMode = 'required' | 'not_required';
 
 export interface TaskBoardCard {
@@ -27,6 +34,10 @@ export interface TaskBoardCard {
   evidence?: string[];
   notes?: string | null;
   blocker?: string | null;
+  /** Provider/source identifiers for a card ingested from a task source
+   *  (`{provider, source_id, external_id, url, repo?, urgency}`); absent on
+   *  agent/UI-authored cards. */
+  sourceMetadata?: Record<string, unknown> | null;
   order: number;
   updatedAt: string;
 }

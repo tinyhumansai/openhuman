@@ -1,6 +1,6 @@
-use crate::openhuman::integrations::parallel::{SearchResponse, SearchResultItem};
-use crate::openhuman::integrations::{IntegrationClient, SeltzSearchTool};
+use crate::openhuman::integrations::IntegrationClient;
 use crate::openhuman::tools::traits::{Tool, ToolCallOptions, ToolResult};
+use crate::openhuman::tools::{SearchResponse, SearchResultItem, SeltzSearchTool};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};

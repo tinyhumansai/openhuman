@@ -9,6 +9,7 @@
 use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use std::path::Path;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,9 +69,34 @@ pub struct LearnedContextData {
     /// subsystem is off or no reflections have been captured yet.
     pub reflections: Vec<String>,
     /// Pre-fetched root-level summaries from the tree summarizer, one per
-    /// namespace that has a root node on disk. Each entry is
-    /// `(namespace, body)`. Empty when the tree summarizer hasn't run.
-    pub tree_root_summaries: Vec<(String, String)>,
+    /// namespace that has a root node on disk. Empty when the tree
+    /// summarizer hasn't run.
+    ///
+    /// Each entry carries the namespace's root `updated_at` so the
+    /// renderer can stamp how current the memory is. Without that stamp
+    /// the model treats distilled memory as present-tense and can serve
+    /// a stale summary as today's update (#2944).
+    pub tree_root_summaries: Vec<NamespaceSummary>,
+}
+
+/// A single memory-namespace root summary fetched from the tree
+/// summarizer, paired with the timestamp of its root node.
+///
+/// `updated_at` is rendered as an absolute date (not a relative
+/// "N days ago") on purpose: this block sits near the front of the
+/// KV-cache-stable system prompt, so a label that changes every day
+/// would bust the cached prefix for everything after it. An absolute
+/// date only changes when the underlying memory does; the model judges
+/// freshness by comparing it against the `## Current Date & Time`
+/// section. See [`LearnedContextData::tree_root_summaries`] (#2944).
+#[derive(Debug, Clone)]
+pub struct NamespaceSummary {
+    /// Memory namespace this root summary belongs to (e.g. `activities`).
+    pub namespace: String,
+    /// The distilled root summary text.
+    pub body: String,
+    /// When the namespace's root node was last updated on disk.
+    pub updated_at: DateTime<Utc>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
