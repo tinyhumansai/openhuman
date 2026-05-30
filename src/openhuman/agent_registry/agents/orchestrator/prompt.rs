@@ -326,6 +326,42 @@ mod tests {
     }
 
     #[test]
+    fn build_requires_grounding_before_generate_presentation() {
+        // #2780 grounding rule: orchestrator must ground a topical/factual
+        // deck via `memory_tree` / `delegate_research` / `query_memory`
+        // before dispatching `generate_presentation`. The rule is
+        // expressed in `prompt.md` and must reach the assembled body
+        // verbatim — the test pins both the section header and the
+        // load-bearing "do not skip" instruction so a future prompt
+        // refactor can't quietly drop the guardrail.
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(
+            body.contains("## Presentation generation"),
+            "presentation section header missing from orchestrator prompt"
+        );
+        assert!(
+            body.contains("Grounding rule (do not skip)"),
+            "grounding rule missing from presentation section"
+        );
+        assert!(
+            body.contains("Before calling `generate_presentation`"),
+            "grounding pre-condition phrasing missing from presentation section"
+        );
+        // Each of the three permitted grounding tools must be named so
+        // the model knows the menu, not just the constraint.
+        assert!(body.contains("`memory_tree`"));
+        assert!(body.contains("`delegate_research`"));
+        assert!(body.contains("`query_memory`"));
+        // The waiver list must keep the "user pasted source material"
+        // escape hatch — without it the rule blocks legitimate
+        // structural-deck and quoted-source requests.
+        assert!(
+            body.contains("user pasted source material"),
+            "waiver clause for pasted-source decks missing"
+        );
+    }
+
+    #[test]
     fn build_omits_guide_when_no_integrations_connected() {
         let integrations = vec![ConnectedIntegration {
             toolkit: "linear".into(),

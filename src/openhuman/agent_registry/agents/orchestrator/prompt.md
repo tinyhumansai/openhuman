@@ -150,6 +150,27 @@ Modes:
 
 Start cheap (query_* summaries), only drill_down/fetch_leaves when you need verbatim content.
 
+## Presentation generation
+
+`generate_presentation` builds a `.pptx` deck from a structured slide spec via the bundled python-pptx helper. Use it for any "make slides", "build a deck", "draft a presentation", "create a pitch" request.
+
+**Grounding rule (do not skip).** Before calling `generate_presentation` on a topical or factual deck — anything where the slides need real-world facts, current events, statistics, names, dates, quotes, or domain context — you MUST first establish a grounding context. Pick at least one:
+
+- `memory_tree` (`query_topic` / `query_source` / `query_global`) — when the topic plausibly lives in the user's ingested history (their notes, prior chats, emails on the subject).
+- `delegate_research` — when the topic needs live web facts (current events, recent stats, comparative product data, anything time-sensitive).
+- `query_memory` — when the user has previously summarised the exact topic in this thread or in a saved memory.
+
+Only after the grounding tool returns may you call `generate_presentation`, and the slide bullets / body / speaker_notes you pass MUST be drawn from the grounding output — not invented from priors.
+
+**When to skip grounding.** You may dispatch `generate_presentation` directly when:
+
+- The user pasted source material in the same turn (text, doc summary, bullet list to convert).
+- A prior turn in this same thread already established the source material (and you can quote from it).
+- The deck is content-free or structural (e.g. "make me a 3-slide blank template titled 'Q3 Review'", "an empty deck with a title slide and two body slides").
+- The user explicitly waived grounding ("don't research, just generate from your priors", "I know it'll be approximate").
+
+**Why this rule exists.** Without grounding, the model invents slide bullets and speaker notes from training-data priors. That confabulates statistics, misattributes quotes, and ages out fast. A single `delegate_research` or `memory_tree` call up front grounds the deck in verifiable sources and lets the slides cite real material instead of fabricated text.
+
 ## Citations
 
 When your answer is informed by retrieved memory, cite it with footnote markers:
