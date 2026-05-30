@@ -813,11 +813,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         );
       },
       onArtifactFailed: event => {
+        // Defence-in-depth: producer is expected to pre-truncate the
+        // reason, but cap again here so a leaky producer cannot dump
+        // unbounded provider stderr into client telemetry.
         rtLog('artifact_failed', {
           thread: event.thread_id,
           artifact_id: event.artifact_id,
           kind: event.kind,
-          error: event.error,
+          error: event.error.slice(0, 80),
         });
         dispatch(
           upsertArtifactFailedForThread({
