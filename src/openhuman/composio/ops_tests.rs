@@ -1477,6 +1477,52 @@ async fn composio_enable_trigger_via_mock() {
     assert!(outcome.logs.iter().any(|l| l.contains("enabled trigger")));
 }
 
+/// Regression for issue #2913: a backend 403 (permission denied) on trigger
+/// enable must surface a mapped, actionable error — not the raw
+/// `[composio] enable_trigger failed: Backend returned 403 ...` blob.
+#[tokio::test]
+async fn composio_enable_trigger_403_returns_mapped_error() {
+    let app = Router::new().route(
+        "/agent-integrations/composio/triggers",
+        post(|Json(_body): Json<Value>| async move {
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                Json(json!({
+                    "success": false,
+                    "error": "You do not have permission to enable triggers on this connection"
+                })),
+            )
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = config_with_backend(&tmp, base);
+
+    let err = composio_enable_trigger(&config, "c1", "GMAIL_NEW_GMAIL_MESSAGE", None)
+        .await
+        .unwrap_err();
+
+    // Mapped class prefix, not the raw op-layer/backend blob.
+    assert!(
+        err.contains("[composio:error:trigger_permission]"),
+        "expected mapped trigger_permission error, got: {err}"
+    );
+    assert!(
+        !err.contains("[composio] enable_trigger failed:"),
+        "raw op-layer prefix leaked: {err}"
+    );
+    assert!(
+        !err.contains("Backend returned 403"),
+        "raw backend blob leaked: {err}"
+    );
+    // Actionable, branded reconnect guidance.
+    assert!(err.contains("gmail"), "expected toolkit branding: {err}");
+    assert!(
+        err.contains("Settings"),
+        "expected reconnect guidance: {err}"
+    );
+}
+
 #[tokio::test]
 async fn composio_disable_trigger_via_mock() {
     let app = Router::new().route(

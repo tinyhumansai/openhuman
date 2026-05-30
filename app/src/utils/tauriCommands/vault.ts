@@ -15,7 +15,11 @@ export interface CoreVault {
   created_at: string;
   last_synced_at?: string | null;
   file_count: number;
+  write_state: CoreVaultWriteState;
+  write_state_reason?: string | null;
 }
+
+export type CoreVaultWriteState = 'writable' | 'read_only' | 'unavailable';
 
 export type CoreVaultFileStatus = 'ok' | 'skipped' | 'failed';
 
@@ -95,6 +99,30 @@ export async function openhumanVaultFiles(
   return await callCoreRpc<CommandResponse<CoreVaultFile[]>>({
     method: 'openhuman.vault_files',
     params: { vault_id: vaultId },
+  });
+}
+
+export async function openhumanVaultWriteMarkdown(params: {
+  vaultId: string;
+  relPath: string;
+  content: string;
+  overwrite?: boolean;
+  approved: boolean;
+}): Promise<
+  CommandResponse<{ vault_id: string; rel_path: string; bytes_written: number; created: boolean }>
+> {
+  ensureTauri();
+  return await callCoreRpc<
+    CommandResponse<{ vault_id: string; rel_path: string; bytes_written: number; created: boolean }>
+  >({
+    method: 'openhuman.vault_write_markdown',
+    params: {
+      vault_id: params.vaultId,
+      rel_path: params.relPath,
+      content: params.content,
+      overwrite: params.overwrite ?? false,
+      approved: params.approved,
+    },
   });
 }
 

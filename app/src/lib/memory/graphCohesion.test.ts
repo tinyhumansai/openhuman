@@ -112,8 +112,9 @@ describe('computeGraphCohesion — diamond (two triangles sharing an edge)', () 
   });
 
   it('average clustering = mean over the four clusterable nodes', () => {
-    // (1 + 1 + 2/3 + 2/3) / 4 = 5/6
-    expect(r.averageClustering).toBeCloseTo(5 / 6, 12);
+    // (1 + 1 + 2/3 + 2/3) / 4 = 5/6 ≈ 0.833333
+    // Implementation rounds to 6 decimal places, so exact toBe is correct here.
+    expect(r.averageClustering).toBe(0.833333);
   });
 
   it('transitivity = 3·triangles / connected-triples = 6/8', () => {

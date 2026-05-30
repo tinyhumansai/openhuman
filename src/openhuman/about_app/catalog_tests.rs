@@ -103,6 +103,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.mcp_server",
         "intelligence.searxng_search",
         "intelligence.tool_registry",
+        "intelligence.vault_markdown_writes",
         "intelligence.embedding_provider_config",
         "intelligence.embedding_provider_test",
         "conversation.subagent_mascots",

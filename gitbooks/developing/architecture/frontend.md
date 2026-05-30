@@ -587,6 +587,16 @@ const result = await callCoreRpc<MyType>({
 
 Implementation: `invoke('core_rpc_relay', { request: { method, params, serviceManaged } })` → `app/src-tauri/src/commands/core_relay.rs` → HTTP client in `app/src-tauri/src/core_rpc.rs`.
 
+### Knowledge Vault Write State
+
+`VaultPanel` in `app/src/components/intelligence/` renders user-added knowledge vaults from the core `vault.*` controller surface. Each vault row must show the core-provided `write_state`:
+
+- `writable` means approved markdown/wiki writes can be saved under the vault root.
+- `read_only` means the folder exists but local permissions report it as read-only.
+- `unavailable` means the folder is missing, no longer a directory, or cannot be inspected on this device.
+
+The UI should not infer writability from the path string alone. It maps the core-provided `write_state_reason` code through i18n so unsupported write states are visible instead of failing silently. Approved artifact creation uses `openhuman.vault_write_markdown`; callers must pass `approved: true`, a relative `.md` or `.markdown` path, and content. The core rejects absolute paths, `..` traversal, non-markdown files, symlink escapes, and updates without `overwrite: true`.
+
 ### Service integration with providers
 
 #### SocketProvider

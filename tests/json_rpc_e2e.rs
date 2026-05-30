@@ -3996,12 +3996,21 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
         "expected providerStatus=ready for configured chain rows: {result}"
     );
 
-    // balances: zero placeholders for each derived account.
+    // balances: one row per native asset. The EVM account fans out into one
+    // row per displayed network (Ethereum, Base, BNB Chain), so 3 EVM rows +
+    // BTC + Solana + Tron = 6.
     let balances = post_json_rpc(&rpc_base, 2004, "openhuman.wallet_balances", json!({})).await;
     let body = assert_no_jsonrpc_error(&balances, "wallet_balances");
     let result = body.get("result").unwrap_or(&body);
     let rows = result.as_array().expect("balances array");
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 6);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.get("chain").and_then(Value::as_str) == Some("evm"))
+            .count(),
+        3,
+        "expected 3 EVM network rows: {result}"
+    );
     // Every row reports a raw integer string. Don't require zero — the
     // BTC/Solana/Tron default REST endpoints may have network access in CI
     // and return non-placeholder values for the deterministic test addresses.

@@ -157,6 +157,8 @@ interface ComposioConnectModalProps {
   toolkit: ComposioToolkitMeta;
   /** Existing connection (if any) from the hook. */
   connection?: ComposioConnection;
+  /** Connected, but not yet exposed to the agent tool surface. */
+  agentUnsupported?: boolean;
   /** Invoked on successful connect/disconnect so the parent can refresh. */
   onChanged?: () => void;
   onClose: () => void;
@@ -168,6 +170,7 @@ const POLL_TIMEOUT_MS = 5 * 60 * 1_000;
 export default function ComposioConnectModal({
   toolkit,
   connection,
+  agentUnsupported = false,
   onChanged,
   onClose,
 }: ComposioConnectModalProps) {
@@ -724,6 +727,17 @@ export default function ComposioConnectModal({
                   )}
                 </div>
               </div>
+              {agentUnsupported && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+                  <div className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200">
+                    <div className="h-2 w-2 rounded-full bg-amber-500" />
+                    {t('composio.previewBadge')}
+                  </div>
+                  <p className="mt-2 text-xs leading-relaxed text-amber-700 dark:text-amber-200/80">
+                    {t('composio.previewTooltip')}
+                  </p>
+                </div>
+              )}
               <ScopeToggles
                 scopes={scopes}
                 savingScope={savingScope}

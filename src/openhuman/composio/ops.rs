@@ -1047,8 +1047,21 @@ pub async fn composio_enable_trigger(
         .enable_trigger(connection_id, slug, trigger_config)
         .await
         .map_err(|e| {
+            // Keep the raw error on the Sentry funnel for diagnosis (unchanged).
             report_composio_op_error("enable_trigger", &e);
-            format!("[composio] enable_trigger failed: {e:#}")
+            // Map the backend error (e.g. a 403 "you do not have permission to
+            // enable triggers on this connection") into actionable, user-facing
+            // guidance instead of leaking the raw blob to the UI (issue #2913).
+            let raw = format!("{e:#}");
+            let class = super::error_mapping::classify_composio_error(slug, &raw);
+            let mapped = super::error_mapping::format_provider_error(slug, &raw);
+            tracing::warn!(
+                slug = %slug,
+                connection_id = %connection_id,
+                class = class.as_str(),
+                "[composio] enable_trigger failed; surfacing mapped error"
+            );
+            mapped
         })?;
     let trigger_id = resp.trigger_id.clone();
     Ok(RpcOutcome::new(

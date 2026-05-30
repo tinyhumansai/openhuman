@@ -73,6 +73,7 @@ pub mod memory_tools;
 pub mod memory_tree;
 pub mod migration;
 pub mod migrations;
+pub mod model_council;
 pub mod notifications;
 pub mod overlay;
 pub mod people;

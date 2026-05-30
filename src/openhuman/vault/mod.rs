@@ -18,6 +18,7 @@ pub use schemas::{
 };
 pub use types::{
     Vault, VaultFile, VaultFileStatus, VaultSyncReport, VaultSyncState, VaultSyncStatus,
+    VaultWriteMarkdownReport, VaultWriteState,
 };
 
 #[cfg(test)]
