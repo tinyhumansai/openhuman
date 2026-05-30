@@ -4,33 +4,47 @@
 //! interpreter against a temp workspace, then asserts the produced
 //! file is a valid `.pptx` (zip with `[Content_Types].xml`).
 //!
-//! Skipped on hosts that lack `python3` or `python-pptx` so contributors
-//! without a Python install still see green locally. CI provisions the
-//! dependency via `.github/workflows/coverage.yml`'s Rust-core lane.
+//! Skipped on hosts whose `PATH` carries no Python ≥ `3.12.0` (the
+//! `runtime_python` floor) so contributors without a compatible
+//! install still see green locally. CI provisions a 3.12 interpreter
+//! via `.github/workflows/coverage.yml`'s Rust-core lane; pip and
+//! `python-pptx` are installed by `runtime_python::venv::ensure_venv`
+//! inside the test's tempdir cache (the venv has no host
+//! `site-packages`), so the host does not need `python-pptx`
+//! pre-installed.
 
-use std::process::Command;
 use std::sync::Arc;
 
+use openhuman_core::openhuman::config::schema::RuntimePythonConfig;
 use openhuman_core::openhuman::config::Config;
+use openhuman_core::openhuman::runtime_python::detect_system_python;
 use openhuman_core::openhuman::tools::PresentationTool;
 use openhuman_core::openhuman::tools::Tool;
 use serde_json::json;
 
 #[tokio::test]
 async fn end_to_end_generates_real_pptx_when_python_pptx_available() {
-    // Resolve a single python binary up-front so the availability
-    // check and the `import pptx` probe can't disagree on which
-    // interpreter is being validated (e.g. python3 advertises
-    // availability but only `python` actually has python-pptx, or
-    // vice versa — which would make the real tool invocation fail
-    // nondeterministically below).
-    let Some(python) = resolved_python() else {
-        eprintln!("skipping: no python3 on PATH");
-        return;
-    };
-    if !python_pptx_importable(python) {
+    // Mirror runtime_python::bootstrap's interpreter selection so the
+    // skip gate and the in-test invoker land on the same binary. The
+    // free-form `resolved_python()` + `python -c "import pptx"` gate
+    // we used to run was misaligned with the runtime two ways:
+    //
+    //   1. Candidate order — runtime probes `python3.12` → `python3`
+    //      → `python` and rejects anything below `minimum_version`
+    //      (default 3.12.0). A free `python3`-first probe would pass
+    //      on a 3.10 host that the runtime would then refuse, leaving
+    //      the test to skip on the wrong axis.
+    //   2. The `import pptx` probe gated on host site-packages, but
+    //      `ensure_venv` creates an isolated venv (no
+    //      `--system-site-packages`) and pip-installs
+    //      `python-pptx==1.0.2` itself — host importability says
+    //      nothing about whether the venv path will work.
+    let defaults = RuntimePythonConfig::default();
+    if detect_system_python(&defaults.minimum_version, None).is_none() {
         eprintln!(
-            "skipping: {python} cannot `import pptx` — install with `pip install python-pptx==1.0.2`"
+            "skipping: no Python >= {} on PATH (runtime_python floor); \
+             install python3.12+ to exercise this test",
+            defaults.minimum_version
         );
         return;
     }
@@ -113,27 +127,4 @@ async fn end_to_end_rejects_invalid_input_without_spawning_python() {
         .expect("execute returns Ok with is_error=true");
     assert!(result.is_error);
     assert!(result.text().contains("title"));
-}
-
-/// First `python3` / `python` on PATH that exits 0 for `--version`,
-/// returned as a stable name string. Used so both the availability
-/// probe and the `import pptx` probe pin to the same interpreter.
-fn resolved_python() -> Option<&'static str> {
-    for name in ["python3", "python"] {
-        if let Ok(output) = Command::new(name).arg("--version").output() {
-            if output.status.success() {
-                return Some(name);
-            }
-        }
-    }
-    None
-}
-
-fn python_pptx_importable(python: &str) -> bool {
-    Command::new(python)
-        .arg("-c")
-        .arg("import pptx")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
