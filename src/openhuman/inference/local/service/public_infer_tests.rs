@@ -352,6 +352,56 @@ async fn prompt_interactive_does_not_block_on_held_permit() {
 }
 
 #[tokio::test]
+async fn summarize_interactive_does_not_block_on_held_permit() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let _held = crate::openhuman::scheduler_gate::gate::try_acquire_llm_permit()
+        .expect("test must start with a free permit");
+
+    let app = Router::new().route(
+        "/api/generate",
+        post(|Json(body): Json<serde_json::Value>| async move {
+            let prompt = body["prompt"].as_str().unwrap_or_default();
+            assert!(
+                prompt.contains("commitments.\n\ntext to summarize"),
+                "summary prompt should use real newlines, got: {prompt:?}"
+            );
+            assert!(
+                !prompt.contains(r"commitments.\n\ntext to summarize"),
+                "summary prompt must not contain literal backslash-n separators"
+            );
+            Json(json!({
+                "model": "test",
+                "response": "summary from mock",
+                "done": true
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = enabled_config();
+    let service = ready_service(&config);
+
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        service.summarize_interactive(&config, "text to summarize", Some(16)),
+    )
+    .await;
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+
+    let reply = result
+        .expect("interactive summary must not block on a held permit")
+        .expect("interactive summary response");
+    assert_eq!(reply, "summary from mock");
+}
+
+#[tokio::test]
 async fn chat_with_history_interactive_does_not_block_on_held_permit() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 

@@ -27,6 +27,8 @@ pub async fn flush_stale_buffers(
     max_age: Duration,
     strategy: &LabelStrategy,
 ) -> Result<usize> {
+    use crate::openhuman::memory_store::trees::store::get_trees_batch;
+
     let now = Utc::now();
     let cutoff = now - max_age;
     let stale = store::list_stale_buffers(config, cutoff)?;
@@ -36,20 +38,38 @@ pub async fn flush_stale_buffers(
         max_age
     );
 
+    // One batched `SELECT … WHERE id IN (?,?,…)` over the distinct
+    // tree_ids instead of N per-buffer `get_tree` round-trips. `stale`
+    // is filtered to L0 by `list_stale_buffers` so the same tree_id
+    // typically appears at most once, but we still de-dup defensively
+    // before hitting the DB — future widenings of the filter (e.g.
+    // dropping the `level = 0` clause) would otherwise re-pay the cost.
+    // Missing rows stay silently absent from the map; the
+    // `Some(t) => ... / None => warn-and-skip` orphan-buffer path below
+    // preserves the per-id `get_tree` `Ok(None)` semantics.
+    let distinct_tree_ids: Vec<String> = {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for buf in &stale {
+            if seen.insert(buf.tree_id.clone()) {
+                out.push(buf.tree_id.clone());
+            }
+        }
+        out
+    };
+    let tree_by_id = get_trees_batch(config, &distinct_tree_ids)?;
+
     let mut seals: usize = 0;
     for buf in stale {
-        let tree = match store::get_tree(config, &buf.tree_id)? {
-            Some(t) => t,
-            None => {
-                log::warn!(
-                    "[tree::flush] orphan buffer tree_id={} level={}",
-                    buf.tree_id,
-                    buf.level
-                );
-                continue;
-            }
+        let Some(tree) = tree_by_id.get(&buf.tree_id) else {
+            log::warn!(
+                "[tree::flush] orphan buffer tree_id={} level={}",
+                buf.tree_id,
+                buf.level
+            );
+            continue;
         };
-        let sealed = cascade_all_from(config, &tree, buf.level, Some(now), strategy).await?;
+        let sealed = cascade_all_from(config, tree, buf.level, Some(now), strategy).await?;
         seals += sealed.len();
     }
     Ok(seals)
@@ -273,5 +293,98 @@ mod tests {
         .await;
         assert_eq!(seals, 0);
         assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
+    }
+
+    /// Regression for the `get_trees_batch` refactor: two distinct
+    /// trees each carry a stale L0 buffer; `flush_stale_buffers` must
+    /// seal both via a single batched tree-fetch. Pre-refactor this
+    /// path issued N per-buffer `get_tree(...)` round-trips; post-
+    /// refactor it's one `SELECT … WHERE id IN (?,?)` and a per-id
+    /// HashMap lookup. The interesting bit is the HashMap lookup
+    /// keying by tree_id (not by `enumerate()` position over the input
+    /// slice) — with two trees, swapping the lookup key would leak one
+    /// tree's `Tree` into the other tree's seal and either error out
+    /// or write summaries against the wrong `root_id`.
+    #[tokio::test]
+    async fn flush_seals_multiple_distinct_trees_via_batched_lookup() {
+        let (_tmp, cfg) = test_config();
+        let tree_a = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
+        let tree_b = get_or_create_source_tree(&cfg, "slack:#design").unwrap();
+        assert_ne!(
+            tree_a.id, tree_b.id,
+            "test prerequisite: distinct source_ids must yield distinct tree_ids"
+        );
+        let provider: Arc<dyn ChatProvider> =
+            Arc::new(StaticChatProvider::new("test summary content"));
+
+        let old_ts = Utc::now() - Duration::days(10);
+
+        // Plant a stale L0 leaf in each tree, backed by real chunks so
+        // the cascade can seal end-to-end.
+        for (src_id, content) in [
+            ("slack:#eng", "engineering content"),
+            ("slack:#design", "design content"),
+        ] {
+            let c = Chunk {
+                id: chunk_id(SourceKind::Chat, src_id, 0, content),
+                content: content.into(),
+                metadata: Metadata {
+                    source_kind: SourceKind::Chat,
+                    source_id: src_id.into(),
+                    owner: "alice".into(),
+                    timestamp: old_ts,
+                    time_range: (old_ts, old_ts),
+                    tags: vec![],
+                    source_ref: Some(SourceRef::new(&format!("slack://{src_id}"))),
+                },
+                token_count: 100,
+                seq_in_source: 0,
+                created_at: old_ts,
+                partial_message: false,
+            };
+            upsert_chunks(&cfg, &[c.clone()]).unwrap();
+            stage_test_chunks(&cfg, &[c.clone()]);
+            let leaf = LeafRef {
+                chunk_id: c.id.clone(),
+                token_count: 100,
+                timestamp: old_ts,
+                content: c.content.clone(),
+                entities: vec![],
+                topics: vec![],
+                score: 0.5,
+            };
+            let target_tree = if src_id == "slack:#eng" {
+                &tree_a
+            } else {
+                &tree_b
+            };
+            test_override::with_provider(Arc::clone(&provider), async {
+                append_leaf(&cfg, target_tree, &leaf, &LabelStrategy::Empty)
+                    .await
+                    .unwrap();
+            })
+            .await;
+        }
+
+        let seals = test_override::with_provider(provider, async {
+            flush_stale_buffers(&cfg, Duration::days(7), &LabelStrategy::Empty)
+                .await
+                .unwrap()
+        })
+        .await;
+
+        // Both trees sealed via a single batched fetch — the HashMap
+        // lookup correctly routed each buffer to its own `Tree`.
+        assert_eq!(seals, 2, "both stale trees must seal in one flush pass");
+        assert_eq!(
+            store::count_summaries(&cfg, &tree_a.id).unwrap(),
+            1,
+            "tree_a must own its summary (HashMap keyed by id, not position)"
+        );
+        assert_eq!(
+            store::count_summaries(&cfg, &tree_b.id).unwrap(),
+            1,
+            "tree_b must own its summary (HashMap keyed by id, not position)"
+        );
     }
 }

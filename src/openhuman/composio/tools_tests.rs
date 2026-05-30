@@ -630,6 +630,58 @@ fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
 }
 
 #[test]
+fn retain_connected_tools_keeps_multi_segment_connected_toolkits() {
+    use crate::openhuman::composio::types::{
+        ComposioToolFunction, ComposioToolSchema, ComposioToolsResponse,
+    };
+    use std::collections::HashSet;
+
+    let mut resp = ComposioToolsResponse {
+        tools: vec![
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "ZOHO_MAIL_SEND_EMAIL".into(),
+                    description: None,
+                    parameters: None,
+                },
+            },
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "ONE_DRIVE_GET_FILE".into(),
+                    description: None,
+                    parameters: None,
+                },
+            },
+            ComposioToolSchema {
+                kind: "function".into(),
+                function: ComposioToolFunction {
+                    name: "GMAIL_SEND_EMAIL".into(),
+                    description: None,
+                    parameters: None,
+                },
+            },
+        ],
+    };
+
+    let connected: HashSet<String> = ["zoho_mail".to_string(), "one_drive".to_string()]
+        .into_iter()
+        .collect();
+    let dropped = retain_connected_tools(&mut resp, &connected);
+
+    assert_eq!(dropped, 1, "should only drop the disconnected gmail tool");
+    let names: Vec<&str> = resp
+        .tools
+        .iter()
+        .map(|t| t.function.name.as_str())
+        .collect();
+    assert!(names.contains(&"ZOHO_MAIL_SEND_EMAIL"));
+    assert!(names.contains(&"ONE_DRIVE_GET_FILE"));
+    assert!(!names.contains(&"GMAIL_SEND_EMAIL"));
+}
+
+#[test]
 fn normalized_scope_toolkits_prefers_requested_filter() {
     use std::collections::HashSet;
 

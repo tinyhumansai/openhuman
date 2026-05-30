@@ -14,8 +14,14 @@ interface ApiKeysStepProps {
 
 type OpenAiOAuthStatus = { connected: boolean; authMethod?: string | null };
 
-// non-display technical sentinel — exempt from i18n
-const OPENAI_OAUTH_CALLBACK_PLACEHOLDER = 'http://127.0.0.1:1455/auth/callback?code=...&state=...';
+// Fixed OpenAI OAuth loopback origin (mirrors `REDIRECT_URI` in
+// src/openhuman/inference/openai_oauth/config.rs). Interpolated into the
+// translated callback hint via the `{url}` placeholder so the literal lives in
+// one place instead of inside all 14 locale strings.
+const OPENAI_OAUTH_CALLBACK_ORIGIN = 'http://127.0.0.1:1455/';
+// Non-display technical sentinel (example redirect URL shown as the input
+// placeholder) — exempt from i18n.
+const OPENAI_OAUTH_CALLBACK_PLACEHOLDER = `${OPENAI_OAUTH_CALLBACK_ORIGIN}auth/callback?code=...&state=...`;
 
 const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
   const { t } = useT();
@@ -166,7 +172,10 @@ const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
           {oauthAwaitingCallback && !oauthConnected ? (
             <div className="flex flex-col gap-1.5">
               <p className="text-[11px] text-stone-500 dark:text-neutral-400">
-                {t('onboarding.apiKeys.openaiOauthCallbackHint')}
+                {t('onboarding.apiKeys.openaiOauthCallbackHint').replace(
+                  '{url}',
+                  OPENAI_OAUTH_CALLBACK_ORIGIN
+                )}
               </p>
               <input
                 data-testid="onboarding-openai-oauth-callback-input"

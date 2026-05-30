@@ -21,6 +21,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("list"),
         schemas("get"),
         schemas("files"),
+        schemas("write_markdown"),
         schemas("remove"),
         schemas("sync"),
         schemas("sync_status"),
@@ -44,6 +45,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("files"),
             handler: handle_files,
+        },
+        RegisteredController {
+            schema: schemas("write_markdown"),
+            handler: handle_write_markdown,
         },
         RegisteredController {
             schema: schemas("remove"),
@@ -136,6 +141,44 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "files",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("VaultFile"))),
                 comment: "Per-file ledger rows.",
+                required: true,
+            }],
+        },
+        "write_markdown" => ControllerSchema {
+            namespace: "vault",
+            function: "write_markdown",
+            description: "Write an explicitly approved markdown/wiki file inside a writable vault.",
+            inputs: vec![
+                vault_id_input("Identifier of the vault to write into."),
+                FieldSchema {
+                    name: "rel_path",
+                    ty: TypeSchema::String,
+                    comment: "Relative .md/.markdown path inside the vault.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "content",
+                    ty: TypeSchema::String,
+                    comment: "Markdown content to write.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "overwrite",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+                    comment: "When true, update an existing markdown file.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "approved",
+                    ty: TypeSchema::Bool,
+                    comment: "Must be true after explicit user approval for arbitrary vault writes.",
+                    required: true,
+                },
+            ],
+            outputs: vec![FieldSchema {
+                name: "report",
+                ty: TypeSchema::Ref("VaultWriteMarkdownReport"),
+                comment: "Write result with relative path and byte count.",
                 required: true,
             }],
         },
@@ -280,6 +323,23 @@ fn handle_files(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let vault_id = read_required::<String>(&params, "vault_id")?;
         to_json(crate::openhuman::vault::ops::vault_files(&config, vault_id.trim()).await?)
+    })
+}
+
+fn handle_write_markdown(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let vault_id = read_required::<String>(&params, "vault_id")?;
+        let rel_path = read_required::<String>(&params, "rel_path")?;
+        let content = read_required::<String>(&params, "content")?;
+        let overwrite = read_optional::<bool>(&params, "overwrite")?.unwrap_or(false);
+        let approved = read_required::<bool>(&params, "approved")?;
+        to_json(
+            crate::openhuman::vault::ops::vault_write_markdown(
+                &config, &vault_id, &rel_path, &content, overwrite, approved,
+            )
+            .await?,
+        )
     })
 }
 

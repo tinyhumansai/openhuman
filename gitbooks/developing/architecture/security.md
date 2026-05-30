@@ -104,8 +104,8 @@ The agent never sees the choice — it just calls into `Sandbox::run(...)` and t
 - `src/openhuman/cron/scheduler.rs` — wraps shell jobs in `SecurityPolicy::from_config`.
 - `src/openhuman/tools/local_cli.rs`, `tools/ops.rs`, and most `tools/impl/{system,network,memory,agent}/*.rs` — every executable tool consults `SecurityPolicy`.
 - `src/openhuman/tools/impl/network/{curl,http_request,composio}.rs` — risk-classify outbound calls.
-- `src/openhuman/tools/impl/memory/{store,forget}.rs` — sensitive-write tracking.
-- `src/openhuman/tools/impl/agent/delegate.rs` — sub-agent dispatch goes through the autonomy gate.
+- `src/openhuman/memory/tools/{store,forget}.rs` — sensitive-write tracking.
+- `src/openhuman/agent/tools/delegate.rs` — sub-agent dispatch goes through the autonomy gate.
 - `src/openhuman/credentials/` — uses `SecretStore` and `redact`.
 
 ## Tests

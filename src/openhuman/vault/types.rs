@@ -59,6 +59,20 @@ pub struct Vault {
     pub created_at: DateTime<Utc>,
     pub last_synced_at: Option<DateTime<Utc>>,
     pub file_count: u64,
+    #[serde(default)]
+    pub write_state: VaultWriteState,
+    #[serde(default)]
+    pub write_state_reason: Option<String>,
+}
+
+/// Whether OpenHuman can write approved markdown artifacts back into a vault.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultWriteState {
+    Writable,
+    ReadOnly,
+    #[default]
+    Unavailable,
 }
 
 /// Per-file ledger entry used for dedup on re-sync.
@@ -112,4 +126,13 @@ pub struct VaultSyncReport {
     pub skipped_unsupported: u64,
     pub duration_ms: i64,
     pub errors: Vec<String>,
+}
+
+/// Result returned after writing an approved markdown/wiki artifact into a vault.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VaultWriteMarkdownReport {
+    pub vault_id: String,
+    pub rel_path: String,
+    pub bytes_written: u64,
+    pub created: bool,
 }

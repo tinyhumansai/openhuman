@@ -387,6 +387,41 @@ describe('SkillsRunnerBody — per-job history viewer', () => {
   });
 });
 
+describe('SkillsRunnerBody — schedule frequency + save', () => {
+  beforeEach(() => {
+    Object.values(hoisted).forEach((fn) => fn.mockReset());
+    hoisted.listSkills.mockResolvedValue(skillsList);
+    hoisted.describeSkill.mockResolvedValue(skillDescription);
+    hoisted.recentRuns.mockResolvedValue([]);
+    hoisted.cronList.mockResolvedValue({ result: [] });
+    hoisted.cronAdd.mockResolvedValue({ result: makeJob() });
+    hoisted.cronRuns.mockResolvedValue({ result: { runs: [] } });
+  });
+
+  it('changes schedule frequency and calls openhumanCronAdd on save', async () => {
+    const Body = await importBody();
+    renderBody(Body);
+    await waitFor(() => expect(hoisted.listSkills).toHaveBeenCalled());
+    const select = screen.getByLabelText('settings.skillsRunner.skill') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: SKILL_ID } });
+    await waitFor(() => expect(hoisted.cronList).toHaveBeenCalled());
+
+    const freq = screen.getByLabelText(
+      'settings.skillsRunner.schedule.frequency'
+    ) as HTMLSelectElement;
+    fireEvent.change(freq, { target: { value: '0 9 * * *' } });
+    expect(freq.value).toBe('0 9 * * *');
+
+    fireEvent.click(screen.getByText('settings.skillsRunner.schedule.save'));
+    await waitFor(() => expect(hoisted.cronAdd).toHaveBeenCalled());
+    const [params] = hoisted.cronAdd.mock.calls[0];
+    expect(params).toMatchObject({
+      schedule: { kind: 'cron', expr: '0 9 * * *' },
+      job_type: 'agent',
+    });
+  });
+});
+
 describe('SkillsRunnerBody — SmartIssuePicker conditional mount', () => {
   beforeEach(() => {
     Object.values(hoisted).forEach((fn) => fn.mockReset());

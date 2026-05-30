@@ -24,9 +24,12 @@ use serde::Deserialize;
 use crate::openhuman::config::rpc as config_rpc;
 
 use super::super::defaults::{explorer_tx_url, rpc_url_for_chain};
-use super::super::execution::{ExecutionResult, PreparedKind, PreparedStatus, PreparedTransaction};
+use super::super::execution::{
+    ExecutionResult, PreparedKind, PreparedStatus, PreparedTransaction, TxLookupInfo,
+    TxReceiptInfo, TxState, TxStatusInfo,
+};
 use super::super::ops::{secret_material, WalletChain};
-use super::super::rpc::{rest_get_json, rest_post_text};
+use super::super::rpc::{rest_get_json, rest_get_text, rest_post_text};
 
 const LOG_PREFIX: &str = "[wallet::btc]";
 /// Hardcoded fee rate (sat/vbyte) used to estimate fees for prepared quotes
@@ -298,6 +301,136 @@ pub async fn execute_btc_quote(mut quote: PreparedTransaction) -> Result<Executi
     })
 }
 
+/// Esplora `/tx/:txid/status` → normalized status. Confirmations are derived
+/// from the chain tip (`/blocks/tip/height`) when the tx is confirmed.
+pub async fn tx_status(hash: &str) -> Result<TxStatusInfo, String> {
+    let base = rpc_url_for_chain(WalletChain::Btc);
+    let base = base.trim_end_matches('/');
+    let status: serde_json::Value = match rest_get_json(&format!("{base}/tx/{hash}/status")).await {
+        Ok(v) => v,
+        // Esplora returns 404 for unknown txids; surface as NotFound.
+        Err(e) if e.contains("status=404") => {
+            return Ok(TxStatusInfo {
+                chain: WalletChain::Btc,
+                evm_network: None,
+                hash: hash.to_string(),
+                state: TxState::NotFound,
+                confirmations: None,
+                block_number: None,
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    let confirmed = status
+        .get("confirmed")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    if !confirmed {
+        return Ok(TxStatusInfo {
+            chain: WalletChain::Btc,
+            evm_network: None,
+            hash: hash.to_string(),
+            state: TxState::Pending,
+            confirmations: Some(0),
+            block_number: None,
+        });
+    }
+    let block_number = status
+        .get("block_height")
+        .and_then(serde_json::Value::as_u64);
+    let confirmations = match block_number {
+        Some(bn) => {
+            let tip = rest_get_text(&format!("{base}/blocks/tip/height"))
+                .await
+                .ok();
+            tip.and_then(|t| t.trim().parse::<u64>().ok())
+                .map(|tip| tip.saturating_sub(bn).saturating_add(1))
+        }
+        None => None,
+    };
+    Ok(TxStatusInfo {
+        chain: WalletChain::Btc,
+        evm_network: None,
+        hash: hash.to_string(),
+        state: TxState::Confirmed,
+        confirmations,
+        block_number,
+    })
+}
+
+/// Esplora `/tx/:txid` → normalized receipt (fee + confirmed height).
+pub async fn tx_receipt(hash: &str) -> Result<TxReceiptInfo, String> {
+    let base = rpc_url_for_chain(WalletChain::Btc);
+    let base = base.trim_end_matches('/');
+    let tx: serde_json::Value = match rest_get_json(&format!("{base}/tx/{hash}")).await {
+        Ok(v) => v,
+        Err(e) if e.contains("status=404") => {
+            return Ok(TxReceiptInfo {
+                chain: WalletChain::Btc,
+                evm_network: None,
+                hash: hash.to_string(),
+                found: false,
+                success: None,
+                block_number: None,
+                gas_used: None,
+                fee_raw: None,
+                raw: serde_json::Value::Null,
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    let confirmed = tx
+        .get("status")
+        .and_then(|s| s.get("confirmed"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let block_number = tx
+        .get("status")
+        .and_then(|s| s.get("block_height"))
+        .and_then(serde_json::Value::as_u64);
+    let fee_raw = tx
+        .get("fee")
+        .and_then(serde_json::Value::as_u64)
+        .map(|f| f.to_string());
+    // Leave `success` unset until the tx is confirmed — an unconfirmed mempool
+    // tx is pending (see tx_status), not a failure.
+    let success = if confirmed { Some(true) } else { None };
+    Ok(TxReceiptInfo {
+        chain: WalletChain::Btc,
+        evm_network: None,
+        hash: hash.to_string(),
+        found: true,
+        success,
+        block_number,
+        gas_used: None,
+        fee_raw,
+        raw: tx,
+    })
+}
+
+/// Esplora `/tx/:txid` → raw transaction passthrough.
+pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
+    let base = rpc_url_for_chain(WalletChain::Btc);
+    let base = base.trim_end_matches('/');
+    match rest_get_json::<serde_json::Value>(&format!("{base}/tx/{hash}")).await {
+        Ok(tx) => Ok(TxLookupInfo {
+            chain: WalletChain::Btc,
+            evm_network: None,
+            hash: hash.to_string(),
+            found: true,
+            raw: tx,
+        }),
+        Err(e) if e.contains("status=404") => Ok(TxLookupInfo {
+            chain: WalletChain::Btc,
+            evm_network: None,
+            hash: hash.to_string(),
+            found: false,
+            raw: serde_json::Value::Null,
+        }),
+        Err(e) => Err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -559,5 +692,54 @@ mod tests {
             "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu"
         );
         let _ = secp; // suppress unused
+    }
+
+    #[tokio::test]
+    async fn tx_status_confirmed_with_tip_confirmations() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let app = Router::new()
+            .route(
+                "/tx/{txid}/status",
+                get(|| async {
+                    axum::Json(json!({"confirmed": true, "block_height": 800_000u64}))
+                }),
+            )
+            .route("/blocks/tip/height", get(|| async { "800002" }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        std::env::set_var("OPENHUMAN_WALLET_RPC_BTC", format!("http://{addr}"));
+        let info = tx_status("deadbeef").await.unwrap();
+        assert_eq!(
+            info.state,
+            crate::openhuman::wallet::execution::TxState::Confirmed
+        );
+        assert_eq!(info.block_number, Some(800_000));
+        assert_eq!(info.confirmations, Some(3));
+    }
+
+    #[tokio::test]
+    async fn lookup_tx_not_found_on_404() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let app = Router::new().route(
+            "/tx/{txid}",
+            get(|| async { (axum::http::StatusCode::NOT_FOUND, "Transaction not found") }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        std::env::set_var("OPENHUMAN_WALLET_RPC_BTC", format!("http://{addr}"));
+        let info = lookup_tx("deadbeef").await.unwrap();
+        assert!(!info.found);
     }
 }

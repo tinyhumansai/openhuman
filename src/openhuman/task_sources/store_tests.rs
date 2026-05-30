@@ -215,6 +215,68 @@ fn dedup_detects_seen_and_edited_tasks() {
     assert_eq!(listed[0].external_id, "42");
 }
 
+#[tokio::test]
+async fn add_with_assigned_executor_persists_and_filters_blank() {
+    use crate::openhuman::task_sources::ops;
+
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    // Some(non-empty) → persisted via the follow-up update_source patch
+    // (exercises both ops::add's assigned-executor branch and store's
+    // update_source patch arm). The store layer preserves the value verbatim;
+    // route::add_card is what trims it when stamping a card's assigned_agent.
+    let out = ops::add(
+        &config,
+        ProviderSlug::Github,
+        None,
+        None,
+        github_filter(),
+        Some(1800),
+        Some(SourceTarget::TodoOnly),
+        Some(25),
+        Some("my-skill".into()),
+    )
+    .await
+    .expect("add with executor");
+    assert_eq!(out.value.assigned_executor.as_deref(), Some("my-skill"));
+
+    // Re-read from disk to confirm persistence (not just the returned value).
+    let fetched = get_source(&config, &out.value.id).unwrap();
+    assert_eq!(fetched.assigned_executor.as_deref(), Some("my-skill"));
+
+    // Whitespace-only executor is filtered to None before the patch runs.
+    let blank = ops::add(
+        &config,
+        ProviderSlug::Github,
+        None,
+        None,
+        github_filter(),
+        Some(1800),
+        Some(SourceTarget::TodoOnly),
+        Some(25),
+        Some("   ".into()),
+    )
+    .await
+    .expect("add with blank executor");
+    assert_eq!(blank.value.assigned_executor, None);
+}
+
+#[test]
+fn content_hash_changes_when_only_url_changes() {
+    // `url` is load-bearing downstream (source_metadata / external write-back),
+    // so a URL-only upstream edit must produce a different hash and re-ingest —
+    // even if `updated_at` didn't advance (coarse-`updated_at` providers).
+    let base = sample_task("7", "Same title", "2025-01-01T00:00:00Z");
+    let mut moved = base.clone();
+    moved.url = Some("https://example.com/issues/7".into());
+    assert_ne!(
+        content_hash(&base),
+        content_hash(&moved),
+        "a URL-only change must re-ingest"
+    );
+}
+
 #[test]
 fn list_ingested_orders_newest_first() {
     let tmp = TempDir::new().unwrap();

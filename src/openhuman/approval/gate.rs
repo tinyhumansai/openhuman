@@ -18,14 +18,17 @@
 //! 5. The parked future wakes with the decision and translates it
 //!    into [`GateOutcome::Allow`] / `Deny`.
 //!
-//! Sessions: the gate is keyed by a per-launch `session_id` (the
-//! per-launch hex bearer the core hands out) for audit grouping.
-//! Rows from prior launches are intentionally preserved on init —
-//! the issue #1339 acceptance criterion requires they survive
-//! restart so the UI can show / dismiss orphans. Decisions on
-//! orphan rows update the DB but cannot resume a parked future
-//! across processes — no side effect can fire across launches, so
-//! the security invariant is preserved without auto-purging.
+//! Sessions: the gate is keyed by an internal per-launch UUID
+//! (`session-<uuid>`) used purely for audit grouping. This value is
+//! generated unconditionally by the caller (see
+//! `bootstrap_core_runtime`) and is never derived from the JSON-RPC
+//! bearer token or any other credential material — it is safe to
+//! persist and to log. Rows from prior launches are intentionally
+//! preserved on init — the issue #1339 acceptance criterion requires
+//! they survive restart so the UI can show / dismiss orphans.
+//! Decisions on orphan rows update the DB but cannot resume a parked
+//! future across processes — no side effect can fire across launches,
+//! so the security invariant is preserved without auto-purging.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -120,6 +123,17 @@ impl ApprovalGate {
     }
 
     fn new(config: Config, session_id: String, ttl: Duration) -> Self {
+        // Regression guard: the gate's session_id must be the per-launch
+        // UUID minted by `bootstrap_core_runtime` (shape:
+        // `session-<uuid>`). Any other shape risks re-introducing the
+        // credential leak that was fixed by switching off the RPC bearer
+        // — fail loudly in debug builds the moment a caller wires up a
+        // raw token (or any other ad-hoc string).
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            session_id.starts_with("session-"),
+            "ApprovalGate session_id must be a per-launch UUID prefix, not a credential",
+        );
         Self {
             config,
             session_id,
@@ -224,7 +238,6 @@ impl ApprovalGate {
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted: args_redacted.clone(),
-            session_id: self.session_id.clone(),
             created_at: now,
             expires_at,
         };
@@ -247,7 +260,7 @@ impl ApprovalGate {
                 .insert(thread_id.clone(), request_id.clone());
         }
 
-        if let Err(err) = store::insert_pending(&self.config, &pending) {
+        if let Err(err) = store::insert_pending(&self.config, &pending, &self.session_id) {
             self.evict_waiter(&request_id);
             self.clear_thread(&chat_thread_id);
             tracing::error!(
@@ -278,7 +291,6 @@ impl ApprovalGate {
             tool_name: tool_name.to_string(),
             action_summary: action_summary.to_string(),
             args_redacted,
-            session_id: self.session_id.clone(),
             thread_id: chat_thread_id.clone(),
             client_id: chat_client_id.clone(),
         });
@@ -502,7 +514,11 @@ mod tests {
             workspace_dir: dir.path().to_path_buf(),
             ..Config::default()
         };
-        let session = format!("test-session-{}", uuid::Uuid::new_v4());
+        // Mirrors the `session-<uuid>` shape minted by
+        // `bootstrap_core_runtime` in production so the
+        // `debug_assert!` regression guard in `ApprovalGate::new`
+        // doesn't trip in tests.
+        let session = format!("session-{}", uuid::Uuid::new_v4());
         // 500ms TTL was racing the 50×10ms poll loop on slow CI
         // runners — the row would expire (and get denied by
         // list_pending's lazy-expire) before `decide` could fire,

@@ -10,7 +10,9 @@ use super::ops;
 use super::state;
 use super::store;
 use super::sync::supported_extension;
-use super::types::{Vault, VaultFile, VaultFileStatus, VaultSyncState, VaultSyncStatus};
+use super::types::{
+    Vault, VaultFile, VaultFileStatus, VaultSyncState, VaultSyncStatus, VaultWriteState,
+};
 
 fn make_config(tmp: &TempDir) -> Config {
     let mut config = Config::default();
@@ -30,6 +32,8 @@ fn sample_vault(root: PathBuf) -> Vault {
         created_at: chrono::Utc::now(),
         last_synced_at: None,
         file_count: 0,
+        write_state: VaultWriteState::Writable,
+        write_state_reason: None,
     }
 }
 
@@ -99,6 +103,31 @@ fn store_stamps_new_vaults_with_current_host_os() {
     let listed = store::list_vaults(&config).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].host_os.as_deref(), Some(std::env::consts::OS));
+    assert_eq!(listed[0].write_state, VaultWriteState::Writable);
+    assert_eq!(
+        listed[0].write_state_reason.as_deref(),
+        Some(store::VAULT_WRITE_REASON_WRITABLE)
+    );
+}
+
+#[test]
+fn store_marks_missing_vault_folder_unavailable_instead_of_hiding_it() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let vault_root = tmp.path().join("vault-root");
+    std::fs::create_dir_all(&vault_root).unwrap();
+    let vault = sample_vault(vault_root.clone());
+
+    store::insert_vault(&config, &vault).unwrap();
+    std::fs::remove_dir_all(&vault_root).unwrap();
+
+    let listed = store::list_vaults(&config).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].write_state, VaultWriteState::Unavailable);
+    assert_eq!(
+        listed[0].write_state_reason.as_deref(),
+        Some(store::VAULT_WRITE_REASON_UNAVAILABLE)
+    );
 }
 
 #[test]
@@ -342,6 +371,11 @@ async fn vault_create_returns_current_host_os() {
     .unwrap();
 
     assert_eq!(outcome.value.host_os.as_deref(), Some(std::env::consts::OS));
+    assert_eq!(outcome.value.write_state, VaultWriteState::Writable);
+    assert_eq!(
+        outcome.value.write_state_reason.as_deref(),
+        Some(store::VAULT_WRITE_REASON_WRITABLE)
+    );
 }
 
 #[tokio::test]
@@ -388,6 +422,160 @@ async fn vault_sync_status_returns_idle_for_unknown_vault() {
     assert_eq!(outcome.value.status, VaultSyncStatus::Idle);
     assert_eq!(outcome.value.vault_id, "__ops_status_unknown__");
     assert_eq!(outcome.value.ingested, 0);
+}
+
+#[tokio::test]
+async fn vault_write_markdown_requires_explicit_approval() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+
+    let vault = ops::vault_create(
+        &config,
+        "Test",
+        tmp.path().to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap()
+    .value;
+
+    let err = ops::vault_write_markdown(
+        &config,
+        &vault.id,
+        "wiki/summary.md",
+        "# Summary\n",
+        false,
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(err.contains("explicit user approval"));
+}
+
+#[tokio::test]
+async fn vault_write_markdown_creates_and_updates_relative_markdown() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let vault_root = tmp.path().join("vault-root");
+    std::fs::create_dir_all(&vault_root).unwrap();
+
+    let vault = ops::vault_create(
+        &config,
+        "Test",
+        vault_root.to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap()
+    .value;
+
+    let first = ops::vault_write_markdown(
+        &config,
+        &vault.id,
+        "wiki/summary.md",
+        "# Summary\n\nInitial.",
+        false,
+        true,
+    )
+    .await
+    .unwrap()
+    .value;
+    assert!(first.created);
+    assert_eq!(first.rel_path, "wiki/summary.md");
+    assert_eq!(first.bytes_written, "# Summary\n\nInitial.".len() as u64);
+    assert_eq!(
+        std::fs::read_to_string(vault_root.join("wiki/summary.md")).unwrap(),
+        "# Summary\n\nInitial."
+    );
+
+    let duplicate = ops::vault_write_markdown(
+        &config,
+        &vault.id,
+        "wiki/summary.md",
+        "# Summary\n\nUpdated.",
+        false,
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(duplicate.contains("already exists"));
+
+    let updated = ops::vault_write_markdown(
+        &config,
+        &vault.id,
+        "wiki/summary.md",
+        "# Summary\n\nUpdated.",
+        true,
+        true,
+    )
+    .await
+    .unwrap()
+    .value;
+    assert!(!updated.created);
+    assert_eq!(
+        std::fs::read_to_string(vault_root.join("wiki/summary.md")).unwrap(),
+        "# Summary\n\nUpdated."
+    );
+}
+
+#[tokio::test]
+async fn vault_write_markdown_rejects_escape_paths_and_non_markdown() {
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let vault = ops::vault_create(
+        &config,
+        "Test",
+        tmp.path().to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap()
+    .value;
+
+    let traversal = ops::vault_write_markdown(&config, &vault.id, "../x.md", "x", false, true)
+        .await
+        .unwrap_err();
+    assert!(traversal.contains(".."));
+
+    let non_markdown =
+        ops::vault_write_markdown(&config, &vault.id, "notes/out.txt", "x", false, true)
+            .await
+            .unwrap_err();
+    assert!(non_markdown.contains(".md"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn vault_write_markdown_rejects_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let vault_root = tmp.path().join("vault-root");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&vault_root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, vault_root.join("linked")).unwrap();
+
+    let vault = ops::vault_create(
+        &config,
+        "Test",
+        vault_root.to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap()
+    .value;
+
+    let err = ops::vault_write_markdown(&config, &vault.id, "linked/escape.md", "x", false, true)
+        .await
+        .unwrap_err();
+    assert!(err.contains("outside the vault"));
+    assert!(!outside.join("escape.md").exists());
 }
 
 #[tokio::test]
