@@ -131,15 +131,22 @@ pub fn get_trees_batch(config: &Config, tree_ids: &[String]) -> Result<HashMap<S
     if tree_ids.is_empty() {
         return Ok(HashMap::new());
     }
+    log::debug!(
+        "[tree::store] get_trees_batch: ids={} max_batch={TREES_MAX_FETCH_BATCH}",
+        tree_ids.len()
+    );
     with_connection(config, |conn| {
         let mut out: HashMap<String, Tree> = HashMap::with_capacity(tree_ids.len());
         for window in tree_ids.chunks(TREES_MAX_FETCH_BATCH) {
+            // SAFETY (SQL injection): only the *count* of placeholders is
+            // interpolated into the query string — `?1,?2,…` are numbered
+            // bind slots, never the id values. Every id is bound via typed
+            // `rusqlite::ToSql` params below; nothing user-controlled is
+            // ever formatted into `sql`. Do NOT inline id values here.
             let placeholders = (1..=window.len())
                 .map(|i| format!("?{i}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            // placeholders are positional bind params (?1,?2,…) — values are
-            // never interpolated, so this format! is not SQL-injectable.
             let sql = format!(
                 "SELECT id, kind, scope, root_id, max_level, status,
                         created_at_ms, last_sealed_at_ms
@@ -147,17 +154,21 @@ pub fn get_trees_batch(config: &Config, tree_ids: &[String]) -> Result<HashMap<S
                   WHERE id IN ({placeholders})"
             );
             let mut stmt = conn.prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                window.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
             let rows = stmt
-                .query_map(
-                    rusqlite::params_from_iter(window.iter().map(String::as_str)),
-                    row_to_tree,
-                )?
+                .query_map(params.as_slice(), row_to_tree)?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .context("Failed to collect trees batch")?;
             for t in rows {
                 out.insert(t.id.clone(), t);
             }
         }
+        log::debug!(
+            "[tree::store] get_trees_batch: requested={} found={}",
+            tree_ids.len(),
+            out.len()
+        );
         Ok(out)
     })
 }
@@ -504,6 +515,108 @@ pub fn get_summary_embedding_for_signature(
             }
         }
     })
+}
+
+/// Per-batch cap on `?` placeholders. Mirrors `chunks::store::
+/// MAX_EMBEDDING_BATCH` — see that constant's doc for the rationale (well
+/// below SQLite's `SQLITE_MAX_VARIABLE_NUMBER = 32766`, large enough that
+/// the current `LOOKUP_HEADROOM = 200` callsite always fits in one
+/// round-trip). The two sides are independent intentionally: the summary
+/// and chunk tables can grow at different rates and the cap might want to
+/// drift independently in the future.
+const MAX_EMBEDDING_BATCH: usize = 500;
+
+/// Batched read of summary embeddings under a single `model_signature`.
+///
+/// Returns a `HashMap<summary_id, Vec<f32>>` containing **only the
+/// summaries that have a vector under `model_signature`**. Summaries with
+/// no row, with a `NULL` vector (pending re-embed), or with a corrupted
+/// blob are simply absent from the map — semantically identical to the
+/// per-row [`get_summary_embedding_for_signature`] returning `Ok(None)`.
+///
+/// Mirror of `chunks::store::get_chunk_embeddings_for_signature_batch`.
+/// See that helper's doc for the rerank-loop motivation. The summary
+/// side has its own copy rather than a generic helper because the two
+/// tables (`mem_tree_summary_embeddings` vs `mem_tree_chunk_embeddings`)
+/// have different blob-nullability semantics: summaries can store an
+/// explicit `NULL` vector to flag a pending re-embed (handled here via
+/// `Option<Vec<u8>>` + `decode_signature_blob`), chunks cannot.
+pub fn get_summary_embeddings_for_signature_batch(
+    config: &Config,
+    summary_ids: &[String],
+    model_signature: &str,
+) -> Result<HashMap<String, Vec<f32>>> {
+    if summary_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, Vec<f32>> = HashMap::with_capacity(summary_ids.len());
+        // Chunk to stay under SQLite's SQLITE_MAX_VARIABLE_NUMBER cap.
+        // For LOOKUP_HEADROOM=200 this loop runs exactly once; chunking
+        // only engages if a future caller passes >500 ids at a time.
+        for window in summary_ids.chunks(MAX_EMBEDDING_BATCH) {
+            // Build `IN (?,?,?,...)` with `window.len()` placeholders.
+            // model_signature is bound as the last parameter (?{n+1}).
+            let placeholders = std::iter::repeat_n("?", window.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT summary_id, vector, dim
+                   FROM mem_tree_summary_embeddings
+                  WHERE summary_id IN ({placeholders})
+                    AND model_signature = ?{sig_idx}",
+                sig_idx = window.len() + 1,
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .context("prepare get_summary_embeddings_for_signature_batch")?;
+            let mut bound: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(window.len() + 1);
+            for id in window {
+                bound.push(id as &dyn rusqlite::ToSql);
+            }
+            bound.push(&model_signature as &dyn rusqlite::ToSql);
+            let rows = stmt
+                .query_map(bound.as_slice(), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<Vec<u8>>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .context("query get_summary_embeddings_for_signature_batch")?;
+            for row in rows {
+                let (summary_id, blob, dim) = row?;
+                // Reuse the single-row decoder so NULL vectors (pending
+                // re-embed) and corrupt blobs surface with identical
+                // diagnostics to the per-row path. `Ok(None)` from the
+                // decoder is dropped: the map only carries materialised
+                // vectors, exactly mirroring the existing per-row
+                // contract. Length / dim-mismatch / negative-dim /
+                // non-multiple-of-4 are already enforced inside
+                // `decode_signature_blob` itself — no extra check here,
+                // matching the chunks side which delegates the same way
+                // to `embedding_from_blob`.
+                if let Some(v) =
+                    decode_signature_blob(blob, dim, &format!("summary_id={summary_id}"))?
+                {
+                    out.insert(summary_id, v);
+                }
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// Batched read of summary embeddings under the **active** model
+/// signature. Mirrors [`get_summary_embedding`] for the per-row path:
+/// resolves `tree_active_signature` once, forwards to
+/// [`get_summary_embeddings_for_signature_batch`].
+pub fn get_summary_embeddings_batch(
+    config: &Config,
+    summary_ids: &[String],
+) -> Result<HashMap<String, Vec<f32>>> {
+    let signature = crate::openhuman::memory_store::chunks::store::tree_active_signature(config);
+    get_summary_embeddings_for_signature_batch(config, summary_ids, &signature)
 }
 
 /// Fetch one summary by id. Soft-deleted rows are returned with

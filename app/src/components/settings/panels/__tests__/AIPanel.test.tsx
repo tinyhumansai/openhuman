@@ -3,16 +3,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { listConnections as listComposioConnections } from '../../../../lib/composio/composioApi';
 import {
+  clearCloudProviderKey,
+  completeOpenAiCodexOAuth,
+  importOpenAiCodexCliAuth,
   listProviderModels,
   loadAISettings,
   loadLocalProviderSnapshot,
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL,
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
   saveAISettings,
   setCloudProviderKey,
+  startOpenAiCodexOAuth,
   testProviderModel,
 } from '../../../../services/api/aiSettingsApi';
 import { creditsApi } from '../../../../services/api/creditsApi';
 import { renderWithProviders } from '../../../../test/test-utils';
 import { connectOpenRouterViaOAuth } from '../../../../utils/openrouterOAuth';
+import { openUrl } from '../../../../utils/openUrl';
 // Lazy import so the typed mock is available to individual tests.
 import { openhumanUpdateLocalAiSettings as openhumanUpdateLocalAiSettingsMock } from '../../../../utils/tauriCommands/config';
 import {
@@ -49,7 +56,12 @@ vi.mock('../../../../services/api/aiSettingsApi', () => ({
   ),
   localProvider: { download: vi.fn(), applyPreset: vi.fn() },
   flushCloudProviders: vi.fn().mockResolvedValue(undefined),
+  importOpenAiCodexCliAuth: vi.fn().mockResolvedValue(undefined),
   listProviderModels: vi.fn().mockResolvedValue([]),
+  OPENAI_CODEX_OAUTH_MISSING_AUTH_URL: 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL',
+  OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL: 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL',
+  startOpenAiCodexOAuth: vi.fn(),
+  completeOpenAiCodexOAuth: vi.fn(),
 }));
 
 vi.mock('../../hooks/useSettingsNavigation', () => ({
@@ -87,6 +99,7 @@ vi.mock('../../../../utils/tauriCommands/config', async () => {
 });
 
 vi.mock('../../../../utils/openrouterOAuth', () => ({ connectOpenRouterViaOAuth: vi.fn() }));
+vi.mock('../../../../utils/openUrl', () => ({ openUrl: vi.fn() }));
 
 const baseSettings = {
   cloudProviders: [
@@ -196,8 +209,15 @@ describe('AIPanel', () => {
     vi.mocked(loadAISettings).mockResolvedValue(baseSettings);
     vi.mocked(loadLocalProviderSnapshot).mockResolvedValue(baseLocalSnapshot);
     vi.mocked(setCloudProviderKey).mockResolvedValue(undefined);
+    vi.mocked(clearCloudProviderKey).mockResolvedValue(undefined);
+    vi.mocked(importOpenAiCodexCliAuth).mockResolvedValue(undefined);
     vi.mocked(testProviderModel).mockResolvedValue({ reply: 'Hello from the selected model.' });
     vi.mocked(listProviderModels).mockResolvedValue([]);
+    vi.mocked(startOpenAiCodexOAuth).mockResolvedValue({
+      authUrl: 'https://auth.openai.com/oauth/authorize?client_id=test',
+    });
+    vi.mocked(completeOpenAiCodexOAuth).mockResolvedValue(undefined);
+    vi.mocked(openUrl).mockResolvedValue(undefined);
     vi.mocked(connectOpenRouterViaOAuth).mockResolvedValue('sk-or-oauth');
     vi.mocked(openhumanHeartbeatSettingsGet).mockResolvedValue({
       result: { settings: baseHeartbeatSettings },
@@ -353,7 +373,11 @@ describe('AIPanel', () => {
       expect(screen.getByRole('dialog', { name: /Connect OpenAI/i })).toBeInTheDocument()
     );
     // The input for the API key should be visible.
-    expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: /Connect OpenAI/i });
+    expect(within(dialog).getByLabelText(/API key/i)).toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('button', { name: /Sign in with ChatGPT \/ Codex/i })
+    ).not.toBeInTheDocument();
   });
 
   it('surfaces provider setup errors in an alert with technical details collapsed', async () => {
@@ -527,6 +551,68 @@ describe('AIPanel', () => {
 
     // Specifically: no "Disconnect OpenAI" switch (chip is still in off state).
     expect(screen.queryByRole('switch', { name: /Disconnect OpenAI/i })).not.toBeInTheDocument();
+  });
+
+  it('connects OpenAI through Codex CLI auth without storing an API key', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+
+    await waitFor(() => expect(vi.mocked(importOpenAiCodexCliAuth)).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(startOpenAiCodexOAuth)).not.toHaveBeenCalled();
+    expect(vi.mocked(openUrl)).not.toHaveBeenCalled();
+    expect(vi.mocked(completeOpenAiCodexOAuth)).not.toHaveBeenCalled();
+    expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();
+    expect(vi.mocked(clearCloudProviderKey)).toHaveBeenCalledWith('openai');
+    expect(vi.mocked(listProviderModels)).not.toHaveBeenCalledWith('openai');
+
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+    expect(vi.mocked(saveAISettings).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(clearCloudProviderKey).mock.invocationCallOrder[0]
+    );
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'openai',
+          label: 'OpenAI',
+          endpoint: 'https://api.openai.com/v1',
+          auth_style: 'bearer',
+          has_api_key: true,
+        }),
+      ])
+    );
+  });
+
+  it.each([
+    [OPENAI_CODEX_OAUTH_MISSING_AUTH_URL, /Codex OAuth did not return an authorization URL/i],
+    [
+      OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL,
+      /Paste the redirect URL from your browser after signing in/i,
+    ],
+  ])('localizes Codex CLI auth error code %s', async (errorCode, expectedMessage) => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    vi.mocked(importOpenAiCodexCliAuth).mockRejectedValueOnce(new Error(errorCode));
+
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect OpenAI/i })).toBeInTheDocument()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Codex 인증/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(expectedMessage));
+    expect(vi.mocked(setCloudProviderKey)).not.toHaveBeenCalled();
+    expect(vi.mocked(clearCloudProviderKey)).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 
   it('wraps long provider setup errors and hides raw JSON behind technical details', async () => {

@@ -58,7 +58,13 @@ const slice = createSlice({
     },
     setBackend(state, action: PayloadAction<{ value: BackendState; error?: string }>) {
       state.backend = action.payload.value;
-      if (action.payload.value === 'connected') {
+      if (action.payload.value === 'connected' || action.payload.value === 'connecting') {
+        // Clear the stale error on both successful connection and reconnect
+        // attempts. Previously only 'connected' deleted lastError.backend,
+        // which meant a prior disconnect error (e.g. "transport close") was
+        // left set to `undefined` — not deleted — during 'connecting'. UI
+        // components that read lastError.backend could still surface a stale
+        // message in the reconnect window even though the key appeared falsy.
         delete state.lastError.backend;
       } else {
         state.lastError.backend = action.payload.error;

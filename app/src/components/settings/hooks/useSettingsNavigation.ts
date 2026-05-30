@@ -38,6 +38,7 @@ export type SettingsRoute =
   | 'mascot'
   | 'persona'
   | 'appearance'
+  | 'approval-history'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
@@ -124,6 +125,9 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
+    // `approval-history` is an explicit leaf route under Agent access; it has a
+    // distinct prefix from `agent-access`, so ordering between them is cosmetic.
+    if (path.includes('/settings/approval-history')) return 'approval-history';
     // `agents-settings` (the Agents section page) must be checked before the
     // shorter `agents` (the manage-agents registry panel) so it isn't swallowed.
     if (path.includes('/settings/agents-settings')) return 'agents-settings';
@@ -185,6 +189,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
   const developerCrumb: BreadcrumbItem = {
     label: 'Developer Options',
     onClick: () => navigate('/settings/developer-options'),
+  };
+
+  const agentAccessCrumb: BreadcrumbItem = {
+    label: 'Agent access',
+    onClick: () => navigate('/settings/agent-access'),
   };
 
   const agentsCrumb: BreadcrumbItem = {
@@ -272,6 +281,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Appearance (theme) panel sits at the top level of Settings.
       case 'appearance':
         return [settingsCrumb];
+
+      // Approval history is a leaf under Agent access, which itself lives under
+      // the Agents section — so the trail is Settings → Agents → Agent access.
+      case 'approval-history':
+        return [settingsCrumb, agentsCrumb, agentAccessCrumb];
 
       case 'home':
       default:

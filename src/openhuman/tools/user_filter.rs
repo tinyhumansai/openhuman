@@ -47,9 +47,36 @@ fn all_filterable_tool_names() -> HashSet<&'static str> {
         .collect()
 }
 
-/// Given the list of enabled Rust tool names (already expanded from UI IDs by
-/// the frontend), retain only tools that are either infrastructure (not
-/// filterable) or explicitly enabled.
+/// Expand persisted tool-preference entries into Rust tool `name()` values.
+///
+/// Accepts both formats we may find in app state:
+/// - Rust tool names (new format)
+/// - UI toggle IDs (legacy / partial-rollout format)
+///
+/// Unknown entries are ignored.
+fn expand_enabled_tool_names(enabled_tool_names: &[String]) -> HashSet<String> {
+    let mut expanded = HashSet::new();
+    for entry in enabled_tool_names {
+        if let Some((_, rust_names)) = TOOL_ID_TO_RUST_NAMES.iter().find(|(id, _)| id == &entry) {
+            for name in *rust_names {
+                expanded.insert((*name).to_string());
+            }
+            continue;
+        }
+
+        if TOOL_ID_TO_RUST_NAMES
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .any(|name| name == entry)
+        {
+            expanded.insert(entry.clone());
+        }
+    }
+    expanded
+}
+
+/// Given the list of enabled tools from app state, retain only tools that are
+/// either infrastructure (not filterable) or explicitly enabled.
 ///
 /// An empty `enabled_tool_names` list means "all enabled" (default / not yet
 /// configured) — the filter is a no-op in that case.
@@ -64,7 +91,13 @@ pub(crate) fn filter_tools_by_user_preference(
 
     let filterable = all_filterable_tool_names();
 
-    let allowed: HashSet<&str> = enabled_tool_names.iter().map(String::as_str).collect();
+    let allowed = expand_enabled_tool_names(enabled_tool_names);
+    if allowed.is_empty() {
+        log::warn!(
+            "[tool-filter] enabled_tools was non-empty but none matched known UI IDs or tool names; leaving tools unfiltered for safety"
+        );
+        return;
+    }
 
     let before = tools.len();
     tools.retain(|tool| {
@@ -84,5 +117,32 @@ pub(crate) fn filter_tools_by_user_preference(
             after,
             before - after
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_enabled_tool_names;
+
+    #[test]
+    fn expands_legacy_ui_toggle_ids_to_rust_tool_names() {
+        let allowed = expand_enabled_tool_names(&["cron".to_string(), "web_search".to_string()]);
+        assert!(allowed.contains("cron_add"));
+        assert!(allowed.contains("cron_list"));
+        assert!(allowed.contains("web_search_tool"));
+    }
+
+    #[test]
+    fn keeps_direct_rust_tool_names() {
+        let allowed =
+            expand_enabled_tool_names(&["cron_add".to_string(), "memory_store".to_string()]);
+        assert!(allowed.contains("cron_add"));
+        assert!(allowed.contains("memory_store"));
+    }
+
+    #[test]
+    fn ignores_unknown_entries() {
+        let allowed = expand_enabled_tool_names(&["totally_unknown".to_string()]);
+        assert!(allowed.is_empty());
     }
 }

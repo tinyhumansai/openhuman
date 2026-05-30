@@ -1,0 +1,55 @@
+{
+  "id": "build/cargo-doc",
+  "family": "build-rust",
+  "description": "Compact cargo doc output while preserving documentation warnings and errors.",
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["cargo"],
+    "argvIncludes": [["doc"]]
+  },
+  "onEmpty": "cargo doc: generated successfully",
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^\\s*Compiling .+",
+      "^\\s*Checking .+",
+      "^\\s*Documenting .+",
+      "^\\s*Downloading .+",
+      "^\\s*Downloaded .+",
+      "^\\s*Locking .+",
+      "^\\s*Fresh .+",
+      "^\\s+\\|\\s*$"
+    ]
+  },
+  "summarize": {
+    "head": 10,
+    "tail": 8
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 14,
+    "tail": 14
+  },
+  "counters": [
+    {
+      "name": "error",
+      "pattern": "^error(\\[E\\d+\\])?:",
+      "flags": "i"
+    },
+    {
+      "name": "warning",
+      "pattern": "^warning:",
+      "flags": "i"
+    }
+  ],
+  "matchOutput": [
+    {
+      "pattern": "^\\s*Finished .+\\s*$",
+      "message": "cargo doc: generated successfully"
+    }
+  ]
+}
