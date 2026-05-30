@@ -211,6 +211,13 @@ export async function dismissWalkthroughIfPresent(page: Page): Promise<void> {
   }
 
   await markCompleted();
+  // Last-resort: a lingering #react-joyride-portal node will keep
+  // intercepting clicks on the page even after we've persisted the
+  // completion flag. Strip every portal node from the DOM so the
+  // next interaction is not blocked by the modal overlay.
+  await page.evaluate(() => {
+    document.querySelectorAll('#react-joyride-portal').forEach(node => node.remove());
+  });
 }
 
 async function waitForAuthenticatedSnapshot(page: Page): Promise<void> {
