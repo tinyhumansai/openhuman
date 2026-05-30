@@ -1,6 +1,6 @@
 use super::*;
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
-use crate::openhuman::inference::provider::ChatResponse;
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse};
 use crate::openhuman::tools::{ToolResult, ToolScope};
 use async_trait::async_trait;
 use parking_lot::Mutex;

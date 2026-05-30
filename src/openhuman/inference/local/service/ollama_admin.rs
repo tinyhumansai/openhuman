@@ -848,6 +848,11 @@ impl LocalAiService {
 
         let base_url = ollama_base_url_from_config(config);
         let healthy = self.ollama_healthy_at(&base_url).await;
+        let runner_ok = if healthy {
+            self.ollama_runner_ok_at(&base_url).await
+        } else {
+            false
+        };
 
         log::debug!(
             "[local_ai] diagnostics: entry base_url={} healthy={}",
@@ -884,11 +889,15 @@ impl LocalAiService {
         // `/api/show` is one bounded round-trip per installed model,
         // fetched concurrently and only on this diagnostics path.
         let model_eligibilities: Vec<ContextEligibility> = if healthy {
-            futures_util::future::join_all(models.iter().map(|m| self.fetch_model_context(&m.name)))
-                .await
-                .into_iter()
-                .map(evaluate_context)
-                .collect()
+            futures_util::future::join_all(
+                models
+                    .iter()
+                    .map(|m| self.fetch_model_context_at(&base_url, &m.name)),
+            )
+            .await
+            .into_iter()
+            .map(evaluate_context)
+            .collect()
         } else {
             Vec::new()
         };
@@ -940,6 +949,12 @@ impl LocalAiService {
                 "Ollama server is not running or not reachable at {}",
                 base_url
             ));
+        }
+        if healthy && !runner_ok {
+            issues.push(
+                "Configured Ollama runtime is reachable but cannot execute models. Restart the external runtime and retry."
+                    .to_string(),
+            );
         }
         if healthy && !chat_found {
             issues.push(format!("Chat model `{}` is not installed", expected_chat));
@@ -1002,6 +1017,7 @@ impl LocalAiService {
 
         Ok(serde_json::json!({
             "ollama_running": healthy,
+            "ollama_runner_ok": runner_ok,
             "ollama_base_url": base_url,
             "ollama_binary_path": binary_path,
             "installed_models": installed_models,
@@ -1112,8 +1128,8 @@ impl LocalAiService {
     /// the metadata key is absent) — the caller maps that to an `Unknown`
     /// eligibility verdict rather than a hard rejection. One bounded HTTP
     /// round-trip per model; only ever invoked from the diagnostics path.
-    async fn fetch_model_context(&self, model: &str) -> Option<u64> {
-        let url = format!("{}/api/show", ollama_base_url());
+    async fn fetch_model_context_at(&self, base_url: &str, model: &str) -> Option<u64> {
+        let url = format!("{}/api/show", base_url.trim_end_matches('/'));
         let resp = self
             .http
             .post(&url)

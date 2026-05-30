@@ -962,3 +962,100 @@ fn validate_reembed_skip_key_rejects_empty_and_oversized() {
         "trimmed"
     );
 }
+
+// ---------- get_chunk_embeddings_for_signature_batch ----------
+//
+// Contract: equivalent to looping `get_chunk_embedding_for_signature`
+// per id, but in O(ceil(n / MAX_EMBEDDING_BATCH)) round-trips instead
+// of O(n). The map contains only ids that have a vector under the
+// requested signature; absent rows are silently dropped (same as the
+// per-row helper returning Ok(None)).
+
+#[test]
+fn batch_embedding_lookup_returns_only_signature_scoped_rows() {
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#eng", 1, 1_700_000_000_000);
+    let c3 = sample_chunk("slack:#eng", 2, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+
+    let sig_a = "openai/text-embedding-3-small@1536";
+    let sig_b = "local/bge-small@384";
+    set_chunk_embedding_for_signature(&cfg, &c1.id, sig_a, &[0.1, 0.2]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c2.id, sig_a, &[0.3, 0.4]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c3.id, sig_b, &[0.5, 0.6, 0.7]).unwrap();
+
+    let ids = vec![c1.id.clone(), c2.id.clone(), c3.id.clone()];
+    let map_a = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig_a).unwrap();
+    assert_eq!(map_a.len(), 2, "only c1 and c2 are under sig_a");
+    assert_eq!(map_a.get(&c1.id).cloned(), Some(vec![0.1, 0.2]));
+    assert_eq!(map_a.get(&c2.id).cloned(), Some(vec![0.3, 0.4]));
+    assert!(map_a.get(&c3.id).is_none(), "c3 has only sig_b");
+
+    let map_b = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig_b).unwrap();
+    assert_eq!(map_b.len(), 1);
+    assert_eq!(map_b.get(&c3.id).cloned(), Some(vec![0.5, 0.6, 0.7]));
+}
+
+#[test]
+fn batch_embedding_lookup_empty_input_returns_empty_map() {
+    let (_tmp, cfg) = test_config();
+    let map = get_chunk_embeddings_for_signature_batch(&cfg, &[], "any/sig@1").unwrap();
+    assert!(map.is_empty());
+}
+
+#[test]
+fn batch_embedding_lookup_unknown_ids_absent_from_map() {
+    // Pre-batch contract: per-row helper returned Ok(None) for missing
+    // chunks. Batch helper must mirror that — missing ids absent from
+    // the map, present ids carry their vector. The retrieval rerank
+    // path depends on this so absent rows get the
+    // (NEG_INFINITY, false) sink-to-bottom treatment.
+    let (_tmp, cfg) = test_config();
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+    let sig = "openai/text-embedding-3-small@1536";
+    set_chunk_embedding_for_signature(&cfg, &c.id, sig, &[0.1]).unwrap();
+
+    let ids = vec![
+        c.id.clone(),
+        "ghost:no-such-chunk-1".into(),
+        "ghost:no-such-chunk-2".into(),
+    ];
+    let map = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get(&c.id).cloned(), Some(vec![0.1]));
+}
+
+#[test]
+fn batch_embedding_lookup_splits_id_list_above_per_batch_threshold() {
+    // Validates the `chunks(MAX_EMBEDDING_BATCH)` window loop in
+    // `get_chunk_embeddings_for_signature_batch`. We pass > 500 ids in
+    // one call; the helper must internally split them into multiple
+    // `IN (...)` queries and merge results into a single map. 3 of the
+    // 501 ids actually carry embeddings; the other 498 are unknown
+    // strings and must be absent from the returned map (no error).
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#a", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#b", 0, 1_700_000_000_000);
+    let c3 = sample_chunk("slack:#c", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+    let sig = "openai/text-embedding-3-small@1536";
+    set_chunk_embedding_for_signature(&cfg, &c1.id, sig, &[1.0]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c2.id, sig, &[2.0]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c3.id, sig, &[3.0]).unwrap();
+
+    // Build 501 ids: 3 real + 498 ghosts. The 501-element vec crosses
+    // the 500-per-batch boundary, forcing two `IN (...)` queries.
+    let mut ids: Vec<String> = (0..498).map(|i| format!("ghost:{i}")).collect();
+    ids.push(c1.id.clone());
+    ids.push(c2.id.clone());
+    ids.push(c3.id.clone());
+    assert_eq!(ids.len(), 501);
+
+    let map = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig).unwrap();
+    assert_eq!(map.len(), 3, "only the 3 real ids should be present");
+    assert_eq!(map.get(&c1.id).cloned(), Some(vec![1.0]));
+    assert_eq!(map.get(&c2.id).cloned(), Some(vec![2.0]));
+    assert_eq!(map.get(&c3.id).cloned(), Some(vec![3.0]));
+}

@@ -1102,6 +1102,7 @@ fn spawn_progress_bridge(
                     mode,
                     dedicated_thread,
                     prompt_chars,
+                    worker_thread_id,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
@@ -1116,6 +1117,7 @@ fn spawn_progress_bridge(
                             mode: Some(mode),
                             dedicated_thread: Some(dedicated_thread),
                             prompt_chars: Some(prompt_chars as u64),
+                            worker_thread_id,
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1247,6 +1249,54 @@ fn spawn_progress_bridge(
                             task_id: Some(task_id),
                             elapsed_ms: Some(elapsed_ms),
                             output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentTextDelta {
+                    agent_id,
+                    task_id,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_text_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(round),
+                        delta: Some(delta),
+                        delta_kind: Some("text".to_string()),
+                        skill_id: Some(task_id.clone()),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentThinkingDelta {
+                    agent_id,
+                    task_id,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_thinking_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(round),
+                        delta: Some(delta),
+                        delta_kind: Some("thinking".to_string()),
+                        skill_id: Some(task_id.clone()),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
                             ..Default::default()
                         }),
                         ..Default::default()

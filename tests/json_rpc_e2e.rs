@@ -9215,3 +9215,131 @@ async fn json_rpc_task_sources_fetch_pipeline_e2e() {
 
     rpc_join.abort();
 }
+
+/// Full lifecycle over JSON-RPC for the `workflows` namespace:
+/// create → list → read → phase → uninstall. Workflows are scaffolded under
+/// the user-scope root (`$HOME/.openhuman/workflows/<slug>/`), which the temp
+/// `HOME` isolates per-test.
+#[tokio::test]
+async fn json_rpc_workflows_lifecycle_round_trip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_url_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    let _api_url_guard = EnvVarGuard::unset("OPENHUMAN_API_URL");
+
+    let (api_addr, api_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let api_origin = format!("http://{api_addr}");
+    write_min_config(openhuman_home.as_path(), &api_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{rpc_addr}");
+
+    // 1. Create a user-scope workflow.
+    let create = post_json_rpc(
+        &rpc_base,
+        9201,
+        "openhuman.workflows_create",
+        json!({
+            "name": "Bug Triage",
+            "description": "How to handle an incoming bug report",
+            "when_to_use": "a user reports a bug or something is broken",
+        }),
+    )
+    .await;
+    let create_result = assert_no_jsonrpc_error(&create, "workflows_create");
+    let wf = create_result.get("workflow").expect("workflow in create");
+    assert_eq!(
+        wf.get("dir_name").and_then(Value::as_str),
+        Some("bug-triage")
+    );
+    assert_eq!(wf.get("name").and_then(Value::as_str), Some("Bug Triage"));
+    assert!(
+        wf.pointer("/phases/on_pick_up_task").is_some(),
+        "scaffold seeds an on_pick_up_task phase"
+    );
+
+    // 2. List reflects the new workflow.
+    let list = post_json_rpc(&rpc_base, 9202, "openhuman.workflows_list", json!({})).await;
+    let list_result = assert_no_jsonrpc_error(&list, "workflows_list");
+    let workflows = list_result
+        .get("workflows")
+        .and_then(Value::as_array)
+        .expect("workflows array");
+    assert_eq!(workflows.len(), 1, "exactly one workflow after create");
+    assert_eq!(
+        workflows[0].get("id").and_then(Value::as_str),
+        Some("bug-triage")
+    );
+    assert_eq!(
+        workflows[0].get("when_to_use").and_then(Value::as_str),
+        Some("a user reports a bug or something is broken")
+    );
+
+    // 3. Read returns the full workflow.
+    let read = post_json_rpc(
+        &rpc_base,
+        9203,
+        "openhuman.workflows_read",
+        json!({ "id": "bug-triage" }),
+    )
+    .await;
+    let read_result = assert_no_jsonrpc_error(&read, "workflows_read");
+    assert_eq!(
+        read_result
+            .pointer("/workflow/name")
+            .and_then(Value::as_str),
+        Some("Bug Triage")
+    );
+
+    // 4. Phase resolution renders the seeded rule's guidance.
+    let phase = post_json_rpc(
+        &rpc_base,
+        9204,
+        "openhuman.workflows_phase",
+        json!({ "id": "bug-triage", "phase": "on_pick_up_task" }),
+    )
+    .await;
+    let phase_result = assert_no_jsonrpc_error(&phase, "workflows_phase");
+    let guidance = phase_result
+        .get("guidance")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        guidance.contains("on_pick_up_task"),
+        "guidance names the phase, got: {guidance}"
+    );
+
+    // 5. Uninstall removes it; the list is empty again.
+    let uninstall = post_json_rpc(
+        &rpc_base,
+        9205,
+        "openhuman.workflows_uninstall",
+        json!({ "id": "bug-triage" }),
+    )
+    .await;
+    let uninstall_result = assert_no_jsonrpc_error(&uninstall, "workflows_uninstall");
+    assert_eq!(
+        uninstall_result.get("removed").and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let after = post_json_rpc(&rpc_base, 9206, "openhuman.workflows_list", json!({})).await;
+    let after_result = assert_no_jsonrpc_error(&after, "workflows_list");
+    assert!(
+        after_result
+            .get("workflows")
+            .and_then(Value::as_array)
+            .expect("workflows array")
+            .is_empty(),
+        "no workflows after uninstall"
+    );
+
+    api_join.abort();
+    rpc_join.abort();
+}

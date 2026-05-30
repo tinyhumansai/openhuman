@@ -421,6 +421,7 @@ impl AgentOrchestrationSession {
                     mode: "typed".to_string(),
                     dedicated_thread: false,
                     prompt_chars: prompt.chars().count(),
+                    worker_thread_id: None,
                 })
                 .await;
         }

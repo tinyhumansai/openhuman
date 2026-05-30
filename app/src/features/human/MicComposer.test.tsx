@@ -1,7 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isLowConfidenceTranscript, MAX_RECORDING_MS, MicComposer } from './MicComposer';
+import {
+  isLowConfidenceTranscript,
+  MAX_RECORDING_MS,
+  MicComposer,
+  STT_MAX_RETRIES,
+} from './MicComposer';
 
 // transcribeWithFactory + encodeBlobToWav are the network/heavy boundaries —
 // mock them here so we can drive the state machine without touching real APIs.
@@ -709,6 +714,68 @@ describe('MicComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('Hello, how are you?'));
   });
+
+  it('retry counter is monotone across native + WAV paths (no double-count)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // 3 native failures + 2 WAV failures + 1 WAV success = 6 calls total.
+      //
+      // The double-count bug only manifests on the SECOND WAV retry callback:
+      //   fixed:  snapshot nativeRetries=2 → handleRetry(2+2)=4 → "4 of 4"
+      //   buggy:  read mutable cumulativeRetries=3 → handleRetry(3+2)=5 → "5 of 4"
+      //
+      // By the time WAV attempt 2 (call 6, the success) starts executing, React
+      // has already flushed the setRetryCount update from WAV attempt 1's retry
+      // callback (which fired synchronously before the 500ms backoff sleep that
+      // immediately preceded call 6). We read the rendered <span> text inside
+      // that mock to assert the actual value the component shows, not a literal.
+      let retryLabelAtSuccessCall = '';
+      transcribeWithFactoryMock
+        .mockRejectedValueOnce(new Error('native 0'))
+        .mockRejectedValueOnce(new Error('native 1'))
+        .mockRejectedValueOnce(new Error('native 2'))
+        .mockRejectedValueOnce(new Error('wav 0'))
+        .mockRejectedValueOnce(new Error('wav 1'))
+        .mockImplementationOnce(async () => {
+          // WAV attempt 2 — the success call. At this point setRetryCount was
+          // called synchronously before the 500ms backoff that preceded this call.
+          // React flushed during that backoff (fake-timer advancement is act-wrapped),
+          // so the DOM reflects the actual retryCount value: 4 (fixed) or 5 (buggy).
+          const el = document.querySelector('span.text-xs');
+          retryLabelAtSuccessCall = el?.textContent ?? '';
+          return 'cross-path ok';
+        });
+      encodeBlobToWavMock.mockResolvedValueOnce(
+        new Blob([new Uint8Array([0])], { type: 'audio/wav' })
+      );
+      const onSubmit = vi.fn();
+      render(<MicComposer disabled={false} onSubmit={onSubmit} />);
+
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /stop recording and send/i })).toBeInTheDocument()
+      );
+      fireEvent.click(screen.getByRole('button', { name: /stop recording and send/i }));
+
+      // Drive all 6 calls to completion by advancing through backoffs.
+      // native: 500ms + 1000ms, WAV: 500ms + 1000ms.
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await waitFor(() => expect(onSubmit).toHaveBeenCalledWith('cross-path ok'));
+      expect(transcribeWithFactoryMock).toHaveBeenCalledTimes(6);
+
+      // The label seen inside call 6 must read "Retrying... (4 of 4)", not
+      // "Retrying... (5 of 4)". If the snapshot fix is absent, cumulativeRetries
+      // would be mutated to 3 after WAV retry 0, then 3+2=5 on WAV retry 1.
+      expect(retryLabelAtSuccessCall).toMatch(/retrying.*4 of 4/i);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ── isLowConfidenceTranscript unit tests ──────────────────────────────────
@@ -750,5 +817,12 @@ describe('isLowConfidenceTranscript', () => {
     expect(isLowConfidenceTranscript('مرحبا')).toBe(false);
     expect(isLowConfidenceTranscript('नमस्ते')).toBe(false);
     expect(isLowConfidenceTranscript('বাংলা')).toBe(false);
+  });
+});
+
+describe('STT_MAX_RETRIES export', () => {
+  it('is a positive integer', () => {
+    expect(Number.isInteger(STT_MAX_RETRIES)).toBe(true);
+    expect(STT_MAX_RETRIES).toBeGreaterThan(0);
   });
 });

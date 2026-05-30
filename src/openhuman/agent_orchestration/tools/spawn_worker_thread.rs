@@ -12,9 +12,7 @@
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{run_subagent, SubagentRunOptions};
-use crate::openhuman::memory_conversations::{
-    self as conversations, ConversationMessage, CreateConversationThread,
-};
+use crate::openhuman::memory_conversations::{self as conversations};
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -183,46 +181,14 @@ impl Tool for SpawnWorkerThreadTool {
             .ok_or_else(|| anyhow::anyhow!("agent_id '{}' not found", agent_id))?;
 
         // ── Create Worker Thread ───────────────────────────────────────
-        let worker_thread_id = format!("worker-{}", uuid::Uuid::new_v4());
-        let now = chrono::Utc::now().to_rfc3339();
-
-        conversations::ensure_thread(
+        // Shared with `spawn_subagent` so both delegation paths persist an
+        // identical, reopenable sub-thread seeded with the prompt.
+        let worker_thread_id = super::worker_thread::create_worker_thread(
             parent.workspace_dir.clone(),
-            CreateConversationThread {
-                id: worker_thread_id.clone(),
-                title: task_title.clone(),
-                created_at: now.clone(),
-                parent_thread_id: Some(current_thread_id.clone()),
-                labels: Some(vec!["worker".to_string()]),
-                personality_id: None,
-            },
-        )
-        .map_err(|e| anyhow::anyhow!(e))?;
-
-        tracing::info!(
-            agent_id = %agent_id,
-            worker_thread_id = %worker_thread_id,
-            parent_thread_id = %current_thread_id,
-            task_title = %task_title,
-            created_at = %now,
-            "[spawn_worker_thread] created worker thread"
-        );
-
-        // Append initial user message to the worker thread
-        conversations::append_message(
-            parent.workspace_dir.clone(),
-            &worker_thread_id,
-            ConversationMessage {
-                id: format!("user:{}", uuid::Uuid::new_v4()),
-                content: prompt.clone(),
-                message_type: "text".to_string(),
-                extra_metadata: json!({
-                    "scope": "worker_thread",
-                    "agent_id": agent_id,
-                }),
-                sender: "user".to_string(),
-                created_at: now,
-            },
+            &current_thread_id,
+            &agent_id,
+            &task_title,
+            &prompt,
         )
         .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -294,6 +260,7 @@ mod tests {
     };
     use crate::openhuman::agent::harness::fork_context::with_parent_context;
     use crate::openhuman::agent::harness::ParentExecutionContext;
+    use crate::openhuman::memory_conversations::{ConversationMessage, CreateConversationThread};
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::TempDir;

@@ -287,3 +287,147 @@ fn list_stale_buffers_orders_by_age() {
     assert_eq!(only_oldest[0].level, 0);
     assert_eq!(only_oldest[0].tree_id, "tree-1");
 }
+
+// ── get_summaries_batch ────────────────────────────────────────────────
+//
+// Same shape as `chunks::store::get_chunks_batch` /
+// `score::store::get_scores_batch`: present ids decode through the same
+// `row_to_summary` path as the per-id `get_summary` and land in a
+// `HashMap` keyed by id; missing ids are silently absent so the
+// `hydrate_summary_inputs` "missing row → warn + skip" contract keeps
+// working without an extra Ok(None) sentinel.
+
+#[test]
+fn get_summaries_batch_returns_present_ids_in_map() {
+    let (_tmp, cfg) = test_config();
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let a = sample_summary("sum-a", "tree-1", 1);
+    let b = sample_summary("sum-b", "tree-1", 1);
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &a, None, "test")?;
+        insert_summary_tx(&tx, &b, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let ids = vec!["sum-a".to_string(), "sum-b".to_string()];
+    let map = get_summaries_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 2);
+    // Each decoded row must match the per-id `get_summary` path bit-for-bit
+    // — same `row_to_summary` decoder under the hood, so the structs are
+    // equal including the deserialised JSON columns.
+    assert_eq!(map.get("sum-a").unwrap(), &a);
+    assert_eq!(map.get("sum-b").unwrap(), &b);
+}
+
+#[test]
+fn get_summaries_batch_empty_input_and_missing_ids() {
+    // Empty input: empty map (no SQL issued).
+    let (_tmp, cfg) = test_config();
+    let empty = get_summaries_batch(&cfg, &[]).unwrap();
+    assert!(empty.is_empty());
+
+    // Missing ids: silently absent so `hydrate_summary_inputs` can warn
+    // + skip without an extra `Ok(None)` sentinel per id.
+    insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
+    let a = sample_summary("sum-a", "tree-1", 1);
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &a, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    let ids = vec!["sum-a".to_string(), "ghost:no-such".to_string()];
+    let map = get_summaries_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("sum-a").unwrap(), &a);
+    assert!(map.get("ghost:no-such").is_none());
+}
+
+// ---------- get_summary_embeddings_for_signature_batch ----------
+//
+// Contract mirror of the chunks-side batch helper: equivalent to looping
+// `get_summary_embedding_for_signature` per id, but in
+// O(ceil(n / MAX_EMBEDDING_BATCH)) round-trips instead of O(n). The map
+// contains only ids that have a non-null vector under the requested
+// signature; absent rows (no sidecar entry, or sidecar entry with NULL
+// vector) are silently dropped (same as the per-row helper returning
+// Ok(None)). Chunking-window behaviour is covered on the chunks side
+// (`batch_embedding_lookup_splits_id_list_above_per_batch_threshold`);
+// the implementations share the same `chunks(MAX_EMBEDDING_BATCH)` loop
+// shape so re-validating it here would be pure duplication.
+
+fn seed_summary(cfg: &Config, tree_id: &str, summary_id: &str) {
+    insert_tree(cfg, &sample_tree(tree_id, &format!("scope:{tree_id}"))).ok();
+    let node = sample_summary(summary_id, tree_id, 1);
+    with_connection(cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        insert_summary_tx(&tx, &node, None, "test")?;
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[test]
+fn summary_batch_embedding_lookup_returns_only_signature_scoped_rows() {
+    let (_tmp, cfg) = test_config();
+    seed_summary(&cfg, "tree-1", "sum-1");
+    seed_summary(&cfg, "tree-1", "sum-2");
+    seed_summary(&cfg, "tree-1", "sum-3");
+
+    let sig_a = "openai/text-embedding-3-small@1536";
+    let sig_b = "local/bge-small@384";
+    set_summary_embedding_for_signature(&cfg, "sum-1", sig_a, &[0.1, 0.2]).unwrap();
+    set_summary_embedding_for_signature(&cfg, "sum-2", sig_a, &[0.3, 0.4]).unwrap();
+    set_summary_embedding_for_signature(&cfg, "sum-3", sig_b, &[0.5, 0.6, 0.7]).unwrap();
+
+    let ids = vec![
+        "sum-1".to_string(),
+        "sum-2".to_string(),
+        "sum-3".to_string(),
+    ];
+    let map_a = get_summary_embeddings_for_signature_batch(&cfg, &ids, sig_a).unwrap();
+    assert_eq!(map_a.len(), 2, "only sum-1 and sum-2 are under sig_a");
+    assert_eq!(map_a.get("sum-1").cloned(), Some(vec![0.1, 0.2]));
+    assert_eq!(map_a.get("sum-2").cloned(), Some(vec![0.3, 0.4]));
+    assert!(map_a.get("sum-3").is_none(), "sum-3 has only sig_b");
+
+    let map_b = get_summary_embeddings_for_signature_batch(&cfg, &ids, sig_b).unwrap();
+    assert_eq!(map_b.len(), 1);
+    assert_eq!(map_b.get("sum-3").cloned(), Some(vec![0.5, 0.6, 0.7]));
+}
+
+#[test]
+fn summary_batch_embedding_lookup_empty_input_returns_empty_map() {
+    let (_tmp, cfg) = test_config();
+    let map = get_summary_embeddings_for_signature_batch(&cfg, &[], "any/sig@1").unwrap();
+    assert!(map.is_empty());
+}
+
+#[test]
+fn summary_batch_embedding_lookup_unknown_ids_absent_from_map() {
+    // Pre-batch contract: per-row helper returned Ok(None) for missing
+    // summaries OR for summaries whose sidecar row has a NULL vector
+    // (pending re-embed). The batch helper must mirror that — missing
+    // ids absent from the map, present ids carry their vector. The
+    // retrieval rerank path depends on this so absent rows get the
+    // (NEG_INFINITY, false) sink-to-bottom treatment.
+    let (_tmp, cfg) = test_config();
+    seed_summary(&cfg, "tree-1", "sum-1");
+    let sig = "openai/text-embedding-3-small@1536";
+    set_summary_embedding_for_signature(&cfg, "sum-1", sig, &[0.1]).unwrap();
+
+    let ids = vec![
+        "sum-1".to_string(),
+        "ghost:no-such-summary-1".to_string(),
+        "ghost:no-such-summary-2".to_string(),
+    ];
+    let map = get_summary_embeddings_for_signature_batch(&cfg, &ids, sig).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("sum-1").cloned(), Some(vec![0.1]));
+}

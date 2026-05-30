@@ -1219,6 +1219,18 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "automation.agent_workflows",
+        name: "Agent Workflows",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Define phase-keyed workflows (WORKFLOW.md) that inject rules, run \
+                      gated scripts, scope visible tools, and surface working-directory \
+                      context across a task's lifecycle (pick-up, close, directory entry).",
+        how_to: "Workflows",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "automation.view_cron_jobs",
         name: "View Cron Jobs",
         domain: "automation",
