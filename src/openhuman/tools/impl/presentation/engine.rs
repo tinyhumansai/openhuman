@@ -62,6 +62,18 @@ pub(super) async fn generate(
     // boundary as a borrow.
     let slides = build_slides(input);
     let deck_title = input.title.clone();
+    let started = std::time::Instant::now();
+    let slide_count = slides.len();
+    let deadline_secs = deadline.as_secs();
+    let title_chars = deck_title.chars().count();
+
+    tracing::debug!(
+        target: "presentation",
+        deadline_secs,
+        slide_count,
+        title_chars,
+        "[presentation:engine] generate:start"
+    );
 
     let join: Result<Result<Result<Vec<u8>, EngineFailure>, _>, Elapsed> = timeout(
         deadline,
@@ -69,13 +81,52 @@ pub(super) async fn generate(
     )
     .await;
 
+    let elapsed_ms = started.elapsed().as_millis() as u64;
     match join {
-        Err(_elapsed) => Err(PresentationError::GenerationTimeout {
-            timeout_secs: deadline.as_secs(),
-        }),
-        Ok(Err(join_err)) => Err(map_join_error(join_err)),
-        Ok(Ok(Err(engine_err))) => Err(map_engine_failure(engine_err)),
-        Ok(Ok(Ok(bytes))) => Ok(bytes),
+        Err(_elapsed) => {
+            tracing::warn!(
+                target: "presentation",
+                elapsed_ms,
+                deadline_secs,
+                slide_count,
+                "[presentation:engine] generate:timeout"
+            );
+            Err(PresentationError::GenerationTimeout {
+                timeout_secs: deadline_secs,
+            })
+        }
+        Ok(Err(join_err)) => {
+            let err = map_join_error(join_err);
+            tracing::warn!(
+                target: "presentation",
+                elapsed_ms,
+                kind = "join_error",
+                err = %err,
+                "[presentation:engine] generate:failure"
+            );
+            Err(err)
+        }
+        Ok(Ok(Err(engine_err))) => {
+            let err = map_engine_failure(engine_err);
+            tracing::warn!(
+                target: "presentation",
+                elapsed_ms,
+                kind = "engine_failure",
+                err = %err,
+                "[presentation:engine] generate:failure"
+            );
+            Err(err)
+        }
+        Ok(Ok(Ok(bytes))) => {
+            tracing::debug!(
+                target: "presentation",
+                elapsed_ms,
+                bytes = bytes.len(),
+                slide_count,
+                "[presentation:engine] generate:done"
+            );
+            Ok(bytes)
+        }
     }
 }
 

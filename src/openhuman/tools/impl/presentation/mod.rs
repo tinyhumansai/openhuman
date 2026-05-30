@@ -210,9 +210,26 @@ impl Tool for PresentationTool {
         }
 
         let size_bytes = bytes.len() as u64;
-        let updated = finalize_artifact(&self.workspace_dir, &meta.id, size_bytes)
-            .await
-            .map_err(anyhow::Error::msg)?;
+        let updated = match finalize_artifact(&self.workspace_dir, &meta.id, size_bytes).await {
+            Ok(updated) => updated,
+            Err(err) => {
+                let reason = format!("failed to finalize artifact: {err}");
+                // File is already on disk but the ledger transition failed.
+                // Flip the artifact to Failed so the UI surfaces the error
+                // instead of leaving it stuck in `Pending`. Fail-artifact
+                // errors are swallowed — they can only happen if the same
+                // ledger backend is unavailable, in which case nothing we
+                // do here will help.
+                let _ = fail_artifact(&self.workspace_dir, &meta.id, &reason).await;
+                tracing::warn!(
+                    target: "presentation",
+                    err = %err,
+                    artifact_id = %meta.id,
+                    "[presentation] finalize_artifact failed; flipped to Failed"
+                );
+                return Ok(ToolResult::error(reason));
+            }
+        };
 
         tracing::info!(
             target: "presentation",
