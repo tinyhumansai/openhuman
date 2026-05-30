@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
+import EntityAssociationsTab from '../components/intelligence/EntityAssociationsTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
@@ -29,6 +30,7 @@ type IntelligenceTab =
   | 'workflows'
   | 'diagram'
   | 'centrality'
+  | 'associations'
   | 'freshness'
   | 'timeline';
 
@@ -110,6 +112,7 @@ export default function Intelligence() {
       },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
+      { id: 'associations', label: t('memory.tab.associations') },
       { id: 'freshness', label: t('memory.tab.freshness') },
       { id: 'timeline', label: t('memory.tab.timeline') },
     ];
@@ -202,6 +205,8 @@ export default function Intelligence() {
             {activeTab === 'diagram' && <DiagramViewerTab />}
 
             {activeTab === 'centrality' && <GraphCentralityTab />}
+
+            {activeTab === 'associations' && <EntityAssociationsTab />}
 
             {activeTab === 'freshness' && <MemoryFreshnessTab />}
 

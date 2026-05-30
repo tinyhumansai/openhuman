@@ -323,6 +323,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': '커넥터',
   'graphCentrality.bridgeTitle': '커넥터 - 링크 수보다 더 큰 영향력을 가진 엔터티',
   'graphCentrality.degreeTitle': '들어옴 {in} · 나감 {out}',
+  'memory.tab.associations': 'Associations',
+  'entityAssociations.title': 'Entity Associations',
+  'entityAssociations.intro':
+    'Entities that share many of the same connections are associated — even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
+  'entityAssociations.loading': 'Scoring associations…',
+  'entityAssociations.errorPrefix': 'Could not load the graph:',
+  'entityAssociations.retry': 'Retry',
+  'entityAssociations.empty': 'No associations yet.',
+  'entityAssociations.emptyHint':
+    'When entities start sharing connections, the strongest pairings will surface here.',
+  'entityAssociations.namespaceLabel': 'Namespace',
+  'entityAssociations.namespaceAll': 'All namespaces',
+  'entityAssociations.metricEntities': 'Entities',
+  'entityAssociations.metricPairs': 'Associations',
+  'entityAssociations.rankedHeading': 'Strongest associations',
+  'entityAssociations.linkedBadge': 'linked',
+  'entityAssociations.inferredBadge': 'inferred',
+  'entityAssociations.linkedTitle': 'These entities are directly connected.',
+  'entityAssociations.inferredTitle':
+    'No direct link — associated only through shared connections.',
+  'entityAssociations.sharedLabel': '{shared} shared',
+  'entityAssociations.pairTitle': '{jaccard}% similar · {shared} of {union} connections shared',
+  'entityAssociations.truncated': 'Showing {shown} of {total} — strongest first.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': 'Knowledge Freshness',
   'memoryFreshness.intro':
@@ -429,6 +452,16 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     'ChatGPT Plus/Pro(구독) 또는 OpenAI API 키를 사용하세요. 둘 다 필수는 아닙니다.',
   'onboarding.apiKeys.openaiOauthOpening': '로그인 중…',
+  'onboarding.apiKeys.openaiOauthConnect': 'ChatGPT로 로그인',
+  'onboarding.apiKeys.openaiOauthConnected': 'ChatGPT로 연결됨',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    '로그인한 후 브라우저에서 전체 리디렉션 URL을 붙여넣으세요({url}로 시작).',
+  'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT 로그인은 데스크톱 앱에서만 사용할 수 있습니다.',
+  'onboarding.apiKeys.oauthStartFailed':
+    'ChatGPT 로그인을 시작할 수 없습니다. 다시 시도하거나 API 키를 사용하세요.',
+  'onboarding.apiKeys.oauthPasteRedirect': '로그인한 후 브라우저에서 리디렉션 URL을 붙여넣으세요.',
+  'onboarding.apiKeys.oauthCompleteFailed':
+    'ChatGPT 로그인이 완료되지 않았습니다. 리디렉션 URL을 확인하고 다시 시도하세요.',
   'onboarding.apiKeys.finishSignIn': 'ChatGPT 로그인 완료',
   'onboarding.apiKeys.orApiKey': '또는 API 키',
   'onboarding.apiKeys.anthropicLabel': 'Anthropic API 키',
@@ -4023,6 +4056,10 @@ const messages: TranslationMap = {
   'vault.relative.min': '{count}분 전',
   'vault.relative.hr': '{count}시간 전',
   'vault.relative.day': '{count}일 전',
+  'vault.openButton': '열기',
+  'vault.openSuccess': 'Obsidian에서 열림',
+  'vault.openFallback': 'Obsidian을 찾을 수 없음 — 파일 관리자에서 열림',
+  'vault.openError': '볼트를 열 수 없습니다',
   'whatsapp.title': 'WhatsApp',
   'subconscious.interval.fiveMinutes': '5분',
   'subconscious.interval.tenMinutes': '10분',

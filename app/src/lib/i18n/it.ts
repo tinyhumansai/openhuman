@@ -332,6 +332,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Connettore — più influente di quanto suggerisca il suo numero di collegamenti',
   'graphCentrality.degreeTitle': '{in} in entrata · {out} in uscita',
+  'memory.tab.associations': 'Associations',
+  'entityAssociations.title': 'Entity Associations',
+  'entityAssociations.intro':
+    'Entities that share many of the same connections are associated — even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
+  'entityAssociations.loading': 'Scoring associations…',
+  'entityAssociations.errorPrefix': 'Could not load the graph:',
+  'entityAssociations.retry': 'Retry',
+  'entityAssociations.empty': 'No associations yet.',
+  'entityAssociations.emptyHint':
+    'When entities start sharing connections, the strongest pairings will surface here.',
+  'entityAssociations.namespaceLabel': 'Namespace',
+  'entityAssociations.namespaceAll': 'All namespaces',
+  'entityAssociations.metricEntities': 'Entities',
+  'entityAssociations.metricPairs': 'Associations',
+  'entityAssociations.rankedHeading': 'Strongest associations',
+  'entityAssociations.linkedBadge': 'linked',
+  'entityAssociations.inferredBadge': 'inferred',
+  'entityAssociations.linkedTitle': 'These entities are directly connected.',
+  'entityAssociations.inferredTitle':
+    'No direct link — associated only through shared connections.',
+  'entityAssociations.sharedLabel': '{shared} shared',
+  'entityAssociations.pairTitle': '{jaccard}% similar · {shared} of {union} connections shared',
+  'entityAssociations.truncated': 'Showing {shown} of {total} — strongest first.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': 'Knowledge Freshness',
   'memoryFreshness.intro':
@@ -439,6 +462,17 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     'Utilizza ChatGPT Plus/Pro (abbonamento) o una chiave OpenAI API: non entrambi richiesti.',
   'onboarding.apiKeys.openaiOauthOpening': "Apertura dell'accesso…",
+  'onboarding.apiKeys.openaiOauthConnect': 'Accedi con ChatGPT',
+  'onboarding.apiKeys.openaiOauthConnected': 'Connesso con ChatGPT',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    "Dopo l'accesso, incolla l'URL di reindirizzamento completo dal tuo browser (inizia con {url}).",
+  'onboarding.apiKeys.oauthDesktopOnly': "L'accesso a ChatGPT è disponibile solo nell'app desktop.",
+  'onboarding.apiKeys.oauthStartFailed':
+    "Impossibile avviare l'accesso a ChatGPT. Riprova o usa una chiave API.",
+  'onboarding.apiKeys.oauthPasteRedirect':
+    "Incolla l'URL di reindirizzamento dal tuo browser dopo l'accesso.",
+  'onboarding.apiKeys.oauthCompleteFailed':
+    "L'accesso a ChatGPT non è stato completato. Controlla l'URL di reindirizzamento e riprova.",
   'onboarding.apiKeys.finishSignIn': "Termina l'accesso a ChatGPT",
   'onboarding.apiKeys.orApiKey': 'o il tasto API',
   'onboarding.apiKeys.anthropicLabel': 'Chiave API Anthropic',
@@ -4123,6 +4157,10 @@ const messages: TranslationMap = {
   'vault.relative.min': '{count}m fa',
   'vault.relative.hr': '{count}h fa',
   'vault.relative.day': '{count}d fa',
+  'vault.openButton': 'Open',
+  'vault.openSuccess': 'Opened in Obsidian',
+  'vault.openFallback': 'Obsidian not found — opened in file manager',
+  'vault.openError': "Couldn't open vault",
   'whatsapp.title': 'WhatsApp',
   'subconscious.interval.fiveMinutes': '5 minuti',
   'subconscious.interval.tenMinutes': '10 minuti',
