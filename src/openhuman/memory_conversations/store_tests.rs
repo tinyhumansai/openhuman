@@ -994,6 +994,7 @@ fn search_cold_rebuild_does_not_block_concurrent_append() {
             title: "Rebuild thread".to_string(),
             created_at: ts.clone(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -1105,6 +1106,7 @@ fn prime_index_cold_build_works_on_legacy_workspace_without_stats() {
             updated_at: ts.clone(),
             parent_thread_id: None,
             labels: None,
+            personality_id: None,
         },
     )
     .unwrap();
@@ -1176,6 +1178,7 @@ fn legacy_workspace_cold_rebuild_does_not_block_concurrent_append() {
                 updated_at: ts.clone(),
                 parent_thread_id: None,
                 labels: None,
+                personality_id: None,
             },
         )
         .unwrap();
@@ -1207,6 +1210,7 @@ fn legacy_workspace_cold_rebuild_does_not_block_concurrent_append() {
             updated_at: ts.clone(),
             parent_thread_id: None,
             labels: None,
+            personality_id: None,
         },
     )
     .unwrap();
