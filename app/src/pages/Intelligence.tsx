@@ -21,9 +21,6 @@ import type {
   ToastNotification,
 } from '../types/intelligence';
 
-<<<<<<< HEAD
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'diagram' | 'centrality' | 'path';
-=======
 type IntelligenceTab =
   | 'memory'
   | 'subconscious'
@@ -31,8 +28,8 @@ type IntelligenceTab =
   | 'workflows'
   | 'diagram'
   | 'centrality'
-  | 'freshness';
->>>>>>> upstream/main
+  | 'freshness'
+  | 'path';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -107,11 +104,8 @@ export default function Intelligence() {
       { id: 'subconscious', label: t('memory.tab.subconscious') },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
-<<<<<<< HEAD
-      { id: 'path', label: t('memory.tab.path') },
-=======
       { id: 'freshness', label: t('memory.tab.freshness') },
->>>>>>> upstream/main
+      { id: 'path', label: t('memory.tab.path') },
     ];
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
@@ -201,11 +195,9 @@ export default function Intelligence() {
 
             {activeTab === 'centrality' && <GraphCentralityTab />}
 
-<<<<<<< HEAD
-            {activeTab === 'path' && <ConnectionPathTab />}
-=======
             {activeTab === 'freshness' && <MemoryFreshnessTab />}
->>>>>>> upstream/main
+
+            {activeTab === 'path' && <ConnectionPathTab />}
           </div>
         </div>
       </div>
