@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, test, vi } from 'vitest';
 
 import type { CoreCronJob, CoreCronRun } from '../../../../utils/tauriCommands';
@@ -11,10 +11,12 @@ vi.mock('../../../../lib/i18n/I18nContext', () => ({
         'common.enabled': 'Enabled',
         'common.remove': 'Remove',
         'settings.cron.jobs.desc': 'Manage cron jobs',
+        'settings.cron.jobs.edit': 'Edit',
         'settings.cron.jobs.lastStatus': 'Last status',
         'settings.cron.jobs.nextRun': 'Next run',
         'settings.cron.jobs.pause': 'Pause',
         'settings.cron.jobs.recentRuns': 'Recent runs',
+        'settings.cron.jobs.saving': 'Saving…',
         'settings.cron.jobs.schedule': 'Schedule',
         'settings.cron.jobs.title': 'Scheduled Jobs',
         'settings.cron.jobs.viewRuns': 'View Runs',
@@ -74,5 +76,51 @@ describe('CoreJobList stable test hooks', () => {
     );
     expect(screen.getByTestId('cron-job-remove-morning_briefing')).toHaveTextContent('Remove');
     expect(screen.getByTestId('cron-job-runs-morning_briefing')).toHaveTextContent('success');
+  });
+
+  test('edit button absent when onEditCoreJob prop is not provided', () => {
+    renderList();
+    expect(screen.queryByTestId('cron-job-edit-morning_briefing')).not.toBeInTheDocument();
+  });
+
+  test('edit button present and invokes callback with job when onEditCoreJob is provided', () => {
+    const onEditCoreJob = vi.fn();
+    render(
+      <CoreJobList
+        loading={false}
+        coreJobs={[job]}
+        coreRunsByJob={{ [job.id]: [run] }}
+        coreBusyKey={null}
+        onToggleCoreJob={vi.fn()}
+        onRunCoreJob={vi.fn()}
+        onLoadCoreRuns={vi.fn()}
+        onRemoveCoreJob={vi.fn()}
+        onEditCoreJob={onEditCoreJob}
+      />
+    );
+
+    const editBtn = screen.getByTestId('cron-job-edit-morning_briefing');
+    expect(editBtn).toBeInTheDocument();
+    expect(editBtn).toHaveTextContent('Edit');
+
+    fireEvent.click(editBtn);
+    expect(onEditCoreJob).toHaveBeenCalledOnce();
+    expect(onEditCoreJob).toHaveBeenCalledWith(job);
+  });
+
+  test('toggle button shows saving label when coreBusyKey targets the toggle', () => {
+    render(
+      <CoreJobList
+        loading={false}
+        coreJobs={[job]}
+        coreRunsByJob={{}}
+        coreBusyKey={`core-toggle:${job.id}`}
+        onToggleCoreJob={vi.fn()}
+        onRunCoreJob={vi.fn()}
+        onLoadCoreRuns={vi.fn()}
+        onRemoveCoreJob={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId(`cron-job-toggle-${job.id}`)).toHaveTextContent('Saving…');
   });
 });

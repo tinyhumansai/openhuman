@@ -5,15 +5,16 @@
 import { useMemo } from 'react';
 
 import { useCoreState } from '../../providers/CoreStateProvider';
-import type { SkillConnectionStatus } from '../../types/skillStatus';
+import {
+  activeStatus,
+  enabledStatus,
+  offlineStatus,
+  setupRequiredStatus,
+  type SkillCardStatusDescriptor,
+  unsupportedStatus,
+} from '../skills/skillCardStatus';
 
-export interface ScreenIntelligenceSkillStatus {
-  connectionStatus: SkillConnectionStatus;
-  statusDot: string;
-  statusLabel: string;
-  statusColor: string;
-  ctaLabel: string;
-  ctaVariant: 'primary' | 'sage' | 'amber';
+export interface ScreenIntelligenceSkillStatus extends SkillCardStatusDescriptor {
   /** True when all three macOS permissions are granted. */
   allPermissionsGranted: boolean;
   /** True when the platform doesn't support screen intelligence. */
@@ -27,29 +28,11 @@ export function useScreenIntelligenceSkillStatus(): ScreenIntelligenceSkillStatu
   return useMemo(() => {
     // No status yet (core not ready or not in Tauri)
     if (!status) {
-      return {
-        connectionStatus: 'offline' as SkillConnectionStatus,
-        statusDot: 'bg-stone-400',
-        statusLabel: 'Offline',
-        statusColor: 'text-stone-500',
-        ctaLabel: 'Enable',
-        ctaVariant: 'sage' as const,
-        allPermissionsGranted: false,
-        platformUnsupported: false,
-      };
+      return { ...offlineStatus(), allPermissionsGranted: false, platformUnsupported: false };
     }
 
     if (!status.platform_supported) {
-      return {
-        connectionStatus: 'offline' as SkillConnectionStatus,
-        statusDot: 'bg-stone-400',
-        statusLabel: 'Unsupported',
-        statusColor: 'text-stone-500',
-        ctaLabel: 'Details',
-        ctaVariant: 'primary' as const,
-        allPermissionsGranted: false,
-        platformUnsupported: true,
-      };
+      return { ...unsupportedStatus(), allPermissionsGranted: false, platformUnsupported: true };
     }
 
     const { permissions, session, config } = status;
@@ -60,54 +43,22 @@ export function useScreenIntelligenceSkillStatus(): ScreenIntelligenceSkillStatu
 
     // Permissions missing — needs setup
     if (!allGranted) {
-      return {
-        connectionStatus: 'setup_required' as SkillConnectionStatus,
-        statusDot: 'bg-primary-400',
-        statusLabel: 'Setup',
-        statusColor: 'text-primary-400',
-        ctaLabel: 'Setup',
-        ctaVariant: 'primary' as const,
-        allPermissionsGranted: false,
-        platformUnsupported: false,
-      };
+      return { ...setupRequiredStatus(), allPermissionsGranted: false, platformUnsupported: false };
     }
 
     // Session active — fully connected
     if (session.active) {
-      return {
-        connectionStatus: 'connected' as SkillConnectionStatus,
-        statusDot: 'bg-sage-500',
-        statusLabel: 'Active',
-        statusColor: 'text-sage-400',
-        ctaLabel: 'Manage',
-        ctaVariant: 'primary' as const,
-        allPermissionsGranted: true,
-        platformUnsupported: false,
-      };
+      return { ...activeStatus(), allPermissionsGranted: true, platformUnsupported: false };
     }
 
     // Permissions granted, enabled in config, but session not active
     if (config.enabled) {
-      return {
-        connectionStatus: 'disconnected' as SkillConnectionStatus,
-        statusDot: 'bg-stone-400',
-        statusLabel: 'Enabled',
-        statusColor: 'text-stone-400',
-        ctaLabel: 'Manage',
-        ctaVariant: 'primary' as const,
-        allPermissionsGranted: true,
-        platformUnsupported: false,
-      };
+      return { ...enabledStatus(), allPermissionsGranted: true, platformUnsupported: false };
     }
 
     // Permissions granted but not enabled
     return {
-      connectionStatus: 'offline' as SkillConnectionStatus,
-      statusDot: 'bg-stone-400',
-      statusLabel: 'Disabled',
-      statusColor: 'text-stone-500',
-      ctaLabel: 'Enable',
-      ctaVariant: 'sage' as const,
+      ...offlineStatus('Disabled'),
       allPermissionsGranted: true,
       platformUnsupported: false,
     };

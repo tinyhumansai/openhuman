@@ -3,6 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 export type SettingsRoute =
   | 'home'
+  | 'agents'
+  | 'agents-settings'
+  | 'agent-access'
   | 'account'
   | 'features'
   | 'messaging'
@@ -23,6 +26,7 @@ export type SettingsRoute =
   | 'memory-data'
   | 'memory-debug'
   | 'recovery-phrase'
+  | 'wallet-balances'
   | 'webhooks-debug'
   | 'agent-chat'
   | 'screen-awareness-debug'
@@ -34,6 +38,7 @@ export type SettingsRoute =
   | 'mascot'
   | 'persona'
   | 'appearance'
+  | 'approval-history'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
@@ -109,6 +114,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/composio-routing')) return 'composio-routing';
     if (path.includes('/settings/intelligence')) return 'intelligence';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
+    if (path.includes('/settings/wallet-balances')) return 'wallet-balances';
     if (path.includes('/settings/agent-chat')) return 'agent-chat';
     // Notification routes must be checked in specificity order so the more
     // specific `notification-routing` path doesn't get swallowed by the
@@ -119,6 +125,14 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
+    // `approval-history` is an explicit leaf route under Agent access; it has a
+    // distinct prefix from `agent-access`, so ordering between them is cosmetic.
+    if (path.includes('/settings/approval-history')) return 'approval-history';
+    // `agents-settings` (the Agents section page) must be checked before the
+    // shorter `agents` (the manage-agents registry panel) so it isn't swallowed.
+    if (path.includes('/settings/agents-settings')) return 'agents-settings';
+    if (path.includes('/settings/agent-access')) return 'agent-access';
+    if (path.includes('/settings/agents')) return 'agents';
     if (path.includes('/settings/mcp-server')) return 'mcp-server';
     if (path.includes('/settings/dev-workflow')) return 'dev-workflow';
     return 'home';
@@ -177,16 +191,35 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     onClick: () => navigate('/settings/developer-options'),
   };
 
+  const agentAccessCrumb: BreadcrumbItem = {
+    label: 'Agent access',
+    onClick: () => navigate('/settings/agent-access'),
+  };
+
+  const agentsCrumb: BreadcrumbItem = {
+    label: 'Agents',
+    onClick: () => navigate('/settings/agents-settings'),
+  };
+
   const getBreadcrumbs = (): BreadcrumbItem[] => {
     switch (currentRoute) {
       // Section pages
       case 'account':
       case 'features':
       case 'ai':
+      case 'agents-settings':
         return [settingsCrumb];
+
+      // Leaf panels under the Agents section
+      case 'agents':
+      case 'agent-access':
+      case 'autonomy':
+      case 'persona':
+        return [settingsCrumb, agentsCrumb];
 
       // Leaf panels under account
       case 'recovery-phrase':
+      case 'wallet-balances':
       case 'team':
       case 'privacy':
         return [settingsCrumb, accountCrumb];
@@ -228,7 +261,6 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'notification-routing':
       case 'mcp-server':
       case 'dev-workflow':
-      case 'autonomy':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page
@@ -246,13 +278,14 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'mascot':
         return [settingsCrumb];
 
-      // Persona panel sits at the top level of Settings.
-      case 'persona':
-        return [settingsCrumb];
-
       // Appearance (theme) panel sits at the top level of Settings.
       case 'appearance':
         return [settingsCrumb];
+
+      // Approval history is a leaf under Agent access, which itself lives under
+      // the Agents section — so the trail is Settings → Agents → Agent access.
+      case 'approval-history':
+        return [settingsCrumb, agentsCrumb, agentAccessCrumb];
 
       case 'home':
       default:

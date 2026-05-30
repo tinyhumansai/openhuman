@@ -8,7 +8,16 @@ use serde::{Deserialize, Serialize};
 /// A tool call that has been intercepted and is awaiting a user
 /// decision. Persisted in `pending_approvals` and surfaced to the UI
 /// via `approval_list_pending`.
+///
+/// Note: this type intentionally does not expose a `session_id`. Session
+/// provenance is an internal correlation token owned by `ApprovalGate`
+/// and the persistence layer; surfacing it on the public type made it
+/// too easy for callers to log or serialize a value that historically
+/// derived from credential material (the JSON-RPC bearer token). The
+/// underlying column is retained in SQLite for downgrade safety but no
+/// longer carries any credential-shaped value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct PendingApproval {
     pub request_id: String,
     pub tool_name: String,
@@ -18,19 +27,21 @@ pub struct PendingApproval {
     /// Redacted JSON arguments — counts/shape only, no raw message
     /// bodies, per `feedback_pr_no_chat_content.md`.
     pub args_redacted: serde_json::Value,
-    pub session_id: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// Durable audit row for an approval request after a decision.
+///
+/// See [`PendingApproval`] for the rationale behind omitting
+/// `session_id` from the public shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
 pub struct ApprovalAuditEntry {
     pub request_id: String,
     pub tool_name: String,
     pub action_summary: String,
     pub args_redacted: serde_json::Value,
-    pub session_id: String,
     pub created_at: DateTime<Utc>,
     pub expires_at: Option<DateTime<Utc>>,
     pub decided_at: DateTime<Utc>,
@@ -179,6 +190,54 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&ExecutionOutcome::Aborted).unwrap(),
             "\"aborted\""
+        );
+    }
+
+    /// Regression guard. Earlier revisions of [`PendingApproval`]
+    /// exposed a `session_id: String` field — when an operator had
+    /// set the RPC bearer to a stable value, that field carried the
+    /// raw credential, and Debug-formatting / serializing a pending
+    /// row was enough to leak it. Both surfaces are exercised here.
+    #[test]
+    fn pending_approval_debug_and_serialize_do_not_carry_session_id() {
+        let p = PendingApproval {
+            request_id: "req-1".to_string(),
+            tool_name: "composio".to_string(),
+            action_summary: "send slack message".to_string(),
+            args_redacted: serde_json::json!({ "tool_slug": "SLACK_SEND" }),
+            created_at: Utc::now(),
+            expires_at: None,
+        };
+        let dbg = format!("{p:?}");
+        assert!(
+            !dbg.contains("session_id"),
+            "Debug output must not surface session_id: {dbg}"
+        );
+        let json = serde_json::to_value(&p).unwrap();
+        assert!(
+            json.get("session_id").is_none(),
+            "Serialized JSON must not surface session_id: {json}"
+        );
+
+        let audit = ApprovalAuditEntry {
+            request_id: "req-1".to_string(),
+            tool_name: "composio".to_string(),
+            action_summary: "send slack message".to_string(),
+            args_redacted: serde_json::json!({ "tool_slug": "SLACK_SEND" }),
+            created_at: Utc::now(),
+            expires_at: None,
+            decided_at: Utc::now(),
+            decision: ApprovalDecision::ApproveOnce,
+        };
+        let audit_dbg = format!("{audit:?}");
+        assert!(
+            !audit_dbg.contains("session_id"),
+            "ApprovalAuditEntry Debug must not surface session_id: {audit_dbg}"
+        );
+        let audit_json = serde_json::to_value(&audit).unwrap();
+        assert!(
+            audit_json.get("session_id").is_none(),
+            "ApprovalAuditEntry JSON must not surface session_id: {audit_json}"
         );
     }
 }

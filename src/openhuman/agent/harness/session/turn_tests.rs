@@ -112,6 +112,27 @@ impl Tool for EchoTool {
     }
 }
 
+struct CronAddProbeTool;
+
+#[async_trait]
+impl Tool for CronAddProbeTool {
+    fn name(&self) -> &str {
+        "cron_add"
+    }
+
+    fn description(&self) -> &str {
+        "cron add probe"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        Ok(ToolResult::success(format!("cron_add_args={args}")))
+    }
+}
+
 struct CountingTool {
     calls: Arc<AtomicUsize>,
 }
@@ -446,6 +467,49 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     assert!(collect_tree_root_summaries(agent.workspace_dir(), 8_000, 32_000).is_empty());
 }
 
+#[test]
+fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
+    // #2944: the wrapper must carry the root node's `updated_at` from the
+    // store tuple into the `NamespaceSummary` the prompt renderer stamps.
+    use crate::openhuman::config::Config;
+    use crate::openhuman::memory_tree::tree_runtime::store::write_node;
+    use crate::openhuman::memory_tree::tree_runtime::types::{
+        derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let config = Config {
+        workspace_dir: workspace.clone(),
+        ..Config::default()
+    };
+
+    let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-25T09:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let summary = "Distilled activities summary.";
+    let node = TreeNode {
+        node_id: "root".to_string(),
+        namespace: "activities".to_string(),
+        level: level_from_node_id("root"),
+        parent_id: derive_parent_id("root"),
+        summary: summary.to_string(),
+        token_count: estimate_tokens(summary),
+        child_count: 0,
+        created_at: updated_at,
+        updated_at,
+        metadata: None,
+    };
+    write_node(&config, &node).unwrap();
+
+    let summaries = collect_tree_root_summaries(&workspace, 8_000, 32_000);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].namespace, "activities");
+    assert_eq!(summaries[0].body, summary);
+    assert_eq!(summaries[0].updated_at, updated_at);
+}
+
 #[tokio::test]
 async fn transcript_roundtrip_work() {
     let mut agent = make_agent(None);
@@ -561,6 +625,40 @@ async fn execute_tool_call_reports_unknown_tool() {
     assert!(result.output.contains("Unknown tool: missing"));
     assert_eq!(record.name, "missing");
     assert!(!record.success);
+}
+
+#[tokio::test]
+async fn execute_tool_call_rewrites_legacy_run_skill_for_builtin_cron_tools() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(CronAddProbeTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+    let call = ParsedToolCall {
+        name: "run_skill".into(),
+        arguments: serde_json::json!({
+            "skill_id": "cron_add",
+            "inputs": {
+              "name": "water-reminder",
+              "schedule": { "kind": "every", "every_ms": 60000 },
+              "job_type": "agent",
+              "prompt": "remind me to drink water"
+            }
+        }),
+        tool_call_id: Some("tc-run-skill-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(result.success, "{}", result.output);
+    assert_eq!(result.name, "cron_add");
+    assert_eq!(record.name, "cron_add");
+    assert!(result.output.contains("\"every_ms\":60000"));
 }
 
 #[tokio::test]

@@ -155,7 +155,7 @@ fn alice_phoenix_thread() -> EmailThread {
 /// TOML was updated accordingly.
 #[test]
 fn orchestrator_lists_memory_tree_tools() {
-    let toml = include_str!("../src/openhuman/agent/agents/orchestrator/agent.toml");
+    let toml = include_str!("../src/openhuman/agent_registry/agents/orchestrator/agent.toml");
     // Exact entry match — substring match would also hit comments or prefixed names.
     let has_memory_tree_entry = toml
         .lines()

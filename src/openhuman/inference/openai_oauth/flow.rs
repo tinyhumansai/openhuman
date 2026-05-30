@@ -14,7 +14,10 @@ use crate::openhuman::config::Config;
 use crate::openhuman::credentials::state_dir_from_config;
 
 use super::config::{codex_oauth_config, REDIRECT_URI};
-use super::store::{persist_openai_oauth_token, OPENAI_OAUTH_PROFILE_NAME, OPENAI_PROVIDER_KEY};
+use super::store::{
+    import_codex_cli_auth, persist_openai_oauth_token, OPENAI_OAUTH_PROFILE_NAME,
+    OPENAI_PROVIDER_KEY,
+};
 
 const LOG_PREFIX: &str = "[inference][openai-oauth]";
 const PENDING_FILENAME: &str = "openai-oauth-pending.json";
@@ -181,6 +184,22 @@ pub async fn complete_openai_oauth(
         "profileId": profile.id,
         "provider": OPENAI_PROVIDER_KEY,
         "authMethod": "oauth",
+    }))
+}
+
+pub fn import_openai_oauth_from_codex_cli(config: &Config) -> Result<serde_json::Value, String> {
+    let profile = import_codex_cli_auth(config)?;
+    log::info!(
+        "{LOG_PREFIX} codex cli auth imported profile_id={}",
+        profile.id
+    );
+
+    Ok(serde_json::json!({
+        "connected": true,
+        "profileId": profile.id,
+        "provider": OPENAI_PROVIDER_KEY,
+        "authMethod": "oauth",
+        "source": "codex_cli",
     }))
 }
 

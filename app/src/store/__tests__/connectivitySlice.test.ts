@@ -39,6 +39,23 @@ describe('connectivitySlice', () => {
     expect(state.lastError.backend).toBeUndefined();
   });
 
+  it('setBackend clears the stale backend error when a reconnect begins (connecting)', () => {
+    // A prior disconnect leaves an error string in state…
+    let state = connectivityReducer(
+      undefined,
+      setBackend({ value: 'disconnected', error: 'transport close' })
+    );
+    expect(state.lastError.backend).toBe('transport close');
+
+    // …and the reconnect attempt ('connecting') must fully clear it rather than
+    // leave the key present-but-undefined, so the UI does not surface a stale
+    // disconnect message during the reconnection window.
+    state = connectivityReducer(state, setBackend({ value: 'connecting' }));
+    expect(state.backend).toBe('connecting');
+    expect(state.lastError.backend).toBeUndefined();
+    expect('backend' in state.lastError).toBe(false);
+  });
+
   it('initial internet state is "offline" when navigator.onLine is false (line 33)', () => {
     // Simulate the browser reporting no network at boot time.
     const originalOnLine = Object.getOwnPropertyDescriptor(navigator, 'onLine');

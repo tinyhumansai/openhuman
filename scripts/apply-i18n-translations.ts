@@ -1,6 +1,6 @@
 #!/usr/bin/env -S pnpm exec tsx
 /**
- * apply-i18n-translations — merge a translations file into chunked locale files.
+ * apply-i18n-translations — merge a translations file into a single locale file.
  *
  * Input (one file per locale, default dir tmp/i18n-translations/):
  *   {
@@ -9,10 +9,11 @@
  *   }
  *
  * Behavior:
- *   - Loads the existing locale chunks (keeps current translations for keys not in input).
- *   - For each English chunk (1..5), writes <locale>-N.ts containing every key in en-N's
- *     order. Value precedence: new translation → existing translation → English fallback.
- *   - Single-quoted JS string literals with safe escaping. Header comment preserved per locale.
+ *   - Loads the existing app/src/lib/i18n/<locale>.ts (keeps current values for keys
+ *     not present in the input).
+ *   - Rewrites <locale>.ts containing every English key in en.ts order. Value
+ *     precedence: new translation → existing translation → English fallback.
+ *   - Single-quoted JS string literals with safe escaping. Header comment preserved.
  *
  * Usage:
  *   pnpm exec tsx scripts/apply-i18n-translations.ts [--dir tmp/i18n-translations] [--locale es]
@@ -24,8 +25,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT = path.resolve(path.dirname(__filename), "..");
-const CHUNKS_DIR = path.join(ROOT, "app/src/lib/i18n/chunks");
-const CHUNK_COUNT = 5;
+const I18N_DIR = path.join(ROOT, "app/src/lib/i18n");
 
 const LOCALE_HEADERS: Record<string, string> = {
   "zh-CN": "Simplified Chinese (简体中文)",
@@ -39,6 +39,8 @@ const LOCALE_HEADERS: Record<string, string> = {
   ru: "Russian (Русский)",
   id: "Indonesian (Bahasa Indonesia)",
   it: "Italian (Italiano)",
+  ko: "Korean (한국어)",
+  pl: "Polish (Polski)",
 };
 
 interface InputFile {
@@ -69,17 +71,8 @@ function jsString(s: string): string {
   return "'" + escaped + "'";
 }
 
-function camelVar(locale: string, n: number): string {
-  // zh-CN → zhCN5, en → en5
-  const safe = locale.replace(/-([a-z])/gi, (_, c: string) => c.toUpperCase());
-  return `${safe}${n}`;
-}
-
-async function loadChunk(
-  locale: string,
-  n: number,
-): Promise<Record<string, string>> {
-  const p = path.join(CHUNKS_DIR, `${locale}-${n}.ts`);
+async function loadLocale(locale: string): Promise<Record<string, string>> {
+  const p = path.join(I18N_DIR, `${locale}.ts`);
   const mod = await import(pathToFileURL(p).href);
   if (!mod.default || typeof mod.default !== "object") {
     throw new Error(`${p}: missing default export`);
@@ -87,71 +80,62 @@ async function loadChunk(
   return mod.default as Record<string, string>;
 }
 
-async function loadEnChunkKeysInOrder(n: number): Promise<string[]> {
-  // Object key insertion order is preserved in V8 for string keys, so importing en-N
-  // and reading Object.keys gives us source order.
-  const en = await loadChunk("en", n);
-  return Object.keys(en);
-}
-
-async function writeChunk(
+async function writeLocale(
   locale: string,
-  n: number,
-  keysInOrder: string[],
+  enKeysInOrder: string[],
   values: Record<string, string>,
 ): Promise<void> {
   const langLabel = LOCALE_HEADERS[locale] ?? locale;
   const lines: string[] = [];
-  lines.push(`import type { TranslationMap } from '../types';`);
+  lines.push(`import type { TranslationMap } from './types';`);
   lines.push("");
+  lines.push(`// ${langLabel} translations. Keys mirror en.ts; missing/`);
   lines.push(
-    `// ${langLabel} chunk ${n}/${CHUNK_COUNT}. Translated from chunks/en-${n}.ts.`,
+    `// English-identical values fall back to English via I18nContext.resolveEn().`,
   );
-  lines.push(`const ${camelVar(locale, n)}: TranslationMap = {`);
-  for (const k of keysInOrder) {
+  lines.push(`const messages: TranslationMap = {`);
+  for (const k of enKeysInOrder) {
     const v = values[k];
     if (v === undefined) continue; // shouldn't happen — English fallback ensures coverage
     lines.push(`  ${jsString(k)}: ${jsString(v)},`);
   }
   lines.push(`};`);
   lines.push("");
-  lines.push(`export default ${camelVar(locale, n)};`);
+  lines.push(`export default messages;`);
   lines.push("");
-  const file = path.join(CHUNKS_DIR, `${locale}-${n}.ts`);
+  const file = path.join(I18N_DIR, `${locale}.ts`);
   await fs.writeFile(file, lines.join("\n"));
 }
 
 async function applyLocale(
   input: InputFile,
+  enKeys: string[],
+  enValues: Record<string, string>,
 ): Promise<{ updated: number; total: number }> {
   const { locale, translations } = input;
   if (locale === "en") throw new Error("refusing to overwrite English source");
   let updated = 0;
   let total = 0;
-  for (let n = 1; n <= CHUNK_COUNT; n++) {
-    const enKeys = await loadEnChunkKeysInOrder(n);
-    const enValues = await loadChunk("en", n);
-    let existing: Record<string, string> = {};
-    try {
-      existing = await loadChunk(locale, n);
-    } catch {
-      existing = {};
-    }
-    const merged: Record<string, string> = {};
-    for (const k of enKeys) {
-      total++;
-      if (Object.prototype.hasOwnProperty.call(translations, k)) {
-        const newVal = translations[k];
-        if (newVal !== existing[k]) updated++;
-        merged[k] = newVal;
-      } else if (Object.prototype.hasOwnProperty.call(existing, k)) {
-        merged[k] = existing[k];
-      } else {
-        merged[k] = enValues[k]; // shouldn't trigger if locale is in-sync
-      }
-    }
-    await writeChunk(locale, n, enKeys, merged);
+  let existing: Record<string, string> = {};
+  try {
+    existing = await loadLocale(locale);
+  } catch {
+    existing = {};
   }
+  const merged: Record<string, string> = {};
+  for (const k of enKeys) {
+    total++;
+    if (Object.prototype.hasOwnProperty.call(translations, k)) {
+      const newVal = translations[k];
+      if (newVal !== existing[k]) updated++;
+      merged[k] = newVal;
+    } else if (Object.prototype.hasOwnProperty.call(existing, k)) {
+      merged[k] = existing[k];
+    } else {
+      merged[k] = enValues[k]; // shouldn't trigger if locale is in-sync
+    }
+  }
+  await writeLocale(locale, enKeys, merged);
   return { updated, total };
 }
 
@@ -172,6 +156,8 @@ async function main() {
       process.exit(2);
     }
   }
+  const enValues = await loadLocale("en");
+  const enKeys = Object.keys(enValues);
   const entries = await fs.readdir(dir);
   for (const f of entries) {
     if (!f.endsWith(".json")) continue;
@@ -185,7 +171,7 @@ async function main() {
       );
       continue;
     }
-    const res = await applyLocale(input);
+    const res = await applyLocale(input, enKeys, enValues);
     console.log(`${locale}: ${res.updated}/${res.total} entries updated`);
   }
 }

@@ -426,5 +426,5 @@ fn generate_id() -> String {
 }
 
 #[cfg(test)]
-#[path = "registry_test.rs"]
+#[path = "registry_tests.rs"]
 mod tests;

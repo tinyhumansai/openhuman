@@ -244,5 +244,5 @@ impl Provider for RouterProvider {
 }
 
 #[cfg(test)]
-#[path = "router_test.rs"]
-mod router_test;
+#[path = "router_tests.rs"]
+mod router_tests;
