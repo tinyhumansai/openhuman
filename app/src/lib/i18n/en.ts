@@ -4679,7 +4679,7 @@ const en: TranslationMap = {
   'chat.artifact.downloaded': 'Saved to {path}',
   'chat.artifact.download_failed': 'Download failed: {reason}',
   'chat.artifact.retry': 'Retry',
-  'chat.artifact.reveal': 'Reveal in Finder',
+  'chat.artifact.reveal': 'Show in folder',
 };
 
 export default en;

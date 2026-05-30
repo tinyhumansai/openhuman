@@ -4456,7 +4456,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': '{path} में सहेजा गया',
   'chat.artifact.download_failed': 'डाउनलोड विफल: {reason}',
   'chat.artifact.retry': 'पुनः प्रयास',
-  'chat.artifact.reveal': 'Finder में दिखाएं',
+  'chat.artifact.reveal': 'फ़ोल्डर में दिखाएं',
 };
 
 export default messages;

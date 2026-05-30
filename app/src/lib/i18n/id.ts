@@ -4466,7 +4466,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': 'Disimpan ke {path}',
   'chat.artifact.download_failed': 'Unduhan gagal: {reason}',
   'chat.artifact.retry': 'Coba lagi',
-  'chat.artifact.reveal': 'Tampilkan di Finder',
+  'chat.artifact.reveal': 'Tampilkan di folder',
 };
 
 export default messages;

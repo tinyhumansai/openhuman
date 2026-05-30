@@ -4449,7 +4449,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': '{path} এ সংরক্ষিত',
   'chat.artifact.download_failed': 'ডাউনলোড ব্যর্থ: {reason}',
   'chat.artifact.retry': 'পুনরায় চেষ্টা',
-  'chat.artifact.reveal': 'Finder-এ দেখান',
+  'chat.artifact.reveal': 'ফোল্ডারে দেখান',
 };
 
 export default messages;

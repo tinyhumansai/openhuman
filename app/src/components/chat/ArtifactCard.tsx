@@ -19,7 +19,7 @@ import type { ArtifactSnapshot } from '../../store/chatRuntimeSlice';
  *   landed yet.
  * - `ready` — kind icon + title + human-readable size + Download
  *   button. Click → `downloadArtifact()` → "Saved to …" w/ a
- *   "Reveal in Finder" link.
+ *   "Show in folder" link.
  * - `failed` — error icon + title + producer-supplied reason +
  *   optional Retry button (only when `onRetry` is provided).
  *

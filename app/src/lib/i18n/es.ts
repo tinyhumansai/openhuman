@@ -4532,7 +4532,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': 'Guardado en {path}',
   'chat.artifact.download_failed': 'Error al descargar: {reason}',
   'chat.artifact.retry': 'Reintentar',
-  'chat.artifact.reveal': 'Mostrar en Finder',
+  'chat.artifact.reveal': 'Mostrar en la carpeta',
 };
 
 export default messages;
