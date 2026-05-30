@@ -4,7 +4,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { setWalkthroughPending } from '../../components/walkthrough/AppWalkthrough';
 import { useCoreState } from '../../providers/CoreStateProvider';
 import { trackEvent } from '../../services/analytics';
-import { getDefaultEnabledTools } from '../../utils/toolDefinitions';
+import { getDefaultEnabledTools, getEnabledRustToolNames } from '../../utils/toolDefinitions';
 import BetaBanner from './components/BetaBanner';
 import { OnboardingContext, type OnboardingDraft } from './OnboardingContext';
 
@@ -34,7 +34,7 @@ const OnboardingLayout = () => {
           snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
         localModelConsentGiven: false,
         localModelDownloadStarted: false,
-        enabledTools: getDefaultEnabledTools(),
+        enabledTools: getEnabledRustToolNames(getDefaultEnabledTools()),
         connectedSources: draft.connectedSources,
         updatedAtMs: Date.now(),
       });

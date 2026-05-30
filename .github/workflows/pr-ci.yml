@@ -68,6 +68,39 @@ jobs:
         env:
           NODE_ENV: test
 
+  i18n-coverage:
+    name: i18n Coverage (parity)
+    runs-on: ubuntu-22.04
+    container:
+      image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Cache pnpm store
+        id: pnpm-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: .pnpm-store
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-store-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+
+      - name: Save pnpm store cache
+        if: always() && steps.pnpm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .pnpm-store
+          key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+
+      - name: Verify i18n coverage (missing / extra / drifted keys across locales)
+        run: bash scripts/ci-cancel-aware.sh pnpm i18n:check
+
   rust-quality:
     name: Rust Quality (fmt, clippy)
     runs-on: ubuntu-22.04

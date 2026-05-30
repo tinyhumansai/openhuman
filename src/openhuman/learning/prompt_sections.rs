@@ -309,6 +309,7 @@ mod tests {
             personality_soul_md: None,
             personality_memory_md: None,
             personality_roster: vec![],
+            workflows: &[],
             curated_snapshot: None,
         }
     }

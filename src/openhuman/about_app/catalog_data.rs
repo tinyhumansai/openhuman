@@ -311,6 +311,16 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: LOCAL_RAW,
     },
     Capability {
+        id: "intelligence.vault_markdown_writes",
+        name: "Vault Markdown Writes",
+        domain: "intelligence",
+        category: CapabilityCategory::Intelligence,
+        description: "Show whether a user-added local vault is writable, and write explicitly approved markdown/wiki artifacts back into that vault without leaving the device.",
+        how_to: "Intelligence > Memory > Knowledge vaults",
+        status: CapabilityStatus::Beta,
+        privacy: LOCAL_RAW,
+    },
+    Capability {
         id: "intelligence.embedding_provider_config",
         name: "Configure Embedding Provider",
         domain: "embeddings",
@@ -598,7 +608,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "skills",
         category: CapabilityCategory::Skills,
         description: "Set up local EVM, BTC, Solana, and Tron wallet identities from one recovery phrase.",
-        how_to: "Settings > Recovery Phrase or Settings > Connections",
+        how_to: "Settings > Crypto > Recovery Phrase or Settings > Connections",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -608,7 +618,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "wallet",
         category: CapabilityCategory::Skills,
         description: "Read addresses and balances, prepare/confirm/execute native + token transfers (ERC20/SPL/TRC20/BEP20), and inspect transactions (status, receipt, lookup) across the connected wallet (EVM, BTC, Solana, Tron). Quote-first; signing stays local.",
-        how_to: "Use wallet.* RPC methods (balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx) via the agent or core_rpc_relay, or via Settings > Wallet Balances.",
+        how_to: "Use wallet.* RPC methods (balances, prepare_transfer, execute_prepared, tx_status, tx_receipt, lookup_tx) via the agent or core_rpc_relay, or via Settings > Crypto > Wallet Balances.",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_CREDENTIALS,
     },
@@ -1219,6 +1229,18 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: DERIVED_TO_BACKEND,
     },
     Capability {
+        id: "automation.agent_workflows",
+        name: "Agent Workflows",
+        domain: "automation",
+        category: CapabilityCategory::Automation,
+        description: "Define phase-keyed workflows (WORKFLOW.md) that inject rules, run \
+                      gated scripts, scope visible tools, and surface working-directory \
+                      context across a task's lifecycle (pick-up, close, directory entry).",
+        how_to: "Workflows",
+        status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
         id: "automation.view_cron_jobs",
         name: "View Cron Jobs",
         domain: "automation",
@@ -1426,6 +1448,18 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                       remove it any time under Settings → Agent OS access to be prompted again. \
                       Policy still blocks forbidden paths and high-risk commands regardless.",
         how_to: "Click \"Always allow\" on an approval prompt; manage the list in Settings → Agent OS access.",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
+        id: "security.approval_history",
+        name: "Approval History",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Review a read-only audit trail of past tool-approval decisions \
+                      (Approve once / Always allow / Deny), newest first. Summaries are \
+                      scrubbed of chat content and arguments are shown as redacted shape only.",
+        how_to: "Settings → Agent OS access → View approval history",
         status: CapabilityStatus::Stable,
         privacy: None,
     },

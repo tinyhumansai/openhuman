@@ -580,81 +580,161 @@ pub async fn chain_status() -> Result<RpcOutcome<Vec<ChainStatus>>, String> {
     ))
 }
 
+/// EVM networks surfaced as their own native-balance rows. The single derived
+/// EVM account address is shared across all of them, so `balances()` reads the
+/// native asset (ETH / ETH / BNB) on each network independently.
+pub const EVM_BALANCE_NETWORKS: [EvmNetwork; 3] = [
+    EvmNetwork::EthereumMainnet,
+    EvmNetwork::BaseMainnet,
+    EvmNetwork::BscMainnet,
+];
+
+/// Build a single native-balance row, reading the live on-chain balance and
+/// falling back to a zero/`Missing` row when the provider is unreachable.
+fn balance_row(
+    chain: WalletChain,
+    evm_network: Option<EvmNetwork>,
+    address: &str,
+    asset: WalletAssetDefinition,
+    raw: String,
+    provider_status: ProviderStatus,
+) -> BalanceInfo {
+    let raw_u128 = raw.parse::<u128>().unwrap_or(0);
+    BalanceInfo {
+        chain,
+        evm_network,
+        address: address.to_string(),
+        asset_symbol: asset.symbol,
+        decimals: asset.decimals,
+        formatted: format_amount(raw_u128, asset.decimals),
+        raw,
+        provider_status,
+    }
+}
+
+fn native_asset_for(chain: WalletChain) -> Result<WalletAssetDefinition, String> {
+    super::defaults::asset_catalog(chain)
+        .into_iter()
+        .find(|value| value.native)
+        .ok_or_else(|| format!("native asset metadata missing for '{}'", chain_str(chain)))
+}
+
+fn evm_native_asset(network: EvmNetwork) -> Result<WalletAssetDefinition, String> {
+    evm_asset_catalog(network)
+        .into_iter()
+        .find(|value| value.native)
+        .ok_or_else(|| {
+            format!(
+                "native asset metadata missing for evm network '{}'",
+                network.as_str()
+            )
+        })
+}
+
 pub async fn balances() -> Result<RpcOutcome<Vec<BalanceInfo>>, String> {
     let status = wallet_status().await?.value;
     if !status.configured {
         return Err("wallet is not configured; run wallet setup first".to_string());
     }
-    let mut out = Vec::with_capacity(status.accounts.len());
+    let mut out = Vec::with_capacity(status.accounts.len() + EVM_BALANCE_NETWORKS.len());
     for account in &status.accounts {
-        let asset = super::defaults::asset_catalog(account.chain)
-            .into_iter()
-            .find(|value| value.native)
-            .ok_or_else(|| {
-                format!(
-                    "native asset metadata missing for '{}'",
-                    chain_str(account.chain)
-                )
-            })?;
-        let (raw, provider_status) = match account.chain {
+        match account.chain {
+            // The EVM account fans out into one native-balance row per displayed
+            // network (Ethereum, Base, BNB Chain), all sharing the same address.
             WalletChain::Evm => {
-                match chain_evm::evm_balance(EvmNetwork::EthereumMainnet, &account.address).await {
-                    Ok(balance) => (balance.to_string(), ProviderStatus::Ready),
-                    Err(error) => {
-                        warn!(
-                        "{LOG_PREFIX} balances chain=evm address={} falling back to zero: {error}",
-                        account.address
-                    );
-                        ("0".to_string(), ProviderStatus::Missing)
-                    }
+                for network in EVM_BALANCE_NETWORKS {
+                    let asset = evm_native_asset(network)?;
+                    let (raw, provider_status) = match chain_evm::evm_balance(
+                        network,
+                        &account.address,
+                    )
+                    .await
+                    {
+                        Ok(balance) => (balance.to_string(), ProviderStatus::Ready),
+                        Err(error) => {
+                            warn!(
+                                    "{LOG_PREFIX} balances chain=evm network={} address={} falling back to zero: {error}",
+                                    network.as_str(),
+                                    account.address
+                                );
+                            ("0".to_string(), ProviderStatus::Missing)
+                        }
+                    };
+                    out.push(balance_row(
+                        WalletChain::Evm,
+                        Some(network),
+                        &account.address,
+                        asset,
+                        raw,
+                        provider_status,
+                    ));
                 }
             }
-            WalletChain::Btc => match chain_btc::native_balance(&account.address).await {
-                Ok(sats) => (sats.to_string(), ProviderStatus::Ready),
-                Err(error) => {
-                    warn!(
-                        "{LOG_PREFIX} balances chain=btc address={} falling back to zero: {error}",
-                        account.address
-                    );
-                    ("0".to_string(), ProviderStatus::Missing)
-                }
-            },
-            WalletChain::Solana => match chain_sol::native_balance(&account.address).await {
-                Ok(lamports) => (lamports.to_string(), ProviderStatus::Ready),
-                Err(error) => {
-                    warn!(
-                        "{LOG_PREFIX} balances chain=solana address={} falling back to zero: {error}",
-                        account.address
-                    );
-                    ("0".to_string(), ProviderStatus::Missing)
-                }
-            },
-            WalletChain::Tron => match chain_tron::native_balance(&account.address).await {
-                Ok(sun) => (sun.to_string(), ProviderStatus::Ready),
-                Err(error) => {
-                    warn!(
-                        "{LOG_PREFIX} balances chain=tron address={} falling back to zero: {error}",
-                        account.address
-                    );
-                    ("0".to_string(), ProviderStatus::Missing)
-                }
-            },
-        };
-        let raw_u128 = raw.parse::<u128>().unwrap_or(0);
-        out.push(BalanceInfo {
-            chain: account.chain,
-            evm_network: if account.chain == WalletChain::Evm {
-                Some(EvmNetwork::EthereumMainnet)
-            } else {
-                None
-            },
-            address: account.address.clone(),
-            asset_symbol: asset.symbol,
-            decimals: asset.decimals,
-            raw,
-            formatted: format_amount(raw_u128, asset.decimals),
-            provider_status,
-        });
+            WalletChain::Btc => {
+                let (raw, provider_status) = match chain_btc::native_balance(&account.address).await
+                {
+                    Ok(sats) => (sats.to_string(), ProviderStatus::Ready),
+                    Err(error) => {
+                        warn!(
+                            "{LOG_PREFIX} balances chain=btc address={} falling back to zero: {error}",
+                            account.address
+                        );
+                        ("0".to_string(), ProviderStatus::Missing)
+                    }
+                };
+                out.push(balance_row(
+                    WalletChain::Btc,
+                    None,
+                    &account.address,
+                    native_asset_for(WalletChain::Btc)?,
+                    raw,
+                    provider_status,
+                ));
+            }
+            WalletChain::Solana => {
+                let (raw, provider_status) = match chain_sol::native_balance(&account.address).await
+                {
+                    Ok(lamports) => (lamports.to_string(), ProviderStatus::Ready),
+                    Err(error) => {
+                        warn!(
+                                "{LOG_PREFIX} balances chain=solana address={} falling back to zero: {error}",
+                                account.address
+                            );
+                        ("0".to_string(), ProviderStatus::Missing)
+                    }
+                };
+                out.push(balance_row(
+                    WalletChain::Solana,
+                    None,
+                    &account.address,
+                    native_asset_for(WalletChain::Solana)?,
+                    raw,
+                    provider_status,
+                ));
+            }
+            WalletChain::Tron => {
+                let (raw, provider_status) = match chain_tron::native_balance(&account.address)
+                    .await
+                {
+                    Ok(sun) => (sun.to_string(), ProviderStatus::Ready),
+                    Err(error) => {
+                        warn!(
+                            "{LOG_PREFIX} balances chain=tron address={} falling back to zero: {error}",
+                            account.address
+                        );
+                        ("0".to_string(), ProviderStatus::Missing)
+                    }
+                };
+                out.push(balance_row(
+                    WalletChain::Tron,
+                    None,
+                    &account.address,
+                    native_asset_for(WalletChain::Tron)?,
+                    raw,
+                    provider_status,
+                ));
+            }
+        }
     }
     debug!("{LOG_PREFIX} balances returned rows={}", out.len());
     Ok(RpcOutcome::new(

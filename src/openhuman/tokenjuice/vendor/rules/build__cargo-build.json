@@ -1,0 +1,58 @@
+{
+  "id": "build/cargo-build",
+  "family": "build-rust",
+  "description": "Compact cargo build and cargo check output while preserving compiler diagnostics.",
+  "match": {
+    "toolNames": ["exec"],
+    "argv0": ["cargo"],
+    "argvIncludesAny": [["build"], ["check"]]
+  },
+  "onEmpty": "cargo: build succeeded",
+  "transforms": {
+    "stripAnsi": true,
+    "dedupeAdjacent": true,
+    "trimEmptyEdges": true
+  },
+  "filters": {
+    "skipPatterns": [
+      "^\\s*Compiling .+",
+      "^\\s*Checking .+",
+      "^\\s*Downloading .+",
+      "^\\s*Downloaded .+",
+      "^\\s*Locking .+",
+      "^\\s*Updating .+",
+      "^\\s*Fresh .+",
+      "^\\s*Packaging .+",
+      "^\\s+\\|\\s*$",
+      "^\\s*For more information about this error",
+      "^\\s*Some errors have detailed explanations"
+    ]
+  },
+  "summarize": {
+    "head": 12,
+    "tail": 8
+  },
+  "failure": {
+    "preserveOnFailure": true,
+    "head": 16,
+    "tail": 16
+  },
+  "counters": [
+    {
+      "name": "error",
+      "pattern": "^error(\\[E\\d+\\])?:",
+      "flags": "i"
+    },
+    {
+      "name": "warning",
+      "pattern": "^warning(\\[.+\\])?:",
+      "flags": "i"
+    }
+  ],
+  "matchOutput": [
+    {
+      "pattern": "^\\s*Finished .+\\s*$",
+      "message": "cargo: build succeeded"
+    }
+  ]
+}

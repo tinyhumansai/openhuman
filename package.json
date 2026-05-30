@@ -26,6 +26,7 @@
     "test:coverage": "pnpm --filter openhuman-app test:coverage",
     "test:rust": "pnpm --filter openhuman-app test:rust",
     "test:rust:e2e": "bash scripts/test-rust-e2e.sh",
+    "test:rust:e2e:coverage": "node scripts/check-domain-e2e-coverage.mjs",
     "test:e2e": "pnpm --filter openhuman-app test:e2e:all",
     "test:e2e:flows": "pnpm --filter openhuman-app test:e2e:all:flows",
     "mascot:render": "pnpm --dir remotion render:runtime-assets",

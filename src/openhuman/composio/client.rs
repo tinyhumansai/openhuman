@@ -779,6 +779,30 @@ pub fn create_composio_client(
             // the `Tool` surface re-acquire the live policy from their own
             // context.
             let security = Arc::new(crate::openhuman::security::SecurityPolicy::default());
+            #[cfg(debug_assertions)]
+            let tool = match (
+                std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2").ok(),
+                std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3").ok(),
+            ) {
+                (Some(base_v2), Some(base_v3)) => {
+                    crate::openhuman::tools::ComposioTool::new_with_base_urls_for_loopback(
+                        &api_key,
+                        Some(config.composio.entity_id.as_str()),
+                        security,
+                        base_v2,
+                        base_v3,
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!("invalid debug composio direct loopback base override: {e}")
+                    })?
+                }
+                _ => crate::openhuman::tools::ComposioTool::new(
+                    &api_key,
+                    Some(config.composio.entity_id.as_str()),
+                    security,
+                ),
+            };
+            #[cfg(not(debug_assertions))]
             let tool = crate::openhuman::tools::ComposioTool::new(
                 &api_key,
                 Some(config.composio.entity_id.as_str()),

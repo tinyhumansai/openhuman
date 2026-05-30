@@ -7,6 +7,7 @@ import {
   ACK_FACE_HOLD_MS,
   pickConversationAckFace,
   pickViseme,
+  TTS_MAX_PLAYBACK_MS,
   useHumanMascot,
 } from './useHumanMascot';
 import { type PlaybackHandle, playBase64Audio } from './voice/audioPlayer';
@@ -549,6 +550,40 @@ describe('useHumanMascot state machine', () => {
     rerender({ listening: true });
     expect(result.current.face).toBe('listening');
     expect(result.current.viseme).toEqual(VISEMES.REST);
+  });
+
+  it('listening override transitions to listening face and cancels ack timer', () => {
+    const { result, rerender } = renderHook(
+      ({ listening }: { listening: boolean }) => useHumanMascot({ speakReplies: false, listening }),
+      { initialProps: { listening: false } }
+    );
+    // Trigger a happy ack that starts the hold timer.
+    act(() => {
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Here you go.',
+          reaction_emoji: null,
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('happy');
+    // Mic activates before the hold timer expires.
+    rerender({ listening: true });
+    expect(result.current.face).toBe('listening');
+    // The hold timer should have been cancelled — advancing past its deadline
+    // must not flip the face back to idle.
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
+    expect(result.current.face).toBe('listening');
+  });
+
+  it('TTS_MAX_PLAYBACK_MS is a positive number', () => {
+    expect(TTS_MAX_PLAYBACK_MS).toBeGreaterThan(0);
+    expect(typeof TTS_MAX_PLAYBACK_MS).toBe('number');
   });
 });
 

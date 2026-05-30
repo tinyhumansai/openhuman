@@ -10,6 +10,8 @@ interface CoreJobListProps {
   onRunCoreJob: (jobId: string) => void;
   onLoadCoreRuns: (jobId: string) => void;
   onRemoveCoreJob: (jobId: string) => void;
+  /** Optional: when provided, an Edit button is rendered per row. */
+  onEditCoreJob?: (job: CoreCronJob) => void;
 }
 
 const CoreJobList = ({
@@ -21,8 +23,34 @@ const CoreJobList = ({
   onRunCoreJob,
   onLoadCoreRuns,
   onRemoveCoreJob,
+  onEditCoreJob,
 }: CoreJobListProps) => {
   const { t } = useT();
+  const neutralButtonClassName =
+    'inline-flex min-h-9 items-center justify-center whitespace-nowrap rounded-lg border border-stone-300 dark:border-stone-700 bg-white dark:bg-stone-900 px-3 py-1.5 text-[13px] font-medium leading-5 text-stone-700 dark:text-stone-200 shadow-sm transition-colors hover:bg-stone-100 hover:text-stone-900 dark:hover:bg-stone-800 dark:hover:text-stone-100 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:cursor-not-allowed disabled:opacity-70 disabled:text-stone-500 dark:disabled:text-stone-400';
+  const removeButtonClassName =
+    'inline-flex min-h-9 items-center justify-center whitespace-nowrap rounded-lg border border-red-700/40 bg-red-600 px-3 py-1.5 text-[13px] font-medium leading-5 text-white shadow-sm transition-colors hover:bg-red-700 hover:text-white active:bg-red-800 focus:outline-none focus:ring-2 focus:ring-red-500/30 disabled:cursor-not-allowed disabled:opacity-70';
+
+  const toggleButtonLabel = (job: CoreCronJob) => {
+    if (coreBusyKey === `core-toggle:${job.id}`) {
+      return t('settings.cron.jobs.saving');
+    }
+    return job.enabled ? t('settings.cron.jobs.pause') : t('settings.cron.jobs.resume');
+  };
+
+  const runButtonLabel = (jobId: string) =>
+    coreBusyKey === `core-run:${jobId}`
+      ? t('settings.cron.jobs.runningNow')
+      : t('subconscious.runNow');
+
+  const viewRunsButtonLabel = (jobId: string) =>
+    coreBusyKey === `core-runs:${jobId}`
+      ? t('settings.cron.jobs.loadingRuns')
+      : t('settings.cron.jobs.viewRuns');
+
+  const removeButtonLabel = (jobId: string) =>
+    coreBusyKey === `core-remove:${jobId}` ? t('settings.cron.jobs.removing') : t('common.remove');
+
   return (
     <section className="rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
       <div className="p-4 border-b border-stone-200 dark:border-neutral-800">
@@ -102,44 +130,43 @@ const CoreJobList = ({
                 <button
                   type="button"
                   data-testid={`cron-job-toggle-${job.id}`}
-                  className="btn btn-sm btn-outline"
+                  className={neutralButtonClassName}
                   disabled={coreBusyKey === `core-toggle:${job.id}`}
                   onClick={() => onToggleCoreJob(job)}>
-                  {coreBusyKey === `core-toggle:${job.id}`
-                    ? t('settings.cron.jobs.saving')
-                    : job.enabled
-                      ? t('settings.cron.jobs.pause')
-                      : t('settings.cron.jobs.resume')}
+                  {toggleButtonLabel(job)}
                 </button>
                 <button
                   type="button"
                   data-testid={`cron-job-run-${job.id}`}
-                  className="btn btn-sm btn-outline"
+                  className={neutralButtonClassName}
                   disabled={coreBusyKey === `core-run:${job.id}`}
                   onClick={() => onRunCoreJob(job.id)}>
-                  {coreBusyKey === `core-run:${job.id}`
-                    ? t('settings.cron.jobs.runningNow')
-                    : t('subconscious.runNow')}
+                  {runButtonLabel(job.id)}
                 </button>
                 <button
                   type="button"
                   data-testid={`cron-job-view-runs-${job.id}`}
-                  className="btn btn-sm btn-outline"
+                  className={neutralButtonClassName}
                   disabled={coreBusyKey === `core-runs:${job.id}`}
                   onClick={() => onLoadCoreRuns(job.id)}>
-                  {coreBusyKey === `core-runs:${job.id}`
-                    ? t('settings.cron.jobs.loadingRuns')
-                    : t('settings.cron.jobs.viewRuns')}
+                  {viewRunsButtonLabel(job.id)}
                 </button>
+                {onEditCoreJob && (
+                  <button
+                    type="button"
+                    data-testid={`cron-job-edit-${job.id}`}
+                    className={neutralButtonClassName}
+                    onClick={() => onEditCoreJob(job)}>
+                    {t('settings.cron.jobs.edit')}
+                  </button>
+                )}
                 <button
                   type="button"
                   data-testid={`cron-job-remove-${job.id}`}
-                  className="btn btn-sm btn-error"
+                  className={removeButtonClassName}
                   disabled={coreBusyKey === `core-remove:${job.id}`}
                   onClick={() => onRemoveCoreJob(job.id)}>
-                  {coreBusyKey === `core-remove:${job.id}`
-                    ? t('settings.cron.jobs.removing')
-                    : t('common.remove')}
+                  {removeButtonLabel(job.id)}
                 </button>
               </div>
 

@@ -13,4 +13,13 @@ omit_skills_catalog = true
 hint = "agentic"
 
 [tools]
-named = ["composio_list_tools", "file_read", "composio_execute"]
+named = [
+    "composio_list_tools",
+    "file_read",
+    "composio_execute",
+    # Workflow tools — surface installed WORKFLOW.md bundles so the
+    # integrations_agent can inspect and activate phases when operating
+    # inside a task lifecycle (e.g. on_pick_up_task).
+    "workflow_load",
+    "workflow_phase",
+]

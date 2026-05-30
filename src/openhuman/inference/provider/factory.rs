@@ -28,6 +28,10 @@ use crate::openhuman::inference::provider::claude_agent_sdk::subprocess::ClaudeA
 use crate::openhuman::inference::provider::compatible::{
     AuthStyle as CompatAuthStyle, OpenAiCompatibleProvider,
 };
+use crate::openhuman::inference::provider::openai_codex::{
+    openai_codex_client_version, openai_codex_user_agent, resolve_openai_codex_routing,
+    OPENAI_CODEX_ACCOUNT_HEADER, OPENAI_CODEX_ORIGINATOR, OPENAI_CODEX_ORIGINATOR_HEADER,
+};
 use crate::openhuman::inference::provider::openhuman_backend::OpenHumanBackendProvider;
 use crate::openhuman::inference::provider::traits::Provider;
 use crate::openhuman::inference::provider::ProviderRuntimeOptions;
@@ -868,6 +872,8 @@ fn make_cloud_provider_by_slug(
     );
 
     let key = lookup_key_for_slug(slug, config)?;
+    let openai_codex_routing = resolve_openai_codex_routing(config, slug, &entry.endpoint, &key)
+        .map_err(anyhow::Error::msg)?;
 
     let unsupported = &config.temperature_unsupported_models;
     match entry.auth_style {
@@ -905,15 +911,33 @@ fn make_cloud_provider_by_slug(
             Ok((p, effective_model))
         }
         AuthStyle::Bearer => {
-            let p = make_openai_compatible_provider_with_config(
+            log::info!(
+                "[providers][chat-factory] role={} slug={} codex_oauth={} endpoint_host={} account_id_header={}",
+                role,
                 slug,
-                &entry.endpoint,
-                &key,
+                openai_codex_routing.using_oauth,
+                redact_endpoint(&openai_codex_routing.endpoint),
+                openai_codex_routing.account_id.is_some()
+            );
+            let mut provider = OpenAiCompatibleProvider::new(
+                slug,
+                &openai_codex_routing.endpoint,
+                (!key.trim().is_empty()).then_some(key.as_str()),
                 CompatAuthStyle::Bearer,
-                unsupported,
-                temperature_override,
-                true,
-            )?;
+            )
+            .with_temperature_unsupported_models(unsupported.to_vec())
+            .with_temperature_override(temperature_override);
+            if let Some(account_id) = openai_codex_routing.account_id.as_deref() {
+                provider = provider.with_extra_header(OPENAI_CODEX_ACCOUNT_HEADER, account_id);
+            }
+            if openai_codex_routing.using_oauth {
+                provider = provider
+                    .with_extra_header(OPENAI_CODEX_ORIGINATOR_HEADER, OPENAI_CODEX_ORIGINATOR)
+                    .with_user_agent(openai_codex_user_agent())
+                    .with_extra_query_param("client_version", openai_codex_client_version())
+                    .with_responses_api_primary();
+            }
+            let p: Box<dyn Provider> = Box::new(provider);
             Ok((p, effective_model))
         }
     }

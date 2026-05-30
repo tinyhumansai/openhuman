@@ -262,15 +262,25 @@ impl ProviderContext {
         // Arc<Config> snapshot held by `self` was taken at agent-init time
         // and is otherwise stale relative to subsequent set_api_key /
         // clear_api_key RPCs.
-        let live_config = config_rpc::load_config_with_timeout().await.map_err(|e| {
-            tracing::warn!(
-                action = %action,
-                toolkit = %self.toolkit,
-                error = %e,
-                "[composio:provider_context] execute: load_config failed"
-            );
-            anyhow::anyhow!("composio provider_context: failed to load live config: {e}")
-        })?;
+        //
+        // Use `reload_config_snapshot_with_timeout` (anchored to the snapshot's
+        // `config_path`) rather than `load_config_with_timeout` (which
+        // re-resolves `OPENHUMAN_WORKSPACE` from the process env). The config
+        // path is stable for the lifetime of a `ProviderContext` — it is set
+        // at context creation from the agent's scoped config — so reading from
+        // it always reaches the correct user workspace and avoids a data-race
+        // in tests that share the process env.
+        let live_config = config_rpc::reload_config_snapshot_with_timeout(&self.config)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    action = %action,
+                    toolkit = %self.toolkit,
+                    error = %e,
+                    "[composio:provider_context] execute: reload_config failed"
+                );
+                anyhow::anyhow!("composio provider_context: failed to reload live config: {e}")
+            })?;
         let kind = create_composio_client(&live_config)?;
         match kind {
             ComposioClientKind::Backend(client) => {
@@ -308,16 +318,21 @@ impl ProviderContext {
         // snapshot held by `self` was taken at agent-init time and is
         // otherwise stale relative to subsequent set_api_key /
         // clear_api_key RPCs.
-        let live_config = config_rpc::load_config_with_timeout().await.map_err(|e| {
-            tracing::warn!(
-                toolkit = %self.toolkit,
-                error = %e,
-                "[composio:provider_context] backend_client: load_config failed"
-            );
-            anyhow::anyhow!(
-                "composio provider_context.backend_client: failed to load live config: {e}"
-            )
-        })?;
+        //
+        // Anchored to the snapshot's config_path (not OPENHUMAN_WORKSPACE)
+        // for the same isolation reason as `execute`.
+        let live_config = config_rpc::reload_config_snapshot_with_timeout(&self.config)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    toolkit = %self.toolkit,
+                    error = %e,
+                    "[composio:provider_context] backend_client: reload_config failed"
+                );
+                anyhow::anyhow!(
+                    "composio provider_context.backend_client: failed to reload live config: {e}"
+                )
+            })?;
         match create_composio_client(&live_config)? {
             ComposioClientKind::Backend(client) => Ok(client),
             ComposioClientKind::Direct(_) => Err(anyhow::anyhow!(
@@ -349,13 +364,11 @@ impl ProviderContext {
 mod tests {
     use super::*;
 
-    // Both `ProviderContext::execute` and `ProviderContext::backend_client`
-    // now reload config via `config_rpc::load_config_with_timeout()` per
-    // call (#1710 Wave 4), so the injected `Arc<Config>` no longer drives
-    // the factory — the live on-disk config under `OPENHUMAN_WORKSPACE`
-    // does. Both tests below therefore set up an isolated, persisted
-    // config under `TEST_ENV_LOCK` rather than relying on a constructed
-    // `Arc<Config>` helper.
+    // `ProviderContext::execute` and `ProviderContext::backend_client` reload
+    // config from `ctx.config.config_path` (via `reload_config_snapshot_with_timeout`)
+    // rather than from the process-global `OPENHUMAN_WORKSPACE`. Tests
+    // therefore only need to persist the config to `config_path` — no env var
+    // manipulation required.
 
     #[tokio::test]
     async fn provider_context_execute_resolves_via_factory_at_call_time() {
@@ -365,23 +378,7 @@ mod tests {
         // `client: ComposioClient` field was always backend, so this
         // path would have surfaced a backend session lookup error
         // even with `mode = "direct"`.
-        //
-        // Production `ctx.execute(..)` calls `load_config_with_timeout()`
-        // per call which reads from `~/.openhuman/config.toml` (or the
-        // workspace pointed at by `OPENHUMAN_WORKSPACE`). To isolate
-        // the test from the dev's real config we hold `TEST_ENV_LOCK`,
-        // point `OPENHUMAN_WORKSPACE` at a tempdir, and persist the
-        // test's `Config` to that tempdir's `config.toml` before
-        // invoking `execute`. Without the lock this test also races the
-        // shared `OPENHUMAN_WORKSPACE` env var against the other
-        // `load_config_with_timeout`-driven composio tests.
-        use crate::openhuman::config::TEST_ENV_LOCK;
-        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -407,10 +404,6 @@ mod tests {
                 "direct-mode execute must not surface backend session artifacts: {msg}"
             );
         }
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 
     #[tokio::test]
@@ -419,21 +412,7 @@ mod tests {
         // token: the factory should return a backend-session error from
         // `ctx.execute`. Verifies the backend branch is reachable and
         // the error surface is sensible.
-        //
-        // Production `ctx.execute(..)` calls `load_config_with_timeout()`
-        // per call which reads from `~/.openhuman/config.toml` (or the
-        // workspace pointed at by `OPENHUMAN_WORKSPACE`). To isolate
-        // the test from the dev's real config we hold `TEST_ENV_LOCK`,
-        // point `OPENHUMAN_WORKSPACE` at a tempdir, and persist the
-        // test's `Config` to that tempdir's `config.toml` before
-        // invoking `execute`.
-        use crate::openhuman::config::TEST_ENV_LOCK;
-        let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
         let tmp = tempfile::tempdir().expect("tempdir");
-        unsafe {
-            std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
-        }
 
         let mut config = Config::default();
         config.config_path = tmp.path().join("config.toml");
@@ -453,9 +432,5 @@ mod tests {
             msg.contains("backend") || msg.contains("session"),
             "expected backend-session error, got: {msg}"
         );
-
-        unsafe {
-            std::env::remove_var("OPENHUMAN_WORKSPACE");
-        }
     }
 }

@@ -1,3 +1,4 @@
+use serde::de::{self, DeserializeOwned};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -9,9 +10,9 @@ use super::ops::StoredAppStatePatch;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateLocalStateParams {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     encryption_key: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     onboarding_tasks: Option<Option<super::ops::StoredOnboardingTasks>>,
 }
 
@@ -115,6 +116,21 @@ fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
     }
 }
 
+fn deserialize_nullable_patch<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        Some(value) => T::deserialize(value)
+            .map(Some)
+            .map(Some)
+            .map_err(de::Error::custom),
+        None => Ok(Some(None)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +215,16 @@ mod tests {
         let params: UpdateLocalStateParams =
             serde_json::from_value(serde_json::Value::Object(m)).unwrap();
         assert!(params.encryption_key.is_some());
+    }
+
+    #[test]
+    fn deserialize_update_local_state_params_with_null_clears_value() {
+        let mut m = Map::new();
+        m.insert("encryptionKey".into(), serde_json::Value::Null);
+        m.insert("onboardingTasks".into(), serde_json::Value::Null);
+        let params: UpdateLocalStateParams =
+            serde_json::from_value(serde_json::Value::Object(m)).unwrap();
+        assert_eq!(params.encryption_key, Some(None));
+        assert!(matches!(params.onboarding_tasks, Some(None)));
     }
 }

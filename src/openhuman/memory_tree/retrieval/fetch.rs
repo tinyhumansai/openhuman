@@ -13,10 +13,10 @@
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::store::get_chunk;
+use crate::openhuman::memory_store::chunks::store::get_chunks_batch;
 use crate::openhuman::memory_store::content::read as content_read;
 use crate::openhuman::memory_tree::retrieval::types::{hit_from_chunk, RetrievalHit};
-use crate::openhuman::memory_tree::score::store::get_score;
+use crate::openhuman::memory_tree::score::store::get_scores_batch;
 
 /// Max batch size. Callers that pass more than this get truncated with a
 /// warn log — no error surface so the LLM sees a partial result.
@@ -47,22 +47,33 @@ pub async fn fetch_leaves(config: &Config, chunk_ids: &[String]) -> Result<Vec<R
 
     let config_owned = config.clone();
     let hits = tokio::task::spawn_blocking(move || -> Result<Vec<RetrievalHit>> {
+        // Two batched SQLite reads up front instead of 2N per-id queries
+        // inside the loop. With the `MAX_BATCH = 20` cap above, this turns
+        // 40 round-trips into 2. Per-row decoders are reused inside both
+        // helpers so the returned `Chunk` and `score.total` values are
+        // byte-identical to the old per-id path. Missing ids are absent
+        // from the maps (same contract as `get_chunk` / `get_score`
+        // returning `Ok(None)`).
+        let chunk_by_id = get_chunks_batch(&config_owned, &ids)?;
+        let score_by_id = get_scores_batch(&config_owned, &ids)?;
+
+        // Walk the input ids in order so the response preserves caller
+        // ordering. Missing ids are dropped exactly as before — callers
+        // detect partial results via `hits.len() < ids.len()`. File I/O
+        // (`read_chunk_body`) stays per-id: each MD body lives in its
+        // own on-disk file, so batching there would mean concurrent file
+        // opens, not a single round-trip — left untouched.
         let mut out: Vec<RetrievalHit> = Vec::with_capacity(ids.len());
-        for id in &ids {
-            let chunk = match get_chunk(&config_owned, id)? {
-                Some(c) => c,
-                None => {
-                    log::debug!(
-                        "[retrieval::fetch] chunk not found — skipping (1 of {} requested)",
-                        ids.len()
-                    );
-                    continue;
-                }
+        for (idx, id) in ids.iter().enumerate() {
+            let Some(chunk) = chunk_by_id.get(id) else {
+                log::debug!(
+                    "[retrieval::fetch] chunk not found at index {}/{} — skipping",
+                    idx + 1,
+                    ids.len()
+                );
+                continue;
             };
-            let score = match get_score(&config_owned, id)? {
-                Some(s) => s.total,
-                None => 0.0,
-            };
+            let score = score_by_id.get(id).copied().unwrap_or(0.0);
             // Leaves are not attached to a materialised tree id via the
             // chunk row. `scope` falls back to the chunk's own source_id so
             // consumers still see provenance (e.g. "slack:#eng").
@@ -71,7 +82,7 @@ pub async fn fetch_leaves(config: &Config, chunk_ids: &[String]) -> Result<Vec<R
             // The `content` column in SQLite holds a ≤500-char preview after
             // the MD-on-disk migration; the retrieval API must return the
             // complete chunk text so the LLM sees untruncated content.
-            let mut chunk_with_body = chunk;
+            let mut chunk_with_body = chunk.clone();
             match content_read::read_chunk_body(&config_owned, id) {
                 Ok(body) => chunk_with_body.content = body,
                 Err(e) => {
@@ -212,5 +223,72 @@ mod tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].source_ref.as_deref(), Some("slack://slack:#eng/0"));
         assert_eq!(out[0].tree_scope, "slack:#eng");
+    }
+
+    /// After the batch refactor, ordering and score propagation rely on
+    /// walking the input slice and looking each id up in two HashMaps
+    /// (chunk + score). This test pins both invariants: interleaved
+    /// present/missing ids keep their input order, and each kept hit
+    /// carries the score from its own `mem_tree_score` row (not the
+    /// row of a neighbour, not the 0.0 fallback when a row exists).
+    #[tokio::test]
+    async fn fetch_leaves_preserves_input_order_and_propagates_scores() {
+        use crate::openhuman::memory_tree::score::signals::ScoreSignals;
+        use crate::openhuman::memory_tree::score::store::{upsert_score, ScoreRow};
+
+        let (_tmp, cfg) = test_config();
+        let c1 = sample_chunk("slack:#eng", 0);
+        let c2 = sample_chunk("slack:#eng", 1);
+        let c3 = sample_chunk("slack:#eng", 2);
+        upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+        stage_test_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]);
+
+        // Distinct totals so we can tell which chunk a hit's score came
+        // from — proves the per-id HashMap lookup keys by chunk_id and
+        // not by iteration index.
+        let mk_row = |id: &str, total: f32| ScoreRow {
+            chunk_id: id.to_string(),
+            total,
+            signals: ScoreSignals {
+                token_count: 0.0,
+                unique_words: 0.0,
+                metadata_weight: 0.0,
+                source_weight: 0.0,
+                interaction: 0.0,
+                entity_density: 0.0,
+                llm_importance: 0.0,
+            },
+            llm_importance_reason: None,
+            dropped: false,
+            reason: None,
+            computed_at_ms: 0,
+        };
+        upsert_score(&cfg, &mk_row(&c1.id, 0.1)).unwrap();
+        upsert_score(&cfg, &mk_row(&c2.id, 0.2)).unwrap();
+        // c3 intentionally has NO score row so we also pin the 0.0
+        // fallback after the get_scores_batch contract.
+
+        // Request order: c2, ghost, c3, c1 — none in natural id order.
+        let out = fetch_leaves(
+            &cfg,
+            &[
+                c2.id.clone(),
+                "ghost:no-such".into(),
+                c3.id.clone(),
+                c1.id.clone(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.len(), 3, "ghost dropped, 3 real chunks returned");
+        assert_eq!(out[0].node_id, c2.id);
+        assert_eq!(out[1].node_id, c3.id);
+        assert_eq!(out[2].node_id, c1.id);
+        assert!((out[0].score - 0.2).abs() < 1e-6, "c2 score");
+        assert!(
+            out[1].score.abs() < 1e-6,
+            "c3 has no score row → 0.0 fallback"
+        );
+        assert!((out[2].score - 0.1).abs() < 1e-6, "c1 score");
     }
 }

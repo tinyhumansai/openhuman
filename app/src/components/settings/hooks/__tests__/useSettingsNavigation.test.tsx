@@ -18,9 +18,16 @@ describe('useSettingsNavigation breadcrumbs', () => {
     expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
   });
 
-  test('notifications returns Settings (top-level)', () => {
+  test('notifications-hub returns Settings > Developer Options', () => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications-hub'] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Developer Options');
+  });
+
+  test('notifications panel nests under Settings > Developer Options > Notifications', () => {
     renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/notifications'] });
-    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent(
+      'Settings > Developer Options > Notifications'
+    );
   });
 
   test('developer-options returns Settings (section page)', () => {
@@ -31,5 +38,20 @@ describe('useSettingsNavigation breadcrumbs', () => {
   test('persona returns Settings (top-level)', () => {
     renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/persona'] });
     expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
+  });
+
+  test('crypto returns Settings (section page)', () => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/crypto'] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
+  });
+
+  test('recovery-phrase returns Settings > Crypto', () => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/recovery-phrase'] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Crypto');
+  });
+
+  test('wallet-balances returns Settings > Crypto', () => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/wallet-balances'] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings > Crypto');
   });
 });
