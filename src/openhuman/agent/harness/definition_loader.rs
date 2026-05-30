@@ -95,7 +95,7 @@ pub fn load_dir(dir: &Path, out: &mut Vec<AgentDefinition>) -> Result<()> {
 ///
 /// Rejects definitions that omit (or leave blank) their `system_prompt`
 /// — built-in agents are loaded separately and have their prompts
-/// injected by [`crate::openhuman::agent::agents::load_builtins`], so a
+/// injected by [`crate::openhuman::agent_registry::agents::load_builtins`], so a
 /// file-loaded definition that arrives with the
 /// [`defaults::empty_inline_prompt`] placeholder is always a caller
 /// mistake. Custom definitions must set either

@@ -21,15 +21,44 @@ use super::UnifiedMemory;
 impl UnifiedMemory {
     /// Open (or create) the unified store rooted at `workspace_dir`.
     ///
-    /// Creates the on-disk layout, runs all `CREATE TABLE` statements, and
-    /// applies idempotent legacy-namespace migrations. Safe to call on every
-    /// boot.
+    /// Delegates to [`Self::new_with_memory_dir`] using the default
+    /// `"memory"` subdirectory name. Safe to call on every boot.
     pub fn new(
         workspace_dir: &Path,
         embedder: Arc<dyn EmbeddingProvider>,
         _open_timeout_secs: Option<u64>,
     ) -> anyhow::Result<Self> {
-        let memory_dir = workspace_dir.join("memory");
+        Self::new_with_memory_dir(workspace_dir, "memory", embedder, _open_timeout_secs)
+    }
+
+    /// Open (or create) a unified store using an explicit memory subdirectory
+    /// name under `workspace_dir`.
+    ///
+    /// This enables multiple independent stores inside the same workspace (e.g.
+    /// per-personality databases) without path collisions. `memory_subdir` is
+    /// joined directly to `workspace_dir`, so `"memory-1"` yields
+    /// `workspace_dir/memory-1/memory.db`.
+    ///
+    /// Creates the on-disk layout, runs all `CREATE TABLE` statements, and
+    /// applies idempotent legacy-namespace migrations. Safe to call on every
+    /// boot.
+    pub fn new_with_memory_dir(
+        workspace_dir: &Path,
+        memory_subdir: &str,
+        embedder: Arc<dyn EmbeddingProvider>,
+        _open_timeout_secs: Option<u64>,
+    ) -> anyhow::Result<Self> {
+        use std::path::Component;
+        anyhow::ensure!(!memory_subdir.is_empty(), "memory_subdir must not be empty");
+        let subdir_path = Path::new(memory_subdir);
+        anyhow::ensure!(
+            subdir_path.components().count() == 1
+                && subdir_path
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_))),
+            "memory_subdir must be a single relative path component without traversal"
+        );
+        let memory_dir = workspace_dir.join(subdir_path);
         let namespaces_dir = memory_dir.join("namespaces");
         let vectors_dir = memory_dir.join("vectors");
         std::fs::create_dir_all(&namespaces_dir)?;
@@ -262,6 +291,7 @@ impl UnifiedMemory {
 
         Ok(Self {
             workspace_dir: workspace_dir.to_path_buf(),
+            memory_dir,
             db_path,
             vectors_dir,
             conn: Arc::new(Mutex::new(conn)),
@@ -309,9 +339,15 @@ impl UnifiedMemory {
             .collect()
     }
 
+    /// Resolved memory subdirectory for this store instance (e.g.
+    /// `workspace_dir/memory` for the default store, or a custom subdir for
+    /// personality-specific stores).
+    pub fn memory_dir(&self) -> &Path {
+        &self.memory_dir
+    }
+
     pub(crate) fn namespace_dir(&self, namespace: &str) -> PathBuf {
-        self.workspace_dir
-            .join("memory")
+        self.memory_dir
             .join("namespaces")
             .join(Self::sanitize_namespace(namespace))
     }
@@ -346,6 +382,32 @@ mod tests {
                 .join("namespaces")
                 .join("team_alpha/_1")
         );
+    }
+
+    #[test]
+    fn new_with_memory_dir_creates_separate_db() {
+        let tmp = TempDir::new().unwrap();
+        let mem1 = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).unwrap();
+        let mem2 = UnifiedMemory::new_with_memory_dir(
+            tmp.path(),
+            "memory-1",
+            Arc::new(NoopEmbedding),
+            None,
+        )
+        .unwrap();
+        assert_ne!(mem1.db_path(), mem2.db_path());
+        assert!(
+            mem1.db_path().ends_with("memory/memory.db"),
+            "expected mem1 db under memory/memory.db, got {:?}",
+            mem1.db_path()
+        );
+        assert!(
+            mem2.db_path().ends_with("memory-1/memory.db"),
+            "expected mem2 db under memory-1/memory.db, got {:?}",
+            mem2.db_path()
+        );
+        assert!(mem1.db_path().exists(), "mem1 db file must exist on disk");
+        assert!(mem2.db_path().exists(), "mem2 db file must exist on disk");
     }
 
     #[test]

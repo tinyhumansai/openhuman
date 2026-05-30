@@ -6,6 +6,24 @@ use std::sync::LazyLock;
 
 static NO_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
 
+/// Build a `NamespaceSummary` with a fixed `updated_at` (#2944), so
+/// freshness-label assertions are deterministic.
+fn ns_summary_at(namespace: &str, body: &str, rfc3339: &str) -> NamespaceSummary {
+    NamespaceSummary {
+        namespace: namespace.into(),
+        body: body.into(),
+        updated_at: chrono::DateTime::parse_from_rfc3339(rfc3339)
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+    }
+}
+
+/// `NamespaceSummary` with an arbitrary fixed date, for tests that don't
+/// assert on the freshness stamp itself.
+fn ns_summary(namespace: &str, body: &str) -> NamespaceSummary {
+    ns_summary_at(namespace, body, "2026-01-01T00:00:00Z")
+}
+
 struct TestTool;
 
 #[async_trait]
@@ -50,6 +68,9 @@ fn prompt_builder_assembles_sections() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
     assert!(rendered.contains("## Tools"));
@@ -81,6 +102,9 @@ fn identity_section_creates_missing_workspace_files() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
 
     let section = IdentitySection;
@@ -121,6 +145,9 @@ fn datetime_section_includes_timestamp_and_timezone() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
 
     let rendered = DateTimeSection.build(&ctx).unwrap();
@@ -163,6 +190,9 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: identity,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     }
 }
 
@@ -302,6 +332,9 @@ fn tools_section_pformat_renders_signature_not_schema() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
 
     let rendered = ToolsSection.build(&ctx).unwrap();
@@ -342,6 +375,9 @@ fn tools_section_uses_pformat_signature_for_text_dispatchers() {
             include_memory_md: false,
             curated_snapshot: None,
             user_identity: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            personality_roster: vec![],
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
         assert!(
@@ -359,10 +395,15 @@ fn tools_section_uses_pformat_signature_for_text_dispatchers() {
 fn user_memory_section_renders_namespaces_with_headings() {
     let learned = LearnedContextData {
         tree_root_summaries: vec![
-            ("user".into(), "Steven prefers terse Rust answers.".into()),
-            (
-                "conversations".into(),
-                "Recent thread: prompt rework.".into(),
+            ns_summary_at(
+                "user",
+                "Steven prefers terse Rust answers.",
+                "2026-05-25T00:00:00Z",
+            ),
+            ns_summary_at(
+                "conversations",
+                "Recent thread: prompt rework.",
+                "2026-05-25T00:00:00Z",
             ),
         ],
         ..Default::default()
@@ -384,11 +425,60 @@ fn user_memory_section_renders_namespaces_with_headings() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.starts_with("## User Memory\n\n"));
-    assert!(rendered.contains("### user\n\nSteven prefers terse Rust answers."));
-    assert!(rendered.contains("### conversations\n\nRecent thread: prompt rework."));
+    assert!(
+        rendered
+            .contains("### user (last updated 2026-05-25)\n\nSteven prefers terse Rust answers."),
+        "heading must carry the absolute update date (#2944); got:\n{rendered}"
+    );
+    assert!(rendered
+        .contains("### conversations (last updated 2026-05-25)\n\nRecent thread: prompt rework."));
+}
+
+#[test]
+fn memory_date_label_formats_absolute_utc_date() {
+    let dt = chrono::DateTime::parse_from_rfc3339("2026-05-25T18:30:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    // Absolute date, no time-of-day — must stay byte-stable day to day.
+    assert_eq!(memory_date_label(dt), "2026-05-25");
+}
+
+#[test]
+fn user_memory_section_labels_stale_summary_and_warns_against_present_tense() {
+    // #2944 regression: a summary last updated weeks ago must render with
+    // its absolute date, and the section must steer the model to compare
+    // against the current date — so a May-25 briefing is never served as
+    // today's.
+    let learned = LearnedContextData {
+        tree_root_summaries: vec![ns_summary_at(
+            "briefings",
+            "Daily briefing: 2 meetings, proposal due.",
+            "2026-05-25T07:00:00Z",
+        )],
+        ..Default::default()
+    };
+    let rendered = UserMemorySection.build(&ctx_with_learned(learned)).unwrap();
+
+    assert!(
+        rendered.contains("### briefings (last updated 2026-05-25)"),
+        "stale summary must carry its absolute update date; got:\n{rendered}"
+    );
+    // Guardrail: tell the model to cross-check against the current date
+    // and not restate older memory as today's.
+    assert!(
+        rendered.contains("Current Date & Time"),
+        "section must reference the current-date block; got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("never present older memory as"),
+        "section must forbid presenting stale memory as current; got:\n{rendered}"
+    );
 }
 
 #[test]
@@ -414,6 +504,9 @@ fn user_memory_section_returns_empty_when_no_summaries() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.is_empty());
@@ -1059,6 +1152,9 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         include_memory_md: true,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
 
     // Test a narrow-agent runtime path:
@@ -1102,6 +1198,9 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let narrow = builder.build(&ctx_narrow).unwrap();
     assert!(
@@ -1168,10 +1267,7 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         skills: &[],
         dispatcher_instructions: "",
         learned: LearnedContextData {
-            tree_root_summaries: vec![
-                ("user".into(), "kept".into()),
-                ("empty".into(), "   ".into()),
-            ],
+            tree_root_summaries: vec![ns_summary("user", "kept"), ns_summary("empty", "   ")],
             ..Default::default()
         },
         visible_tool_names: &NO_FILTER,
@@ -1182,6 +1278,9 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.contains("### user"));
@@ -1207,6 +1306,9 @@ fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     }
 }
 
@@ -1302,7 +1404,7 @@ fn user_reflections_render_above_user_memory_when_both_present() {
     // UserMemorySection content).
     let ctx = ctx_with_learned(LearnedContextData {
         reflections: vec!["I want terse answers".into()],
-        tree_root_summaries: vec![("user".into(), "Generic summary".into())],
+        tree_root_summaries: vec![ns_summary("user", "Generic summary")],
         ..Default::default()
     });
     let reflections = UserReflectionsSection.build(&ctx).unwrap();
@@ -1343,6 +1445,9 @@ fn tools_section_empty_for_native() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1373,6 +1478,9 @@ fn tools_section_nonempty_for_pformat() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1405,6 +1513,9 @@ fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(

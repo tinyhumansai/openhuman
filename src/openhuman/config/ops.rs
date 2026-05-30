@@ -377,6 +377,7 @@ pub struct AutonomySettingsPatch {
     pub max_actions_per_hour: Option<u32>,
     /// "Always allow" allowlist — tool names the gate skips prompting for.
     pub auto_approve: Option<Vec<String>>,
+    pub require_task_plan_approval: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -410,7 +411,7 @@ pub struct MeetSettingsPatch {
 
 #[derive(Debug, Clone, Default)]
 pub struct SearchSettingsPatch {
-    /// One of `managed` | `parallel` | `brave` | `querit`.
+    /// One of `disabled` | `managed` | `parallel` | `brave` | `querit`.
     /// Empty/unknown values are rejected by `apply_search_settings`.
     /// Runtime fallback to `managed` applies only to persisted/legacy config
     /// values resolved by `SearchConfig::effective_engine()`.
@@ -870,6 +871,9 @@ pub async fn apply_autonomy_settings(
     if let Some(auto_approve) = update.auto_approve {
         config.autonomy.auto_approve = auto_approve;
     }
+    if let Some(require_task_plan_approval) = update.require_task_plan_approval {
+        config.autonomy.require_task_plan_approval = require_task_plan_approval;
+    }
 
     config.save().await.map_err(|e| e.to_string())?;
 
@@ -1012,12 +1016,12 @@ pub async fn apply_search_settings(
         // time via `effective_engine()`, but failing fast in the writer keeps
         // the TOML clean.
         match trimmed {
-            "managed" | "parallel" | "brave" | "querit" => {
+            "disabled" | "managed" | "parallel" | "brave" | "querit" => {
                 config.search.engine = trimmed.to_string();
             }
             other => {
                 return Err(format!(
-                    "engine must be one of managed/parallel/brave/querit (got {other:?})"
+                    "engine must be one of disabled/managed/parallel/brave/querit (got {other:?})"
                 ));
             }
         }
@@ -1124,6 +1128,7 @@ pub async fn get_search_settings() -> Result<RpcOutcome<serde_json::Value>, Stri
     let result = serde_json::json!({
         "engine": config.search.requested_engine_str(),
         "effective_engine": match config.search.effective_engine() {
+            crate::openhuman::config::SearchEngine::Disabled => "disabled",
             crate::openhuman::config::SearchEngine::Managed => "managed",
             crate::openhuman::config::SearchEngine::Parallel => "parallel",
             crate::openhuman::config::SearchEngine::Brave => "brave",

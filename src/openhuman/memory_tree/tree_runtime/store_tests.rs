@@ -205,6 +205,34 @@ fn frontmatter_parsing() {
 }
 
 #[test]
+fn parse_node_markdown_uses_deterministic_fallback_timestamps() {
+    // #2944: `updated_at` now flows into the system prompt as a freshness
+    // stamp, and the renderer relies on byte-stable output for KV-cache
+    // reuse. Legacy nodes that predate the `created_at`/`updated_at`
+    // frontmatter must therefore fall back deterministically — never to
+    // `Utc::now()`, which would change on every read and masquerade an
+    // undated node as "fresh today".
+
+    // No timestamps at all → both fall back to UNIX_EPOCH (renders as an
+    // unmistakably ancient date rather than today's).
+    let raw = "---\nnode_id: \"root\"\nlevel: root\n---\n\nUndated summary.";
+    let node = parse_node_markdown_pub(raw, "ns", "root").unwrap();
+    assert_eq!(node.created_at, DateTime::<Utc>::UNIX_EPOCH);
+    assert_eq!(node.updated_at, DateTime::<Utc>::UNIX_EPOCH);
+
+    // `created_at` present but `updated_at` missing → `updated_at` falls
+    // back to `created_at`, its best estimate of last-touched.
+    let raw =
+        "---\nnode_id: \"root\"\nlevel: root\ncreated_at: 2026-05-25T09:00:00Z\n---\n\nSummary.";
+    let node = parse_node_markdown_pub(raw, "ns", "root").unwrap();
+    let created = DateTime::parse_from_rfc3339("2026-05-25T09:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    assert_eq!(node.created_at, created);
+    assert_eq!(node.updated_at, created);
+}
+
+#[test]
 fn validate_node_id_accepts_valid() {
     assert!(validate_node_id("root").is_ok());
     assert!(validate_node_id("2024").is_ok());
@@ -278,13 +306,34 @@ fn collect_root_summaries_respects_per_namespace_cap() {
     // Per-namespace cap of 10 should clip the body.
     let result = collect_root_summaries_with_caps(&config.workspace_dir, 10, 10_000);
     assert_eq!(result.len(), 1);
-    let (ns, body) = &result[0];
+    let (ns, body, _updated_at) = &result[0];
     assert_eq!(ns, "ns");
     assert!(
         body.starts_with("xxxxxxxxxx"),
         "expected the first 10 x's, got: {body}"
     );
     assert!(body.contains("[... truncated]"));
+}
+
+#[test]
+fn collect_root_summaries_carries_root_updated_at() {
+    // #2944: the namespace root's `updated_at` must survive the
+    // disk round-trip so the prompt renderer can stamp memory freshness.
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+
+    let fixed = chrono::DateTime::parse_from_rfc3339("2026-05-25T09:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let mut node = make_node("ns", "root", "summary body");
+    node.updated_at = fixed;
+    write_node(&config, &node).unwrap();
+
+    let result = collect_root_summaries_with_caps(&config.workspace_dir, 1000, 10_000);
+    assert_eq!(result.len(), 1);
+    let (ns, _body, updated_at) = &result[0];
+    assert_eq!(ns, "ns");
+    assert_eq!(*updated_at, fixed, "root updated_at must round-trip");
 }
 
 #[test]

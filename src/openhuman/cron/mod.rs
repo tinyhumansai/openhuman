@@ -4,6 +4,7 @@ mod schedule;
 mod schemas;
 pub mod seed;
 mod store;
+pub mod tools;
 mod types;
 
 pub mod scheduler;

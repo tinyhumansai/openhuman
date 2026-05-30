@@ -51,13 +51,13 @@ fn report_ollama_health_gate_once(base_url: &str, model: &str) -> bool {
     let sentry_message = format!(
         "ollama embeddings opted-in but daemon unreachable at {base_url}; falling back to cloud embeddings for this session"
     );
-    // Route through `report_error_or_expected` so the GX arm of
-    // `is_ollama_user_config_rejection` in `expected_error_kind` demotes
-    // the message to an info breadcrumb (user-state: ollama daemon not
-    // running). Direct `report_error_message` here bypassed the classifier
-    // and produced TAURI-RUST-B (~409 events). The `&str` input avoids
-    // the `format!("{:#}")` round-trip that `report_error` would do on an
-    // anyhow chain — the wire shape stays bit-identical.
+    // Route through `report_error_or_expected` so the `expected_error_kind`
+    // classifier runs. The wire shape `"ollama embeddings opted-in but daemon
+    // unreachable at …"` matches `is_ollama_user_config_rejection` → routes to
+    // `ExpectedErrorKind::ProviderUserState` → demoted to a warn breadcrumb,
+    // NOT a Sentry error event. Using `report_error_message` directly would
+    // bypass the classifier and fire `sentry::capture_message(…, Level::Error)`
+    // unconditionally — the root cause of TAURI-RUST-B (472 events).
     crate::core::observability::report_error_or_expected(
         sentry_message.as_str(),
         "memory",
@@ -764,6 +764,27 @@ mod tests {
         assert!(
             !report_ollama_health_gate_once("http://example.invalid:11434", "nomic-embed-text"),
             "different URL also suppressed — gate is process-scoped, not per-URL"
+        );
+    }
+
+    /// TAURI-RUST-B (issue #2921): the exact wire shape produced by
+    /// `report_ollama_health_gate_once` must classify as
+    /// `ExpectedErrorKind::ProviderUserState` so `report_error_or_expected`
+    /// routes it to a warn breadcrumb rather than a Sentry error event.
+    ///
+    /// Previously the gate called `report_error_message` directly, bypassing
+    /// the classifier and firing `sentry::capture_message(…, Level::Error)`
+    /// unconditionally for every process restart where Ollama was opted-in but
+    /// not running (472 events at time of fix). The fix routes through
+    /// `report_error_or_expected` which checks `expected_error_kind` first.
+    #[test]
+    fn tauri_rust_b_wire_shape_classifies_as_expected() {
+        // Canonical format produced by `report_ollama_health_gate_once`.
+        let msg = "ollama embeddings opted-in but daemon unreachable at http://localhost:11434; falling back to cloud embeddings for this session";
+        assert_eq!(
+            crate::core::observability::expected_error_kind(msg),
+            Some(crate::core::observability::ExpectedErrorKind::ProviderUserState),
+            "TAURI-RUST-B — daemon-unreachable health-gate message must demote to ProviderUserState, not fire as Sentry error"
         );
     }
 }

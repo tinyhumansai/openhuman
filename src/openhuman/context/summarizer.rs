@@ -288,7 +288,9 @@ fn render_transcript(msgs: &[ConversationMessage]) -> String {
             ConversationMessage::Chat(m) => {
                 let _ = writeln!(&mut out, "[{i}] {}: {}", m.role, m.content);
             }
-            ConversationMessage::AssistantToolCalls { text, tool_calls } => {
+            ConversationMessage::AssistantToolCalls {
+                text, tool_calls, ..
+            } => {
                 if let Some(t) = text.as_deref() {
                     if !t.is_empty() {
                         let _ = writeln!(&mut out, "[{i}] assistant: {t}");

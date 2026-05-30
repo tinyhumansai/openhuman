@@ -1,5 +1,5 @@
 ---
-description: End-to-end testing with WDIO + tauri-driver / Appium. CI and local setup.
+description: End-to-end testing with WDIO + Appium. CI and local setup.
 icon: vials
 ---
 
@@ -7,24 +7,25 @@ icon: vials
 
 ## Overview
 
-Desktop E2E tests use **WebDriverIO (WDIO)** to drive the Tauri app via two automation backends:
+Desktop E2E tests use **WebDriverIO (WDIO)** to drive the Tauri app through Appium:
 
-| Platform | Driver | Port | App format | Selectors |
-|----------|--------|------|------------|-----------|
-| **Linux / CEF status** | `tauri-driver` | 4444 | Debug binary | CSS / DOM |
-| **macOS / Appium** | Appium Mac2 | 4723 | `.app` bundle | XPath / accessibility |
+| Platform                    | Driver          | Port | App format    | Selectors |
+| --------------------------- | --------------- | ---- | ------------- | --------- |
+| **Linux / Appium Chromium** | Appium Chromium | 4723 | Debug binary  | CSS / DOM |
+| **macOS / Appium Chromium** | Appium Chromium | 4723 | `.app` bundle | CSS / DOM |
 
-OpenHuman's desktop app currently uses the CEF runtime (`tauri-runtime-cef`). Linux `tauri-driver` talks to WebKitWebDriver / webkit2gtk and cannot drive a CEF-backed WebView, so Linux CEF E2E is disabled in CI until a CEF-compatible driver or replacement harness exists. The supported path today is macOS/Appium for local runs, with manual macOS/Appium workflow runs when that workflow is enabled.
+OpenHuman's desktop app currently uses the CEF runtime (`tauri-runtime-cef`). CI drives the Linux debug binary with Appium's Chromium driver; manual macOS and Windows E2E use the same Chromium-driver backend.
 
 ---
 
 ## Quick start
 
-### Linux / CEF status
+### Linux / Appium Chromium
 
 ```bash
-# Install tauri-driver (one-time)
-cargo install tauri-driver
+# Install Appium and the Chromium driver (one-time)
+npm install -g appium@3
+appium driver install --source=npm appium-chromium-driver
 
 # Build the E2E app
 pnpm --filter openhuman-app test:e2e:build
@@ -36,14 +37,14 @@ pnpm --filter openhuman-app test:e2e:all:flows
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/smoke.spec.ts smoke
 ```
 
-On headless Linux, the harness runs under **Xvfb** for a virtual display. This path is currently useful only for non-CEF / WebKit-compatible debugging; the default CEF app cannot be automated by WebKitWebDriver.
+On headless Linux, the harness runs under **Xvfb** for a virtual display.
 
-### macOS / Appium
+### macOS / Appium Chromium
 
 ```bash
-# Install Appium + Mac2 driver (one-time, needs Node 24+)
-npm install -g appium
-appium driver install mac2
+# Install Appium + Chromium driver (one-time, needs Node 24+)
+npm install -g appium@3
+appium driver install --source=npm appium-chromium-driver
 
 # Build the .app bundle
 pnpm --filter openhuman-app test:e2e:build
@@ -54,7 +55,7 @@ pnpm --filter openhuman-app test:e2e:all:flows
 
 ### Docker on macOS (Linux harness locally)
 
-Run the same Linux-based harness from macOS using Docker. The same CEF limitation applies: this is not a supported path for the default CEF runtime until a CEF-compatible driver exists.
+Run the same Linux-based harness from macOS using Docker.
 
 ```bash
 # Build + run all E2E flows
@@ -79,25 +80,25 @@ Requires Docker Desktop or Colima. The repo is bind-mounted so builds persist be
 
 `app/test/e2e/helpers/platform.ts` exports:
 
-- `isTauriDriver()`, `true` on Linux (tauri-driver session)
-- `isMac2()`, `true` on macOS (Appium Mac2 session)
-- `supportsExecuteScript()`, `true` when `browser.execute()` works (tauri-driver only)
+- `isTauriDriver()`, legacy shim that now always returns `true` for the DOM-capable Chromium session
+- `isMac2()`, legacy shim that now always returns `false`
+- `supportsExecuteScript()`, `true` because the Chromium driver supports `browser.execute()` on every platform
 
 ### Element helpers
 
 `app/test/e2e/helpers/element-helpers.ts` provides a unified API:
 
-| Helper | Mac2 (macOS) | tauri-driver (Linux) |
-|--------|-------------|---------------------|
-| `waitForText(text)` | XPath over @label/@value/@title | XPath over DOM text content |
-| `waitForButton(text)` | XCUIElementTypeButton XPath | `button` / `[role="button"]` XPath |
-| `clickText(text)` | W3C pointer actions | Standard `el.click()` |
-| `clickNativeButton(text)` | W3C pointer actions on XCUIElementTypeButton | Standard `el.click()` on button |
-| `clickToggle()` | XCUIElementTypeSwitch / XCUIElementTypeCheckBox | `[role="switch"]` / `input[type="checkbox"]` |
-| `waitForWindowVisible()` | XCUIElementTypeWindow | Window handle check |
-| `waitForWebView()` | XCUIElementTypeWebView | `document.readyState` check |
-| `hasAppChrome()` | XCUIElementTypeMenuBar | Window handle check |
-| `dumpAccessibilityTree()` | Accessibility XML | HTML page source |
+| Helper                    | Appium Chromium                              |
+| ------------------------- | -------------------------------------------- |
+| `waitForText(text)`       | XPath over DOM text content                  |
+| `waitForButton(text)`     | `button` / `[role="button"]` XPath           |
+| `clickText(text)`         | Standard `el.click()`                        |
+| `clickNativeButton(text)` | Standard `el.click()` on button              |
+| `clickToggle()`           | `[role="switch"]` / `input[type="checkbox"]` |
+| `waitForWindowVisible()`  | Window handle check                          |
+| `waitForWebView()`        | `document.readyState` check                  |
+| `hasAppChrome()`          | Window handle check                          |
+| `dumpAccessibilityTree()` | HTML page source                             |
 
 ### Stable test IDs
 
@@ -116,8 +117,8 @@ Use `waitForTestId(testId)` and `clickTestId(testId)` from `element-helpers.ts` 
 
 `app/test/e2e/helpers/deep-link-helpers.ts` handles auth deep links:
 
-- **tauri-driver**: `browser.execute(window.__simulateDeepLink(url))` (primary), `xdg-open` (fallback)
-- **Appium Mac2**: `macos: deepLink` extension command (primary), `open -a ...` (fallback)
+- **Appium Chromium**: `browser.execute(window.__simulateDeepLink(url))` on every platform
+- **macOS fallback**: `macos: deepLink` extension command, then `open -a ...`
 
 For release candidates, also run one manual secondary-instance smoke on Linux
 or macOS when touching CEF preflight, single-instance, or deep-link startup
@@ -148,17 +149,16 @@ CEF cache preflight before Tauri's deep-link forwarding path is installed.
 
 ## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TAURI_DRIVER_PORT` | `4444` | tauri-driver WebDriver port |
-| `APPIUM_PORT` | `4723` | Appium server port |
-| `E2E_MOCK_PORT` | `18473` | Mock backend server port |
-| `OPENHUMAN_WORKSPACE` | (temp dir) | App workspace directory |
-| `OPENHUMAN_SERVICE_MOCK` | `0` | Enable service mock mode |
-| `OPENHUMAN_E2E_MODE` | unset | Enables destructive test-support RPCs; the E2E runner sets this to `1` |
-| `OPENHUMAN_E2E_AUTH_BYPASS` | unset | Enable JWT bypass auth |
-| `DEBUG_E2E_DEEPLINK` | (verbose) | Set to `0` to silence deep link logs |
-| `E2E_FORCE_CARGO_CLEAN` | unset | Force cargo clean before E2E build |
+| Variable                    | Default    | Description                                                            |
+| --------------------------- | ---------- | ---------------------------------------------------------------------- |
+| `APPIUM_PORT`               | `4723`     | Appium server port                                                     |
+| `E2E_MOCK_PORT`             | `18473`    | Mock backend server port                                               |
+| `OPENHUMAN_WORKSPACE`       | (temp dir) | App workspace directory                                                |
+| `OPENHUMAN_SERVICE_MOCK`    | `0`        | Enable service mock mode                                               |
+| `OPENHUMAN_E2E_MODE`        | unset      | Enables destructive test-support RPCs; the E2E runner sets this to `1` |
+| `OPENHUMAN_E2E_AUTH_BYPASS` | unset      | Enable JWT bypass auth                                                 |
+| `DEBUG_E2E_DEEPLINK`        | (verbose)  | Set to `0` to silence deep link logs                                   |
+| `E2E_FORCE_CARGO_CLEAN`     | unset      | Force cargo clean before E2E build                                     |
 
 ---
 
@@ -166,18 +166,15 @@ CEF cache preflight before Tauri's deep-link forwarding path is installed.
 
 ### Push / PR checks
 
-The default `test.yml` workflow runs frontend unit tests and Rust checks. Its Linux `tauri-driver` E2E job is commented out because WebKitWebDriver cannot drive the CEF-backed WebView.
+The default pull-request gate is `.github/workflows/pr-ci.yml`. It builds one Linux E2E-compatible desktop artifact, then runs the Linux Appium/Chromium `mega-flow` lane and the Playwright web lane in parallel with Rust and coverage jobs.
 
-The disabled Linux E2E job used to:
-1. Installs system deps (webkit2gtk, Xvfb, dbus)
-2. Installs `tauri-driver` via cargo
-3. Builds the app with mock server URL baked in
-4. Runs all E2E flows under Xvfb
+macOS and Windows desktop E2E do not run on every PR. Use the manually dispatched E2E workflow, or release pretest workflows, when cross-platform desktop signal is needed.
 
-### macOS / Appium
+### macOS / Appium Chromium
 
-macOS/Appium is the supported automation backend for the current CEF desktop app. Run it locally, or through a manually dispatched macOS workflow when that workflow is enabled:
-1. Installs Appium + Mac2 driver
+macOS/Appium Chromium is available for local runs and through the manually dispatched E2E workflow:
+
+1. Installs Appium + Chromium driver
 2. Builds the `.app` bundle
 3. Runs all E2E flows
 
@@ -187,23 +184,26 @@ macOS/Appium is the supported automation backend for the current CEF desktop app
 
 ### Linux: "WebView not ready" timeout
 
-For the default CEF runtime, this usually means the unsupported Linux `tauri-driver` path is trying to drive a CEF-backed WebView through WebKitWebDriver. Use macOS/Appium, or wait for a CEF-compatible Linux driver.
+For the default CEF runtime, this usually means a stale local runner is trying to drive a CEF-backed WebView through WebKitWebDriver. Current CI uses the Appium Chromium driver on Linux; use `app/scripts/e2e-run-session.sh` or the PR CI workflow for the supported Linux path.
 
 Ensure `DISPLAY` is set and Xvfb is running:
+
 ```bash
 export DISPLAY=:99
 Xvfb :99 -screen 0 1280x1024x24 &
 ```
 
 Also ensure dbus is started (required by webkit2gtk):
+
 ```bash
 eval $(dbus-launch --sh-syntax)
 ```
 
-### Linux: tauri-driver not found
+### Linux: Appium Chromium driver not found
 
 ```bash
-cargo install tauri-driver
+npm install -g appium@3
+appium driver install --source=npm appium-chromium-driver
 ```
 
 ### macOS: Deep links not working in `tauri dev`
@@ -212,7 +212,7 @@ Deep links require a `.app` bundle. Use `pnpm tauri build --debug --bundles app`
 
 ### Docker: Build is slow on first run
 
-The first Docker build compiles Rust + tauri-driver from source. Subsequent runs use cached layers. Cargo registry and git sources are cached via Docker volumes.
+The first Docker build compiles Rust and installs the E2E harness dependencies. Subsequent runs use cached layers. Cargo registry and git sources are cached via Docker volumes.
 
 ## Spec: Notifications
 
@@ -233,7 +233,7 @@ Tests notification RPC methods via the live core sidecar and the Notifications U
 bash app/scripts/e2e-run-spec.sh test/e2e/specs/notifications.spec.ts notifications
 ```
 
-**Platform note**: RPC tests (`notification_ingest`, `notification_list`, `notification_mark_read`, `notification_stats`) are written for both Linux/tauri-driver and macOS/Appium Mac2, but Linux execution is disabled for the default CEF runtime until a CEF-compatible driver exists. UI assertions (Notifications page sections) require `browser.execute()` support, so they auto-skip on Mac2 when `supportsExecuteScript()` returns `false`.
+**Platform note**: RPC tests (`notification_ingest`, `notification_list`, `notification_mark_read`, `notification_stats`) run through the unified Appium Chromium backend. UI assertions require `browser.execute()` support, which the current backend provides on every platform.
 
 ---
 

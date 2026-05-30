@@ -220,6 +220,37 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         "thinking mode must be passed back",
         // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
         "requires a subscription, upgrade for access",
+        // TAURI-RUST-1V / OPENHUMAN-TAURI-4JS —
+        // `reliable.rs::format_failure_aggregate` (no-configured-fallbacks
+        // branch) wraps every exhausted `reliable_chat_with_system` turn
+        // with:
+        //
+        //   "The model `<name>` may not be available on your provider.
+        //    Configure a fallback chain via `reliability.model_fallbacks`
+        //    in your OpenHuman config, or change your default model in
+        //    Settings → AI.\n\nAll providers/models failed. Attempts:\n…"
+        //
+        // The aggregate fires once per turn regardless of the underlying
+        // per-attempt cause (auth wall, unknown model, region block,
+        // rate-limit cliff). All of those are user-actionable: pick a
+        // different model, fix the credential, or configure fallbacks —
+        // the message body literally tells the user how. Sentry has no
+        // remediation path the per-attempt classifiers haven't already
+        // covered at the lower layer (provider/ops.rs:486 publishes
+        // SessionExpired, billing_error covers credit walls, etc.).
+        //
+        // Two anchors, both unique to this single emit site (verified via
+        // grep across `src/`) and both present only in the no-configured-
+        // fallbacks branch — the configured-fallbacks branch emits only
+        // the bare "All providers/models failed. Attempts:\n…" dump, so
+        // neither phrase fires on it (see the
+        // `does_not_classify_reliable_aggregate_with_configured_fallbacks`
+        // test). `may not be available on your provider` is the canonical
+        // remediation-sentence phrase (TAURI-RUST-1V); the
+        // `reliability.model_fallbacks` config path (OPENHUMAN-TAURI-4JS)
+        // is kept as a redundant belt-and-braces anchor for the same line.
+        "may not be available on your provider",
+        "reliability.model_fallbacks",
         // TAURI-RUST-35 family — user picked a model that doesn't
         // implement tool calling, agent harness sent a tool spec
         // anyway, upstream rejected with `{"error":{"message":
@@ -230,18 +261,11 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // fragmented by model id (TAURI-RUST-35, -DF, -123, -4K7,
         // -4FS, -4F6, -2YA, -4KR, -4KH, -4KY — ~458 events). The user
         // must pick a tool-capable model; Sentry has no remediation.
+        // NOTE: also pinned in the TAURI-RUST-4K7 capability-discovery
+        // block above; both match the same phrase — the duplicate is
+        // harmless (`.any()` short-circuits) and kept so each Sentry
+        // family stays self-documenting.
         "does not support tools",
-        // TAURI-RUST-1V — reliable-provider chain rolls up exhausted
-        // fallbacks into `All providers/models failed. Attempts:\n…\nThe
-        // model `<id>` may not be available on your provider. Configure
-        // a fallback chain via `reliability.model_fallbacks` in …`.
-        // Emitted at `src/openhuman/inference/provider/reliable.rs:332`.
-        // The remediation is "fix your `model_fallbacks` config" — pure
-        // user-config, nothing Sentry can act on. Anchor on the canonical
-        // remediation phrase so this doesn't collide with unrelated
-        // mentions of model availability (`reliable.rs:332` is the sole
-        // producer in-tree).
-        "may not be available on your provider",
     ];
 
     let lower = body.to_ascii_lowercase();
@@ -497,6 +521,78 @@ mod tests {
                 "{body:?} must NOT classify as a provider config-rejection"
             );
         }
+    }
+
+    #[test]
+    fn detects_reliable_aggregate_no_fallbacks_envelope() {
+        // OPENHUMAN-TAURI-4JS — `reliable::format_failure_aggregate`
+        // (no-configured-fallbacks branch) wraps every exhausted turn.
+        // Pin a few realistic shapes:
+        //
+        //   1. Verbatim Sentry 4JS payload (auth wall as the per-attempt cause).
+        //   2. Same aggregate, unknown-model upstream body (proves the matcher
+        //      is per-emit-site, not per-underlying-cause).
+        //   3. Same aggregate, region-block per-attempt body (R1-sibling cause).
+        //   4. Bare two-line aggregate (only the literal prefix + an empty
+        //      attempts dump).
+        //
+        // All four must classify; the unique anchor is the
+        // `reliability.model_fallbacks` config path the message literally
+        // tells the user to set.
+        for raw in [
+            // 1) Verbatim 4JS payload.
+            "The model `reasoning-quick-v1` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n\
+             provider=openhuman model=reasoning-quick-v1 attempt 1/3: non_retryable; \
+             error=OpenHuman API error (401 Unauthorized): {\"success\":false,\"error\":\"Invalid token\"}",
+            // 2) Unknown-model upstream cause.
+            "The model `gpt-5.5` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n\
+             provider=custom_openai model=gpt-5.5 attempt 1/3: non_retryable; \
+             error=custom_openai API error (404 Not Found): {\"error\":\"model not found\"}",
+            // 3) Region-block (R1-sibling) per-attempt cause.
+            "The model `gpt-4o` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n\
+             provider=custom_openai model=gpt-4o attempt 1/3: non_retryable; \
+             error=custom_openai API error (403 Forbidden): {\"error\":{\"message\":\"This model is not available in your region.\"}}",
+            // 4) Bare aggregate — minimal anchor surface.
+            "The model `x` may not be available on your provider. \
+             Configure a fallback chain via `reliability.model_fallbacks` in your \
+             OpenHuman config, or change your default model in Settings → AI.\n\n\
+             All providers/models failed. Attempts:\n",
+        ] {
+            assert!(
+                is_provider_config_rejection_message(raw),
+                "OPENHUMAN-TAURI-4JS aggregate must classify as provider config-rejection: {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_reliable_aggregate_with_configured_fallbacks() {
+        // The configured-fallbacks branch of `format_failure_aggregate`
+        // emits ONLY the attempts dump (`"All providers/models failed.
+        // Attempts:\n…"`), with no `reliability.model_fallbacks`
+        // remediation hint — the user has already engaged with the knob,
+        // so the aggregate is closer to a real diagnostic surface than a
+        // user-config nudge. Without the anchor phrase, this matcher
+        // must NOT fire on its own — only the per-attempt body
+        // classifiers (#2786 SessionExpired, config_rejection siblings,
+        // …) can demote it on a per-shape basis.
+        let aggregate_with_fallbacks = "All providers/models failed. Attempts:\n\
+             provider=openhuman model=gpt-5.5 attempt 1/3: non_retryable; \
+             error=OpenHuman API error (404 Not Found): {\"error\":\"unknown model\"}";
+        assert!(
+            !is_provider_config_rejection_message(aggregate_with_fallbacks),
+            "configured-fallbacks aggregate (no `reliability.model_fallbacks` anchor) \
+             must NOT classify on the aggregate phrase alone"
+        );
     }
 
     #[test]
