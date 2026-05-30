@@ -4424,6 +4424,31 @@ const messages: TranslationMap = {
   'modelCouncil.memberFailed': 'Failed',
   'modelCouncil.synthesisHeading': 'Synthesis',
   'modelCouncil.synthesisBy': 'by {model}',
+  'graphCohesion.brokerBadge': 'broker',
+  'graphCohesion.brokerTitle':
+    'Lubang struktural: tetangga entitas ini tidak saling terhubung — entitas inilah satu-satunya tautan di antara mereka.',
+  'graphCohesion.colCohesion': 'Kohesi',
+  'graphCohesion.colEntity': 'Entitas',
+  'graphCohesion.colLinks': 'Tautan',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.empty': 'Belum ada graf pengetahuan.',
+  'graphCohesion.emptyHint':
+    'Saat asisten mencatat fakta-fakta terhubung tentang Anda, struktur pengelompokannya akan muncul di sini.',
+  'graphCohesion.errorPrefix': 'Tidak dapat memuat graf:',
+  'graphCohesion.intro':
+    'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker — entitas yang tetangganya tidak saling terhubung — adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
+  'graphCohesion.loading': 'Menghitung kohesi…',
+  'graphCohesion.metricConnections': 'Koneksi',
+  'graphCohesion.metricEntities': 'Entitas',
+  'graphCohesion.metricTriangles': 'Segitiga',
+  'graphCohesion.namespaceAll': 'Semua ruang nama',
+  'graphCohesion.namespaceLabel': 'Ruang nama',
+  'graphCohesion.noBrokers': 'Belum ada entitas dengan dua atau lebih koneksi.',
+  'graphCohesion.rankedHeading': 'Broker — lingkungan paling renggang',
+  'graphCohesion.retry': 'Coba lagi',
+  'graphCohesion.summaryCaption': 'Pengelompokan rata-rata {avg} · transitivitas {transitivity}',
+  'graphCohesion.title': 'Kohesi Graf',
+  'memory.tab.cohesion': 'Cohesion',
 };
 
 export default messages;

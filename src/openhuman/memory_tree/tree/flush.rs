@@ -47,6 +47,9 @@ pub async fn flush_stale_buffers(
     // Missing rows stay silently absent from the map; the
     // `Some(t) => ... / None => warn-and-skip` orphan-buffer path below
     // preserves the per-id `get_tree` `Ok(None)` semantics.
+    // Preserve list_stale_buffers order so the HashMap lookup below stays
+    // predictable; dedup is purely to avoid redundant DB params (not for
+    // semantic ordering — the per-buffer loop walks `stale` directly).
     let distinct_tree_ids: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();

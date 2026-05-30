@@ -4482,6 +4482,31 @@ const messages: TranslationMap = {
   'modelCouncil.memberFailed': 'Failed',
   'modelCouncil.synthesisHeading': 'Synthesis',
   'modelCouncil.synthesisBy': 'by {model}',
+  'graphCohesion.brokerBadge': 'broker',
+  'graphCohesion.brokerTitle':
+    'Dziura strukturalna: sąsiedzi tej encji nie są ze sobą połączeni — jest ona jedynym łącznikiem między nimi.',
+  'graphCohesion.colCohesion': 'Spójność',
+  'graphCohesion.colEntity': 'Encja',
+  'graphCohesion.colLinks': 'Łącza',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.empty': 'Jeszcze brak grafu wiedzy.',
+  'graphCohesion.emptyHint':
+    'W miarę jak asystent zapisuje powiązane fakty o Tobie, ich struktura klasteryzacji pojawi się tutaj.',
+  'graphCohesion.errorPrefix': 'Nie udało się załadować grafu:',
+  'graphCohesion.intro':
+    'Jak ściśle spleciona jest okolica wokół każdej encji. Brokerzy — encje, których sąsiedzi nie są ze sobą połączeni — to pojedyncze punkty trzymające razem klastry, które inaczej byłyby oddzielne, czego sortowanie po częstotliwości ani PageRank nie ujawni.',
+  'graphCohesion.loading': 'Obliczanie spójności…',
+  'graphCohesion.metricConnections': 'Połączenia',
+  'graphCohesion.metricEntities': 'Encje',
+  'graphCohesion.metricTriangles': 'Trójkąty',
+  'graphCohesion.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'graphCohesion.namespaceLabel': 'Przestrzeń nazw',
+  'graphCohesion.noBrokers': 'Brak jeszcze encji z dwoma lub więcej połączeniami.',
+  'graphCohesion.rankedHeading': 'Brokerzy — najluźniejsze sąsiedztwa',
+  'graphCohesion.retry': 'Spróbuj ponownie',
+  'graphCohesion.summaryCaption': 'Średnia klasteryzacja {avg} · tranzytywność {transitivity}',
+  'graphCohesion.title': 'Spójność grafu',
+  'memory.tab.cohesion': 'Cohesion',
 };
 
 export default messages;

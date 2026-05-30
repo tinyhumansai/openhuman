@@ -4451,6 +4451,31 @@ const messages: TranslationMap = {
   'modelCouncil.memberFailed': 'Failed',
   'modelCouncil.synthesisHeading': 'Synthesis',
   'modelCouncil.synthesisBy': 'by {model}',
+  'graphCohesion.brokerBadge': 'брокер',
+  'graphCohesion.brokerTitle':
+    'Структурная дыра: соседи этой сущности не связаны друг с другом — она единственная связь между ними.',
+  'graphCohesion.colCohesion': 'Связность',
+  'graphCohesion.colEntity': 'Сущность',
+  'graphCohesion.colLinks': 'Связки',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.empty': 'Пока нет графа знаний.',
+  'graphCohesion.emptyHint':
+    'По мере того как ассистент фиксирует связанные факты о вас, здесь появится их кластерная структура.',
+  'graphCohesion.errorPrefix': 'Не удалось загрузить граф:',
+  'graphCohesion.intro':
+    'Насколько плотно сплетено окружение каждой сущности. Брокеры — сущности, чьи соседи не связаны друг с другом, — это единичные точки, удерживающие вместе иначе разделённые кластеры, чего сортировка по частоте или PageRank не вскроет.',
+  'graphCohesion.loading': 'Вычисление связности…',
+  'graphCohesion.metricConnections': 'Связи',
+  'graphCohesion.metricEntities': 'Сущности',
+  'graphCohesion.metricTriangles': 'Треугольники',
+  'graphCohesion.namespaceAll': 'Все пространства имён',
+  'graphCohesion.namespaceLabel': 'Пространство имён',
+  'graphCohesion.noBrokers': 'Пока нет сущностей с двумя или более связями.',
+  'graphCohesion.rankedHeading': 'Брокеры — самые разреженные окрестности',
+  'graphCohesion.retry': 'Повторить',
+  'graphCohesion.summaryCaption': 'Средняя кластеризация {avg} · транзитивность {transitivity}',
+  'graphCohesion.title': 'Связность графа',
+  'memory.tab.cohesion': 'Cohesion',
 };
 
 export default messages;

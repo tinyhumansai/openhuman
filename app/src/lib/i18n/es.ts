@@ -4493,6 +4493,31 @@ const messages: TranslationMap = {
   'modelCouncil.memberFailed': 'Failed',
   'modelCouncil.synthesisHeading': 'Synthesis',
   'modelCouncil.synthesisBy': 'by {model}',
+  'graphCohesion.brokerBadge': 'intermediario',
+  'graphCohesion.brokerTitle':
+    'Hueco estructural: los vecinos de esta entidad no están conectados entre sí — ella es el único enlace entre ellos.',
+  'graphCohesion.colCohesion': 'Cohesión',
+  'graphCohesion.colEntity': 'Entidad',
+  'graphCohesion.colLinks': 'Enlaces',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.empty': 'Aún no hay grafo de conocimiento.',
+  'graphCohesion.emptyHint':
+    'A medida que el asistente registra hechos conectados sobre usted, su estructura de agrupamiento aparecerá aquí.',
+  'graphCohesion.errorPrefix': 'No se pudo cargar el grafo:',
+  'graphCohesion.intro':
+    'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios — entidades cuyos vecinos no están conectados entre sí — son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
+  'graphCohesion.loading': 'Calculando cohesión…',
+  'graphCohesion.metricConnections': 'Conexiones',
+  'graphCohesion.metricEntities': 'Entidades',
+  'graphCohesion.metricTriangles': 'Triángulos',
+  'graphCohesion.namespaceAll': 'Todos los espacios de nombres',
+  'graphCohesion.namespaceLabel': 'Espacio de nombres',
+  'graphCohesion.noBrokers': 'Aún no hay entidades con dos o más conexiones.',
+  'graphCohesion.rankedHeading': 'Intermediarios: vecindarios más sueltos',
+  'graphCohesion.retry': 'Reintentar',
+  'graphCohesion.summaryCaption': 'Agrupamiento promedio {avg} · transitividad {transitivity}',
+  'graphCohesion.title': 'Cohesión del grafo',
+  'memory.tab.cohesion': 'Cohesion',
 };
 
 export default messages;

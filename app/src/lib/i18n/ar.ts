@@ -4333,6 +4333,30 @@ const messages: TranslationMap = {
   'modelCouncil.memberFailed': 'Failed',
   'modelCouncil.synthesisHeading': 'Synthesis',
   'modelCouncil.synthesisBy': 'by {model}',
+  'graphCohesion.brokerBadge': 'وسيط',
+  'graphCohesion.brokerTitle':
+    'ثقب بنيوي: جيران هذا الكيان غير مترابطين فيما بينهم — وهو الرابط الوحيد بينهم.',
+  'graphCohesion.colCohesion': 'التماسك',
+  'graphCohesion.colEntity': 'الكيان',
+  'graphCohesion.colLinks': 'روابط',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.empty': 'لا يوجد رسم معرفة بعد.',
+  'graphCohesion.emptyHint': 'كلما سجّل المساعد حقائق مترابطة عنك، ستظهر هنا بنية تجميعها.',
+  'graphCohesion.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'graphCohesion.intro':
+    'مدى تماسك الجوار حول كل كيان. الوسطاء — كيانات لا يرتبط جيرانها ببعضهم — هم النقاط الوحيدة التي تربط بين عناقيد كانت ستظل منفصلة، وهو ما لا يمكن لفرز التكرار أو PageRank الكشف عنه.',
+  'graphCohesion.loading': 'يجري حساب التماسك…',
+  'graphCohesion.metricConnections': 'الاتصالات',
+  'graphCohesion.metricEntities': 'الكيانات',
+  'graphCohesion.metricTriangles': 'مثلثات',
+  'graphCohesion.namespaceAll': 'كل مساحات الأسماء',
+  'graphCohesion.namespaceLabel': 'مساحة الأسماء',
+  'graphCohesion.noBrokers': 'لا توجد بعد كيانات بصلتين أو أكثر.',
+  'graphCohesion.rankedHeading': 'الوسطاء — أكثر الجوارات تخلخلًا',
+  'graphCohesion.retry': 'إعادة المحاولة',
+  'graphCohesion.summaryCaption': 'متوسط التجميع {avg} · التعدّي {transitivity}',
+  'graphCohesion.title': 'تماسك الرسم البياني',
+  'memory.tab.cohesion': 'Cohesion',
 };
 
 export default messages;

@@ -5,6 +5,7 @@ import ConnectionPathTab from '../components/intelligence/ConnectionPathTab';
 import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import EntityAssociationsTab from '../components/intelligence/EntityAssociationsTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
+import GraphCohesionTab from '../components/intelligence/GraphCohesionTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import MemoryFreshnessTab from '../components/intelligence/MemoryFreshnessTab';
@@ -33,6 +34,7 @@ type IntelligenceTab =
   | 'workflows'
   | 'diagram'
   | 'centrality'
+  | 'cohesion'
   | 'associations'
   | 'freshness'
   | 'timeline'
@@ -118,6 +120,7 @@ export default function Intelligence() {
       },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
+      { id: 'cohesion', label: t('memory.tab.cohesion') },
       { id: 'associations', label: t('memory.tab.associations') },
       { id: 'freshness', label: t('memory.tab.freshness') },
       { id: 'timeline', label: t('memory.tab.timeline') },
@@ -214,6 +217,8 @@ export default function Intelligence() {
             {activeTab === 'diagram' && <DiagramViewerTab />}
 
             {activeTab === 'centrality' && <GraphCentralityTab />}
+
+            {activeTab === 'cohesion' && <GraphCohesionTab />}
 
             {activeTab === 'associations' && <EntityAssociationsTab />}
 
