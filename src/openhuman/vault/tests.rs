@@ -547,38 +547,35 @@ async fn vault_write_markdown_rejects_escape_paths_and_non_markdown() {
     assert!(non_markdown.contains(".md"));
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn vault_write_markdown_rejects_symlink_escape() {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
+    use std::os::unix::fs::symlink;
 
-        let tmp = TempDir::new().unwrap();
-        let config = make_config(&tmp);
-        let vault_root = tmp.path().join("vault-root");
-        let outside = tmp.path().join("outside");
-        std::fs::create_dir_all(&vault_root).unwrap();
-        std::fs::create_dir_all(&outside).unwrap();
-        symlink(&outside, vault_root.join("linked")).unwrap();
+    let tmp = TempDir::new().unwrap();
+    let config = make_config(&tmp);
+    let vault_root = tmp.path().join("vault-root");
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&vault_root).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, vault_root.join("linked")).unwrap();
 
-        let vault = ops::vault_create(
-            &config,
-            "Test",
-            vault_root.to_str().unwrap(),
-            vec![],
-            vec![],
-        )
+    let vault = ops::vault_create(
+        &config,
+        "Test",
+        vault_root.to_str().unwrap(),
+        vec![],
+        vec![],
+    )
+    .await
+    .unwrap()
+    .value;
+
+    let err = ops::vault_write_markdown(&config, &vault.id, "linked/escape.md", "x", false, true)
         .await
-        .unwrap()
-        .value;
-
-        let err =
-            ops::vault_write_markdown(&config, &vault.id, "linked/escape.md", "x", false, true)
-                .await
-                .unwrap_err();
-        assert!(err.contains("outside the vault"));
-        assert!(!outside.join("escape.md").exists());
-    }
+        .unwrap_err();
+    assert!(err.contains("outside the vault"));
+    assert!(!outside.join("escape.md").exists());
 }
 
 #[tokio::test]
