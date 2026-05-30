@@ -348,6 +348,16 @@ pub async fn create_artifact(
 /// Flip a pending artifact to [`ArtifactStatus::Ready`] and persist
 /// the final size. Idempotent on already-ready artifacts (no-op + log).
 /// Returns the updated metadata.
+///
+/// On a real transition (Pending → Ready), publishes
+/// [`DomainEvent::ArtifactReady`] on the global bus so the web
+/// channel can surface a download card to the originating thread.
+/// When the calling task carries no
+/// [`ApprovalChatContext`](crate::openhuman::approval::ApprovalChatContext)
+/// (CLI / cron / sub-agent paths), the event is still published but
+/// `thread_id` / `client_id` are `None` so the socket bridge silently
+/// drops it. Idempotent calls (already-Ready) skip the publish so we
+/// don't flap the UI.
 pub async fn finalize_artifact(
     workspace_dir: &Path,
     artifact_id: &str,
@@ -363,6 +373,19 @@ pub async fn finalize_artifact(
     meta.error = None;
     save_artifact_meta(workspace_dir, &meta).await?;
     log::debug!("[artifacts] finalize_artifact: id={artifact_id} -> Ready size={size_bytes}");
+
+    let (thread_id, client_id) = current_chat_context();
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::ArtifactReady {
+            artifact_id: meta.id.clone(),
+            kind: meta.kind.as_str().to_string(),
+            title: meta.title.clone(),
+            path: meta.path.clone(),
+            size_bytes: meta.size_bytes,
+            thread_id,
+            client_id,
+        },
+    );
     Ok(meta)
 }
 
@@ -370,6 +393,10 @@ pub async fn finalize_artifact(
 /// failure reason. The producer should call this when generation
 /// fails so the UI / RPC consumer can surface a useful message
 /// instead of an indefinite spinner. Returns the updated metadata.
+///
+/// Publishes [`DomainEvent::ArtifactFailed`] so the chat surface
+/// flips the in-flight card to a retry-hint state. Same chat-context
+/// rules as [`finalize_artifact`].
 pub async fn fail_artifact(
     workspace_dir: &Path,
     artifact_id: &str,
@@ -380,7 +407,31 @@ pub async fn fail_artifact(
     meta.error = Some(reason.to_string());
     save_artifact_meta(workspace_dir, &meta).await?;
     log::warn!("[artifacts] fail_artifact: id={artifact_id} -> Failed reason={reason:?}");
+
+    let (thread_id, client_id) = current_chat_context();
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::ArtifactFailed {
+            artifact_id: meta.id.clone(),
+            kind: meta.kind.as_str().to_string(),
+            title: meta.title.clone(),
+            error: reason.to_string(),
+            thread_id,
+            client_id,
+        },
+    );
     Ok(meta)
+}
+
+/// Read the active [`ApprovalChatContext`] task-local (set by
+/// `channels::providers::web` around each chat turn) and return its
+/// thread + client ids. Returns `(None, None)` for non-chat callers
+/// (CLI, cron, sub-agent runners) so artifact emit hooks degrade
+/// gracefully — the event is still published but the web subscriber
+/// drops it for lack of a routing target.
+fn current_chat_context() -> (Option<String>, Option<String>) {
+    crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+        .try_with(|ctx| (Some(ctx.thread_id.clone()), Some(ctx.client_id.clone())))
+        .unwrap_or((None, None))
 }
 
 #[cfg(test)]
