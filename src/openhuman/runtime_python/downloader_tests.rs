@@ -47,8 +47,7 @@ fn rejects_prerelease_versions() {
     assert!(parse_distribution_asset(&alpha, "20260510").is_none());
 
     let rc = GithubAsset {
-        name: "cpython-3.14.0rc1+20260510-x86_64-unknown-linux-gnu-install_only.tar.gz"
-            .to_string(),
+        name: "cpython-3.14.0rc1+20260510-x86_64-unknown-linux-gnu-install_only.tar.gz".to_string(),
         browser_download_url: "https://example.invalid/python-rc.tar.gz".to_string(),
         digest: None,
     };
