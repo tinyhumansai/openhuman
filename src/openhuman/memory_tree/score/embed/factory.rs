@@ -137,6 +137,88 @@ pub fn build_embedder_from_config(config: &Config) -> Result<Box<dyn Embedder>> 
     }
 }
 
+/// Build the embedder used by **write** paths (ingest extract + seal), with an
+/// explicit "no usable embedder" signal (#002 FR-002).
+///
+/// Identical resolution to [`build_embedder_from_config`] for every real
+/// provider (explicit Ollama override, local Ollama, cloud session). The one
+/// difference is the terminal fallback: where the read-path factory returns an
+/// [`InertEmbedder`] (zero vectors) so retrieval can still run, the write path
+/// returns **`Ok(None)`** so callers **skip** embedding instead of persisting a
+/// fake all-zero vector that would silently poison semantic recall and present
+/// a degraded result as success. The chunk/summary is written embedding-less
+/// (re-embeddable later once a provider is configured), and the process-global
+/// `semantic_recall` degraded flag is set with a typed cause so the status /
+/// doctor surface can name the fix.
+///
+/// `embeddings_provider = "none"` is treated as a deliberate opt-out, not a
+/// degradation: it returns the [`InertEmbedder`] (vector search intentionally
+/// off) without setting the degraded flag — same as the read path.
+pub fn build_write_embedder(config: &Config) -> Result<Option<Box<dyn Embedder>>> {
+    use crate::openhuman::memory_tree::health::{
+        clear_semantic_recall_degraded, mark_semantic_recall_degraded, FailureCode,
+    };
+
+    let tree_cfg = &config.memory_tree;
+
+    // Explicit Ollama override (power-user / E2E rig).
+    if let (Some(endpoint), Some(model)) = (
+        tree_cfg.embedding_endpoint.as_deref(),
+        tree_cfg.embedding_model.as_deref(),
+    ) {
+        if !endpoint.trim().is_empty() && !model.trim().is_empty() {
+            let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
+            clear_semantic_recall_degraded();
+            return Ok(Some(Box::new(OllamaEmbedder::new(
+                endpoint.to_string(),
+                model.to_string(),
+                timeout_ms,
+            ))));
+        }
+    }
+
+    // Deliberate opt-out — vector search off by user choice, NOT a degradation.
+    if config
+        .embeddings_provider
+        .as_deref()
+        .map(|s| s.trim())
+        .is_some_and(|s| s == "none")
+    {
+        log::info!(
+            "[memory_tree::embed::factory] embeddings_provider=none — write path \
+             uses InertEmbedder (vector search disabled by choice)"
+        );
+        return Ok(Some(Box::new(InertEmbedder::new())));
+    }
+
+    // Local Ollama via the unified workload setting.
+    if let Some(model) = config.workload_local_model("embeddings") {
+        let endpoint = ollama_base_url();
+        let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
+        clear_semantic_recall_degraded();
+        return Ok(Some(Box::new(OllamaEmbedder::new(
+            endpoint, model, timeout_ms,
+        ))));
+    }
+
+    // Cloud session present → managed Voyage. Auth/budget failures surface at
+    // the first embed() call and are classified by the worker (T012).
+    if cloud_session_available(config) {
+        clear_semantic_recall_degraded();
+        return Ok(Some(Box::new(CloudEmbedder::new(config))));
+    }
+
+    // No usable provider. SKIP embedding (don't write zero vectors) and mark
+    // semantic recall degraded so the user gets a typed, actionable cause.
+    log::warn!(
+        "[memory_tree::embed::factory] no usable embeddings provider — skipping \
+         embedding (chunk persists embedding-less, re-embeddable later). Set up \
+         local Ollama embeddings or log in to OpenHuman to enable semantic recall."
+    );
+    mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +255,95 @@ mod tests {
         cfg.memory_tree.embedding_timeout_ms = Some(5000);
         let e = build_embedder_from_config(&cfg).expect("Ollama path should build");
         assert_eq!(e.name(), "ollama");
+    }
+
+    // ── build_write_embedder (T010, #002 FR-002) ─────────────────────────
+    //
+    // These assert the write-path factory's "skip vs embed" contract. The
+    // degraded flag is a process-global atomic, so the flag-sensitive tests
+    // serialize on a shared mutex to avoid stomping each other under cargo's
+    // parallel test runner.
+    fn degraded_flag_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn write_embedder_none_when_no_provider_and_marks_degraded() {
+        use crate::openhuman::memory_tree::health::{
+            clear_semantic_recall_degraded, current_degraded_state, FailureCode,
+        };
+        let _guard = degraded_flag_lock();
+        clear_semantic_recall_degraded();
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        // No auth-profiles.json, no local workload model → no usable provider.
+        let e = build_write_embedder(&cfg).expect("factory must not error");
+        assert!(e.is_none(), "no provider → skip embedding (None), not inert");
+        let d = current_degraded_state();
+        assert!(d.semantic_recall, "semantic recall must be flagged degraded");
+        assert_eq!(
+            d.cause.map(|c| c.code),
+            Some(FailureCode::EmbeddingsUnconfigured)
+        );
+        clear_semantic_recall_degraded();
+    }
+
+    #[test]
+    fn write_embedder_some_cloud_with_session_and_clears_degraded() {
+        use crate::openhuman::memory_tree::health::{
+            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
+        };
+        let _guard = degraded_flag_lock();
+        // Pretend a prior run left recall degraded; a working provider clears it.
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        touch_auth_profile(&cfg);
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("cloud session → Some(embedder)");
+        assert_eq!(e.name(), "cloud");
+        assert!(
+            !current_degraded_state().semantic_recall,
+            "a usable provider must clear the degraded flag"
+        );
+    }
+
+    #[test]
+    fn write_embedder_some_ollama_override() {
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = Some("http://localhost:11434".into());
+        cfg.memory_tree.embedding_model = Some("bge-m3".into());
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("override → Some(embedder)");
+        assert_eq!(e.name(), "ollama");
+    }
+
+    #[test]
+    fn write_embedder_none_provider_is_inert_not_skip() {
+        use crate::openhuman::memory_tree::health::{
+            clear_semantic_recall_degraded, current_degraded_state,
+        };
+        let _guard = degraded_flag_lock();
+        clear_semantic_recall_degraded();
+        let (_tmp, mut cfg) = test_config();
+        cfg.embeddings_provider = Some("none".into());
+        // Deliberate opt-out → InertEmbedder (vector search off by choice),
+        // and NOT flagged as a degradation.
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("provider=none → Some(inert), not skip");
+        assert_eq!(e.name(), "inert");
+        assert!(
+            !current_degraded_state().semantic_recall,
+            "explicit opt-out is not a degradation"
+        );
     }
 
     #[test]

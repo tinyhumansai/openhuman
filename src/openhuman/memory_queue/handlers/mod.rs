@@ -23,7 +23,9 @@ use crate::openhuman::memory_store::content::{
     self as content_store, read as content_read, tags as content_tags,
 };
 use crate::openhuman::memory_tree::score;
-use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, pack_checked};
+use crate::openhuman::memory_tree::score::embed::{
+    build_embedder_from_config, build_write_embedder, pack_checked,
+};
 use crate::openhuman::memory_tree::score::store as score_store;
 use crate::openhuman::memory_tree::tree::store as summary_store;
 use crate::openhuman::memory_tree::tree::{LeafRef, TreeFactory};
@@ -120,29 +122,52 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
     let scoring_cfg = score::ScoringConfig::from_config(config);
     let result = score::score_chunk(&chunk_with_body, &scoring_cfg).await?;
     let chunk_embedding: Option<Vec<f32>> = if result.kept {
-        let embedder =
-            build_embedder_from_config(config).context("build embedder in extract handler")?;
-        // Reuse the body already read — avoid a second disk read.
-        let vector = match embedder.embed(&body).await {
-            Ok(v) => v,
-            Err(e) => {
-                // #002: classify the embed failure so the worker can fail
-                // fast on unrecoverable causes (budget/auth/dim) and surface
-                // a typed reason, instead of burning the retry budget. The
-                // typed failure is the outer (downcast) error; the original
-                // chain is preserved as context.
-                let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
-                return Err(anyhow::Error::new(failure)
-                    .context(format!("embed chunk_id={} in extract handler: {e:#}", chunk.id)));
+        // #002 (FR-002): when no usable embeddings provider is configured the
+        // write path returns None instead of an InertEmbedder — we SKIP
+        // embedding (the chunk is persisted embedding-less and re-embeddable
+        // later) rather than writing a fake all-zero vector that would
+        // silently poison semantic recall. `build_write_embedder` has already
+        // marked the process-global semantic-recall degraded flag with a typed
+        // cause for the status / doctor surface.
+        match build_write_embedder(config).context("build embedder in extract handler")? {
+            None => {
+                log::warn!(
+                    "[memory::jobs] extract chunk_id={} — embeddings unavailable, \
+                     skipping embed (semantic recall degraded)",
+                    chunk.id
+                );
+                None
             }
-        };
-        // Preserve the pre-cutover dimension guard (the job fails fast on a
-        // misconfigured embedder) even though #1574 no longer persists the
-        // packed blob to the legacy `mem_tree_chunks.embedding` column —
-        // the vector now goes to the per-model sidecar instead.
-        pack_checked(&vector)
-            .with_context(|| format!("validate embedding dims for chunk_id={}", chunk.id))?;
-        Some(vector)
+            Some(embedder) => {
+                // Reuse the body already read — avoid a second disk read.
+                let vector = match embedder.embed(&body).await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        // #002: classify the embed failure so the worker can
+                        // fail fast on unrecoverable causes (budget/auth/dim)
+                        // and surface a typed reason, instead of burning the
+                        // retry budget. The typed failure is the outer
+                        // (downcast) error; the original chain is context.
+                        let failure =
+                            crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                        return Err(anyhow::Error::new(failure).context(format!(
+                            "embed chunk_id={} in extract handler: {e:#}",
+                            chunk.id
+                        )));
+                    }
+                };
+                // Preserve the pre-cutover dimension guard (the job fails fast
+                // on a misconfigured embedder) even though #1574 no longer
+                // persists the packed blob to the legacy
+                // `mem_tree_chunks.embedding` column — the vector now goes to
+                // the per-model sidecar instead.
+                pack_checked(&vector)
+                    .with_context(|| format!("validate embedding dims for chunk_id={}", chunk.id))?;
+                // A real embed succeeded — recall is healthy again.
+                crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
+                Some(vector)
+            }
+        }
     } else {
         None
     };

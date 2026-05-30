@@ -301,6 +301,103 @@ impl DegradedState {
     }
 }
 
+// ── Process-visible degradation flags ────────────────────────────────────
+//
+// The embed/extract stages run deep inside the job worker, far from the
+// `pipeline_status` RPC. Rather than thread a `DegradedState` return up
+// through every call site, the stages set these process-global atomics when
+// they detect a degraded condition (no usable embedder → semantic recall
+// disabled; extraction empty across the board → no structure). The status /
+// doctor surface reads them via [`current_degraded_state`]. They reflect the
+// most recent run, are cheap, and never block — a coarse "is recall/structure
+// currently degraded?" signal, intentionally not per-namespace.
+
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+static SEMANTIC_RECALL_DEGRADED: AtomicBool = AtomicBool::new(false);
+static STRUCTURE_DEGRADED: AtomicBool = AtomicBool::new(false);
+/// Last degradation cause as a `FailureCode` discriminant + 1 (0 = none), so
+/// the status surface can name *why* recall/structure is degraded.
+static DEGRADED_CAUSE: AtomicU8 = AtomicU8::new(0);
+
+fn code_to_u8(code: FailureCode) -> u8 {
+    match code {
+        FailureCode::BudgetExhausted => 1,
+        FailureCode::AuthMissing => 2,
+        FailureCode::AuthInvalid => 3,
+        FailureCode::EmbeddingsUnconfigured => 4,
+        FailureCode::EmbeddingDimMismatch => 5,
+        FailureCode::LocalModelUnavailable => 6,
+        FailureCode::ExtractionTimeout => 7,
+        FailureCode::Transient => 8,
+    }
+}
+
+fn u8_to_code(v: u8) -> Option<FailureCode> {
+    Some(match v {
+        1 => FailureCode::BudgetExhausted,
+        2 => FailureCode::AuthMissing,
+        3 => FailureCode::AuthInvalid,
+        4 => FailureCode::EmbeddingsUnconfigured,
+        5 => FailureCode::EmbeddingDimMismatch,
+        6 => FailureCode::LocalModelUnavailable,
+        7 => FailureCode::ExtractionTimeout,
+        8 => FailureCode::Transient,
+        _ => return None,
+    })
+}
+
+/// Record that semantic recall is degraded (embeddings were skipped because no
+/// usable provider is available). `cause` names why so the status surface can
+/// lead the user to the fix. Idempotent / cheap; safe to call per embed-stage.
+pub fn mark_semantic_recall_degraded(cause: FailureCode) {
+    SEMANTIC_RECALL_DEGRADED.store(true, Ordering::Relaxed);
+    DEGRADED_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
+}
+
+/// Clear the semantic-recall degraded flag — call when an embed succeeds, so
+/// the surface recovers once the user fixes the provider.
+pub fn clear_semantic_recall_degraded() {
+    SEMANTIC_RECALL_DEGRADED.store(false, Ordering::Relaxed);
+    // Only clear the shared cause when structure isn't also degraded.
+    if !STRUCTURE_DEGRADED.load(Ordering::Relaxed) {
+        DEGRADED_CAUSE.store(0, Ordering::Relaxed);
+    }
+}
+
+/// Record that wiki structure is degraded (extraction yielded nothing across
+/// the board). `cause` is typically [`FailureCode::ExtractionTimeout`].
+pub fn mark_structure_degraded(cause: FailureCode) {
+    STRUCTURE_DEGRADED.store(true, Ordering::Relaxed);
+    DEGRADED_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
+}
+
+/// Clear the structure degraded flag — call when extraction yields entities.
+pub fn clear_structure_degraded() {
+    STRUCTURE_DEGRADED.store(false, Ordering::Relaxed);
+    if !SEMANTIC_RECALL_DEGRADED.load(Ordering::Relaxed) {
+        DEGRADED_CAUSE.store(0, Ordering::Relaxed);
+    }
+}
+
+/// Snapshot the current process-global [`DegradedState`] for the status /
+/// doctor surface. The `cause` is populated from the last recorded
+/// [`FailureCode`] when either flag is set.
+pub fn current_degraded_state() -> DegradedState {
+    let semantic_recall = SEMANTIC_RECALL_DEGRADED.load(Ordering::Relaxed);
+    let structure = STRUCTURE_DEGRADED.load(Ordering::Relaxed);
+    let cause = if semantic_recall || structure {
+        u8_to_code(DEGRADED_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
+    } else {
+        None
+    };
+    DegradedState {
+        semantic_recall,
+        structure,
+        cause,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
