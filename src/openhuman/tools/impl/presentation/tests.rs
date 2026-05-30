@@ -391,3 +391,18 @@ fn truncate_stderr_caps_payload_with_suffix() {
     let short = "tiny stderr";
     assert_eq!(types::PresentationError::truncate_stderr(short), short);
 }
+
+#[test]
+fn unsupported_file_type_display_includes_extension_and_supported() {
+    // Reserved-for-future variant: confirms the Display impl renders
+    // both the rejected extension and the supported set so a downstream
+    // mapper can surface a user-correctable message verbatim.
+    let err = types::PresentationError::UnsupportedFileType {
+        extension: "key".to_string(),
+        supported: "pptx".to_string(),
+    };
+    let rendered = err.to_string();
+    assert!(rendered.contains("unsupported file type"));
+    assert!(rendered.contains("'key'"));
+    assert!(rendered.contains("supported: pptx"));
+}
