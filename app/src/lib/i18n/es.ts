@@ -444,7 +444,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'Iniciar sesión con ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Conectado con ChatGPT',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'Después de iniciar sesión, pega la URL de redirección completa de tu navegador (empieza por http://127.0.0.1:1455/).',
+    'Después de iniciar sesión, pega la URL de redirección completa de tu navegador (empieza por {url}).',
   'onboarding.apiKeys.oauthDesktopOnly':
     'El inicio de sesión con ChatGPT solo está disponible en la aplicación de escritorio.',
   'onboarding.apiKeys.oauthStartFailed':

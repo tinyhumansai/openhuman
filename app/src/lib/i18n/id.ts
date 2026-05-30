@@ -436,7 +436,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'Masuk dengan ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Terhubung dengan ChatGPT',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'Setelah masuk, tempel URL pengalihan lengkap dari browser Anda (dimulai dengan http://127.0.0.1:1455/).',
+    'Setelah masuk, tempel URL pengalihan lengkap dari browser Anda (dimulai dengan {url}).',
   'onboarding.apiKeys.oauthDesktopOnly': 'Masuk ChatGPT hanya tersedia di aplikasi desktop.',
   'onboarding.apiKeys.oauthStartFailed':
     'Tidak dapat memulai proses masuk ChatGPT. Coba lagi atau gunakan kunci API.',

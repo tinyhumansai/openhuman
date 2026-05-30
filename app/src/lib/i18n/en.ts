@@ -475,7 +475,7 @@ const en: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'Sign in with ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Connected with ChatGPT',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'After signing in, paste the full redirect URL from your browser (starts with http://127.0.0.1:1455/).',
+    'After signing in, paste the full redirect URL from your browser (starts with {url}).',
   'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT sign-in is only available in the desktop app.',
   'onboarding.apiKeys.oauthStartFailed':
     'Could not start ChatGPT sign-in. Try again or use an API key.',

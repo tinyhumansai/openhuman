@@ -432,7 +432,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'ChatGPT로 로그인',
   'onboarding.apiKeys.openaiOauthConnected': 'ChatGPT로 연결됨',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    '로그인한 후 브라우저에서 전체 리디렉션 URL을 붙여넣으세요(http://127.0.0.1:1455/로 시작).',
+    '로그인한 후 브라우저에서 전체 리디렉션 URL을 붙여넣으세요({url}로 시작).',
   'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT 로그인은 데스크톱 앱에서만 사용할 수 있습니다.',
   'onboarding.apiKeys.oauthStartFailed':
     'ChatGPT 로그인을 시작할 수 없습니다. 다시 시도하거나 API 키를 사용하세요.',

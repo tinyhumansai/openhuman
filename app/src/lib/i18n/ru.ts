@@ -437,7 +437,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'Войти через ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Подключено через ChatGPT',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'После входа вставьте полный URL перенаправления из браузера (начинается с http://127.0.0.1:1455/).',
+    'После входа вставьте полный URL перенаправления из браузера (начинается с {url}).',
   'onboarding.apiKeys.oauthDesktopOnly':
     'Вход через ChatGPT доступен только в десктопном приложении.',
   'onboarding.apiKeys.oauthStartFailed':

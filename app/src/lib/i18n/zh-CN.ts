@@ -418,7 +418,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': '使用 ChatGPT 登录',
   'onboarding.apiKeys.openaiOauthConnected': '已通过 ChatGPT 连接',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    '登录后，粘贴浏览器中的完整重定向 URL（以 http://127.0.0.1:1455/ 开头）。',
+    '登录后，粘贴浏览器中的完整重定向 URL（以 {url} 开头）。',
   'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT 登录仅在桌面应用中可用。',
   'onboarding.apiKeys.oauthStartFailed': '无法启动 ChatGPT 登录。请重试或使用 API 密钥。',
   'onboarding.apiKeys.oauthPasteRedirect': '登录后，粘贴浏览器中的重定向 URL。',

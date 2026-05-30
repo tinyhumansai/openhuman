@@ -443,7 +443,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'Entrar com ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'Conectado com ChatGPT',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'Após entrar, cole o URL de redirecionamento completo do seu navegador (começa com http://127.0.0.1:1455/).',
+    'Após entrar, cole o URL de redirecionamento completo do seu navegador (começa com {url}).',
   'onboarding.apiKeys.oauthDesktopOnly':
     'O login do ChatGPT só está disponível no aplicativo de desktop.',
   'onboarding.apiKeys.oauthStartFailed':

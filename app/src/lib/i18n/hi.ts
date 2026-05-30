@@ -432,7 +432,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'ChatGPT से साइन इन करें',
   'onboarding.apiKeys.openaiOauthConnected': 'ChatGPT से कनेक्ट किया गया',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'साइन इन करने के बाद, अपने ब्राउज़र से पूरा रीडायरेक्ट URL पेस्ट करें (http://127.0.0.1:1455/ से शुरू होता है)।',
+    'साइन इन करने के बाद, अपने ब्राउज़र से पूरा रीडायरेक्ट URL पेस्ट करें ({url} से शुरू होता है)।',
   'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT साइन-इन केवल डेस्कटॉप ऐप में उपलब्ध है।',
   'onboarding.apiKeys.oauthStartFailed':
     'ChatGPT साइन-इन शुरू नहीं किया जा सका। पुनः प्रयास करें या API कुंजी का उपयोग करें।',

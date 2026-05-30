@@ -433,7 +433,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'ChatGPT দিয়ে সাইন ইন করুন',
   'onboarding.apiKeys.openaiOauthConnected': 'ChatGPT দিয়ে সংযুক্ত',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'সাইন ইন করার পরে, আপনার ব্রাউজার থেকে সম্পূর্ণ রিডাইরেক্ট URL পেস্ট করুন (http://127.0.0.1:1455/ দিয়ে শুরু হয়)।',
+    'সাইন ইন করার পরে, আপনার ব্রাউজার থেকে সম্পূর্ণ রিডাইরেক্ট URL পেস্ট করুন ({url} দিয়ে শুরু হয়)।',
   'onboarding.apiKeys.oauthDesktopOnly': 'ChatGPT সাইন-ইন শুধুমাত্র ডেস্কটপ অ্যাপে উপলব্ধ।',
   'onboarding.apiKeys.oauthStartFailed':
     'ChatGPT সাইন-ইন শুরু করা যায়নি। আবার চেষ্টা করুন বা একটি API কী ব্যবহার করুন।',

@@ -427,7 +427,7 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthConnect': 'تسجيل الدخول باستخدام ChatGPT',
   'onboarding.apiKeys.openaiOauthConnected': 'تم الاتصال عبر ChatGPT',
   'onboarding.apiKeys.openaiOauthCallbackHint':
-    'بعد تسجيل الدخول، الصق عنوان URL الكامل لإعادة التوجيه من متصفحك (يبدأ بـ http://127.0.0.1:1455/).',
+    'بعد تسجيل الدخول، الصق عنوان URL الكامل لإعادة التوجيه من متصفحك (يبدأ بـ {url}).',
   'onboarding.apiKeys.oauthDesktopOnly': 'تسجيل الدخول إلى ChatGPT متاح فقط في تطبيق سطح المكتب.',
   'onboarding.apiKeys.oauthStartFailed':
     'تعذّر بدء تسجيل الدخول إلى ChatGPT. حاول مرة أخرى أو استخدم مفتاح API.',
