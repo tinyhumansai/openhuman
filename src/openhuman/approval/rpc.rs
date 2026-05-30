@@ -8,7 +8,7 @@ use anyhow::anyhow;
 use crate::rpc::RpcOutcome;
 
 use super::gate::ApprovalGate;
-use super::types::{ApprovalDecision, PendingApproval};
+use super::types::{ApprovalAuditEntry, ApprovalDecision, PendingApproval};
 
 /// List rows still awaiting a user decision in the current session.
 ///
@@ -30,6 +30,35 @@ pub async fn approval_list_pending() -> anyhow::Result<RpcOutcome<Vec<PendingApp
     };
     tracing::debug!(rows = rows.len(), "[rpc:approval_list_pending] exit");
     let log = format!("[approval] list_pending returned {} row(s)", rows.len());
+    Ok(RpcOutcome::single_log(rows, log))
+}
+
+/// List recently decided approval rows for audit/diagnostic surfaces.
+pub async fn approval_list_recent_decisions(
+    limit: Option<usize>,
+) -> anyhow::Result<RpcOutcome<Vec<ApprovalAuditEntry>>> {
+    tracing::debug!("[rpc:approval_list_recent_decisions] entry");
+    let Some(gate) = ApprovalGate::try_global() else {
+        tracing::debug!("[rpc:approval_list_recent_decisions] gate not installed, returning empty");
+        return Ok(RpcOutcome::new(Vec::new(), vec![]));
+    };
+    let limit = limit.unwrap_or(50);
+    let rows = match gate.list_recent_decisions(limit) {
+        Ok(rows) => rows,
+        Err(err) => {
+            tracing::error!(error = %err, "[rpc:approval_list_recent_decisions] store error");
+            return Err(err);
+        }
+    };
+    let log = format!(
+        "[approval] list_recent_decisions returned {} row(s)",
+        rows.len()
+    );
+    tracing::debug!(
+        rows = rows.len(),
+        limit = limit,
+        "[rpc:approval_list_recent_decisions] exit"
+    );
     Ok(RpcOutcome::single_log(rows, log))
 }
 
@@ -69,17 +98,51 @@ pub async fn approval_decide(
         );
         anyhow!("no pending approval found for request_id '{request_id}'")
     })?;
+
+    let mut logs = vec![format!(
+        "[approval] decided request_id={} tool={} decision={}",
+        row.request_id,
+        row.tool_name,
+        decision.as_str()
+    )];
+
+    // "Always allow": persist the tool onto the user's `autonomy.auto_approve`
+    // allowlist (config save + live-policy reload) so the gate skips prompting
+    // for it on future turns — this session and across restarts. Best-effort:
+    // `gate.decide` already resolved the current call, so a persistence failure
+    // must not fail the RPC. It degrades safely — the tool simply prompts again
+    // next time rather than being silently auto-approved.
+    if decision == ApprovalDecision::ApproveAlwaysForTool {
+        match crate::openhuman::config::ops::add_auto_approve_tool(&row.tool_name).await {
+            Ok(()) => {
+                tracing::info!(
+                    tool = row.tool_name.as_str(),
+                    "[rpc:approval_decide] tool persisted to auto_approve allowlist"
+                );
+                logs.push(format!(
+                    "[approval] '{}' added to the Always-allow list",
+                    row.tool_name
+                ));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    tool = row.tool_name.as_str(),
+                    error = %err,
+                    "[rpc:approval_decide] failed to persist auto_approve; tool will prompt again next time"
+                );
+                logs.push(format!(
+                    "[approval] WARNING: could not save 'Always allow' for '{}': {err}",
+                    row.tool_name
+                ));
+            }
+        }
+    }
+
     tracing::info!(
         request_id = row.request_id.as_str(),
         tool = row.tool_name.as_str(),
         decision = decision.as_str(),
         "[rpc:approval_decide] exit"
     );
-    let log = format!(
-        "[approval] decided request_id={} tool={} decision={}",
-        row.request_id,
-        row.tool_name,
-        decision.as_str()
-    );
-    Ok(RpcOutcome::single_log(row, log))
+    Ok(RpcOutcome::new(row, logs))
 }

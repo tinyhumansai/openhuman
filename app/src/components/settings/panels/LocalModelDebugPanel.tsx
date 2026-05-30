@@ -1,3 +1,4 @@
+import debug from 'debug';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
@@ -15,6 +16,7 @@ import {
   type LocalAiSpeechResult,
   type LocalAiStatus,
   type LocalAiTtsResult,
+  type OllamaConnectionTestResult,
   openhumanLocalAiAssetsStatus,
   openhumanLocalAiDiagnostics,
   openhumanLocalAiDownloadAsset,
@@ -23,14 +25,19 @@ import {
   openhumanLocalAiPrompt,
   openhumanLocalAiStatus,
   openhumanLocalAiSummarize,
+  openhumanLocalAiTestConnection,
   openhumanLocalAiTranscribe,
   openhumanLocalAiTts,
   openhumanLocalAiVisionPrompt,
+  openhumanUpdateLocalAiSettings,
 } from '../../../utils/tauriCommands';
+import { openhumanGetConfig } from '../../../utils/tauriCommands/config';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 import ModelDownloadSection from './local-model/ModelDownloadSection';
 import ModelStatusSection from './local-model/ModelStatusSection';
+
+const log = debug('openhuman:local-model-debug');
 
 const statusTone = (state: string): string => {
   switch (state) {
@@ -93,6 +100,14 @@ const LocalModelDebugPanel = () => {
 
   const [showErrorDetail, setShowErrorDetail] = useState(false);
 
+  const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
+  const [ollamaBaseUrlInput, setOllamaBaseUrlInput] = useState(DEFAULT_OLLAMA_URL);
+  const [savedOllamaBaseUrl, setSavedOllamaBaseUrl] = useState(DEFAULT_OLLAMA_URL);
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] =
+    useState<OllamaConnectionTestResult | null>(null);
+  const [isSavingUrl, setIsSavingUrl] = useState(false);
+
   const progress = useMemo(() => {
     const downloadProgress = progressFromDownloads(downloads);
     if (downloadProgress != null) return downloadProgress;
@@ -149,6 +164,25 @@ const LocalModelDebugPanel = () => {
       window.clearTimeout(initialLoad);
       window.clearInterval(timer);
     };
+  }, []);
+
+  useEffect(() => {
+    const seedSavedUrl = async () => {
+      try {
+        const configResponse = await openhumanGetConfig();
+        const localAi = configResponse.result?.config?.local_ai as
+          | Record<string, unknown>
+          | undefined;
+        const saved = localAi?.base_url as string | undefined | null;
+        if (saved && saved.trim()) {
+          setOllamaBaseUrlInput(saved.trim());
+          setSavedOllamaBaseUrl(saved.trim());
+        }
+      } catch {
+        // Non-critical — stay on default.
+      }
+    };
+    void seedSavedUrl();
   }, []);
 
   const runSummaryTest = async () => {
@@ -281,10 +315,65 @@ const LocalModelDebugPanel = () => {
     try {
       const result = await openhumanLocalAiDiagnostics();
       setDiagnostics(result);
+      if (result.ollama_base_url) {
+        const reported = result.ollama_base_url;
+        // Only overwrite the input if the user hasn't made unsaved edits.
+        setOllamaBaseUrlInput(prev => (prev === savedOllamaBaseUrl ? reported : prev));
+        setSavedOllamaBaseUrl(reported);
+      }
     } catch (err) {
       setDiagnosticsError(err instanceof Error ? err.message : 'Diagnostics failed');
     } finally {
       setIsDiagnosticsLoading(false);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setConnectionTestResult(null);
+    try {
+      const result = await openhumanLocalAiTestConnection(ollamaBaseUrlInput);
+      log('[local_ai:ui] test_connection result: reachable=%o', result.reachable);
+      setConnectionTestResult(result);
+    } catch (err) {
+      setConnectionTestResult({
+        reachable: false,
+        error: err instanceof Error ? err.message : 'Connection test failed',
+        models_count: null,
+      });
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
+
+  const handleSaveOllamaBaseUrl = async () => {
+    setIsSavingUrl(true);
+    try {
+      await openhumanUpdateLocalAiSettings({ base_url: ollamaBaseUrlInput });
+      log(
+        '[local_ai:ui] saved ollama base_url=%s',
+        ollamaBaseUrlInput.replace(/\/\/[^@]*@/, '//***@')
+      );
+      setSavedOllamaBaseUrl(ollamaBaseUrlInput);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'Failed to save URL');
+    } finally {
+      setIsSavingUrl(false);
+    }
+  };
+
+  const handleResetOllamaBaseUrl = async () => {
+    setOllamaBaseUrlInput(DEFAULT_OLLAMA_URL);
+    setConnectionTestResult(null);
+    setIsSavingUrl(true);
+    try {
+      await openhumanUpdateLocalAiSettings({ base_url: null });
+      log('[local_ai:ui] reset ollama base_url to default');
+      setSavedOllamaBaseUrl(DEFAULT_OLLAMA_URL);
+    } catch (err) {
+      setStatusError(err instanceof Error ? err.message : 'Failed to reset URL');
+    } finally {
+      setIsSavingUrl(false);
     }
   };
 
@@ -319,6 +408,11 @@ const LocalModelDebugPanel = () => {
           etaText={etaText}
           statusTone={statusTone}
           runtimeEnabled={runtimeEnabled}
+          ollamaBaseUrlInput={ollamaBaseUrlInput}
+          isTestingConnection={isTestingConnection}
+          connectionTestResult={connectionTestResult}
+          isSavingUrl={isSavingUrl}
+          savedOllamaBaseUrl={savedOllamaBaseUrl}
           onRefreshStatus={() => void loadStatus()}
           onTriggerDownload={() => {}}
           onSetOllamaPath={() => {}}
@@ -326,6 +420,10 @@ const LocalModelDebugPanel = () => {
           onSetOllamaPathInput={() => {}}
           onToggleErrorDetail={() => setShowErrorDetail(v => !v)}
           onRunDiagnostics={() => void handleRunDiagnostics()}
+          onSetOllamaBaseUrlInput={setOllamaBaseUrlInput}
+          onTestConnection={() => void handleTestConnection()}
+          onSaveOllamaBaseUrl={() => void handleSaveOllamaBaseUrl()}
+          onResetOllamaBaseUrl={() => void handleResetOllamaBaseUrl()}
         />
 
         <ModelDownloadSection

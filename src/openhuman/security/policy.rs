@@ -2,9 +2,28 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::OnceCell;
 
 use crate::openhuman::util::floor_char_boundary;
+
+/// Stable, machine-recognizable marker prefixing a **permanent** policy
+/// rejection: the identical `(tool, args)` call can never succeed in the
+/// current tier (read-only blocking a write, a forbidden/credential path, a
+/// disallowed high-risk or hidden-execution command, an off-allowlist command).
+/// The agent harness ([`crate::openhuman::agent::harness::tool_loop`]) detects
+/// this and halts on the **first verbatim repeat** rather than reiterating a
+/// provably-futile call. Kept short and bracketed so it survives the
+/// `Error: …` wrapping the tool layer adds and is easy to grep in logs.
+pub const POLICY_BLOCKED_MARKER: &str = "[policy-blocked]";
+
+/// Stable marker prefixing a **this-turn denial** — the user answered "no" to
+/// an approval prompt, or the prompt timed out / its channel dropped. Unlike a
+/// block this isn't permanent across turns, but re-issuing the *same* call this
+/// turn just re-prompts the user, so the harness records it in the circuit
+/// breaker and stops the agent from re-asking the identical call.
+pub const POLICY_DENIED_MARKER: &str = "[policy-denied]";
 
 /// How much autonomy the agent has
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -19,12 +38,76 @@ pub enum AutonomyLevel {
     Full,
 }
 
+/// Access level granted to a trusted root outside the workspace.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TrustedAccess {
+    /// Read + list only.
+    #[default]
+    Read,
+    /// Read and write/edit.
+    ReadWrite,
+}
+
+/// A directory outside the workspace the agent is explicitly granted access to.
+/// Takes precedence over `workspace_only` and `forbidden_paths` for its subtree,
+/// except for credential stores (see `SecurityPolicy::is_always_forbidden`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TrustedRoot {
+    /// Absolute path (a leading `~` is expanded to the user's home).
+    pub path: String,
+    /// Whether the agent may write within this root.
+    #[serde(default)]
+    pub access: TrustedAccess,
+}
+
 /// Risk score for shell command execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandRiskLevel {
     Low,
     Medium,
     High,
+}
+
+/// Coarse permission bucket the harness approval gate keys on.
+///
+/// Classification is **fail-closed**: a command that is not provably read-only
+/// (and not a recognized network/destructive command) is treated as at least
+/// [`CommandClass::Write`]. Across multiple shell segments the **highest** class
+/// wins (so `ls | curl …` is `Network`). Variants are ordered low→high so
+/// [`Ord`] / [`Iterator::max`] compose them directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CommandClass {
+    /// Provably read-only / observational (curated safe-read allowlist).
+    Read,
+    /// State-changing but not inherently catastrophic — the fail-closed default
+    /// for anything not recognized as read/network/destructive.
+    Write,
+    /// Reaches the network (curl/wget/ssh/scp/…). Always prompts, every tier.
+    Network,
+    /// Installs an OS / language package (system package manager, or a *global*
+    /// npm/pnpm/yarn/cargo/pip install). Always-ask in every acting tier,
+    /// including Full — mirrors the dedicated `install_tool` gate so shell
+    /// installs can't slip past it. Project-local installs are ordinary `Write`.
+    Install,
+    /// Catastrophic / irreversible / privilege-escalating / system-control.
+    /// Always prompts, even in Full.
+    Destructive,
+}
+
+/// What the harness should do with an acting tool call of a given
+/// [`CommandClass`] under the session's [`AutonomyLevel`]. Computed by
+/// [`SecurityPolicy::gate_decision`]; the harness translates `Prompt` into an
+/// `ApprovalGate` round-trip *before* the tool's `execute()` runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateDecision {
+    /// Run without prompting.
+    Allow,
+    /// Require explicit human approval before running.
+    Prompt,
+    /// Refuse outright — no in-tier prompt can authorize it (e.g. any act in
+    /// read-only mode).
+    Block,
 }
 
 /// Classifies whether a tool operation is read-only or side-effecting.
@@ -97,7 +180,43 @@ pub struct SecurityPolicy {
     pub max_cost_per_day_cents: u32,
     pub require_approval_for_medium_risk: bool,
     pub block_high_risk_commands: bool,
+    /// Directories outside the workspace the agent may access (read or read-write).
+    pub trusted_roots: Vec<TrustedRoot>,
+    /// Whether the agent may install OS packages via the `install_tool` tool.
+    pub allow_tool_install: bool,
+    /// Tool names the user has pre-approved ("Always allow"). The `ApprovalGate`
+    /// skips the interactive prompt for any tool in this set. Sourced from
+    /// `autonomy.auto_approve`; populated/cleared via `config.update_autonomy_settings`
+    /// (or an "Always allow" decision) and observed live via `live_policy`.
+    pub auto_approve: Vec<String>,
     pub tracker: ActionTracker,
+    /// Lazily-cached canonical form of [`workspace_dir`].
+    ///
+    /// `validate_path` / `validate_parent_path` use the canonical workspace
+    /// root to check resolved paths against `forbidden_paths`. Without a cache
+    /// each call invokes `tokio::fs::canonicalize(&workspace_dir)` — one
+    /// `stat(2)` + symlink walk on the same path on every file op. A single
+    /// agent turn doing tens of read/edit/shell-path validations hits this
+    /// repeatedly with identical input.
+    ///
+    /// `workspace_dir` is effectively immutable for a given `SecurityPolicy`
+    /// (a config update builds a *new* policy via `from_config` and swaps the
+    /// `Arc` in [`live_policy`]), so caching the resolved value is safe and
+    /// stays correct across config updates.
+    ///
+    /// `Arc<OnceCell<_>>` so the struct stays `Clone` (clone the `Arc`) and
+    /// init happens lazily on the first async call site without blocking
+    /// constructors. Fallback (raw `workspace_dir` if canonicalize fails)
+    /// matches the previous inline behavior exactly.
+    ///
+    /// Visibility is `pub` to match every other field on the struct: external
+    /// crates (Cargo examples, downstream consumers) construct
+    /// `SecurityPolicy` with the `..SecurityPolicy::default()` functional-update
+    /// spread, and Rust requires every field of the target struct to be
+    /// visible to the caller in that syntax — even fields supplied by the
+    /// default. `pub(crate)` was an over-tight first cut that broke
+    /// `examples/mouse_smoke.rs` with E0451.
+    pub canonical_workspace: Arc<OnceCell<PathBuf>>,
 }
 
 impl Default for SecurityPolicy {
@@ -106,10 +225,24 @@ impl Default for SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: PathBuf::from("."),
             workspace_only: true,
+            // When adding a new entry to this allowlist, re-audit
+            // `DANGEROUS_ENV_PREFIXES` (see below). Every newly-allowed binary
+            // may introduce its own env-driven subprocess hooks (pager, editor,
+            // loader override, SSH/diff helper, preprocessor) — those names
+            // must be added to the prefix denylist so that the
+            // `KEY=cmd <allowed-binary>` shape cannot bypass allowlisting via
+            // `skip_env_assignments` in `is_command_allowed`. Cross-ref #2636.
             allowed_commands: vec![
+                // Version control
                 "git".into(),
+                // Package managers / build systems
                 "npm".into(),
+                "pnpm".into(),
+                "yarn".into(),
                 "cargo".into(),
+                "make".into(),
+                "cmake".into(),
+                // Directory / file inspection (read-only, low-risk)
                 "ls".into(),
                 "cat".into(),
                 "grep".into(),
@@ -120,6 +253,32 @@ impl Default for SecurityPolicy {
                 "head".into(),
                 "tail".into(),
                 "date".into(),
+                "sort".into(),
+                "uniq".into(),
+                "diff".into(),
+                "which".into(),
+                "uname".into(),
+                "basename".into(),
+                "dirname".into(),
+                "tr".into(),
+                "cut".into(),
+                "realpath".into(),
+                "readlink".into(),
+                "stat".into(),
+                "file".into(),
+                // Filesystem mutations (medium-risk — require approval in Supervised mode)
+                "mkdir".into(),
+                "touch".into(),
+                "cp".into(),
+                "mv".into(),
+                "ln".into(),
+                // Windows read-only equivalents for the same basic
+                // inspection workflows as ls/cat/grep/which.
+                "dir".into(),
+                "type".into(),
+                "where".into(),
+                "findstr".into(),
+                "more".into(),
             ],
             forbidden_paths: vec![
                 // System directories (blocked even when workspace_only=false)
@@ -143,296 +302,29 @@ impl Default for SecurityPolicy {
                 "~/.aws".into(),
                 "~/.config".into(),
             ],
-            max_actions_per_hour: 20,
+            // Effectively unlimited — matches AutonomyConfig::default_max_actions_per_hour().
+            // The rate-limiter check is `count <= max`, so u32::MAX is functionally
+            // infinite without requiring an Option sentinel on the field type.
+            max_actions_per_hour: u32::MAX,
             max_cost_per_day_cents: 500,
             require_approval_for_medium_risk: true,
             block_high_risk_commands: true,
+            trusted_roots: Vec::new(),
+            allow_tool_install: false,
+            auto_approve: Vec::new(),
             tracker: ActionTracker::new(),
+            canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
 }
 
-/// Skip leading environment variable assignments (e.g. `FOO=bar cmd args`).
-/// Returns the remainder starting at the first non-assignment word.
-fn skip_env_assignments(s: &str) -> &str {
-    let mut rest = s;
-    loop {
-        let Some(word) = rest.split_whitespace().next() else {
-            return rest;
-        };
-        // Environment assignment: contains '=' and starts with a letter or underscore
-        if word.contains('=')
-            && word
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        {
-            // Advance past this word
-            rest = rest[word.len()..].trim_start();
-        } else {
-            return rest;
-        }
-    }
-}
-
-fn command_basename(command: &str) -> &str {
-    command
-        .split(|ch| ch == '/' || ch == '\\')
-        .next_back()
-        .unwrap_or(command)
-}
-
-fn normalized_command_name(command: &str) -> String {
-    let command = command_basename(command).to_ascii_lowercase();
-    command
-        .strip_suffix(".exe")
-        .unwrap_or(command.as_str())
-        .to_string()
-}
-
-fn is_python_command(command: &str) -> bool {
-    let command = normalized_command_name(command);
-    command == "python"
-        || command == "pythonw"
-        || command
-            .strip_prefix("pythonw")
-            .and_then(|suffix| suffix.chars().next())
-            .is_some_and(|ch| ch.is_ascii_digit())
-        || command
-            .strip_prefix("python")
-            .and_then(|suffix| suffix.chars().next())
-            .is_some_and(|ch| ch.is_ascii_digit())
-}
-
-fn is_command_executor(command: &str) -> bool {
-    let command = normalized_command_name(command);
-    is_python_command(command.as_str())
-        || matches!(
-            command.as_str(),
-            "xargs"
-                | "awk"
-                | "gawk"
-                | "mawk"
-                | "nawk"
-                | "perl"
-                | "ruby"
-                | "bash"
-                | "sh"
-                | "dash"
-                | "zsh"
-                | "ksh"
-                | "fish"
-                | "env"
-        )
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum QuoteState {
-    None,
-    Single,
-    Double,
-}
-
-/// Split a shell command into sub-commands by unquoted separators.
-///
-/// Separators:
-/// - `;` and newline
-/// - `|`
-/// - `&&`, `||`
-///
-/// Characters inside single or double quotes are treated as literals, so
-/// `sqlite3 db "SELECT 1; SELECT 2;"` remains a single segment.
-fn split_unquoted_segments(command: &str) -> Vec<String> {
-    let mut segments = Vec::new();
-    let mut current = String::new();
-    let mut quote = QuoteState::None;
-    let mut escaped = false;
-    let mut chars = command.chars().peekable();
-
-    let push_segment = |segments: &mut Vec<String>, current: &mut String| {
-        let trimmed = current.trim();
-        if !trimmed.is_empty() {
-            segments.push(trimmed.to_string());
-        }
-        current.clear();
-    };
-
-    while let Some(ch) = chars.next() {
-        match quote {
-            QuoteState::Single => {
-                if ch == '\'' {
-                    quote = QuoteState::None;
-                }
-                current.push(ch);
-            }
-            QuoteState::Double => {
-                if escaped {
-                    escaped = false;
-                    current.push(ch);
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    current.push(ch);
-                    continue;
-                }
-                if ch == '"' {
-                    quote = QuoteState::None;
-                }
-                current.push(ch);
-            }
-            QuoteState::None => {
-                if escaped {
-                    escaped = false;
-                    current.push(ch);
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    current.push(ch);
-                    continue;
-                }
-
-                match ch {
-                    '\'' => {
-                        quote = QuoteState::Single;
-                        current.push(ch);
-                    }
-                    '"' => {
-                        quote = QuoteState::Double;
-                        current.push(ch);
-                    }
-                    ';' | '\n' => push_segment(&mut segments, &mut current),
-                    '|' => {
-                        if chars.next_if_eq(&'|').is_some() {
-                            // Consume full `||`; both characters are separators.
-                        }
-                        push_segment(&mut segments, &mut current);
-                    }
-                    '&' => {
-                        if chars.next_if_eq(&'&').is_some() {
-                            // `&&` is a separator; single `&` is handled separately.
-                            push_segment(&mut segments, &mut current);
-                        } else {
-                            current.push(ch);
-                        }
-                    }
-                    _ => current.push(ch),
-                }
-            }
-        }
-    }
-
-    let trimmed = current.trim();
-    if !trimmed.is_empty() {
-        segments.push(trimmed.to_string());
-    }
-
-    segments
-}
-
-/// Detect a single unquoted `&` operator (background/chain). `&&` is allowed.
-///
-/// We treat any standalone `&` as unsafe in policy validation because it can
-/// chain hidden sub-commands and escape foreground timeout expectations.
-fn contains_unquoted_single_ampersand(command: &str) -> bool {
-    let mut quote = QuoteState::None;
-    let mut escaped = false;
-    let mut chars = command.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        match quote {
-            QuoteState::Single => {
-                if ch == '\'' {
-                    quote = QuoteState::None;
-                }
-            }
-            QuoteState::Double => {
-                if escaped {
-                    escaped = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    continue;
-                }
-                if ch == '"' {
-                    quote = QuoteState::None;
-                }
-            }
-            QuoteState::None => {
-                if escaped {
-                    escaped = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    continue;
-                }
-                match ch {
-                    '\'' => quote = QuoteState::Single,
-                    '"' => quote = QuoteState::Double,
-                    '&' => {
-                        if chars.next_if_eq(&'&').is_none() {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    false
-}
-
-/// Detect an unquoted character in a shell command.
-fn contains_unquoted_char(command: &str, target: char) -> bool {
-    let mut quote = QuoteState::None;
-    let mut escaped = false;
-
-    for ch in command.chars() {
-        match quote {
-            QuoteState::Single => {
-                if ch == '\'' {
-                    quote = QuoteState::None;
-                }
-            }
-            QuoteState::Double => {
-                if escaped {
-                    escaped = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    continue;
-                }
-                if ch == '"' {
-                    quote = QuoteState::None;
-                    continue;
-                }
-            }
-            QuoteState::None => {
-                if escaped {
-                    escaped = false;
-                    continue;
-                }
-                if ch == '\\' {
-                    escaped = true;
-                    continue;
-                }
-                match ch {
-                    '\'' => quote = QuoteState::Single,
-                    '"' => quote = QuoteState::Double,
-                    _ if ch == target => return true,
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    false
-}
+#[path = "policy_command.rs"]
+mod policy_command;
+use policy_command::{
+    classify_segment, command_basename, contains_unquoted_char, contains_unquoted_single_ampersand,
+    has_dangerous_env_prefix, has_hidden_execution, is_command_executor, normalized_command_name,
+    skip_env_assignments, split_unquoted_segments,
+};
 
 impl SecurityPolicy {
     /// Classify command risk. Any high-risk segment marks the whole command high.
@@ -451,40 +343,33 @@ impl SecurityPolicy {
             let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
             let joined_segment = cmd_part.to_ascii_lowercase();
 
-            // High-risk commands
-            if is_command_executor(base.as_str())
-                || matches!(
-                    base.as_str(),
-                    "rm" | "mkfs"
-                        | "dd"
-                        | "shutdown"
-                        | "reboot"
-                        | "halt"
-                        | "poweroff"
-                        | "sudo"
-                        | "su"
-                        | "chown"
-                        | "chmod"
-                        | "useradd"
-                        | "userdel"
-                        | "usermod"
-                        | "passwd"
-                        | "mount"
-                        | "umount"
-                        | "iptables"
-                        | "ufw"
-                        | "firewall-cmd"
-                        | "curl"
-                        | "wget"
-                        | "nc"
-                        | "ncat"
-                        | "netcat"
-                        | "scp"
-                        | "ssh"
-                        | "ftp"
-                        | "telnet"
-                )
-            {
+            // High-risk = catastrophic / irreversible / privilege-escalating /
+            // system-control commands ONLY. Interpreters (python/bash/…),
+            // network tools (curl/wget/ssh/…), and ordinary rm/chmod/chown are
+            // deliberately NOT high-risk: they are routine for a coding agent and
+            // are treated as medium-risk below (prompted in Supervised, run in
+            // Full). This keeps "Full access" actually able to run code while
+            // still guarding the few irreversible / system-destroying commands.
+            if matches!(
+                base.as_str(),
+                "mkfs"
+                    | "dd"
+                    | "shutdown"
+                    | "reboot"
+                    | "halt"
+                    | "poweroff"
+                    | "sudo"
+                    | "su"
+                    | "mount"
+                    | "umount"
+                    | "iptables"
+                    | "ufw"
+                    | "firewall-cmd"
+                    | "useradd"
+                    | "userdel"
+                    | "usermod"
+                    | "passwd"
+            ) {
                 return CommandRiskLevel::High;
             }
 
@@ -526,9 +411,15 @@ impl SecurityPolicy {
                         "add" | "remove" | "install" | "clean" | "publish"
                     )
                 }),
-                "touch" | "mkdir" | "mv" | "cp" | "ln" => true,
+                "touch" | "mkdir" | "mv" | "cp" | "ln" | "rm" | "chmod" | "chown" | "curl"
+                | "wget" | "nc" | "ncat" | "netcat" | "scp" | "ssh" | "ftp" | "telnet" => true,
                 _ => false,
             };
+
+            // Interpreters / code executors run arbitrary code — medium-risk
+            // (that is the job of a coding agent): prompted in Supervised,
+            // allowed in Full. They are no longer classified high-risk.
+            let medium = medium || is_command_executor(base.as_str());
 
             saw_medium |= medium;
         }
@@ -537,6 +428,116 @@ impl SecurityPolicy {
             CommandRiskLevel::Medium
         } else {
             CommandRiskLevel::Low
+        }
+    }
+
+    /// Classify a shell command into a fail-closed [`CommandClass`]. The highest
+    /// class across all `;`/`|`/`&&`/`||`/newline-separated segments wins, and a
+    /// file redirect (`>`/`>>`) or `tee` lifts the class to at least `Write` no
+    /// matter how benign the base looks (`cat x > y` writes `y`).
+    ///
+    /// This is the deterministic floor the harness gate keys on; an LLM-declared
+    /// category may only *raise* it (`gate = max(rust_floor, llm_declared)`),
+    /// never lower it.
+    pub fn classify_command(&self, command: &str) -> CommandClass {
+        let mut class = CommandClass::Read;
+        for segment in split_unquoted_segments(command) {
+            let cmd_part = skip_env_assignments(&segment);
+            let mut words = cmd_part.split_whitespace();
+            let Some(base_raw) = words.next() else {
+                continue;
+            };
+            let base = normalized_command_name(base_raw);
+            let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
+            let joined = cmd_part.to_ascii_lowercase();
+            class = class.max(classify_segment(&base, &args, &joined));
+        }
+        // A redirect or `tee` writes a file regardless of the base command.
+        if contains_unquoted_char(command, '>')
+            || command
+                .split_whitespace()
+                .any(|w| w == "tee" || w.ends_with("/tee"))
+        {
+            class = class.max(CommandClass::Write);
+        }
+        class
+    }
+
+    /// The gate decision for an acting tool call of `class` under this policy's
+    /// autonomy tier. The harness turns `Prompt` into an `ApprovalGate`
+    /// round-trip *before* the tool runs; `Block` is refused outright.
+    ///
+    /// Matrix: read-only allows only `Read`; ask-before-edit (`Supervised`)
+    /// prompts on every acting class; full runs `Read`/`Write` silently but
+    /// always prompts on `Network`/`Destructive`.
+    pub fn gate_decision(&self, class: CommandClass) -> GateDecision {
+        match self.autonomy {
+            AutonomyLevel::ReadOnly => match class {
+                CommandClass::Read => GateDecision::Allow,
+                _ => GateDecision::Block,
+            },
+            AutonomyLevel::Supervised => match class {
+                CommandClass::Read => GateDecision::Allow,
+                _ => GateDecision::Prompt,
+            },
+            AutonomyLevel::Full => match class {
+                CommandClass::Read | CommandClass::Write => GateDecision::Allow,
+                CommandClass::Network | CommandClass::Install | CommandClass::Destructive => {
+                    GateDecision::Prompt
+                }
+            },
+        }
+    }
+
+    /// Defense-in-depth check for the harness-gated command flow (Option 2).
+    ///
+    /// The run / prompt / block decision is made by [`Self::gate_decision`] +
+    /// the process-global `ApprovalGate` (which prompts the human *before*
+    /// `execute()`), so by the time a tool calls this the command is either a
+    /// read or an already-approved act. This enforces what must still hold:
+    ///
+    /// - **Read-only**: only `Read`-class commands run (`Block` otherwise).
+    /// - **Supervised**: no *hidden execution* (command/process substitution,
+    ///   backticks, background `&`) that could smuggle an unseen command past
+    ///   the approval the human read. Plain redirects (`2>&1`, `> file`) and
+    ///   pipes are fine here — `classify_command` already lifts redirects to
+    ///   `Write` so the gate prompted on them, and the human approved the
+    ///   literal command. Full is trusted and skips the structural guard.
+    ///
+    /// Returns the classified [`CommandClass`] on success.
+    pub fn check_gated_command(&self, command: &str) -> Result<CommandClass, String> {
+        let class = self.classify_command(command);
+        if self.gate_decision(class) == GateDecision::Block {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Security policy: read-only mode — only read commands are \
+                 permitted. Do not retry this command; use a read-only approach or report that it \
+                 cannot be done in this mode."
+            ));
+        }
+        if self.autonomy != AutonomyLevel::Full && has_hidden_execution(command) {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Command blocked: command/process substitution ($(…), \
+                 <(…)), backticks, and background (&) are not allowed in this mode — they can run \
+                 a hidden command the approval prompt wouldn't show. Plain redirects like `2>&1` \
+                 are fine. Do not retry as-is; rewrite the command without these constructs."
+            ));
+        }
+        Ok(class)
+    }
+
+    /// Parse an LLM-declared command category. This is an **escalate-only**
+    /// hint: callers combine it with the deterministic floor via
+    /// `classify_command(cmd).max(declared)`, so the model can *raise* the gate
+    /// (e.g. flag a `Write` as `Destructive` to request confirmation) but can
+    /// never lower what the runtime determined. Unknown / empty → `None`.
+    pub fn parse_declared_class(declared: &str) -> Option<CommandClass> {
+        match declared.trim().to_ascii_lowercase().as_str() {
+            "read" => Some(CommandClass::Read),
+            "write" => Some(CommandClass::Write),
+            "network" => Some(CommandClass::Network),
+            "install" => Some(CommandClass::Install),
+            "destructive" => Some(CommandClass::Destructive),
+            _ => None,
         }
     }
 
@@ -559,7 +560,8 @@ impl SecurityPolicy {
                 truncated
             );
             return Err(format!(
-                "Command not allowed by security policy: {truncated}"
+                "{POLICY_BLOCKED_MARKER} Command not allowed by security policy: {truncated}. \
+                 Do not retry this command; it is off the allowlist for this mode."
             ));
         }
 
@@ -571,7 +573,11 @@ impl SecurityPolicy {
                     "[openhuman:policy] High-risk command blocked: {}",
                     &command[..floor_char_boundary(command, 80)]
                 );
-                return Err("Command blocked: high-risk command is disallowed by policy".into());
+                return Err(format!(
+                    "{POLICY_BLOCKED_MARKER} Command blocked: high-risk command is disallowed by \
+                     policy. Do not retry this command; choose a safer approach or report that it \
+                     cannot be done."
+                ));
             }
             if self.autonomy == AutonomyLevel::Supervised && !approved {
                 log::warn!(
@@ -622,6 +628,18 @@ impl SecurityPolicy {
             return false;
         }
 
+        // Full access bypasses the command allowlist AND the structural guards
+        // (redirects, pipes, subshells, background) — a Full-access agent is
+        // trusted to run any command, including the `mkdir`/`node`/`python`/
+        // redirect-using commands a coding workflow needs. The remaining safety
+        // net is `validate_command_execution`'s high-risk handling (still gated
+        // by `block_high_risk_commands`), plus path-level `forbidden_paths` and
+        // any configured sandbox. The allowlist + structural guards below stay
+        // in force for Supervised, which runs only curated commands.
+        if self.autonomy == AutonomyLevel::Full {
+            return true;
+        }
+
         // Block subshell/expansion operators — these allow hiding arbitrary
         // commands inside an allowed command (e.g. `echo $(rm -rf /)`)
         if command.contains('`')
@@ -657,6 +675,15 @@ impl SecurityPolicy {
         // Split on unquoted command separators and validate each sub-command.
         let segments = split_unquoted_segments(command);
         for segment in &segments {
+            // Reject segments that prefix the command with a dangerous env
+            // assignment (e.g. `GIT_PAGER=<cmd> git log`). The bare command
+            // after the assignment is allowlisted, but the prefix mutates
+            // the downstream binary's execution to spawn `<cmd>` as a
+            // subprocess. See [`has_dangerous_env_prefix`].
+            if has_dangerous_env_prefix(segment) {
+                return false;
+            }
+
             // Strip leading env var assignments (e.g. FOO=bar cmd)
             let cmd_part = skip_env_assignments(segment);
 
@@ -701,8 +728,13 @@ impl SecurityPolicy {
 
         match base.as_str() {
             "find" => {
-                // find -exec and find -ok allow arbitrary command execution
-                !args.iter().any(|arg| arg == "-exec" || arg == "-ok")
+                // -exec / -ok run a command per match. -execdir / -okdir do
+                // the same with the working directory set to the match's
+                // parent — same code-execution semantics, just with a
+                // different cwd, so they must be blocked alongside.
+                !args.iter().any(|arg| {
+                    arg == "-exec" || arg == "-ok" || arg == "-execdir" || arg == "-okdir"
+                })
             }
             "git" => {
                 // git config, alias, and -c can be used to set dangerous options
@@ -715,6 +747,7 @@ impl SecurityPolicy {
                         || arg == "-c"
                 })
             }
+            "date" => args.is_empty(),
             _ => true,
         }
     }
@@ -752,19 +785,31 @@ impl SecurityPolicy {
 
         // Expand tilde for comparison
         let expanded = self.expand_tilde(path);
+        let expanded_path = Path::new(&expanded);
 
-        // Block absolute paths when workspace_only is set
-        if self.workspace_only && Path::new(&expanded).is_absolute() {
+        // Credential stores are never reachable, even via a trusted-root grant.
+        if Self::is_always_forbidden(expanded_path) {
             return false;
         }
 
-        // Block forbidden paths using path-component-aware matching
-        let expanded_path = Path::new(&expanded);
-        for forbidden in &self.forbidden_paths {
-            let forbidden_expanded = self.expand_tilde(forbidden);
-            let forbidden_path = Path::new(&forbidden_expanded);
-            if expanded_path.starts_with(forbidden_path) {
-                return false;
+        // A trusted root grants access to its subtree, taking precedence over
+        // workspace_only and forbidden_paths. Read-vs-write is enforced by the
+        // operation-specific validators (validate_path / validate_parent_path).
+        let in_trusted_root = self.is_within_trusted_root(expanded_path, false);
+
+        // Block absolute paths when workspace_only is set (unless trusted-rooted).
+        if self.workspace_only && expanded_path.is_absolute() && !in_trusted_root {
+            return false;
+        }
+
+        // Block forbidden paths using path-component-aware matching (unless trusted-rooted).
+        if !in_trusted_root {
+            for forbidden in &self.forbidden_paths {
+                let forbidden_expanded = self.expand_tilde(forbidden);
+                let forbidden_path = Path::new(&forbidden_expanded);
+                if expanded_path.starts_with(forbidden_path) {
+                    return false;
+                }
             }
         }
 
@@ -774,11 +819,18 @@ impl SecurityPolicy {
         // path and re-validate `workspace_only` containment + forbidden_paths
         // against the resolved location.
         if let Some(canonical) = self.try_canonicalize_under_workspace(path) {
+            if Self::is_always_forbidden(&canonical) {
+                return false;
+            }
             let workspace_root = self
                 .workspace_dir
                 .canonicalize()
                 .unwrap_or_else(|_| self.workspace_dir.clone());
-            if self.workspace_only && !canonical.starts_with(&workspace_root) {
+            let canonical_in_trusted = self.is_within_trusted_root(&canonical, false);
+            if self.workspace_only
+                && !canonical.starts_with(&workspace_root)
+                && !canonical_in_trusted
+            {
                 log::trace!(
                     "[security:policy] path blocked: symlink escapes workspace (requested={}, resolved={}, workspace={})",
                     path,
@@ -794,7 +846,7 @@ impl SecurityPolicy {
             // to catch escapes *outside* the workspace, which the workspace
             // containment check above already validates.
             let inside_workspace = canonical.starts_with(&workspace_root);
-            if !inside_workspace {
+            if !inside_workspace && !canonical_in_trusted {
                 for forbidden in &self.forbidden_paths {
                     let forbidden_expanded = if let Some(stripped) = forbidden.strip_prefix("~/") {
                         std::env::var("HOME")
@@ -854,12 +906,37 @@ impl SecurityPolicy {
         parent.canonicalize().ok().map(|p| p.join(name))
     }
 
+    /// Return the canonical form of `workspace_dir`, hydrating the
+    /// `canonical_workspace` cache on the first call.
+    ///
+    /// `validate_path` / `validate_parent_path` both need the canonical
+    /// workspace root for forbidden-path containment checks. The underlying
+    /// `tokio::fs::canonicalize` is a `stat(2)` + symlink walk and was
+    /// previously invoked on every call with the same input.
+    ///
+    /// Falls back to the raw `workspace_dir` if `canonicalize` fails (e.g.
+    /// during early startup or in tests where the workspace doesn't exist on
+    /// disk), matching the inline behavior the callers used before the cache.
+    async fn workspace_root(&self) -> PathBuf {
+        self.canonical_workspace
+            .get_or_init(|| async {
+                tokio::fs::canonicalize(&self.workspace_dir)
+                    .await
+                    .unwrap_or_else(|_| self.workspace_dir.clone())
+            })
+            .await
+            .clone()
+    }
+
     /// Validate a path for file I/O: string checks, canonicalize, workspace containment,
     /// and forbidden-path check on the resolved path.
     /// Returns the canonical `PathBuf` on success.
     pub async fn validate_path(&self, path: &str) -> Result<PathBuf, String> {
         if !self.is_path_string_allowed(path) {
-            return Err(format!("Path not allowed by security policy: {path}"));
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Path not allowed by security policy: {path}. Do not \
+                 retry this path; use an allowed location (the workspace or a granted folder)."
+            ));
         }
         let expanded = self.expand_tilde(path);
         let full_path = if Path::new(&expanded).is_absolute() {
@@ -870,15 +947,13 @@ impl SecurityPolicy {
         let resolved = tokio::fs::canonicalize(&full_path)
             .await
             .map_err(|e| format!("Failed to resolve path '{path}': {e}"))?;
-        if !self.is_resolved_path_allowed(&resolved) {
+        if !self.is_resolved_path_allowed_for(&resolved, false) {
             return Err(format!(
-                "Resolved path escapes workspace: {}",
+                "{POLICY_BLOCKED_MARKER} Resolved path escapes workspace: {}",
                 resolved.display()
             ));
         }
-        let workspace_root = tokio::fs::canonicalize(&self.workspace_dir)
-            .await
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root().await;
         self.check_resolved_against_forbidden(&resolved, &workspace_root)?;
         log::debug!(
             "[security] validate_path: '{}' resolved to '{}'",
@@ -895,7 +970,10 @@ impl SecurityPolicy {
     /// Returns the canonical full path (parent resolved + filename appended).
     pub async fn validate_parent_path(&self, path: &str) -> Result<PathBuf, String> {
         if !self.is_path_string_allowed(path) {
-            return Err(format!("Path not allowed by security policy: {path}"));
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Path not allowed by security policy: {path}. Do not \
+                 retry this path; use an allowed location (the workspace or a granted folder)."
+            ));
         }
         let expanded = self.expand_tilde(path);
         let full_path = if Path::new(&expanded).is_absolute() {
@@ -926,9 +1004,9 @@ impl SecurityPolicy {
         let canonical_ancestor = tokio::fs::canonicalize(&existing_ancestor)
             .await
             .map_err(|e| format!("Failed to resolve parent of '{path}': {e}"))?;
-        if !self.is_resolved_path_allowed(&canonical_ancestor) {
+        if !self.is_resolved_path_allowed_for(&canonical_ancestor, true) {
             return Err(format!(
-                "Resolved parent path escapes workspace: {}",
+                "{POLICY_BLOCKED_MARKER} Resolved parent path escapes workspace: {}",
                 canonical_ancestor.display()
             ));
         }
@@ -942,9 +1020,7 @@ impl SecurityPolicy {
         let resolved_parent = canonical_ancestor.join(relative_suffix);
         let result = resolved_parent.join(file_name);
 
-        let workspace_root = tokio::fs::canonicalize(&self.workspace_dir)
-            .await
-            .unwrap_or_else(|_| self.workspace_dir.clone());
+        let workspace_root = self.workspace_root().await;
         self.check_resolved_against_forbidden(&canonical_ancestor, &workspace_root)?;
         self.check_resolved_against_forbidden(&result, &workspace_root)?;
 
@@ -956,17 +1032,100 @@ impl SecurityPolicy {
         Ok(result)
     }
 
+    /// Paths that remain blocked even when a `trusted_root` grant would
+    /// otherwise reach them — credential stores and core OS directories. A
+    /// grant on a parent must never expose SSH/GPG/AWS/keychain secrets, nor
+    /// open `/etc`, `C:\Windows`, `/System`, etc. Matching is **case-insensitive**
+    /// (Windows/macOS filesystems are), so `.SSH` / `C:\WINDOWS` cannot slip
+    /// through. Gray-area dirs (`/usr`, `/opt`, `/var`, `~/Library`) stay in the
+    /// user-overridable `forbidden_paths` instead, so a grant can still reach
+    /// e.g. `/usr/local/...`.
+    fn is_always_forbidden(path: &Path) -> bool {
+        // Normalize separators + case BEFORE splitting: a Windows backslash
+        // path is a single component on POSIX (and vice-versa), so we segment
+        // the normalized string rather than rely on `Path::components()`.
+        let lc_path = path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .replace('\\', "/");
+        let segments: Vec<&str> = lc_path.split('/').filter(|s| !s.is_empty()).collect();
+
+        // (a) Credential stores — matched by path segment, location-independent
+        // (catches e.g. `C:\Users\x\.ssh` and `~/Library/Keychains`).
+        const SENSITIVE_COMPONENTS: &[&str] =
+            &[".ssh", ".gnupg", ".aws", ".azure", ".kube", "keychains"];
+        if segments.iter().any(|s| SENSITIVE_COMPONENTS.contains(s)) {
+            return true;
+        }
+        // Windows DPAPI / credential stores live under `…\Microsoft\{Protect,
+        // Credentials,Crypto,Vault}` — match the pair so the generic second
+        // name can't false-positive an unrelated project directory.
+        if segments.windows(2).any(|w| {
+            w[0] == "microsoft" && matches!(w[1], "protect" | "credentials" | "crypto" | "vault")
+        }) {
+            return true;
+        }
+
+        // (b) Core OS directories — matched by absolute prefix. Unconditional,
+        // unlike the user-overridable `forbidden_paths`.
+        const SYSTEM_PREFIXES: &[&str] = &[
+            // POSIX
+            "/etc",
+            "/root",
+            "/boot",
+            "/proc",
+            "/sys",
+            // macOS (note: /private is intentionally NOT blocked — macOS temp
+            // dirs and /etc canonicalize under /private/var and /private/etc).
+            "/system",
+            // Windows
+            "c:/windows",
+            "c:/program files",
+            "c:/program files (x86)",
+            "c:/programdata",
+        ];
+        SYSTEM_PREFIXES
+            .iter()
+            .any(|p| lc_path == *p || lc_path.starts_with(&format!("{p}/")))
+    }
+
+    /// True if `path` is within a configured trusted root. When `require_write`
+    /// is set, only `ReadWrite` roots match. Never matches credential stores.
+    pub fn is_within_trusted_root(&self, path: &Path, require_write: bool) -> bool {
+        if Self::is_always_forbidden(path) {
+            return false;
+        }
+        self.trusted_roots.iter().any(|root| {
+            if require_write && root.access != TrustedAccess::ReadWrite {
+                return false;
+            }
+            let root_path = PathBuf::from(self.expand_tilde(&root.path));
+            let canonical_root = root_path
+                .canonicalize()
+                .unwrap_or_else(|_| root_path.clone());
+            path.starts_with(&root_path) || path.starts_with(&canonical_root)
+        })
+    }
+
     /// Validate that a resolved path is still inside the workspace.
     /// Call this AFTER joining `workspace_dir` + relative path and canonicalizing.
     pub fn is_resolved_path_allowed(&self, resolved: &Path) -> bool {
-        // Must be under workspace_dir (prevents symlink escapes).
-        // Prefer canonical workspace root so `/a/../b` style config paths don't
-        // cause false positives or negatives.
+        self.is_resolved_path_allowed_for(resolved, false)
+    }
+
+    /// Operation-aware resolved-path check: allowed when under the workspace, or
+    /// within a trusted root (write roots only when `require_write`). Prefers the
+    /// canonical workspace root so `/a/../b` style config paths don't misfire.
+    pub fn is_resolved_path_allowed_for(&self, resolved: &Path, require_write: bool) -> bool {
+        if Self::is_always_forbidden(resolved) {
+            return false;
+        }
         let workspace_root = self
             .workspace_dir
             .canonicalize()
             .unwrap_or_else(|_| self.workspace_dir.clone());
-        resolved.starts_with(workspace_root)
+        resolved.starts_with(&workspace_root)
+            || self.is_within_trusted_root(resolved, require_write)
     }
 
     /// Check `resolved` against every entry in `forbidden_paths`, resolving relative
@@ -977,6 +1136,17 @@ impl SecurityPolicy {
         resolved: &Path,
         workspace_root: &Path,
     ) -> Result<(), String> {
+        // Credential stores are never reachable, even via a trusted-root grant.
+        if Self::is_always_forbidden(resolved) {
+            return Err(format!(
+                "{POLICY_BLOCKED_MARKER} Resolved path is a protected credential store: {}",
+                resolved.display()
+            ));
+        }
+        // A trusted-root grant takes precedence over forbidden_paths for its subtree.
+        if self.is_within_trusted_root(resolved, false) {
+            return Ok(());
+        }
         for forbidden in &self.forbidden_paths {
             let forbidden_path = PathBuf::from(self.expand_tilde(forbidden));
             let forbidden_resolved = if forbidden_path.is_absolute() {
@@ -989,7 +1159,7 @@ impl SecurityPolicy {
             };
             if resolved.starts_with(&forbidden_resolved) {
                 return Err(format!(
-                    "Resolved path is inside a forbidden directory: {}",
+                    "{POLICY_BLOCKED_MARKER} Resolved path is inside a forbidden directory: {}",
                     forbidden_resolved.display()
                 ));
             }
@@ -1020,7 +1190,8 @@ impl SecurityPolicy {
                         operation_name
                     );
                     return Err(format!(
-                        "Security policy: read-only mode, cannot perform '{operation_name}'"
+                        "{POLICY_BLOCKED_MARKER} Security policy: read-only mode, cannot perform \
+                         '{operation_name}'. Do not retry; this tier blocks all write actions."
                     ));
                 }
 
@@ -1029,7 +1200,10 @@ impl SecurityPolicy {
                         "[openhuman:policy] Operation '{}' blocked: rate limit exceeded",
                         operation_name
                     );
-                    return Err("Rate limit exceeded: action budget exhausted".to_string());
+                    return Err(format!(
+                        "Rate limit exceeded: action budget exhausted ({} actions/hour). Increase the limit in Settings -> Advanced -> Agent autonomy or wait for the rolling one-hour window to refill.",
+                        self.max_actions_per_hour
+                    ));
                 }
 
                 log::debug!(
@@ -1067,6 +1241,32 @@ impl SecurityPolicy {
             autonomy_config.allowed_commands.len(),
             autonomy_config.max_actions_per_hour
         );
+
+        // `auto_approve` is the user's "Always allow" allowlist: the
+        // `ApprovalGate` reads it via `live_policy::current()` and skips the
+        // interactive prompt for any tool named in it. Tier + `CommandClass`
+        // (and the unconditional read-only / forbidden-path / high-risk denials)
+        // still run *before* the gate, so the allowlist can only suppress the
+        // human prompt — it can never override a hard policy denial.
+
+        // The default projects home (`~/OpenHuman/projects`) is always a
+        // read-write trusted root so the coding agent can create/edit projects
+        // there regardless of tier or `workspace_only`. Injected here — the one
+        // autonomy→policy chokepoint every session goes through — because the
+        // channels-startup injection is skipped on cores with no listening
+        // integrations (web-chat-only), and a freshly reloaded config wouldn't
+        // carry an in-memory edit anyway. A user-granted entry is left as-is.
+        let mut trusted_roots = autonomy_config.trusted_roots.clone();
+        let projects_path = crate::openhuman::config::default_projects_dir()
+            .to_string_lossy()
+            .to_string();
+        if !trusted_roots.iter().any(|r| r.path == projects_path) {
+            trusted_roots.push(TrustedRoot {
+                path: projects_path,
+                access: TrustedAccess::ReadWrite,
+            });
+        }
+
         Self {
             autonomy: autonomy_config.level,
             workspace_dir: workspace_dir.to_path_buf(),
@@ -1077,7 +1277,11 @@ impl SecurityPolicy {
             max_cost_per_day_cents: autonomy_config.max_cost_per_day_cents,
             require_approval_for_medium_risk: autonomy_config.require_approval_for_medium_risk,
             block_high_risk_commands: autonomy_config.block_high_risk_commands,
+            trusted_roots,
+            allow_tool_install: autonomy_config.allow_tool_install,
+            auto_approve: autonomy_config.auto_approve.clone(),
             tracker: ActionTracker::new(),
+            canonical_workspace: Arc::new(OnceCell::new()),
         }
     }
 }

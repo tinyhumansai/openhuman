@@ -1,19 +1,22 @@
 //! Shared URL validation + SSRF guards for outbound network tools.
 //!
 //! Used by `http_request`, `curl`, and any future tool that takes a
-//! user-supplied URL. The contract is intentionally strict:
+//! user-supplied URL. Two allowlist modes:
 //!
-//! - http(s) only
-//! - non-empty allowlist required (callers pass it in)
-//! - no whitespace, no userinfo, no IPv6 hosts
-//! - blocks loopback / RFC1918 / link-local / multicast / documentation /
-//!   shared-address / IPv4-mapped IPv6, including `localhost` /
-//!   `*.localhost` / `*.local`
+//! - **Open allowlist** (`allowed_domains` is empty): any public non-private
+//!   host is permitted. All SSRF guards still apply (loopback / RFC1918 /
+//!   link-local / multicast / documentation / shared-address /
+//!   IPv4-mapped IPv6, `localhost` / `*.localhost` / `*.local`).
+//! - **Strict allowlist** (`allowed_domains` is non-empty): only the listed
+//!   domains and their subdomains are permitted.
 //!
-//! The blocklist deliberately does NOT cover alternate IP notations
-//! (octal, hex, decimal) because Rust's `IpAddr::parse` rejects them —
-//! they fall through and get rejected by the allowlist instead. See the
-//! tests in `http_request.rs` for the documented behaviour.
+//! Both modes enforce: http(s) only, no whitespace, no userinfo, no IPv6 hosts.
+//!
+//! **Alternate IP notations** (octal, hex, decimal): Rust's `IpAddr::parse`
+//! rejects them so they are treated as plain hostnames. In strict-allowlist
+//! mode they are rejected by the domain check. In open-allowlist mode they
+//! pass `validate_url` but are caught by `validate_url_with_dns_check`
+//! because they fail real-world DNS resolution.
 //!
 //! ## DNS Rebinding Protection
 //!
@@ -43,21 +46,45 @@ pub(super) fn validate_url(raw_url: &str, allowed_domains: &[String]) -> anyhow:
         anyhow::bail!("Only http:// and https:// URLs are allowed");
     }
 
-    if allowed_domains.is_empty() {
-        anyhow::bail!(
-            "Network tool is enabled but no allowed_domains are configured. Add [http_request].allowed_domains in config.toml"
-        );
-    }
-
     let host = extract_host(url)?;
 
     if is_private_or_local_host(&host) {
+        log::debug!(
+            "[url_guard] ssrf block: host={host} mode={}",
+            if allowed_domains.is_empty() {
+                "open"
+            } else {
+                "strict"
+            }
+        );
         anyhow::bail!("Blocked local/private host: {host}");
     }
 
-    if !host_matches_allowlist(&host, allowed_domains) {
-        anyhow::bail!("Host '{host}' is not in http_request.allowed_domains");
+    // Empty allowed_domains = open mode: any public non-private host is
+    // permitted (same as ["*"]). This ensures the http_request tool works
+    // out of the box regardless of whether the user configured an explicit
+    // domain list, and keeps web-fetch consistent across routing paths.
+    // A non-empty list = strict mode: only listed domains pass. (#2700)
+    if !allowed_domains.is_empty() && !host_matches_allowlist(&host, allowed_domains) {
+        log::debug!(
+            "[url_guard] strict-allowlist rejection: host={host} allowed={:?}",
+            allowed_domains
+        );
+        anyhow::bail!(
+            "I'm not allowed to open '{host}' — it isn't in your allowed websites. \
+             Add it (or turn on \"Allow all sites\") under \
+             Settings → Advanced → Search engine → Allowed websites, then ask me again."
+        );
     }
+
+    log::debug!(
+        "[url_guard] validate_url ok: host={host} mode={}",
+        if allowed_domains.is_empty() {
+            "open"
+        } else {
+            "strict"
+        }
+    );
 
     Ok(url.to_string())
 }
@@ -138,12 +165,26 @@ async fn resolve_host_ips(host: String, port: u16) -> anyhow::Result<Vec<IpAddr>
 }
 
 pub(super) fn normalize_allowed_domains(domains: Vec<String>) -> Vec<String> {
+    if domains.is_empty() {
+        return Vec::new();
+    }
     let mut normalized = domains
         .into_iter()
         .filter_map(|d| normalize_domain(&d))
         .collect::<Vec<_>>();
     normalized.sort_unstable();
     normalized.dedup();
+    if normalized.is_empty() {
+        // All entries were malformed (whitespace-only, scheme-only, etc.) and
+        // filtered out. Returning empty would silently enter open mode; instead
+        // return a sentinel that keeps the tool in strict mode and rejects every
+        // URL — fail-closed on misconfiguration. (#2738)
+        log::warn!(
+            "[url_guard] all configured allowed_domains entries are invalid — \
+             treating as misconfigured allowlist (fail-closed)"
+        );
+        return vec!["<misconfigured-allowlist>".to_string()];
+    }
     normalized
 }
 
@@ -244,7 +285,12 @@ fn extract_port(url: &str) -> anyhow::Result<u16> {
 
 pub(super) fn host_matches_allowlist(host: &str, allowed_domains: &[String]) -> bool {
     allowed_domains.iter().any(|domain| {
-        host == domain
+        // `"*"` is the explicit allow-all wildcard (the "Allow all sites"
+        // toggle), mirroring the browser tool. Local/private hosts are still
+        // rejected upstream by `is_private_or_local_host`, so a wildcard only
+        // opens *public* hosts, never the loopback/RFC1918 SSRF surface.
+        domain == "*"
+            || host == domain
             || host
                 .strip_suffix(domain)
                 .is_some_and(|prefix| prefix.ends_with('.'))
@@ -348,7 +394,29 @@ mod tests {
         let err = validate_url("https://google.com", &allow)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("allowed_domains"));
+        assert!(err.contains("allowed websites"));
+    }
+
+    #[test]
+    fn validate_wildcard_allows_any_public_host() {
+        let allow = vec!["*".to_string()];
+        assert!(validate_url("https://example.com/docs", &allow).is_ok());
+        assert!(validate_url("https://www.cnbc.com/markets", &allow).is_ok());
+        assert!(validate_url("https://sub.deep.example.org", &allow).is_ok());
+    }
+
+    #[test]
+    fn validate_wildcard_still_blocks_local_and_private() {
+        // "Allow all sites" must NOT defeat the SSRF guard.
+        let allow = vec!["*".to_string()];
+        assert!(validate_url("https://localhost:8080", &allow)
+            .unwrap_err()
+            .to_string()
+            .contains("local/private"));
+        assert!(validate_url("https://192.168.1.5", &allow)
+            .unwrap_err()
+            .to_string()
+            .contains("local/private"));
     }
 
     #[test]
@@ -387,12 +455,85 @@ mod tests {
         assert!(err.contains("userinfo"));
     }
 
+    // Empty allowed_domains = open mode: any public host is permitted.
+    // This keeps web-fetch working when no domain list is configured and
+    // makes behaviour consistent between default and external-LLM routing.
+    // (#2700)
     #[test]
-    fn validate_requires_allowlist() {
-        let err = validate_url("https://example.com", &[])
+    fn validate_empty_allowlist_allows_public_host() {
+        assert!(validate_url("https://example.com", &[]).is_ok());
+        assert!(validate_url("https://www.cnbc.com/markets", &[]).is_ok());
+    }
+
+    #[test]
+    fn validate_empty_allowlist_still_blocks_private_hosts() {
+        let err = validate_url("https://192.168.1.5", &[])
             .unwrap_err()
             .to_string();
-        assert!(err.contains("allowed_domains"));
+        assert!(err.contains("local/private"));
+
+        let err = validate_url("https://localhost", &[])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("local/private"));
+    }
+
+    // ── normalize_allowed_domains: fail-closed on malformed-only input ──
+
+    #[test]
+    fn normalize_all_invalid_entries_stays_fail_closed() {
+        // A non-empty list that fully normalizes to nothing must NOT produce
+        // an empty slice (which would silently enter open mode). (#2738)
+        let got = normalize_allowed_domains(vec!["   ".into(), "https://".into()]);
+        assert!(
+            !got.is_empty(),
+            "normalized result must be non-empty to stay in strict mode"
+        );
+        // The sentinel must not match any real public host.
+        assert!(
+            !host_matches_allowlist("example.com", &got),
+            "sentinel must not grant access to real hosts"
+        );
+        assert!(
+            !host_matches_allowlist("api.example.com", &got),
+            "sentinel must not grant access to subdomains"
+        );
+    }
+
+    #[test]
+    fn normalize_empty_input_stays_empty_for_open_mode() {
+        // Explicitly empty input should return empty (open mode is intentional).
+        assert!(normalize_allowed_domains(vec![]).is_empty());
+    }
+
+    #[tokio::test]
+    async fn dns_check_with_empty_allowlist_allows_public_resolved_host() {
+        // Open mode (empty allowlist) must still pass DNS check for public IPs.
+        let got = validate_url_with_dns_check_with_resolver(
+            "https://example.com",
+            &[],
+            |host, port| async move {
+                assert_eq!(host, "example.com");
+                assert_eq!(port, 443);
+                Ok(vec!["93.184.216.34".parse().unwrap()])
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(got, "https://example.com");
+    }
+
+    #[tokio::test]
+    async fn dns_check_with_empty_allowlist_blocks_private_resolved_ip() {
+        // Even in open mode, DNS rebinding to a private IP must be blocked.
+        let err =
+            validate_url_with_dns_check_with_resolver("https://example.com", &[], |_, _| async {
+                Ok(vec!["10.0.0.1".parse().unwrap()])
+            })
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("DNS rebinding blocked"));
     }
 
     #[test]
@@ -581,7 +722,7 @@ mod tests {
         ] {
             let err = validate_url(notation, &allow).unwrap_err().to_string();
             assert!(
-                err.contains("allowed_domains"),
+                err.contains("allowed websites"),
                 "Expected allowlist rejection for {notation}, got: {err}"
             );
         }
@@ -678,5 +819,24 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("local/private"));
+    }
+
+    #[test]
+    fn wildcard_allows_any_host() {
+        let any = vec!["*".to_string()];
+        assert!(host_matches_allowlist("docs.rs", &any));
+        assert!(host_matches_allowlist("api.github.com", &any));
+        assert!(host_matches_allowlist("whatever.example.org", &any));
+    }
+
+    #[tokio::test]
+    async fn wildcard_still_blocks_private_hosts() {
+        // `*` opens public hosts only — SSRF block on private/local hosts stays.
+        let any = vec!["*".to_string()];
+        let err = validate_url_with_dns_check("https://127.0.0.1", &any)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("local/private"), "got: {err}");
     }
 }

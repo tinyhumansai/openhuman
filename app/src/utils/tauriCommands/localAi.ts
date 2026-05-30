@@ -108,15 +108,6 @@ export interface LocalAiTtsResult {
   voice_id: string;
 }
 
-export interface LocalAiChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-}
-
-export interface LocalAiChatResult {
-  result: string;
-}
-
 export interface ReactionDecision {
   should_react: boolean;
   emoji: string | null;
@@ -203,6 +194,7 @@ export interface InstalledModelInfo {
 
 export interface LocalAiDiagnostics {
   ollama_running: boolean;
+  ollama_runner_ok?: boolean;
   ollama_base_url: string;
   ollama_binary_path: string | null;
   vision_mode?: string;
@@ -325,19 +317,6 @@ export async function openhumanLocalAiTts(
 }
 
 /**
- * Multi-turn chat completion via the configured inference provider.
- */
-export async function openhumanLocalAiChat(
-  messages: LocalAiChatMessage[],
-  maxTokens?: number
-): Promise<CommandResponse<string>> {
-  return await callCoreRpc<CommandResponse<string>>({
-    method: 'openhuman.inference_chat',
-    params: { messages, max_tokens: maxTokens },
-  });
-}
-
-/**
  * Ask the configured inference provider whether the assistant should react to
  * a user message with an emoji.
  */
@@ -408,5 +387,20 @@ export async function openhumanLocalAiDiagnostics(): Promise<LocalAiDiagnostics>
   return await callCoreRpc<LocalAiDiagnostics>({
     method: 'openhuman.inference_diagnostics',
     params: {},
+  });
+}
+
+export interface OllamaConnectionTestResult {
+  reachable: boolean;
+  error?: string | null;
+  models_count?: number | null;
+}
+
+export async function openhumanLocalAiTestConnection(
+  url: string
+): Promise<OllamaConnectionTestResult> {
+  return await callCoreRpc<OllamaConnectionTestResult>({
+    method: 'openhuman.local_ai_test_connection',
+    params: { url },
   });
 }

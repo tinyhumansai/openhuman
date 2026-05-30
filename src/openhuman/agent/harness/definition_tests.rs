@@ -130,17 +130,17 @@ named = ["query_memory"]
 
 /// `subagents` is optional — omitting it should yield an empty Vec
 /// rather than a deserialization error. Most non-delegating agents
-/// (welcome, archivist, code_executor, etc.) will not list any.
+/// (archivist, code_executor, etc.) will not list any.
 #[test]
 fn subagents_defaults_to_empty_when_omitted() {
     let toml_src = r#"
-id = "welcome"
-when_to_use = "First agent a new user speaks to"
+id = "code_executor"
+when_to_use = "Runs code and shell commands"
 temperature = 0.7
 max_iterations = 6
 
 [tools]
-named = ["complete_onboarding", "memory_recall"]
+named = ["shell", "file_read"]
 "#;
     let def: AgentDefinition = toml::from_str(toml_src).expect("toml parse");
     assert!(def.subagents.is_empty());

@@ -149,6 +149,68 @@ async fn ensure_ollama_server_requires_external_runtime_when_unreachable() {
 }
 
 #[tokio::test]
+async fn test_ollama_connection_returns_reachable_with_model_count() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new().route(
+        "/api/tags",
+        get(|| async {
+            Json(json!({
+                "models": [
+                    {"name": "llama3:latest", "modified_at": "", "size": 1u64, "digest": "d"},
+                    {"name": "mistral:7b", "modified_at": "", "size": 2u64, "digest": "d"}
+                ]
+            }))
+        }),
+    );
+    let base = spawn_mock(app).await;
+
+    let result = super::test_ollama_connection(&base).await.unwrap();
+    assert_eq!(result["reachable"], true);
+    assert_eq!(result["models_count"], 2);
+    assert!(result["error"].is_null());
+}
+
+#[tokio::test]
+async fn test_ollama_connection_returns_unreachable_on_server_error() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new().route(
+        "/api/tags",
+        get(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+    );
+    let base = spawn_mock(app).await;
+
+    let result = super::test_ollama_connection(&base).await.unwrap();
+    assert_eq!(result["reachable"], false);
+    assert!(!result["error"].as_str().unwrap_or("").is_empty());
+}
+
+#[tokio::test]
+async fn test_ollama_connection_returns_unreachable_on_connect_failure() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let result = super::test_ollama_connection("http://127.0.0.1:1")
+        .await
+        .unwrap();
+    assert_eq!(result["reachable"], false);
+    assert!(!result["error"].as_str().unwrap_or("").is_empty());
+}
+
+#[tokio::test]
+async fn test_ollama_connection_rejects_invalid_url() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let err = super::test_ollama_connection("not-a-url")
+        .await
+        .unwrap_err();
+    assert!(
+        !err.is_empty(),
+        "expected validation error, got empty string"
+    );
+}
+
+#[tokio::test]
 async fn ensure_ollama_server_reports_broken_external_runner_without_restart_attempt() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
@@ -183,6 +245,38 @@ async fn ensure_ollama_server_reports_broken_external_runner_without_restart_att
         err.contains("cannot execute models") || err.contains("Restart the external runtime"),
         "unexpected error: {err}"
     );
+}
+
+#[tokio::test]
+async fn ensure_ollama_server_accepts_healthy_external_runner() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let app = Router::new()
+        .route("/api/tags", get(|| async { Json(json!({ "models": [] })) }))
+        .route(
+            "/api/show",
+            axum::routing::post(|| async {
+                (
+                    axum::http::StatusCode::NOT_FOUND,
+                    Json(json!({ "error": "model '___nonexistent_probe___' not found" })),
+                )
+            }),
+        );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let config = Config::default();
+    let service = LocalAiService::new(&config);
+    service
+        .ensure_ollama_server(&config)
+        .await
+        .expect("healthy external runner should pass");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
 }
 
 #[tokio::test]
@@ -344,6 +438,82 @@ async fn diagnostics_ok_when_expected_models_are_present() {
 }
 
 #[tokio::test]
+async fn diagnostics_reports_broken_runner_even_when_models_are_present() {
+    let _guard = crate::openhuman::inference::inference_test_guard();
+
+    let config = Config::default();
+    let chat = crate::openhuman::inference::model_ids::effective_chat_model_id(&config);
+    let embedding = crate::openhuman::inference::model_ids::effective_embedding_model_id(&config);
+    let chat_tag = format!("{}:latest", chat);
+    let embed_tag = format!("{}:latest", embedding);
+    let app = Router::new()
+        .route(
+            "/api/tags",
+            get(move || {
+                let chat_tag = chat_tag.clone();
+                let embed_tag = embed_tag.clone();
+                async move {
+                    Json(json!({
+                        "models": [
+                            { "name": chat_tag, "modified_at": "", "size": 1u64, "digest": "d" },
+                            { "name": embed_tag, "modified_at": "", "size": 2u64, "digest": "e" },
+                        ]
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/api/show",
+            axum::routing::post(|Json(body): Json<serde_json::Value>| async move {
+                let model = body["name"]
+                    .as_str()
+                    .or_else(|| body["model"].as_str())
+                    .unwrap_or_default();
+                if model == "___nonexistent_probe___" {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        "fork/exec /broken/ollama: no such file or directory".to_string(),
+                    );
+                }
+                (
+                    axum::http::StatusCode::OK,
+                    json!({
+                        "model_info": {
+                            "general.architecture": "bert",
+                            "bert.context_length": 8192,
+                        },
+                        "capabilities": ["embedding"],
+                    })
+                    .to_string(),
+                )
+            }),
+        );
+    let base = spawn_mock(app).await;
+    unsafe {
+        std::env::set_var("OPENHUMAN_OLLAMA_BASE_URL", &base);
+    }
+
+    let service = LocalAiService::new(&config);
+    let diag = service.diagnostics(&config).await.expect("diagnostics");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");
+    }
+
+    assert_eq!(diag["ollama_running"], true);
+    assert_eq!(diag["ok"], false);
+    let issues = diag["issues"].as_array().cloned().unwrap_or_default();
+    assert!(
+        issues.iter().any(|issue| issue
+            .as_str()
+            .unwrap_or_default()
+            .contains("cannot execute models")),
+        "diagnostics should report the broken Ollama runner, got: {:?}",
+        issues
+    );
+}
+
+#[tokio::test]
 async fn resolve_binary_path_finds_binary_via_ollama_bin_env() {
     let _guard = crate::openhuman::inference::inference_test_guard();
 
@@ -458,7 +628,7 @@ async fn list_models_returns_parsed_payload() {
 
     let config = Config::default();
     let service = LocalAiService::new(&config);
-    let models = service.list_models().await.expect("list_models");
+    let models = service.list_models_at(&base).await.expect("list_models");
     assert_eq!(models.len(), 2);
     assert_eq!(models[0].name, "a:latest");
     assert_eq!(models[1].name, "b:v2");
@@ -482,7 +652,7 @@ async fn list_models_errors_on_non_success() {
 
     let config = Config::default();
     let service = LocalAiService::new(&config);
-    let err = service.list_models().await.unwrap_err();
+    let err = service.list_models_at(&base).await.unwrap_err();
     assert!(err.contains("503") || err.contains("tags failed"));
     unsafe {
         std::env::remove_var("OPENHUMAN_OLLAMA_BASE_URL");

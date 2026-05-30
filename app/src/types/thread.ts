@@ -8,6 +8,7 @@ export interface Thread {
   createdAt: string;
   parentThreadId?: string;
   labels: string[];
+  personalityId?: string | null;
 }
 
 export interface ThreadMessage {

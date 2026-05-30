@@ -24,10 +24,17 @@ import { renderWithProviders } from '../src/test/test-utils';
 // (which are hoisted to the top of the file by Vitest).
 // ---------------------------------------------------------------------------
 
-const { mockGetBackendUrl, mockOpenUrl, mockIsTauri, mockCheckBackendHealthy } = vi.hoisted(() => ({
+const {
+  mockGetBackendUrl,
+  mockOpenUrl,
+  mockIsTauri,
+  mockPrepareOAuthLoginLaunch,
+  mockCheckBackendHealthy,
+} = vi.hoisted(() => ({
   mockGetBackendUrl: vi.fn(),
   mockOpenUrl: vi.fn(),
   mockIsTauri: vi.fn(),
+  mockPrepareOAuthLoginLaunch: vi.fn(),
   // Default to a healthy backend so the pre-flight in OAuthProviderButton
   // (added for issue #1985) doesn't short-circuit the OAuth flow these
   // tests exercise.
@@ -53,6 +60,15 @@ vi.mock('../src/utils/openUrl', () => ({ openUrl: mockOpenUrl }));
 vi.mock('../src/utils/tauriCommands', async importOriginal => {
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, isTauri: mockIsTauri };
+});
+vi.mock('../src/utils/oauthAppVersionGate', async importOriginal => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return { ...actual, prepareOAuthLoginLaunch: mockPrepareOAuthLoginLaunch };
+});
+
+beforeEach(() => {
+  mockPrepareOAuthLoginLaunch.mockReset();
+  mockPrepareOAuthLoginLaunch.mockResolvedValue(undefined);
 });
 
 // IS_DEV is set to `true` by the global setup mock of '../utils/config'

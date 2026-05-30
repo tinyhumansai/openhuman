@@ -1,12 +1,14 @@
+use async_trait::async_trait;
 use once_cell::sync::Lazy;
-use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, OnceLock};
 use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 use crate::core::all::{ControllerFuture, RegisteredController};
+use crate::core::event_bus::{DomainEvent, EventHandler, SubscriptionHandle};
 use crate::core::socketio::{SubagentProgressDetail, WebChannelEvent};
 use crate::core::{ControllerSchema, FieldSchema, TypeSchema};
 use crate::openhuman::agent::profiles::{AgentProfile, AgentProfileStore, DEFAULT_PROFILE_ID};
@@ -34,6 +36,89 @@ pub fn publish_web_channel_event(event: WebChannelEvent) {
     let _ = EVENT_BUS.send(event);
 }
 
+static APPROVAL_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
+
+/// Bridge a parked `ApprovalGate` request onto the web channel. When the gate
+/// publishes `ApprovalRequested` carrying a chat thread/client (set via the
+/// per-turn `ApprovalChatContext`), surface the "run X? (yes/no)" question as an
+/// `approval_request` event on that thread so the user can answer in chat.
+/// Idempotent. No-op for non-chat approvals (thread/client id absent).
+pub fn register_approval_surface_subscriber() {
+    if APPROVAL_SURFACE_HANDLE.get().is_some() {
+        return;
+    }
+    match crate::core::event_bus::subscribe_global(Arc::new(ApprovalSurfaceSubscriber)) {
+        Some(handle) => {
+            let _ = APPROVAL_SURFACE_HANDLE.set(handle);
+            log::info!(
+                "[web-channel] approval-surface subscriber registered (domain=approval) — will bridge ApprovalRequested → approval_request socket event"
+            );
+        }
+        None => {
+            log::warn!(
+                "[web-channel] failed to register approval-surface subscriber — bus not initialized"
+            );
+        }
+    }
+}
+
+struct ApprovalSurfaceSubscriber;
+
+#[async_trait]
+impl EventHandler for ApprovalSurfaceSubscriber {
+    fn name(&self) -> &str {
+        "channels::web::approval_surface"
+    }
+
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["approval"])
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        if let DomainEvent::ApprovalRequested {
+            request_id,
+            tool_name,
+            action_summary,
+            args_redacted,
+            thread_id,
+            client_id,
+            ..
+        } = event
+        {
+            match (thread_id, client_id) {
+                (Some(thread_id), Some(client_id)) => {
+                    // Short, neutral description — the card renders the exact
+                    // command/args (from `args` below) and has Approve/Deny
+                    // buttons, so no "reply yes/no" instruction here.
+                    let question = format!("Run `{tool_name}` — {action_summary}");
+                    log::info!(
+                        "[web-channel] approval-surface emitting approval_request request_id={request_id} thread_id={thread_id} client_id={client_id} tool={tool_name}"
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "approval_request".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        tool_name: Some(tool_name.clone()),
+                        message: Some(question),
+                        // The exact (redacted) command/args being requested, so
+                        // the card can show precisely what will run.
+                        args: Some(args_redacted.clone()),
+                        ..Default::default()
+                    });
+                }
+                _ => {
+                    log::warn!(
+                        "[web-channel] approval-surface received ApprovalRequested request_id={request_id} tool={tool_name} but thread_id/client_id absent (thread={}, client={}) — NOT surfacing",
+                        thread_id.is_some(),
+                        client_id.is_some()
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// All inputs that the cached `SessionEntry`'s `Agent` was built from,
 /// captured at build time. The cache-hit predicate is a single
 /// `entry.fingerprint == current_fingerprint` comparison — pulling the
@@ -52,12 +137,8 @@ struct SessionCacheFingerprint {
     /// Per-message `temperature` override (same channel as
     /// `model_override`).
     temperature: Option<f64>,
-    /// Which agent definition was used to build `agent`. Without this
-    /// the cache hit short-circuited the welcome→orchestrator routing
-    /// fix — the very first turn picked welcome, welcome called
-    /// `complete_onboarding(complete)`, the flag flipped, but the next
-    /// turn read the cached welcome agent instead of invoking
-    /// `build_session_agent` to re-resolve the target.
+    /// Which agent definition was used to build `agent`. Tracked so cache
+    /// invalidation can detect when the target changes between turns.
     target_agent_id: String,
     /// Bound provider string at build time for the selected workload
     /// role (`chat`, `reasoning`, `agentic`, `coding`, `summarization`).
@@ -69,6 +150,15 @@ struct SessionCacheFingerprint {
     /// against the updated provider rather than silently reusing the
     /// stale instance.
     provider_binding: String,
+    /// Signature of the autonomy/access config (`[autonomy]`) at build time.
+    /// The cached `Agent` holds tools that each captured a `SecurityPolicy`
+    /// snapshot at construction, so a change to the agent-access tier
+    /// (`config.update_autonomy_settings` → Settings → Agent access) must
+    /// invalidate the cache — otherwise the next turn silently reuses tools
+    /// gated by the OLD policy and the setting appears to do nothing. Derived
+    /// from the on-disk autonomy block (read fresh each turn), so it flips the
+    /// moment a new tier is saved.
+    autonomy_signature: String,
 }
 
 struct SessionEntry {
@@ -76,24 +166,25 @@ struct SessionEntry {
     fingerprint: SessionCacheFingerprint,
 }
 
+/// Deterministic signature of the autonomy/access config for the session cache
+/// fingerprint. Serializing the whole `[autonomy]` block (serde emits fields in
+/// stable declaration order) captures every knob that feeds `SecurityPolicy` —
+/// `level`, `workspace_only`, `trusted_roots`, `allow_tool_install`,
+/// `allowed_commands`, … — so saving any agent-access change flips the
+/// signature and forces a rebuild. On the practically-impossible serialize
+/// error we return an empty string, which just means "treat as changed".
+fn autonomy_signature(config: &Config) -> String {
+    serde_json::to_string(&config.autonomy).unwrap_or_default()
+}
+
 /// Decide which agent definition this turn should run with.
 ///
-/// Mirrors the routing decision inside `build_session_agent` so
-/// `run_chat_task` can compute it once up front and use it both as
-/// the cache hit predicate AND (transitively) as the target id the
-/// builder picks. Reads `chat_onboarding_completed` from a fresh
-/// disk-loaded `Config` (no in-process cache) so the value reflects
-/// the current persisted state — meaning the moment the welcome
-/// agent calls `complete_onboarding(complete)` and the flag flips
-/// to `true`, the very next chat turn observes the new value here
-/// and the cache miss + rebuild routes to orchestrator.
-fn pick_target_agent_id(config: &Config, profile: &AgentProfile) -> String {
+/// All new chat turns route to the `orchestrator` agent directly.
+/// The welcome agent has been removed; the Joyride walkthrough in the
+/// frontend handles onboarding UI instead.
+fn pick_target_agent_id(_config: &Config, profile: &AgentProfile) -> String {
     if profile.id == DEFAULT_PROFILE_ID {
-        if config.chat_onboarding_completed {
-            "orchestrator".to_string()
-        } else {
-            "welcome".to_string()
-        }
+        "orchestrator".to_string()
     } else {
         profile.agent_id.clone()
     }
@@ -119,20 +210,17 @@ static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
 #[cfg(test)]
 static TEST_FORCED_RUN_CHAT_TASK_ERROR: Lazy<Mutex<Option<String>>> =
     Lazy::new(|| Mutex::new(None));
-static BUDGET_ERROR_NORMALIZE_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[-_\s]+").expect("budget normalize regex"));
-static BUDGET_ERROR_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
-    vec![
-        Regex::new(r"budget.*exceed").expect("budget exceeded regex"),
-        Regex::new(r"top up").expect("top up regex"),
-        Regex::new(r"add.*credits").expect("add credits regex"),
-        Regex::new(r"out of credits").expect("out of credits regex"),
-        Regex::new(r"no remaining credits").expect("no remaining credits regex"),
-    ]
-});
-
-fn key_for(client_id: &str, thread_id: &str) -> String {
-    format!("{client_id}::{thread_id}")
+/// Key for the per-thread runtime maps (`THREAD_SESSIONS`, `IN_FLIGHT`).
+///
+/// Keyed by `thread_id` ALONE — the stable, persistent identity of a
+/// conversation — NOT by the Socket.IO `client_id`, which is regenerated on
+/// every reconnect. Keying these maps by `client_id` previously orphaned a
+/// thread's cached session (conversation amnesia) and its in-flight task handle
+/// (Cancel became a no-op) whenever the socket reconnected with a new id. Event
+/// delivery still routes by `client_id` (the live socket); only the
+/// thread-owned runtime state keys off `thread_id`.
+fn key_for(thread_id: &str) -> String {
+    thread_id.to_string()
 }
 
 fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
@@ -143,187 +231,19 @@ fn event_session_id_for(client_id: &str, thread_id: &str) -> String {
     .to_string()
 }
 
-fn is_inference_budget_exceeded_error(message: &str) -> bool {
-    let normalized = BUDGET_ERROR_NORMALIZE_RE
-        .replace_all(&message.trim().to_ascii_lowercase(), " ")
-        .into_owned();
-    BUDGET_ERROR_PATTERNS
-        .iter()
-        .any(|pattern| pattern.is_match(&normalized))
-}
-
-fn inference_budget_exceeded_user_message() -> &'static str {
-    "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
-}
-
-fn generic_inference_error_user_message() -> &'static str {
-    "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"
-}
-
-/// Pull the structured provider error message out of a raw error string.
-///
-/// Provider error chains from OpenAI/Anthropic/OpenRouter/etc. arrive looking
-/// like `custom_openai API error (404 Not Found): {"error":{"message":"...","type":"..."}}`.
-/// We extract the `error.message` value so the UI can show the *real* reason
-/// — e.g. "Project ... does not have access to model `gpt-5.5`" — instead of
-/// a generic apology.
-///
-/// Returns `None` for transport-level failures (DNS, TLS, connect refused)
-/// where there is no provider body to quote — those have no actionable
-/// detail and the raw error text can leak internal infrastructure URLs,
-/// which the chat surface deliberately does not expose to end users.
-fn extract_provider_error_detail(err: &str) -> Option<String> {
-    const MAX_DETAIL_CHARS: usize = 300;
-
-    // Find the first `"message"` JSON field anywhere in the error chain.
-    let key = "\"message\"";
-    let idx = err.find(key)?;
-    let after_key = &err[idx + key.len()..];
-    // Skip whitespace and the colon to the opening quote of the value.
-    let after_colon = after_key.trim_start_matches(|c: char| c != '"');
-    let stripped = after_colon.strip_prefix('"')?;
-
-    // Manual unescape — handle `\"` and `\\` only; everything else passes
-    // through. Sufficient for OpenAI/Anthropic/etc. error bodies.
-    let mut out = String::new();
-    let mut chars = stripped.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '"' => {
-                let trimmed = out.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-                let sanitized = crate::openhuman::inference::provider::sanitize_api_error(trimmed);
-                return Some(crate::openhuman::util::truncate_with_ellipsis(
-                    &sanitized,
-                    MAX_DETAIL_CHARS,
-                ));
-            }
-            '\\' => {
-                if let Some(esc) = chars.next() {
-                    match esc {
-                        '"' => out.push('"'),
-                        '\\' => out.push('\\'),
-                        'n' => out.push('\n'),
-                        't' => out.push('\t'),
-                        other => out.push(other),
-                    }
-                }
-            }
-            other => out.push(other),
-        }
-    }
-
-    None
-}
-
-/// Append the upstream provider detail to a user-facing message, if a useful
-/// one can be extracted. Keeps the friendly summary first and the verbatim
-/// provider reason below as a quotable block.
-fn with_provider_detail(summary: &str, err: &str) -> String {
-    match extract_provider_error_detail(err) {
-        Some(detail) => format!("{summary}\n\n> {detail}"),
-        None => summary.to_string(),
-    }
-}
-
-fn classify_inference_error(err: &str) -> (&'static str, String) {
-    let lower = err.to_lowercase();
-    if lower.contains("rate limit") || lower.contains("429") {
-        (
-            "rate_limited",
-            with_provider_detail(
-                "You're being rate-limited. Please wait a moment and try again.",
-                err,
-            ),
-        )
-    } else if lower.contains("timeout") || lower.contains("timed out") {
-        (
-            "timeout",
-            with_provider_detail(
-                "The request timed out. Please check your connection and try again.",
-                err,
-            ),
-        )
-    } else if lower.contains("401") || lower.contains("unauthorized") || lower.contains("api key") {
-        (
-            "auth_error",
-            with_provider_detail(
-                "There's an authentication issue with the AI provider. Please check your API key in settings.",
-                err,
-            ),
-        )
-    } else if lower.contains("402")
-        || lower.contains("payment required")
-        || lower.contains("insufficient balance")
-    {
-        (
-            "budget_exhausted",
-            with_provider_detail("Insufficient credits. Please top up to continue.", err),
-        )
-    } else if lower.contains("500")
-        || lower.contains("internal server")
-        || lower.contains("service unavailable")
-        || lower.contains("503")
-    {
-        (
-            "provider_error",
-            with_provider_detail(
-                "The AI provider is temporarily unavailable. Please try again later.",
-                err,
-            ),
-        )
-    } else if lower.contains("context")
-        && (lower.contains("length")
-            || lower.contains("limit")
-            || lower.contains("exceed")
-            || lower.contains("token"))
-    {
-        (
-            "context_overflow",
-            with_provider_detail(
-                "The conversation is too long. Please start a new chat.",
-                err,
-            ),
-        )
-    } else if crate::openhuman::inference::provider::is_provider_config_rejection_message(err) {
-        // #2079 / #2076 / #2202: an OpenHuman abstract tier alias leaked to
-        // a custom provider, a stale model pin, or a model-specific
-        // temperature constraint. Checked BEFORE the generic
-        // model-unavailable arm so config-rejection bodies that also
-        // contain "model"/"does not exist"/"does not have access" get the
-        // specific "Settings → LLM" remediation instead of the generic
-        // copy. Shared predicate keeps this in lockstep with the
-        // Sentry-demotion classifier.
-        (
-            "model_unavailable",
-            with_provider_detail(
-                "Your AI provider rejected the request's model or temperature setting. \
-                 Check your model and routing in Settings → LLM.",
-                err,
-            ),
-        )
-    } else if lower.contains("model")
-        && (lower.contains("not found")
-            || lower.contains("unavailable")
-            || lower.contains("does not exist")
-            || lower.contains("does not have access"))
-    {
-        (
-            "model_unavailable",
-            with_provider_detail(
-                "The selected model isn't available on your provider. Check your model settings.",
-                err,
-            ),
-        )
-    } else {
-        (
-            "inference",
-            with_provider_detail(generic_inference_error_user_message(), err),
-        )
-    }
-}
+#[path = "web_errors.rs"]
+mod web_errors;
+pub(crate) use web_errors::{
+    classify_inference_error, inference_budget_exceeded_user_message,
+    is_inference_budget_exceeded_error,
+};
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use web_errors::{
+    extract_provider_error_detail, extract_provider_name, generic_inference_error_user_message,
+    is_action_budget_exhausted, is_fallback_chain_exhausted, is_non_retryable_rate_limit_text,
+    parse_retry_after_secs_from_str, retry_after_hint, with_provider_detail, ClassifiedError,
+};
 
 fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     match action {
@@ -400,7 +320,55 @@ pub async fn start_chat(
         return Err(prompt_guard_user_message(prompt_decision.action).to_string());
     }
 
-    let map_key = key_for(&client_id, &thread_id);
+    // Chat-native approval: if this thread has a parked approval and the message
+    // is a yes/no reply, route it to the gate (resuming the parked turn) rather
+    // than starting a new turn — which would cancel the parked approval. Any
+    // other text falls through to the normal path below, which cancels the
+    // in-flight turn and dispatches the message fresh (the intended "redirect").
+    if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
+        if let Some(request_id) = gate.pending_for_thread(&thread_id) {
+            if let Some(decision) = crate::openhuman::approval::parse_approval_reply(&message) {
+                match gate.decide(&request_id, decision) {
+                    Ok(Some(_)) => {
+                        log::info!(
+                            "[web-channel] routed chat reply to approval gate thread_id={} request_id={} decision={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                        return Ok(request_id);
+                    }
+                    Ok(None) => {
+                        // `decide` returns `Ok(None)` when the request is already
+                        // gone / already decided — the parked turn was NOT resumed
+                        // by this call. Don't ACK it as applied; fall through so the
+                        // reply is dispatched as a fresh turn.
+                        log::warn!(
+                            "[web-channel] approval reply targeted a non-pending/already-decided request thread_id={} request_id={} decision={} — dispatching as fresh turn",
+                            thread_id,
+                            request_id,
+                            decision.as_str()
+                        );
+                    }
+                    Err(err) => {
+                        // Don't claim success: the parked turn is still waiting on
+                        // its oneshot. Log and fall through so the reply is
+                        // dispatched as a fresh turn rather than silently dropped
+                        // (the stale parked request will TTL out).
+                        log::warn!(
+                            "[web-channel] failed to route chat reply to approval gate thread_id={} request_id={} decision={} err={}",
+                            thread_id,
+                            request_id,
+                            decision.as_str(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    let map_key = key_for(&thread_id);
 
     {
         let mut in_flight = IN_FLIGHT.lock().await;
@@ -414,6 +382,11 @@ pub async fn start_chat(
                 full_response: None,
                 message: Some("Cancelled by newer request".to_string()),
                 error_type: Some("cancelled".to_string()),
+                error_source: None,
+                error_retryable: None,
+                error_retry_after_ms: None,
+                error_provider: None,
+                error_fallback_available: None,
                 tool_name: None,
                 skill_id: None,
                 args: None,
@@ -440,17 +413,30 @@ pub async fn start_chat(
 
     let user_message = message.clone();
     let handle = tokio::spawn(async move {
-        let result = run_chat_task(
-            &client_id_task,
-            &thread_id_task,
-            &request_id_task,
-            &user_message,
-            model_override,
-            temperature,
-            profile_id,
-            locale,
-        )
-        .await;
+        // Scope the per-turn approval chat context so a parked `ApprovalGate`
+        // request (raised deep in the tool loop, which runs inline in this same
+        // task) carries the thread/client id — letting a yes/no chat reply be
+        // routed back to `approval_decide`. No sub-task is spawned between here
+        // and `intercept`, so the task-local propagates.
+        let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let result = crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+            .scope(
+                approval_ctx,
+                run_chat_task(
+                    &client_id_task,
+                    &thread_id_task,
+                    &request_id_task,
+                    &user_message,
+                    model_override,
+                    temperature,
+                    profile_id,
+                    locale,
+                ),
+            )
+            .await;
 
         match result {
             Ok(chat_result) => {
@@ -480,7 +466,8 @@ pub async fn start_chat(
                     "run_chat_task failed client_id={} thread_id={} request_id={} error={}",
                     client_id_task, thread_id_task, request_id_task, err
                 );
-                let (classified_type, classified_message) = classify_inference_error(&err);
+                let classified = classify_inference_error(&err);
+                let classified_type = classified.error_type;
                 let classified_type_string = classified_type.to_string();
                 // Max-tool-iterations cap is a deterministic agent-state
                 // outcome surfaced to the user via the existing
@@ -528,8 +515,13 @@ pub async fn start_chat(
                     thread_id: thread_id_task.clone(),
                     request_id: request_id_task.clone(),
                     full_response: None,
-                    message: Some(classified_message),
+                    message: Some(classified.message),
                     error_type: Some(classified_type_string),
+                    error_source: Some(classified.source.to_string()),
+                    error_retryable: Some(classified.retryable),
+                    error_retry_after_ms: classified.retry_after_ms,
+                    error_provider: classified.provider,
+                    error_fallback_available: classified.fallback_available,
                     tool_name: None,
                     skill_id: None,
                     args: None,
@@ -617,7 +609,7 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
         return Err("thread_id is required".to_string());
     }
 
-    let map_key = key_for(client_id, thread_id);
+    let map_key = key_for(thread_id);
     let mut removed_request_id: Option<String> = None;
 
     {
@@ -637,6 +629,11 @@ pub async fn cancel_chat(client_id: &str, thread_id: &str) -> Result<Option<Stri
             full_response: None,
             message: Some("Cancelled".to_string()),
             error_type: Some("cancelled".to_string()),
+            error_source: None,
+            error_retryable: None,
+            error_retry_after_ms: None,
+            error_provider: None,
+            error_fallback_available: None,
             tool_name: None,
             skill_id: None,
             args: None,
@@ -685,16 +682,13 @@ async fn run_chat_task(
     let config = config_rpc::load_config_with_timeout().await?;
     let (_profiles_state, profile) =
         AgentProfileStore::new(config.workspace_dir.clone()).resolve(profile_id.as_deref())?;
-    let map_key = key_for(client_id, thread_id);
+    let map_key = key_for(thread_id);
     let model_override = normalize_model_override(profile.model_override.clone())
         .or_else(|| normalize_model_override(model_override));
     let temperature = profile.temperature.or(temperature);
     // Compute the routing decision up front so the cache lookup can
-    // detect when it has changed. Without this, a turn that flips
-    // `chat_onboarding_completed` (welcome agent calling
-    // `complete_onboarding(complete)`) would still serve the next
-    // turn from the cached welcome agent — the cache hit predicate
-    // didn't know about the routing decision before Commit 13.
+    // detect when it has changed. This also keeps non-default profile
+    // switches from reusing a cached agent built for another target.
     let target_agent_id = pick_target_agent_id(&config, &profile);
     let provider_role = provider_role_for_model_override(model_override.as_deref());
     let current_fp = SessionCacheFingerprint {
@@ -705,6 +699,7 @@ async fn run_chat_task(
             provider_role,
             &config,
         ),
+        autonomy_signature: autonomy_signature(&config),
     };
 
     let prior = {
@@ -775,7 +770,7 @@ async fn run_chat_task(
     // method is a no-op if the agent already has a cached transcript
     // or non-empty history, so this is cheap on the warm path too.
     if was_built_fresh {
-        match crate::openhuman::memory::conversations::get_messages(
+        match crate::openhuman::memory_conversations::get_messages(
             config.workspace_dir.clone(),
             thread_id,
         ) {
@@ -1000,6 +995,11 @@ fn spawn_progress_bridge(
                         full_response: None,
                         message: None,
                         error_type: None,
+                        error_source: None,
+                        error_retryable: None,
+                        error_retry_after_ms: None,
+                        error_provider: None,
+                        error_fallback_available: None,
                         tool_name: None,
                         skill_id: None,
                         args: None,
@@ -1030,6 +1030,11 @@ fn spawn_progress_bridge(
                         full_response: None,
                         message: Some(format!("Iteration {iteration}/{max_iterations}")),
                         error_type: None,
+                        error_source: None,
+                        error_retryable: None,
+                        error_retry_after_ms: None,
+                        error_provider: None,
+                        error_fallback_available: None,
                         tool_name: None,
                         skill_id: None,
                         args: None,
@@ -1097,6 +1102,7 @@ fn spawn_progress_bridge(
                     mode,
                     dedicated_thread,
                     prompt_chars,
+                    worker_thread_id,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
@@ -1111,6 +1117,7 @@ fn spawn_progress_bridge(
                             mode: Some(mode),
                             dedicated_thread: Some(dedicated_thread),
                             prompt_chars: Some(prompt_chars as u64),
+                            worker_thread_id,
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1242,6 +1249,54 @@ fn spawn_progress_bridge(
                             task_id: Some(task_id),
                             elapsed_ms: Some(elapsed_ms),
                             output_chars: Some(output_chars as u64),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentTextDelta {
+                    agent_id,
+                    task_id,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_text_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(round),
+                        delta: Some(delta),
+                        delta_kind: Some("text".to_string()),
+                        skill_id: Some(task_id.clone()),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
+                AgentProgress::SubagentThinkingDelta {
+                    agent_id,
+                    task_id,
+                    delta,
+                    iteration,
+                } => {
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_thinking_delta".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        round: Some(round),
+                        delta: Some(delta),
+                        delta_kind: Some("thinking".to_string()),
+                        skill_id: Some(task_id.clone()),
+                        subagent: Some(SubagentProgressDetail {
+                            child_iteration: Some(iteration),
+                            agent_id: Some(agent_id),
+                            task_id: Some(task_id),
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1386,37 +1441,15 @@ fn build_session_agent(
         effective.default_temperature = temp;
     }
 
-    // Route to welcome vs orchestrator based on the per-user
-    // **chat-onboarding** flag. #525 fix: pre-onboarding users see the
-    // welcome agent's persona with its 2-tool TOML scope
-    // (complete_onboarding + memory_recall) instead of the
-    // orchestrator's default delegation surface. Post-onboarding they
-    // transition automatically on the next chat turn because
-    // `Config::load_or_init` reads fresh from disk every call.
-    //
-    // We deliberately read `chat_onboarding_completed`, NOT
-    // `onboarding_completed`. The latter is the React UI wizard's
-    // gate (`OnboardingOverlay.tsx`) which flips to `true` the moment
-    // the user dismisses the wizard — which happens BEFORE they ever
-    // type in the chat pane. If we routed on that flag the welcome
-    // agent could never run from the Tauri desktop app. The chat
-    // flag is set only by the welcome agent itself via
-    // `complete_onboarding`, so it stays `false`
-    // for the user's actual first chat message regardless of what
-    // the React layer did, then flips on the welcome turn so the
-    // very next message routes to orchestrator.
-    //
-    // The config reached here has already been loaded by
-    // `run_chat_task` via `config_rpc::load_config_with_timeout`, so
-    // both flags reflect the current persisted state — no cache to
-    // invalidate.
+    // All chat turns route directly to the orchestrator agent (or to the
+    // profile-specific agent for non-default profiles). The welcome agent
+    // has been removed; onboarding UI is handled by the Joyride walkthrough
+    // in the frontend.
     log::info!(
-        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (chat_onboarding_completed={}, ui_onboarding_completed={}, client_id={}, thread_id={})",
+        "[web-channel] routing chat turn to '{}' via profile '{}' provider_role='{}' (client_id={}, thread_id={})",
         target_agent_id,
         profile.id,
         provider_role,
-        effective.chat_onboarding_completed,
-        effective.onboarding_completed,
         client_id,
         thread_id
     );
@@ -1510,7 +1543,7 @@ fn load_reflection_chunks_for_thread(
     workspace_dir: &std::path::Path,
     thread_id: &str,
 ) -> Option<Vec<crate::openhuman::subconscious::SourceChunk>> {
-    let messages = crate::openhuman::memory::conversations::get_messages(
+    let messages = crate::openhuman::memory_conversations::get_messages(
         workspace_dir.to_path_buf(),
         thread_id,
     )

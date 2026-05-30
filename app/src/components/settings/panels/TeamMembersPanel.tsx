@@ -7,6 +7,7 @@ import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import type { TeamMember, TeamRole } from '../../../types/team';
 import { sanitizeError } from '../../../utils/sanitize';
+import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus } from '../../ui';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -78,7 +79,7 @@ const TeamMembersPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to change role'
+          : t('team.failedChangeRole')
       );
     } finally {
       setChangingRoleId(null);
@@ -104,7 +105,7 @@ const TeamMembersPanel = () => {
       setError(
         err && typeof err === 'object' && 'error' in err
           ? String(err.error)
-          : 'Failed to remove member'
+          : t('team.failedRemoveMember')
       );
     } finally {
       setRemovingId(null);
@@ -138,64 +139,24 @@ const TeamMembersPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          {error && (
-            <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
-              <p className="text-xs text-coral-400">{error}</p>
-            </div>
-          )}
+          {error && <ErrorBanner message={error} />}
 
           {/* Refreshing indicator - only when loading and has existing data */}
           {isLoadingMembers && members.length > 0 && (
-            <div className="flex items-center gap-2 px-1 py-2 text-xs text-amber-400">
-              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              Refreshing members...
-            </div>
+            <InlineLoadingStatus label={t('team.refreshingMembers')} />
           )}
 
           {/* Member count */}
           <p className="text-xs text-stone-500 dark:text-neutral-400 px-1">
-            {members.length} member{members.length !== 1 ? 's' : ''}
+            {t(members.length === 1 ? 'team.memberCount' : 'team.memberCountPlural').replace(
+              '{count}',
+              String(members.length)
+            )}
           </p>
 
           {/* Full loading state - only when loading and no existing data */}
           {isLoadingMembers && members.length === 0 ? (
-            <div className="flex items-center justify-center py-8">
-              <svg
-                className="w-5 h-5 text-stone-500 dark:text-neutral-400 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              <span className="ml-3 text-sm text-stone-500 dark:text-neutral-400">
-                Loading members...
-              </span>
-            </div>
+            <CenteredLoadingState label={t('team.loadingMembers')} />
           ) : (
             <div className="space-y-2">
               {members.map(member => (
@@ -216,7 +177,7 @@ const TeamMembersPanel = () => {
                         </span>
                         {isCurrentUser(member) && (
                           <span className="text-[10px] text-stone-500 dark:text-neutral-400">
-                            (You)
+                            {t('team.you')}
                           </span>
                         )}
                       </div>
@@ -255,7 +216,7 @@ const TeamMembersPanel = () => {
                         onClick={() => handleRemoveMember(member)}
                         disabled={removingId === member._id}
                         className="p-1 rounded-lg text-stone-500 dark:text-neutral-400 hover:text-coral-400 hover:bg-coral-500/10 transition-colors disabled:opacity-50"
-                        aria-label={`Remove ${displayName(member)}`}>
+                        aria-label={t('team.removeAria').replace('{name}', displayName(member))}>
                         <svg
                           className="w-4 h-4"
                           fill="none"
@@ -276,7 +237,9 @@ const TeamMembersPanel = () => {
 
               {members.length === 0 && !isLoadingMembers && (
                 <div className="text-center py-8">
-                  <p className="text-sm text-stone-500 dark:text-neutral-400">No members found</p>
+                  <p className="text-sm text-stone-500 dark:text-neutral-400">
+                    {t('team.noMembers')}
+                  </p>
                 </div>
               )}
             </div>
@@ -287,7 +250,7 @@ const TeamMembersPanel = () => {
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
               <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
                 <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
-                  Remove Team Member
+                  {t('team.removeTitle')}
                 </h3>
 
                 {error && (
@@ -299,15 +262,13 @@ const TeamMembersPanel = () => {
                 <div className="space-y-4">
                   <div className="text-sm text-stone-400 dark:text-neutral-500">
                     <p>
-                      Are you sure you want to remove{' '}
+                      {t('team.removePromptPrefix')}{' '}
                       <strong className="text-stone-900 dark:text-neutral-100">
                         {displayName(memberToRemove)}
                       </strong>{' '}
-                      from the team?
+                      {t('team.removePromptSuffix')}
                     </p>
-                    <p className="mt-2 text-coral-400">
-                      They will lose access to the team and all team resources.
-                    </p>
+                    <p className="mt-2 text-coral-400">{t('team.removeWarning')}</p>
                   </div>
 
                   <div className="flex gap-2 pt-2">
@@ -315,13 +276,15 @@ const TeamMembersPanel = () => {
                       onClick={() => setMemberToRemove(null)}
                       disabled={removingId === memberToRemove._id}
                       className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-100 dark:bg-neutral-800 hover:bg-stone-200 dark:bg-neutral-800 text-stone-700 dark:text-neutral-200 transition-colors disabled:opacity-50">
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                     <button
                       onClick={confirmRemoveMember}
                       disabled={removingId === memberToRemove._id}
                       className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-coral-500 hover:bg-coral-600 text-white transition-colors disabled:opacity-50">
-                      {removingId === memberToRemove._id ? 'Removing...' : 'Remove Member'}
+                      {removingId === memberToRemove._id
+                        ? t('team.removing')
+                        : t('team.removeAction')}
                     </button>
                   </div>
                 </div>
@@ -334,7 +297,7 @@ const TeamMembersPanel = () => {
             <div className="fixed inset-0 bg-stone-900/50 flex items-center justify-center z-50 p-4">
               <div className="bg-white dark:bg-neutral-900 rounded-2xl p-6 w-full max-w-md border border-stone-200 dark:border-neutral-800">
                 <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100 mb-4">
-                  Change Member Role
+                  {t('team.changeRoleTitle')}
                 </h3>
 
                 {error && (
@@ -346,31 +309,16 @@ const TeamMembersPanel = () => {
                 <div className="space-y-4">
                   <div className="text-sm text-stone-400 dark:text-neutral-500">
                     <p>
-                      Change{' '}
-                      <strong className="text-stone-900 dark:text-neutral-100 font-semibold">
-                        {displayName(roleChangeConfirmation.member)}
-                      </strong>
-                      's role from{' '}
-                      <span className="text-amber-400 font-medium">
-                        {roleChangeConfirmation.oldRole}
-                      </span>{' '}
-                      to{' '}
-                      <span className="text-primary-400 font-medium">
-                        {roleChangeConfirmation.newRole}
-                      </span>
-                      ?
+                      {t('team.changeRolePrompt')
+                        .replace('{name}', displayName(roleChangeConfirmation.member))
+                        .replace('{oldRole}', roleChangeConfirmation.oldRole)
+                        .replace('{newRole}', roleChangeConfirmation.newRole)}
                     </p>
                     {roleChangeConfirmation.newRole === 'ADMIN' && (
-                      <p className="mt-2 text-amber-400">
-                        This will grant them full admin permissions including the ability to manage
-                        team members.
-                      </p>
+                      <p className="mt-2 text-amber-400">{t('team.changeRoleAdminGrant')}</p>
                     )}
                     {roleChangeConfirmation.oldRole === 'ADMIN' && (
-                      <p className="mt-2 text-coral-400">
-                        This will remove their admin permissions and they will no longer be able to
-                        manage the team.
-                      </p>
+                      <p className="mt-2 text-coral-400">{t('team.changeRoleAdminRemove')}</p>
                     )}
                   </div>
 
@@ -379,15 +327,15 @@ const TeamMembersPanel = () => {
                       onClick={() => setRoleChangeConfirmation(null)}
                       disabled={changingRoleId === roleChangeConfirmation.member._id}
                       className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-stone-700/50 hover:bg-stone-700 text-stone-300 dark:text-neutral-600 transition-colors disabled:opacity-50">
-                      Cancel
+                      {t('common.cancel')}
                     </button>
                     <button
                       onClick={confirmChangeRole}
                       disabled={changingRoleId === roleChangeConfirmation.member._id}
                       className="flex-1 px-4 py-2 text-sm font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50">
                       {changingRoleId === roleChangeConfirmation.member._id
-                        ? 'Changing...'
-                        : 'Change Role'}
+                        ? t('team.changing')
+                        : t('team.changeRoleAction')}
                     </button>
                   </div>
                 </div>

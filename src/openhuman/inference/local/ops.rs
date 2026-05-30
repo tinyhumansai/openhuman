@@ -32,6 +32,29 @@ fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     }
 }
 
+/// Normalize a `model_override` string into the `Option<String>` form the
+/// downstream config-resolution path expects.
+///
+/// `None` → `None`. `Some(non-empty-after-trim)` → `Some(trimmed)`. Anything
+/// else (`Some("")`, `Some("   ")`, `Some("\t\n")`) collapses to `None` so
+/// the existing default-model fallback applies instead of overwriting
+/// `config.default_model` with a blank string that the OpenHuman backend
+/// would reject with `400 model is required` (Sentry TAURI-RUST-RS).
+///
+/// Extracted to keep `agent_chat` and `agent_chat_simple` in lockstep —
+/// future tweaks (additional log lines, tightening the trim rules) live in
+/// exactly one place.
+fn normalize_model_override(opt: Option<String>) -> Option<String> {
+    opt.and_then(|m| {
+        let t = m.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    })
+}
+
 fn enforce_user_prompt_or_reject(prompt: &str, source: &'static str) -> Result<(), String> {
     let decision = enforce_prompt_input(
         prompt,
@@ -69,7 +92,10 @@ pub async fn agent_chat(
 ) -> Result<RpcOutcome<String>, String> {
     enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat")?;
 
-    if let Some(model) = model_override {
+    // TAURI-RUST-RS: an upstream caller (frontend, JSON-RPC client) can pass
+    // `model_override: Some("")`. See `normalize_model_override` for the
+    // rationale — an empty / whitespace-only override collapses to `None`.
+    if let Some(model) = normalize_model_override(model_override) {
         config.default_model = Some(model);
     }
     if let Some(temp) = temperature {
@@ -90,7 +116,8 @@ pub async fn agent_chat_simple(
     enforce_user_prompt_or_reject(message, "local_ai.ops.agent_chat_simple")?;
 
     let mut effective = config.clone();
-    if let Some(model) = model_override {
+    // TAURI-RUST-RS: see `normalize_model_override` for the rationale.
+    if let Some(model) = normalize_model_override(model_override) {
         effective.default_model = Some(model);
     }
     if let Some(temp) = temperature {
@@ -173,7 +200,7 @@ pub async fn local_ai_summarize(
         service.bootstrap(config).await;
     }
     let summary = service
-        .summarize(config, text, max_tokens)
+        .summarize_interactive(config, text, max_tokens)
         .await
         .map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(
@@ -197,7 +224,7 @@ pub async fn local_ai_prompt(
         service.bootstrap(config).await;
     }
     let output = service
-        .prompt(config, prompt.trim(), max_tokens, no_think.unwrap_or(true))
+        .prompt_interactive(config, prompt.trim(), max_tokens, no_think.unwrap_or(true))
         .await
         .map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(output, "local ai prompt completed"))
@@ -412,7 +439,7 @@ pub async fn local_ai_chat(
 
     let service = local_ai::global(config);
     let reply = service
-        .chat_with_history(config, ollama_messages, max_tokens)
+        .chat_with_history_interactive(config, ollama_messages, max_tokens)
         .await?;
 
     tracing::debug!(
@@ -421,7 +448,6 @@ pub async fn local_ai_chat(
     );
     Ok(RpcOutcome::single_log(reply, "local ai chat completed"))
 }
-
 /// Result of the reaction-decision prompt.
 #[derive(Debug, serde::Serialize)]
 pub struct ReactionDecision {

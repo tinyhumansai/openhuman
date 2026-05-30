@@ -2,21 +2,15 @@ import debug from 'debug';
 import { type FC, useMemo } from 'react';
 
 import type { ToolTimelineEntry, ToolTimelineEntryStatus } from '../../store/chatRuntimeSlice';
-import { Ghosty, type MascotFace } from './Mascot';
+import { type MascotFace, RiveMascot } from './Mascot';
+import type { MascotColor } from './Mascot/mascotPalette';
 
 const subMascotLog = debug('human:sub-mascots');
 
 const MAX_SUB_MASCOTS = 5;
 const ACTIVITY_LIMIT = 74;
 
-const SUB_MASCOT_COLORS = [
-  '#4A83DD',
-  '#5C9B75',
-  '#D9854B',
-  '#B8657A',
-  '#6E7BBD',
-  '#4A9A9A',
-] as const;
+const SUB_MASCOT_COLORS: readonly MascotColor[] = ['yellow', 'navy', 'burgundy', 'black'] as const;
 
 const POSITIONS = [
   { left: '72%', top: '18%' },
@@ -33,7 +27,7 @@ export interface SubMascotModel {
   status: ToolTimelineEntryStatus;
   face: MascotFace;
   activity: string;
-  color: string;
+  color: MascotColor;
   position: (typeof POSITIONS)[number];
 }
 
@@ -108,7 +102,15 @@ function activityForEntry(entry: ToolTimelineEntry): string {
 
 export function subMascotModelsFromTimeline(entries: ToolTimelineEntry[]): SubMascotModel[] {
   return entries
-    .filter(entry => entry.subagent && entry.name.startsWith('subagent:'))
+    .filter(
+      entry =>
+        entry.subagent &&
+        entry.name.startsWith('subagent:') &&
+        // Once a subagent's task is done (success or error), drop it from the
+        // strip rather than letting completed mascots linger and crowd the
+        // bottom. Only actively-running subagents are surfaced.
+        entry.status === 'running'
+    )
     .slice(-MAX_SUB_MASCOTS)
     .map((entry, index) => {
       const subagent = entry.subagent!;
@@ -140,48 +142,36 @@ export const SubMascotLayer: FC<SubMascotLayerProps> = ({ entries }) => {
 
   return (
     <div
-      className="pointer-events-none absolute inset-0 z-10"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center"
       data-testid="sub-mascot-layer"
       aria-live="polite">
-      {models.map(model => (
-        <div
-          key={model.id}
-          role="status"
-          aria-label={`${model.label} subagent ${model.status}`}
-          data-testid="sub-mascot"
-          data-status={model.status}
-          className="absolute w-[clamp(78px,18%,128px)]"
-          style={{
-            left: model.position.left,
-            top: model.position.top,
-            transform: 'translate(-50%, -50%)',
-          }}>
+      <div className="flex items-end justify-center gap-3 px-3 pb-2 max-w-full overflow-x-auto">
+        {models.map(model => (
           <div
-            className={[
-              'relative transition-opacity duration-500',
-              model.status === 'running' ? 'opacity-100' : 'opacity-85',
-            ].join(' ')}>
-            <div className="drop-shadow-[0_10px_20px_rgba(15,23,42,0.22)]">
-              <Ghosty
-                size="100%"
-                idPrefix={`sub-mascot-${model.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`}
-                bodyColor={model.color}
-                face={model.face}
-              />
-            </div>
+            key={model.id}
+            role="status"
+            aria-label={`${model.label} subagent ${model.status}`}
+            data-testid="sub-mascot"
+            data-status={model.status}
+            className="flex flex-col items-center w-[72px] flex-shrink-0">
             <div
-              className="absolute left-1/2 top-[78%] w-[min(168px,42vw)] -translate-x-1/2 rounded-lg border border-white/70 bg-white/90 px-2 py-1 text-center text-[11px] leading-tight text-stone-700 shadow-soft backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/90 dark:text-neutral-100"
-              data-testid="sub-mascot-bubble">
-              <div className="truncate font-medium">{model.label}</div>
-              <div
-                className="mt-0.5 overflow-hidden text-[10px] text-stone-500 dark:text-neutral-300"
-                style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                {model.activity}
+              className={[
+                'relative w-[56px] h-[56px] transition-opacity duration-500',
+                model.status === 'running' ? 'opacity-100' : 'opacity-75',
+              ].join(' ')}>
+              <div className="drop-shadow-[0_6px_12px_rgba(15,23,42,0.18)]">
+                <RiveMascot size="100%" face={model.face} />
               </div>
             </div>
+            <div
+              className="mt-1 max-w-[88px] rounded-md border border-white/70 bg-white/85 px-1.5 py-0.5 text-center text-[9px] leading-tight text-stone-600 shadow-soft backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/85 dark:text-neutral-200"
+              data-testid="sub-mascot-bubble"
+              title={`${model.label} — ${model.activity}`}>
+              <div className="truncate font-medium">{model.label}</div>
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 };

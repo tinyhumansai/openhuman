@@ -9,7 +9,7 @@ use super::harness::memory_context::{
     CROSS_CHAT_LIMIT, CROSS_CHAT_SNIPPET_CHARS, WORKING_MEMORY_KEY_PREFIX, WORKING_MEMORY_LIMIT,
 };
 use crate::openhuman::learning::transcript_ingest::CONVERSATION_MEMORY_NAMESPACE;
-use crate::openhuman::memory::conversations::ConversationStore;
+use crate::openhuman::memory_conversations::ConversationStore;
 
 /// Maximum number of `[Prior conversations]` lines surfaced into the prompt
 /// at the start of a fresh chat. Tight cap on purpose: this block is meant
@@ -20,6 +20,46 @@ const PRIOR_CONVERSATION_LIMIT: usize = 3;
 /// Medium/low entries stay queryable via the on-demand memory tool but
 /// do not auto-pollute every fresh chat.
 const PRIOR_CONVERSATION_KEY_PREFIX: &str = "high.";
+
+/// Parse a `MemoryEntry::timestamp` (RFC 3339) into an absolute
+/// `YYYY-MM-DD` label for prompt injection, e.g. `2026-05-25`. Returns
+/// `None` when the timestamp is missing or unparseable so callers omit
+/// the stamp rather than emit a garbage date.
+///
+/// Time-sensitive memory ("finish the proposal by Wednesday") is a prime
+/// vector for stale-as-current hallucinations: with no date the model
+/// can't tell a four-day-old working fact from a present-tense one, so it
+/// may serve it as today's — the same failure as the memory-tree path.
+/// This block feeds the chat user message *and*, via
+/// `last_memory_context`, every typed sub-agent including the cron
+/// morning briefing (#2944). Reuses the prompt layer's absolute-date
+/// formatter for one consistent date shape across surfaces.
+fn memory_entry_date_label(timestamp: &str) -> Option<String> {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .ok()
+        .map(|dt| {
+            crate::openhuman::agent::prompts::memory_date_label(dt.with_timezone(&chrono::Utc))
+        })
+}
+
+/// Canonical header for the `[Cross-chat context]` block injected on
+/// every turn that has FTS-surfaced hits from other threads.
+///
+/// The "historical" / "capabilities may have changed since" suffix is
+/// deliberate: it tells the model these snippets are snapshots from
+/// earlier moments and that capability claims (e.g. "I can't delete
+/// emails") may be stale because the tool surface or per-toolkit scope
+/// toggles can change between chats.
+///
+/// Single source of truth — all three call sites bind to this constant
+/// so a wording tweak doesn't drift between (a) `memory_loader.rs`'s
+/// primary JSONL path, (b) `harness/memory_context.rs`'s fallback
+/// recall path, and (c) the orchestrator's "Capability questions"
+/// prompt section that names the header verbatim. Tests assert on this
+/// constant too — see `memory_loader::tests` and
+/// `harness::memory_context::tests`.
+pub const CROSS_CHAT_HEADER: &str =
+    "[Cross-chat context — historical; capabilities may have changed since]\n";
 
 #[async_trait]
 pub trait MemoryLoader: Send + Sync {
@@ -183,7 +223,13 @@ impl MemoryLoader for DefaultMemoryLoader {
                 context.push_str(section);
                 appended_working_header = true;
             }
-            let line = format!("- {}: {}\n", entry.key, entry.content);
+            // Stamp each fact with its last-updated date so the model can
+            // compare against the current date and not present a stale
+            // working fact as current (#2944).
+            let line = match memory_entry_date_label(&entry.timestamp) {
+                Some(date) => format!("- {} (as of {date}): {}\n", entry.key, entry.content),
+                None => format!("- {}: {}\n", entry.key, entry.content),
+            };
             if context.len() + line.len() > budget {
                 tracing::debug!(
                     budget,
@@ -252,7 +298,12 @@ impl MemoryLoader for DefaultMemoryLoader {
                 context.push_str(section);
                 appended_prior_header = true;
             }
-            let line = format!("- {primary}\n");
+            // Date-stamp the fact so a months-old "high importance"
+            // statement isn't read as a present-tense commitment (#2944).
+            let line = match memory_entry_date_label(&entry.timestamp) {
+                Some(date) => format!("- (noted {date}) {primary}\n"),
+                None => format!("- {primary}\n"),
+            };
             if context.len() + line.len() > budget {
                 tracing::debug!(
                     budget,
@@ -371,11 +422,14 @@ impl MemoryLoader for DefaultMemoryLoader {
             };
             let prov = provenance_tag(&sid);
             if !appended_cross_header {
-                let section = "[Cross-chat context]\n";
-                if context.len() + section.len() > budget {
+                // The header explicitly labels these snippets as historical so
+                // the model down-weights them when answering capability
+                // questions — see CROSS_CHAT_HEADER doc for the rationale and
+                // the cross-module wording contract.
+                if context.len() + CROSS_CHAT_HEADER.len() > budget {
                     break;
                 }
-                context.push_str(section);
+                context.push_str(CROSS_CHAT_HEADER);
                 appended_cross_header = true;
             }
             let line = format!("- [{prov}] {snippet}\n");
@@ -492,6 +546,77 @@ mod tests {
         }
     }
 
+    #[test]
+    fn memory_entry_date_label_parses_rfc3339_else_none() {
+        assert_eq!(
+            super::memory_entry_date_label("2026-05-25T07:00:00Z").as_deref(),
+            Some("2026-05-25")
+        );
+        assert_eq!(super::memory_entry_date_label("not-a-date"), None);
+        assert_eq!(super::memory_entry_date_label(""), None);
+    }
+
+    #[tokio::test]
+    async fn loader_stamps_working_memory_with_date() {
+        // #2944: working-memory facts must carry their last-updated date so
+        // the model (and downstream sub-agents / the cron briefing, which
+        // inherit this block) can tell a stale fact from a current one.
+        let mem = MockMemory::new(vec![MemoryEntry {
+            id: "id-tz".into(),
+            key: "working.user.commitment".into(),
+            content: "Finish the proposal by Wednesday.".into(),
+            namespace: Some("test".into()),
+            category: MemoryCategory::Conversation,
+            timestamp: "2026-05-25T00:00:00Z".into(),
+            session_id: None,
+            score: None,
+        }]);
+
+        let out = DefaultMemoryLoader::default()
+            .load_context(&mem, "what's on my plate?")
+            .await
+            .expect("loader must succeed");
+
+        assert!(
+            out.contains("[User working memory]"),
+            "expected working-memory block, got:\n{out}"
+        );
+        assert!(
+            out.contains("(as of 2026-05-25)"),
+            "working-memory fact must carry its date (#2944), got:\n{out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn loader_stamps_prior_conversation_with_date() {
+        // #2944: high-importance prior-chat facts must be dated so a
+        // months-old statement isn't read as a present-tense commitment.
+        let mem = MockMemory::new(vec![MemoryEntry {
+            id: "id-1".into(),
+            key: "high.preference.aaaaaaaaaaaa".into(),
+            content: "[high preference] I prefer Postgres for new services.".into(),
+            namespace: Some(super::CONVERSATION_MEMORY_NAMESPACE.to_string()),
+            category: MemoryCategory::Conversation,
+            timestamp: "2026-04-22T00:00:00Z".into(),
+            session_id: Some("thr_old".into()),
+            score: Some(0.9),
+        }]);
+
+        let out = DefaultMemoryLoader::default()
+            .load_context(&mem, "what should I default to for storage?")
+            .await
+            .expect("loader must succeed");
+
+        assert!(
+            out.contains("[Prior conversations]"),
+            "expected prior conversations block, got:\n{out}"
+        );
+        assert!(
+            out.contains("(noted 2026-04-22)"),
+            "prior-conversation fact must carry its date (#2944), got:\n{out}"
+        );
+    }
+
     #[tokio::test]
     async fn loader_surfaces_prior_conversation_high_importance_only() {
         // Prior chat extracted two memories: one high-importance preference
@@ -594,7 +719,7 @@ mod tests {
             .await
             .expect("loader must succeed");
         assert!(
-            out.contains("[Cross-chat context]"),
+            out.contains(CROSS_CHAT_HEADER.trim_end()),
             "expected cross-chat header, got:\n{out}"
         );
         assert!(
@@ -669,7 +794,7 @@ mod tests {
             .await
             .expect("loader must succeed");
         assert!(
-            !out.contains("[Cross-chat context]"),
+            !out.contains(CROSS_CHAT_HEADER.trim_end()),
             "no cross-chat hits must produce no header, got:\n{out}"
         );
     }
@@ -685,7 +810,7 @@ mod tests {
     /// actually run.
     #[tokio::test]
     async fn loader_surfaces_jsonl_primary_path_with_workspace_dir() {
-        use crate::openhuman::memory::conversations::{
+        use crate::openhuman::memory_conversations::{
             ConversationMessage, ConversationStore, CreateConversationThread,
         };
 
@@ -700,6 +825,7 @@ mod tests {
                 title: "Chat A".to_string(),
                 created_at: "2026-04-10T12:00:00Z".to_string(),
                 labels: None,
+                personality_id: None,
             })
             .expect("ensure thread-a");
         store
@@ -726,6 +852,7 @@ mod tests {
                 title: "Chat B".to_string(),
                 created_at: "2026-04-10T13:00:00Z".to_string(),
                 labels: None,
+                personality_id: None,
             })
             .expect("ensure thread-b");
 
@@ -741,7 +868,7 @@ mod tests {
             .expect("loader must succeed");
 
         assert!(
-            out.contains("[Cross-chat context]"),
+            out.contains(CROSS_CHAT_HEADER.trim_end()),
             "JSONL primary path must emit the cross-chat header, got:\n{out}"
         );
         assert!(

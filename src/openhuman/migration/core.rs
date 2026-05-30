@@ -1,5 +1,6 @@
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::{self, Memory, MemoryCategory};
+use crate::openhuman::memory::{Memory, MemoryCategory};
+use crate::openhuman::memory_store;
 use anyhow::{bail, Context, Result};
 use directories::UserDirs;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -118,7 +119,7 @@ pub async fn migrate_openclaw_memory(
 }
 
 fn target_memory_backend(config: &Config) -> Result<Box<dyn Memory>> {
-    memory::create_memory_for_migration(&config.memory, &config.workspace_dir)
+    memory_store::create_memory_for_migration(&config.memory, &config.workspace_dir)
 }
 
 fn collect_source_entries(
@@ -273,6 +274,145 @@ fn resolve_openclaw_workspace(source: Option<PathBuf>) -> Result<PathBuf> {
     Ok(user_dirs.home_dir().join(".openclaw").join("workspace"))
 }
 
+fn resolve_hermes_workspace(source: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(path) = source {
+        return Ok(path);
+    }
+
+    let Some(user_dirs) = UserDirs::new() else {
+        bail!("Failed to determine user home directory");
+    };
+
+    #[cfg(windows)]
+    {
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            return Ok(PathBuf::from(local_app_data).join("hermes"));
+        }
+    }
+
+    Ok(user_dirs.home_dir().join(".hermes"))
+}
+
+fn hermes_file_mappings() -> Vec<(&'static str, &'static str, MemoryCategory)> {
+    vec![
+        ("MEMORY.md", "hermes_memory", MemoryCategory::Core),
+        (
+            "USER.md",
+            "hermes_user_profile",
+            MemoryCategory::Custom("user_profile".to_string()),
+        ),
+        (
+            "SOUL.md",
+            "hermes_persona",
+            MemoryCategory::Custom("persona".to_string()),
+        ),
+    ]
+}
+
+pub async fn migrate_hermes_memory(
+    config: &Config,
+    source_workspace: Option<PathBuf>,
+    dry_run: bool,
+) -> Result<MigrationReport> {
+    let source_workspace = resolve_hermes_workspace(source_workspace)?;
+    if !source_workspace.exists() {
+        bail!(
+            "Hermes workspace not found at {}. Provide a valid source workspace.",
+            source_workspace.display()
+        );
+    }
+
+    if paths_equal(&source_workspace, &config.workspace_dir) {
+        bail!("Source workspace matches current OpenHuman workspace; refusing self-migration");
+    }
+
+    let mut stats = MigrationStats::default();
+    let mut warnings = Vec::new();
+    let mut entries = Vec::new();
+
+    for (filename, key, category) in hermes_file_mappings() {
+        let path = source_workspace.join(filename);
+        if !path.exists() {
+            warnings.push(format!(
+                "{filename} not found in {}",
+                source_workspace.display()
+            ));
+            continue;
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("Failed to read {}", path.display()))?;
+        if content.trim().is_empty() {
+            warnings.push(format!("{filename} is empty, skipping"));
+            continue;
+        }
+        entries.push(SourceEntry {
+            key: key.to_string(),
+            content: content.trim().to_string(),
+            category,
+        });
+    }
+
+    stats.from_markdown = entries.len();
+
+    if entries.is_empty() {
+        warnings.push(format!(
+            "No importable memory found in {}",
+            source_workspace.display()
+        ));
+        warnings.push("Checked for: MEMORY.md, USER.md, SOUL.md".to_string());
+        return Ok(MigrationReport {
+            source_workspace,
+            target_workspace: config.workspace_dir.clone(),
+            dry_run,
+            stats,
+            warnings,
+        });
+    }
+
+    if dry_run {
+        return Ok(MigrationReport {
+            source_workspace,
+            target_workspace: config.workspace_dir.clone(),
+            dry_run,
+            stats,
+            warnings,
+        });
+    }
+
+    if let Some(backup_dir) = backup_target_memory(&config.workspace_dir)? {
+        warnings.push(format!("Backup created: {}", backup_dir.display()));
+    }
+
+    let memory = target_memory_backend(config)?;
+
+    for entry in entries {
+        let mut key = entry.key;
+
+        if let Some(existing) = memory.get("", &key).await? {
+            if existing.content.trim() == entry.content.trim() {
+                stats.skipped_unchanged += 1;
+                continue;
+            }
+            let renamed = next_available_key(memory.as_ref(), &key).await?;
+            key = renamed;
+            stats.renamed_conflicts += 1;
+        }
+
+        memory
+            .store("", &key, &entry.content, entry.category, None)
+            .await?;
+        stats.imported += 1;
+    }
+
+    Ok(MigrationReport {
+        source_workspace,
+        target_workspace: config.workspace_dir.clone(),
+        dry_run,
+        stats,
+        warnings,
+    })
+}
+
 fn paths_equal(left: &Path, right: &Path) -> bool {
     if let (Ok(left), Ok(right)) = (left.canonicalize(), right.canonicalize()) {
         left == right
@@ -418,5 +558,26 @@ mod tests {
             parse_category("unknown"),
             MemoryCategory::Custom("unknown".to_string())
         );
+    }
+
+    #[test]
+    fn resolve_hermes_workspace_returns_override_when_provided() {
+        let custom = PathBuf::from("/custom/hermes");
+        let result = resolve_hermes_workspace(Some(custom.clone())).unwrap();
+        assert_eq!(result, custom);
+    }
+
+    #[test]
+    fn resolve_hermes_workspace_defaults_to_home_dot_hermes() {
+        let result = resolve_hermes_workspace(None).unwrap();
+        #[cfg(windows)]
+        {
+            if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+                assert_eq!(result, PathBuf::from(local_app_data).join("hermes"));
+                return;
+            }
+        }
+        let home = directories::UserDirs::new().unwrap();
+        assert_eq!(result, home.home_dir().join(".hermes"));
     }
 }

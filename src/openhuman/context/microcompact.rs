@@ -116,6 +116,7 @@ mod tests {
                 name: name.into(),
                 arguments: "{}".into(),
             }],
+            reasoning_content: None,
         }
     }
 

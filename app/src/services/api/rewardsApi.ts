@@ -1,8 +1,13 @@
-import type { ApiResponse } from '../../types/api';
+import createDebug from 'debug';
+
+import type { ApiError, ApiResponse } from '../../types/api';
 import type { RewardsAchievement, RewardsSnapshot } from '../../types/rewards';
 import { apiClient } from '../apiClient';
 
 const REWARDS_SNAPSHOT_TIMEOUT_MS = 15_000;
+const log = createDebug('rewards:api');
+
+export type RewardsApiError = ApiError & { code?: string; status?: number };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -34,6 +39,43 @@ function asFiniteNumberOrNull(value: unknown): number | null {
   }
 
   return null;
+}
+
+export function normalizeRewardsApiError(error: unknown): RewardsApiError {
+  const raw = asRecord(error);
+  const message =
+    (typeof raw?.error === 'string' && raw.error) ||
+    (typeof raw?.message === 'string' && raw.message) ||
+    (error instanceof Error ? error.message : null) ||
+    'Unable to load rewards';
+  const code = typeof raw?.code === 'string' ? raw.code : undefined;
+  const status = typeof raw?.status === 'number' ? raw.status : undefined;
+  const name =
+    (typeof raw?.name === 'string' && raw.name) ||
+    (error instanceof Error ? error.name : undefined);
+  const lowerMessage = message.toLowerCase();
+  const isTimeout =
+    lowerMessage.includes('timed out') ||
+    lowerMessage.includes('timeout') ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNABORTED' ||
+    name === 'AbortError';
+
+  if (isTimeout) {
+    return {
+      success: false,
+      error: 'Rewards sync timed out. Check your connection and try again.',
+      ...(code ? { code } : {}),
+      ...(status == null ? {} : { status }),
+    };
+  }
+
+  return {
+    success: false,
+    error: message,
+    ...(code ? { code } : {}),
+    ...(status == null ? {} : { status }),
+  };
 }
 
 function normalizeAchievement(value: unknown): RewardsAchievement {
@@ -108,21 +150,44 @@ export function normalizeRewardsSnapshot(payload: unknown): RewardsSnapshot {
 
 export const rewardsApi = {
   async getMyRewards(): Promise<RewardsSnapshot> {
-    const response = await apiClient.get<ApiResponse<unknown>>('/rewards/me', {
-      timeout: REWARDS_SNAPSHOT_TIMEOUT_MS,
-    });
+    let response: ApiResponse<unknown>;
+    try {
+      response = await apiClient.get<ApiResponse<unknown>>('/rewards/me', {
+        timeout: REWARDS_SNAPSHOT_TIMEOUT_MS,
+      });
+    } catch (transportError) {
+      // Transport-level failure (network error, timeout, abort) — normalize to
+      // a stable retryable message. String-based timeout heuristics are only
+      // safe here where the error comes from the HTTP layer, not from backend
+      // application logic.
+      const normalized = normalizeRewardsApiError(transportError);
+      log(
+        'snapshot transport failed error=%s code=%s status=%s',
+        normalized.error,
+        normalized.code ?? 'none',
+        normalized.status ?? 'none'
+      );
+      throw normalized;
+    }
+
     if (!response.success) {
-      throw {
+      // Backend application error — preserve the exact message so callers see
+      // the real signal (e.g. "Session timeout. Please log in again." must not
+      // be remapped to the generic network-timeout message).
+      const appError: RewardsApiError = {
         success: false,
         error: response.error ?? response.message ?? 'Unable to load rewards',
       };
+      log('snapshot backend error error=%s', appError.error);
+      throw appError;
     }
 
-    console.debug('[rewards] loaded backend snapshot', {
-      achievementCount: Array.isArray((response.data as { achievements?: unknown[] })?.achievements)
+    log(
+      'loaded backend snapshot achievementCount=%d',
+      Array.isArray((response.data as { achievements?: unknown[] })?.achievements)
         ? (response.data as { achievements: unknown[] }).achievements.length
-        : 0,
-    });
+        : 0
+    );
     return normalizeRewardsSnapshot(response.data);
   },
 };

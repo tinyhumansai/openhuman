@@ -11,6 +11,7 @@ use super::types::{Agent, AgentBuilder};
 use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::dispatcher::ParsedToolCall;
 use crate::openhuman::agent::error::AgentError;
+use crate::openhuman::agent_tool_policy::ToolPolicyEngine;
 use crate::openhuman::inference::provider::{self, ConversationMessage, Provider, ToolCall};
 use crate::openhuman::memory::Memory;
 use crate::openhuman::prompt_injection::{
@@ -142,6 +143,9 @@ impl Agent {
         integrations: Vec<crate::openhuman::context::prompt::ConnectedIntegration>,
     ) {
         self.connected_integrations = integrations;
+        self.connected_integrations_initialized = true;
+        self.last_seen_integrations_hash =
+            crate::openhuman::composio::connected_set_hash(&self.connected_integrations);
     }
 
     /// The agent's runtime config snapshot.
@@ -157,6 +161,7 @@ impl Agent {
     pub fn set_event_context(&mut self, session_id: impl Into<String>, channel: impl Into<String>) {
         self.event_session_id = session_id.into();
         self.event_channel = channel.into();
+        self.rebuild_tool_policy_session();
     }
 
     /// Override the agent definition name used for session transcript
@@ -195,6 +200,7 @@ impl Agent {
             .unwrap_or("0");
         self.session_key = format!("{prefix}_{sanitized}");
         self.agent_definition_name = name;
+        self.rebuild_tool_policy_session();
     }
 
     /// Attach a progress event sender for real-time turn updates.
@@ -210,19 +216,27 @@ impl Agent {
     }
 
     /// Restrict which tools the main agent can see and call for this
-    /// session. An empty set restores the default "all visible"
-    /// behavior.
+    /// session. An empty set restores the default "all visible" behavior,
+    /// still subject to the configured channel permission policy.
     pub fn set_visible_tool_names(&mut self, names: HashSet<String>) {
         self.visible_tool_names = names;
-        let visible_specs = if self.visible_tool_names.is_empty() {
-            (*self.tool_specs).clone()
-        } else {
-            self.tool_specs
-                .iter()
-                .filter(|spec| self.visible_tool_names.contains(&spec.name))
-                .cloned()
-                .collect()
-        };
+        self.rebuild_tool_policy_session();
+    }
+
+    pub(super) fn rebuild_tool_policy_session(&mut self) {
+        self.tool_policy_session = ToolPolicyEngine::build_session(
+            &self.agent_definition_name,
+            &self.event_channel,
+            "session",
+            &self.config.channel_permissions,
+            self.tools.as_slice(),
+            &self.visible_tool_names,
+        );
+        let visible_specs = super::builder::visible_tool_specs_for_policy(
+            self.tool_specs.as_slice(),
+            &self.visible_tool_names,
+            &self.tool_policy_session,
+        );
         self.visible_tool_specs = Arc::new(super::builder::dedup_visible_tool_specs(visible_specs));
     }
 
@@ -377,6 +391,7 @@ impl Agent {
             Some(AgentError::ToolExecutionError { .. }) => Some("tool_execution_error"),
             Some(AgentError::CostBudgetExceeded { .. }) => Some("cost_budget_exceeded"),
             Some(AgentError::MaxIterationsExceeded { .. }) => Some("max_iterations_exceeded"),
+            Some(AgentError::EmptyProviderResponse { .. }) => Some("empty_provider_response"),
             Some(AgentError::CompactionFailed { .. }) => Some("compaction_failed"),
             Some(AgentError::PermissionDenied { .. }) => Some("permission_denied"),
             Some(AgentError::Other(_)) | None => None,
@@ -505,12 +520,16 @@ impl Agent {
             }
             Err(err) => {
                 let sanitized_message = Self::sanitize_event_error_message(&err);
-                // The max-tool-iterations cap is a deterministic agent-state
-                // outcome, not a bug — the UI already surfaces the failure
-                // to the user via the chat-rendered "Error: Agent exceeded
-                // maximum tool iterations" message. Skip the Sentry funnel
-                // for this variant entirely and emit a structured
-                // `log::info!` (OPENHUMAN-TAURI-99 / -98).
+                // Some typed `AgentError` variants represent agent / user /
+                // provider state that the UI already surfaces — the
+                // max-tool-iterations cap (OPENHUMAN-TAURI-99 / -98,
+                // chat-rendered "Error: Agent exceeded maximum tool
+                // iterations") and the empty-provider-response degeneracy
+                // (TAURI-RUST-4JX, "The model returned an empty response.
+                // Please try again."). Skip the Sentry funnel for both
+                // and emit a structured `log::info!` instead. The
+                // suppressed set is owned by `AgentError::skips_sentry()`
+                // so the policy stays in one place.
                 //
                 // Other agent errors go through `report_error_or_expected`
                 // so OPENHUMAN-TAURI-5Z and the budget-noise cluster —
@@ -520,14 +539,13 @@ impl Agent {
                 // warn/info-level breadcrumb without losing genuine bugs.
                 // `Err` propagation, the `AgentError` domain event, and
                 // downstream `recoverable=false` semantics are preserved.
-                let is_max_iter = matches!(
-                    err.downcast_ref::<AgentError>(),
-                    Some(AgentError::MaxIterationsExceeded { .. })
-                );
-                if is_max_iter {
+                let skips_sentry = err
+                    .downcast_ref::<AgentError>()
+                    .is_some_and(AgentError::skips_sentry);
+                if skips_sentry {
                     log::info!(
                         target: "agent",
-                        "[agent.run_single] suppressed Sentry emission for max-iteration cap \
+                        "[agent.run_single] suppressed Sentry emission for user-state agent error \
                          session_id={} channel={} error_kind={} message={}",
                         self.event_session_id(),
                         self.event_channel(),

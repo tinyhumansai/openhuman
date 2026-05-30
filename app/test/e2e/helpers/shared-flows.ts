@@ -12,7 +12,6 @@ import {
   clickText,
   dumpAccessibilityTree,
   textExists,
-  waitForText,
   waitForWebView,
   waitForWindowVisible,
 } from './element-helpers';
@@ -32,20 +31,36 @@ import { supportsExecuteScript } from './platform';
  * explicit selector. Tracking a follow-up `clickByAriaLabel` helper.
  */
 export async function openAddAccountModal(): Promise<void> {
+  const page = await browser.$('[data-testid="accounts-page"]');
+  await page.waitForDisplayed({ timeout: 15_000 });
+
   const opened = await browser.execute(() => {
-    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
-    // aria-label is t('accounts.addAccount') = 'Add Account'
-    const addBtn = buttons.find(b => b.getAttribute('aria-label') === 'Add Account');
-    if (addBtn) {
-      addBtn.click();
-      return true;
-    }
-    return false;
+    const addBtn = document.querySelector<HTMLButtonElement>('[data-testid="accounts-add-button"]');
+    if (!addBtn) return false;
+    addBtn.click();
+    return true;
   });
   if (!opened) {
-    throw new Error('Could not locate Add Account button on /chat');
+    throw new Error('Could not locate Add Account button on /chat accounts page');
   }
-  await waitForText('Add account', 5_000);
+  const modal = await browser.$('[data-testid="add-account-modal"]');
+  await modal.waitForDisplayed({ timeout: 5_000 });
+}
+
+export async function waitForAccountsPage(timeout = 15_000): Promise<void> {
+  const page = await browser.$('[data-testid="accounts-page"]');
+  await page.waitForDisplayed({ timeout });
+}
+
+export async function clickAddAccountProvider(provider: string, timeout = 10_000): Promise<void> {
+  const tile = await browser.$(`[data-testid="add-account-provider-${provider}"]`);
+  await tile.waitForDisplayed({ timeout });
+  await tile.click();
+}
+
+export async function waitForAddAccountModalClosed(timeout = 5_000): Promise<void> {
+  const modal = await browser.$('[data-testid="add-account-modal"]');
+  await modal.waitForExist({ timeout, reverse: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -110,24 +125,164 @@ const HASH_TO_SIDEBAR_LABEL = {
   '/chat': 'Chat',
   '/notifications': 'Alerts',
   '/settings': 'Settings',
-  '/settings/intelligence': 'Intelligence',
+  '/intelligence': 'Intelligence',
 };
+
+function normalizeHash(value) {
+  const raw = String(value || '');
+  const withPrefix = raw.startsWith('#') ? raw : `#${raw}`;
+  return withPrefix.replace(/\/$/, '');
+}
+
+function routeReadySelector(hash) {
+  const path = normalizeHash(hash).replace(/^#/, '');
+  const selectors = {
+    '/notifications': '[data-testid="integration-notifications-section"]',
+    '/settings/cron-jobs': '[data-testid="cron-jobs-panel"]',
+    '/settings/privacy': '[data-testid="settings-privacy-panel"]',
+    '/settings/migration': '[data-testid="migration-form"]',
+    '/settings/voice': '[data-testid="voice-providers-section"]',
+    '/settings/memory-data': '[data-testid="memory-workspace"]',
+    '/intelligence': '[data-testid="memory-workspace"]',
+  };
+  return selectors[path] || null;
+}
+
+async function routeSignature() {
+  return browser.execute(() => {
+    const root = document.getElementById('root');
+    return (root?.innerText || root?.textContent || '').trim().slice(0, 500);
+  });
+}
+
+async function waitForHashRouteReady(hash, options = {}) {
+  const { timeout = 10_000, previousSignature = '', allowSameSignature = false } = options;
+  const expected = normalizeHash(hash);
+  const readySelector = routeReadySelector(hash);
+  await browser.waitUntil(
+    async () =>
+      Boolean(
+        await browser.execute(
+          ({ target, selector, before, allowSame }) => {
+            if (document.readyState !== 'complete') return false;
+            const current = window.location.hash.replace(/\/$/, '');
+            if (current !== target) return false;
+            const root = document.getElementById('root');
+            if (!root) return false;
+            if (selector && root.querySelector(selector)) return true;
+
+            const signature = (root.innerText || root.textContent || '').trim().slice(0, 500);
+            if (!signature) return false;
+            return allowSame || signature !== before;
+          },
+          {
+            target: expected,
+            selector: readySelector,
+            before: previousSignature,
+            allowSame: allowSameSignature,
+          }
+        )
+      ),
+    {
+      timeout,
+      interval: 250,
+      timeoutMsg: `hash route ${expected} did not become ready within ${timeout}ms`,
+    }
+  );
+}
 
 export async function navigateViaHash(hash) {
   const normalized = String(hash).replace(/\/$/, '') || hash;
+  const expectedHash = `#${normalized}`;
+  const hashMatches = currentHash =>
+    currentHash === expectedHash || String(currentHash).startsWith(`${expectedHash}/`);
+  const waitForHash = async (timeout = 8_000) =>
+    browser.waitUntil(
+      async () => {
+        const currentHash = await browser.execute(() => window.location.hash);
+        if (!hashMatches(currentHash)) return false;
+        await browser.pause(300);
+        const stableHash = await browser.execute(() => window.location.hash);
+        return hashMatches(stableHash);
+      },
+      { timeout, interval: 250, timeoutMsg: `hash did not settle on ${hash}` }
+    );
 
   if (supportsExecuteScript()) {
+    // Try sidebar button click first — more reliable than direct hash set.
+    const label = HASH_TO_SIDEBAR_LABEL[normalized];
+    if (label) {
+      try {
+        const clicked = await browser.execute((targetLabel: string) => {
+          const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
+          const button = buttons.find(btn => {
+            const aria = btn.getAttribute('aria-label')?.trim();
+            const title = btn.getAttribute('title')?.trim();
+            const text = btn.textContent?.trim();
+            return aria === targetLabel || title === targetLabel || text === targetLabel;
+          });
+          if (!button) return false;
+          button.click();
+          return true;
+        }, label);
+        if (clicked) {
+          await waitForHash();
+          const currentHash = await browser.execute(() => window.location.hash);
+          console.log(`[E2E] Navigated to ${hash} via "${label}" (current: ${currentHash})`);
+          return;
+        }
+      } catch (buttonErr) {
+        console.log(`[E2E] Button navigation to ${hash} failed:`, buttonErr);
+      }
+    }
+
+    // Fallback: direct hash set + wait for route readiness.
     try {
+      const beforeSignature = await routeSignature();
+      const beforeHash = normalizeHash(await browser.execute(() => window.location.hash));
+      const targetHash = normalizeHash(hash);
       await browser.execute(h => {
         window.location.hash = h;
       }, hash);
-      await browser.pause(2_000);
+      await waitForHashRouteReady(hash, {
+        previousSignature: beforeSignature,
+        allowSameSignature: beforeHash === targetHash,
+      });
       const currentHash = await browser.execute(() => window.location.hash);
       console.log(`[E2E] Navigated to ${hash} (current: ${currentHash})`);
+      return;
     } catch (err) {
       console.log(`[E2E] Hash navigation to ${hash} failed:`, err);
     }
-    return;
+
+    // Last resort: retry button click.
+    if (label) {
+      try {
+        const clicked = await browser.execute((targetLabel: string) => {
+          const buttons = Array.from(document.querySelectorAll('button')) as HTMLButtonElement[];
+          const button = buttons.find(btn => {
+            const aria = btn.getAttribute('aria-label')?.trim();
+            const title = btn.getAttribute('title')?.trim();
+            const text = btn.textContent?.trim();
+            return aria === targetLabel || title === targetLabel || text === targetLabel;
+          });
+          if (!button) return false;
+          button.click();
+          return true;
+        }, label);
+        if (!clicked) {
+          throw new Error(`could not find nav button "${label}"`);
+        }
+        await waitForHash();
+        const currentHash = await browser.execute(() => window.location.hash);
+        console.log(`[E2E] Navigated to ${hash} via "${label}" (current: ${currentHash})`);
+        return;
+      } catch (fallbackErr) {
+        console.log(`[E2E] Button navigation to ${hash} failed:`, fallbackErr);
+      }
+    }
+
+    throw new Error(`[E2E] Failed to navigate to ${hash}`);
   }
 
   // Appium Mac2 — Settings → Billing (nested route)
@@ -275,7 +430,7 @@ export async function navigateToSkills() {
 }
 
 export async function navigateToIntelligence() {
-  await navigateViaHash('/settings/intelligence');
+  await navigateViaHash('/intelligence');
 }
 
 export async function navigateToConversations() {
@@ -308,9 +463,21 @@ export const ONBOARDING_OVERLAY_TEXTS = [
   'Install Skills',
 ] as const;
 
-/** True when the full-screen onboarding overlay is likely visible. */
+/** True when the routed full-screen onboarding flow is visible. */
 async function onboardingOverlayLikelyVisible(): Promise<boolean> {
+  if (supportsExecuteScript()) {
+    const routedOnboarding = await browser.execute(() => {
+      const onOnboardingRoute = window.location.hash.startsWith('#/onboarding');
+      const hasOnboardingShell =
+        document.querySelector('[data-testid="onboarding-layout"]') !== null ||
+        document.querySelector('[data-testid="onboarding-next-button"]') !== null;
+      return onOnboardingRoute && hasOnboardingShell;
+    });
+    if (routedOnboarding) return true;
+  }
+
   for (const label of ONBOARDING_OVERLAY_TEXTS) {
+    if (label === 'Welcome') continue;
     if (await textExists(label)) return true;
   }
   return false;
@@ -338,6 +505,38 @@ export async function waitForOnboardingOverlayHidden(timeout = 10_000): Promise<
   return false;
 }
 
+export async function dismissWalkthroughIfVisible(timeout = 6_000): Promise<boolean> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (supportsExecuteScript()) {
+      const status = await browser.execute(() => {
+        const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
+        const skip = buttons.find(button => (button.textContent ?? '').trim() === 'Skip tour');
+        if (!skip) return 'not-visible';
+        ['mousedown', 'mouseup', 'click'].forEach(type => {
+          skip.dispatchEvent(
+            new MouseEvent(type, { bubbles: true, cancelable: true, view: window, button: 0 })
+          );
+        });
+        return 'clicked';
+      });
+      if (status === 'clicked') {
+        await browser.waitUntil(async () => !(await textExists('Skip tour')), {
+          timeout: 4_000,
+          interval: 250,
+          timeoutMsg: 'walkthrough skip button remained visible',
+        });
+        return true;
+      }
+    } else if (await textExists('Skip tour')) {
+      await clickText('Skip tour', 2_000);
+      return true;
+    }
+    await browser.pause(400);
+  }
+  return false;
+}
+
 /**
  * BootCheckGate shows a "Choose core mode" modal on fresh storage. It sits
  * *in front of* the routed page, so onboarding never mounts behind it. We
@@ -352,16 +551,24 @@ export async function dismissBootCheckGateIfVisible(timeoutMs = 12_000): Promise
   let everSeen = false;
   while (Date.now() < deadline) {
     const status = await browser.execute(() => {
-      const heading = Array.from(document.querySelectorAll('h2')).find(
-        h => (h.textContent ?? '').trim() === 'Choose core mode'
-      );
+      // The BootCheckGate renders a full-screen `.fixed` overlay with a
+      // heading. Check for both "Choose core mode" (legacy) and
+      // "Select a Runtime" (current i18n key bootCheck.chooseCoreMode).
+      // Important: only match headings inside a `.fixed` overlay — the
+      // Welcome page also has a "Select a Runtime" button, but that is
+      // NOT the BootCheckGate and clicking it would reset the core mode.
+      const heading = Array.from(document.querySelectorAll('.fixed h2')).find(h => {
+        const text = (h.textContent ?? '').trim();
+        return text === 'Choose core mode' || text === 'Select a Runtime';
+      });
       if (!heading) return 'gone';
       const modal = heading.closest('.fixed') ?? heading.parentElement;
       if (!modal) return 'gone';
       const buttons = Array.from(modal.querySelectorAll<HTMLButtonElement>('button'));
       const primary =
         buttons.find(b => (b.textContent ?? '').trim() === 'Continue') ??
-        buttons.find(b => /bg-ocean-500/.test(b.className)) ??
+        buttons.find(b => (b.textContent ?? '').trim().includes('Local')) ??
+        buttons.find(b => /bg-ocean-500|bg-primary/.test(b.className)) ??
         buttons[buttons.length - 1];
       if (!primary) return 'visible-no-button';
       ['mousedown', 'mouseup', 'click'].forEach(type => {
@@ -376,6 +583,45 @@ export async function dismissBootCheckGateIfVisible(timeoutMs = 12_000): Promise
     await browser.pause(800);
   }
   return everSeen;
+}
+
+async function waitForPostOnboardingHome(logPrefix, timeout = 20_000) {
+  if (supportsExecuteScript()) {
+    // After onboarding the app routes to either #/home or #/chat depending on
+    // the DefaultRedirect guard and the user's onboarding state. Accept both.
+    await browser.waitUntil(
+      async () =>
+        Boolean(
+          await browser.execute(() => {
+            const h = window.location.hash.replace(/\/$/, '');
+            return h === '#/home' || h === '#/chat';
+          })
+        ),
+      {
+        timeout: Math.min(timeout, 10_000),
+        interval: 300,
+        timeoutMsg: 'onboarding completed but hash did not settle on #/home or #/chat',
+      }
+    );
+  }
+
+  // Check for Home page markers, but don't fail if we're on /chat instead.
+  const homeText = await waitForHomePage(Math.min(timeout, 8_000));
+  if (!homeText) {
+    // The app may have routed to /chat. Check for chat markers.
+    const onChat =
+      supportsExecuteScript() &&
+      (await browser.execute(() => window.location.hash.startsWith('#/chat')));
+    if (onChat) {
+      console.log(`${logPrefix} Post-onboarding landed on /chat (accepted)`);
+      return;
+    }
+    const tree = await dumpAccessibilityTree();
+    console.log(`${logPrefix} Home page not ready after onboarding. Tree:\n`, tree.slice(0, 4000));
+    throw new Error('Onboarding dismissed but Home page did not become ready');
+  }
+
+  console.log(`${logPrefix} Post-onboarding Home page confirmed: found "${homeText}"`);
 }
 
 /**
@@ -427,6 +673,7 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
 
   if (!appeared) {
     console.log(`${logPrefix} Onboarding next-button never appeared — assuming already onboarded`);
+    await dismissWalkthroughIfVisible(3_000);
     return;
   }
 
@@ -448,6 +695,7 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
 
     if (status === 'gone') {
       console.log(`${logPrefix} Onboarding dismissed after ${step} step(s)`);
+      await waitForPostOnboardingHome(logPrefix);
       return;
     }
     if (status === 'gone-but-onboarding-hash') {
@@ -471,6 +719,7 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
     await browser.pause(step >= 4 ? 3_000 : 1_500);
   }
   console.log(`${logPrefix} Onboarding hit max steps (${maxSteps}) — moving on`);
+  await dismissWalkthroughIfVisible(8_000);
 }
 
 /**
@@ -482,6 +731,7 @@ export async function walkOnboarding(logPrefix = '[E2E]', maxSteps = 12): Promis
  */
 export async function completeOnboardingIfVisible(logPrefix = '[E2E]') {
   await walkOnboarding(logPrefix);
+  await waitForHomePage(15_000);
 }
 
 export async function waitForLoggedOutState(timeout = 10_000): Promise<string | null> {
@@ -499,7 +749,11 @@ export async function waitForLoggedOutState(timeout = 10_000): Promise<string | 
 }
 
 export async function logoutViaSettings(logPrefix = '[E2E]') {
-  await navigateToSettings();
+  // Logout + Clear App Data moved out of the main /settings page and into
+  // the Account section in PR #2550 (LogoutAndClearActions footer on
+  // /settings/account). Navigate straight to the section that actually
+  // renders the buttons.
+  await navigateViaHash('/settings/account');
 
   const loggedOut = await browser.execute(() => {
     const candidates = ['Log out', 'Logout', 'Sign out'];

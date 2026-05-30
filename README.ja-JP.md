@@ -16,7 +16,7 @@
 </p>
  
 <p align="center">
- <strong>OpenHuman はあなたのパーソナル AI スーパーインテリジェンスです。プライベートで、シンプルで、非常に強力。</strong>
+ <strong>OpenHuman はあなたのパーソナル AI スーパーインテリジェンスです：ローカルメモリ、必要に応じてマネージドサービス、シンプルで強力。</strong>
 </p>
 
 
@@ -46,6 +46,8 @@
 
 > **早期ベータ版**: 現在も活発に開発中です。荒削りな部分があることをご了承ください。
 
+> **ローカル + マネージドサービス、upfront:** OpenHuman は Memory Tree、Obsidian スタイルの Markdown ヴォルト、ワークスペース設定、およびローカルランタイム状態をあなたのマシン上に保存します。デフォルトのマネージド体験では、アカウントサインイン、モデルルーティング、Web 検索プロキシ、および Composio コネクタレイヤーを介したマネージド統合/OAuth フローに、OpenHuman ホスト型サービスが引き続き使用されます。独自のモデル、検索、または Composio 認証情報を持ち込みたい場合は、カスタム/ローカル設定を選択してください。一部のリアルタイムトリガーおよびホスト型機能には、マネージドバックエンドが引き続き必要です。
+
 インストールや利用開始は、ウェブサイト [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) からダウンロードするか、以下のコマンドを実行してください。
 
 ```bash
@@ -58,6 +60,12 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
+<!-- TODO: translate (ja-JP) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
+<!-- /TODO -->
+
 # OpenHuman とは?
 
 OpenHuman は、あなたの日常生活に統合されるよう設計されたオープンソースのエージェント型アシスタントです。各項目は[ドキュメント](https://tinyhumans.gitbook.io/openhuman/)内の詳細な解説にリンクしています。
@@ -66,9 +74,11 @@ OpenHuman は、あなたの日常生活に統合されるよう設計された�
 
 - **[118+ のサードパーティ統合](https://tinyhumans.gitbook.io/openhuman/features/integrations) と [自動取得](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)**: Gmail、Notion、GitHub、Slack、Stripe、Calendar、Drive、Linear、Jira などのスタックに **ワンクリック OAuth** で接続できます。すべての接続は型付きツールとしてエージェントに公開され、20 分ごとにコアがアクティブな各接続を巡回し、最新データを[メモリーツリー](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch)に取り込みます。プロンプトも、自分で書くポーリングループも不要なので、エージェントは今朝の時点で明日のコンテキストを既に持っています。
 
+  マネージド統合は OpenHuman の Composio コネクタレイヤーを使用します。OAuth ハンドシェイクおよび統合ツール呼び出しは、デフォルトでマネージドバックエンドを介してプロキシされます。代わりに Composio を直接実行したい場合は、独自の Composio API キーでダイレクトモードを構成してください。リアルタイムトリガーの Webhook は、その後あなたがホストして配線する必要があります。
+
 - **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: あなたのデータとアクティビティから構築されるローカルファーストのナレッジベースです。接続したすべての情報は ≤3k トークンの Markdown チャンクへ正規化され、スコアリングされ、階層的なサマリーツリーに畳み込まれて **あなたのマシン上の SQLite** に保存されます。同じチャンクは Obsidian 互換のボルトに `.md` ファイルとして配置され、開いて閲覧・編集できます。Karpathy 氏の [obsidian-wiki ワークフロー](https://x.com/karpathy/status/2039805659525644595)にインスパイアされています。
 
-- **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)が各タスクを適切な LLM(reasoning、fast、または vision)に振り分け、一つのサブスクリプションで提供します。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
+- **電池同梱(Batteries included)**: ウェブ検索、ウェブフェッチ用[スクレイパー](https://tinyhumans.gitbook.io/openhuman/features/native-tools)、フルコーダーツールセット(ファイルシステム、git、lint、test、grep)、そして[ネイティブ音声](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 入力、ElevenLabs TTS 出力、マスコットのリップシンク、ライブ Google Meet エージェント)がデフォルトで組み込まれています。デフォルトで、[モデルルーティング](https://tinyhumans.gitbook.io/openhuman/features/model-routing)は OpenHuman バックエンドを使用して各ワークロードに適切な LLM(reasoning、fast、または vision)を選択およびプロキシします。一つのサブスクリプションですべてのモデルが含まれます。「ファイル読み込みのためにプラグインをインストール」という煩わしさはありません。デバイス上のワークロード向けに [Ollama によるオプショナルなローカル AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) も利用できます。
 
 - **[スマートトークン圧縮 (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: すべてのツール呼び出し、スクレイプ結果、メール本文、検索ペイロードは、LLM モデルに渡される前にトークン圧縮レイヤーを通過します。HTML は Markdown に変換され、長い URL は短縮され、冗長なツール出力は設定可能なルールレイヤーで重複排除と要約が行われるなど…。CJK、絵文字などのマルチバイト文字は書記素(grapheme)単位で完全に保持され、除去されることはありません。同じ情報をわずかなトークン数で得られます。コストとレイテンシを最大 80% 削減します。
 
@@ -89,7 +99,7 @@ OpenHuman は、あなたの日常生活に統合されるよう設計された�
 OpenHuman は、数分であなたのことを理解する初めてのエージェントハーネスです。[Karpathy 氏の LLM ナレッジベース](https://x.com/karpathy/status/2039805659525644595)にインスパイアされました。ほとんどのエージェントは冷えた状態から始まります。Hermes はあなたの作業を見て学習し、OpenClaw はプラグインがコンテキストを運び込むのを待ちます。いずれにせよ、エージェントがあなたのスタックを十分理解して本当に役立つようになるまで、数日から数週間を費やすことになります。
 
 <p align="center">
- <img src="./gitbooks/.gitbook/assets/image (1).png" alt="OpenHuman context diagram">
+ <img src="./gitbooks/.gitbook/assets/image (1).png" alt="OpenHuman のコンテキスト構築図">
 </p>
 
 > OpenHuman はあなたのすべてのドキュメント、メール、チャットを要約・圧縮し、エージェントがあなたについてすべてを覚えていられるメモリーグラフを作成します。

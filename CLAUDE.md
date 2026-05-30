@@ -23,11 +23,32 @@ Commands assume the **repo root**; `pnpm dev` delegates to the `app` workspace. 
 
 - **Shipped product**: desktop — Windows, macOS, Linux.
 - **Tauri host** (`app/src-tauri`): desktop-only. No Android/iOS branches.
-- **Core runs in-process** inside the Tauri host as a tokio task — there is **no sidecar binary anymore** (removed in PR #1061). The lifecycle is owned by `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`; on Cmd+Q the core dies with the GUI. Frontend RPC still goes over HTTP (`core_rpc_relay` + `core_rpc` client) to `http://127.0.0.1:<port>/rpc`, authenticated with a per-launch bearer in `OPENHUMAN_CORE_TOKEN`. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process (e.g. a debug harness).
+- **Core runs in-process** inside the Tauri host as a tokio task — there is **no sidecar binary anymore** (removed in PR #1061). The lifecycle is owned by `core_process::CoreProcessHandle` in `app/src-tauri/src/core_process.rs`; on Cmd+Q the core dies with the GUI. Frontend RPC still goes over HTTP (`core_rpc_relay` + `core_rpc` client) to `http://127.0.0.1:<port>/rpc`, authenticated with a per-launch bearer the shell hands the embedded server in-memory via `run_server_embedded_with_ready(rpc_token: Some(_))`. The renderer reads the same bearer via the `core_rpc_token` Tauri command. `OPENHUMAN_CORE_TOKEN` is still honoured for CLI / docker / cloud env-as-config (operator-supplied) but is no longer set on the process env by the desktop shell. Set `OPENHUMAN_CORE_REUSE_EXISTING=1` to attach to an externally-started `openhuman-core` process (e.g. a debug harness).
 
 **Where logic lives**
 - **Rust core**: business logic, execution, domains, RPC, persistence, CLI. Authoritative.
 - **Tauri + React (`app/`)**: UX, screens, navigation, bridging to the core. Presents and orchestrates only.
+
+---
+
+## iOS client (experimental)
+
+The iOS client is an **in-progress, non-shipping** target in this repo. It does not ship a Rust core on-device; instead it connects to the desktop core via one of three transports selected by a `ConnectionProfile`.
+
+**Transport strategies** (see `app/src/services/transport/`):
+- `LanHttpTransport` — direct HTTP to the desktop core on the same LAN.
+- `TunnelTransport` — socket.io relay through the backend; E2E encrypted with XChaCha20-Poly1305 over X25519 key agreement.
+- `CloudHttpTransport` — fallback via the cloud backend API.
+
+**Key paths:**
+- PTT plugin: `packages/tauri-plugin-ptt/` (Swift + Rust, iOS-only).
+- iOS screens: `app/src/pages/ios/` and `app/src/components/ios/`.
+- Devices domain (Rust): `src/openhuman/devices/`.
+- Tunnel crypto (TS): `app/src/lib/tunnel/`.
+- iOS build entry: `pnpm tauri:ios:dev` — uses stock `@tauri-apps/cli@^2` via `npx`, **not** the vendored CEF CLI.
+- Setup guide: `docs/ios/SETUP.md`.
+
+**Backend dependency:** `tinyhumansai/backend#709` (tunnel socket.io contract) must be merged and deployed for end-to-end pairing to work.
 
 ---
 
@@ -100,6 +121,12 @@ PRs must meet **≥ 80% coverage on changed lines**. Enforced by [`.github/workf
 
 **Rust config** uses a TOML `Config` struct (`src/openhuman/config/schema/types.rs`) with env overrides (`src/openhuman/config/schema/load.rs`).
 
+**Agent access mode** — the `[autonomy]` block (`src/openhuman/config/schema/autonomy.rs`) drives the agent's filesystem/shell reach via `SecurityPolicy` (`src/openhuman/security/policy.rs`). Tiers: `level` (`readonly` = read-only / `supervised` = "ask before edit" / `full` = full access) × `workspace_only` × `trusted_roots` (per-folder `read`/`readwrite` grants outside the workspace, overriding `forbidden_paths` for their subtree) × `allow_tool_install` (gates `install_tool`). Edit live via the `config.update_autonomy_settings` RPC or **Settings → Agent access** (`AgentAccessPanel.tsx`); changes swap the process-global policy in `security::live_policy` and apply to new sessions. The default projects home is `~/OpenHuman/projects` (`config::default_projects_dir`, env `OPENHUMAN_PROJECTS_DIR`), auto-created at startup and injected as a ReadWrite trusted root — distinct from the hidden internal `~/.openhuman/workspace`.
+
+**Command permission model (deterministic, fail-closed):** `classify_command` buckets a command into `CommandClass` (`Read` / `Write` / `Network` / `Install` / `Destructive`); an unrecognized command is **`Write`**, never `Read`. `gate_decision(class, tier)` → `Allow` / `Prompt` / `Block`: read-only allows only reads; ask-before-edit prompts every act (file *create* is free, *edit-existing* prompts); full runs read+write but **always-asks** Network/Install/Destructive. Acting tools (`shell`/`node_exec`/`npm_exec`/`file_write`/`edit_file`/`apply_patch`/`git_operations`/`curl`) return `external_effect_with_args() == true` for `Prompt` classes so the harness routes them through the `ApprovalGate` *before* `execute()`; read-only `Block` + structural guards (`check_gated_command`) are enforced in-tool. The LLM may pass a `category` (escalate-only: `max(rust_floor, declared)`). System/credential dirs are an **unconditional** cross-platform block (`is_always_forbidden`, trusted-root-proof). Enforcement is in Rust (`classify_command`/`gate_decision`/`check_gated_command`/`is_path_string_allowed`/`validate_path`), never the system prompt.
+
+> ⚠️ **The approval prompt is ON by default** (opt out with `OPENHUMAN_APPROVAL_GATE=0`/`false`, `jsonrpc.rs`). `ApprovalGate::init_global` installs unless disabled, so `try_global()` is `Some` and the prompt is wired end-to-end; with `OPENHUMAN_APPROVAL_GATE=0` the harness skips the intercept and `Prompt`-class calls **run unprompted**. The gate parks only for **interactive chat turns** (a `tokio` task-local chat context is set in `channels/providers/web.rs`; background triage/cron turns carry no context and are allowed through, not gated). It publishes `DomainEvent::ApprovalRequested`, which `ApprovalSurfaceSubscriber` bridges to the `approval_request` web-channel socket event; the frontend (`ChatApprovalRequestEvent` → `chatRuntime.pendingApprovalByThread` → `ApprovalRequestCard` above the composer) surfaces Approve/Deny, routing to the `openhuman.approval_decide` RPC. A typed `yes`/`no` chat reply is also honoured server-side (web.rs ingress router runs before the "newer request aborts the in-flight turn" path); any other text cancels the parked turn and is taken as a fresh message. Unanswered prompts still park to the 10-min TTL → Deny. Read-only blocking, path hardening, structural guards, and classification **are** live regardless of the flag. Full access ships as documented full-trust (not sandboxed).
+
 ---
 
 ## Testing
@@ -170,7 +197,7 @@ No `UserProvider` / `AIProvider` / `SkillProvider` — auth and core snapshot li
 
 Thin desktop host. Top-level modules: `core_process`, `core_rpc`, `cdp`, `cef_preflight`, `cef_profile`, `dictation_hotkeys`, `file_logging`, `mascot_native_window`, `native_notifications`, `notification_settings`, `process_kill`, `process_recovery`, `screen_capture`, `window_state`, plus the per-provider scanner modules (`discord_scanner`, `gmessages_scanner`, `imessage_scanner`, `meet_scanner`, `slack_scanner`, `telegram_scanner`, `whatsapp_scanner`), `meet_audio` / `meet_call` / `meet_video`, `fake_camera`, `webview_accounts`, `webview_apis`.
 
-**Core lifecycle**: `core_process::CoreProcessHandle` spawns the JSON-RPC server as an in-process tokio task and authenticates inbound RPC with a per-launch hex bearer (`OPENHUMAN_CORE_TOKEN`). On stale-listener detection (#1130) the handle revalidates the PID before force-killing so PID reuse can't kill an unrelated process. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
+**Core lifecycle**: `core_process::CoreProcessHandle` spawns the JSON-RPC server as an in-process tokio task and authenticates inbound RPC with a per-launch hex bearer. The bearer is generated in `CoreProcessHandle::new()` and handed to the embedded server in-memory through `run_server_embedded_with_ready(rpc_token: Some(_))` — never set on the process env. On stale-listener detection (#1130) the handle revalidates the PID before force-killing so PID reuse can't kill an unrelated process. `restart_core_process` / `start_core_process` Tauri commands let the frontend cycle it for updates.
 
 Registered IPC (see [`gitbooks/developing/architecture/tauri-shell.md`](gitbooks/developing/architecture/tauri-shell.md)) includes `greet`, `write_ai_config_file`, `ai_get_config`, `ai_refresh_config`, `core_rpc_relay`, `core_rpc_token`, `start_core_process`, `restart_core_process`, window commands, and `openhuman_*` daemon helpers. Always use `invoke('core_rpc_relay', ...)` for in-process RPC (avoids CORS preflight that `fetch()` would trigger).
 
@@ -198,8 +225,27 @@ Watch out for Tauri plugins that inject JS by default. `tauri-plugin-opener` shi
 - **Controller schema contract**: shared types in `src/core/types.rs` / `src/core/mod.rs` (`ControllerSchema`, `FieldSchema`, `TypeSchema`).
 - **Domain schema files**: per-domain `schemas.rs` (e.g. `src/openhuman/cron/schemas.rs`), exported from domain `mod.rs`.
 - **Controller-only exposure**: expose features to CLI and JSON-RPC via the controller registry. **Do not** add domain branches in `src/core/cli.rs` / `src/core/jsonrpc.rs`.
-- **Light `mod.rs`**: keep domain `mod.rs` export-focused. Operational code in `ops.rs`, `store.rs`, `types.rs`, etc.
+- **Light `mod.rs`**: keep domain `mod.rs` export-focused. Operational code in `ops.rs`, `store.rs`, `types.rs`, etc. See **Canonical module shape** below for the full per-file contract.
 - **`src/core/`** — Transport only. Modules: `all`, `all_tests`, `auth`, `autocomplete_cli_adapter`, `cli`, `cli_tests`, `dispatch`, `event_bus/`, `jsonrpc`, `jsonrpc_tests`, `legacy_aliases`, `logging`, `memory_cli`, `observability`, `rpc_log`, `shutdown`, `socketio`, `types`, plus `agent_cli`. No heavy domain logic here. (There is no `src/core_server/` — older docs that reference `core_server` mean `src/core/`.)
+
+### Canonical module shape
+
+Each high-level domain under `src/openhuman/<domain>/` should follow this file contract. Only `mod.rs` and tests are universal; the rest exist **only when applicable** — do not create empty placeholder files (e.g. a stateless domain has no `store.rs`, a domain that exposes no agent tools has no `tools.rs`).
+
+| File | When | Role |
+| --- | --- | --- |
+| `mod.rs` | always | Export-focused **only**: module docstring + `mod`/`pub mod` decls + `pub use` re-exports, plus the `all_<domain>_controller_schemas` / `all_<domain>_registered_controllers` pair when RPC-facing. **No business logic, no domain-state statics, no domain `impl` blocks.** |
+| `types.rs` | domain has its own types | Serde domain types. |
+| `store.rs` | domain persists state | Persistence layer. |
+| `ops.rs` | domain has logic / handlers | Business logic + entry points returning `RpcOutcome<T>`. **Canonical handler file** (`ops.rs` is the majority convention; `rpc.rs` is legal only where a domain separates a pure-domain API from ops, e.g. `cron` does `pub use ops as rpc`). |
+| `schemas.rs` | RPC-facing | Controller schemas + `handle_*` fns delegating to `ops.rs` (see **Controller migration checklist**). |
+| `tools.rs` | domain owns agent tools | Domain-owned tool impls live here (+ optional `tools/` submodules), re-exported via `src/openhuman/tools/mod.rs` (see AGENTS.md "Tool ownership rule"). Only genuinely cross-cutting tool families (filesystem, browser/computer, generic system/network) stay in `src/openhuman/tools/impl/`. |
+| `bus.rs` | domain has event subscribers | `EventHandler` impls (see **Event bus**). |
+| tests | new/changed behavior | Inline `#[cfg(test)] mod tests` (small modules) **or** a sibling `<file>_tests.rs` via `#[cfg(test)] #[path = "<file>_tests.rs"] mod tests;` (large suites). Both are legal. |
+
+Two clarifications:
+- **Inline tests do not count against "light `mod.rs`".** A `mod.rs` whose non-test body is pure re-exports is already compliant; moving a large inline suite into a sibling `mod_tests.rs` is tidiness, not a correctness requirement.
+- **Narrow thin-facade exception:** pure dispatch forwarders (pick an implementation and forward — no domain state, no I/O of their own) MAY stay in `mod.rs` when being that facade is the module's whole purpose (e.g. `cwd_jail::spawn` / `spawn_with` / `default_backend`). Justify it in the module docstring.
 
 ### Controller migration checklist
 
@@ -249,11 +295,30 @@ Tauri/Rust in the shell is a **delivery vehicle** (windowing, process lifecycle,
 
 ## Git workflow
 
-- **Never write code on `main`.** Before making any code changes, fork a new branch off the latest `main` (`git fetch upstream && git checkout -b <branch> upstream/main`). All work happens on that feature branch; `main` stays clean and only advances via merged PRs.
+This file is loaded into every contributor's Claude Code session, so the instructions below are written generically: `<your-username>` means **your** GitHub username (the owner of your fork), not any specific maintainer. Adapt the literal commands accordingly.
+
+**One-time remote setup.** Contribute via your own fork of `tinyhumansai/openhuman`. Recommended remote layout:
+
+```
+origin    git@github.com:<your-username>/openhuman.git  (your fork — push here)
+upstream  git@github.com:tinyhumansai/openhuman.git     (fetch-only; never push)
+```
+
+If you cloned the upstream directly, fix it once:
+
+```bash
+git remote rename origin upstream
+git remote add origin git@github.com:<your-username>/openhuman.git
+git fetch upstream
+```
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full new-contributor walkthrough.
+
+- **Never write code on `main`.** Before making any code changes, branch off the latest upstream `main` (`git fetch upstream && git checkout -b <branch> upstream/main`). All work happens on that feature branch; `main` stays clean and only advances via merged PRs.
 - Issues and PRs on upstream **[tinyhumansai/openhuman](https://github.com/tinyhumansai/openhuman)** — not a fork — unless explicitly told otherwise.
 - Issue templates: [`.github/ISSUE_TEMPLATE/feature.md`](.github/ISSUE_TEMPLATE/feature.md), [`.github/ISSUE_TEMPLATE/bug.md`](.github/ISSUE_TEMPLATE/bug.md). PR template: [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md). AI-authored text should follow them verbatim.
-- PRs target **`main`**.
-- **Push branches to `origin` (the user's fork — `senamakel/openhuman`), never to `upstream` (`tinyhumansai/openhuman`).** PRs are still opened against `tinyhumansai/openhuman:main`, but with `--head senamakel:<branch>` so the source is the fork. Direct pushes to upstream pollute its branch list and skip code-review boundaries. Treat the `upstream` remote as fetch-only.
+- PRs target **`main`** of `tinyhumansai/openhuman`.
+- **Push branches to `origin` (your fork), never to `upstream` (`tinyhumansai/openhuman`).** PRs are opened against `tinyhumansai/openhuman:main` with `--head <your-username>:<branch>` so the source is the fork. Direct pushes to upstream pollute its branch list and skip code-review boundaries. Treat the `upstream` remote as fetch-only.
 - **When the user asks you to push or open a PR, resolve blockers and push — don't prompt for permission.** If a pre-push hook fails on something unrelated to your changes (e.g. pre-existing breakage on `main` in code you didn't touch), push with `--no-verify` and call it out in the PR body. If the hook fails on your own changes, fix them and push again. Don't ask the user whether to bypass — just do the right thing and tell them what you did.
 
 ---
@@ -300,6 +365,8 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 - **Pre-merge** (code changes): Prettier, ESLint, `tsc --noEmit` in `app/`; `cargo fmt` + `cargo check` for changed Rust.
 - **No dynamic imports** in production `app/src` code — static `import` / `import type` only. No `import()`, `React.lazy(() => import(...))`, `await import(...)`. For heavy optional paths, use a static import and guard the call site with `try/catch` or a runtime check. *Exceptions*: Vitest harness patterns in `*.test.ts` / `__tests__` / `test/setup.ts`; ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).
 - **Dual socket sync**: when changing the realtime protocol, keep `socketService` / MCP transport aligned with core socket behavior (see `gitbooks/developing/architecture.md` dual-socket section).
+- **i18n for all UI text**: every user-visible string in `app/src/**` (headings, labels, button text, placeholders, status chips, toasts, error messages, dialog copy) must go through `useT()` from `app/src/lib/i18n/I18nContext`. Hard-coded literals in JSX or `label=`/`placeholder=`/`aria-label=` props are not allowed. Add the key to [`app/src/lib/i18n/en.ts`](app/src/lib/i18n/en.ts) **and a real translation to every other locale file** in the same PR (see the next bullet — English-only fallback is the runtime safety net for *missing* keys, not an excuse to ship untranslated values). Exceptions: developer-only debug logs, code identifiers, and non-display data (URLs, slugs, technical sentinel values).
+- **i18n locale files — update ALL locales with REAL translations**: each locale is a **single flat file** at `app/src/lib/i18n/<locale>.ts` (`en.ts` is the source of truth; the chunked `chunks/<locale>-N.ts` layout was retired). When adding or changing keys in `en.ts`, you **must also** add the same key to every non-English locale file **with an actual, correct translation in that language — NOT an English placeholder**. Do not copy the English string into `ar.ts`/`de.ts`/… and "leave it for translators"; translate it (the short UI strings here are well within reach — translate them, and only fall back to English for genuine brand names / commands / paths / units, which belong in the `INTENTIONAL_ENGLISH` allowlist). CI enforces this two ways: `pnpm i18n:check` fails on a missing or extra key in any locale (parity), and **`pnpm i18n:english:check`** ([`scripts/i18n-find-english.ts`](scripts/i18n-find-english.ts)) fails on any value still rendering English — including *stale* English (translated from an older en string that since changed). The English-detection gate uses script-coverage for non-Latin locales and English-only function words for Latin locales; the `INTENTIONAL_ENGLISH` allowlist is **only** for genuinely-English literals (brand names / commands / paths / units / cognates) — never use it to silence an untranslated string. Locales: `ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pl`, `pt`, `ru`, `zh-CN`.
 
 ---
 
@@ -307,5 +374,6 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 
 - **Vendored CEF-aware `tauri-cli`**: runtime is CEF; only the vendored CLI at `app/src-tauri/vendor/tauri-cef/crates/tauri-cli` bundles Chromium into `Contents/Frameworks/`. Stock `@tauri-apps/cli` produces a broken bundle (panic in `cef::library_loader::LibraryLoader::new`). `pnpm dev:app` and all `cargo tauri` scripts call `pnpm tauri:ensure` which runs [`scripts/ensure-tauri-cli.sh`](scripts/ensure-tauri-cli.sh). If overwritten, reinstall with `cargo install --locked --path app/src-tauri/vendor/tauri-cef/crates/tauri-cli`.
 - **macOS deep links**: often require a built `.app` bundle, not just `tauri dev`.
+- **Windows deep links**: `openhuman://` is registered to `HKCU\Software\Classes\openhuman\shell\open\command` by `tauri-plugin-deep-link::register_all` at first launch (per-user, no UAC). The Tauri shell now reads that key back after `register_all` returns and emits `log::error!` with the actual state (`NotRegistered` / `MissingCommand` / `Stale` / `ReadError`) when the value is missing or doesn't point at the running exe — without it, OAuth callbacks via `openhuman://auth?…` never reach the app (issue #2699). The check lives in [`app/src-tauri/src/deep_link_registration_check.rs`](app/src-tauri/src/deep_link_registration_check.rs); a manual repair script for affected users is in [`gitbooks/overview/troubleshooting-sign-in.md`](gitbooks/overview/troubleshooting-sign-in.md).
 - **Tauri environment guard**: use `isTauri()` (from `app/src/services/webviewAccountService.ts`) or wrap `invoke(...)` in `try/catch`; do not check `window.__TAURI__` directly — it is not present at module load and bypasses the established wrapper contract.
-- **Core is in-process** (no sidecar): `core_rpc` reaches the embedded server at `http://127.0.0.1:<port>/rpc` with bearer auth via `OPENHUMAN_CORE_TOKEN`. `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo. To run the core standalone for debugging, use `./target/debug/openhuman-core serve` (token at `{workspace}/core.token`, default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`).
+- **Core is in-process** (no sidecar): `core_rpc` reaches the embedded server at `http://127.0.0.1:<port>/rpc` with bearer auth. The Tauri shell hands the bearer to the embedded server in-memory (no `OPENHUMAN_CORE_TOKEN` on the process env). `scripts/stage-core-sidecar.mjs` no longer exists; `pnpm core:stage` is a no-op echo. To run the core standalone for debugging, use `./target/debug/openhuman-core serve` (token at `{workspace}/core.token`, default `~/.openhuman-staging/core.token` under `OPENHUMAN_APP_ENV=staging`); docker / cloud deployments still supply the bearer via `OPENHUMAN_CORE_TOKEN` in the environment (operator-supplied).

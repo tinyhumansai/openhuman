@@ -59,6 +59,21 @@ fn embedding_provider_validation_rejects_malformed_url() {
     assert!(err.contains("invalid custom provider URL"), "{err}");
 }
 
+#[test]
+fn model_matches_accepts_exact_and_tagged_variants() {
+    assert!(model_matches("bge-m3", "bge-m3"));
+    assert!(model_matches("bge-m3:latest", "bge-m3"));
+    assert!(model_matches("bge-m3", "bge-m3:latest"));
+    assert!(model_matches("bge-m3:v1.0", "bge-m3"));
+}
+
+#[test]
+fn model_matches_rejects_different_base_models() {
+    assert!(!model_matches("nomic-embed-text:latest", "bge-m3"));
+    assert!(!model_matches("bge-m3:latest", "nomic-embed-text"));
+    assert!(!model_matches("bge-m3:latest", "bge-m3:v1.0"));
+}
+
 // ── check_memory_tree_db tests (#2206) ───────────────────────────────────────
 
 /// When the workspace exists but the DB file has never been created,
@@ -89,7 +104,7 @@ fn check_memory_tree_db_ok_when_accessible() {
     let cfg = test_config_in(&tmp);
 
     // Trigger DB creation.
-    crate::openhuman::memory::tree::store::with_connection(&cfg, |_conn| Ok(()))
+    crate::openhuman::memory_store::chunks::store::with_connection(&cfg, |_conn| Ok(()))
         .expect("DB init must succeed");
 
     let mut items = vec![];

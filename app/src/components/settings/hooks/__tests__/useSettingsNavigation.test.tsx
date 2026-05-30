@@ -27,4 +27,9 @@ describe('useSettingsNavigation breadcrumbs', () => {
     renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/developer-options'] });
     expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
   });
+
+  test('persona returns Settings (top-level)', () => {
+    renderWithProviders(<BreadcrumbProbe />, { initialEntries: ['/settings/persona'] });
+    expect(screen.getByTestId('breadcrumbs')).toHaveTextContent('Settings');
+  });
 });

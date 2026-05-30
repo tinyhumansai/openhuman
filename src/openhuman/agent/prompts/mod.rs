@@ -6,7 +6,7 @@ pub use connected_identities::render_connected_identities;
 use crate::openhuman::skills::Skill;
 use crate::openhuman::tools::Tool;
 use anyhow::Result;
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
@@ -177,14 +177,14 @@ impl SystemPromptBuilder {
     /// construction so the rendered system prompt stays byte-identical
     /// for the lifetime of the session. The session builder is
     /// responsible for pre-fetching via
-    /// [`crate::openhuman::memory::ToolMemoryStore::rules_for_prompt`]
+    /// [`crate::openhuman::memory_tools::ToolMemoryStore::rules_for_prompt`]
     /// (or the `memory_tool_rules_for_prompt` RPC) before invoking
     /// this method.
     ///
     /// No-op when `rules` is empty.
     pub fn with_tool_memory_rules(
         mut self,
-        rules: Vec<crate::openhuman::memory::ToolMemoryRule>,
+        rules: Vec<crate::openhuman::memory_tools::ToolMemoryRule>,
     ) -> Self {
         if rules.is_empty() {
             return self;
@@ -192,8 +192,9 @@ impl SystemPromptBuilder {
         // Insert before the tool-catalogue section so these rules appear
         // adjacent to the tool listings and survive tail-biased trimming.
         // Falls back to push when no tools section is present.
-        let section: Box<dyn PromptSection> =
-            Box::new(crate::openhuman::memory::ToolMemoryRulesSection::new(rules));
+        let section: Box<dyn PromptSection> = Box::new(
+            crate::openhuman::memory_tools::ToolMemoryRulesSection::new(rules),
+        );
         let tools_idx = self
             .sections
             .iter()
@@ -421,6 +422,49 @@ pub struct UserIdentitySection;
 /// [`AgentDefinition::omit_profile`] / `omit_memory_md`.
 pub struct UserFilesSection;
 
+/// Renders the personality roster for the master agent's system prompt.
+///
+/// When [`PromptContext::personality_roster`] is non-empty, emits an
+/// `## Available Personalities` section listing each non-self personality
+/// with its `id`, `name`, `description`, and an optional truncated
+/// `memory_summary`. Empty (and skipped) for non-master agents.
+pub struct PersonalityRosterSection;
+
+impl PromptSection for PersonalityRosterSection {
+    fn name(&self) -> &str {
+        "personality_roster"
+    }
+
+    fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
+        if ctx.personality_roster.is_empty() {
+            return Ok(String::new());
+        }
+        let mut out = String::from("## Available Personalities\n\n");
+        out.push_str(
+            "You are the master agent. You can delegate tasks to these personality agents \
+             using the `delegate_to_personality` tool. Each personality has its own memory, \
+             identity, and expertise.\n\n",
+        );
+        for entry in &ctx.personality_roster {
+            out.push_str(&format!(
+                "- **{}** (`{}`): {}",
+                entry.name, entry.id, entry.description
+            ));
+            if let Some(ref summary) = entry.memory_summary {
+                let truncated = if summary.chars().count() > 200 {
+                    let head: String = summary.chars().take(200).collect();
+                    format!("{head}…")
+                } else {
+                    summary.clone()
+                };
+                out.push_str(&format!("\n  Recent context: {truncated}"));
+            }
+            out.push('\n');
+        }
+        Ok(out)
+    }
+}
+
 impl PromptSection for IdentitySection {
     fn name(&self) -> &str {
         "identity"
@@ -447,9 +491,20 @@ impl PromptSection for IdentitySection {
         for file in all_files {
             // Always sync to disk so builtin updates ship.
             sync_workspace_file(ctx.workspace_dir, file);
-            if !skip_in_prompt.contains(file) {
-                inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
+            if skip_in_prompt.contains(file) {
+                continue;
             }
+            if *file == "SOUL.md" {
+                if let Some(ref soul) = ctx.personality_soul_md {
+                    tracing::debug!(
+                        "[identity] personality SOUL.md override active ({} chars)",
+                        soul.len()
+                    );
+                    inject_inline_content(&mut prompt, "SOUL.md", soul, BOOTSTRAP_MAX_CHARS);
+                    continue;
+                }
+            }
+            inject_workspace_file(&mut prompt, ctx.workspace_dir, file);
         }
 
         // PROFILE.md / MEMORY.md injection lives in the dedicated
@@ -489,12 +544,16 @@ impl PromptSection for UserFilesSection {
             );
         }
         if ctx.include_memory_md {
-            // Prefer the session-frozen curated-memory snapshot when the
-            // session has taken one — that's the runtime-writable store
-            // behind `curated_memory.add/replace/remove`. Fall back to
-            // the workspace file only when no snapshot is attached (pure
-            // prompt-unit tests and older call sites).
-            if let Some(snap) = &ctx.curated_snapshot {
+            // Personality-specific MEMORY.md takes highest priority, then
+            // the session-frozen curated-memory snapshot, then the
+            // workspace file (pure prompt-unit tests and older call sites).
+            if let Some(ref memory_md) = ctx.personality_memory_md {
+                tracing::debug!(
+                    "[user_files] personality MEMORY.md override active ({} chars)",
+                    memory_md.len()
+                );
+                inject_inline_content(&mut out, "MEMORY.md", memory_md, USER_FILE_MAX_CHARS);
+            } else if let Some(snap) = &ctx.curated_snapshot {
                 inject_snapshot_content(&mut out, "MEMORY.md", &snap.memory, USER_FILE_MAX_CHARS);
                 inject_snapshot_content(&mut out, "USER.md", &snap.user, USER_FILE_MAX_CHARS);
             } else {
@@ -675,6 +734,20 @@ impl PromptSection for UserReflectionsSection {
     }
 }
 
+/// Format a memory item's `updated_at` as an absolute UTC date label
+/// for prompt injection, e.g. `2026-05-25`.
+///
+/// Absolute (not relative "N days ago") on purpose: memory sections sit
+/// near the front of the KV-cache-stable system prompt, so a label that
+/// changes daily would bust the cached prefix for everything after it.
+/// An absolute date only changes when the underlying memory does. The
+/// model judges staleness by comparing this against the injected current
+/// date. Shared by [`UserMemorySection`] and the working-memory block in
+/// `agent::memory_loader`. (#2944)
+pub(crate) fn memory_date_label(updated_at: DateTime<Utc>) -> String {
+    updated_at.format("%Y-%m-%d").to_string()
+}
+
 impl PromptSection for UserMemorySection {
     fn name(&self) -> &str {
         "user_memory"
@@ -690,16 +763,34 @@ impl PromptSection for UserMemorySection {
             "Long-term memory distilled by the tree summarizer. \
              Each section is the root summary for a memory namespace, \
              representing everything we've learned about that domain over time. \
-             Treat this as durable context: the model has seen these facts before, \
-             they should not need to be re-discovered.\n\n",
+             Treat this as durable background context, but NOT as fresh, \
+             present-tense fact: each section header shows when that memory \
+             was last updated. Compare those dates against the `## Current \
+             Date & Time` section below before answering time-sensitive \
+             questions (today's briefing, daily summary, reminders, calendar, \
+             notifications, \"today/tomorrow/this week\"). If a summary predates \
+             the period the user is asking about, treat it as potentially \
+             stale — say so explicitly and never present older memory as \
+             today's update.\n\n",
         );
 
-        for (namespace, body) in &ctx.learned.tree_root_summaries {
+        for NamespaceSummary {
+            namespace,
+            body,
+            updated_at,
+        } in &ctx.learned.tree_root_summaries
+        {
             let trimmed = body.trim();
             if trimmed.is_empty() {
                 continue;
             }
-            let _ = writeln!(out, "### {namespace}\n");
+            // Absolute date (not "N days ago") keeps this front-of-prompt
+            // section byte-stable for KV-cache reuse — see `NamespaceSummary`.
+            let _ = writeln!(
+                out,
+                "### {namespace} (last updated {})\n",
+                memory_date_label(*updated_at)
+            );
             out.push_str(trimmed);
             out.push_str("\n\n");
         }
@@ -927,6 +1018,10 @@ fn empty_prompt_context_for_static_sections() -> PromptContext<'static> {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     }
 }
 
@@ -1278,9 +1373,40 @@ fn inject_workspace_file(prompt: &mut String, workspace_dir: &Path, filename: &s
     inject_workspace_file_capped(prompt, workspace_dir, filename, BOOTSTRAP_MAX_CHARS);
 }
 
-/// Inject `content` into `prompt` under a header matching
-/// [`inject_workspace_file_capped`]'s format — so a swap from the
-/// file-based loader to a curated-memory snapshot is byte-compatible
+/// Inject pre-loaded string content into `prompt` under a `### label` heading,
+/// capped at `max_chars`. Mirrors the format of [`inject_snapshot_content`]
+/// and [`inject_workspace_file_capped`] but takes a `&str` instead of a file
+/// path. Used for personality-specific overrides (`personality_soul_md`,
+/// `personality_memory_md`) on [`PromptContext`] so a swap from the file-based
+/// loader to an inline override is byte-compatible with the workspace-file path.
+///
+/// Empty/whitespace content is silently skipped.
+fn inject_inline_content(prompt: &mut String, label: &str, content: &str, max_chars: usize) {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let _ = writeln!(prompt, "### {label}\n");
+    let truncated = if trimmed.chars().count() > max_chars {
+        trimmed
+            .char_indices()
+            .nth(max_chars)
+            .map(|(idx, _)| &trimmed[..idx])
+            .unwrap_or(trimmed)
+    } else {
+        trimmed
+    };
+    prompt.push_str(truncated);
+    if truncated.len() < trimmed.len() {
+        let _ = writeln!(
+            prompt,
+            "\n\n[... truncated at {max_chars} chars — use `read` for full file]\n"
+        );
+    } else {
+        prompt.push_str("\n\n");
+    }
+}
+
 /// for the output header and truncation semantics.
 ///
 /// Empty/whitespace content is silently skipped, mirroring the file

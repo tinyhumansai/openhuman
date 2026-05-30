@@ -284,8 +284,8 @@ mod tests {
     use crate::openhuman::agent::hooks::{PostTurnHook, ToolCallRecord, TurnContext};
     use crate::openhuman::agent_experience::store::AgentExperienceStore;
     use crate::openhuman::agent_experience::types::ExperienceOutcome;
-    use crate::openhuman::memory::tool_memory::test_helpers::MockMemory;
     use crate::openhuman::memory::Memory;
+    use crate::openhuman::memory_tools::test_helpers::MockMemory;
     use std::sync::Arc;
 
     fn ctx_with(tool_calls: Vec<ToolCallRecord>) -> TurnContext {

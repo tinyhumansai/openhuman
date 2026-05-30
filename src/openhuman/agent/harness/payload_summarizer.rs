@@ -309,7 +309,7 @@ impl PayloadSummarizer for SubagentPayloadSummarizer {
 }
 
 /// Rough token estimate: ~4 characters per token. Mirrors
-/// [`crate::openhuman::tree_summarizer::types::estimate_tokens`] but
+/// [`crate::openhuman::memory_tree::tree_runtime::types::estimate_tokens`] but
 /// returns `usize` (not `u32`) and lives here to avoid a cross-module
 /// dependency from the agent harness on the tree summarizer.
 fn estimate_tokens(text: &str) -> usize {
@@ -443,11 +443,11 @@ mod tests {
     #[test]
     fn build_summarizer_prompt_includes_tool_name_and_hint() {
         let prompt = build_summarizer_prompt(
-            "GITHUB_LIST_ISSUES",
+            "GITHUB_LIST_REPOSITORY_ISSUES",
             Some("find the most urgent open issues"),
             "{\"issues\": [{\"id\": 1}]}",
         );
-        assert!(prompt.contains("GITHUB_LIST_ISSUES"));
+        assert!(prompt.contains("GITHUB_LIST_REPOSITORY_ISSUES"));
         assert!(prompt.contains("find the most urgent open issues"));
         assert!(prompt.contains("Parent task hint:"));
         assert!(prompt.contains("--- BEGIN ---"));

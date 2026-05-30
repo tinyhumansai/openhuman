@@ -20,7 +20,7 @@ use super::handoff::{
 };
 use super::tool_prep::{
     build_text_mode_tool_instructions, filter_tool_indices, is_subagent_spawn_tool,
-    is_welcome_only_tool, load_prompt_source, top_k_for_toolkit,
+    load_prompt_source, top_k_for_toolkit,
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
@@ -31,9 +31,12 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider, ToolCall};
-use crate::openhuman::memory::conversations::ConversationMessage;
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, Provider, ProviderDelta, ToolCall,
+};
+use crate::openhuman::memory_conversations::ConversationMessage;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
+use crate::openhuman::util::truncate_with_ellipsis;
 
 /// Prompt suffix injected into every typed sub-agent run.
 ///
@@ -147,11 +150,20 @@ pub(super) fn resolve_subagent_provider(
                         (std::sync::Arc::from(p), m)
                     }
                     Err(e) => {
+                        let suggested_key = match workload.as_str() {
+                            "summarization" | "memory" => "memory_provider".to_string(),
+                            _ => format!("{workload}_provider"),
+                        };
                         log::warn!(
-                        "[subagent_runner] workload '{}' provider build failed ({}) for agent_id={} — \
-                         falling back to parent provider + parent model '{}'",
-                        workload, e, agent_id, parent_model
-                    );
+                            "[subagent_runner] workload='{}' provider build failed for agent_id={} error='{}' \
+                             falling back to parent provider (parent_model='{}'). \
+                             Consider setting {} in config.",
+                            workload,
+                            agent_id,
+                            e,
+                            parent_model,
+                            suggested_key
+                        );
                         (parent_provider, parent_model)
                     }
                 }
@@ -190,7 +202,7 @@ struct LazyToolkitResolver {
 
 impl LazyToolkitResolver {
     fn resolve(&self, name: &str) -> Option<Box<dyn Tool>> {
-        let action = self.actions.iter().find(|a| a.name == name)?;
+        let action = self.find_action(name)?;
         Some(Box::new(
             crate::openhuman::composio::ComposioActionTool::new(
                 self.config.clone(),
@@ -201,11 +213,79 @@ impl LazyToolkitResolver {
         ))
     }
 
+    /// Match a model-supplied tool name to a real toolkit action, tolerant
+    /// of the near-miss slugs models routinely emit — case differences and
+    /// separator/prefix drift (bug-report-2026-05-26 A2). Tries, in order:
+    /// exact, case-insensitive, then a normalized alphanumeric match
+    /// (accepted only when **unique**, so a fabricated slug can't silently
+    /// resolve to the wrong action — those still fall through to the
+    /// "tool not available" error, which lists `known_slugs` for the model
+    /// to self-correct).
+    fn find_action(
+        &self,
+        name: &str,
+    ) -> Option<&crate::openhuman::context::prompt::ConnectedIntegrationTool> {
+        if let Some(action) = self.actions.iter().find(|a| a.name == name) {
+            return Some(action);
+        }
+        if let Some(action) = self
+            .actions
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
+        {
+            tracing::debug!(
+                requested = %name,
+                matched = %action.name,
+                "[subagent_runner] resolved tool by case-insensitive match"
+            );
+            return Some(action);
+        }
+        let norm = normalize_slug(name);
+        if !norm.is_empty() {
+            let mut matches = self
+                .actions
+                .iter()
+                .filter(|a| normalize_slug(&a.name) == norm);
+            if let Some(action) = matches.next() {
+                if matches.next().is_none() {
+                    tracing::info!(
+                        requested = %name,
+                        matched = %action.name,
+                        "[subagent_runner] resolved tool by normalized-slug match"
+                    );
+                    return Some(action);
+                }
+                // Ambiguous: 2+ actions normalize to the same slug (e.g.
+                // `read_file` and `ReadFile` → `readfile`). We deliberately
+                // refuse to guess. Warn (not debug): a slug collision is a
+                // toolkit configuration anomaly that should surface in normal
+                // operator logs, not stay hidden behind debug filtering.
+                tracing::warn!(
+                    requested = %name,
+                    norm = %norm,
+                    "[subagent_runner] ambiguous normalized-slug match — multiple actions resolve to the same slug; not resolving"
+                );
+            }
+        }
+        None
+    }
+
     /// Slugs from the bound toolkit, for inclusion in unknown-tool
     /// errors so the model can self-correct without burning a turn.
     fn known_slugs(&self) -> Vec<&str> {
         self.actions.iter().map(|a| a.name.as_str()).collect()
     }
+}
+
+/// Lowercased, non-alphanumerics stripped — collapses separator/prefix
+/// drift (`GOOGLESLIDES_BATCH_UPDATE` vs `googleslides_batch_update`) so
+/// near-miss tool slugs still resolve, while genuinely different slugs
+/// (e.g. a hallucinated `GMAIL_GET_LAST_3_MESSAGES`) stay distinct.
+fn normalize_slug(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 /// Run a sub-agent based on its definition and a task prompt.
@@ -325,6 +405,44 @@ pub async fn run_subagent(
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed mode — narrow prompt, filtered tools, cheaper model
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Deduplicate assembled tool specs by name, keeping the first occurrence.
+///
+/// The sub-agent's `filtered_specs` is a `Vec` assembled from
+/// `parent.all_tool_specs` indices plus dynamic tools, so a delegation tool can
+/// shadow a same-named skill/integration tool (common for the wide-set
+/// `tools_agent`), leaving two specs with the same name. Strict providers reject
+/// such a request with `400 "Tool names must be unique."` The main-agent path
+/// dedups via [`session::builder::dedup_visible_tool_specs`]; this separate
+/// sub-agent assembly must do the same.
+///
+/// First occurrence wins so registration-order semantics are preserved (tool
+/// dispatch still resolves by name). Dropped duplicates are logged at `debug`
+/// (diagnostic instrumentation, per the repo Rust logging guideline).
+///
+/// Extracted as a free function so the regression suite can exercise the dedup
+/// without standing up the full `run_typed_mode` plumbing.
+fn dedup_tool_specs_by_name(agent_id: &str, specs: Vec<ToolSpec>) -> Vec<ToolSpec> {
+    let mut seen: HashSet<String> = HashSet::with_capacity(specs.len());
+    let mut deduped: Vec<ToolSpec> = Vec::with_capacity(specs.len());
+    let mut dropped: Vec<String> = Vec::new();
+    for spec in specs {
+        if seen.insert(spec.name.clone()) {
+            deduped.push(spec);
+        } else {
+            dropped.push(spec.name);
+        }
+    }
+    if !dropped.is_empty() {
+        tracing::debug!(
+            agent_id = %agent_id,
+            "[subagent_runner] dropped {} duplicate tool spec(s) before sending to provider: {:?}",
+            dropped.len(),
+            dropped
+        );
+    }
+    deduped
+}
 
 /// Execute a sub-agent in "Typed" mode.
 ///
@@ -461,14 +579,6 @@ async fn run_typed_mode(
             .as_deref()
             .or(definition.skill_filter.as_deref()),
     );
-
-    // `complete_onboarding` is a welcome-only tool — it flips the
-    // onboarding-complete flag in workspace config and is meaningless
-    // (and potentially destructive) from any other agent. Strip it
-    // from every non-welcome subagent regardless of their scope.
-    if definition.id != "welcome" {
-        allowed_indices.retain(|&i| !is_welcome_only_tool(parent.all_tools[i].name()));
-    }
 
     // Sub-agents must never spawn their own sub-agents. Nested spawns
     // create a recursion tree the harness doesn't budget, observe, or
@@ -632,7 +742,9 @@ async fn run_typed_mode(
                 // behaviour on network failure.
                 let fresh_actions = match &client_kind {
                     Some(ComposioClientKind::Backend(client)) => {
-                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk).await {
+                        match crate::openhuman::composio::fetch_toolkit_actions(client, tk, None)
+                            .await
+                        {
                             Ok(actions) if !actions.is_empty() => actions,
                             Ok(_) => {
                                 tracing::debug!(
@@ -682,7 +794,17 @@ async fn run_typed_mode(
                     toolkit: cached_integration.toolkit.clone(),
                     description: cached_integration.description.clone(),
                     tools: fresh_actions,
+                    // Inherit the cached gated set: this spawn path only
+                    // refreshes the *visible* (callable) actions from the
+                    // backend; the gated/unlock-hint surface is computed
+                    // by `fetch_connected_integrations_uncached` against
+                    // the user pref and doesn't change per-spawn.
+                    gated_tools: cached_integration.gated_tools.clone(),
                     connected: cached_integration.connected,
+                    // Inherit the cached non-active status — this spawn
+                    // path only fires on connected toolkits, but keep the
+                    // field consistent with the source row for #2365.
+                    non_active_status: cached_integration.non_active_status.clone(),
                 };
                 let integration = &integration;
                 // Fuzzy-filter the toolkit's actions against the task prompt
@@ -818,20 +940,41 @@ async fn run_typed_mode(
         None
     };
 
-    let mut filtered_specs: Vec<ToolSpec> = allowed_indices
-        .iter()
-        .map(|&i| parent.all_tool_specs[i].clone())
-        .collect();
+    // Build provider-visible tool schemas in EXECUTION-PRECEDENCE order:
+    // `dynamic_tools` (extra_tools at runtime) before parent specs, because
+    // the inner loop's name lookup (see end of this fn) resolves
+    // `extra_tools` first and only falls back to `parent_tools`. Aligning
+    // the dedup order with the runtime lookup order guarantees the schema
+    // the model sees and the tool that actually executes describe the same
+    // behaviour. (CodeRabbit review on PR #2446.)
+    let mut filtered_specs: Vec<ToolSpec> = dynamic_tools.iter().map(|t| t.spec()).collect();
+    filtered_specs.extend(
+        allowed_indices
+            .iter()
+            .map(|&i| parent.all_tool_specs[i].clone()),
+    );
     let mut allowed_names: HashSet<String> = allowed_indices
         .iter()
         .map(|&i| parent.all_tools[i].name().to_string())
         .collect();
-    // Append dynamic tool specs / names so they're discoverable by the
-    // provider (native tool-calling) and by the inner loop's allowlist.
+    // Dynamic tool names must also be in the allowlist so the inner loop
+    // accepts model tool_calls that reference them.
     for tool in &dynamic_tools {
-        filtered_specs.push(tool.spec());
         allowed_names.insert(tool.name().to_string());
     }
+    // Dedup by name: first occurrence wins. Dynamic Composio action tools
+    // can share a name with an inherited parent-registry spec when the
+    // agent's AllowedAll scope includes a same-named skill tool. Some
+    // providers (Anthropic, OpenHuman cloud after the uniqueness-enforcement
+    // rollout) 400 on duplicate tool names — see TAURI-RUST-4. Because
+    // `filtered_specs` is in execution order (dynamic first), the kept
+    // schema matches what the runtime will actually dispatch.
+    let filtered_specs =
+        crate::openhuman::agent::harness::session::dedup_visible_tool_specs(filtered_specs);
+
+    // Dedup by tool name before the specs reach the provider (see
+    // `dedup_tool_specs_by_name` for why duplicates appear here).
+    let filtered_specs = dedup_tool_specs_by_name(&definition.id, filtered_specs);
 
     tracing::debug!(
         agent_id = %definition.id,
@@ -948,6 +1091,10 @@ async fn run_typed_mode(
         include_memory_md: !definition.omit_memory_md,
         curated_snapshot: None,
         user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
 
     let system_prompt = match &definition.system_prompt {
@@ -1089,7 +1236,19 @@ async fn run_inner_loop(
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
 ) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
-    let max_iterations = max_iterations.max(1);
+    // An autonomous skill run (set via `with_autonomous_iter_cap`) lifts the
+    // per-agent cap so sub-agents run until done / the circuit breaker trips.
+    // Take the larger of the two so a sub-agent that already wants more keeps it.
+    let max_iterations = super::autonomous::autonomous_iter_cap()
+        .map(|cap| cap.max(max_iterations))
+        .unwrap_or(max_iterations)
+        .max(1);
+
+    // Compiled digest of this sub-agent run's tool calls + results, for a
+    // graceful checkpoint if it hits the iteration cap (mirrors the main
+    // agent — bug-report-2026-05-26 A1). Accumulated as the loop runs so it's
+    // robust to history trimming.
+    let mut run_tool_digest = String::new();
 
     // Sub-agent transcript stem — mirrors what
     // `persist_subagent_transcript` used to compute on one-shot
@@ -1246,7 +1405,7 @@ async fn run_inner_loop(
                     sender,
                     created_at: chrono::Utc::now().to_rfc3339(),
                 };
-                if let Err(err) = crate::openhuman::memory::conversations::append_message(
+                if let Err(err) = crate::openhuman::memory_conversations::append_message(
                     parent.workspace_dir.clone(),
                     thread_id,
                     message,
@@ -1266,6 +1425,12 @@ async fn run_inner_loop(
     // so the inner loop body doesn't repeatedly re-resolve `parent.on_progress`.
     let progress_sink = parent.on_progress.clone();
 
+    // Repeated-failure circuit breaker (shared guard with run_tool_call_loop):
+    // halt the subagent with a root cause instead of grinding to
+    // MaxIterationsExceeded when it re-issues a doomed action or makes no
+    // progress (e.g. re-running `pip install` that keeps failing PEP 668).
+    let mut failure_guard = crate::openhuman::agent::harness::tool_loop::RepeatFailureGuard::new();
+    let mut halt_reason: Option<String> = None;
     for iteration in 0..max_iterations {
         tracing::debug!(
             task_id = %task_id,
@@ -1286,17 +1451,77 @@ async fn run_inner_loop(
                 .await;
         }
 
-        let resp = provider
+        // Stream the child's tokens to the parent's progress sink so the
+        // UI can render the sub-agent's thinking/output live, attributed
+        // to this row via `task_id`. Mirrors the main turn loop
+        // (`session/turn.rs`): only set up the SSE sink when a listener
+        // exists, otherwise the channel buffer would back-pressure the
+        // provider and we'd lose the non-streaming HTTP fast path for
+        // providers that don't implement streaming.
+        let child_iteration_for_stream = (iteration + 1) as u32;
+        let (delta_tx_opt, delta_forwarder) = if let Some(ref sink) = progress_sink {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
+            let sink = sink.clone();
+            let agent_id_for_stream = agent_id.to_string();
+            let task_id_for_stream = task_id.to_string();
+            let forwarder = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    // Only visible text and reasoning deltas attribute to
+                    // the subagent transcript; tool-call arg fragments are
+                    // already surfaced via SubagentToolCall* lifecycle
+                    // events, so they're dropped here to avoid double-render.
+                    let mapped = match event {
+                        ProviderDelta::TextDelta { delta } => AgentProgress::SubagentTextDelta {
+                            agent_id: agent_id_for_stream.clone(),
+                            task_id: task_id_for_stream.clone(),
+                            delta,
+                            iteration: child_iteration_for_stream,
+                        },
+                        ProviderDelta::ThinkingDelta { delta } => {
+                            AgentProgress::SubagentThinkingDelta {
+                                agent_id: agent_id_for_stream.clone(),
+                                task_id: task_id_for_stream.clone(),
+                                delta,
+                                iteration: child_iteration_for_stream,
+                            }
+                        }
+                        ProviderDelta::ToolCallStart { .. }
+                        | ProviderDelta::ToolCallArgsDelta { .. } => continue,
+                    };
+                    // Await backpressure so streamed deltas arrive in order
+                    // and aren't silently dropped when the downstream
+                    // progress bridge is slow.
+                    if sink.send(mapped).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            (Some(tx), Some(forwarder))
+        } else {
+            (None, None)
+        };
+
+        let chat_result = provider
             .chat(
                 ChatRequest {
                     messages: history.as_slice(),
                     tools: request_tools,
-                    stream: None,
+                    stream: delta_tx_opt.as_ref(),
                 },
                 model,
                 temperature,
             )
-            .await?;
+            .await;
+
+        // Drop the sender so the forwarder task observes channel close and
+        // terminates instead of leaking. This must run on BOTH the success
+        // and error paths — propagating the provider error with `?` before
+        // joining the forwarder would orphan the task and leak the sender.
+        drop(delta_tx_opt);
+        if let Some(forwarder) = delta_forwarder {
+            let _ = forwarder.await;
+        }
+        let resp = chat_result?;
 
         if let Some(ref u) = resp.usage {
             usage.input_tokens += u.input_tokens;
@@ -1373,8 +1598,11 @@ async fn run_inner_loop(
         if force_text_mode {
             history.push(ChatMessage::assistant(response_text.clone()));
         } else {
-            let assistant_history_content =
-                super::super::parse::build_native_assistant_history(&response_text, &native_calls);
+            let assistant_history_content = super::super::parse::build_native_assistant_history(
+                &response_text,
+                resp.reasoning_content.as_deref(),
+                &native_calls,
+            );
             history.push(ChatMessage::assistant(assistant_history_content));
         }
 
@@ -1464,16 +1692,33 @@ async fn run_inner_loop(
             {
                 let args = parse_tool_arguments(&call.arguments);
                 let timeout = crate::openhuman::tool_timeout::tool_execution_timeout_duration();
-                // ── External-effect approval gate (#1339) ─────
+                // ── External-effect approval gate (#1339, #2135) ─
                 // Subagents share the same gate as the parent loop;
                 // see `tool_loop.rs` for the rationale.
+                //
+                // When the call is allowed and persisted, we keep
+                // hold of the `request_id` so we can stamp the
+                // terminal execution outcome onto the same audit
+                // row (issue #2135).
+                let mut approval_request_id: Option<String> = None;
+                let mut approval_gate_for_audit: Option<
+                    std::sync::Arc<crate::openhuman::approval::ApprovalGate>,
+                > = None;
                 let gate_denial: Option<String> = if tool.external_effect_with_args(&args) {
                     if let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() {
                         let summary =
                             crate::openhuman::approval::summarize_action(&call.name, &args);
                         let redacted = crate::openhuman::approval::redact_args(&args);
-                        match gate.intercept(&call.name, &summary, redacted).await {
-                            crate::openhuman::approval::GateOutcome::Allow => None,
+                        let (outcome, request_id) =
+                            gate.intercept_audited(&call.name, &summary, redacted).await;
+                        match outcome {
+                            crate::openhuman::approval::GateOutcome::Allow => {
+                                approval_request_id = request_id;
+                                if approval_request_id.is_some() {
+                                    approval_gate_for_audit = Some(gate);
+                                }
+                                None
+                            }
                             crate::openhuman::approval::GateOutcome::Deny { reason } => {
                                 tracing::warn!(
                                     tool = call.name.as_str(),
@@ -1498,18 +1743,43 @@ async fn run_inner_loop(
                     // (CodeRabbit review on PR #2149.)
                     format!("Error: {reason}")
                 } else {
-                    match tokio::time::timeout(timeout, tool.execute(args)).await {
-                        Ok(Ok(result)) => {
-                            let raw = result.output();
-                            if result.is_error {
-                                format!("Error: {raw}")
-                            } else {
-                                raw
+                    let (raw, exec_success) =
+                        match tokio::time::timeout(timeout, tool.execute(args)).await {
+                            Ok(Ok(result)) => {
+                                let raw = result.output();
+                                if result.is_error {
+                                    (format!("Error: {raw}"), false)
+                                } else {
+                                    (raw, true)
+                                }
                             }
-                        }
-                        Ok(Err(err)) => format!("Error executing {}: {err}", call.name),
-                        Err(_) => format!("Error: tool '{}' timed out", call.name),
+                            Ok(Err(err)) => {
+                                (format!("Error executing {}: {err}", call.name), false)
+                            }
+                            Err(_) => (format!("Error: tool '{}' timed out", call.name), false),
+                        };
+                    // Stamp the terminal status onto the
+                    // pending_approvals audit row — best-effort,
+                    // failures don't propagate to the agent (#2135).
+                    // Success comes from the structured execute result,
+                    // not from parsing `raw.starts_with("Error")` — a
+                    // legitimate success payload can start with "Error"
+                    // (search hits, copied logs), which would otherwise
+                    // persist a false Failure (CodeRabbit review on #2367).
+                    if let (Some(gate), Some(req_id)) = (
+                        approval_gate_for_audit.as_ref(),
+                        approval_request_id.as_ref(),
+                    ) {
+                        let success = exec_success;
+                        let exec_outcome = if success {
+                            crate::openhuman::approval::ExecutionOutcome::Success
+                        } else {
+                            crate::openhuman::approval::ExecutionOutcome::Failure
+                        };
+                        let err_text = if success { None } else { Some(raw.as_str()) };
+                        gate.record_execution(req_id, exec_outcome, err_text);
                     }
+                    raw
                 }
             } else {
                 format!("Unknown tool: {}", call.name)
@@ -1575,6 +1845,29 @@ async fn run_inner_loop(
             let call_success = !result_text.starts_with("Error");
             let call_output_chars = result_text.chars().count();
             let call_elapsed_ms = call_started.elapsed().as_millis() as u64;
+
+            // Record this call in the run digest (output truncated to bound
+            // size) for a possible max-iteration checkpoint.
+            run_tool_digest.push_str(&format!(
+                "- {} [{}]: {}\n",
+                call.name,
+                if call_success { "ok" } else { "failed" },
+                truncate_with_ellipsis(&result_text, 800)
+            ));
+
+            // Repeated-failure circuit breaker (shared guard). `call.arguments`
+            // is the stable signature; on a trip we stash the root-cause summary
+            // and bail after this iteration's tool results are recorded.
+            if let Some(reason) =
+                failure_guard.record(&call.name, &call.arguments, call_success, &result_text)
+            {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    tool = call.name.as_str(),
+                    "[subagent_runner] circuit breaker tripped — halting with root cause"
+                );
+                halt_reason = Some(reason);
+            }
 
             if force_text_mode {
                 let status = if call_success { "ok" } else { "error" };
@@ -1644,9 +1937,79 @@ async fn run_inner_loop(
         // iteration's provider call would leave the transcript without
         // the tool outputs the next turn will be reasoning from.
         persist_transcript(history, &usage);
+
+        // Circuit breaker tripped this iteration: return the root-cause summary
+        // as the subagent's result (tool results are already in `history`),
+        // instead of looping to MaxIterationsExceeded and being re-delegated.
+        if let Some(reason) = halt_reason.take() {
+            return Ok((reason, iteration + 1, usage));
+        }
     }
 
-    Err(SubagentRunError::MaxIterationsExceeded(max_iterations))
+    // Iteration cap reached. Instead of erroring — which discards all of the
+    // sub-agent's partial work (the parent just sees "delegate failed") —
+    // compile a graceful checkpoint of what it accomplished and return it as
+    // the result, so the calling agent can continue from the partial progress
+    // (mirrors the main-agent checkpoint — bug-report-2026-05-26 A1).
+    let digest = if run_tool_digest.is_empty() {
+        "(no tool calls completed)"
+    } else {
+        run_tool_digest.as_str()
+    };
+    let deterministic = format!(
+        "I reached my tool-call limit ({max_iterations} steps) before finishing this task. \
+         Progress so far (tool calls + results):\n{digest}\n\nThe task is incomplete — the above is \
+         what I accomplished; continue from here."
+    );
+    let summary_input = vec![ChatMessage::user(format!(
+        "You are sub-agent `{agent_id}` and reached your tool-call limit before finishing. Here are \
+         the tool calls you made and their results — compile a brief progress checkpoint (what you \
+         accomplished, what still remains) for the agent that delegated to you. Do not call tools.\n\n{digest}"
+    ))];
+    let checkpoint = match provider
+        .chat(
+            ChatRequest {
+                messages: &summary_input,
+                tools: None,
+                stream: None,
+            },
+            model,
+            temperature,
+        )
+        .await
+    {
+        Ok(resp) => {
+            if let Some(ref u) = resp.usage {
+                usage.input_tokens += u.input_tokens;
+                usage.output_tokens += u.output_tokens;
+                usage.cached_input_tokens += u.cached_input_tokens;
+                usage.charged_amount_usd += u.charged_amount_usd;
+            }
+            // Strip any stray tool-call markup a text-mode model emits; if no
+            // prose survives, fall back to the deterministic digest.
+            let raw = resp.text.unwrap_or_default();
+            let (prose, _) = super::super::parse::parse_tool_calls(&raw);
+            if prose.trim().is_empty() {
+                deterministic
+            } else {
+                prose
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                task_id = %task_id,
+                error = %e,
+                "[subagent_runner] checkpoint summary call failed — using deterministic fallback"
+            );
+            deterministic
+        }
+    };
+    // NB: unlike the main-agent path, this checkpoint is intentionally NOT
+    // written to a sub-agent transcript — the calling agent's transcript
+    // captures the delegated result, so there's no data loss. Don't "fix"
+    // this by adding a `persist_subagent_transcript` call.
+    Ok((checkpoint, max_iterations, usage))
 }
 
 fn parse_tool_arguments(arguments: &str) -> serde_json::Value {
@@ -1673,6 +2036,10 @@ pub(crate) fn user_is_signed_in_to_composio(config: &crate::openhuman::config::C
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_dedup_tests.rs"]
+mod dedup_tests;
 
 #[cfg(test)]
 #[path = "ops_truncation_tests.rs"]

@@ -1,6 +1,7 @@
 use super::*;
 use crate::openhuman::config::{BrowserConfig, Config, MemoryConfig};
 use crate::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER, DEFAULT_AUTH_PROFILE_NAME};
+use crate::openhuman::security::AuditLogger;
 use tempfile::TempDir;
 
 #[path = "../integrations/test_support.rs"]
@@ -19,7 +20,7 @@ fn test_memory(tmp: &TempDir) -> Arc<dyn Memory> {
         backend: "markdown".into(),
         ..MemoryConfig::default()
     };
-    Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap())
+    Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap())
 }
 
 fn tool_names(tools: &[Box<dyn Tool>]) -> Vec<String> {
@@ -56,6 +57,11 @@ fn integration_test_config(tmp: &TempDir, backend_url: &str) -> Config {
     cfg.integrations.tinyfish.enabled = true;
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
+    // Parallel tools (search/extract/chat/research/enrich/dataset) are
+    // registered by the unified search-engine selector, so flip the
+    // engine to `parallel` in test setup.
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_PARALLEL.into();
+    cfg.search.parallel.api_key = Some("test-parallel-key".into());
     cfg
 }
 
@@ -67,6 +73,7 @@ fn integration_tools_for_config(tmp: &TempDir, cfg: &Config) -> Vec<Box<dyn Tool
     all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -104,7 +111,7 @@ fn all_tools_includes_spawn_subagent() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: false,
@@ -118,6 +125,7 @@ fn all_tools_includes_spawn_subagent() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -141,7 +149,7 @@ fn all_tools_includes_spawn_parallel_agents() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig {
         enabled: false,
         allowed_domains: vec![],
@@ -154,6 +162,7 @@ fn all_tools_includes_spawn_parallel_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -181,7 +190,7 @@ fn all_tools_always_registers_curl() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -190,6 +199,7 @@ fn all_tools_always_registers_curl() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -213,7 +223,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
@@ -222,6 +232,7 @@ fn all_tools_registers_gitbooks_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -279,7 +290,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
@@ -288,6 +299,7 @@ fn all_tools_skips_gitbooks_when_disabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -307,45 +319,6 @@ fn all_tools_skips_gitbooks_when_disabled() {
 }
 
 #[test]
-fn all_tools_includes_complete_onboarding() {
-    // Regression guard: the `complete_onboarding` tool must be
-    // present so the welcome agent can check setup status and
-    // finalize onboarding.
-    let tmp = TempDir::new().unwrap();
-    let security = Arc::new(SecurityPolicy::default());
-    let mem_cfg = MemoryConfig {
-        backend: "markdown".into(),
-        ..MemoryConfig::default()
-    };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
-
-    let browser = BrowserConfig::default();
-    let http = crate::openhuman::config::HttpRequestConfig::default();
-    let cfg = test_config(&tmp);
-
-    let tools = all_tools(
-        Arc::new(Config::default()),
-        &security,
-        mem,
-        &browser,
-        &http,
-        tmp.path(),
-        &HashMap::new(),
-        &cfg,
-    );
-    let names: Vec<&str> = tools.iter().map(|t| t.name()).collect();
-    assert!(
-        names.contains(&"complete_onboarding"),
-        "complete_onboarding must be registered in the default tool list; got: {names:?}"
-    );
-    assert!(
-        names.contains(&"check_onboarding_status"),
-        "check_onboarding_status must be registered in the default tool list; got: {names:?}"
-    );
-}
-
-#[test]
 fn all_tools_includes_current_time() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
@@ -354,7 +327,7 @@ fn all_tools_includes_current_time() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -363,6 +336,7 @@ fn all_tools_includes_current_time() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -392,6 +366,7 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -417,8 +392,6 @@ fn all_tools_default_registry_contains_expected_baseline_surface() {
             "spawn_parallel_agents",
             "todo",
             "plan_exit",
-            "check_onboarding_status",
-            "complete_onboarding",
             "current_time",
             "cron_add",
             "cron_list",
@@ -469,6 +442,7 @@ fn all_tools_default_registry_has_no_duplicate_tool_names() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -494,7 +468,7 @@ fn all_tools_excludes_browser_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: false,
@@ -508,6 +482,7 @@ fn all_tools_excludes_browser_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -523,6 +498,32 @@ fn all_tools_excludes_browser_when_disabled() {
 }
 
 #[test]
+fn browser_allowed_domains_shares_fetch_list_minus_wildcard() {
+    // Unified web-access firewall: the browser tool derives its host allowlist
+    // from `http_request.allowed_domains`, but the `"*"` allow-all wildcard is
+    // stripped so a fetch-side "Allow all" never silently opens the browser.
+
+    // Explicit hosts pass straight through (shared with fetch).
+    assert_eq!(
+        browser_allowed_domains(&["reuters.com".into(), "github.com".into()]),
+        vec!["reuters.com".to_string(), "github.com".to_string()],
+    );
+
+    // `"*"` (fetch allow-all, and the http_request default) yields an EMPTY
+    // browser list — browser stays closed unless OPENHUMAN_BROWSER_ALLOW_ALL.
+    assert!(browser_allowed_domains(&["*".into()]).is_empty());
+
+    // Mixed: wildcard dropped, explicit hosts kept.
+    assert_eq!(
+        browser_allowed_domains(&["*".into(), "intranet.corp".into()]),
+        vec!["intranet.corp".to_string()],
+    );
+
+    // Block-all (empty fetch list) -> empty browser list.
+    assert!(browser_allowed_domains(&[]).is_empty());
+}
+
+#[test]
 fn all_tools_includes_browser_when_enabled() {
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
@@ -531,7 +532,7 @@ fn all_tools_includes_browser_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig {
         enabled: true,
@@ -545,6 +546,7 @@ fn all_tools_includes_browser_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -652,7 +654,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -672,6 +674,7 @@ fn all_tools_includes_delegate_when_agents_configured() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -692,7 +695,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -701,6 +704,7 @@ fn all_tools_excludes_delegate_when_no_agents() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -725,7 +729,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -734,6 +738,7 @@ fn all_tools_registers_node_exec_when_node_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -761,7 +766,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -771,6 +776,7 @@ fn all_tools_excludes_node_exec_when_node_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -798,7 +804,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -808,6 +814,7 @@ fn all_tools_excludes_computer_control_when_disabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -835,7 +842,7 @@ fn all_tools_includes_computer_control_when_enabled() {
         ..MemoryConfig::default()
     };
     let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&mem_cfg, tmp.path()).unwrap());
+        Arc::from(crate::openhuman::memory_store::create_memory(&mem_cfg, tmp.path()).unwrap());
 
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
@@ -845,6 +852,7 @@ fn all_tools_includes_computer_control_when_enabled() {
     let tools = all_tools(
         Arc::new(Config::default()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -879,11 +887,15 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
     cfg.integrations.stock_prices.enabled = true;
     cfg.integrations.twilio.enabled = true;
     cfg.composio.enabled = true;
+    // Parallel tools now register through the unified search-engine selector.
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_PARALLEL.into();
+    cfg.search.parallel.api_key = Some("test-parallel-key".into());
     store_test_session_token(&cfg);
 
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -926,15 +938,19 @@ fn all_tools_registers_integration_families_when_enabled_and_signed_in() {
 }
 
 #[test]
-fn all_tools_registers_optional_search_lsp_and_tool_stats_when_enabled() {
+fn all_tools_registers_brave_engine_lsp_and_tool_stats_when_enabled() {
+    // The legacy seltz/searxng tools are no longer registered — the
+    // unified `search.engine` selector replaces them. This test now
+    // verifies that picking `brave` layers in its full tool surface
+    // alongside lsp + tool_stats.
     let tmp = TempDir::new().unwrap();
     let security = Arc::new(SecurityPolicy::default());
     let mem = test_memory(&tmp);
     let browser = BrowserConfig::default();
     let http = crate::openhuman::config::HttpRequestConfig::default();
     let mut cfg = test_config(&tmp);
-    cfg.seltz.enabled = true;
-    cfg.searxng.enabled = true;
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_BRAVE.into();
+    cfg.search.brave.api_key = Some("test-brave-key".into());
     cfg.learning.enabled = true;
     cfg.learning.tool_tracking_enabled = true;
 
@@ -951,6 +967,7 @@ fn all_tools_registers_optional_search_lsp_and_tool_stats_when_enabled() {
     let tools = all_tools(
         Arc::new(cfg.clone()),
         &security,
+        AuditLogger::disabled(),
         mem,
         &browser,
         &http,
@@ -961,11 +978,89 @@ fn all_tools_registers_optional_search_lsp_and_tool_stats_when_enabled() {
     let names = tool_names(&tools);
     assert_contains_all(
         &names,
-        &["seltz_search", "searxng_search", "lsp", "tool_stats"],
+        &[
+            "web_search_tool",
+            "brave_news_search",
+            "brave_image_search",
+            "brave_video_search",
+            "lsp",
+            "tool_stats",
+        ],
     );
 
     unsafe {
         std::env::remove_var(crate::openhuman::tools::implementations::LSP_ENABLED_ENV);
+    }
+}
+
+#[test]
+fn all_tools_registers_querit_engine_when_enabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_QUERIT.into();
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+    assert_contains_all(&names, &["web_search_tool", "querit_search"]);
+}
+
+#[test]
+fn all_tools_omits_search_surface_when_search_is_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.api_url = Some("https://backend.example.test".to_string());
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_DISABLED.into();
+    cfg.search.brave.api_key = Some("test-brave-key".into());
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+    cfg.integrations.tinyfish.enabled = true;
+    store_test_session_token(&cfg);
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+
+    for search_tool in [
+        "web_search_tool",
+        "brave_news_search",
+        "brave_image_search",
+        "brave_video_search",
+        "querit_search",
+        "tinyfish_search",
+        "tinyfish_fetch",
+        "tinyfish_agent_run",
+    ] {
+        assert!(
+            !names.iter().any(|name| name == search_tool),
+            "did not expect search tool `{search_tool}` when search is disabled; got: {names:?}"
+        );
     }
 }
 
@@ -1324,4 +1419,58 @@ async fn all_tools_executes_stock_and_twilio_family_against_fake_backend() {
     );
     assert_eq!(requests[2].body["requireGreeks"], serde_json::json!(true));
     assert_eq!(requests[5].body["to"], serde_json::json!("+14155551234"));
+}
+
+/// Every acting tool gates on `can_act()` and returns its own read-only refusal
+/// string. Each of those must carry [`POLICY_BLOCKED_MARKER`] so the agent
+/// harness recognizes the block as a hard reject and halts on a verbatim repeat
+/// (see `agent::harness::tool_loop::hard_reject_kind`). This pins every tool's
+/// literal to the marker const — drift between them fails here rather than
+/// silently letting the agent grind on a doomed call. Args are the minimum
+/// needed to reach the `can_act()` check in each tool.
+#[tokio::test]
+async fn readonly_acting_tools_carry_policy_blocked_marker() {
+    use crate::openhuman::security::{AutonomyLevel, POLICY_BLOCKED_MARKER};
+
+    let tmp = TempDir::new().unwrap();
+    let sec = Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::ReadOnly,
+        workspace_dir: tmp.path().to_path_buf(),
+        ..SecurityPolicy::default()
+    });
+
+    let cases: Vec<(Box<dyn Tool>, serde_json::Value)> = vec![
+        (
+            Box::new(ApplyPatchTool::new(sec.clone())),
+            serde_json::json!({ "edits": [{ "path": "a.txt", "old_string": "x", "new_string": "y" }] }),
+        ),
+        (
+            Box::new(CsvExportTool::new(sec.clone())),
+            serde_json::json!({ "data": "col1\nval1", "filename": "x.csv" }),
+        ),
+        (
+            Box::new(KeyboardTool::new(sec.clone())),
+            serde_json::json!({}),
+        ),
+        (Box::new(MouseTool::new(sec.clone())), serde_json::json!({})),
+        (
+            Box::new(BrowserOpenTool::new(sec.clone(), vec![])),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+        (
+            Box::new(HttpRequestTool::new(sec.clone(), vec![], 0, 0)),
+            serde_json::json!({ "url": "https://example.com" }),
+        ),
+    ];
+
+    for (tool, args) in cases {
+        let name = tool.name().to_string();
+        let out = tool.execute(args).await.unwrap();
+        assert!(out.is_error, "{name} should error under read-only autonomy");
+        assert!(
+            out.output().contains(POLICY_BLOCKED_MARKER),
+            "{name} read-only block must carry {POLICY_BLOCKED_MARKER}, got: {}",
+            out.output()
+        );
+    }
 }

@@ -1,0 +1,50 @@
+# github-issue-crusher — a DEFAULT skill shipped with OpenHuman.
+# Bundled into the binary and seeded into <workspace>/skills/ on first load
+# (idempotent — never clobbers user edits). Parsed as a SkillDefinition:
+# AgentDefinition fields are flattened in, plus the declared [[inputs]]. At
+# skills_run time it runs as the `orchestrator` agent, focused by SKILL.md,
+# with these inputs rendered into the task prompt.
+#
+# Fork-aware: the issue lives on the UPSTREAM repo, the fix is pushed to a FORK
+# (via the GitHub API — no local push creds needed), and the PR is cross-repo.
+id = "github-issue-crusher"
+when_to_use = "Fix one GitHub issue end to end and open a pull request — including the fork workflow (issue on an upstream repo, fix pushed to a fork, cross-repo PR back to upstream)."
+
+# Preflight gate (see src/openhuman/skills/preflight.rs). issue-crusher
+# touches GitHub via Composio AND pushes branches to a fork via local
+# git, so both subsystems must be ready before the orchestrator boots:
+#
+#   * Composio GitHub connection is active
+#   * local `git` is on PATH
+#   * `git config --global user.{name,email}` are both set
+#   * (strict) Composio username == local git user.name (case-insensitive)
+#
+# Strict match is important here: a cross-repo PR's fork-side push uses
+# whatever local git is configured as, while the PR itself is opened
+# through Composio under a (potentially different) GitHub account. The
+# gate refuses the run loudly rather than silently producing a PR
+# authored under one identity and pushed under another.
+[github]
+required = true
+identity_match = "strict"
+
+[[inputs]]
+name = "repo"
+description = "The UPSTREAM repo the issue lives on AND the PR targets, as owner/name (e.g. acme/web)."
+required = true
+
+[[inputs]]
+name = "issue"
+description = "Issue number on the upstream repo to pick and fix."
+required = true
+type = "integer"
+
+[[inputs]]
+name = "fork"
+description = "Fork to push the fix branch to, as owner/name. Omit to use (or create) a fork under the connected GitHub account."
+required = false
+
+[[inputs]]
+name = "pr_base"
+description = "Base branch on the upstream the PR targets (default: the upstream's default branch)."
+required = false

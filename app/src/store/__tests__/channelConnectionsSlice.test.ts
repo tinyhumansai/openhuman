@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import reducer, {
+  clearOtherPendingForChannel,
   completeBreakingMigration,
+  setChannelConnectionStatus,
   setDefaultMessagingChannel,
   upsertChannelConnection,
 } from '../channelConnectionsSlice';
@@ -68,6 +70,136 @@ describe('channelConnectionsSlice', () => {
 
     expect(state.connections.telegram.managed_dm?.status).toBe('connected');
     expect(state.connections.telegram.managed_dm?.capabilities).toEqual(['dm']);
+  });
+
+  describe('clearOtherPendingForChannel (#2128)', () => {
+    it('cancels sibling auth modes stuck in connecting', () => {
+      const migrated = reducer(undefined, completeBreakingMigration());
+      const withTwoPending = [
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode: 'oauth',
+          patch: { status: 'connecting' },
+        }),
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode: 'managed_dm',
+          patch: { status: 'connecting' },
+        }),
+      ].reduce(reducer, migrated);
+
+      const cleared = reducer(
+        withTwoPending,
+        clearOtherPendingForChannel({ channel: 'discord', exceptAuthMode: 'managed_dm' })
+      );
+
+      expect(cleared.connections.discord.managed_dm?.status).toBe('connecting');
+      expect(cleared.connections.discord.oauth?.status).toBe('disconnected');
+      expect(cleared.connections.discord.oauth?.lastError).toBeUndefined();
+    });
+
+    it('leaves connected and error sibling rows untouched', () => {
+      const migrated = reducer(undefined, completeBreakingMigration());
+      const mixed = [
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode: 'oauth',
+          patch: { status: 'connected', capabilities: ['read', 'write'] },
+        }),
+        setChannelConnectionStatus({
+          channel: 'discord',
+          authMode: 'bot_token',
+          status: 'error',
+          lastError: 'bad token',
+        }),
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode: 'managed_dm',
+          patch: { status: 'connecting' },
+        }),
+      ].reduce(reducer, migrated);
+
+      const cleared = reducer(
+        mixed,
+        clearOtherPendingForChannel({ channel: 'discord', exceptAuthMode: 'managed_dm' })
+      );
+
+      // Sibling row that was `connecting` would have flipped, but there's
+      // none here — the others are connected/error and must be preserved.
+      expect(cleared.connections.discord.oauth?.status).toBe('connected');
+      expect(cleared.connections.discord.bot_token?.status).toBe('error');
+      expect(cleared.connections.discord.bot_token?.lastError).toBe('bad token');
+      expect(cleared.connections.discord.managed_dm?.status).toBe('connecting');
+    });
+
+    it('is a no-op when no sibling is pending', () => {
+      const migrated = reducer(undefined, completeBreakingMigration());
+      const justOne = reducer(
+        migrated,
+        upsertChannelConnection({
+          channel: 'telegram',
+          authMode: 'oauth',
+          patch: { status: 'connecting' },
+        })
+      );
+      const after = reducer(
+        justOne,
+        clearOtherPendingForChannel({ channel: 'telegram', exceptAuthMode: 'oauth' })
+      );
+
+      expect(after.connections.telegram.oauth?.status).toBe('connecting');
+    });
+
+    it('does not affect other channels', () => {
+      const migrated = reducer(undefined, completeBreakingMigration());
+      const crossChannel = [
+        upsertChannelConnection({
+          channel: 'discord',
+          authMode: 'oauth',
+          patch: { status: 'connecting' },
+        }),
+        upsertChannelConnection({
+          channel: 'telegram',
+          authMode: 'oauth',
+          patch: { status: 'connecting' },
+        }),
+      ].reduce(reducer, migrated);
+
+      const after = reducer(
+        crossChannel,
+        clearOtherPendingForChannel({ channel: 'discord', exceptAuthMode: 'bot_token' })
+      );
+
+      // discord.oauth was pending and is not the exception → cleared.
+      expect(after.connections.discord.oauth?.status).toBe('disconnected');
+      // telegram.oauth is a different channel → untouched.
+      expect(after.connections.telegram.oauth?.status).toBe('connecting');
+    });
+  });
+
+  it('lazily initialises a channel modes bucket when persisted state is missing the key', () => {
+    // Simulates a rehydrated state from before yuanbao existed: the channel
+    // key is absent so `state.connections.yuanbao` is undefined. Without
+    // `ensureChannelModes()` the first upsert would crash on
+    // `state.connections[channel][authMode]`. See `ensureChannelModes` in
+    // channelConnectionsSlice.ts.
+    const migrated = reducer(undefined, completeBreakingMigration());
+    const partial = {
+      ...migrated,
+      connections: { ...migrated.connections, yuanbao: undefined as never },
+    };
+
+    const next = reducer(
+      partial,
+      upsertChannelConnection({
+        channel: 'yuanbao',
+        authMode: 'api_key',
+        patch: { status: 'connected' },
+      })
+    );
+
+    expect(next.connections.yuanbao).toBeDefined();
+    expect(next.connections.yuanbao.api_key?.status).toBe('connected');
   });
 
   it('clears stale lastError when patch explicitly sets undefined', () => {

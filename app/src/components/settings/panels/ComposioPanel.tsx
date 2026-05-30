@@ -15,6 +15,8 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
+import { useCoreState } from '../../../providers/CoreStateProvider';
+import { isLocalSessionToken } from '../../../utils/localSession';
 import {
   type ComposioModeStatus,
   openhumanComposioClearApiKey,
@@ -30,11 +32,18 @@ interface ComposioPanelProps {
   /** When true, render without the SettingsHeader chrome (used when embedded
    *  inside the onboarding custom wizard). */
   embedded?: boolean;
+  /** Whether OpenHuman-managed auth should be offered. Defaults to true for
+   *  cloud-authenticated sessions and false otherwise. */
+  managedAuthEnabled?: boolean;
 }
 
-const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
+const ComposioPanel = ({ embedded = false, managedAuthEnabled }: ComposioPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { snapshot } = useCoreState();
+  const allowManagedAuth =
+    managedAuthEnabled ??
+    (Boolean(snapshot.sessionToken) && !isLocalSessionToken(snapshot.sessionToken));
 
   const [mode, setMode] = useState<Mode>('backend');
   // Tracks the mode that's actually persisted on disk — distinct from
@@ -66,7 +75,8 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
         if (!isMounted) return;
         const status: ComposioModeStatus | undefined = res.result;
         if (!status) return;
-        const normalizedMode: Mode = status.mode === 'direct' ? 'direct' : 'backend';
+        const normalizedMode: Mode =
+          !allowManagedAuth || status.mode === 'direct' ? 'direct' : 'backend';
         setMode(normalizedMode);
         setPersistedMode(normalizedMode);
         setApiKeyStored(Boolean(status.api_key_set));
@@ -87,7 +97,7 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
         clearTimeout(saveStatusTimer.current);
       }
     };
-  }, []);
+  }, [allowManagedAuth]);
 
   const flashSaved = (status: 'saved' | 'cleared') => {
     setSaveStatus(status);
@@ -197,7 +207,7 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
       <div>
         {!embedded && (
           <SettingsHeader
-            title="Composio"
+            title={t('settings.composio.title')}
             showBackButton
             onBack={navigateBack}
             breadcrumbs={breadcrumbs}
@@ -216,7 +226,7 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
     <div>
       {!embedded && (
         <SettingsHeader
-          title="Composio"
+          title={t('settings.composio.title')}
           showBackButton
           onBack={navigateBack}
           breadcrumbs={breadcrumbs}
@@ -228,58 +238,71 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
           {t('settings.composio.intro')}
         </p>
 
-        {/* Mode toggle */}
-        <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4 space-y-3">
-          <fieldset>
-            <legend className="text-sm font-medium text-stone-900 dark:text-neutral-100 mb-2">
-              {t('settings.composio.routingMode')}
-            </legend>
-            <div className="space-y-2">
-              <label
-                className="flex items-start gap-3 cursor-pointer"
-                onClick={() => setMode('backend')}>
-                <input
-                  type="radio"
-                  name="composio-mode"
-                  value="backend"
-                  checked={mode === 'backend'}
-                  onChange={() => setMode('backend')}
-                  aria-label={t('settings.composio.modeManaged')}
-                  className="mt-1"
-                />
-                <div className="text-left">
-                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                    {t('settings.composio.modeManaged')}
-                  </span>
-                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
-                    {t('settings.composio.modeManagedDesc')}
-                  </p>
-                </div>
-              </label>
-              <label
-                className="flex items-start gap-3 cursor-pointer"
-                onClick={() => setMode('direct')}>
-                <input
-                  type="radio"
-                  name="composio-mode"
-                  value="direct"
-                  checked={mode === 'direct'}
-                  onChange={() => setMode('direct')}
-                  aria-label={t('settings.composio.modeDirect')}
-                  className="mt-1"
-                />
-                <div className="text-left">
-                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                    {t('settings.composio.modeDirect')}
-                  </span>
-                  <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
-                    {t('settings.composio.modeDirectDesc')}
-                  </p>
-                </div>
-              </label>
-            </div>
-          </fieldset>
-        </div>
+        {allowManagedAuth ? (
+          <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4 space-y-3">
+            <fieldset>
+              <legend className="text-sm font-medium text-stone-900 dark:text-neutral-100 mb-2">
+                {t('settings.composio.routingMode')}
+              </legend>
+              <div className="space-y-2">
+                <label
+                  className="flex items-start gap-3 cursor-pointer"
+                  onClick={() => setMode('backend')}>
+                  <input
+                    type="radio"
+                    name="composio-mode"
+                    value="backend"
+                    checked={mode === 'backend'}
+                    onChange={() => setMode('backend')}
+                    aria-label={t('settings.composio.modeManaged')}
+                    className="mt-1"
+                  />
+                  <div className="text-left">
+                    <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                      {t('settings.composio.modeManaged')}
+                    </span>
+                    <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                      {t('settings.composio.modeManagedDesc')}
+                    </p>
+                  </div>
+                </label>
+                <label
+                  className="flex items-start gap-3 cursor-pointer"
+                  onClick={() => setMode('direct')}>
+                  <input
+                    type="radio"
+                    name="composio-mode"
+                    value="direct"
+                    checked={mode === 'direct'}
+                    onChange={() => setMode('direct')}
+                    aria-label={t('settings.composio.modeDirect')}
+                    className="mt-1"
+                  />
+                  <div className="text-left">
+                    <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                      {t('settings.composio.modeDirect')}
+                    </span>
+                    <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5">
+                      {t('settings.composio.modeDirectDesc')}
+                    </p>
+                  </div>
+                </label>
+              </div>
+            </fieldset>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-4 space-y-2">
+            <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+              {t('settings.composio.modeDirect')}
+            </p>
+            <p className="text-xs text-stone-500 dark:text-neutral-400">
+              {t(
+                'settings.composio.directOnlyDesc',
+                'Managed Composio auth is unavailable here. Enter your own Composio API key or skip this for now.'
+              )}
+            </p>
+          </div>
+        )}
 
         {/* API key field — only when Direct is selected */}
         {mode === 'direct' && (
@@ -301,7 +324,7 @@ const ComposioPanel = ({ embedded = false }: ComposioPanelProps = {}) => {
               placeholder={
                 apiKeyStored
                   ? t('settings.composio.apiKeyStoredPlaceholder')
-                  : 'ck_live_xxxxxxxxxxxxxxxx'
+                  : t('settings.composio.apiKeyExamplePlaceholder')
               }
               className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2 text-sm font-mono text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-400 focus:outline-none focus:ring-1 focus:ring-primary-400"
             />

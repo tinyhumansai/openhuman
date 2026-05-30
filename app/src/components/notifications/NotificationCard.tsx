@@ -1,5 +1,6 @@
 import { useT } from '../../lib/i18n/I18nContext';
 import type { IntegrationNotification } from '../../types/notifications';
+import NotificationBody from './NotificationBody';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -80,8 +81,24 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
           )}
         </div>
 
-        <button
+        {/* `role="button"` + key handler instead of a real `<button>` because
+            this wrapper contains `NotificationLinkPill` (also a `<button>`),
+            and nested interactive elements break keyboard / screen-reader
+            behaviour (HTML spec disallows it). */}
+        <div
+          role="button"
+          tabIndex={0}
           onClick={handleBodyClick}
+          onKeyDown={e => {
+            // Ignore bubbled keydown from inner controls (e.g. the link pill).
+            // Without this, pressing Enter/Space on a focused pill would also
+            // activate the card body.
+            if (e.target !== e.currentTarget) return;
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              handleBodyClick();
+            }
+          }}
           className="flex-1 min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-1 rounded-sm">
           {/* Header row: provider badge + timestamp */}
           <div className="flex items-center gap-2 mb-1">
@@ -117,13 +134,15 @@ const NotificationCard = ({ notification: n, onMarkRead, onNavigate, onDismiss }
             {n.title}
           </p>
 
-          {/* Body preview */}
+          {/* Body preview — `<openhuman-link>` tags render as pills */}
           {n.body && (
-            <p className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 line-clamp-2">
-              {n.body}
+            <p
+              data-testid="notification-card-body"
+              className="text-xs text-stone-500 dark:text-neutral-400 mt-0.5 line-clamp-2">
+              <NotificationBody body={n.body} />
             </p>
           )}
-        </button>
+        </div>
         {onDismiss && (
           <button
             onClick={() => onDismiss(n.id)}

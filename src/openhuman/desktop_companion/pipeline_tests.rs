@@ -10,13 +10,11 @@ use crate::openhuman::desktop_companion::pointing::ScreenGeometry;
 use crate::openhuman::desktop_companion::session;
 use crate::openhuman::desktop_companion::types::*;
 
-use std::sync::Mutex as StdMutex;
-
-/// Serialize tests that touch the process-global session state.
-static TEST_MUTEX: StdMutex<()> = StdMutex::new(());
-
+/// Serialize tests that touch the process-global session state. Shared with
+/// `session_tests` via `session::lock_test_state()` so transitions in one test
+/// module can't race a reset/transition in the other.
 fn lock_and_reset() -> std::sync::MutexGuard<'static, ()> {
-    let guard = TEST_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+    let guard = session::lock_test_state();
     session::reset_for_test();
     session::start_session(&StartCompanionSessionParams {
         consent: true,

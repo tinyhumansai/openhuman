@@ -28,6 +28,17 @@ pub struct ModelInfo {
 pub async fn list_configured_models(
     provider_id: &str,
 ) -> Result<crate::rpc::RpcOutcome<serde_json::Value>, String> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    list_configured_models_from_config(provider_id, &config).await
+}
+
+async fn list_configured_models_from_config(
+    provider_id: &str,
+    config: &crate::openhuman::config::Config,
+) -> Result<crate::rpc::RpcOutcome<serde_json::Value>, String> {
     let provider_id = provider_id.trim().to_string();
     if provider_id.is_empty() {
         return Err("provider_id must not be empty".to_string());
@@ -35,15 +46,15 @@ pub async fn list_configured_models(
 
     log::debug!("[providers][list_models] provider_id={}", provider_id);
 
-    let config = crate::openhuman::config::Config::load_or_init()
-        .await
-        .map_err(|e| e.to_string())?;
-
+    // Explicit `cloud_providers` entry wins (e.g. a user-pointed remote
+    // ollama box at https://ollama.example.com/v1). Falling back to the
+    // local-runtime synthesis below only happens when no entry matches.
     let entry = config
         .cloud_providers
         .iter()
         .find(|e| e.id == provider_id || e.slug == provider_id)
         .cloned()
+        .or_else(|| synthesize_local_runtime_entry(&provider_id, config))
         .ok_or_else(|| format!("no cloud provider with id or slug '{}' found", provider_id))?;
 
     let base = entry.endpoint.trim_end_matches('/');
@@ -56,8 +67,9 @@ pub async fn list_configured_models(
     );
 
     let api_key =
-        crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, &config)
+        crate::openhuman::inference::provider::factory::lookup_key_for_slug(&entry.slug, config)
             .unwrap_or_default();
+    let api_key = api_key.trim().to_string();
 
     let client = crate::openhuman::config::build_runtime_proxy_client_with_timeouts(
         "providers.list_models",
@@ -65,9 +77,13 @@ pub async fn list_configured_models(
         10,
     );
 
+    use crate::openhuman::config::schema::cloud_providers::AuthStyle;
+    if is_openrouter_provider(&entry) {
+        validate_openrouter_api_key(&client, base, &api_key).await?;
+    }
+
     let mut request = client.get(&models_url);
 
-    use crate::openhuman::config::schema::cloud_providers::AuthStyle;
     request = match entry.auth_style {
         AuthStyle::Bearer => {
             if !api_key.is_empty() {
@@ -100,6 +116,22 @@ pub async fn list_configured_models(
 
     let status = response.status();
     if !status.is_success() {
+        // A 404 from the /models endpoint means the provider does not support model
+        // listing — this is expected for many OpenAI-compatible providers (e.g. DeepSeek,
+        // Moonshot, Kimi, custom proxies). Return an empty model list so the caller can
+        // proceed normally instead of surfacing a spurious error / Sentry event.
+        // (Sentry issue TAURI-RUST-1Z — 819 events from this path alone.)
+        if status == reqwest::StatusCode::NOT_FOUND {
+            log::debug!(
+                "[providers][list_models] slug={} returned 404 — provider does not support /models listing; returning empty list",
+                entry.slug
+            );
+            return Ok(crate::rpc::RpcOutcome::new(
+                serde_json::json!({ "models": serde_json::Value::Array(vec![]), "unsupported": true }),
+                vec!["provider does not support model listing (404)".to_string()],
+            ));
+        }
+
         let body = response.text().await.unwrap_or_default();
         let sanitized = sanitize_api_error(&body);
         let truncated = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
@@ -110,10 +142,28 @@ pub async fn list_configured_models(
         ));
     }
 
-    let body: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("[providers][list_models] failed to parse JSON: {}", e))?;
+    // TAURI-RUST-12: `response.json()` discards the body when decoding fails,
+    // so Sentry just sees `error decoding response body` with no clue what the
+    // server actually sent. In practice the offending body is HTML from a
+    // captive portal / corporate proxy login page, an upstream load-balancer
+    // 502 served as HTML with a `200 OK`, or a JSON parser tripping on a
+    // wrong-path endpoint. Read the body as text first, then parse, and
+    // surface a sanitized + truncated snippet so the failure is diagnosable
+    // from the error string alone.
+    let raw_body = response.text().await.map_err(|e| {
+        format!(
+            "[providers][list_models] failed to read response body: {}",
+            e
+        )
+    })?;
+    let body: serde_json::Value = serde_json::from_str(&raw_body).map_err(|e| {
+        let sanitized = sanitize_api_error(&raw_body);
+        let snippet = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
+        format!(
+            "[providers][list_models] failed to parse JSON: {} (body: {})",
+            e, snippet
+        )
+    })?;
 
     // OpenAI-compatible servers occasionally return HTTP 200 with an error
     // payload instead of a 4xx (LM Studio does this for unknown paths like
@@ -135,22 +185,80 @@ pub async fn list_configured_models(
         return Err(format!("provider returned error payload: {}", sanitized));
     }
 
-    // A valid `/models` response has a top-level `data` array (per the
-    // OpenAI API contract). Missing it means the endpoint isn't
-    // `/models`-compatible — the user almost certainly typed the wrong
-    // path. Fail loudly so the AI-panel probe surfaces the mistake.
-    let Some(data) = body.get("data").and_then(|d| d.as_array()).cloned() else {
-        let keys = body
-            .as_object()
-            .map(|o| o.keys().cloned().collect::<Vec<_>>().join(", "))
-            .unwrap_or_else(|| "<non-object>".to_string());
-        return Err(format!(
-            "provider response missing `data` array — endpoint is not OpenAI-compatible (got keys: {})",
-            keys
-        ));
-    };
+    // Parse the OpenAI-compatible `/models` envelope into typed model
+    // entries. See `parse_models_response` for the distinct error shapes
+    // returned for "missing field" vs "field present but wrong type"
+    // (TAURI-RUST-4Y).
+    let models = parse_models_response(&body)?;
 
-    let models: Vec<ModelInfo> = data
+    log::info!(
+        "[providers][list_models] slug={} fetched {} models",
+        entry.slug,
+        models.len()
+    );
+
+    Ok(crate::rpc::RpcOutcome::new(
+        serde_json::json!({ "models": models }),
+        vec![format!("fetched {} models", models.len())],
+    ))
+}
+
+/// Parse the OpenAI-compatible `/models` response envelope into typed
+/// [`ModelInfo`] entries.
+///
+/// Returns distinct errors for the three failure modes the wild has
+/// produced in `inference_list_models` Sentry events:
+///
+/// 1. **Missing `data` field** — endpoint isn't `/models`-compatible
+///    (user typo'd the base URL, pointed at a vector-DB host, etc.).
+///    Original TAURI-RUST-4Y wire shape, preserved verbatim so the
+///    Sentry fingerprint stays stable for that population.
+/// 2. **`data` field present but wrong type** — provider returned
+///    `{"object":"error","data":{…}}` or `{"data":null}` or similar
+///    non-array. The pre-fix code conflated this with case (1), emitting
+///    a misleading `"missing 'data' array (got keys: data, object)"`
+///    message; the new shape names the actual JSON type so triage knows
+///    what the provider sent.
+/// 3. **Non-object top-level body** — provider returned a bare array,
+///    string, etc. Caught explicitly so the parser doesn't silently
+///    drop into the missing-data arm with a `<non-object>` keys list.
+///
+/// Per-entry parsing ignores entries that don't have a string `id` (lax
+/// on purpose — many OpenAI-compatible servers include malformed rows
+/// for capabilities they don't fully implement).
+fn parse_models_response(body: &serde_json::Value) -> Result<Vec<ModelInfo>, String> {
+    let obj = body.as_object().ok_or_else(|| {
+        format!(
+            "provider response is not a JSON object — endpoint is not OpenAI-compatible (got {} at top level)",
+            json_value_kind(body)
+        )
+    })?;
+
+    let data_value = obj.get("data").ok_or_else(|| {
+        let keys = obj.keys().cloned().collect::<Vec<_>>().join(", ");
+        format!(
+            "provider response missing `data` field — endpoint is not OpenAI-compatible (got keys: {})",
+            keys
+        )
+    })?;
+
+    let data = data_value.as_array().ok_or_else(|| {
+        // Include the sibling `object` field if present — OpenAI-shaped
+        // servers set it to `"list"` on success and `"error"` (or omit)
+        // on failure, so its value is the fastest triage signal for
+        // future Sentry events on the wrong-type arm.
+        let object_field = obj
+            .get("object")
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "<absent>".to_string());
+        format!(
+            "provider response has `data` field but it is {}, expected array — endpoint may be returning an error envelope (\"object\" = {})",
+            json_value_kind(data_value),
+            object_field,
+        )
+    })?;
+
+    Ok(data
         .iter()
         .filter_map(|item| {
             let id = item.get("id")?.as_str()?.to_string();
@@ -168,18 +276,151 @@ pub async fn list_configured_models(
                 context_window,
             })
         })
-        .collect();
+        .collect())
+}
 
-    log::info!(
-        "[providers][list_models] slug={} fetched {} models",
-        entry.slug,
-        models.len()
-    );
+/// Name the JSON value kind for use in `parse_models_response` error
+/// messages. Mirrors `serde_json::Value::*` variants exactly so test
+/// assertions on the rendered token (`object`/`string`/`null`/…) stay
+/// in lock-step with the matcher.
+fn json_value_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
 
-    Ok(crate::rpc::RpcOutcome::new(
-        serde_json::json!({ "models": models }),
-        vec![format!("fetched {} models", models.len())],
-    ))
+/// Synthesize a transient [`CloudProviderCreds`] entry for the well-known
+/// local-runtime slugs (`ollama`, `lmstudio`) so [`list_configured_models`]
+/// can probe their OpenAI-compatible `/v1/models` endpoint even when the
+/// user has not registered a matching `cloud_providers` row.
+///
+/// Background: the AI settings panel registers an `ollama` `cloud_providers`
+/// entry when the user configures Ollama (see comment on
+/// [`crate::openhuman::config::schema::cloud_providers::is_slug_reserved`]),
+/// but in practice some users hit
+/// `inference_list_models("ollama")` without that entry — config drift,
+/// flush-vs-probe race, or upgrade from a build that only persisted
+/// `config.local_ai.base_url`. Sentry TAURI-RUST-28Z captures this:
+/// 24 events / 7d, all `domain=rpc, method=openhuman.inference_list_models,
+/// operation=invoke_method`. Without this fallback, the dropdown surfaces
+/// the bare `"no cloud provider with id or slug 'ollama' found"` error
+/// (also visible in the Sentry breadcrumb) instead of returning models.
+///
+/// Returns `None` for any slug that is not a recognized local-runtime
+/// alias — callers continue down the normal "no cloud provider" error
+/// path for `openai` / `anthropic` / opaque ids / typos.
+fn synthesize_local_runtime_entry(
+    slug: &str,
+    config: &crate::openhuman::config::Config,
+) -> Option<crate::openhuman::config::schema::cloud_providers::CloudProviderCreds> {
+    use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
+
+    let endpoint = match slug {
+        // Ollama's OpenAI-compatible surface at `<base>/v1/models` returns
+        // the same `{"data": [...]}` shape the existing parser handles, so
+        // we route through that rather than the native `/api/tags`.
+        "ollama" => {
+            let base = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+            format!("{}/v1", base.trim_end_matches('/'))
+        }
+        // `lm_studio_base_url` already ends in `/v1`.
+        "lmstudio" => crate::openhuman::inference::local::lm_studio::lm_studio_base_url(config),
+        _ => return None,
+    };
+
+    Some(CloudProviderCreds {
+        id: format!("synthetic_local_{slug}"),
+        slug: slug.to_string(),
+        label: slug.to_string(),
+        endpoint,
+        // Local runtimes accept unauthenticated requests on loopback.
+        // The probe at `<endpoint>/models` runs without an Authorization
+        // header — `lookup_key_for_slug` may still return a key, but
+        // `AuthStyle::None` ignores it (see auth-style match below).
+        auth_style: AuthStyle::None,
+        legacy_type: None,
+        default_model: None,
+    })
+}
+
+fn is_openrouter_provider(
+    entry: &crate::openhuman::config::schema::cloud_providers::CloudProviderCreds,
+) -> bool {
+    if entry.slug.eq_ignore_ascii_case("openrouter") {
+        return true;
+    }
+
+    reqwest::Url::parse(&entry.endpoint)
+        .ok()
+        .and_then(|url| url.host_str().map(|host| host.to_ascii_lowercase()))
+        .is_some_and(|host| host == "openrouter.ai" || host.ends_with(".openrouter.ai"))
+}
+
+async fn validate_openrouter_api_key(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: &str,
+) -> Result<(), String> {
+    if api_key.is_empty() {
+        return Err("OpenRouter API key is required before enabling the provider".to_string());
+    }
+
+    let key_url = format!("{}/key", base);
+    log::debug!("[providers][list_models] validating OpenRouter API key");
+    let response = client
+        .get(&key_url)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .send()
+        .await
+        .map_err(|e| format!("[providers][list_models] OpenRouter key validation failed: {e}"))?;
+
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let sanitized = sanitize_api_error(&text);
+        let truncated = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
+        log::debug!(
+            "[providers][list_models] OpenRouter key validation failed status={} body={}",
+            status.as_u16(),
+            truncated
+        );
+        return Err(format!(
+            "OpenRouter key validation returned {}: {}",
+            status.as_u16(),
+            truncated
+        ));
+    }
+
+    if let Ok(body) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(err_field) = body.get("error") {
+            let msg = err_field
+                .as_str()
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    err_field
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| err_field.to_string());
+            let sanitized = sanitize_api_error(&msg);
+            log::debug!(
+                "[providers][list_models] OpenRouter key validation returned error payload={}",
+                sanitized
+            );
+            return Err(format!(
+                "OpenRouter key validation returned error payload: {}",
+                sanitized
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 impl Default for ProviderRuntimeOptions {
@@ -398,21 +639,44 @@ pub(super) fn log_provider_access_policy_denied_http_403(
 /// abstract tier leaked to a custom provider, model-specific temperature
 /// constraint) that should be demoted from Sentry to an info log.
 ///
-/// Provider-aware (inverted polarity vs. the 401/403 backend rule): the
-/// same body from the OpenHuman **backend** stays Sentry-actionable —
-/// that would mean we sent our own backend a bad request (a regression,
-/// e.g. #2079). Only client errors from a *custom / third-party*
-/// provider are user-config state. Restricted to the observed shapes
-/// (400 invalid-param / unknown-model, 404 model-does-not-exist, 422
-/// unprocessable); 408/429 are transient and handled separately.
+/// Provider-aware (inverted polarity vs. the 401/403 backend rule): for
+/// most config-rejection phrases the same body from the OpenHuman
+/// **backend** stays Sentry-actionable — that would mean we sent our own
+/// backend a bad request (a regression, e.g. #2079). Restricted to the
+/// observed shapes (400 invalid-param / unknown-model, 404
+/// model-does-not-exist, 422 unprocessable); 408/429 are transient and
+/// handled separately.
+///
+/// **Exception: OpenAI-compatible "unknown model"** (`Model 'X' is not
+/// available. Use GET /openai/v1/models …`). The OpenHuman backend now
+/// emits this exact body for user-configured unknown model ids, so it is
+/// user-state regardless of provider — the polarity guard is dropped for
+/// this specific shape (TAURI-RUST-2Z1). See
+/// [`super::is_openai_compatible_unknown_model_message`].
 pub(super) fn is_provider_config_rejection_http(
     status: reqwest::StatusCode,
     provider: &str,
     body: &str,
 ) -> bool {
-    matches!(status.as_u16(), 400 | 404 | 422)
-        && provider != openhuman_backend::PROVIDER_LABEL
-        && super::is_provider_config_rejection_message(body)
+    if !matches!(status.as_u16(), 400 | 404 | 422) {
+        return false;
+    }
+    if !super::is_provider_config_rejection_message(body) {
+        return false;
+    }
+    // OpenAI-compatible "unknown model" body is user-state regardless of
+    // provider — both third-party `custom_openai` upstreams and our own
+    // OpenHuman backend now emit it for user-configured model ids that
+    // aren't in the registry (TAURI-RUST-2Z1).
+    if super::is_openai_compatible_unknown_model_message(body) {
+        return true;
+    }
+    // Remaining config-rejection phrases (DeepSeek `supported api model
+    // names are`, Moonshot `invalid temperature`, litellm envelopes, …)
+    // are intrinsically scoped to third-party providers — keep the
+    // polarity guard so a regression where our own backend emits one of
+    // those still reaches Sentry.
+    provider != openhuman_backend::PROVIDER_LABEL
 }
 
 pub(super) fn log_provider_config_rejection(
@@ -432,6 +696,145 @@ pub(super) fn log_provider_config_rejection(
         "[llm_provider] {operation} provider config-rejection ({status}) — \
          user model/param configuration, not reporting to Sentry"
     );
+}
+
+/// Whether a provider error body indicates the request exceeded the model's
+/// context window (the conversation/prompt is too long for the configured
+/// model). This is a deterministic user-state / usage condition — the
+/// remediation is "start a new chat, trim the conversation, or pick a
+/// larger-context model" — not a product bug. Sentry has no signal to act
+/// on.
+///
+/// Single source of truth for the context-overflow phrasing, shared by:
+/// - [`super::reliable`]'s non-retryable classifier (retrying the same
+///   oversized request can't help),
+/// - the [`api_error`] Sentry-suppression cascade (below), and
+/// - the `core::observability` `ContextWindowExceeded` classifier (which
+///   catches the higher-layer re-report under `domain=agent` /
+///   `web_channel`).
+///
+/// Status-agnostic on purpose: providers disagree on the HTTP code for this
+/// condition — OpenAI / most emit `400 context_length_exceeded`, but some
+/// custom / self-hosted gateways mis-report it as `500` (Sentry
+/// TAURI-RUST-501: `"custom API error (500 …): Context size has been
+/// exceeded."`). Matching on the body keeps all of them in one bucket.
+///
+/// Anchoring is deliberately two-tier because this matcher now also feeds
+/// `core::observability::expected_error_kind` (Sentry suppression) and the
+/// `reliable` non-retryable decision, so an over-broad match would both
+/// hide a real error from Sentry *and* wrongly mark a retryable error as
+/// permanent:
+///
+/// - **Length/context phrases** ([`CONTEXT_HINTS`]) are unambiguous —
+///   "context window", "context length", "prompt is too long" only describe
+///   request-size overflow — so they match alone.
+/// - **Token-count phrases** ([`TOKEN_HINTS`]) collide with per-minute token
+///   *rate* limits ("rate limit reached … too many tokens per min"), which
+///   are transient 429s that MUST stay retryable and keep reaching Sentry.
+///   They only count as context-overflow when no rate-limit marker is
+///   present.
+pub fn is_context_window_exceeded_message(body: &str) -> bool {
+    let lower = body.to_ascii_lowercase();
+
+    // Unambiguous request-size / context phrases — match on their own.
+    const CONTEXT_HINTS: &[&str] = &[
+        "exceeds the context window",
+        "context window of this model",
+        "maximum context length",
+        "context length exceeded",
+        "context size has been exceeded",
+        "prompt is too long",
+        "input is too long",
+    ];
+    if CONTEXT_HINTS.iter().any(|hint| lower.contains(hint)) {
+        return true;
+    }
+
+    // Token-count phrases are ambiguous with token-per-minute RATE limits.
+    // Treat them as context-overflow only when the body carries no
+    // rate-limit marker — otherwise a transient TPM 429 would be silenced
+    // from Sentry and (via `reliable`) wrongly classified as non-retryable.
+    const TOKEN_HINTS: &[&str] = &["too many tokens", "token limit exceeded"];
+    if TOKEN_HINTS.iter().any(|hint| lower.contains(hint)) {
+        const RATE_LIMIT_MARKERS: &[&str] = &[
+            "per minute",
+            "per min",
+            "rate limit",
+            "rate_limit",
+            "tpm",
+            "requests per",
+            "retry after",
+            "try again in",
+        ];
+        return !RATE_LIMIT_MARKERS
+            .iter()
+            .any(|marker| lower.contains(marker));
+    }
+
+    false
+}
+
+pub(super) fn log_context_window_exceeded(
+    operation: &str,
+    provider: &str,
+    model: Option<&str>,
+    status: reqwest::StatusCode,
+) {
+    tracing::warn!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        model = model.unwrap_or(""),
+        status = status.as_u16(),
+        failure = "non_2xx",
+        kind = "context_window_exceeded",
+        "[llm_provider] {operation} context-window exceeded ({status}) — \
+         request too long for the model, not reporting to Sentry"
+    );
+}
+
+/// Whether a provider non-2xx response is the OpenHuman **backend** rejecting
+/// the app session JWT (`401`/`403`). This is expected user-session state
+/// (token expired / revoked / rotated server-side), not a product bug — the
+/// auth domain owns recovery. `401`/`403` from **other** providers (OpenAI,
+/// Anthropic, …) mean a misconfigured BYO API key and stay Sentry-actionable,
+/// so the predicate is provider-scoped to [`openhuman_backend::PROVIDER_LABEL`].
+pub(super) fn is_backend_auth_failure(provider: &str, status: reqwest::StatusCode) -> bool {
+    matches!(status.as_u16(), 401 | 403) && provider == openhuman_backend::PROVIDER_LABEL
+}
+
+/// Handle a backend session-expiry auth failure: publish a
+/// [`crate::core::event_bus::DomainEvent::SessionExpired`] so the credentials
+/// subscriber clears the session and flips the scheduler-gate signed-out
+/// override (halting downstream LLM work — see OPENHUMAN-TAURI-1T), and skip
+/// the Sentry report. Mirrors the `is_auth_failure && is_backend` arm in
+/// [`api_error`], factored out for the hand-rolled provider HTTP-error chains
+/// in [`super::compatible::OpenAiCompatibleProvider`] which consume the
+/// response body inline and so can't delegate to `api_error`. The
+/// `chat_completions` chain lacked this branch and reported the backend
+/// `401 Invalid token` to Sentry — that drift was TAURI-RUST-N.
+///
+/// `message` is the already-formatted `"{provider} API error ({status}): …"`
+/// string; it embeds the sanitized body, but the prefix and caller-controlled
+/// provider name aren't scrubbed, so re-run [`sanitize_api_error`] on the final
+/// string before it reaches the SessionExpired subscriber's logs.
+pub(super) fn publish_backend_session_expired(
+    operation: &str,
+    provider: &str,
+    status: reqwest::StatusCode,
+    message: &str,
+) {
+    tracing::warn!(
+        domain = "llm_provider",
+        operation = operation,
+        provider = provider,
+        status = status.as_u16(),
+        "[llm_provider] backend auth failure ({status}) — publishing SessionExpired"
+    );
+    crate::core::event_bus::publish_global(crate::core::event_bus::DomainEvent::SessionExpired {
+        source: "llm_provider.openhuman_backend".to_string(),
+        reason: sanitize_api_error(message),
+    });
 }
 
 /// Build a sanitized provider error from a failed HTTP response.
@@ -475,26 +878,16 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         is_custom_openai_upstream_bad_request_http_400(provider, status, &body);
     let is_provider_access_policy_denied = is_provider_access_policy_denied_http_403(status, &body);
     let is_provider_config_rejection = is_provider_config_rejection_http(status, provider, &body);
+    // Context-overflow is status-agnostic: match the body directly (some
+    // custom gateways mis-report it as 500 — TAURI-RUST-501 — so a status
+    // gate would let those through to `should_report_provider_http_failure`).
+    let is_context_window_exceeded = is_context_window_exceeded_message(&body);
 
     if is_auth_failure && is_backend {
-        tracing::warn!(
-            domain = "llm_provider",
-            operation = "api_error",
-            provider = provider,
-            status = status_str.as_str(),
-            "[llm_provider] backend auth failure ({status}) — publishing SessionExpired"
-        );
-        // `message` already embeds the sanitized body via
-        // `sanitize_api_error(&body)`, but the leading `{provider} API
-        // error ({status})` prefix and any caller-controlled provider
-        // name aren't scrubbed — re-run sanitize on the final string so
-        // the SessionExpired subscriber's logs never persist secrets.
-        crate::core::event_bus::publish_global(
-            crate::core::event_bus::DomainEvent::SessionExpired {
-                source: "llm_provider.openhuman_backend".to_string(),
-                reason: sanitize_api_error(&message),
-            },
-        );
+        // Single source of truth for backend session-expiry handling (warn +
+        // SessionExpired publish + final-string sanitize) — shared with the
+        // hand-rolled `chat_completions` chain in `compatible.rs`.
+        publish_backend_session_expired("api_error", provider, status, &message);
     } else if is_budget_exhausted_user_state {
         log_budget_exhausted_http_400("api_error", provider, None, status);
     } else if is_custom_openai_upstream_bad_request {
@@ -503,17 +896,41 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
         log_provider_access_policy_denied_http_403("api_error", provider, None, status);
     } else if is_provider_config_rejection {
         log_provider_config_rejection("api_error", provider, None, status);
+    } else if is_context_window_exceeded {
+        log_context_window_exceeded("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
-        crate::core::observability::report_error(
-            message.as_str(),
-            "llm_provider",
-            "api_error",
-            &[
-                ("provider", provider),
-                ("status", status_str.as_str()),
-                ("failure", "non_2xx"),
-            ],
-        );
+        // Defense-in-depth: some backends (e.g. OpenHuman) wrap an upstream
+        // provider 429 as an HTTP 500 with a rate-limit phrase in the body
+        // (`"429 rate limit exceeded"`, `"upstream rate limit exceeded"`).
+        // `should_report_provider_http_failure(500)` would otherwise let this
+        // through to Sentry — suppress it here before the report fires so the
+        // noise stays off Sentry (OPENHUMAN-TAURI-S: ~6 984 events).
+        // The `expected_error_kind` classifier in `report_error_or_expected`
+        // catches the same shape at re-report sites (agent / web_channel).
+        let lower_body = body.to_ascii_lowercase();
+        let is_rate_limit_body =
+            crate::core::observability::is_upstream_rate_limit_message(&lower_body);
+        if is_rate_limit_body {
+            tracing::warn!(
+                domain = "llm_provider",
+                operation = "api_error",
+                provider = provider,
+                status = status_str.as_str(),
+                "[llm_provider] api_error: skipping Sentry report — rate-limit body in \
+                 non-429 response ({status})"
+            );
+        } else {
+            crate::core::observability::report_error(
+                message.as_str(),
+                "llm_provider",
+                "api_error",
+                &[
+                    ("provider", provider),
+                    ("status", status_str.as_str()),
+                    ("failure", "non_2xx"),
+                ],
+            );
+        }
     }
     anyhow::anyhow!(message)
 }
@@ -821,278 +1238,5 @@ pub fn canonical_china_provider_name(_name: &str) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn list_configured_models_accepts_slug() {
-        // list_configured_models should find a provider by slug when the caller
-        // passes a slug instead of the opaque random id. This lets the frontend
-        // call the RPC before the provider config has been persisted (where only
-        // the slug is stable).
-        use crate::openhuman::config::schema::cloud_providers::{AuthStyle, CloudProviderCreds};
-        use crate::openhuman::config::Config;
-
-        let mut config = Config::default();
-        config.cloud_providers.push(CloudProviderCreds {
-            id: "p_openai_xyz99".to_string(),
-            slug: "openai".to_string(),
-            label: "OpenAI".to_string(),
-            endpoint: "https://api.openai.com/v1".to_string(),
-            auth_style: AuthStyle::Bearer,
-            legacy_type: None,
-            default_model: None,
-        });
-
-        // The find predicate must match on slug.
-        let found_by_slug = config
-            .cloud_providers
-            .iter()
-            .find(|e| e.id == "openai" || e.slug == "openai");
-        assert!(
-            found_by_slug.is_some(),
-            "slug lookup must find the provider"
-        );
-        assert_eq!(found_by_slug.unwrap().id, "p_openai_xyz99");
-
-        // The find predicate must still match on id.
-        let found_by_id = config
-            .cloud_providers
-            .iter()
-            .find(|e| e.id == "p_openai_xyz99" || e.slug == "p_openai_xyz99");
-        assert!(found_by_id.is_some(), "id lookup must still work");
-    }
-
-    #[test]
-    fn factory_backend() {
-        assert!(create_backend_inference_provider(
-            None,
-            None,
-            None,
-            &ProviderRuntimeOptions::default()
-        )
-        .is_ok());
-    }
-
-    #[test]
-    fn skips_sentry_report_for_transient_upstream_statuses() {
-        // Transient statuses — 429 rate-limit, 408 client timeout, and 502/503/504
-        // gateway-layer failures — are retried by reliable.rs. The aggregate
-        // "all providers exhausted" event still fires for genuine outages.
-        // Reporting each attempt individually floods Sentry (OPENHUMAN-TAURI-2E
-        // ~1393 events, 84 ~1050 events, T ~871 events).
-        for transient in [
-            reqwest::StatusCode::TOO_MANY_REQUESTS,
-            reqwest::StatusCode::REQUEST_TIMEOUT,
-            reqwest::StatusCode::BAD_GATEWAY,
-            reqwest::StatusCode::SERVICE_UNAVAILABLE,
-            reqwest::StatusCode::GATEWAY_TIMEOUT,
-        ] {
-            assert!(
-                !should_report_provider_http_failure(transient),
-                "transient status {transient} must not trigger per-attempt Sentry report"
-            );
-        }
-        // Auth + permanent server faults remain reportable — those are
-        // misconfiguration or genuine bugs, not transient capacity issues.
-        for reportable in [
-            reqwest::StatusCode::UNAUTHORIZED,
-            reqwest::StatusCode::FORBIDDEN,
-            reqwest::StatusCode::BAD_REQUEST,
-            reqwest::StatusCode::NOT_FOUND,
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-        ] {
-            assert!(
-                should_report_provider_http_failure(reportable),
-                "status {reportable} must still report to Sentry"
-            );
-        }
-    }
-
-    // Confirm the budget-exhausted suppression predicate is scoped correctly.
-    // These tests exercise the real production function, not a duplicate.
-    mod budget_exhausted_suppression {
-        use super::*;
-
-        const BUDGET_BODY: &str = "Insufficient budget";
-        const UNRELATED_BODY: &str = "Invalid request: model not found";
-
-        #[test]
-        fn budget_exhausted_400_is_suppressed() {
-            assert!(is_budget_exhausted_http_400(
-                reqwest::StatusCode::BAD_REQUEST,
-                BUDGET_BODY,
-            ));
-        }
-
-        #[test]
-        fn budget_exhausted_400_is_case_insensitive() {
-            assert!(is_budget_exhausted_http_400(
-                reqwest::StatusCode::BAD_REQUEST,
-                "budget exceeded — ADD credits to continue",
-            ));
-        }
-
-        #[test]
-        fn budget_exhausted_500_is_not_suppressed() {
-            // A 500 is a server bug, not expected user-state — keep reporting.
-            assert!(!is_budget_exhausted_http_400(
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-                BUDGET_BODY,
-            ));
-        }
-
-        #[test]
-        fn budget_exhausted_400_unrelated_body_is_not_suppressed() {
-            assert!(!is_budget_exhausted_http_400(
-                reqwest::StatusCode::BAD_REQUEST,
-                UNRELATED_BODY,
-            ));
-        }
-
-        #[test]
-        fn budget_exhausted_402_is_not_suppressed() {
-            assert!(!is_budget_exhausted_http_400(
-                reqwest::StatusCode::PAYMENT_REQUIRED,
-                BUDGET_BODY,
-            ));
-        }
-
-        #[test]
-        fn budget_exhausted_empty_body_is_not_suppressed() {
-            assert!(!is_budget_exhausted_http_400(
-                reqwest::StatusCode::BAD_REQUEST,
-                "",
-            ));
-        }
-    }
-
-    mod provider_access_policy_suppression {
-        use super::*;
-
-        const ACCESS_TERMINATED_BODY: &str =
-            "{\"error\":{\"message\":\"Kimi For Coding is currently only available for Coding Agents.\",\"type\":\"access_terminated_error\"}}";
-
-        #[test]
-        fn access_terminated_403_is_suppressed() {
-            assert!(is_provider_access_policy_denied_http_403(
-                reqwest::StatusCode::FORBIDDEN,
-                ACCESS_TERMINATED_BODY,
-            ));
-        }
-
-        #[test]
-        fn access_terminated_non_403_is_not_suppressed() {
-            assert!(!is_provider_access_policy_denied_http_403(
-                reqwest::StatusCode::BAD_REQUEST,
-                ACCESS_TERMINATED_BODY,
-            ));
-        }
-
-        #[test]
-        fn unrelated_403_is_not_suppressed() {
-            assert!(!is_provider_access_policy_denied_http_403(
-                reqwest::StatusCode::FORBIDDEN,
-                "{\"error\":{\"message\":\"forbidden\"}}",
-            ));
-        }
-    }
-
-    // Exercises the real `is_provider_config_rejection_http` decision used
-    // by `api_error`, including the inverted provider-aware polarity.
-    mod provider_config_rejection_suppression {
-        use super::*;
-
-        // The exact #2079 Sentry body shape.
-        const TIER_LEAK_BODY: &str =
-            "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, \
-             but you passed reasoning-v1.";
-        // #2076 Moonshot Kimi K2 temperature constraint.
-        const TEMP_BODY: &str = "invalid temperature: only 1 is allowed for this model";
-
-        #[test]
-        fn custom_provider_4xx_config_rejection_is_suppressed() {
-            assert!(is_provider_config_rejection_http(
-                reqwest::StatusCode::BAD_REQUEST,
-                "custom_openai",
-                TIER_LEAK_BODY,
-            ));
-            assert!(is_provider_config_rejection_http(
-                reqwest::StatusCode::BAD_REQUEST,
-                "custom_openai",
-                TEMP_BODY,
-            ));
-            // 404 "model does not exist" is the same user-config class.
-            assert!(is_provider_config_rejection_http(
-                reqwest::StatusCode::NOT_FOUND,
-                "custom_openai",
-                "The model `gpt-5.5` does not exist or you do not have access to it.",
-            ));
-        }
-
-        #[test]
-        fn openhuman_backend_same_body_is_not_suppressed() {
-            // Inverted polarity: a model-rejection from our OWN backend
-            // means we sent it a bad request — a real regression that must
-            // still reach Sentry. (Mirror of the 401/403 backend rule.)
-            assert!(!is_provider_config_rejection_http(
-                reqwest::StatusCode::BAD_REQUEST,
-                openhuman_backend::PROVIDER_LABEL,
-                TIER_LEAK_BODY,
-            ));
-        }
-
-        #[test]
-        fn server_error_is_not_suppressed() {
-            // A 5xx is a server bug, not user-config — keep reporting.
-            assert!(!is_provider_config_rejection_http(
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-                "custom_openai",
-                TIER_LEAK_BODY,
-            ));
-        }
-
-        #[test]
-        fn transient_429_is_not_suppressed_here() {
-            // 429 is transient; handled by should_report_provider_http_failure,
-            // not this classifier (must not be swallowed as user-config).
-            assert!(!is_provider_config_rejection_http(
-                reqwest::StatusCode::TOO_MANY_REQUESTS,
-                "custom_openai",
-                TIER_LEAK_BODY,
-            ));
-        }
-
-        #[test]
-        fn unrelated_4xx_body_is_not_suppressed() {
-            assert!(!is_provider_config_rejection_http(
-                reqwest::StatusCode::BAD_REQUEST,
-                "custom_openai",
-                "Bad request: missing required field 'messages'",
-            ));
-        }
-
-        #[test]
-        fn log_helper_runs_without_panicking() {
-            // Covers the demotion log path taken by `api_error` when a
-            // custom provider rejects the user's model/param config. No
-            // tracing subscriber in unit tests, so this is a pure smoke.
-            log_provider_config_rejection(
-                "api_error",
-                "custom_openai",
-                Some("reasoning-v1"),
-                reqwest::StatusCode::BAD_REQUEST,
-            );
-        }
-    }
-
-    #[test]
-    fn test_sanitize_api_error_utf8() {
-        let input = "🦀".repeat(MAX_API_ERROR_CHARS + 10);
-        let sanitized = sanitize_api_error(&input);
-        assert!(sanitized.ends_with("..."));
-        // Should truncate at MAX_API_ERROR_CHARS crabs
-        let crabs_count = sanitized.chars().filter(|c| *c == '🦀').count();
-        assert_eq!(crabs_count, MAX_API_ERROR_CHARS);
-    }
-}
+#[path = "ops_tests.rs"]
+mod tests;

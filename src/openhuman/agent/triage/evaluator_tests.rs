@@ -1,7 +1,7 @@
 use super::*;
-use crate::openhuman::agent::agents::BUILTINS;
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+use crate::openhuman::agent_registry::agents::BUILTINS;
 use crate::openhuman::inference::provider::Provider;
 use async_trait::async_trait;
 use serde_json::json;
@@ -766,5 +766,91 @@ async fn no_local_arm_returns_deferred_after_cloud_exhaustion() {
         counter.load(Ordering::SeqCst),
         2,
         "1 cloud + 1 retry, no local"
+    );
+}
+
+#[tokio::test]
+async fn double_cloud_parse_failure_falls_through_to_local_fallback() {
+    // Regression for #2322: two malformed cloud replies used to turn the
+    // second cloud parse error into ArmError::Fatal, bubbling out of
+    // run_triage as Err and making the Composio subscriber emit
+    // `[composio][triage] run_triage failed` at error level.
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            let n = counter.fetch_add(1, Ordering::SeqCst);
+            if n < 2 {
+                assert_eq!(
+                    req.provider_name, "stub-cloud",
+                    "first two attempts should stay on the cloud arm"
+                );
+                Ok(AgentTurnResponse {
+                    text: "not json".to_string(),
+                })
+            } else {
+                assert_eq!(
+                    req.provider_name, "stub-local",
+                    "malformed cloud retry should fall through to local"
+                );
+                Ok(AgentTurnResponse {
+                    text: VALID_JSON_REPLY.to_string(),
+                })
+            }
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), Some(local_arm()), &envelope())
+        .await
+        .expect("malformed cloud retry must fall through, not surface Err");
+
+    let run = outcome.into_decision().expect("decision");
+    assert_eq!(run.resolution_path, TriageResolutionPath::LocalFallback);
+    assert!(run.used_local);
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        3,
+        "1 cloud + 1 cloud retry + 1 local"
+    );
+}
+
+#[tokio::test]
+async fn double_cloud_parse_failure_without_local_returns_deferred_not_err() {
+    AgentDefinitionRegistry::init_global_builtins().expect("init_global_builtins");
+    let counter = StdArc::new(AtomicUsize::new(0));
+    let counter_for_stub = StdArc::clone(&counter);
+
+    let _guard = mock_agent_run_turn(move |_req| {
+        let counter = StdArc::clone(&counter_for_stub);
+        async move {
+            counter.fetch_add(1, Ordering::SeqCst);
+            Ok(AgentTurnResponse {
+                text: "still not json".to_string(),
+            })
+        }
+    })
+    .await;
+
+    let outcome = run_triage_with_arms_for_test(cloud_arm(), None, &envelope())
+        .await
+        .expect("malformed cloud retry with no local must Defer, not Err");
+
+    match outcome {
+        TriageOutcome::Deferred { reason, .. } => {
+            assert!(
+                reason.contains("local arm unavailable"),
+                "reason should explain the missing local arm: {reason}"
+            );
+        }
+        TriageOutcome::Decision(_) => panic!("expected Deferred"),
+    }
+    assert_eq!(
+        counter.load(Ordering::SeqCst),
+        2,
+        "1 cloud + 1 cloud retry, no local"
     );
 }

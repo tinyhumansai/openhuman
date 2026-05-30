@@ -87,21 +87,24 @@ read_sig() {
 #   darwin-aarch64   — macOS Apple Silicon
 #   darwin-x86_64    — macOS Intel
 #   linux-x86_64     — Linux glibc x64 (AppImage)
+#   linux-aarch64    — Linux glibc arm64 (AppImage)
 #   windows-x86_64   — Windows x64 (NSIS setup)
 #
 # Naming conventions emitted by tauri-bundler with createUpdaterArtifacts:
 #   darwin  : <AppName>_<version>_<arch>.app.tar.gz
-#   linux   : <AppName>_<version>_amd64.AppImage
+#   linux   : <AppName>_<version>_amd64.AppImage / <AppName>_<version>_arm64.AppImage
 #   windows : <AppName>_<version>_x64-setup.exe
 MAC_AARCH64=$(find_asset "^OpenHuman(_| ).*aarch64(-apple-darwin)?\.app\.tar\.gz$")
 MAC_X86_64=$(find_asset  "^OpenHuman(_| ).*(x64|x86_64)(-apple-darwin)?\.app\.tar\.gz$")
 LIN_X86_64=$(find_asset  "^OpenHuman(_| ).*amd64\.AppImage$")
+LIN_AARCH64=$(find_asset "^OpenHuman(_| ).*(arm64|aarch64)\.AppImage$")
 WIN_X86_64=$(find_asset "^OpenHuman(_| ).*x64-setup\.exe$")
 
 echo "[updater] Resolved updater bundles:"
 echo "  darwin-aarch64  = ${MAC_AARCH64:-<missing>}"
 echo "  darwin-x86_64   = ${MAC_X86_64:-<missing>}"
 echo "  linux-x86_64    = ${LIN_X86_64:-<missing>}"
+echo "  linux-aarch64   = ${LIN_AARCH64:-<missing>}"
 echo "  windows-x86_64  = ${WIN_X86_64:-<missing>}"
 
 PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
@@ -132,12 +135,13 @@ add_platform() {
 add_platform "darwin-aarch64" "$MAC_AARCH64"
 add_platform "darwin-x86_64"  "$MAC_X86_64"
 add_platform "linux-x86_64"   "$LIN_X86_64"
+add_platform "linux-aarch64"  "$LIN_AARCH64"
 add_platform "windows-x86_64" "$WIN_X86_64"
 
 # Require every platform advertised by the public installers. A partial
 # latest.json leaves install.sh resolving a documented platform to nothing.
 missing_platforms=$(jq -r '
-  ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "windows-x86_64"]
+  ["darwin-aarch64", "darwin-x86_64", "linux-x86_64", "linux-aarch64", "windows-x86_64"]
   - (.platforms | keys)
   | join(", ")
 ' "$MANIFEST")

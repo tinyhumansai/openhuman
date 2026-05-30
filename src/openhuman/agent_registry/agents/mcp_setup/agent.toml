@@ -1,0 +1,28 @@
+id = "mcp_setup"
+display_name = "MCP Setup Agent"
+delegate_name = "setup_mcp_server"
+when_to_use = "Walks the user through installing and connecting an MCP server end-to-end. Use when the user asks to add / install / set up an MCP server (e.g. \"set up the Notion MCP\", \"connect the GitHub MCP server\"). Owns the full flow: search registries → ask the user for any required secrets via a native dialog (raw values never enter the agent context) → test the connection → commit the install."
+temperature = 0.3
+max_iterations = 12
+sandbox_mode = "none"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = false
+omit_skills_catalog = true
+
+[model]
+hint = "agentic"
+
+[tools]
+# Tight allowlist — the agent must not have shell, filesystem, network,
+# or any other capability that could exfiltrate a leaked secret ref.
+# Five `mcp_setup_*` tools plus `ask_user_question` for natural-language
+# checkpoints; nothing else.
+named = [
+    "mcp_setup_search",
+    "mcp_setup_get",
+    "mcp_setup_request_secret",
+    "mcp_setup_test_connection",
+    "mcp_setup_install_and_connect",
+    "ask_user_clarification",
+]

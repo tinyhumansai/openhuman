@@ -21,10 +21,10 @@
 
 use chrono::{TimeZone, Utc};
 use openhuman_core::openhuman::config::Config;
-use openhuman_core::openhuman::memory::tree::canonicalize::chat::{ChatBatch, ChatMessage};
-use openhuman_core::openhuman::memory::tree::canonicalize::email::{EmailMessage, EmailThread};
-use openhuman_core::openhuman::memory::tree::ingest::{ingest_chat, ingest_email};
-use openhuman_core::openhuman::memory::tree::jobs::drain_until_idle;
+use openhuman_core::openhuman::memory::ingest_pipeline::{ingest_chat, ingest_email};
+use openhuman_core::openhuman::memory::jobs::drain_until_idle;
+use openhuman_core::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
+use openhuman_core::openhuman::memory_sync::canonicalize::email::{EmailMessage, EmailThread};
 use openhuman_core::openhuman::tools::{
     MemoryTreeFetchLeavesTool, MemoryTreeQueryTopicTool, MemoryTreeSearchEntitiesTool, Tool,
 };
@@ -155,7 +155,7 @@ fn alice_phoenix_thread() -> EmailThread {
 /// TOML was updated accordingly.
 #[test]
 fn orchestrator_lists_memory_tree_tools() {
-    let toml = include_str!("../src/openhuman/agent/agents/orchestrator/agent.toml");
+    let toml = include_str!("../src/openhuman/agent_registry/agents/orchestrator/agent.toml");
     // Exact entry match — substring match would also hit comments or prefixed names.
     let has_memory_tree_entry = toml
         .lines()

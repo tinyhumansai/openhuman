@@ -1,11 +1,11 @@
 name: Coverage Gate
 
 on:
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 
 concurrency:
@@ -71,7 +71,11 @@ jobs:
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
-      CARGO_INCREMENTAL: '0'
+      CARGO_INCREMENTAL: "0"
+      # Coverage instrumentation makes each test binary link substantially
+      # heavier. Keep the core coverage job's linker work serialized to avoid
+      # intermittent rust-lld bus errors on hosted Linux runners.
+      CARGO_BUILD_JOBS: "1"
       # sccache is incompatible with `-C instrument-coverage` profiles, so we
       # skip it for coverage runs and rely on Swatinem/rust-cache for warmup.
     steps:
@@ -79,6 +83,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -104,12 +109,13 @@ jobs:
     container:
       image: ghcr.io/tinyhumansai/openhuman_ci:rust-1.93.0
     env:
-      CARGO_INCREMENTAL: '0'
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
           fetch-depth: 1
+          persist-credentials: false
           submodules: recursive
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
@@ -154,7 +160,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
       - name: Install diff-cover
         run: pip install 'diff-cover>=9.2.0'
       - name: Download all lcov artifacts

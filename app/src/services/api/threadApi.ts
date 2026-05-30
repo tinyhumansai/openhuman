@@ -161,10 +161,44 @@ export const threadApi = {
     return data?.taskBoard ?? null;
   },
 
+  /**
+   * Approve or reject a task-board card that is awaiting plan approval
+   * (`openhuman.todos_decide_plan`). Approve → the card becomes runnable
+   * (`ready`); reject → `rejected`. Returns the updated board (rebuilt from
+   * the returned todos snapshot) or null.
+   */
+  decidePlan: async (
+    threadId: string,
+    cardId: string,
+    approve: boolean
+  ): Promise<TaskBoard | null> => {
+    const response = await callCoreRpc<{
+      data?: { threadId?: string | null; cards?: TaskBoardCard[] };
+    }>({
+      method: 'openhuman.todos_decide_plan',
+      params: { thread_id: threadId, id: cardId, approve },
+    });
+    const data = unwrapEnvelope(response);
+    if (!data?.cards) return null;
+    return {
+      threadId: data.threadId ?? threadId,
+      cards: data.cards,
+      updatedAt: new Date().toISOString(),
+    };
+  },
+
   updateLabels: async (threadId: string, labels: string[]): Promise<Thread> => {
     const response = await callCoreRpc<Envelope<Thread>>({
       method: 'openhuman.threads_update_labels',
       params: { thread_id: threadId, labels },
+    });
+    return unwrapEnvelope(response);
+  },
+
+  updateTitle: async (threadId: string, title: string): Promise<Thread> => {
+    const response = await callCoreRpc<Envelope<Thread>>({
+      method: 'openhuman.threads_update_title',
+      params: { thread_id: threadId, title },
     });
     return unwrapEnvelope(response);
   },

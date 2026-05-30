@@ -2,7 +2,7 @@ import debug from 'debug';
 import { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
 
-import { subscribeChatEvents } from '../../services/chatService';
+import { type ChatSubagentDoneEvent, subscribeChatEvents } from '../../services/chatService';
 import { selectEffectiveMascotVoiceId } from '../../store/mascotSlice';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
@@ -76,6 +76,62 @@ export function pickViseme(delta: string): VisemeShape {
   }
 }
 
+type ConversationAckFace = Extract<
+  MascotFace,
+  'happy' | 'confused' | 'concerned' | 'curious' | 'proud' | 'cautious'
+>;
+type ConversationAckEvent = { full_response?: string | null; reaction_emoji?: string | null };
+
+const HAPPY_REACTION_EMOJIS = new Set(['✅', '🎉', '🙌', '😊', '😄', '👍', '💪']);
+const PROUD_REACTION_EMOJIS = new Set(['⭐', '🌟', '🏆', '🎯', '💯', '🚀', '✨', '🥇']);
+const CURIOUS_REACTION_EMOJIS = new Set(['🔍', '💭', '🧐', '🤓', '👀']);
+const CONFUSED_REACTION_EMOJIS = new Set(['🤔', '❓', '❔']);
+// ⚠️ is cautious (heads-up), ❌/🚨 are concerned (failure).
+const CAUTIOUS_REACTION_EMOJIS = new Set(['⚠️', '⚠', '💡', '⚡']);
+const CONCERNED_REACTION_EMOJIS = new Set(['🚨', '❌', '😕', '😟']);
+
+const CONCERNED_TEXT_RE =
+  /\b(sorry|apolog(?:y|ize|ise)|failed|failure|error|cannot|can't|unable|blocked|problem)\b/i;
+const CONFUSED_TEXT_RE =
+  /\b(not sure|unclear|ambiguous|clarify|which one|need more|can you confirm|maybe)\b/i;
+const HAPPY_TEXT_RE = /\b(done|completed|fixed|success|successful|ready|all set|great|nice)\b/i;
+const PROUD_TEXT_RE =
+  /\b(successfully completed|all tasks? (done|finished)|mission accomplished|everything (works?|is working)|all (checks?|tests?) pass(ed)?)\b/i;
+const CURIOUS_TEXT_RE =
+  /\b(interesting|fascinating|curious(ly)?|let me (check|look|investigate)|i('ll)? (look|check) into|actually|turns? out)\b/i;
+const CAUTIOUS_TEXT_RE =
+  /\b(be careful|warning|caution|heads? up|please note|make sure|important(ly)?|note that|worth (noting|mentioning))\b/i;
+
+/**
+ * Map conversation-level meaning into the short acknowledgement face that
+ * follows a completed turn. Runtime activity still owns thinking/speaking
+ * states; this only decides the post-turn emotional beat.
+ */
+export function pickConversationAckFace(event: ConversationAckEvent): ConversationAckFace | null {
+  const reaction = event.reaction_emoji?.trim();
+  if (reaction) {
+    if (PROUD_REACTION_EMOJIS.has(reaction)) return 'proud';
+    if (HAPPY_REACTION_EMOJIS.has(reaction)) return 'happy';
+    if (CURIOUS_REACTION_EMOJIS.has(reaction)) return 'curious';
+    if (CONFUSED_REACTION_EMOJIS.has(reaction)) return 'confused';
+    if (CAUTIOUS_REACTION_EMOJIS.has(reaction)) return 'cautious';
+    if (CONCERNED_REACTION_EMOJIS.has(reaction)) return 'concerned';
+  }
+
+  const text = event.full_response?.trim() ?? '';
+  if (!text) return null;
+  // Priority: concerned > cautious > proud > confused > curious > happy.
+  // Concerned and cautious share some vocabulary; check concerned first so
+  // outright failures don't get softened to a heads-up.
+  if (CONCERNED_TEXT_RE.test(text)) return 'concerned';
+  if (CAUTIOUS_TEXT_RE.test(text)) return 'cautious';
+  if (PROUD_TEXT_RE.test(text)) return 'proud';
+  if (CONFUSED_TEXT_RE.test(text)) return 'confused';
+  if (CURIOUS_TEXT_RE.test(text)) return 'curious';
+  if (HAPPY_TEXT_RE.test(text)) return 'happy';
+  return null;
+}
+
 export interface UseHumanMascotOptions {
   /** When true, post-stream replies are sent to ElevenLabs and the mouth
    *  follows the returned viseme timeline while the audio plays. */
@@ -99,9 +155,9 @@ export interface UseHumanMascotResult {
  * - `iteration_start` round > 1 or `tool_call` → `confused` (heavy reasoning)
  * - `tool_result success=false` → `concerned` (held briefly)
  * - `text_delta` → `speaking`, pseudo-lipsync from the trailing letter
- * - `chat_done` (no TTS) → `happy` (held briefly), then `idle`
+ * - `chat_done` (no TTS) → message-aware ack face (held briefly), then `idle`
  * - `chat_done` (TTS enabled) → `thinking` while synthesizing → `speaking`
- *   with real visemes → `idle` when the audio ends
+ *   with real visemes → message-aware ack face when the audio ends
  * - `chat_error`, TTS failure → `concerned` (held briefly), then `idle`
  * - `listening` option override → `listening` (highest priority)
  *
@@ -112,6 +168,8 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   const { speakReplies = false, listening = false } = options;
   const speakRef = useRef(speakReplies);
   speakRef.current = speakReplies;
+  const listeningRef = useRef(listening);
+  listeningRef.current = listening;
 
   // Effective mascot voice id: resolves the manual override, the
   // locale-default toggle, and the build-time fallback into a single
@@ -126,6 +184,11 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   const targetRef = useRef<VisemeShape>(VISEMES.REST);
   const lastDeltaAtRef = useRef(0);
   const ackTimerRef = useRef<number | null>(null);
+
+  // Track meaningful work performed in the current turn so onDone can
+  // distinguish a proud completion from a routine happy acknowledgement.
+  const toolSucceededRef = useRef(false);
+  const subagentSucceededRef = useRef(false);
 
   // TTS playback state — non-null while audio is mid-flight.
   const playbackRef = useRef<PlaybackHandle | null>(null);
@@ -157,29 +220,52 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
     const unsub = subscribeChatEvents({
       onInferenceStart: () => {
         clearAckTimer();
+        toolSucceededRef.current = false;
+        subagentSucceededRef.current = false;
+        mascotLog('voice-session transition → thinking (inference_start)');
         setFace('thinking');
       },
       onIterationStart: e => {
         // Subsequent iterations mean the agent is grinding through tool rounds.
         if (e.round > 1) {
           clearAckTimer();
+          mascotLog('voice-session transition → confused (iteration round=%d)', e.round);
           setFace('confused');
         }
       },
       onToolCall: () => {
         clearAckTimer();
+        mascotLog('voice-session transition → confused (tool_call)');
         setFace('confused');
       },
       onToolResult: e => {
         if (!e.success) {
+          mascotLog('voice-session transition → concerned (tool_result failed)');
           // Don't fully derail — let the next inference step take over.
           setFace('concerned');
         } else {
+          toolSucceededRef.current = true;
           setFace('thinking');
+        }
+      },
+      onSubagentDone: (e: ChatSubagentDoneEvent) => {
+        if (e.success) {
+          mascotLog('voice-session subagent_done success tool=%s', e.tool_name);
+          subagentSucceededRef.current = true;
+        } else {
+          mascotLog(
+            'voice-session transition → concerned (subagent_done failed tool=%s)',
+            e.tool_name
+          );
+          setFace('concerned');
         }
       },
       onTextDelta: e => {
         // Pseudo-lipsync only kicks in if no real audio is playing.
+        if (listeningRef.current) {
+          mascotLog('voice-session text_delta suppressed — listening is active');
+          return;
+        }
         if (playbackRef.current) return;
         clearAckTimer();
         setFace('speaking');
@@ -187,15 +273,37 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         lastDeltaAtRef.current = window.performance.now();
       },
       onDone: e => {
+        if (listeningRef.current) {
+          mascotLog('voice-session onDone suppressed — listening is active');
+          return;
+        }
+        // Upgrade to `proud` when the turn involved real tool/subagent work.
+        // A happy/null text cue paired with actual execution is a completion —
+        // that reads as proud, not a routine acknowledgement.
+        const didMeaningfulWork = toolSucceededRef.current || subagentSucceededRef.current;
+        const explicitAck = pickConversationAckFace(e);
+        const ackFace: ConversationAckFace =
+          (explicitAck === 'happy' || explicitAck === null) && didMeaningfulWork
+            ? 'proud'
+            : (explicitAck ?? 'happy');
+        toolSucceededRef.current = false;
+        subagentSucceededRef.current = false;
+        mascotLog(
+          'voice-session onDone ackFace=%s (explicit=%s didWork=%s)',
+          ackFace,
+          explicitAck ?? 'none',
+          didMeaningfulWork
+        );
         if (!speakRef.current || !e.full_response?.trim()) {
           // Soft acknowledgement beat instead of snapping back to idle.
-          holdThenIdle('happy');
+          holdThenIdle(ackFace);
           return;
         }
         // Fire-and-forget — startTtsPlayback owns its cleanup via finally.
-        void startTtsPlayback(e.full_response).catch(() => {});
+        void startTtsPlayback(e.full_response, ackFace).catch(() => {});
       },
       onError: () => {
+        mascotLog('voice-session transition → concerned (chat_error), cancelling in-flight TTS');
         // Bump seq to invalidate any in-flight startTtsPlayback awaiters.
         playbackSeqRef.current++;
         const orphan = playbackRef.current;
@@ -225,7 +333,33 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
     };
   }, []);
 
-  async function startTtsPlayback(text: string): Promise<void> {
+  useEffect(() => {
+    if (!listening) return;
+    clearAckTimer();
+    mascotLog(
+      'voice-session listening interrupt — cancelling TTS (had playback=%s)',
+      !!playbackRef.current
+    );
+    // Treat mic-hot as an explicit interruption: stale synthesis/playback
+    // callbacks must not switch the mascot back to speaking after we listen.
+    playbackSeqRef.current++;
+    const orphan = playbackRef.current;
+    playbackRef.current = null;
+    if (orphan) {
+      orphan.stop();
+      orphan.ended.catch(swallowAudioStop);
+    }
+    visemeFramesRef.current = [];
+    visemeCursorRef.current = 0;
+    targetRef.current = VISEMES.REST;
+    lastDeltaAtRef.current = 0;
+    setFace('idle');
+  }, [listening]);
+
+  async function startTtsPlayback(
+    text: string,
+    ackFace: ConversationAckFace = 'happy'
+  ): Promise<void> {
     // Cancel any in-flight playback so its handle.ended callback can't reset
     // state belonging to the new run.
     const prev = playbackRef.current;
@@ -313,6 +447,9 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         // rethrow anything else so real decoder errors aren't masked.
         swallowAudioStop(err);
       }
+    } catch (err) {
+      if (isStillCurrent()) degraded = true;
+      throw err;
     } finally {
       if (isStillCurrent()) {
         playbackRef.current = null;
@@ -320,7 +457,7 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
         if (degraded) {
           holdThenIdle('concerned');
         } else {
-          holdThenIdle('happy');
+          holdThenIdle(ackFace);
         }
       }
     }
@@ -361,7 +498,8 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
 
   // `listening` is an external override so callers wiring dictation state
   // can reflect mic-on without racing the chat event subscription.
-  const effectiveFace: MascotFace = listening && face !== 'speaking' ? 'listening' : face;
+  const effectiveFace: MascotFace = listening ? 'listening' : face;
+  const effectiveViseme: VisemeShape = listening ? VISEMES.REST : viseme;
 
-  return { face: effectiveFace, viseme };
+  return { face: effectiveFace, viseme: effectiveViseme };
 }

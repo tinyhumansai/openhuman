@@ -11,8 +11,30 @@ use directories::UserDirs;
 use std::sync::{Arc, RwLock};
 use tokio::fs;
 
+/// Resolve the Telegram API base URL from an optional env value. Pure function —
+/// callers in production pass `std::env::var("OPENHUMAN_TELEGRAM_BOT_API_BASE").ok()`
+/// (falling back to the legacy `OPENHUMAN_TELEGRAM_API_BASE`);
+/// tests can exercise this directly without mutating process env.
+pub(crate) fn resolve_api_base(raw: Option<String>) -> String {
+    let base = raw
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "https://api.telegram.org".to_string());
+    base.trim_end_matches('/').to_string()
+}
+
 impl TelegramChannel {
     pub fn new(bot_token: String, allowed_users: Vec<String>, mention_only: bool) -> Self {
+        let api_base = resolve_api_base(
+            std::env::var("OPENHUMAN_TELEGRAM_BOT_API_BASE")
+                .ok()
+                .or_else(|| std::env::var("OPENHUMAN_TELEGRAM_API_BASE").ok()),
+        );
+        tracing::debug!(
+            target: "telegram::api",
+            api_base = %api_base,
+            "Using Telegram API base URL"
+        );
+
         let normalized_allowed = Self::normalize_allowed_users(allowed_users);
         let pairing = if normalized_allowed.is_empty() {
             let (guard, code_opt) = PairingGuard::new(true, &[]);
@@ -27,6 +49,7 @@ impl TelegramChannel {
 
         Self {
             bot_token,
+            api_base,
             allowed_users: Arc::new(RwLock::new(normalized_allowed)),
             pairing,
             client: reqwest::Client::new(),
@@ -86,7 +109,7 @@ impl TelegramChannel {
     }
 
     pub(crate) fn api_url(&self, method: &str) -> String {
-        format!("https://api.telegram.org/bot{}/{method}", self.bot_token)
+        format!("{}/bot{}/{method}", self.api_base, self.bot_token)
     }
 
     pub(crate) fn pairing_code_active(&self) -> bool {

@@ -8,7 +8,33 @@
 //! These ops are also callable directly from other domains (e.g. the
 //! agent harness) when they need composio data at runtime.
 
+/// Toolkits that honour the `tags` query param on the backend tool-list endpoint.
+/// Expand this list when a new toolkit gains tag support.
+const TAG_QUERYABLE_TOOLKITS: &[&str] = &["github"];
+
+/// Returns `true` when `tags` should be forwarded to the backend.
+///
+/// Tags are forwarded when no toolkit filter is active (`None` / empty slice)
+/// or when at least one requested toolkit is in [`TAG_QUERYABLE_TOOLKITS`].
+/// This is `pub(crate)` so `tools.rs` can reuse it without duplicating the list.
+pub(crate) fn should_forward_tags(toolkits: Option<&[String]>) -> bool {
+    match toolkits {
+        None => true,
+        Some(kits) => {
+            kits.is_empty()
+                || kits.iter().any(|k| {
+                    TAG_QUERYABLE_TOOLKITS
+                        .iter()
+                        .any(|t| k.trim().eq_ignore_ascii_case(t))
+                })
+        }
+    }
+}
+
 use crate::openhuman::config::Config;
+use crate::openhuman::memory::MemoryClient;
+use crate::openhuman::memory_store::chunks::store as memory_tree_store;
+use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::rpc::RpcOutcome;
 
 /// Result alias used by every `composio_*` op in this module.
@@ -22,11 +48,12 @@ type OpResult<T> = std::result::Result<T, String>;
 use std::sync::Arc;
 
 use super::client::{
-    build_composio_client, create_composio_client, direct_authorize, direct_list_connections,
-    direct_list_tools, ComposioClient, ComposioClientKind,
+    build_composio_client, create_composio_client, direct_list_connections, direct_list_tools,
+    ComposioClient, ComposioClientKind,
 };
 use super::providers::{
-    capability_matrix, get_provider, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    agent_ready_toolkits, capability_matrix, get_provider, sync_state::SyncState, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason,
 };
 use super::types::{
     ComposioActiveTriggersResponse, ComposioAuthorizeResponse, ComposioAvailableTriggersResponse,
@@ -87,7 +114,7 @@ fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
 /// handshake eof`, …), we tag `failure="transport"` instead so the
 /// `before_send` filter's transport-phrase branch fires — and keep the
 /// status tag absent (transport failures don't carry a status).
-fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
+pub(crate) fn report_composio_op_error<E: std::fmt::Display + ?Sized>(operation: &str, err: &E) {
     // `{err:#}` renders the full anyhow chain when applicable; for plain
     // `String` / `&str` errors it falls back to the Display impl.
     let rendered = format!("{err:#}");
@@ -211,6 +238,28 @@ pub async fn composio_list_capabilities(
     ))
 }
 
+/// List every toolkit slug that ships an agent-ready curated catalog.
+///
+/// Connected toolkits that are NOT in this list can still be
+/// authorized via OAuth, but the agent has no curated action surface
+/// for them — the UI should label such connections as
+/// "preview / agent integration coming soon" so users aren't led into
+/// a broken `composio_list_tools` → max-iterations loop. See #2283.
+pub async fn composio_list_agent_ready_toolkits(
+) -> OpResult<RpcOutcome<super::types::ComposioAgentReadyToolkitsResponse>> {
+    tracing::debug!("[composio] rpc list_agent_ready_toolkits");
+    let toolkits: Vec<String> = agent_ready_toolkits()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let count = toolkits.len();
+    let resp = super::types::ComposioAgentReadyToolkitsResponse { toolkits };
+    Ok(RpcOutcome::new(
+        resp,
+        vec![format!("composio: {count} agent-ready toolkit(s) listed")],
+    ))
+}
+
 // ── Connections ─────────────────────────────────────────────────────
 
 pub async fn composio_list_connections(
@@ -243,9 +292,22 @@ pub async fn composio_list_connections(
                 "[composio-direct] list_connections: fetching v3 \
                  /connected_accounts for the user's personal Composio tenant"
             );
-            let resp = direct_list_connections(&direct)
-                .await
-                .map_err(|e| format!("[composio-direct] list_connections failed: {e:#}"))?;
+            let resp = direct_list_connections(&direct).await.map_err(|e| {
+                // [#1166 / Sentry TAURI-RUST-X9] Restore symmetric error
+                // routing for the direct-mode branch. Without this hook the
+                // direct-mode 401 ("Invalid API key …") wire shape bypassed
+                // `report_error_or_expected` and leaked ~15.7k events in ~22h
+                // — same UI 5 s poll + `periodic.rs` tick that the
+                // backend branch (line ~266) was already classifying.
+                //
+                // Render WITH the `[composio-direct]` anchor BEFORE
+                // reporting so the classifier arm in
+                // `is_provider_user_state_message` (which gates on that
+                // prefix) actually fires.
+                let rendered = format!("[composio-direct] list_connections failed: {e:#}");
+                report_composio_op_error("list_connections", &rendered);
+                rendered
+            })?;
             let active = resp.connections.iter().filter(|c| c.is_active()).count();
             let total = resp.connections.len();
             // Reconcile the integrations cache against this fresh live
@@ -300,10 +362,13 @@ pub async fn composio_authorize(
     let resp = match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!(toolkit = %toolkit, "[composio] authorize: backend variant");
-            client.authorize(toolkit, extra_params).await.map_err(|e| {
-                report_composio_op_error("authorize", &e);
-                format!("[composio] authorize failed: {e:#}")
-            })?
+            super::oauth_handoff::authorize_with_meta_guard(&client, toolkit, extra_params)
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("authorize", &e);
+                    let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                    format!("[composio] authorize failed: {wrapped:#}")
+                })?
         }
         ComposioClientKind::Direct(direct) => {
             tracing::info!(
@@ -327,9 +392,25 @@ pub async fn composio_authorize(
                      app.composio.dev for your auth config"
                 );
             }
-            direct_authorize(&direct, toolkit, &config.composio.entity_id)
-                .await
-                .map_err(|e| format!("[composio-direct] authorize failed: {e:#}"))?
+            super::oauth_handoff::direct_authorize_with_meta_guard(
+                &direct,
+                toolkit,
+                &config.composio.entity_id,
+            )
+            .await
+            .map_err(|e| {
+                let wrapped = super::oauth_handoff::wrap_authorize_rate_limit_error(toolkit, e);
+                // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the
+                // backend branch's `report_composio_op_error` on the
+                // same handler — direct-mode 401s from
+                // `connected_accounts/link` were leaking otherwise.
+                // Render WITH the `[composio-direct]` anchor so the
+                // classifier arm fires; wrapped error preserves any
+                // rate-limit classifications fed up the ladder.
+                let rendered = format!("[composio-direct] authorize failed: {wrapped:#}");
+                report_composio_op_error("authorize", &rendered);
+                rendered
+            })?
         }
     };
 
@@ -352,16 +433,48 @@ pub async fn composio_authorize(
 pub async fn composio_delete_connection(
     config: &Config,
     connection_id: &str,
+    clear_memory: bool,
 ) -> OpResult<RpcOutcome<ComposioDeleteResponse>> {
     tracing::debug!(connection_id = %connection_id, "[composio] rpc delete_connection");
     let client = resolve_client(config)?;
-    let toolkit = resolve_toolkit_for_connection(&client, connection_id)
-        .await
-        .ok();
-    let resp = client.delete_connection(connection_id).await.map_err(|e| {
+    let toolkit = match resolve_toolkit_for_connection(&client, connection_id).await {
+        Ok(toolkit) => Some(toolkit),
+        Err(error) if clear_memory => {
+            return Err(format!(
+                "[composio] delete_connection cannot clear memory without resolving toolkit: {error}"
+            ));
+        }
+        Err(_) => None,
+    };
+    let memory_targets = if clear_memory {
+        composio_memory_targets_for_connection(config, toolkit.as_deref(), connection_id)
+            .await
+            .map_err(|error| {
+                format!("[composio] delete_connection cannot enumerate memory targets: {error:#}")
+            })?
+    } else {
+        Vec::new()
+    };
+    let mut resp = client.delete_connection(connection_id).await.map_err(|e| {
         report_composio_op_error("delete_connection", &e);
         format!("[composio] delete_connection failed: {e:#}")
     })?;
+    let mut memory_chunks_deleted = 0;
+    let mut memory_clear_errors = Vec::new();
+    for target in &memory_targets {
+        match target.delete(config) {
+            Ok(deleted) => {
+                memory_chunks_deleted += deleted;
+            }
+            Err(error) => {
+                memory_clear_errors.push(format!(
+                    "[composio] connection deleted, but failed to clear memory chunks for {}: {error:#}",
+                    target.label()
+                ));
+            }
+        }
+    }
+    resp.memory_chunks_deleted = memory_chunks_deleted;
     if let Some(toolkit) = toolkit.as_deref() {
         let deleted =
             super::providers::profile::delete_connected_identity_facets(toolkit, connection_id);
@@ -422,10 +535,155 @@ pub async fn composio_delete_connection(
             );
         }
     }
+    if !memory_clear_errors.is_empty() {
+        return Err(memory_clear_errors.join("; "));
+    }
     Ok(RpcOutcome::new(
         resp,
         vec![format!("composio: connection {connection_id} deleted")],
     ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MemoryCleanupTarget {
+    Exact(SourceKind, String),
+    Prefix(SourceKind, String),
+    Owner(SourceKind, String),
+}
+
+impl MemoryCleanupTarget {
+    fn delete(&self, config: &Config) -> anyhow::Result<usize> {
+        match self {
+            Self::Exact(source_kind, source_id) => {
+                memory_tree_store::delete_chunks_by_source(config, *source_kind, source_id)
+            }
+            Self::Prefix(source_kind, source_id_prefix) => {
+                memory_tree_store::delete_chunks_by_source_prefix(
+                    config,
+                    *source_kind,
+                    source_id_prefix,
+                )
+            }
+            Self::Owner(source_kind, owner) => {
+                memory_tree_store::delete_chunks_by_owner(config, *source_kind, owner)
+            }
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Exact(source_kind, source_id) => {
+                format!("{}:{source_id}", source_kind.as_str())
+            }
+            Self::Prefix(source_kind, source_id_prefix) => {
+                format!("{}:{source_id_prefix}*", source_kind.as_str())
+            }
+            Self::Owner(source_kind, owner) => {
+                format!("{}:owner:{owner}", source_kind.as_str())
+            }
+        }
+    }
+}
+
+async fn composio_memory_targets_for_connection(
+    config: &Config,
+    toolkit: Option<&str>,
+    connection_id: &str,
+) -> anyhow::Result<Vec<MemoryCleanupTarget>> {
+    let Some(toolkit) = toolkit.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    let targets = match toolkit.to_ascii_lowercase().as_str() {
+        "slack" => vec![MemoryCleanupTarget::Exact(
+            SourceKind::Chat,
+            format!("slack:{connection_id}"),
+        )],
+        "gmail" => gmail_memory_sources_for_connection(connection_id),
+        "notion" => notion_memory_targets_for_connection(config, connection_id).await?,
+        "drive" | "googledrive" | "google_drive" => {
+            drive_memory_targets_for_connection(connection_id)
+        }
+        _ => Vec::new(),
+    };
+    Ok(targets)
+}
+
+fn gmail_memory_sources_for_connection(connection_id: &str) -> Vec<MemoryCleanupTarget> {
+    vec![
+        MemoryCleanupTarget::Owner(SourceKind::Email, format!("gmail-sync:{connection_id}")),
+        MemoryCleanupTarget::Exact(SourceKind::Email, format!("gmail:{connection_id}")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}:")),
+        MemoryCleanupTarget::Prefix(SourceKind::Email, format!("gmail:{connection_id}/")),
+    ]
+}
+
+async fn notion_memory_targets_for_connection(
+    config: &Config,
+    connection_id: &str,
+) -> anyhow::Result<Vec<MemoryCleanupTarget>> {
+    let mut targets = connection_scoped_document_targets("notion", connection_id);
+
+    let memory = Arc::new(
+        MemoryClient::from_workspace_dir(config.workspace_dir.clone()).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to open memory client for notion cleanup target discovery: {error}"
+            )
+        })?,
+    );
+    let state = SyncState::load(&memory, "notion", connection_id)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!("failed to load notion sync state for memory cleanup: {error}")
+        })?;
+    for raw_id in state.synced_ids {
+        let Some(page_id) = notion_synced_page_id(&raw_id) else {
+            continue;
+        };
+        targets.push(MemoryCleanupTarget::Exact(
+            SourceKind::Document,
+            format!("notion:{page_id}"),
+        ));
+        targets.push(MemoryCleanupTarget::Exact(
+            SourceKind::Document,
+            format!("composio-notion-page-{page_id}"),
+        ));
+    }
+
+    Ok(dedupe_memory_targets(targets))
+}
+
+fn drive_memory_targets_for_connection(connection_id: &str) -> Vec<MemoryCleanupTarget> {
+    ["drive", "googledrive", "google_drive"]
+        .into_iter()
+        .flat_map(|prefix| connection_scoped_document_targets(prefix, connection_id))
+        .collect()
+}
+
+fn connection_scoped_document_targets(
+    prefix: &str,
+    connection_id: &str,
+) -> Vec<MemoryCleanupTarget> {
+    vec![
+        MemoryCleanupTarget::Exact(SourceKind::Document, format!("{prefix}:{connection_id}")),
+        MemoryCleanupTarget::Prefix(SourceKind::Document, format!("{prefix}:{connection_id}:")),
+        MemoryCleanupTarget::Prefix(SourceKind::Document, format!("{prefix}:{connection_id}/")),
+    ]
+}
+
+fn notion_synced_page_id(raw_id: &str) -> Option<String> {
+    let page_id = raw_id.split_once('@').map_or(raw_id, |(id, _)| id).trim();
+    (!page_id.is_empty()).then(|| page_id.to_string())
+}
+
+fn dedupe_memory_targets(targets: Vec<MemoryCleanupTarget>) -> Vec<MemoryCleanupTarget> {
+    let mut unique = Vec::new();
+    for target in targets {
+        if !unique.contains(&target) {
+            unique.push(target);
+        }
+    }
+    unique
 }
 
 // ── Tools ───────────────────────────────────────────────────────────
@@ -433,8 +691,14 @@ pub async fn composio_delete_connection(
 pub async fn composio_list_tools(
     config: &Config,
     toolkits: Option<Vec<String>>,
+    tags: Option<Vec<String>>,
 ) -> OpResult<RpcOutcome<ComposioToolsResponse>> {
-    tracing::debug!(?toolkits, "[composio] rpc list_tools");
+    let effective_tags = if should_forward_tags(toolkits.as_deref()) {
+        tags
+    } else {
+        None
+    };
+    tracing::debug!(?toolkits, ?effective_tags, "[composio] rpc list_tools");
     // Route through the mode-aware factory. In direct mode the backend
     // tool catalogue (which is shaped by the tinyhumans-tenant
     // allowlist + curated whitelist) does NOT apply — the user's
@@ -447,10 +711,13 @@ pub async fn composio_list_tools(
     match kind {
         ComposioClientKind::Backend(client) => {
             tracing::debug!("[composio] list_tools: backend variant");
-            let resp = client.list_tools(toolkits.as_deref()).await.map_err(|e| {
-                report_composio_op_error("list_tools", &e);
-                format!("[composio] list_tools failed: {e:#}")
-            })?;
+            let resp = client
+                .list_tools(toolkits.as_deref(), effective_tags.as_deref())
+                .await
+                .map_err(|e| {
+                    report_composio_op_error("list_tools", &e);
+                    format!("[composio] list_tools failed: {e:#}")
+                })?;
             let count = resp.tools.len();
             Ok(RpcOutcome::new(
                 resp,
@@ -470,7 +737,17 @@ pub async fn composio_list_tools(
                 Some(list) if !list.is_empty() => list,
                 _ => {
                     let conns = direct_list_connections(&direct).await.map_err(|e| {
-                        format!("[composio-direct] list_tools: prefetch connections failed: {e:#}")
+                        // [#1166 / Sentry TAURI-RUST-X9] Symmetric error
+                        // routing — the prefetch call goes to the same v3
+                        // `/connected_accounts` endpoint as `list_connections`
+                        // and would emit the same 401 wire shape. Render
+                        // WITH the `[composio-direct]` anchor so the
+                        // classifier arm fires on the prefetch path too.
+                        let rendered = format!(
+                            "[composio-direct] list_tools: prefetch connections failed: {e:#}"
+                        );
+                        report_composio_op_error("list_connections", &rendered);
+                        rendered
                     })?;
                     let mut v: Vec<String> = conns
                         .connections
@@ -498,11 +775,24 @@ pub async fn composio_list_tools(
             }
             tracing::debug!(
                 toolkits = scope.len(),
+                ?effective_tags,
                 "[composio-direct] list_tools: fetching v3 tool schemas"
             );
-            let mut resp = direct_list_tools(&direct, &scope)
+            // Forward the same `effective_tags` the backend branch uses so the
+            // tag filter is honoured in direct (BYO-key) mode too — previously
+            // it was computed above and then dropped on this branch.
+            let mut resp = direct_list_tools(&direct, &scope, effective_tags.as_deref())
                 .await
-                .map_err(|e| format!("[composio-direct] list_tools failed: {e:#}"))?;
+                .map_err(|e| {
+                    // [#1166 / Sentry TAURI-RUST-X9] Symmetric with the backend
+                    // branch's hook (line ~451). Direct-mode `list_tools`
+                    // failures are user-state when the API key is bad. Render
+                    // WITH the `[composio-direct]` anchor so the classifier
+                    // arm fires.
+                    let rendered = format!("[composio-direct] list_tools failed: {e:#}");
+                    report_composio_op_error("list_tools", &rendered);
+                    rendered
+                })?;
             // Apply the same curated-whitelist + user-scope filter the
             // backend path runs — schemas may be tenant-agnostic but
             // OpenHuman's curation policy isn't, and direct-mode users
@@ -1018,28 +1308,79 @@ pub async fn composio_sync(
     tracing::debug!(
         connection_id = %connection_id,
         reason = reason.as_str(),
-        "[composio] rpc sync"
+        "[composio] rpc sync (spawned)"
     );
+    // Validate synchronously — a bad request (unknown connection / no native
+    // provider for toolkit) must surface to the caller via the RPC error
+    // envelope, not silently inside a spawned task.
     let client = resolve_client(config)?;
     let toolkit = resolve_toolkit_for_connection(&client, connection_id).await?;
-
     let provider = get_provider(&toolkit).ok_or_else(|| {
         format!("[composio] no native provider registered for toolkit '{toolkit}'")
     })?;
-
     let _ = client; // see analogous comment above — drop the pre-baked client (#1710).
+
+    // `provider.sync` walks every page of the upstream API and ingests every
+    // message in-band — on a real prod inbox a healthy run can legitimately
+    // exceed the frontend's 30s `composio_sync` RPC `.await` cap (one
+    // healthy periodic tick is already ~100s for 20 pages / 500 messages).
+    // There is no reason for the UI to block on it: per-source progress is
+    // already exposed via the polled `openhuman.memory_sync_status_list` RPC,
+    // which reads `mem_tree_chunks` directly and therefore reflects the
+    // spawned task's per-message ingest in real time. So we spawn the sync
+    // as a background task and return immediately with a "started" envelope.
+    // The periodic scheduler (`composio::periodic`) already runs
+    // `provider.sync` from inside its own `tokio::spawn` loop — same pattern.
     let ctx = ProviderContext {
         config: Arc::new(config.clone()),
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
     };
+    let started_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let toolkit_for_outcome = toolkit.clone();
+    let connection_id_for_log = connection_id.to_string();
 
-    let outcome = provider.sync(&ctx, reason).await.map_err(|e| {
-        report_composio_op_error("sync", &e);
-        format!("[composio] sync({toolkit}) failed: {e}")
-    })?;
+    tokio::spawn(async move {
+        let toolkit_in_task = ctx.toolkit.clone();
+        match provider.sync(&ctx, reason).await {
+            Ok(out) => {
+                tracing::info!(
+                    toolkit = %toolkit_in_task,
+                    connection_id = %connection_id_for_log,
+                    items_ingested = out.items_ingested,
+                    elapsed_ms = out.elapsed_ms(),
+                    "[composio] background sync ok"
+                );
+            }
+            Err(e) => {
+                report_composio_op_error("sync", &e);
+                tracing::warn!(
+                    toolkit = %toolkit_in_task,
+                    connection_id = %connection_id_for_log,
+                    error = %e,
+                    "[composio] background sync failed"
+                );
+            }
+        }
+    });
 
-    let summary = outcome.summary.clone();
+    let summary = format!("composio: {toolkit_for_outcome} sync started (background)");
+    let outcome = SyncOutcome {
+        toolkit: toolkit_for_outcome,
+        connection_id: Some(connection_id.to_string()),
+        reason: reason.as_str().to_string(),
+        items_ingested: 0,
+        started_at_ms,
+        // Sentinel: still running. Frontend should rely on
+        // `memory_sync_status_list` for progress; `finished_at_ms == 0`
+        // means "spawned, not yet complete".
+        finished_at_ms: 0,
+        summary: summary.clone(),
+        details: serde_json::json!({ "status": "started" }),
+    };
     Ok(RpcOutcome::new(outcome, vec![summary]))
 }
 
@@ -1061,686 +1402,20 @@ fn parse_sync_reason(raw: Option<&str>) -> OpResult<SyncReason> {
     }
 }
 
-// ── Prompt integration discovery ────────────────────────────────────
-
-use crate::openhuman::context::prompt::{ConnectedIntegration, ConnectedIntegrationTool};
-use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, RwLock};
-use std::time::{Duration, Instant};
-
-/// Defensive TTL on the integrations cache.
-///
-/// Background: the primary invalidation path is the
-/// `ComposioConnectionCreated` → `wait_for_connection_active` bus flow
-/// (see [`super::bus::ComposioConnectionCreatedSubscriber`]), which
-/// polls the backend for up to 60 s after `composio_authorize` returns
-/// a `connectUrl`. On Windows the OAuth round-trip can exceed that
-/// window (Defender SmartScreen, slower browser launch, extra consent
-/// dialogs), so the invalidation call never fires and the chat
-/// runtime's cache stays frozen on the pre-connect snapshot even
-/// though the Settings UI polls `composio_list_connections` every 5 s
-/// and shows the user as "Connected".
-///
-/// The cross-platform defenses we layer on top:
-///   1. [`composio_list_connections`] diff-invalidates the cache whenever
-///      the backend's active-toolkit set diverges from what's cached,
-///      so a running UI keeps the chat cache in sync within one poll
-///      interval.
-///   2. This TTL caps worst-case staleness at 60 s regardless of
-///      whether the UI is open, the bus fires, or the user reconnected
-///      out-of-band.
-const CACHE_TTL: Duration = Duration::from_secs(60);
-
-/// Cached entry: the integrations list plus the timestamp we wrote it.
-#[derive(Clone)]
-struct CachedIntegrations {
-    entries: Vec<ConnectedIntegration>,
-    cached_at: Instant,
-}
-
-/// Process-wide cache for connected integrations, keyed by the config
-/// identity (the `config_path` string) so different user contexts don't
-/// collide. Each entry is populated on first fetch and returned on
-/// subsequent calls until explicitly invalidated or the TTL expires.
-static INTEGRATIONS_CACHE: LazyLock<RwLock<HashMap<String, CachedIntegrations>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
-/// Derive a stable cache key from a [`Config`]. We use the stringified
-/// `config_path` because it uniquely identifies a user context (it
-/// resolves to the per-user openhuman dir).
-fn cache_key(config: &Config) -> String {
-    config.config_path.display().to_string()
-}
-
-/// Clear cached connected integrations so the next call to
-/// [`fetch_connected_integrations`] hits the backend again.
-///
-/// Called by [`super::bus::ComposioConnectionCreatedSubscriber`] when a
-/// new OAuth connection completes, by [`composio_list_connections`]
-/// when it observes a divergence between the backend response and the
-/// cached snapshot, and from tests. Clears the entire map because the
-/// callers don't carry a config reference.
-pub fn invalidate_connected_integrations_cache() {
-    if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
-        let entries = guard.len();
-        guard.clear();
-        tracing::info!(
-            cached_keys = entries,
-            "[composio][integrations] cache invalidated"
-        );
-    }
-}
-
-/// Read-only snapshot of the currently cached connected integrations for
-/// the given config, or [`None`] when the cache is empty, expired, or
-/// the lock is held by a writer.
-///
-/// Designed for hot-path callers that want a cheap "what does the cache
-/// already say?" probe without triggering a backend fetch. The agent
-/// harness uses this on every turn to detect mid-session connection
-/// changes — it relies on the desktop UI's 5 s `composio_list_connections`
-/// poll (which calls into [`fetch_connected_integrations`] and
-/// repopulates this cache) plus the event-driven invalidation path to
-/// keep the cache current.
-///
-/// `try_read` (not `read`) so a writer in progress — e.g. the UI poll
-/// repopulating the cache — never blocks a turn. Worst case the agent
-/// sees `None` for one turn while the writer holds the lock; the next
-/// turn picks up the value naturally.
-///
-/// TTL is enforced defensively: entries older than [`CACHE_TTL`] are
-/// treated as missing even though they're still in the map (a stale
-/// entry would otherwise pin the agent to a frozen view if every
-/// invalidation path silently failed).
-pub fn cached_active_integrations(config: &Config) -> Option<Vec<ConnectedIntegration>> {
-    let key = cache_key(config);
-    let guard = match INTEGRATIONS_CACHE.try_read() {
-        Ok(g) => g,
-        Err(_) => {
-            tracing::trace!(
-                key = %key,
-                "[composio][integrations_cache] cached_active_integrations:lock_contended"
-            );
-            return None;
-        }
-    };
-    let Some(cached) = guard.get(&key) else {
-        tracing::trace!(
-            key = %key,
-            "[composio][integrations_cache] cached_active_integrations:miss"
-        );
-        return None;
-    };
-    let age = cached.cached_at.elapsed();
-    if age > CACHE_TTL {
-        tracing::trace!(
-            key = %key,
-            age_ms = age.as_millis() as u64,
-            ttl_ms = CACHE_TTL.as_millis() as u64,
-            "[composio][integrations_cache] cached_active_integrations:expired"
-        );
-        return None;
-    }
-    tracing::trace!(
-        key = %key,
-        entries = cached.entries.len(),
-        age_ms = age.as_millis() as u64,
-        "[composio][integrations_cache] cached_active_integrations:hit"
-    );
-    Some(cached.entries.clone())
-}
-
-/// Stable hash of the *routing-relevant* slice of a connected-integrations
-/// snapshot.
-///
-/// Two snapshots produce the same hash iff they would synthesise the
-/// same `delegate_<toolkit>` tool set in the orchestrator's
-/// function-calling schema. The hash is:
-///
-///   - **Order-independent** — callers don't need to sort the input.
-///   - **Description-insensitive** — Composio catalogue text edits don't
-///     trigger a refresh. The schema's tool-description field still
-///     picks up new text on the next *real* (membership-changing)
-///     refresh, so descriptions are never permanently stale.
-///   - **Process-local** — [`std::collections::hash_map::DefaultHasher`]
-///     is randomly seeded per process. Fine because we only compare
-///     hashes within one process lifetime.
-///
-/// Only `connected == true` entries contribute. Unconnected toolkits are
-/// stripped by [`super::super::tools::orchestrator_tools::collect_orchestrator_tools`]
-/// anyway, so churn among the unconnected set never changes the agent's
-/// surface and shouldn't trigger a refresh.
-pub fn connected_set_hash(integrations: &[ConnectedIntegration]) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
-    let mut slugs: Vec<&str> = integrations
-        .iter()
-        .filter(|i| i.connected)
-        .map(|i| i.toolkit.as_str())
-        .collect();
-    slugs.sort();
-
-    let mut hasher = DefaultHasher::new();
-    slugs.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Collect the set of toolkit slugs marked `connected` in a snapshot.
-///
-/// Exposed to [`sync_cache_with_connections`] so it can diff the live
-/// backend connection list against what the chat runtime currently
-/// believes is connected.
-fn connected_toolkit_set(integrations: &[ConnectedIntegration]) -> HashSet<String> {
-    integrations
-        .iter()
-        .filter(|i| i.connected)
-        .map(|i| i.toolkit.clone())
-        .collect()
-}
-
-/// Reconcile the process-wide integrations cache with a fresh backend
-/// `list_connections` response.
-///
-/// Called from [`composio_list_connections`], which the desktop UI
-/// polls every 5 s (see `app/src/lib/composio/hooks.ts`). When the set
-/// of ACTIVE/CONNECTED toolkits in the response differs from what's in
-/// the cache, we invalidate so the chat runtime re-fetches on its next
-/// `fetch_connected_integrations` call. This keeps tool availability
-/// in chat in sync with the badge the user sees in Settings, even when
-/// the primary event-bus invalidation path misses (e.g. Windows OAuth
-/// flows that overrun the 60 s readiness poll).
-fn sync_cache_with_connections(connections: &[super::types::ComposioConnection]) {
-    let live_active: HashSet<String> = connections
-        .iter()
-        .filter(|c| c.is_active())
-        .map(|c| c.normalized_toolkit())
-        .filter(|toolkit| !toolkit.is_empty())
-        .collect();
-
-    // Read once to decide whether any cache entry is out of sync. We
-    // clone out the keys + connected sets so we can release the read
-    // lock before taking the write lock.
-    let divergent_keys: Vec<(String, HashSet<String>, HashSet<String>)> = {
-        let Ok(guard) = INTEGRATIONS_CACHE.read() else {
-            return;
-        };
-        guard
-            .iter()
-            .filter_map(|(key, cached)| {
-                let cached_set = connected_toolkit_set(&cached.entries);
-                if cached_set != live_active {
-                    Some((key.clone(), cached_set, live_active.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-
-    if divergent_keys.is_empty() {
-        tracing::debug!(
-            live_connected = live_active.len(),
-            "[composio][integrations] list_connections matches cache — no invalidation needed"
-        );
-        return;
-    }
-
-    if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
-        for (key, cached_set, live_set) in divergent_keys {
-            // Diff logging — makes Windows-timing regressions easy to
-            // catch in user-supplied debug dumps without leaking any
-            // PII (toolkit slugs are public strings like "gmail").
-            let added: Vec<&String> = live_set.difference(&cached_set).collect();
-            let removed: Vec<&String> = cached_set.difference(&live_set).collect();
-            tracing::info!(
-                key = %key,
-                ?added,
-                ?removed,
-                "[composio][integrations] cache diverges from backend — invalidating"
-            );
-            guard.remove(&key);
-        }
-    }
-}
-
-/// Fetch the user's active Composio connections and their available
-/// tool actions, returning a prompt-ready summary.
-///
-/// This is the **single source of truth** for connected integration
-/// data injected into system prompts — both the agent turn loop and
-/// the debug dump CLI call this function.
-///
-/// Results are cached process-wide (keyed by config identity) and
-/// returned instantly on subsequent calls. The cache is invalidated
-/// when a new connection is created
-/// (via [`invalidate_connected_integrations_cache`]), when a UI
-/// `list_connections` poll observes a divergent live set, when
-/// [`CACHE_TTL`] expires, or on process restart.
-///
-/// Best-effort: returns an empty vec when the user isn't signed in,
-/// the backend is unreachable, or any step fails.
-pub async fn fetch_connected_integrations(config: &Config) -> Vec<ConnectedIntegration> {
-    match fetch_connected_integrations_status(config).await {
-        FetchConnectedIntegrationsStatus::Authoritative(v) => v,
-        FetchConnectedIntegrationsStatus::Unavailable => Vec::new(),
-    }
-}
-
-/// Discriminated outcome from [`fetch_connected_integrations_status`].
-///
-/// Lets callers distinguish "the backend confirmed the user has zero
-/// active connections right now" from "we couldn't talk to the backend
-/// (no client, transient failure, …) and have no truth to report".
-///
-/// The legacy [`fetch_connected_integrations`] collapses both into an
-/// empty `Vec`, which is fine for prompt-building (they look the same)
-/// but dangerous for spawn-time allowlist gates — using empty as truth
-/// in the unavailable case would silently wipe the user's allowlist
-/// during a transient 5xx.
-#[derive(Debug, Clone)]
-pub enum FetchConnectedIntegrationsStatus {
-    /// Backend was reachable. Vec may legitimately be empty (no
-    /// allowlisted toolkits, or no active connections).
-    Authoritative(Vec<ConnectedIntegration>),
-    /// Backend wasn't reachable (no auth client, transient error). The
-    /// caller should fall back to its prior snapshot rather than treat
-    /// "no connections" as truth.
-    Unavailable,
-}
-
-/// Status-returning variant of [`fetch_connected_integrations`].
-///
-/// Same caching, same cache-invalidation semantics — only the return
-/// shape differs. Cache hits are by definition `Authoritative` because
-/// we only cache the `Some(...)` arm of `_uncached` (i.e. results the
-/// backend confirmed).
-pub async fn fetch_connected_integrations_status(
-    config: &Config,
-) -> FetchConnectedIntegrationsStatus {
-    let key = cache_key(config);
-
-    // Fast path: return cached result if fresh. Stale entries fall
-    // through to the backend fetch below so the chat runtime can never
-    // be more than `CACHE_TTL` behind a real-world change.
-    if let Ok(guard) = INTEGRATIONS_CACHE.read() {
-        if let Some(cached) = guard.get(&key) {
-            let age = cached.cached_at.elapsed();
-            if age < CACHE_TTL {
-                tracing::debug!(
-                    count = cached.entries.len(),
-                    age_ms = age.as_millis() as u64,
-                    key = %key,
-                    "[composio][integrations] returning cached result"
-                );
-                return FetchConnectedIntegrationsStatus::Authoritative(cached.entries.clone());
-            }
-            tracing::info!(
-                count = cached.entries.len(),
-                age_ms = age.as_millis() as u64,
-                ttl_ms = CACHE_TTL.as_millis() as u64,
-                key = %key,
-                "[composio][integrations] cache entry expired — refetching"
-            );
-        }
-    }
-
-    match fetch_connected_integrations_uncached(config).await {
-        Some(result) => {
-            // Backend was reachable — cache the result (even if empty).
-            if let Ok(mut guard) = INTEGRATIONS_CACHE.write() {
-                guard.insert(
-                    key,
-                    CachedIntegrations {
-                        entries: result.clone(),
-                        cached_at: Instant::now(),
-                    },
-                );
-            }
-            FetchConnectedIntegrationsStatus::Authoritative(result)
-        }
-        None => {
-            // No auth / client unavailable — do NOT cache so a
-            // subsequent call with a different config can retry.
-            FetchConnectedIntegrationsStatus::Unavailable
-        }
-    }
-}
-
-/// The actual backend fetch, called on cache miss.
-///
-/// Returns `Some(vec)` when the backend was reachable. The returned
-/// vector is the merged **integration overview** — every toolkit in
-/// the backend allowlist appears as one entry, with a `connected`
-/// flag indicating whether the user has an active OAuth connection.
-/// Connected entries also carry the per-action tool catalogue
-/// (fetched in a single batched call).
-///
-/// Returns `None` when we couldn't even build a client (no auth),
-/// signalling the caller should NOT cache this result.
-async fn fetch_connected_integrations_uncached(
-    config: &Config,
-) -> Option<Vec<ConnectedIntegration>> {
-    use super::client::{create_composio_client, direct_list_connections, ComposioClientKind};
-    use super::providers::toolkit_description;
-
-    // Route via the mode-aware factory so the chat-agent's
-    // "connected_integrations" view reflects the live tenant — backend
-    // (tinyhumans) or direct (user's personal Composio). Prior to #1710
-    // Wave 3 this path called `build_composio_client` directly, which
-    // is backend-only — after a `composio.mode = "direct"` toggle the
-    // cache kept replaying the tinyhumans-tenant connections back into
-    // the integration overview (e.g. gmail / notion appearing as
-    // connected in direct mode even when the user's direct tenant had
-    // a different set of toolkits). Resolving per call closes the
-    // loop: `ComposioConfigChangedSubscriber` invalidates the cache on
-    // toggle and the next miss re-populates it from the live tenant.
-    let kind = match create_composio_client(config) {
-        Ok(kind) => kind,
-        Err(e) => {
-            tracing::debug!(
-                error = %e,
-                "[composio] fetch_connected_integrations: no client (not signed in?)"
-            );
-            return None;
-        }
-    };
-
-    // Pull the allowlist + connections + tool catalogue. Backend mode
-    // walks the tinyhumans tenant's curated allowlist via
-    // `list_toolkits`; direct mode has no centralised allowlist (per
-    // `ops::composio_list_toolkits`'s direct-mode branch) so the
-    // user's set of active connections IS the universe of valid
-    // toolkit arguments.
-    //
-    // On transient errors we return `None` instead of a degraded
-    // `Some(Vec::new())` so `fetch_connected_integrations` does NOT
-    // cache the failure. Caching an empty allowlist would hide every
-    // integration from the orchestrator until the process restarts or
-    // the cache is explicitly invalidated — a single 5xx during
-    // startup would silently break delegation for the whole session.
-    let (allowlisted_toolkits, connections, tools_by_toolkit): (
-        Vec<String>,
-        Vec<super::types::ComposioConnection>,
-        Vec<super::types::ComposioToolSchema>,
-    ) = match &kind {
-        ComposioClientKind::Backend(client) => {
-            let allowlist: Vec<String> = match client.list_toolkits().await {
-                Ok(resp) => resp
-                    .toolkits
-                    .into_iter()
-                    .map(|toolkit| toolkit.trim().to_ascii_lowercase())
-                    .filter(|toolkit| !toolkit.is_empty())
-                    .collect(),
-                Err(e) => {
-                    tracing::warn!(
-                        "[composio] fetch_connected_integrations: list_toolkits (backend) failed: {e}"
-                    );
-                    return None;
-                }
-            };
-
-            if allowlist.is_empty() {
-                tracing::debug!(
-                    "[composio] fetch_connected_integrations: backend allowlist is empty"
-                );
-                return Some(Vec::new());
-            }
-
-            let connections = match client.list_connections().await {
-                Ok(resp) => resp.connections,
-                Err(e) => {
-                    tracing::warn!(
-                        "[composio] fetch_connected_integrations: list_connections (backend) failed: {e}"
-                    );
-                    return None;
-                }
-            };
-
-            // Tool catalogue scoped to the active subset only —
-            // not-connected toolkits won't be invoked from a sub-agent.
-            let connected_slugs_for_tools: Vec<String> = {
-                let mut v: Vec<String> = connections
-                    .iter()
-                    .filter(|c| c.is_active())
-                    .map(|c| c.normalized_toolkit())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-                v.sort();
-                v.dedup();
-                v
-            };
-            let tools = if connected_slugs_for_tools.is_empty() {
-                Vec::new()
-            } else {
-                match client.list_tools(Some(&connected_slugs_for_tools)).await {
-                    Ok(resp) => resp.tools,
-                    Err(e) => {
-                        tracing::warn!(
-                            "[composio] fetch_connected_integrations: list_tools (backend) failed: {e}"
-                        );
-                        return None;
-                    }
-                }
-            };
-
-            (allowlist, connections, tools)
-        }
-        ComposioClientKind::Direct(direct) => {
-            // Direct mode: walk the user's personal Composio tenant
-            // for *connection state* (active accounts on their key) —
-            // there's no central allowlist in direct mode, so the
-            // active set IS the allowlist.
-            //
-            // Tool *schemas* are tenant-agnostic — Composio's action
-            // definitions (e.g. GMAIL_SEND_EMAIL parameter shape) are
-            // identical regardless of which Composio tenant a user is
-            // connected via. So we best-effort fetch schemas through
-            // the backend client (curated list_tools) if a backend
-            // session is available, even though connection routing
-            // goes to the user's direct tenant. This preserves the
-            // chat agent's "21 gmail actions available" view while
-            // execution itself (via `ComposioActionTool` / Wave 1
-            // factory) still routes to the user's tenant. Direct-only
-            // users without a backend session get empty tools — that
-            // matches `composio_list_tools`'s direct-mode policy and
-            // the `subagent_runner` LazyToolkitResolver still resolves
-            // tools lazily at delegation time.
-            let connections = match direct_list_connections(direct).await {
-                Ok(resp) => resp.connections,
-                Err(e) => {
-                    tracing::warn!(
-                        "[composio] fetch_connected_integrations: list_connections (direct) failed: {e:#}"
-                    );
-                    return None;
-                }
-            };
-            let allowlist: Vec<String> = {
-                let mut v: Vec<String> = connections
-                    .iter()
-                    .filter(|c| c.is_active())
-                    .map(|c| c.normalized_toolkit())
-                    .filter(|t| !t.is_empty())
-                    .collect();
-                v.sort();
-                v.dedup();
-                v
-            };
-            if allowlist.is_empty() {
-                tracing::info!(
-                    "[composio-direct] fetch_connected_integrations: direct tenant has no active connections; returning empty overview"
-                );
-                return Some(Vec::new());
-            }
-            tracing::debug!(
-                connected = allowlist.len(),
-                "[composio-direct] fetch_connected_integrations: using direct tenant's active set as allowlist (no central allowlist in direct mode)"
-            );
-
-            // Best-effort: pull tool schemas via the backend client
-            // (definitional source). Failure is non-fatal — we fall
-            // back to empty tools and let lazy resolution handle it.
-            let tools = match super::client::build_composio_client(config) {
-                Some(backend_client) => match backend_client.list_tools(Some(&allowlist)).await {
-                    Ok(resp) => {
-                        tracing::debug!(
-                            count = resp.tools.len(),
-                            "[composio-direct] fetch_connected_integrations: pulled tool schemas from backend (tenant-agnostic definitional source)"
-                        );
-                        resp.tools
-                    }
-                    Err(e) => {
-                        tracing::info!(
-                            "[composio-direct] fetch_connected_integrations: backend list_tools failed (will use lazy fallback at delegation time): {e:#}"
-                        );
-                        Vec::new()
-                    }
-                },
-                None => {
-                    tracing::info!(
-                        "[composio-direct] fetch_connected_integrations: no backend session for schema fetch; lazy fallback at delegation time"
-                    );
-                    Vec::new()
-                }
-            };
-            (allowlist, connections, tools)
-        }
-    };
-
-    // Active connection slugs (status filter mirrors the original logic).
-    let connected_slugs: std::collections::HashSet<String> = connections
-        .iter()
-        .filter(|c| c.is_active())
-        .map(|c| c.normalized_toolkit())
-        .filter(|toolkit| !toolkit.is_empty())
-        .collect();
-
-    // Deduplicate the allowlist so a backend that returns duplicates
-    // doesn't produce dual entries downstream.
-    let mut unique_toolkits: Vec<String> = allowlisted_toolkits.clone();
-    unique_toolkits.sort();
-    unique_toolkits.dedup();
-
-    // Build one entry per allowlisted toolkit. Connected entries
-    // carry their action catalogue; not-connected entries carry an
-    // empty `tools` vec.
-    let mut integrations: Vec<ConnectedIntegration> = Vec::with_capacity(unique_toolkits.len());
-    for slug in &unique_toolkits {
-        let connected = connected_slugs.contains(slug);
-        // Anchor the prefix with an underscore so slugs that share
-        // a text prefix (e.g. `git` vs `github`) don't false-match
-        // each other's actions. `GMAIL_SEND_EMAIL` matches `gmail_`,
-        // not just `gmail`, so siblings stay in their own buckets.
-        let action_prefix = format!("{}_", slug.to_uppercase());
-        let tools: Vec<ConnectedIntegrationTool> = if connected {
-            // Apply the same curated-whitelist + user-scope filter the
-            // meta-tool layer uses, so the integrations_agent prompt
-            // only advertises actions the agent is actually allowed to
-            // call. One pref load per toolkit (not per action).
-            let pref = super::providers::load_user_scope_or_default(slug).await;
-            let filtered: Vec<&super::types::ComposioToolSchema> = tools_by_toolkit
-                .iter()
-                .filter(|t| t.function.name.starts_with(&action_prefix))
-                .filter(|t| super::providers::is_action_visible_with_pref(&t.function.name, &pref))
-                .collect();
-            tracing::debug!(
-                toolkit = %slug,
-                kept = filtered.len(),
-                "[composio][scopes] integrations prompt action set"
-            );
-            filtered
-                .into_iter()
-                .map(|t| ConnectedIntegrationTool {
-                    name: t.function.name.clone(),
-                    description: t.function.description.clone().unwrap_or_default(),
-                    parameters: t.function.parameters.clone(),
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        integrations.push(ConnectedIntegration {
-            toolkit: slug.clone(),
-            description: toolkit_description(slug).to_string(),
-            tools,
-            connected,
-        });
-    }
-
-    integrations.sort_by(|a, b| a.toolkit.cmp(&b.toolkit));
-
-    let connected_count = integrations.iter().filter(|i| i.connected).count();
-    tracing::info!(
-        total = integrations.len(),
-        connected = connected_count,
-        "[composio] fetch_connected_integrations: done"
-    );
-    for ci in &integrations {
-        tracing::debug!(
-            toolkit = %ci.toolkit,
-            connected = ci.connected,
-            tool_count = ci.tools.len(),
-            "[composio] integration overview"
-        );
-    }
-
-    Some(integrations)
-}
-
-/// Just-in-time fetch of every available action for a single Composio
-/// toolkit, returned in the [`ConnectedIntegrationTool`] shape the
-/// `integrations_agent` spawn path expects.
-///
-/// Unlike [`fetch_connected_integrations`] (which bulk-fetches every
-/// connected toolkit's tools once per session and caches the result),
-/// this helper is uncached and scoped to a single toolkit — meant to
-/// be called at `integrations_agent` spawn time so the sub-agent's
-/// prompt always reflects the toolkit's current action catalogue.
-///
-/// The filter `starts_with("{TOOLKIT}_")` matches
-/// `fetch_connected_integrations_uncached`'s own namespacing rule so
-/// siblings like `github` / `git` don't leak into each other's buckets.
-///
-/// Returns an empty vec when the backend has no actions for the
-/// toolkit (valid steady state for a freshly-authorised integration
-/// whose catalogue hasn't been published yet). Returns `Err` only for
-/// transport / auth failures the caller should surface to the user.
-pub async fn fetch_toolkit_actions(
-    client: &ComposioClient,
-    toolkit: &str,
-) -> anyhow::Result<Vec<ConnectedIntegrationTool>> {
-    let toolkit_slug = toolkit.trim();
-    if toolkit_slug.is_empty() {
-        anyhow::bail!("fetch_toolkit_actions: toolkit must not be empty");
-    }
-    tracing::debug!(toolkit = %toolkit_slug, "[composio] fetch_toolkit_actions");
-    let resp = client
-        .list_tools(Some(&[toolkit_slug.to_string()]))
-        .await
-        .map_err(|e| anyhow::anyhow!("list_tools failed for toolkit `{toolkit_slug}`: {e}"))?;
-    let action_prefix = format!("{}_", toolkit_slug.to_uppercase());
-    // Apply curated whitelist + user scope so spawn-time tool
-    // discovery agrees with the bulk path and the meta-tool layer.
-    let pref = super::providers::load_user_scope_or_default(toolkit_slug).await;
-    let actions: Vec<ConnectedIntegrationTool> = resp
-        .tools
-        .into_iter()
-        .filter(|t| t.function.name.starts_with(&action_prefix))
-        .filter(|t| super::providers::is_action_visible_with_pref(&t.function.name, &pref))
-        .map(|t| ConnectedIntegrationTool {
-            name: t.function.name,
-            description: t.function.description.unwrap_or_default(),
-            parameters: t.function.parameters,
-        })
-        .collect();
-    tracing::debug!(
-        toolkit = %toolkit_slug,
-        action_count = actions.len(),
-        "[composio] fetch_toolkit_actions: done"
-    );
-    Ok(actions)
-}
+#[cfg(test)]
+pub(crate) use super::connected_integrations::cache_key;
+use super::connected_integrations::sync_cache_with_connections;
+pub use super::connected_integrations::{
+    cached_active_integrations, connected_set_hash, fetch_connected_integrations,
+    fetch_connected_integrations_status, fetch_toolkit_actions,
+    invalidate_connected_integrations_cache, FetchConnectedIntegrationsStatus,
+};
+#[cfg(test)]
+pub(crate) use super::connected_integrations::{CachedIntegrations, CACHE_TTL, INTEGRATIONS_CACHE};
+#[cfg(test)]
+pub(crate) use crate::openhuman::context::prompt::ConnectedIntegration;
+#[cfg(test)]
+pub(crate) use std::time::{Duration, Instant};
 
 // ── Direct mode (BYO API key) ───────────────────────────────────────
 
@@ -1881,7 +1556,7 @@ pub async fn composio_clear_api_key(config: &Config) -> OpResult<RpcOutcome<serd
 }
 
 #[cfg(test)]
-#[path = "ops_test.rs"]
+#[path = "ops_tests.rs"]
 mod tests;
 
 // ── Helpers re-exported so callers can pull connection/tool types without

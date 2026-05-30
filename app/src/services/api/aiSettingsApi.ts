@@ -50,7 +50,6 @@ export type WorkloadId =
   | 'agentic'
   | 'coding'
   | 'memory'
-  | 'embeddings'
   | 'heartbeat'
   | 'learning'
   | 'subconscious';
@@ -58,7 +57,6 @@ export type WorkloadId =
 export const CHAT_WORKLOADS: WorkloadId[] = ['chat', 'reasoning', 'agentic', 'coding'];
 export const BACKGROUND_WORKLOADS: WorkloadId[] = [
   'memory',
-  'embeddings',
   'heartbeat',
   'learning',
   'subconscious',
@@ -73,6 +71,7 @@ export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WOR
  */
 export type ProviderRef =
   | { kind: 'openhuman' }
+  | { kind: 'default' }
   | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
   | { kind: 'local'; model: string; temperature?: number | null };
 
@@ -113,6 +112,12 @@ export interface ModelInfo {
   context_window?: number | null;
 }
 
+export interface ProviderModelTestResult {
+  reply: string;
+}
+
+const PROVIDER_MODEL_TEST_TIMEOUT_MS = 120_000;
+
 /** Single in-memory snapshot the AI panel renders against. */
 export interface AISettings {
   cloudProviders: CloudProviderView[];
@@ -133,7 +138,10 @@ export interface AISettings {
  */
 export function parseProviderString(s: string | null | undefined): ProviderRef {
   const trimmed = (s ?? '').trim();
-  if (!trimmed || trimmed === 'cloud' || trimmed === 'openhuman') {
+  if (!trimmed || trimmed === 'cloud') {
+    return { kind: 'default' };
+  }
+  if (trimmed === 'openhuman') {
     return { kind: 'openhuman' };
   }
   if (trimmed.startsWith('ollama:')) {
@@ -160,6 +168,8 @@ export function serializeProviderRef(ref: ProviderRef): string {
   switch (ref.kind) {
     case 'openhuman':
       return 'openhuman';
+    case 'default':
+      return 'cloud';
     case 'cloud':
       return `${ref.providerSlug}:${joinModelAndTemp(ref.model, ref.temperature)}`;
     case 'local':
@@ -211,15 +221,33 @@ export async function loadAISettings(): Promise<AISettings> {
     agentic: parseProviderString(config.agentic_provider),
     coding: parseProviderString(config.coding_provider),
     memory: parseProviderString(config.memory_provider),
-    embeddings: parseProviderString(config.embeddings_provider),
     heartbeat: parseProviderString(config.heartbeat_provider),
     learning: parseProviderString(config.learning_provider),
     subconscious: parseProviderString(config.subconscious_provider),
   };
 
+  // Diagnostic: detect partial BYOK routing — some workloads have a BYOK cloud
+  // provider configured while others are left at default/openhuman. The Rust
+  // factory inherits the BYOK provider for unset workloads, but this log makes
+  // it easy to trace the config state from the frontend side.
+  const byokProvider = (['chat', 'reasoning', 'agentic', 'coding'] as const).find(w => {
+    const ref_ = routing[w];
+    return ref_.kind === 'cloud';
+  });
+  const hasUnsetChatWorkloads = (['chat', 'reasoning', 'coding'] as const).some(w => {
+    const ref_ = routing[w];
+    return ref_.kind === 'default';
+  });
+  if (byokProvider !== undefined && hasUnsetChatWorkloads) {
+    const byokSlug = (routing[byokProvider] as { kind: 'cloud'; providerSlug: string })
+      .providerSlug;
+    console.debug(
+      '[ai-settings] partial BYOK routing detected — unset workloads will inherit from: ' + byokSlug
+    );
+  }
+
   return { cloudProviders, routing };
 }
-
 // ─── Write path: diff + save ───────────────────────────────────────────────
 
 /**
@@ -330,6 +358,27 @@ export async function listProviderModels(providerId: string): Promise<ModelInfo[
     params: { provider_id: providerId },
   });
   return res?.result?.models ?? [];
+}
+
+export async function testProviderModel(
+  workload: WorkloadId,
+  provider: string,
+  prompt = 'Hello world'
+): Promise<ProviderModelTestResult> {
+  if (!isTauri()) {
+    throw new Error('Model testing is only available in the desktop app.');
+  }
+  const res = await callCoreRpc<{ result: ProviderModelTestResult }>({
+    method: 'openhuman.inference_test_provider_model',
+    params: { workload, provider, prompt },
+    timeoutMs: PROVIDER_MODEL_TEST_TIMEOUT_MS,
+  });
+  if (!res?.result) {
+    throw new Error(
+      `Model test RPC returned no result for ${workload} via ${provider} (openhuman.inference_test_provider_model).`
+    );
+  }
+  return res.result;
 }
 
 // ─── Local provider façade (Ollama install / detect / model manage) ───────

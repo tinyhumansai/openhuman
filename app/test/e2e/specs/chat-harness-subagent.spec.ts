@@ -3,17 +3,17 @@
  *
  * The default chat agent after onboarding is the **orchestrator**
  * (`src/openhuman/channels/providers/web.rs::pick_target_agent_id`).
- * Its `subagents = [...]` list synthesises one `delegate_<id>` tool per
- * archetype at build time (see
+ * Its `subagents = [...]` list synthesises one delegated archetype tool
+ * per archetype at build time (see
  * `src/openhuman/tools/orchestrator_tools.rs`). When the LLM calls
- * `delegate_researcher` (or any other `delegate_*`), the tool dispatches
+ * `research` (or any other delegated archetype tool), the tool dispatches
  * to a sub-agent which runs the agent harness loop a level deeper —
  * which means the LLM gets hit at least once more for the sub-agent.
  *
  * What this spec scripts and verifies:
  *
  *   1. Configure `llmForcedResponses` with THREE responses in order:
- *        A) orchestrator turn — emits `delegate_researcher` tool_call
+ *        A) orchestrator turn — emits `research` tool_call
  *        B) researcher turn   — answers with a plain text finding
  *        C) orchestrator turn — final synthesis text (canary marker)
  *
@@ -42,6 +42,7 @@ import {
   getSelectedThreadId,
   hexEncodeThreadId,
   typeIntoComposer,
+  waitForSocketConnected,
 } from '../helpers/chat-harness';
 import { callOpenhumanRpc } from '../helpers/core-rpc';
 import { textExists } from '../helpers/element-helpers';
@@ -56,13 +57,13 @@ const RESEARCHER_REPLY = 'The researcher answer is 42.';
 
 // Three forced responses, popped in order by the mock LLM streamer.
 const FORCED_RESPONSES = [
-  // 1. Orchestrator: emit a delegate_researcher tool call.
+  // 1. Orchestrator: emit a research tool call.
   {
     content: '',
     toolCalls: [
       {
-        id: 'call_delegate_researcher_1',
-        name: 'delegate_researcher',
+        id: 'call_research_1',
+        name: 'research',
         arguments: JSON.stringify({ prompt: 'Tell me a marker phrase' }),
       },
     ],
@@ -137,6 +138,10 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     expect(typeof threadId).toBe('string');
 
     await typeIntoComposer(PROMPT);
+    const socketReady = await waitForSocketConnected(30_000);
+    if (!socketReady) {
+      console.warn('[chat-harness-subagent] socket did not connect within 30 s — send may fail');
+    }
     expect(
       await browser.waitUntil(async () => await clickSend(), {
         timeout: 5_000,
@@ -205,7 +210,10 @@ describe('Chat harness — orchestrator → subagent flow', () => {
     const relPath = `memory/conversations/threads/${hexEncodeThreadId(threadId as string)}.jsonl`;
 
     let content = '';
-    const deadline = Date.now() + 10_000;
+    // The orchestrator's final synthesis may take extra time to persist:
+    // the agent harness flushes the JSONL asynchronously after the stream
+    // completes. Allow up to 30s for disk write to land.
+    const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
       const read = await callOpenhumanRpc<{ result: { content_utf8: string } }>(
         'openhuman.test_support_read_workspace_file',
@@ -215,7 +223,7 @@ describe('Chat harness — orchestrator → subagent flow', () => {
         content = read.result.result.content_utf8;
         if (content.includes(CANARY_FINAL)) break;
       }
-      await browser.pause(300);
+      await browser.pause(500);
     }
     expect(content).toContain(CANARY_FINAL);
   });

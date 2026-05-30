@@ -1,0 +1,55 @@
+---
+name: Android Compile Sanity
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-compile:
+    name: Android Compile Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          # Mobile crate uses stock Tauri (no CEF) — no submodules needed.
+          submodules: false
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          targets: aarch64-linux-android
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app/src-tauri-mobile -> target
+            packages/tauri-plugin-ptt -> target
+          cache-on-failure: true
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile
+
+      # Hard gate: mobile Tauri host compiles for Android.
+      - name: cargo check -- mobile host (aarch64-linux-android)
+        run: bash scripts/ci-cancel-aware.sh cargo check --manifest-path app/src-tauri-mobile/Cargo.toml --target aarch64-linux-android

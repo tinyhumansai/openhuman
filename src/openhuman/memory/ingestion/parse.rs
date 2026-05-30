@@ -14,8 +14,8 @@ use super::types::{
     ExtractedEntity, ExtractedRelation, ExtractionAccumulator, ExtractionMode, ExtractionUnit,
     MemoryIngestionConfig, ParsedIngestion, RawEntity, RawRelation, DEFAULT_CHUNK_TOKENS,
 };
-use crate::openhuman::memory::store::types::NamespaceDocumentInput;
-use crate::openhuman::memory::UnifiedMemory;
+use crate::openhuman::memory_store::types::NamespaceDocumentInput;
+use crate::openhuman::memory_store::UnifiedMemory;
 
 // ── Chunking helpers ──────────────────────────────────────────────────────────
 
@@ -933,3 +933,7 @@ pub(super) async fn parse_document(
         decision_count: accumulator.decisions.len(),
     }
 }
+
+#[cfg(test)]
+#[path = "parse_tests.rs"]
+mod tests;

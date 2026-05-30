@@ -33,7 +33,8 @@ use crate::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, ConversationMessage, Provider, ToolCall,
     ToolResultMessage,
 };
-use crate::openhuman::memory::{self, Memory};
+use crate::openhuman::memory::Memory;
+use crate::openhuman::memory_store;
 use crate::openhuman::tools::{Tool, ToolResult};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -93,6 +94,7 @@ impl Provider for ScriptedProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             });
         }
         Ok(guard.remove(0))
@@ -247,7 +249,7 @@ fn make_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
         backend: "none".into(),
         ..MemoryConfig::default()
     };
-    let mem = Arc::from(memory::create_memory(&cfg, tmp.path()).unwrap());
+    let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
     (mem, tmp)
 }
 
@@ -257,7 +259,7 @@ fn make_sqlite_memory() -> (Arc<dyn Memory>, tempfile::TempDir) {
         backend: "sqlite".into(),
         ..MemoryConfig::default()
     };
-    let mem = Arc::from(memory::create_memory(&cfg, tmp.path()).unwrap());
+    let mem = Arc::from(memory_store::create_memory(&cfg, tmp.path()).unwrap());
     (mem, tmp)
 }
 
@@ -323,6 +325,7 @@ fn tool_response(calls: Vec<ToolCall>) -> ChatResponse {
         text: Some(String::new()),
         tool_calls: calls,
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -332,6 +335,7 @@ fn text_response(text: &str) -> ChatResponse {
         text: Some(text.into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -343,6 +347,7 @@ fn xml_tool_response(name: &str, args: &str) -> ChatResponse {
         )),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }
 }
 
@@ -436,12 +441,18 @@ async fn turn_handles_multi_step_tool_chain() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 4. Max-iteration bailout
+// 4. Max-iteration checkpoint (resumable, not a hard bailout)
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn turn_bails_out_at_max_iterations() {
-    // Create more tool calls than max_tool_iterations allows.
+async fn turn_emits_checkpoint_at_max_iterations() {
+    // Create more tool calls than max_tool_iterations allows. Hitting the
+    // cap must NOT error anymore: the harness emits a resumable checkpoint
+    // and returns it Ok, so the transcript ends on a well-formed assistant
+    // message instead of a dangling tool cycle that wedges the next turn
+    // (bug-report-2026-05-26 A1). Every scripted response here is a tool
+    // call, so the checkpoint summary call also yields no prose and the
+    // deterministic fallback summary is used.
     let max_iters = 3;
     let mut responses = Vec::new();
     for i in 0..max_iters + 5 {
@@ -461,12 +472,24 @@ async fn turn_bails_out_at_max_iterations() {
 
     let (mut agent, _tmp) = build_agent_with_config(provider, vec![Box::new(EchoTool)], config);
 
-    let result = agent.turn("infinite loop").await;
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
+    let reply = agent
+        .turn("infinite loop")
+        .await
+        .expect("hitting the iteration cap should return a checkpoint, not error");
     assert!(
-        err.contains("maximum tool iterations"),
-        "Expected max iterations error, got: {err}"
+        reply.contains("tool-call limit") && reply.contains("Next steps"),
+        "Expected a resumable checkpoint summary, got: {reply}"
+    );
+    // The transcript ends on the assistant checkpoint (well-formed), which
+    // is what lets the user's next message resume the task cleanly.
+    assert!(
+        matches!(
+            agent.history().last(),
+            Some(ConversationMessage::Chat(msg))
+                if msg.role == "assistant" && msg.content.contains("Next steps")
+        ),
+        "history should end on the assistant checkpoint, got: {:?}",
+        agent.history().last()
     );
 }
 
@@ -713,32 +736,49 @@ async fn xml_dispatcher_does_not_send_tool_specs() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[tokio::test]
-async fn turn_handles_empty_text_response() {
+async fn turn_errors_on_empty_text_response() {
+    // A completion with no text *and* no tool calls is never a valid final
+    // answer. The old behaviour returned `Ok("")`, which rendered as a blank
+    // reply and silently wedged the thread; now it surfaces as a visible
+    // error the user can retry on (bug-report-2026-05-26 A1).
     let provider = Box::new(ScriptedProvider::new(vec![ChatResponse {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }]));
 
     let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
-    let response = agent.turn("hi").await.unwrap();
-    assert!(response.is_empty());
+    let err = agent
+        .turn("hi")
+        .await
+        .expect_err("an empty provider response should surface as an error");
+    assert!(
+        err.to_string().contains("empty response"),
+        "expected an empty-response error, got: {err}"
+    );
 }
 
 #[tokio::test]
-async fn turn_handles_none_text_response() {
+async fn turn_errors_on_none_text_response() {
     let provider = Box::new(ScriptedProvider::new(vec![ChatResponse {
         text: None,
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     }]));
 
     let (mut agent, _tmp) = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
-    // Should not panic — falls back to empty string
-    let response = agent.turn("hi").await.unwrap();
-    assert!(response.is_empty());
+    let err = agent
+        .turn("hi")
+        .await
+        .expect_err("a null-text provider response should surface as an error");
+    assert!(
+        err.to_string().contains("empty response"),
+        "expected an empty-response error, got: {err}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -756,6 +796,7 @@ async fn turn_preserves_text_alongside_tool_calls() {
                 arguments: r#"{"message": "hi"}"#.into(),
             }],
             usage: None,
+            reasoning_content: None,
         },
         text_response("Here are the results"),
     ]));
@@ -837,6 +878,7 @@ async fn e2e_native_loop_executes_text_fallback_tool_calls_and_persists_history(
             ),
             tool_calls: vec![],
             usage: None,
+            reasoning_content: None,
         },
         text_response("Completed via tool"),
     ]));
@@ -1047,6 +1089,7 @@ async fn native_dispatcher_handles_stringified_arguments() {
             arguments: r#"{"message": "hello"}"#.into(),
         }],
         usage: None,
+        reasoning_content: None,
     };
 
     let (_, calls) = dispatcher.parse_response(&response);
@@ -1073,6 +1116,7 @@ fn xml_dispatcher_handles_nested_json() {
         ),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
 
     let dispatcher = XmlToolDispatcher;
@@ -1091,6 +1135,7 @@ fn xml_dispatcher_handles_empty_tool_call_tag() {
         text: Some("<tool_call>\n</tool_call>\nSome text".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
 
     let dispatcher = XmlToolDispatcher;
@@ -1105,6 +1150,7 @@ fn xml_dispatcher_handles_unclosed_tool_call() {
         text: Some("Before\n<tool_call>\n{\"name\": \"shell\"}".into()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
 
     let dispatcher = XmlToolDispatcher;
@@ -1131,6 +1177,7 @@ fn conversation_message_serialization_roundtrip() {
                 name: "shell".into(),
                 arguments: "{}".into(),
             }],
+            reasoning_content: Some("thinking".into()),
         },
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "tc1".into(),
@@ -1153,14 +1200,17 @@ fn conversation_message_serialization_roundtrip() {
                 ConversationMessage::AssistantToolCalls {
                     text: a_text,
                     tool_calls: a_calls,
+                    reasoning_content: a_reasoning,
                 },
                 ConversationMessage::AssistantToolCalls {
                     text: b_text,
                     tool_calls: b_calls,
+                    reasoning_content: b_reasoning,
                 },
             ) => {
                 assert_eq!(a_text, b_text);
                 assert_eq!(a_calls.len(), b_calls.len());
+                assert_eq!(a_reasoning, b_reasoning);
             }
             (ConversationMessage::ToolResults(a), ConversationMessage::ToolResults(b)) => {
                 assert_eq!(a.len(), b.len());
@@ -1253,6 +1303,7 @@ fn xml_dispatcher_converts_history_to_provider_messages() {
                 name: "shell".into(),
                 arguments: "{}".into(),
             }],
+            reasoning_content: None,
         },
         ConversationMessage::ToolResults(vec![ToolResultMessage {
             tool_call_id: "tc1".into(),
@@ -1271,22 +1322,68 @@ fn xml_dispatcher_converts_history_to_provider_messages() {
 
 #[test]
 fn native_dispatcher_converts_tool_results_to_tool_messages() {
+    // TAURI-RUST-7: `to_provider_messages` now drops orphan `ToolResults`
+    // that aren't preceded by an emitted `AssistantToolCalls`, since the
+    // OpenAI chat-completions contract rejects a `tool` message that does
+    // not follow a `tool_calls` opener. Feed a properly paired cycle so
+    // this test continues to verify the serialisation shape of ToolResults
+    // (one `tool` ChatMessage per result) rather than the orphan path.
     let dispatcher = NativeToolDispatcher;
-    let history = vec![ConversationMessage::ToolResults(vec![
-        ToolResultMessage {
-            tool_call_id: "tc1".into(),
-            content: "output1".into(),
+    let history = vec![
+        ConversationMessage::AssistantToolCalls {
+            text: None,
+            tool_calls: vec![
+                ToolCall {
+                    id: "tc1".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+                ToolCall {
+                    id: "tc2".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                },
+            ],
+            reasoning_content: None,
         },
-        ToolResultMessage {
-            tool_call_id: "tc2".into(),
-            content: "output2".into(),
-        },
-    ])];
+        ConversationMessage::ToolResults(vec![
+            ToolResultMessage {
+                tool_call_id: "tc1".into(),
+                content: "output1".into(),
+            },
+            ToolResultMessage {
+                tool_call_id: "tc2".into(),
+                content: "output2".into(),
+            },
+        ]),
+    ];
 
     let messages = dispatcher.to_provider_messages(&history);
-    assert_eq!(messages.len(), 2);
-    assert_eq!(messages[0].role, "tool");
+    // assistant tool_calls opener + one `tool` message per tool_call_id.
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0].role, "assistant");
     assert_eq!(messages[1].role, "tool");
+    assert_eq!(messages[2].role, "tool");
+}
+
+#[test]
+fn native_dispatcher_drops_standalone_orphan_tool_results() {
+    // TAURI-RUST-7 regression: a `ToolResults` without a preceding
+    // `AssistantToolCalls` is an invalid wire shape (the provider rejects
+    // a `tool` message that doesn't follow a `tool_calls` opener). The
+    // dispatcher must drop it before serialising.
+    let dispatcher = NativeToolDispatcher;
+    let history = vec![ConversationMessage::ToolResults(vec![ToolResultMessage {
+        tool_call_id: "tc-orphan".into(),
+        content: "stranded".into(),
+    }])];
+
+    let messages = dispatcher.to_provider_messages(&history);
+    assert!(
+        messages.is_empty(),
+        "standalone ToolResults must be dropped, got {} message(s)",
+        messages.len()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

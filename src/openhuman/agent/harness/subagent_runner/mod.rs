@@ -30,6 +30,7 @@
 //! | `extract_tool.rs` | `extract_from_result` tool (direct provider extraction)     |
 //! | `tool_prep.rs`    | Tool filtering + prompt loading + text-mode protocol block  |
 
+mod autonomous;
 mod extract_tool;
 mod handoff;
 mod ops;
@@ -37,13 +38,13 @@ mod tool_prep;
 mod types;
 
 // Public API — the entry point and the shapes it returns.
+pub use autonomous::{autonomous_iter_cap, with_autonomous_iter_cap};
 pub use ops::run_subagent;
 pub use types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
 
 // Crate-internal re-exports: `agent::debug` calls the text-mode protocol
-// renderer, and `session::builder` reuses the welcome-only guard. The
-// other `tool_prep` helpers are used only inside this module.
-pub(crate) use tool_prep::{build_text_mode_tool_instructions, is_welcome_only_tool};
+// renderer. The other `tool_prep` helpers are used only inside this module.
+pub(crate) use tool_prep::build_text_mode_tool_instructions;
 
 // `user_is_signed_in_to_composio` is the mode-aware "can the user call
 // composio at all?" probe added in Wave 2 (#1710). Re-exported here so

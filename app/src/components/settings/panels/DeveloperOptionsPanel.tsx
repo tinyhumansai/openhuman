@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
@@ -6,7 +5,11 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { triggerSentryTestEvent } from '../../../services/analytics';
 import { useAppSelector } from '../../../store/hooks';
 import { APP_ENVIRONMENT } from '../../../utils/config';
-import { isTauri } from '../../../utils/tauriCommands/common';
+// `safeInvoke` (aliased to `invoke`) converts the CEF
+// `window.ipc.postMessage` synchronous throw — Sentry TAURI-REACT-7 /
+// TAURI-REACT-6 — into a rejected Promise so the existing `.catch(...)` /
+// try/catch handlers see it as a normal IPC failure.
+import { safeInvoke as invoke, isTauri } from '../../../utils/tauriCommands/common';
 import { resetWalkthrough } from '../../walkthrough/AppWalkthrough';
 import SettingsHeader from '../components/SettingsHeader';
 import SettingsMenuItem from '../components/SettingsMenuItem';
@@ -50,22 +53,6 @@ const developerItems = [
     ),
   },
   {
-    id: 'messaging',
-    titleKey: 'settings.developerMenu.messagingChannels.title',
-    descriptionKey: 'settings.developerMenu.messagingChannels.desc',
-    route: 'messaging',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M8 10h.01M12 10h.01M16 10h.01M21 11c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 19l1.395-3.72C3.512 14.042 3 12.574 3 11c0-4.418 4.03-8 9-8s9 3.582 9 8z"
-        />
-      </svg>
-    ),
-  },
-  {
     id: 'tools',
     titleKey: 'settings.developerMenu.tools.title',
     descriptionKey: 'settings.developerMenu.tools.desc',
@@ -87,18 +74,40 @@ const developerItems = [
       </svg>
     ),
   },
+  // Settings → Developer → Skills Runner is commented out: the same UX
+  // (and more) now lives at /skills (Connections → Runners sub-tab) as
+  // the scheduled-skills dashboard, with /skills/run for ad-hoc runs.
+  // The route + panel component remain wired (Settings.tsx:458 keeps the
+  // /settings/skills-runner route), so deep links and bookmarks still
+  // resolve — only the menu entry is hidden.
+  // {
+  //   id: 'skills-runner',
+  //   titleKey: 'settings.developerMenu.skillsRunner.title',
+  //   descriptionKey: 'settings.developerMenu.skillsRunner.desc',
+  //   route: 'skills-runner',
+  //   icon: (
+  //     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+  //       <path
+  //         strokeLinecap="round"
+  //         strokeLinejoin="round"
+  //         strokeWidth={2}
+  //         d="M13 10V3L4 14h7v7l9-11h-7z"
+  //       />
+  //     </svg>
+  //   ),
+  // },
   {
-    id: 'agent-chat',
-    titleKey: 'settings.developerMenu.agentChat.title',
-    descriptionKey: 'settings.developerMenu.agentChat.desc',
-    route: 'agent-chat',
+    id: 'dev-workflow',
+    titleKey: 'settings.developerMenu.devWorkflow.title',
+    descriptionKey: 'settings.developerMenu.devWorkflow.desc',
+    route: 'dev-workflow',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth={2}
-          d="M8 10h.01M12 10h.01M16 10h.01M21 11c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 19l1.395-3.72C3.512 14.042 3 12.574 3 11c0-4.418 4.03-8 9-8s9 3.582 9 8z"
+          d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"
         />
       </svg>
     ),
@@ -120,17 +129,17 @@ const developerItems = [
     ),
   },
   {
-    id: 'local-model-debug',
-    titleKey: 'settings.developerMenu.localModelDebug.title',
-    descriptionKey: 'settings.developerMenu.localModelDebug.desc',
-    route: 'local-model-debug',
+    id: 'search',
+    titleKey: 'settings.search.title',
+    descriptionKey: 'settings.search.menuDesc',
+    route: 'search',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth={2}
-          d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"
+          d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z"
         />
       </svg>
     ),
@@ -152,6 +161,38 @@ const developerItems = [
     ),
   },
   {
+    id: 'event-log',
+    titleKey: 'settings.developerMenu.eventLog.title',
+    descriptionKey: 'settings.developerMenu.eventLog.desc',
+    route: 'event-log',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M4 6h16M4 10h16M4 14h16M4 18h16"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'tool-policy-diagnostics',
+    titleKey: 'devOptions.diagnostics',
+    descriptionKey: 'devOptions.toolPolicyDiagnosticsDesc',
+    route: 'tool-policy-diagnostics',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M9 17v-5a2 2 0 012-2h2a2 2 0 012 2v5m-8 0h8m-8 0H7a2 2 0 01-2-2V7a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2h-2"
+        />
+      </svg>
+    ),
+  },
+  {
     id: 'intelligence',
     titleKey: 'settings.developerMenu.intelligence.title',
     descriptionKey: 'settings.developerMenu.intelligence.desc',
@@ -167,43 +208,14 @@ const developerItems = [
       </svg>
     ),
   },
+  // `notification-routing` moved into the main Settings → Notifications page
+  // as a tab. The old `/settings/notification-routing` path now redirects to
+  // `/settings/notifications#routing`, so deep links continue to work.
   {
-    id: 'notification-routing',
-    titleKey: 'settings.developerMenu.notificationRouting.title',
-    descriptionKey: 'settings.developerMenu.notificationRouting.desc',
-    route: 'notification-routing',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: 'webhooks-triggers',
-    titleKey: 'settings.developerMenu.composeioTriggers.title',
-    descriptionKey: 'settings.developerMenu.composeioTriggers.desc',
-    route: 'webhooks-triggers',
-    icon: (
-      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          strokeWidth={2}
-          d="M13.828 10.172a4 4 0 010 5.656l-2 2a4 4 0 01-5.656-5.656l1-1m5-5a4 4 0 015.656 5.656l-1 1m-5 5l5-5"
-        />
-      </svg>
-    ),
-  },
-  {
-    id: 'composio-routing',
-    titleKey: 'settings.developerMenu.composioRouting.title',
-    descriptionKey: 'settings.developerMenu.composioRouting.desc',
-    route: 'composio-routing',
+    id: 'composio',
+    titleKey: 'settings.developerMenu.composio.title',
+    descriptionKey: 'settings.developerMenu.composio.desc',
+    route: 'composio',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
@@ -216,23 +228,33 @@ const developerItems = [
     ),
   },
   {
-    id: 'composio-triggers',
-    titleKey: 'settings.developerMenu.integrationTriggers.title',
-    descriptionKey: 'settings.developerMenu.integrationTriggers.desc',
-    route: 'composio-triggers',
+    id: 'mcp-server',
+    titleKey: 'settings.developerMenu.mcpServer.title',
+    descriptionKey: 'settings.developerMenu.mcpServer.desc',
+    route: 'mcp-server',
     icon: (
       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth={2}
-          d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+          d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
         />
+      </svg>
+    ),
+  },
+  {
+    id: 'model-health',
+    titleKey: 'settings.modelHealth.title',
+    descriptionKey: 'settings.modelHealth.desc',
+    route: 'model-health',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth={2}
-          d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+          d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
         />
       </svg>
     ),
@@ -349,7 +371,7 @@ const SentryTestRow = () => {
             {status.eventId ? (
               <span className="font-mono">id: {status.eventId}</span>
             ) : (
-              <span>(no id — Sentry disabled in this build)</span>
+              <span>{t('devOptions.sentryDisabled')}</span>
             )}
           </span>
         )}
@@ -486,6 +508,7 @@ const DeveloperOptionsPanel = () => {
             title={t(item.titleKey)}
             description={t(item.descriptionKey)}
             onClick={() => navigateToSettings(item.route)}
+            testId={`settings-nav-${item.id}`}
             isFirst={index === 0}
             isLast={false}
           />
@@ -497,6 +520,7 @@ const DeveloperOptionsPanel = () => {
             title={item.title}
             description={item.description}
             onClick={item.onClick}
+            testId={`settings-nav-${item.id}`}
             isFirst={false}
             isLast={index === trailingItems.length - 1}
           />

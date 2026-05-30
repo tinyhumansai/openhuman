@@ -7,7 +7,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     build_http_schema_dump, default_state, escape_html, invoke_method, is_param_validation_error,
-    is_session_expired_error, params_to_object, parse_json_params, rpc_handler, type_name,
+    is_session_expired_error, is_unconfirmed_unauthorized_error, params_to_object,
+    parse_json_params, rpc_handler, type_name,
 };
 
 struct EnvVarGuard {
@@ -274,6 +275,18 @@ async fn invoke_migrate_openclaw_rejects_unknown_param() {
     let err = invoke_method(
         default_state(),
         "openhuman.migrate_openclaw",
+        json!({ "x": 1 }),
+    )
+    .await
+    .expect_err("unknown param should fail");
+    assert!(err.contains("unknown param 'x'"));
+}
+
+#[tokio::test]
+async fn invoke_migrate_hermes_rejects_unknown_param() {
+    let err = invoke_method(
+        default_state(),
+        "openhuman.migrate_hermes",
         json!({ "x": 1 }),
     )
     .await
@@ -564,26 +577,135 @@ fn parse_json_params_reports_error_message() {
 }
 
 #[test]
-fn is_session_expired_error_matches_401_unauthorized() {
+fn is_session_expired_error_matches_backend_path_401() {
+    // Issue #2286: only OpenHuman backend path 401s (HTTP-method prefix) should
+    // match, not generic 401/Unauthorized strings.
     assert!(is_session_expired_error(
-        "backend returned 401 Unauthorized"
+        "GET /teams failed (401 Unauthorized): {\"success\":false}"
     ));
-    assert!(is_session_expired_error("401 UNAUTHORIZED"));
-    assert!(is_session_expired_error("got 401 and unauthorized body"));
+    assert!(is_session_expired_error(
+        "POST /auth/token failed (401 Unauthorized): session expired"
+    ));
+    assert!(is_session_expired_error(
+        "DELETE /sessions/abc failed (401 Unauthorized): unauthorized"
+    ));
 }
 
 #[test]
-fn is_session_expired_error_requires_both_401_and_unauthorized() {
+fn is_session_expired_error_does_not_match_generic_401_unauthorized() {
+    // Generic 401+unauthorized strings without HTTP-method prefix must NOT match.
+    assert!(!is_session_expired_error(
+        "backend returned 401 Unauthorized"
+    ));
+    assert!(!is_session_expired_error("401 UNAUTHORIZED"));
+    assert!(!is_session_expired_error("got 401 and unauthorized body"));
+}
+
+#[test]
+fn unconfirmed_unauthorized_error_matches_generic_401_for_diagnostics_only() {
+    // Generic 401+unauthorized text feeds the diagnostic-only branch — never
+    // SessionExpired publication.
+    assert!(is_unconfirmed_unauthorized_error(
+        "backend returned 401 Unauthorized"
+    ));
+    assert!(is_unconfirmed_unauthorized_error("401 UNAUTHORIZED"));
+    assert!(is_unconfirmed_unauthorized_error(
+        "got 401 and unauthorized body"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_partial_auth_text() {
     // 401 alone is not sufficient — could be HTTP/3.01 nonsense or
-    // unrelated text. We require the string "unauthorized" too.
+    // unrelated text. We require the string "unauthorized" too, plus an
+    // HTTP-method prefix for the 401 path.
     assert!(!is_session_expired_error("server returned 401"));
     assert!(!is_session_expired_error("unauthorized without code"));
 }
 
 #[test]
-fn is_session_expired_error_matches_invalid_token_case_insensitive() {
-    assert!(is_session_expired_error("Invalid Token"));
-    assert!(is_session_expired_error("got an invalid token here"));
+fn is_session_expired_error_matches_openhuman_backend_path_401() {
+    // OpenHuman backend calls via authed_json use the format:
+    // "{METHOD} /path failed (401 Unauthorized): {body}"
+    assert!(is_session_expired_error(
+        "GET /teams failed (401 Unauthorized): {\"success\":false}"
+    ));
+    assert!(is_session_expired_error(
+        "POST /auth/token failed (401 Unauthorized): session expired"
+    ));
+    assert!(is_session_expired_error(
+        "GET /teams/me/usage failed (401 Unauthorized): unauthorized"
+    ));
+    assert!(is_session_expired_error(
+        "PUT /profile failed (401 Unauthorized): token expired"
+    ));
+    assert!(is_session_expired_error(
+        "PATCH /settings failed (401 Unauthorized): unauthorized"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_discord_api_error() {
+    // Issue #2286: Discord bot token 401 must not clear the user session.
+    assert!(!is_session_expired_error(
+        "Discord API error: Discord list guilds failed (401): Unauthorized"
+    ));
+    assert!(!is_session_expired_error(
+        "Discord API error: Discord get bot user failed (401): bad token"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_byo_key_provider_401() {
+    // BYO-key provider 401 should not clear the user session.
+    assert!(!is_session_expired_error(
+        "OpenAI API error (401 Unauthorized): invalid api key"
+    ));
+    assert!(!is_session_expired_error(
+        "Anthropic API error (401 Unauthorized): authentication error"
+    ));
+    assert!(!is_session_expired_error(
+        "Composio v3 API error: HTTP 401: Unauthorized"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_backend_wrapped_composio_invalid_api_key() {
+    // Issue #2537: the backend can return a 500 whose body wraps a Composio
+    // upstream 401. That is a scoped integration/service failure, not proof
+    // that the user's OpenHuman app session expired.
+    let msg = r#"[composio] list_connections failed: Backend returned 500 Internal Server Error for GET https://api.tinyhumans.ai/agent-integrations/composio/connections: 401 {"error":{"message":"Invalid API key: ak_o1Og5*****","code":10401,"slug":"HTTP_Unauthorized","status":401}}"#;
+
+    assert!(
+        !is_session_expired_error(msg),
+        "Composio upstream 401 wrapped by the backend must not publish SessionExpired"
+    );
+    assert!(
+        is_unconfirmed_unauthorized_error(msg),
+        "auth-looking upstream failures should still be logged diagnostically"
+    );
+}
+
+#[test]
+fn is_session_expired_error_does_not_match_invalid_token_case_insensitive() {
+    // "invalid token" is no longer a session-expiry trigger (issue #2286):
+    // it was too broad and caught Discord/OAuth provider token errors. It is
+    // still surfaced via the diagnostic-only `is_unconfirmed_unauthorized_error`.
+    assert!(!is_session_expired_error("Invalid Token"));
+    assert!(!is_session_expired_error("got an invalid token here"));
+    assert!(is_unconfirmed_unauthorized_error("Invalid Token"));
+    assert!(is_unconfirmed_unauthorized_error(
+        "got an invalid token here"
+    ));
+}
+
+#[test]
+fn is_session_expired_error_matches_openhuman_session_expired_body() {
+    // Even without an HTTP-method prefix, an explicit "Session expired" body
+    // text triggers session expiry via the shared observability classifier.
+    assert!(is_session_expired_error(
+        r#"OpenHuman API error (401 Unauthorized): {"success":false,"error":"Session expired. Please log in again."}"#
+    ));
 }
 
 #[test]
@@ -598,6 +720,36 @@ fn is_session_expired_error_does_not_match_unrelated_errors() {
     assert!(!is_session_expired_error("network timeout"));
     assert!(!is_session_expired_error("500 internal server error"));
     assert!(!is_session_expired_error(""));
+}
+
+#[test]
+fn is_session_expired_error_skips_discord_rewrap_for_2285() {
+    // Cross-module regression guard for #2285: the Discord domain
+    // controller intentionally formats its upstream-auth failures so
+    // they do NOT match this dispatch-time classifier. If anyone
+    // changes the wording on either side back into a string that
+    // contains both "401" and "unauthorized", a connected-Discord
+    // card click would once again log the user out of OpenHuman.
+    //
+    // We pin the exact substrings the Discord rewrap was designed
+    // to avoid, plus the canonical post-rewrap message body, so
+    // either-side drift fails loudly.
+    let canonical_rewrap = "Discord API error: Discord list_guilds: bot token was rejected \
+         (upstream HTTP four-oh-one). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(
+        !is_session_expired_error(canonical_rewrap),
+        "Discord rewrap must NOT trip the session-expired classifier: {canonical_rewrap}"
+    );
+    // Defensive: also pin the 403 variant. Same rewrap path, same
+    // requirement — neither '403' nor 'forbidden' is part of the
+    // session classifier today, but locking the message in keeps a
+    // future regression visible.
+    let canonical_rewrap_403 =
+        "Discord API error: Discord list_channels: bot token lacks required Discord permissions \
+         (upstream HTTP four-oh-three). Open Settings → Channels → Discord \
+         and rotate / reconnect the bot token.";
+    assert!(!is_session_expired_error(canonical_rewrap_403));
 }
 
 #[test]
@@ -840,6 +992,98 @@ fn escape_html_is_noop_for_safe_text() {
     assert_eq!(escape_html(""), "");
 }
 
+// --- telegram callback fetch-metadata gate --------------------------------
+
+fn hdr_map(pairs: &[(&str, &str)]) -> axum::http::HeaderMap {
+    let mut m = axum::http::HeaderMap::new();
+    for (k, v) in pairs {
+        m.insert(
+            axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+            axum::http::HeaderValue::from_str(v).unwrap(),
+        );
+    }
+    m
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_no_metadata_headers() {
+    // Older browsers and CLI clients (curl) send neither Sec-Fetch-* nor
+    // Origin/Referer. The legacy flow has to keep working — reject only
+    // when there is evidence of a cross-site embedded context.
+    let headers = hdr_map(&[]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_legit_top_nav_from_telegram() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "cross-site"),
+        ("referer", "https://t.me/some_bot"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_accepts_same_origin_local_nav() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "same-origin"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_ok());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_image_embed() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "no-cors"),
+        ("sec-fetch-dest", "image"),
+        ("sec-fetch-site", "cross-site"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_iframe_embed() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "iframe"),
+        ("sec-fetch-site", "cross-site"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_cross_site_from_non_telegram() {
+    let headers = hdr_map(&[
+        ("sec-fetch-mode", "navigate"),
+        ("sec-fetch-dest", "document"),
+        ("sec-fetch-site", "cross-site"),
+        ("referer", "https://attacker.example/page"),
+    ]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_non_telegram_referer_without_fetch_metadata() {
+    let headers = hdr_map(&[("referer", "https://attacker.example/post")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
+#[test]
+fn telegram_callback_origin_ok_rejects_localhost_host_prefix_decoy() {
+    // Regression: prefix-matching the referer accepted hostnames like
+    // `http://localhost.attacker.example/...`. With exact-host parsing
+    // these must be rejected even when no fetch-metadata headers are
+    // present.
+    let headers = hdr_map(&[("referer", "http://localhost.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+    let headers = hdr_map(&[("referer", "http://127.0.0.1.attacker.example/cb")]);
+    assert!(super::telegram_callback_origin_ok(&headers).is_err());
+}
+
 // --- invoke_method parameter-shape errors ---------------------------------
 
 #[tokio::test]
@@ -907,4 +1151,99 @@ async fn invoke_method_core_version_via_tier1_reflects_state() {
         .await
         .expect("core.version should succeed");
     assert_eq!(result, json!({ "version": "0.0.1-abc" }));
+}
+
+#[tokio::test]
+async fn test_http_health_handler_returns_correct_status() {
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    // Call the handler once and derive both the status and expected status from
+    // the same response — avoids a TOCTOU race where a separate snapshot()
+    // call before/after the handler could observe different component state.
+    let resp = super::health_handler().await.into_response();
+    let status = resp.status();
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("failed to read body");
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&body).expect("failed to deserialize health snapshot");
+
+    let components = snapshot["components"]
+        .as_object()
+        .expect("components should be an object");
+
+    // Derive the expected HTTP status solely from the response body so the
+    // test asserts internal consistency of the handler rather than racing on
+    // live component state.
+    let body_says_ok = components.values().all(|c| {
+        let s = c["status"].as_str().unwrap_or("");
+        s == "ok" || s == "starting"
+    });
+    let expected_status = if body_says_ok {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    assert_eq!(status, expected_status);
+}
+
+#[tokio::test]
+async fn desktop_auth_rejects_deprecated_direct_session_token_marker() {
+    use axum::body::to_bytes;
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, StatusCode};
+    use axum::response::IntoResponse;
+
+    let resp = super::desktop_auth_handler(
+        HeaderMap::new(),
+        Query(super::DesktopAuthQuery {
+            token: Some("eyJ.attacker.session.jwt".to_string()),
+            key: Some(" auth ".to_string()),
+        }),
+    )
+    .await
+    .into_response();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let body = String::from_utf8(body.to_vec()).expect("html body should be utf8");
+    assert!(body.contains("no longer supported"));
+    assert!(!body.contains("Sign-in completed"));
+}
+
+#[tokio::test]
+async fn desktop_auth_rejects_embedded_fetch_metadata() {
+    use axum::body::to_bytes;
+    use axum::extract::Query;
+    use axum::http::{HeaderMap, HeaderValue, StatusCode};
+    use axum::response::IntoResponse;
+
+    let mut headers = HeaderMap::new();
+    headers.insert("sec-fetch-mode", HeaderValue::from_static("no-cors"));
+    headers.insert("sec-fetch-dest", HeaderValue::from_static("image"));
+
+    let resp = super::desktop_auth_handler(
+        headers,
+        Query(super::DesktopAuthQuery {
+            token: Some("one-time-login-token".to_string()),
+            key: None,
+        }),
+    )
+    .await
+    .into_response();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let body = to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("response body");
+    let body = String::from_utf8(body.to_vec()).expect("html body should be utf8");
+    assert!(body.contains("must be opened as a browser page"));
 }

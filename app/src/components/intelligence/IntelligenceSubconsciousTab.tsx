@@ -19,6 +19,47 @@ function isSkillRelated(title: string, description: string): boolean {
   return SKILL_KEYWORDS.test(title) || SKILL_KEYWORDS.test(description);
 }
 
+function formatInterval(minutes: number, t: (key: string) => string): string {
+  switch (minutes) {
+    case 5:
+      return t('subconscious.interval.fiveMinutes');
+    case 10:
+      return t('subconscious.interval.tenMinutes');
+    case 15:
+      return t('subconscious.interval.fifteenMinutes');
+    case 30:
+      return t('subconscious.interval.thirtyMinutes');
+    case 60:
+      return t('subconscious.interval.oneHour');
+    case 360:
+      return t('subconscious.interval.sixHours');
+    case 720:
+      return t('subconscious.interval.twelveHours');
+    case 1440:
+      return t('subconscious.interval.oneDay');
+    default:
+      return String(minutes);
+  }
+}
+
+function formatPriority(priority: string, t: (key: string) => string): string {
+  switch (priority) {
+    case 'critical':
+      return t('subconscious.priority.critical');
+    case 'important':
+      return t('subconscious.priority.important');
+    default:
+      return t('subconscious.priority.normal');
+  }
+}
+
+function formatDuration(durationMs: number, t: (key: string) => string): string {
+  if (durationMs > 1000) {
+    return t('subconscious.durationSeconds').replace('{seconds}', (durationMs / 1000).toFixed(1));
+  }
+  return t('subconscious.durationMilliseconds').replace('{milliseconds}', String(durationMs));
+}
+
 interface IntelligenceSubconsciousTabProps {
   addSubconsciousTask: (title: string) => Promise<void>;
   approveEscalation: (escalationId: string) => Promise<void>;
@@ -59,6 +100,10 @@ export default function IntelligenceSubconsciousTab({
   const { t } = useT();
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const providerUnavailable = status?.provider_available === false;
+  const providerUnavailableReason = providerUnavailable
+    ? (status?.provider_unavailable_reason ?? t('subconscious.providerUnavailableTitle'))
+    : null;
 
   // Reflection "Act" callback — sets the freshly-spawned thread as the
   // selected one and navigates the user to the chat surface so they
@@ -227,19 +272,20 @@ export default function IntelligenceSubconsciousTab({
               disabled
               title={t('subconscious.tickInterval')}
               className="text-xs bg-stone-50 dark:bg-neutral-800/60 border border-stone-200 dark:border-neutral-800 rounded px-1.5 py-0.5 text-stone-500 dark:text-neutral-400 cursor-not-allowed">
-              <option value={5}>5 min</option>
-              <option value={10}>10 min</option>
-              <option value={15}>15 min</option>
-              <option value={30}>30 min</option>
-              <option value={60}>1 hour</option>
-              <option value={360}>6 hours</option>
-              <option value={720}>12 hours</option>
-              <option value={1440}>1 day</option>
+              <option value={5}>{formatInterval(5, t)}</option>
+              <option value={10}>{formatInterval(10, t)}</option>
+              <option value={15}>{formatInterval(15, t)}</option>
+              <option value={30}>{formatInterval(30, t)}</option>
+              <option value={60}>{formatInterval(60, t)}</option>
+              <option value={360}>{formatInterval(360, t)}</option>
+              <option value={720}>{formatInterval(720, t)}</option>
+              <option value={1440}>{formatInterval(1440, t)}</option>
             </select>
           </div>
           <button
             onClick={() => void handleRunTick()}
-            disabled={triggering}
+            disabled={triggering || providerUnavailable}
+            title={providerUnavailable ? t('subconscious.providerUnavailableTitle') : undefined}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 disabled:opacity-40 border border-stone-200 dark:border-neutral-800 rounded-lg text-stone-600 dark:text-neutral-300 transition-colors">
             {triggering ? (
               <div className="w-3 h-3 border border-stone-400 border-t-transparent rounded-full animate-spin" />
@@ -257,6 +303,27 @@ export default function IntelligenceSubconsciousTab({
           </button>
         </div>
       </div>
+
+      {providerUnavailable && (
+        <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                {t('subconscious.providerUnavailableTitle')}
+              </p>
+              <p className="mt-1 text-xs text-amber-700 dark:text-amber-300 break-words">
+                {providerUnavailableReason}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/settings/llm')}
+              className="flex-shrink-0 rounded-md bg-amber-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-amber-700 transition-colors">
+              {t('subconscious.providerSettings')}
+            </button>
+          </div>
+        </div>
+      )}
 
       <SubconsciousReflectionCards
         onNavigateToThread={handleNavigateToReflectionThread}
@@ -294,7 +361,7 @@ export default function IntelligenceSubconsciousTab({
                               ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300'
                               : 'bg-stone-100 dark:bg-neutral-800 text-stone-600 dark:text-neutral-300'
                         }`}>
-                        {esc.priority}
+                        {formatPriority(esc.priority, t)}
                       </span>
                       <span className="text-[10px] text-stone-400 dark:text-neutral-500">
                         {t('subconscious.requiresApproval')}
@@ -500,9 +567,7 @@ export default function IntelligenceSubconsciousTab({
                 </span>
                 {entry.duration_ms != null && (
                   <span className="text-stone-300 dark:text-neutral-600 flex-shrink-0 ml-auto">
-                    {entry.duration_ms > 1000
-                      ? `${(entry.duration_ms / 1000).toFixed(1)}s`
-                      : `${entry.duration_ms}ms`}
+                    {formatDuration(entry.duration_ms, t)}
                   </span>
                 )}
               </div>

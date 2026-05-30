@@ -1,4 +1,4 @@
-use crate::openhuman::memory::NamespaceDocumentInput;
+use crate::openhuman::memory_store::NamespaceDocumentInput;
 use std::collections::VecDeque;
 use uuid::Uuid;
 
@@ -158,8 +158,9 @@ pub(crate) async fn persist_vision_summary(
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .map_err(|err| format!("config load failed: {err}"))?;
-    let client = crate::openhuman::memory::MemoryClient::from_workspace_dir(config.workspace_dir)
-        .map_err(|err| format!("memory init failed: {err}"))?;
+    let client =
+        crate::openhuman::memory_store::MemoryClient::from_workspace_dir(config.workspace_dir)
+            .map_err(|err| format!("memory init failed: {err}"))?;
 
     let ts = chrono::DateTime::from_timestamp_millis(summary.captured_at_ms)
         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
@@ -194,7 +195,7 @@ pub(crate) async fn persist_vision_summary(
         content.push_str(&format!("{}\n", summary.key_text));
     }
 
-    let key = format!("screen_intelligence_{}", summary.id);
+    let key = vision_summary_memory_key(&summary);
     let document = NamespaceDocumentInput {
         namespace: VISION_MEMORY_NAMESPACE.to_string(),
         key: key.clone(),
@@ -229,6 +230,23 @@ pub(crate) async fn persist_vision_summary(
         namespace: VISION_MEMORY_NAMESPACE.to_string(),
         key,
     })
+}
+
+pub(crate) fn vision_summary_memory_key(summary: &VisionSummary) -> String {
+    format!(
+        "screen_intelligence_{}_{}",
+        summary.captured_at_ms,
+        stable_decimal_hash(&summary.id)
+    )
+}
+
+fn stable_decimal_hash(value: &str) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 pub(crate) fn truncate_tail(text: &str, max_chars: usize) -> String {

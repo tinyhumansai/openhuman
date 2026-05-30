@@ -3,9 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 export type SettingsRoute =
   | 'home'
+  | 'agents'
+  | 'agents-settings'
+  | 'agent-access'
   | 'account'
   | 'features'
-  | 'connections'
   | 'messaging'
   | 'cron-jobs'
   | 'screen-intelligence'
@@ -16,6 +18,7 @@ export type SettingsRoute =
   | 'team-members'
   | 'team-invites'
   | 'developer-options'
+  | 'autonomy'
   | 'ai'
   | 'llm'
   | 'voice'
@@ -23,6 +26,7 @@ export type SettingsRoute =
   | 'memory-data'
   | 'memory-debug'
   | 'recovery-phrase'
+  | 'wallet-balances'
   | 'webhooks-debug'
   | 'agent-chat'
   | 'screen-awareness-debug'
@@ -32,11 +36,15 @@ export type SettingsRoute =
   | 'notifications'
   | 'notification-routing'
   | 'mascot'
+  | 'persona'
   | 'appearance'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
-  | 'composio-routing';
+  | 'composio-routing'
+  | 'mcp-server'
+  | 'dev-workflow'
+  | 'devices';
 
 export interface BreadcrumbItem {
   label: string;
@@ -81,7 +89,6 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/team')) return 'team';
     if (path.includes('/settings/account')) return 'account';
     if (path.includes('/settings/features')) return 'features';
-    if (path.includes('/settings/connections')) return 'connections';
     if (path.includes('/settings/messaging')) return 'messaging';
     if (path.includes('/settings/cron-jobs')) return 'cron-jobs';
     if (path.includes('/settings/screen-awareness-debug')) return 'screen-awareness-debug';
@@ -91,6 +98,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/privacy')) return 'privacy';
     if (path.includes('/settings/billing')) return 'billing';
     if (path.includes('/settings/developer-options')) return 'developer-options';
+    if (path.includes('/settings/autonomy')) return 'autonomy';
     if (path.includes('/settings/llm')) return 'llm';
     if (path.includes('/settings/ai')) return 'ai';
     if (path.includes('/settings/local-model-debug')) return 'local-model-debug';
@@ -105,14 +113,24 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/composio-routing')) return 'composio-routing';
     if (path.includes('/settings/intelligence')) return 'intelligence';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
+    if (path.includes('/settings/wallet-balances')) return 'wallet-balances';
     if (path.includes('/settings/agent-chat')) return 'agent-chat';
     // Notification routes must be checked in specificity order so the more
     // specific `notification-routing` path doesn't get swallowed by the
     // shorter `notifications` prefix.
     if (path.includes('/settings/notification-routing')) return 'notification-routing';
     if (path.includes('/settings/notifications')) return 'notifications';
+    if (path.includes('/settings/devices')) return 'devices';
     if (path.includes('/settings/mascot')) return 'mascot';
+    if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
+    // `agents-settings` (the Agents section page) must be checked before the
+    // shorter `agents` (the manage-agents registry panel) so it isn't swallowed.
+    if (path.includes('/settings/agents-settings')) return 'agents-settings';
+    if (path.includes('/settings/agent-access')) return 'agent-access';
+    if (path.includes('/settings/agents')) return 'agents';
+    if (path.includes('/settings/mcp-server')) return 'mcp-server';
+    if (path.includes('/settings/dev-workflow')) return 'dev-workflow';
     return 'home';
   };
 
@@ -169,18 +187,31 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     onClick: () => navigate('/settings/developer-options'),
   };
 
+  const agentsCrumb: BreadcrumbItem = {
+    label: 'Agents',
+    onClick: () => navigate('/settings/agents-settings'),
+  };
+
   const getBreadcrumbs = (): BreadcrumbItem[] => {
     switch (currentRoute) {
       // Section pages
       case 'account':
       case 'features':
       case 'ai':
+      case 'agents-settings':
         return [settingsCrumb];
+
+      // Leaf panels under the Agents section
+      case 'agents':
+      case 'agent-access':
+      case 'autonomy':
+      case 'persona':
+        return [settingsCrumb, agentsCrumb];
 
       // Leaf panels under account
       case 'recovery-phrase':
+      case 'wallet-balances':
       case 'team':
-      case 'connections':
       case 'privacy':
         return [settingsCrumb, accountCrumb];
 
@@ -219,6 +250,8 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'composio-triggers':
       case 'composio-routing':
       case 'notification-routing':
+      case 'mcp-server':
+      case 'dev-workflow':
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page
@@ -227,6 +260,9 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
 
       // Notifications panel sits at the top level of Settings.
       case 'notifications':
+        return [settingsCrumb];
+
+      case 'devices':
         return [settingsCrumb];
 
       // Mascot appearance panel sits at the top level of Settings.

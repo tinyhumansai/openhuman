@@ -5,16 +5,14 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ChannelDefinition, ChannelType } from '../../types/channels';
+import { CloseIcon } from '../ui';
+import { renderChannelIcon } from './channelIcon';
 import DiscordConfig from './DiscordConfig';
 import TelegramConfig from './TelegramConfig';
-
-const CHANNEL_ICONS: Record<string, string> = {
-  telegram: '\u2708\uFE0F',
-  discord: '\uD83C\uDFAE',
-  web: '\uD83C\uDF10',
-};
+import YuanbaoConfig from './YuanbaoConfig';
 
 interface ChannelSetupModalProps {
   definition: ChannelDefinition;
@@ -29,6 +27,8 @@ function ChannelConfigContent({ definition }: { definition: ChannelDefinition })
       return <TelegramConfig definition={definition} />;
     case 'discord':
       return <DiscordConfig definition={definition} />;
+    case 'yuanbao':
+      return <YuanbaoConfig definition={definition} />;
     default:
       return (
         <p className="text-sm text-stone-400 dark:text-neutral-500 py-4">
@@ -42,13 +42,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
   const { t } = useT();
   const modalRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   useEffect(() => {
     const previousFocus = document.activeElement as HTMLElement;
@@ -61,8 +55,6 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
   };
-
-  const icon = CHANNEL_ICONS[definition.icon] ?? '';
 
   const modalContent = (
     <div
@@ -86,7 +78,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0 pr-2">
               <div className="flex items-center gap-2">
-                {icon && <span className="text-base">{icon}</span>}
+                {renderChannelIcon(definition.icon)}
                 <h2
                   id="channel-setup-title"
                   className="text-base font-semibold text-stone-900 dark:text-neutral-100">
@@ -103,14 +95,7 @@ export default function ChannelSetupModal({ definition, onClose }: ChannelSetupM
             <button
               onClick={onClose}
               className="p-1 text-stone-400 dark:text-neutral-500 hover:text-stone-900 dark:hover:text-neutral-100 dark:text-neutral-100 dark:hover:text-neutral-100 transition-colors rounded-lg hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60 flex-shrink-0">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              </svg>
+              <CloseIcon className="w-5 h-5" />
             </button>
           </div>
         </div>

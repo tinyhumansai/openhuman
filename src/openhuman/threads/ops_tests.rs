@@ -343,6 +343,7 @@ fn sample_thread() -> ConversationThread {
         created_at: "2026-01-01T00:00:00Z".into(),
         parent_thread_id: None,
         labels: vec!["work".to_string()],
+        personality_id: None,
     }
 }
 
@@ -493,6 +494,7 @@ async fn create_thread_with_title(_workspace: &tempfile::TempDir, thread_id: &st
             created_at: "2026-01-01T00:00:00Z".to_string(),
             parent_thread_id: None,
             labels: None,
+            personality_id: None,
         },
     )
     .expect("ensure thread");
@@ -690,4 +692,103 @@ async fn turn_state_clear_reports_false_when_snapshot_is_absent() {
     .expect("turn_state_clear");
 
     assert!(!outcome.value.data.unwrap().cleared);
+}
+
+// ── thread_update_title ───────────────────────────────────────
+
+#[tokio::test]
+async fn thread_update_title_rejects_empty_title() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+
+    let err = thread_update_title(
+        crate::openhuman::memory::UpdateConversationThreadTitleRequest {
+            thread_id: "t-1".to_string(),
+            title: "".to_string(),
+        },
+    )
+    .await
+    .expect_err("empty title must be rejected");
+
+    assert!(
+        err.contains("must not be empty"),
+        "expected empty-title error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn thread_update_title_rejects_whitespace_only_title() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+
+    let err = thread_update_title(
+        crate::openhuman::memory::UpdateConversationThreadTitleRequest {
+            thread_id: "t-1".to_string(),
+            title: "   ".to_string(),
+        },
+    )
+    .await
+    .expect_err("whitespace-only title must be rejected");
+
+    assert!(
+        err.contains("must not be empty"),
+        "expected empty-title error, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn thread_update_title_persists_new_title() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+
+    let thread_id = "t-title";
+    create_thread_with_title(&workspace, thread_id, "Original title").await;
+
+    let outcome = thread_update_title(
+        crate::openhuman::memory::UpdateConversationThreadTitleRequest {
+            thread_id: thread_id.to_string(),
+            title: "  Invoice follow-up  ".to_string(),
+        },
+    )
+    .await
+    .expect("thread_update_title");
+
+    let summary = outcome.value.data.expect("data envelope");
+    assert_eq!(
+        summary.title, "Invoice follow-up",
+        "title must be trimmed and persisted"
+    );
+    assert_eq!(summary.id, thread_id);
+}
+
+#[tokio::test]
+async fn thread_update_title_returns_error_for_missing_thread() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let workspace = tempfile::tempdir().expect("workspace");
+    let _workspace_guard = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", workspace.path());
+
+    let err = thread_update_title(
+        crate::openhuman::memory::UpdateConversationThreadTitleRequest {
+            thread_id: "nonexistent-thread".to_string(),
+            title: "New title".to_string(),
+        },
+    )
+    .await
+    .expect_err("missing thread must return an error");
+
+    assert!(
+        err.contains("update title"),
+        "error must describe the update-title failure, got: {err}"
+    );
 }

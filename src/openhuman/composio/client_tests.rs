@@ -306,16 +306,21 @@ async fn list_tools_filters_pass_through_as_csv_query_param() {
     let app = Router::new().route(
         "/agent-integrations/composio/tools",
         get(|Query(q): Query<HashMap<String, String>>| async move {
-            let filter = q.get("toolkits").cloned().unwrap_or_default();
-            // Echo the requested filter back in the payload so the
-            // test can assert it reached the server correctly.
+            let toolkits = q.get("toolkits").cloned().unwrap_or_default();
+            let tags = q.get("tags").cloned().unwrap_or_default();
+            // Echo both filters back so the test can assert they reached the server.
+            let echo = if tags.is_empty() {
+                format!("ECHO_{toolkits}")
+            } else {
+                format!("ECHO_{toolkits}_TAGS_{tags}")
+            };
             Json(json!({
                 "success": true,
                 "data": {
                     "tools": [{
                         "type": "function",
                         "function": {
-                            "name": format!("ECHO_{filter}"),
+                            "name": echo,
                             "description": "echo",
                             "parameters": {}
                         }
@@ -327,24 +332,51 @@ async fn list_tools_filters_pass_through_as_csv_query_param() {
     let base = start_mock_backend(app).await;
     let client = build_client_for(base);
 
-    // No filter: URL should lack `toolkits` query
-    let resp_all = client.list_tools(None).await.unwrap();
+    // No filter: URL should lack both query params
+    let resp_all = client.list_tools(None, None).await.unwrap();
     assert_eq!(resp_all.tools.len(), 1);
     assert_eq!(resp_all.tools[0].function.name, "ECHO_");
 
-    // With filter: CSV-joined
+    // toolkits only: CSV-joined
     let resp_filtered = client
-        .list_tools(Some(&["gmail".to_string(), "notion".to_string()]))
+        .list_tools(Some(&["gmail".to_string(), "notion".to_string()]), None)
         .await
         .unwrap();
     assert_eq!(resp_filtered.tools[0].function.name, "ECHO_gmail,notion");
 
     // Whitespace entries should be dropped before joining
     let resp_trimmed = client
-        .list_tools(Some(&["gmail".to_string(), "  ".to_string()]))
+        .list_tools(Some(&["gmail".to_string(), "  ".to_string()]), None)
         .await
         .unwrap();
     assert_eq!(resp_trimmed.tools[0].function.name, "ECHO_gmail");
+
+    // tags only
+    let resp_tags = client
+        .list_tools(None, Some(&["readOnlyHint".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(resp_tags.tools[0].function.name, "ECHO__TAGS_readOnlyHint");
+
+    // toolkits + tags both forwarded
+    let resp_both = client
+        .list_tools(
+            Some(&["github".to_string()]),
+            Some(&["stars".to_string(), "repos".to_string()]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp_both.tools[0].function.name,
+        "ECHO_github_TAGS_stars,repos"
+    );
+
+    // Empty tags slice treated as no filter
+    let resp_empty_tags = client
+        .list_tools(Some(&["gmail".to_string()]), Some(&[]))
+        .await
+        .unwrap();
+    assert_eq!(resp_empty_tags.tools[0].function.name, "ECHO_gmail");
 }
 
 #[tokio::test]
@@ -1078,29 +1110,43 @@ fn store_get_clear_composio_api_key_roundtrip() {
 // ── Pricing short-circuit ───────────────────────────────────────────
 
 // ── Direct-mode reshapers (`direct_authorize` / `direct_execute` / ─
-//   `direct_list_connections`)
+//   `direct_list_connections` / `direct_list_tools`)
 //
 // These helpers wrap a `ComposioTool` and reshape v3 responses into
-// the backend-proxied envelope types. We can't easily mock the live
-// `backend.composio.dev` endpoints in this unit-test layer (the
-// `ComposioTool` builds its own `reqwest::Client`), so the assertions
-// below verify the empty/invalid-input paths that don't require HTTP:
+// the backend-proxied envelope types. Most still assert the
+// empty/invalid-input paths that don't require HTTP:
 //
 //   * `direct_authorize` rejects an empty toolkit before any network
 //     hit, with an explicit error so the caller can surface it as a
 //     400-class user error.
 //   * `direct_execute` accepts a None-arguments call and falls
 //     through to the underlying tool surface (which then errors on the
-//     network call — covered by the integration test in `ops_test.rs`).
+//     network call — covered by the integration test in `ops_tests.rs`).
 //   * `direct_list_connections` is a thin mapper; the real coverage
 //     for its row → ComposioConnection translation lives in the
 //     `connected_account_*` tests in `composio_tests.rs`.
+//
+// `direct_list_tools` IS exercised over HTTP: `ComposioTool::new_with_v3_base`
+// points its `/tools` GET at a local axum mock, so we can assert both the
+// outbound `tags` filter (repeated query params) and the v3 → backend-envelope
+// reshape without touching `backend.composio.dev`.
 
 fn direct_tool_for_test() -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
     std::sync::Arc::new(crate::openhuman::tools::ComposioTool::new(
         "ck_test_direct",
         Some("default"),
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default()),
+    ))
+}
+
+/// Like [`direct_tool_for_test`] but with the v3 base pointed at a local
+/// mock server so HTTP paths (e.g. `direct_list_tools`) can be asserted.
+fn direct_tool_for_mock(base_v3: String) -> std::sync::Arc<crate::openhuman::tools::ComposioTool> {
+    std::sync::Arc::new(crate::openhuman::tools::ComposioTool::new_with_v3_base(
+        "ck_test_direct",
+        Some("default"),
+        std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::default()),
+        base_v3,
     ))
 }
 
@@ -1115,6 +1161,57 @@ async fn direct_authorize_rejects_empty_toolkit() {
         err.to_string().contains("toolkit must not be empty"),
         "unexpected error: {err}"
     );
+}
+
+#[tokio::test]
+async fn direct_list_tools_forwards_tags_and_reshapes_v3_envelope() {
+    use axum::extract::RawQuery;
+    use std::sync::Mutex;
+
+    let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+    let app = Router::new().route(
+        "/tools",
+        get(move |RawQuery(q): RawQuery| {
+            let sink = sink.clone();
+            async move {
+                *sink.lock().unwrap() = q;
+                Json(json!({
+                    "items": [
+                        {
+                            "slug": "GITHUB_STAR_A_REPOSITORY",
+                            "description": "Star a repository",
+                            "input_parameters": { "type": "object" },
+                            "toolkit": { "slug": "github" }
+                        },
+                        // Empty-slug rows must be dropped by the reshaper.
+                        { "slug": "", "description": "junk" }
+                    ]
+                }))
+            }
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let tool = direct_tool_for_mock(base);
+
+    let resp = super::direct_list_tools(
+        &tool,
+        &["github".to_string()],
+        Some(&["stars".to_string(), "repos".to_string()]),
+    )
+    .await
+    .expect("direct_list_tools should succeed against the mock");
+
+    // Outbound: tags forwarded as repeated params, toolkits CSV.
+    let query = captured.lock().unwrap().clone().expect("server saw query");
+    assert!(query.contains("tags=stars"), "query was: {query}");
+    assert!(query.contains("tags=repos"), "query was: {query}");
+    assert!(query.contains("toolkits=github"), "query was: {query}");
+
+    // Inbound: reshaped into the backend envelope, empty-slug row dropped.
+    assert_eq!(resp.tools.len(), 1);
+    assert_eq!(resp.tools[0].function.name, "GITHUB_STAR_A_REPOSITORY");
+    assert_eq!(resp.tools[0].kind, "function");
 }
 
 #[tokio::test]

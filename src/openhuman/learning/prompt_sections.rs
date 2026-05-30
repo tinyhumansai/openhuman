@@ -86,7 +86,7 @@ impl PromptSection for UserProfileSection {
             return Ok(String::new());
         }
 
-        let mut out = String::from("## User Profile (Learned)\n\n");
+        let mut out = String::from("## Your standing preferences\n\n");
         for entry in &ctx.learned.user_profile {
             out.push_str("- ");
             out.push_str(entry);
@@ -163,7 +163,7 @@ pub fn load_learned_from_cache(
 
     // Group by class prefix (portion before the first '/'), then sort within
     // each class by stability descending, then by key alphabetically.
-    use crate::openhuman::memory::store::profile::ProfileFacet;
+    use crate::openhuman::memory_store::profile::ProfileFacet;
     use std::collections::BTreeMap;
     let mut by_class: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
@@ -197,7 +197,7 @@ pub fn load_learned_from_cache(
             // agent can parse the source. Goal class keeps value-only (full
             // sentence, no key prefix). Pinned entries get a trailing suffix.
             let pinned =
-                if f.user_state == crate::openhuman::memory::store::profile::UserState::Pinned {
+                if f.user_state == crate::openhuman::memory_store::profile::UserState::Pinned {
                     " *(pinned)*"
                 } else {
                     ""
@@ -306,6 +306,10 @@ mod tests {
             include_profile: false,
             include_memory_md: false,
             user_identity: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            personality_roster: vec![],
+            workflows: &[],
             curated_snapshot: None,
         }
     }
@@ -357,7 +361,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(section.name(), "user_profile");
-        assert!(rendered.starts_with("## User Profile (Learned)\n\n"));
+        assert!(rendered.starts_with("## Your standing preferences\n\n"));
         assert!(rendered.contains("- Timezone: America/Los_Angeles"));
         assert!(rendered.contains("- Prefers Rust"));
     }
@@ -376,7 +380,7 @@ mod tests {
     #[test]
     fn load_learned_from_cache_formats_active_facets() {
         use crate::openhuman::learning::cache::FacetCache;
-        use crate::openhuman::memory::store::profile::{
+        use crate::openhuman::memory_store::profile::{
             FacetState, FacetType, ProfileFacet, UserState, PROFILE_INIT_SQL,
         };
         use parking_lot::Mutex;
@@ -456,7 +460,7 @@ mod tests {
     #[test]
     fn load_learned_from_cache_empty_when_no_active_facets() {
         use crate::openhuman::learning::cache::FacetCache;
-        use crate::openhuman::memory::store::profile::PROFILE_INIT_SQL;
+        use crate::openhuman::memory_store::profile::PROFILE_INIT_SQL;
         use parking_lot::Mutex;
         use rusqlite::Connection;
 

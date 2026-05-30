@@ -3,10 +3,12 @@ import debug from 'debug';
 
 import { dispatchLocalAiMethod } from '../lib/ai/localCoreAiMemory';
 import { CORE_RPC_TIMEOUT_MS, CORE_RPC_URL } from '../utils/config';
-import { getStoredCoreToken, peekStoredRpcUrl } from '../utils/configPersistence';
+import { getStoredCoreToken, normalizeRpcUrl, peekStoredRpcUrl } from '../utils/configPersistence';
+import { redactRpcUrlForLog } from '../utils/redactRpcUrlForLog';
 import { sanitizeError } from '../utils/sanitize';
 import { isTauri as coreIsTauri } from '../utils/tauriCommands/common';
 import { normalizeRpcMethod } from './rpcMethods';
+import type { CoreTransport } from './transport/CoreTransport';
 
 interface CoreRpcRelayRequest {
   method: string;
@@ -62,6 +64,22 @@ let resolvedCoreRpcToken: string | null = null;
 let didResolveCoreRpcToken = false;
 let resolvingCoreRpcToken: Promise<string | null> | null = null;
 
+// ---------------------------------------------------------------------------
+// Active transport override (used by iOS / remote profiles)
+// ---------------------------------------------------------------------------
+
+/** Active transport set by TransportManager for non-local profiles. */
+let _activeTransport: CoreTransport | null = null;
+
+/**
+ * Override the active transport used by `callCoreRpc`.
+ * Set to null to revert to the default local HTTP path.
+ */
+export function setActiveCoreTransport(transport: CoreTransport | null): void {
+  _activeTransport = transport;
+  coreRpcLog('[transport] active transport set kind=%s', transport?.kind ?? 'null');
+}
+
 /**
  * Stable classification of an RPC failure. Callers (hooks, providers, Sentry
  * filters) should branch on `kind` — never on raw message regexes. The shape
@@ -71,6 +89,7 @@ let resolvingCoreRpcToken: Promise<string | null> | null = null;
  */
 export type CoreRpcErrorKind =
   | 'auth_expired'
+  | 'provider_auth' // downstream provider 401 — NOT user session expiry
   | 'transport'
   | 'timeout'
   | 'rate_limited'
@@ -107,13 +126,41 @@ export function classifyRpcError(
   if (isThreadNotFoundRpcData(data)) return 'thread_not_found';
   if (httpStatus === 401) return 'auth_expired';
   if (httpStatus === 429) return 'rate_limited';
-  if (/\(401\b.*Unauthorized\)|Session expired/i.test(message)) return 'auth_expired';
+  // Confirmed OpenHuman session expiry — explicit markers from the backend/core.
+  if (/Session expired|SESSION_EXPIRED/i.test(message)) return 'auth_expired';
   // Core-side "no backend session token" → the auth profile is gone but the
   // frontend may still hold a stale sessionToken from an optimistic post-login
   // patch. Treat as auth-expired so `CoreStateProvider` clears the session and
   // `ProtectedRoute` bounces the user back to `/` (login) instead of trapping
   // them on an onboarding step that polls a failing RPC every 5 s.
   if (/no backend session token/i.test(message)) return 'auth_expired';
+  // "session JWT required" covers the case where a prior 401 already cleared
+  // the token and the very next RPC call finds no JWT in the store.
+  if (/session jwt required/i.test(message)) return 'auth_expired';
+  // OpenHuman backend path 401s (via authed_json): "{METHOD} /path failed (401 Unauthorized)"
+  // The HTTP method prefix distinguishes these from downstream provider 401s.
+  // Fix for issue #2286: only match when the message starts with an HTTP verb
+  // followed by a path — this excludes "Discord API error:", "OpenAI API error:", etc.
+  // HEAD and OPTIONS intentionally excluded — authed_json only uses these five verbs.
+  // Aligned with Rust is_session_expired_error: starts-with-verb check + separate
+  // contains checks for "401" and "unauthorized" (case-insensitive).
+  if (
+    /^(GET|POST|PUT|DELETE|PATCH)\s+\//.test(message) &&
+    /401/.test(message) &&
+    /unauthorized/i.test(message)
+  )
+    return 'auth_expired';
+  // Downstream provider/integration 401 — NOT user session expiry.
+  // e.g. "Discord API error: Discord list guilds failed (401): Unauthorized"
+  // e.g. "OpenAI API error (401 Unauthorized): invalid api key"
+  // e.g. "Composio v3 API error: HTTP 401: Unauthorized"
+  // Note: Discord uses "(401): Unauthorized" format (colon after status, reason outside parens),
+  // so we test for 401 and "unauthorized" independently rather than requiring both inside parens.
+  if (
+    (/401/.test(message) && /unauthorized/i.test(message)) ||
+    /invalid token|bad token/i.test(message)
+  )
+    return 'provider_auth';
   if (/429.*rate.?limit/i.test(message)) return 'rate_limited';
   if (/Budget exceeded|Insufficient budget/i.test(message)) return 'budget_exceeded';
   // Local AbortController hit `CORE_RPC_TIMEOUT_MS` — distinct from backend
@@ -124,6 +171,34 @@ export function classifyRpcError(
     return 'transport';
   }
   return 'unknown';
+}
+
+/**
+ * Whether an `auth_expired` classification is a *confirmed* server-side
+ * session rejection versus an *unconfirmed* "no JWT loaded right now" signal.
+ *
+ * - `confirmed`: a real HTTP 401, an explicit `Session expired` marker, or a
+ *   backend-path 401 (`GET /path failed (401 Unauthorized)`). The server told
+ *   us the token is invalid → safe to sign out.
+ * - `unconfirmed`: `session jwt required` / `no backend session token`. These
+ *   mean the core has no token *loaded* — which fires transiently right after
+ *   the identity-flip restart, before the on-disk auth profile is read. Acting
+ *   on it destroys a still-valid session, so `CoreStateProvider` corroborates
+ *   (cheap disk-only `auth_get_session_token`) before logging out. We default
+ *   to `unconfirmed` so the safe "verify, don't destroy" path wins.
+ */
+export type AuthExpiredReason = 'confirmed' | 'unconfirmed';
+
+export function classifyAuthExpiredReason(message: string, httpStatus?: number): AuthExpiredReason {
+  if (httpStatus === 401) return 'confirmed';
+  if (/Session expired|SESSION_EXPIRED/i.test(message)) return 'confirmed';
+  if (
+    /^(GET|POST|PUT|DELETE|PATCH)\s+\//.test(message) &&
+    /401/.test(message) &&
+    /unauthorized/i.test(message)
+  )
+    return 'confirmed';
+  return 'unconfirmed';
 }
 
 function isThreadNotFoundRpcData(data: unknown): boolean {
@@ -152,11 +227,11 @@ export function isThreadNotFoundCoreRpcError(
   return !errorThreadId || errorThreadId === threadId;
 }
 
-function dispatchAuthExpired(method: string): void {
+function dispatchAuthExpired(method: string, reason: AuthExpiredReason): void {
   if (typeof window === 'undefined') return;
   try {
     window.dispatchEvent(
-      new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { method, source: 'rpc' } })
+      new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { method, source: 'rpc', reason } })
     );
   } catch {
     // jsdom in some test paths can throw on CustomEvent constructor edge
@@ -249,7 +324,7 @@ export async function getCoreRpcUrl(): Promise<string> {
     // null when nothing is stored, which lets us distinguish "user hasn't
     // chosen yet" from "user chose a value identical to the default".
     const storedUrl = peekStoredRpcUrl();
-    resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+    resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
     return resolvedCoreRpcUrl;
   }
 
@@ -267,8 +342,8 @@ export async function getCoreRpcUrl(): Promise<string> {
       // cloud mode where no local sidecar is running.
       const storedUrl = peekStoredRpcUrl();
       if (storedUrl) {
-        resolvedCoreRpcUrl = storedUrl;
-        return storedUrl;
+        resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl);
+        return resolvedCoreRpcUrl;
       }
 
       const url = await invoke<string>('core_rpc_url');
@@ -278,16 +353,16 @@ export async function getCoreRpcUrl(): Promise<string> {
           fallback: CORE_RPC_URL,
         });
       }
-      resolvedCoreRpcUrl = trimmed || CORE_RPC_URL;
+      resolvedCoreRpcUrl = normalizeRpcUrl(trimmed || CORE_RPC_URL);
       return resolvedCoreRpcUrl || CORE_RPC_URL;
     } catch (err) {
       // Tauri invoke failed — fall back to stored URL if any, then the
       // build-time default. Keep the underlying invoke failure visible so
       // port mismatches and shell misconfiguration are diagnosable.
       const storedUrl = peekStoredRpcUrl();
-      resolvedCoreRpcUrl = storedUrl ?? CORE_RPC_URL;
+      resolvedCoreRpcUrl = normalizeRpcUrl(storedUrl ?? CORE_RPC_URL);
       coreRpcError('core_rpc_url invoke failed; using fallback RPC URL', {
-        fallback: resolvedCoreRpcUrl,
+        fallback: redactRpcUrlForLog(resolvedCoreRpcUrl),
         usedStoredUrl: Boolean(storedUrl),
         error: sanitizeError(err),
       });
@@ -368,12 +443,13 @@ export async function testCoreRpcConnection(
   tokenOverride?: string,
   init?: { signal?: AbortSignal }
 ): Promise<Response> {
+  const rpcUrl = normalizeRpcUrl(url);
   const token = tokenOverride?.trim() || (await getCoreRpcToken());
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
   }
-  return fetch(url, {
+  return fetch(rpcUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'core.ping', params: {} }),
@@ -425,6 +501,13 @@ export async function callCoreRpc<T>({
   }
 
   const normalizedMethod = normalizeRpcMethod(method);
+
+  // Dispatch through active transport when one is set (e.g. tunnel / cloud).
+  if (_activeTransport) {
+    coreRpcLog('[transport] dispatching via %s method=%s', _activeTransport.kind, normalizedMethod);
+    return _activeTransport.call<T>(normalizedMethod, params ?? {});
+  }
+
   const effectiveTimeoutMs = resolvePerCallTimeoutMs(timeoutMs);
   const payload: JsonRpcRequestBody = {
     jsonrpc: '2.0',
@@ -436,6 +519,12 @@ export async function callCoreRpc<T>({
   try {
     const [rpcUrl, token] = await Promise.all([getCoreRpcUrl(), getCoreRpcToken()]);
     coreRpcLog('HTTP request', { id: payload.id, method: payload.method });
+    if (normalizedMethod === 'openhuman.auth_store_session') {
+      coreRpcLog('[rpc] auth_store_session routing', {
+        rpcUrl,
+        tokenSource: getStoredCoreToken() ? 'cloud-stored' : 'local-resolved',
+      });
+    }
     if (coreIsTauri() && !token) {
       throw new Error('Core RPC token unavailable in Tauri; local RPC auth cannot be satisfied');
     }
@@ -481,7 +570,11 @@ export async function callCoreRpc<T>({
       const text = await response.text();
       const httpMessage = `Core RPC HTTP ${response.status}: ${text || response.statusText}`;
       const kind = classifyRpcError(text || response.statusText, response.status);
-      if (kind === 'auth_expired') dispatchAuthExpired(payload.method);
+      if (kind === 'auth_expired')
+        dispatchAuthExpired(
+          payload.method,
+          classifyAuthExpiredReason(text || response.statusText, response.status)
+        );
       throw new CoreRpcError(httpMessage, kind, response.status);
     }
 
@@ -495,7 +588,8 @@ export async function callCoreRpc<T>({
       });
       const rawMessage = json.error.message || 'Core RPC returned an error';
       const kind = classifyRpcError(rawMessage, undefined, json.error.data);
-      if (kind === 'auth_expired') dispatchAuthExpired(payload.method);
+      if (kind === 'auth_expired')
+        dispatchAuthExpired(payload.method, classifyAuthExpiredReason(rawMessage, undefined));
       throw new CoreRpcError(rawMessage, kind, undefined, json.error.data);
     }
     if (!Object.prototype.hasOwnProperty.call(json, 'result')) {

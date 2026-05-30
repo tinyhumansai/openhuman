@@ -16,7 +16,7 @@
 </p>
  
 <p align="center">
- <strong>OpenHuman은 당신의 개인용 AI 슈퍼 지능입니다. 프라이빗하고, 단순하며, 매우 강력합니다.</strong>
+ <strong>OpenHuman은 당신의 개인용 AI 슈퍼 지능입니다: 로컬 메모리, 필요한 경우 관리형 서비스, 단순하고 강력합니다.</strong>
 </p>
 
 
@@ -47,6 +47,8 @@
 
 > **얼리 베타**: 활발히 개발 중입니다. 다소 미흡한 부분이 있을 수 있습니다.
 
+> **로컬 + 관리형 서비스, upfront:** OpenHuman은 Memory Tree, Obsidian 스타일 Markdown 볼트, 워크스페이스 설정 및 로컬 런타임 상태를 사용자의 머신에 저장합니다. 기본 관리형 경험은 여전히 계정 로그인, 모델 라우팅, 웹 검색 프록시 및 Composio 커넥터 레이어를 통한 관리형 통합/OAuth 플로우에 OpenHuman 호스팅 서비스를 사용합니다. 자체 모델, 검색 또는 Composio 인증 정보를 가져오려면 사용자 지정/로컬 설정을 선택하세요. 일부 실시간 트리거 및 호스팅 기능은 여전히 관리형 백엔드를 필요로 합니다.
+
 설치하거나 시작하려면 [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) 웹사이트에서 다운로드하거나 터미널에서 다음을 실행하세요.
 
 ```bash
@@ -59,6 +61,12 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
+<!-- TODO: translate (ko) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
+<!-- /TODO -->
+
 # OpenHuman이란 무엇인가요?
 
 OpenHuman은 일상 생활에 통합되도록 설계된 오픈 소스 에이전트 어시스턴트입니다. 각 글머리 기호는 [문서](https://tinyhumans.gitbook.io/openhuman/)의 더 깊은 설명으로 연결됩니다.
@@ -69,7 +77,7 @@ OpenHuman은 일상 생활에 통합되도록 설계된 오픈 소스 에이전�
 
 - **[메모리 트리(Memory Tree)](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian 위키](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: 당신의 데이터와 활동을 바탕으로 구축된 로컬 우선 지식 베이스입니다. 연결된 모든 것은 3k 토큰 이하의 Markdown 청크로 규격화되고 점수가 매겨지며, **당신의 머신에 있는 SQLite**에 저장되는 계층적 요약 트리로 접힙니다. 동일한 청크는 당신이 열고, 탐색하고, 편집할 수 있는 Obsidian 호환 볼트에 `.md` 파일로 저장됩니다. 이는 Karpathy의 [obsidian-wiki 워크플로우](https://x.com/karpathy/status/2039805659525644595)에서 영감을 받았습니다.
 
-- **모든 것이 포함됨(Batteries included)**: 웹 검색, 웹 가져오기 [스크레이퍼](https://tinyhumans.gitbook.io/openhuman/features/native-tools), 전체 코더 툴셋(파일 시스템, git, lint, test, grep), 그리고 [네이티브 음성](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 입력, ElevenLabs TTS 출력, 마스코트 립싱크, 라이브 Google Meet 에이전트)이 기본적으로 연결되어 있습니다. [모델 라우팅](https://tinyhumans.gitbook.io/openhuman/features/model-routing)은 단일 구독 하에 각 작업을 적절한 LLM(추론, 고속 또는 비전)으로 보냅니다. "파일을 읽기 위해 플러그인 설치"와 같은 번거로움이 없습니다. 온디바이스 워크로드를 위해 [Ollama를 통한 선택적 로컬 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)를 지원합니다.
+- **모든 것이 포함됨(Batteries included)**: 웹 검색, 웹 가져오기 [스크레이퍼](https://tinyhumans.gitbook.io/openhuman/features/native-tools), 전체 코더 툴셋(파일 시스템, git, lint, test, grep), 그리고 [네이티브 음성](https://tinyhumans.gitbook.io/openhuman/features/voice)(STT 입력, ElevenLabs TTS 출력, 마스코트 립싱크, 라이브 Google Meet 에이전트)이 기본적으로 연결되어 있습니다. 기본적으로 [모델 라우팅](https://tinyhumans.gitbook.io/openhuman/features/model-routing)은 OpenHuman 백엔드를 사용하여 각 워크로드에 적합한 LLM(추론, 고속 또는 비전)을 선택하고 프록시합니다. 하나의 구독에 모든 모델이 포함됩니다. "파일을 읽기 위해 플러그인 설치"와 같은 번거로움이 없습니다. 온디바이스 워크로드를 위해 [Ollama를 통한 선택적 로컬 AI](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai)를 지원합니다.
 
 - **[스마트 토큰 압축(TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: 모든 도구 호출, 스크레이핑 결과, 이메일 본문 및 검색 페이로드는 LLM 모델에 전달되기 전에 토큰 압축 레이어를 거칩니다. HTML은 Markdown으로 변환되고, 긴 URL은 단축되며, 장황한 도구 출력은 구성 가능한 규칙 오버레이 등을 통해 중복 제거 및 요약됩니다. CJK, 이모지 및 기타 멀티바이트 텍스트는 자소(grapheme) 단위로 보존되며 절대 삭제되지 않습니다. 동일한 정보를 훨씬 적은 토큰으로 얻을 수 있어 비용과 지연 시간을 최대 80%까지 줄일 수 있습니다.
 
@@ -90,7 +98,7 @@ OpenHuman은 일상 생활에 통합되도록 설계된 오픈 소스 에이전�
 OpenHuman은 몇 분 만에 당신을 알게 되는 최초의 에이전트 하네스입니다. [Karpathy의 LLM 지식 베이스](https://x.com/karpathy/status/2039805659525644595)에서 영감을 받았습니다. 대부분의 에이전트는 아무런 정보 없이 시작합니다. Hermes는 당신의 작업을 지켜보며 학습하고, OpenClaw는 플러그인이 컨텍스트를 가져오기를 기다립니다. 어느 쪽이든 에이전트가 당신의 스택에 대해 충분히 알고 정말 유용해지기까지는 며칠 또는 몇 주가 걸립니다.
 
 <p align="center">
- <img src="./gitbooks/.gitbook/assets/image (1).png" alt="OpenHuman context diagram">
+ <img src="./gitbooks/.gitbook/assets/image (1).png" alt="OpenHuman 컨텍스트 구축 다이어그램">
 </p>
 
 > OpenHuman은 당신의 모든 문서, 이메일 및 채팅을 요약하고 압축합니다. 그리고 에이전트가 당신에 대한 모든 것을 기억할 수 있도록 메모리 그래프를 생성합니다.

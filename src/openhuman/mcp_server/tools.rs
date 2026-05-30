@@ -5,8 +5,10 @@ use crate::openhuman::agent::harness::AgentDefinitionRegistry;
 use crate::openhuman::agent::Agent;
 use crate::openhuman::config::rpc as config_rpc;
 use crate::openhuman::inference::provider::traits::build_tool_instructions_text;
-use crate::openhuman::integrations::searxng::MAX_RESULTS as SEARXNG_MAX_RESULTS;
 use crate::openhuman::security::{SecurityPolicy, ToolOperation};
+use crate::openhuman::tools::SEARXNG_MAX_RESULTS;
+
+use super::write_dispatch;
 
 const DEFAULT_LIMIT: u64 = 10;
 const MAX_LIMIT: u64 = 50;
@@ -26,6 +28,20 @@ const TREE_BROWSE_ARGUMENTS: &[&str] = &[
 ];
 const TREE_TOP_ENTITIES_ARGUMENTS: &[&str] = &["kind", "k"];
 const TREE_LIST_SOURCES_ARGUMENTS: &[&str] = &["user_email_hint"];
+const MEMORY_STORE_ARGUMENTS: &[&str] = &["title", "content", "namespace", "tags"];
+const MEMORY_NOTE_ARGUMENTS: &[&str] = &["chunk_id", "note_text"];
+const TREE_TAG_ARGUMENTS: &[&str] = &["chunk_id", "tags"];
+/// Upper bound on the number of tags `tree.tag` accepts per call.
+/// Matches the "explicit rejection over silent clamping" pattern used
+/// elsewhere in the MCP layer; prevents a misbehaving client from
+/// flooding a chunk's tag-record document with thousands of entries.
+const TREE_TAG_MAX_TAGS: usize = 50;
+/// Upper bound on a single tag's character length. Tags are categorical
+/// labels — anything past ~128 chars is almost certainly free-form text
+/// that should be `memory.note` instead, so reject up-front to surface
+/// the misuse rather than silently writing a giant token into the
+/// queryable `tags` index.
+const TREE_TAG_MAX_TAG_LENGTH: usize = 128;
 
 #[derive(Debug, Clone)]
 pub struct McpToolSpec {
@@ -34,6 +50,13 @@ pub struct McpToolSpec {
     pub description: &'static str,
     pub rpc_method: Option<&'static str>,
     pub input_schema: Value,
+    /// MCP `ToolAnnotations` per the 2025-03-26+ spec — `readOnlyHint`,
+    /// `destructiveHint`, `idempotentHint`, `openWorldHint`. Hints, not
+    /// guarantees; clients use them to surface accurate safety affordances
+    /// (e.g. Claude Desktop's "this tool can take destructive actions"
+    /// confirmation gate). Per spec, destructive/idempotent are meaningful
+    /// only when `readOnlyHint == false`, so read-only tools omit them.
+    pub annotations: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +110,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "List the live core agent tool catalog that OpenHuman exposes to its orchestrator session.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "core.tool_instructions",
@@ -94,6 +118,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "Emit the markdown tool-use instructions block that OpenHuman injects into prompt-guided agents.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "agent.list_subagents",
@@ -101,6 +126,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "List registered sub-agent definitions that the core can dispatch for specialized work.",
             rpc_method: None,
             input_schema: no_args_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "agent.run_subagent",
@@ -122,6 +148,17 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                 "required": ["agent_id", "prompt"],
                 "additionalProperties": false
             }),
+            // Sub-agent execution is the one Act-policy surface on the MCP
+            // server today (see `enforce_act_policy` dispatch in `call_tool`).
+            // Sub-agents can call further tools, so destructive/openWorld are
+            // both true; running the same agent twice is not a no-op so
+            // idempotent is false.
+            annotations: json!({
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": true
+            }),
         },
         McpToolSpec {
             name: "memory.search",
@@ -129,6 +166,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "Keyword-search OpenHuman's local memory tree and return matching chunks ordered by recency.",
             rpc_method: Some("openhuman.memory_tree_search"),
             input_schema: query_schema("Substring to match against stored memory chunks."),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "memory.recall",
@@ -136,6 +174,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
             description: "Semantically recall local memory-tree chunks relevant to a natural-language query.",
             rpc_method: Some("openhuman.memory_tree_recall"),
             input_schema: query_schema("Natural-language query to embed and rerank against memory summaries."),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.read_chunk",
@@ -153,6 +192,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                 "required": ["chunk_id"],
                 "additionalProperties": false
             }),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.browse",
@@ -165,6 +205,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           pagination.",
             rpc_method: Some("openhuman.memory_tree_list_chunks"),
             input_schema: tree_browse_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.top_entities",
@@ -175,6 +216,7 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           or `memory.search`. Returns entities ordered by reference count.",
             rpc_method: Some("openhuman.memory_tree_top_entities"),
             input_schema: tree_top_entities_schema(),
+            annotations: read_only_local_annotations(),
         },
         McpToolSpec {
             name: "tree.list_sources",
@@ -186,8 +228,72 @@ fn base_tool_specs() -> Vec<McpToolSpec> {
                           `tree.browse`.",
             rpc_method: Some("openhuman.memory_tree_list_sources"),
             input_schema: tree_list_sources_schema(),
+            annotations: read_only_local_annotations(),
+        },
+        McpToolSpec {
+            name: "memory.store",
+            title: "Store Memory",
+            description: "Create a new memory document from content. The document is stored in \
+                          the specified namespace (default `mcp`) and can be retrieved via \
+                          `memory.search` or `memory.recall`.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: memory_store_schema(),
+            annotations: write_local_annotations(),
+        },
+        McpToolSpec {
+            name: "memory.note",
+            title: "Annotate Memory Chunk",
+            description: "Append a note to an existing memory chunk by storing a linked annotation \
+                          document. The note references the original chunk_id for provenance and \
+                          can be retrieved alongside it.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: memory_note_schema(),
+            annotations: write_local_annotations(),
+        },
+        McpToolSpec {
+            name: "tree.tag",
+            title: "Tag Memory Chunk",
+            description: "Apply one or more category tags to an existing memory chunk. \
+                          Stored as an upsertable tag-record document linked to the target \
+                          chunk_id, so re-tagging the same chunk replaces the prior tag set \
+                          rather than accumulating duplicate annotations. Differs from \
+                          `memory.note` in that the payload is a categorical label list — \
+                          queryable via the document `tags` field — rather than free-form text.",
+            rpc_method: Some("openhuman.memory_doc_put"),
+            input_schema: tree_tag_schema(),
+            annotations: write_local_annotations(),
         },
     ]
+}
+
+/// Annotation preset for the read-only, closed-world tools that just read
+/// OpenHuman's local memory tree or agent registry. The MCP spec defaults are
+/// `readOnlyHint: false` / `openWorldHint: true`, so both fields must be set
+/// explicitly to communicate the actual shape to clients. Destructive and
+/// idempotent hints are deliberately omitted — per the spec they are
+/// meaningful only when `readOnlyHint == false`.
+fn read_only_local_annotations() -> Value {
+    json!({
+        "readOnlyHint": true,
+        "openWorldHint": false
+    })
+}
+
+/// Annotation preset for the MCP write tools (`memory.store`, `memory.note`,
+/// `tree.tag`) that upsert documents into OpenHuman's local memory tree.
+/// Writes are keyed deterministically (slug-from-title, `mcp-note-<chunk_id>`,
+/// `mcp-tag-<chunk_id>`) so repeating a call with identical arguments yields
+/// the same stored state — `idempotentHint: true`. The upsert can replace a
+/// previously stored document for the same key, which is a destructive update
+/// in MCP-spec terms — `destructiveHint: true`. Local-only, no external I/O —
+/// `openWorldHint: false`.
+fn write_local_annotations() -> Value {
+    json!({
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+    })
 }
 
 fn searxng_tool_spec() -> McpToolSpec {
@@ -197,6 +303,14 @@ fn searxng_tool_spec() -> McpToolSpec {
         description: "Search the configured self-hosted SearXNG instance and return normalized title, URL, snippet, and source results. Requires searxng.enabled=true in OpenHuman config.",
         rpc_method: Some("openhuman.tools_searxng_search"),
         input_schema: searxng_search_schema(),
+        // SearXNG queries an external (self-hosted but network-reachable)
+        // search engine: read-only (no state mutation), open-world (results
+        // come from outside OpenHuman). Per spec, destructive/idempotent
+        // hints are meaningful only when readOnlyHint=false, so omit them.
+        annotations: json!({
+            "readOnlyHint": true,
+            "openWorldHint": true
+        }),
     }
 }
 
@@ -287,6 +401,80 @@ fn tree_list_sources_schema() -> Value {
     })
 }
 
+fn memory_store_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "title": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Human-readable title for the memory document."
+            },
+            "content": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The text content to store as a memory document."
+            },
+            "namespace": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Namespace to store the document in. Defaults to `mcp` when omitted."
+            },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Optional tags for categorisation and filtering."
+            }
+        },
+        "required": ["title", "content"],
+        "additionalProperties": false
+    })
+}
+
+fn memory_note_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of the memory chunk to annotate. Use an ID from memory.search or memory.recall results."
+            },
+            "note_text": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The note text to attach to the chunk."
+            }
+        },
+        "required": ["chunk_id", "note_text"],
+        "additionalProperties": false
+    })
+}
+
+fn tree_tag_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "chunk_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "ID of the memory chunk to tag. Use an ID from `memory.search`, `memory.recall`, or `tree.browse` results."
+            },
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "minLength": 1
+                },
+                "minItems": 1,
+                "description": "One or more category labels to attach (e.g. `[\"todo\", \"q3-planning\"]`). Re-tagging the same chunk replaces the prior tag set; supply the complete desired set on each call."
+            }
+        },
+        "required": ["chunk_id", "tags"],
+        "additionalProperties": false
+    })
+}
+
 fn searxng_search_schema() -> Value {
     json!({
         "type": "object",
@@ -350,19 +538,38 @@ fn list_tools_result_from_specs(specs: Vec<McpToolSpec>) -> Value {
                 "title": tool.title,
                 "description": tool.description,
                 "inputSchema": tool.input_schema,
+                "annotations": tool.annotations,
             })
         })
         .collect::<Vec<_>>();
     json!({ "tools": tools })
 }
 
-pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallError> {
+pub async fn call_tool(
+    name: &str,
+    arguments: Value,
+    client_info: &str,
+) -> Result<Value, ToolCallError> {
     let spec = tool_specs()
         .into_iter()
         .find(|tool| tool.name == name)
         .ok_or_else(|| ToolCallError::InvalidParams(format!("unknown MCP tool `{name}`")))?;
 
-    let params = build_rpc_params(spec.name, arguments)?;
+    let audit_arguments = arguments.clone();
+    let mut params = match build_rpc_params(spec.name, arguments) {
+        Ok(params) => params,
+        Err(err) => {
+            if write_dispatch::is_write_tool(spec.name) {
+                write_dispatch::audit_write_rejection_without_config(
+                    spec.name,
+                    &audit_arguments,
+                    client_info,
+                    err.message(),
+                );
+            }
+            return Err(err);
+        }
+    };
     match spec.name {
         "core.list_tools" => {
             reject_unexpected_arguments(&params, &[])?;
@@ -382,6 +589,43 @@ pub async fn call_tool(name: &str, arguments: Value) -> Result<Value, ToolCallEr
         "agent.run_subagent" => {
             enforce_act_policy(spec.name).await?;
             return run_subagent_tool(&params).await;
+        }
+        "memory.store" | "memory.note" | "tree.tag" => {
+            let config = write_dispatch::load_write_config(spec.name).await?;
+            if let Err(err) = write_dispatch::enforce_write_policy_for_config(spec.name, &config) {
+                write_dispatch::audit_write_rejection(
+                    &config,
+                    spec.name,
+                    &audit_arguments,
+                    Some(&params),
+                    client_info,
+                    &err,
+                );
+                return Err(err);
+            }
+            params.insert(
+                "source_type".to_string(),
+                Value::String(client_info.to_string()),
+            );
+            if let Err(err) = validate_controller_params(&spec, &params) {
+                write_dispatch::audit_write_rejection(
+                    &config,
+                    spec.name,
+                    &audit_arguments,
+                    Some(&params),
+                    client_info,
+                    &err,
+                );
+                return Err(err);
+            }
+            return write_dispatch::dispatch_write_tool(
+                spec.name,
+                &params,
+                &audit_arguments,
+                client_info,
+                &config,
+            )
+            .await;
         }
         _ => {}
     }
@@ -493,7 +737,7 @@ fn build_rpc_params(
             let mut params = Map::new();
             params.insert("query".to_string(), Value::String(query));
             if let Some(categories) = optional_string_array(&args, "categories")? {
-                crate::openhuman::integrations::searxng::normalize_categories(categories.clone())
+                crate::openhuman::tools::normalize_categories(categories.clone())
                     .map_err(|err| ToolCallError::InvalidParams(err.to_string()))?;
                 params.insert("categories".to_string(), Value::from(categories));
             }
@@ -562,6 +806,108 @@ fn build_rpc_params(
             if let Some(value) = optional_non_empty_string(&args, "user_email_hint")? {
                 params.insert("user_email_hint".to_string(), Value::String(value));
             }
+            Ok(params)
+        }
+        "memory.store" => {
+            reject_unexpected_arguments(&args, MEMORY_STORE_ARGUMENTS)?;
+            let title = required_non_empty_string(&args, "title")?;
+            let content = required_non_empty_string(&args, "content")?;
+            let namespace =
+                optional_non_empty_string(&args, "namespace")?.unwrap_or_else(|| "mcp".to_string());
+            // Generate a deterministic key from the title for upsert dedup.
+            let key = format!("mcp-store-{}", slug_from(&title));
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String(namespace));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            if let Some(tags) = optional_string_array(&args, "tags")? {
+                params.insert(
+                    "tags".to_string(),
+                    Value::Array(tags.into_iter().map(Value::String).collect()),
+                );
+            }
+            Ok(params)
+        }
+        "memory.note" => {
+            reject_unexpected_arguments(&args, MEMORY_NOTE_ARGUMENTS)?;
+            let chunk_id = required_non_empty_string(&args, "chunk_id")?;
+            let note_text = required_non_empty_string(&args, "note_text")?;
+            let key = format!("mcp-note-{chunk_id}");
+            let title = format!("Note on chunk {chunk_id}");
+            let content = format!("[annotation for chunk_id={chunk_id}]\n\n{note_text}");
+            let mut metadata = Map::new();
+            metadata.insert("annotates_chunk_id".to_string(), Value::String(chunk_id));
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String("mcp".to_string()));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            params.insert("metadata".to_string(), Value::Object(metadata));
+            Ok(params)
+        }
+        "tree.tag" => {
+            reject_unexpected_arguments(&args, TREE_TAG_ARGUMENTS)?;
+            let chunk_id = required_non_empty_string(&args, "chunk_id")?;
+            // `required_non_empty_string_array` checks both presence and
+            // that the resulting list isn't empty after trimming — keeps
+            // the LLM honest about supplying at least one label per call.
+            let tags = required_non_empty_string_array(&args, "tags")?;
+            // Cap the tag set to keep the tag-record document bounded:
+            //   * `TREE_TAG_MAX_TAGS` rejects pathological cases where a
+            //     misbehaving client floods one chunk with hundreds of
+            //     labels (would also bloat the document tags index).
+            //   * `TREE_TAG_MAX_TAG_LENGTH` rejects oversize labels that
+            //     are almost certainly free-form text (which belongs in
+            //     `memory.note`, not the categorical tag surface).
+            // Both reject up-front rather than silently truncating — same
+            // "explicit rejection" pattern as `required_non_empty_string_array`.
+            if tags.len() > TREE_TAG_MAX_TAGS {
+                return Err(ToolCallError::InvalidParams(format!(
+                    "argument `tags` accepts at most {TREE_TAG_MAX_TAGS} entries (got {})",
+                    tags.len()
+                )));
+            }
+            if let Some(oversize) = tags.iter().find(|t| t.len() > TREE_TAG_MAX_TAG_LENGTH) {
+                return Err(ToolCallError::InvalidParams(format!(
+                    "argument `tags` entry exceeds {TREE_TAG_MAX_TAG_LENGTH} bytes (got {} bytes)",
+                    oversize.len()
+                )));
+            }
+            // Deterministic key keyed on `chunk_id` (not on tag content)
+            // so re-tagging the same chunk upserts the prior tag-record
+            // document rather than accumulating duplicate annotations.
+            // This is the structural difference from `memory.note`
+            // (which keys on chunk_id too but is content-additive in
+            // intent; the LLM is expected to call note again to append).
+            let key = format!("mcp-tag-{chunk_id}");
+            let title = format!("Tags for chunk {chunk_id}");
+            let content = format!(
+                "[tag record for chunk_id={chunk_id}]\n\nApplied tags: {}",
+                tags.join(", ")
+            );
+            // Build the tag list as a JSON array once, then share it
+            // between metadata.applied_tags and the top-level `tags`
+            // field. `tags_array.clone()` on the cached Value is the
+            // cheapest path — it clones each tag String once total,
+            // matching what an in-place double-collect would do.
+            let tags_array = Value::Array(tags.into_iter().map(Value::String).collect());
+            let mut metadata = Map::new();
+            metadata.insert("tags_for_chunk_id".to_string(), Value::String(chunk_id));
+            // `applied_tags` mirrors `tags` for callers that consume the
+            // metadata view; the top-level `tags` field below feeds the
+            // document tags index (queryable through `doc_list` etc.).
+            metadata.insert("applied_tags".to_string(), tags_array.clone());
+            let mut params = Map::new();
+            params.insert("namespace".to_string(), Value::String("mcp".to_string()));
+            params.insert("key".to_string(), Value::String(key));
+            params.insert("title".to_string(), Value::String(title));
+            params.insert("content".to_string(), Value::String(content));
+            params.insert("source_type".to_string(), Value::String("mcp".to_string()));
+            params.insert("tags".to_string(), tags_array);
+            params.insert("metadata".to_string(), Value::Object(metadata));
             Ok(params)
         }
         _ => Err(ToolCallError::InvalidParams(format!(
@@ -684,6 +1030,28 @@ fn optional_string_array(
         );
     }
     Ok(Some(out))
+}
+
+/// Variant of [`optional_string_array`] that errors when the field is
+/// absent, null, or resolves to an empty list after blank-trim.
+///
+/// Used by tools where supplying an empty `tags: []` is a no-op the
+/// caller almost certainly didn't mean (e.g. `tree.tag`). The MCP layer
+/// rejects it up-front instead of letting it through to the document
+/// RPC where the failure mode is silent.
+fn required_non_empty_string_array(
+    args: &Map<String, Value>,
+    key: &str,
+) -> Result<Vec<String>, ToolCallError> {
+    let trimmed = optional_string_array(args, key)?.ok_or_else(|| {
+        ToolCallError::InvalidParams(format!("missing required argument `{key}`"))
+    })?;
+    if trimmed.is_empty() {
+        return Err(ToolCallError::InvalidParams(format!(
+            "argument `{key}` must contain at least one non-empty string"
+        )));
+    }
+    Ok(trimmed)
 }
 
 fn optional_i64(args: &Map<String, Value>, key: &str) -> Result<Option<i64>, ToolCallError> {
@@ -959,7 +1327,7 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
     }))
 }
 
-fn tool_success(value: Value) -> Value {
+pub(super) fn tool_success(value: Value) -> Value {
     json!({
         "content": [{
             "type": "text",
@@ -977,7 +1345,7 @@ fn tool_text_success(text: String) -> Value {
     })
 }
 
-fn tool_error(message: String) -> Value {
+pub(super) fn tool_error(message: String) -> Value {
     json!({
         "content": [{
             "type": "text",
@@ -985,6 +1353,55 @@ fn tool_error(message: String) -> Value {
         }],
         "isError": true
     })
+}
+
+/// Produce a URL-safe slug from a title for use as a document key.
+/// Lowercases, replaces non-alphanumeric runs with a single hyphen, and
+/// truncates at 64 characters.
+fn slug_from(title: &str) -> String {
+    let slug: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Collapse runs of hyphens, trim leading/trailing.
+    let mut result = String::with_capacity(slug.len());
+    let mut prev_hyphen = true; // treat start as hyphen to trim leading
+    for ch in slug.chars() {
+        if ch == '-' {
+            if !prev_hyphen {
+                result.push('-');
+            }
+            prev_hyphen = true;
+        } else {
+            result.push(ch);
+            prev_hyphen = false;
+        }
+    }
+    // Trim trailing hyphen
+    while result.ends_with('-') {
+        result.pop();
+    }
+    if result.len() > 64 {
+        result.truncate(64);
+        while result.ends_with('-') {
+            result.pop();
+        }
+    }
+    if result.is_empty() {
+        // Fallback for titles with no ASCII-alphanumeric characters (e.g.
+        // Unicode-only titles like "会议记录" or "Протокол"). Use a short
+        // stable hash of the original title to ensure distinct slugs.
+        use sha2::{Digest, Sha256};
+        let hash = hex::encode(&Sha256::digest(title.as_bytes())[..8]);
+        return format!("untitled-{hash}");
+    }
+    result
 }
 
 fn json_type_name(value: &Value) -> &'static str {
@@ -999,408 +1416,5 @@ fn json_type_name(value: &Value) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn list_tools_exposes_base_mcp_surface_when_searxng_disabled() {
-        let config = crate::openhuman::config::Config::default();
-        let result = list_tools_result_for_config(&config);
-        let names = result["tools"]
-            .as_array()
-            .expect("tools array")
-            .iter()
-            .map(|tool| tool["name"].as_str().expect("tool name"))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            names,
-            vec![
-                "core.list_tools",
-                "core.tool_instructions",
-                "agent.list_subagents",
-                "agent.run_subagent",
-                "memory.search",
-                "memory.recall",
-                "tree.read_chunk",
-                "tree.browse",
-                "tree.top_entities",
-                "tree.list_sources",
-            ]
-        );
-    }
-
-    #[test]
-    fn list_tools_includes_searxng_when_enabled() {
-        let mut config = crate::openhuman::config::Config::default();
-        config.searxng.enabled = true;
-        let result = list_tools_result_for_config(&config);
-        let names = result["tools"]
-            .as_array()
-            .expect("tools array")
-            .iter()
-            .map(|tool| tool["name"].as_str().expect("tool name"))
-            .collect::<Vec<_>>();
-
-        assert!(names.contains(&"searxng_search"));
-    }
-
-    #[test]
-    fn mapped_rpc_methods_are_registered() {
-        for spec in tool_specs() {
-            if let Some(rpc_method) = spec.rpc_method {
-                assert!(
-                    all::schema_for_rpc_method(rpc_method).is_some(),
-                    "missing registered RPC method for {} -> {}",
-                    spec.name,
-                    rpc_method
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn build_rpc_params_parses_run_subagent_arguments() {
-        let params = build_rpc_params(
-            "agent.run_subagent",
-            json!({
-                "agent_id": "researcher",
-                "prompt": "Find the root cause."
-            }),
-        )
-        .expect("params should parse");
-
-        assert_eq!(
-            params.get("agent_id").and_then(Value::as_str),
-            Some("researcher")
-        );
-        assert_eq!(
-            params.get("prompt").and_then(Value::as_str),
-            Some("Find the root cause.")
-        );
-    }
-
-    #[test]
-    fn build_rpc_params_rejects_extra_run_subagent_fields() {
-        let err = build_rpc_params(
-            "agent.run_subagent",
-            json!({
-                "agent_id": "researcher",
-                "prompt": "Find the root cause.",
-                "toolkit": "gmail"
-            }),
-        )
-        .expect_err("unexpected field should be rejected");
-
-        assert!(
-            matches!(err, ToolCallError::InvalidParams(message) if message.contains("unexpected argument"))
-        );
-    }
-
-    #[test]
-    fn memory_search_params_trim_query_and_use_default_k() {
-        let params = build_rpc_params(
-            "memory.search",
-            json!({
-                "query": " phoenix migration ",
-            }),
-        )
-        .expect("params");
-
-        assert_eq!(params["query"], "phoenix migration");
-        assert_eq!(params["k"], DEFAULT_LIMIT);
-    }
-
-    #[test]
-    fn searxng_search_params_accept_optional_fields() {
-        let params = build_rpc_params(
-            "searxng_search",
-            json!({
-                "query": " rust async ",
-                "categories": ["web", "news"],
-                "language": " en ",
-                "max_results": 12
-            }),
-        )
-        .expect("params");
-
-        assert_eq!(params["query"], "rust async");
-        assert_eq!(params["categories"], json!(["web", "news"]));
-        assert_eq!(params["language"], "en");
-        assert_eq!(params["max_results"], 12);
-    }
-
-    #[test]
-    fn searxng_search_rejects_unknown_category() {
-        let err = build_rpc_params(
-            "searxng_search",
-            json!({
-                "query": "rust",
-                "categories": ["videos"]
-            }),
-        )
-        .expect_err("must reject");
-
-        assert!(err.message().contains("unsupported SearXNG category"));
-    }
-
-    #[test]
-    fn searxng_search_rejects_max_results_above_max() {
-        let err = build_rpc_params(
-            "searxng_search",
-            json!({
-                "query": "rust",
-                "max_results": SEARXNG_MAX_RESULTS + 1
-            }),
-        )
-        .expect_err("must reject");
-
-        assert!(err.message().contains("must not exceed"));
-    }
-
-    #[test]
-    fn memory_search_rejects_k_above_max() {
-        // Reject (don't silent-clamp) so the LLM can self-correct on the next
-        // call. Silent clamping makes the model believe it got the page size
-        // it asked for and prevents the corrective feedback loop.
-        let err = build_rpc_params(
-            "memory.search",
-            json!({
-                "query": "phoenix",
-                "k": MAX_LIMIT + 1
-            }),
-        )
-        .expect_err("must reject k > MAX_LIMIT");
-
-        let message = err.message();
-        assert!(
-            message.contains("must not exceed"),
-            "error should mention the cap, got: {message}"
-        );
-        assert!(
-            message.contains(&MAX_LIMIT.to_string()),
-            "error should mention the limit value, got: {message}"
-        );
-    }
-
-    #[test]
-    fn memory_search_accepts_k_at_max() {
-        let params = build_rpc_params(
-            "memory.search",
-            json!({ "query": "phoenix", "k": MAX_LIMIT }),
-        )
-        .expect("k = MAX_LIMIT must be accepted (boundary inclusive)");
-        assert_eq!(params["k"], MAX_LIMIT);
-    }
-
-    #[test]
-    fn tool_call_error_invalid_params_maps_to_jsonrpc_invalid_params() {
-        let err = ToolCallError::InvalidParams("missing query".to_string());
-        assert_eq!(err.code(), -32602);
-        assert_eq!(err.jsonrpc_message(), "Invalid params");
-        assert_eq!(err.message(), "missing query");
-    }
-
-    #[test]
-    fn tool_call_error_internal_maps_to_jsonrpc_internal_error() {
-        // Server-side failures (config load, missing resources) must surface
-        // as `-32603 Internal error`, not `-32602 Invalid params`, so the MCP
-        // client doesn't mislead the user / LLM into retrying with different
-        // arguments.
-        let err = ToolCallError::Internal("disk read failed".to_string());
-        assert_eq!(err.code(), -32603);
-        assert_eq!(err.jsonrpc_message(), "Internal error");
-        assert_eq!(err.message(), "disk read failed");
-    }
-
-    #[test]
-    fn memory_recall_requires_query() {
-        let err = build_rpc_params("memory.recall", json!({})).expect_err("must reject");
-        assert!(err.message().contains("missing required argument `query`"));
-    }
-
-    #[test]
-    fn memory_search_rejects_undocumented_limit_alias() {
-        let err = build_rpc_params(
-            "memory.search",
-            json!({
-                "query": "phoenix",
-                "limit": 5
-            }),
-        )
-        .expect_err("must reject");
-
-        assert!(err.message().contains("unexpected argument `limit`"));
-    }
-
-    #[test]
-    fn tree_read_chunk_maps_chunk_id_to_controller_id() {
-        let params =
-            build_rpc_params("tree.read_chunk", json!({"chunk_id": "abc"})).expect("params");
-        assert_eq!(params["id"], "abc");
-        assert!(!params.contains_key("chunk_id"));
-    }
-
-    #[test]
-    fn tree_read_chunk_rejects_unknown_arguments() {
-        let err = build_rpc_params(
-            "tree.read_chunk",
-            json!({
-                "chunk_id": "abc",
-                "unused": true
-            }),
-        )
-        .expect_err("must reject");
-
-        assert!(err.message().contains("unexpected argument `unused`"));
-    }
-
-    #[test]
-    fn non_object_arguments_are_invalid() {
-        let err = build_rpc_params("memory.search", json!("query")).expect_err("must reject");
-        assert!(err.message().contains("arguments must be an object"));
-    }
-
-    // ── tree.browse ────────────────────────────────────────────────────
-
-    #[test]
-    fn tree_browse_no_args_sends_default_limit_only() {
-        // Empty filter is a valid request — the controller treats unset filters
-        // as "no constraint" — and the MCP layer still applies its own DEFAULT_LIMIT
-        // so the LLM doesn't accidentally pull the controller's 50-row default
-        // when it asked for nothing.
-        let params = build_rpc_params("tree.browse", json!({})).expect("empty args are valid");
-        assert_eq!(params.len(), 1);
-        assert_eq!(params["limit"], DEFAULT_LIMIT);
-    }
-
-    #[test]
-    fn tree_browse_passes_through_filters_and_renames_k_to_limit() {
-        let params = build_rpc_params(
-            "tree.browse",
-            json!({
-                "source_kinds": ["email", "chat"],
-                "source_ids": ["acme-thread-1"],
-                "entity_ids": ["person:Alice"],
-                "since_ms": 1_700_000_000_000_i64,
-                "until_ms": 1_710_000_000_000_i64,
-                "query": "Q3 plan",
-                "k": 20,
-                "offset": 10
-            }),
-        )
-        .expect("params");
-
-        assert_eq!(params["limit"], 20);
-        assert!(!params.contains_key("k"));
-        assert_eq!(params["source_kinds"], json!(["email", "chat"]));
-        assert_eq!(params["source_ids"], json!(["acme-thread-1"]));
-        assert_eq!(params["entity_ids"], json!(["person:Alice"]));
-        assert_eq!(params["since_ms"], 1_700_000_000_000_i64);
-        assert_eq!(params["until_ms"], 1_710_000_000_000_i64);
-        assert_eq!(params["query"], "Q3 plan");
-        assert_eq!(params["offset"], 10);
-    }
-
-    #[test]
-    fn tree_browse_rejects_k_above_max() {
-        // Same reject-don't-clamp policy as memory.search / memory.recall so the
-        // LLM gets corrective feedback instead of silently receiving fewer rows
-        // than it asked for.
-        let err = build_rpc_params("tree.browse", json!({ "k": MAX_LIMIT + 1 }))
-            .expect_err("must reject k > MAX_LIMIT");
-        assert!(err.message().contains("must not exceed"));
-    }
-
-    #[test]
-    fn tree_browse_rejects_unknown_argument() {
-        let err = build_rpc_params("tree.browse", json!({ "limit": 10 }))
-            .expect_err("must reject the controller's `limit` alias");
-        assert!(err.message().contains("unexpected argument `limit`"));
-    }
-
-    #[test]
-    fn tree_browse_rejects_non_array_source_kinds() {
-        let err = build_rpc_params("tree.browse", json!({ "source_kinds": "email" }))
-            .expect_err("must reject scalar where array is required");
-        assert!(err.message().contains("must be an array of strings"));
-    }
-
-    #[test]
-    fn tree_browse_rejects_non_integer_since_ms() {
-        let err = build_rpc_params("tree.browse", json!({ "since_ms": "yesterday" }))
-            .expect_err("must reject ISO-style date for ms field");
-        assert!(err.message().contains("must be an integer"));
-    }
-
-    #[test]
-    fn tree_browse_drops_blank_array_entries_silently() {
-        // Empty / whitespace strings inside an array are tolerated — clients
-        // sometimes send `["", "email"]` after a partial UI selection and the
-        // intent ("filter to email") is unambiguous. A fully-blank array is OK
-        // too and produces an empty filter (same as omitting the field).
-        let params = build_rpc_params(
-            "tree.browse",
-            json!({ "source_kinds": ["", "email", "  "] }),
-        )
-        .expect("blank entries don't fail the whole call");
-        assert_eq!(params["source_kinds"], json!(["email"]));
-    }
-
-    // ── tree.top_entities ──────────────────────────────────────────────
-
-    #[test]
-    fn tree_top_entities_defaults_limit_and_omits_kind() {
-        let params =
-            build_rpc_params("tree.top_entities", json!({})).expect("empty args are valid");
-        assert_eq!(params["limit"], DEFAULT_LIMIT);
-        assert!(!params.contains_key("kind"));
-    }
-
-    #[test]
-    fn tree_top_entities_passes_kind_through_and_caps_limit_at_max() {
-        let params = build_rpc_params(
-            "tree.top_entities",
-            json!({ "kind": "person", "k": MAX_LIMIT }),
-        )
-        .expect("k = MAX_LIMIT is the boundary, inclusive");
-        assert_eq!(params["kind"], "person");
-        assert_eq!(params["limit"], MAX_LIMIT);
-    }
-
-    #[test]
-    fn tree_top_entities_rejects_empty_kind() {
-        // Blank kind is a client bug — the controller would happily run it as
-        // "no filter" but that's exactly what *omitting* the field already
-        // means. Rejecting nudges the LLM to drop the field instead.
-        let err = build_rpc_params("tree.top_entities", json!({ "kind": "   " }))
-            .expect_err("must reject blank-only kind");
-        assert!(err.message().contains("must not be empty"));
-    }
-
-    // ── tree.list_sources ──────────────────────────────────────────────
-
-    #[test]
-    fn tree_list_sources_accepts_empty_args() {
-        let params =
-            build_rpc_params("tree.list_sources", json!({})).expect("no args is the common case");
-        assert!(params.is_empty());
-    }
-
-    #[test]
-    fn tree_list_sources_passes_user_email_hint() {
-        let params = build_rpc_params(
-            "tree.list_sources",
-            json!({ "user_email_hint": "me@example.com" }),
-        )
-        .expect("params");
-        assert_eq!(params["user_email_hint"], "me@example.com");
-    }
-
-    #[test]
-    fn tree_list_sources_rejects_unknown_argument() {
-        let err = build_rpc_params("tree.list_sources", json!({ "limit": 5 }))
-            .expect_err("list_sources takes no pagination");
-        assert!(err.message().contains("unexpected argument `limit`"));
-    }
-}
+#[path = "tools_tests.rs"]
+mod tests;

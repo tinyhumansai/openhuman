@@ -23,7 +23,6 @@
  *
  * There is **no** demo loop — the overlay is entirely event-driven.
  */
-import { invoke } from '@tauri-apps/api/core';
 import {
   currentMonitor,
   getCurrentWindow,
@@ -31,11 +30,19 @@ import {
   LogicalSize,
 } from '@tauri-apps/api/window';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { type Socket } from 'socket.io-client';
 
 import RotatingTetrahedronCanvas from '../components/RotatingTetrahedronCanvas';
 import { useT } from '../lib/i18n/I18nContext';
 import { callCoreRpc, getCoreHttpBaseUrl } from '../services/coreRpcClient';
+import { connectCoreSocket } from '../services/coreSocket';
+// `safeInvoke` (aliased to `invoke`) converts the CEF
+// `window.ipc.postMessage` synchronous throw — Sentry TAURI-REACT-7 /
+// TAURI-REACT-6 — into a rejected Promise so the existing `.catch(...)`
+// handler sees it as a normal IPC failure. The overlay window is the most
+// at-risk surface here because it boots into its own WebView where the
+// CEF IPC bridge can briefly be unwired.
+import { safeInvoke as invoke } from '../utils/tauriCommands/common';
 
 const OVERLAY_IDLE_WIDTH = 50;
 const OVERLAY_IDLE_HEIGHT = 50;
@@ -350,18 +357,14 @@ export default function OverlayApp() {
 
     const connect = async () => {
       try {
-        const baseUrl = await resolveCoreSocketUrl();
-        if (disposed) return;
-
-        console.debug(`[overlay] connecting to core socket at ${baseUrl}`);
-        socket = io(baseUrl, {
-          path: '/socket.io/',
-          transports: ['websocket', 'polling'],
-          reconnection: true,
-          reconnectionDelay: 2000,
-          reconnectionAttempts: Infinity,
-          forceNew: true,
+        /* c8 ignore start — thin call site over the tested `connectCoreSocket` helper */
+        console.debug('[overlay] connecting to core socket');
+        socket = await connectCoreSocket({
+          getBaseUrl: resolveCoreSocketUrl,
+          isDisposed: () => disposed,
         });
+        if (!socket) return;
+        /* c8 ignore stop */
 
         socket.on('connect', () => {
           console.debug('[overlay] socket connected', socket?.id);

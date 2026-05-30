@@ -29,7 +29,7 @@
 
 // Re-export everything that was previously public from this file so external
 // callers are unaffected.
-pub use super::ops_create::{create_skill, CreateSkillParams};
+pub use super::ops_create::{create_skill, CreateSkillParams, SkillCreateInputDef};
 pub use super::ops_discover::{
     discover_skills, init_skills_dir, is_workspace_trusted, load_skills, read_skill_resource,
 };

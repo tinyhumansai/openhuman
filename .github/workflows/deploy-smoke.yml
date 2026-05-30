@@ -1,31 +1,6 @@
 ---
 name: Deploy Smoke
 on:
-  push:
-    branches: [main]
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - docker-compose.yml
-      - .do/app.yaml
-      - gitbooks/developing/cloud-deploy.md
-      - .github/workflows/deploy-smoke.yml
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - src/**
-  pull_request:
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - docker-compose.yml
-      - .do/app.yaml
-      - gitbooks/developing/cloud-deploy.md
-      - .github/workflows/deploy-smoke.yml
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - src/**
   workflow_dispatch:
 permissions:
   contents: read

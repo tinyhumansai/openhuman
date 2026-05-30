@@ -43,6 +43,8 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "get_analytics_settings",
         "update_meet_settings",
         "get_meet_settings",
+        "update_autonomy_settings",
+        "get_autonomy_settings",
         "agent_server_status",
         "reset_local_data",
         "get_onboarding_completed",
@@ -125,6 +127,47 @@ fn deserialize_params_parses_model_settings_update() {
     assert_eq!(out.default_temperature, Some(0.7));
     assert!(out.api_url.is_none());
     assert!(out.default_model.is_none());
+}
+
+#[test]
+fn deserialize_params_parses_autonomy_update_with_trusted_roots() {
+    // Mirrors the JSON the AgentAccessPanel posts.
+    let params = serde_json::json!({
+        "level": "supervised",
+        "workspace_only": true,
+        "allow_tool_install": false,
+        "trusted_roots": [
+            { "path": "/data/repo", "access": "readwrite" },
+            { "path": "/srv/docs" }
+        ]
+    });
+    let m = params.as_object().unwrap().clone();
+    let out: AutonomySettingsUpdate = deserialize_params(m).unwrap();
+    assert_eq!(out.level.as_deref(), Some("supervised"));
+    assert_eq!(out.workspace_only, Some(true));
+    assert_eq!(out.allow_tool_install, Some(false));
+    let roots = out.trusted_roots.expect("trusted_roots present");
+    assert_eq!(roots.len(), 2);
+    assert_eq!(roots[0].path, "/data/repo");
+    assert_eq!(
+        roots[0].access,
+        crate::openhuman::security::TrustedAccess::ReadWrite
+    );
+    // `access` defaults to Read when omitted.
+    assert_eq!(
+        roots[1].access,
+        crate::openhuman::security::TrustedAccess::Read
+    );
+}
+
+#[test]
+fn autonomy_settings_rpc_is_registered() {
+    let funcs: Vec<&str> = all_controller_schemas()
+        .iter()
+        .map(|s| s.function)
+        .collect();
+    assert!(funcs.contains(&"get_autonomy_settings"));
+    assert!(funcs.contains(&"update_autonomy_settings"));
 }
 
 #[test]
@@ -216,4 +259,58 @@ fn default_onboarding_flag_constant_points_to_hidden_marker() {
     // Keeps the constant's observable value pinned so tool behavior
     // stays stable across refactors.
     assert_eq!(DEFAULT_ONBOARDING_FLAG_NAME, ".skip_onboarding");
+}
+
+// ── autonomy settings handlers ───────────────────────────────
+
+use crate::openhuman::config::TEST_ENV_LOCK;
+
+#[tokio::test]
+async fn handle_get_autonomy_settings_returns_current_value() {
+    let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+    // Seed a known value before reading.
+    let _ = crate::openhuman::config::ops::load_and_apply_autonomy_settings(
+        crate::openhuman::config::ops::AutonomySettingsPatch {
+            max_actions_per_hour: Some(123),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("seed");
+
+    let out = super::handle_get_autonomy_settings(serde_json::Map::new())
+        .await
+        .expect("handler");
+    // into_cli_compatible_json wraps data under "result" when logs are present.
+    let inner = out.get("result").unwrap_or(&out);
+    let value = inner.get("max_actions_per_hour").and_then(|v| v.as_u64());
+    assert_eq!(value, Some(123));
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
+}
+
+#[tokio::test]
+async fn handle_update_autonomy_settings_rejects_invalid_value() {
+    let _g = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let tmp = tempfile::tempdir().unwrap();
+    unsafe {
+        std::env::set_var("OPENHUMAN_WORKSPACE", tmp.path());
+    }
+    let mut params = serde_json::Map::new();
+    params.insert("max_actions_per_hour".into(), serde_json::json!(0));
+
+    let err = super::handle_update_autonomy_settings(params)
+        .await
+        .unwrap_err();
+    assert!(err.contains("at least 1"), "got: {err}");
+
+    unsafe {
+        std::env::remove_var("OPENHUMAN_WORKSPACE");
+    }
 }

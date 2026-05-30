@@ -289,10 +289,17 @@ fn handle_status(_params: Map<String, Value>) -> ControllerFuture {
                     .unwrap_or((None, 0));
                 Ok((tc, pe, lt, tt))
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
 
+        let provider_unavailable_reason = if hb.enabled && hb.inference_enabled {
+            super::engine::subconscious_provider_unavailable_reason(&config)
+        } else {
+            None
+        };
         let status = super::types::SubconsciousStatus {
             enabled: hb.enabled && hb.inference_enabled,
+            provider_available: provider_unavailable_reason.is_none(),
+            provider_unavailable_reason,
             interval_minutes: hb.interval_minutes.max(5),
             last_tick_at,
             total_ticks,
@@ -348,7 +355,7 @@ fn handle_tasks_list(params: Map<String, Value>) -> ControllerFuture {
         let tasks = store::with_connection(&config.workspace_dir, |conn| {
             store::list_tasks(conn, enabled_only)
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(tasks, "tasks listed"))
     })
 }
@@ -370,7 +377,7 @@ fn handle_tasks_add(params: Map<String, Value>) -> ControllerFuture {
         let task = engine
             .add_task(&title, source)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(task, "task added"))
     })
 }
@@ -402,7 +409,7 @@ fn handle_tasks_update(params: Map<String, Value>) -> ControllerFuture {
         store::with_connection(&config.workspace_dir, |conn| {
             store::update_task(conn, &task_id, &patch)
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(
             serde_json::json!({"updated": task_id}),
             "task updated",
@@ -421,7 +428,7 @@ fn handle_tasks_remove(params: Map<String, Value>) -> ControllerFuture {
         store::with_connection(&config.workspace_dir, |conn| {
             store::remove_task(conn, &task_id)
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(
             serde_json::json!({"removed": task_id}),
             "task removed",
@@ -437,7 +444,7 @@ fn handle_log_list(params: Map<String, Value>) -> ControllerFuture {
         let entries = store::with_connection(&config.workspace_dir, |conn| {
             store::list_log_entries(conn, task_id, limit)
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(entries, "log entries listed"))
     })
 }
@@ -456,7 +463,7 @@ fn handle_escalations_list(params: Map<String, Value>) -> ControllerFuture {
         let escalations = store::with_connection(&config.workspace_dir, |conn| {
             store::list_escalations(conn, status_filter.as_ref())
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(escalations, "escalations listed"))
     })
 }
@@ -474,7 +481,7 @@ fn handle_escalations_approve(params: Map<String, Value>) -> ControllerFuture {
         engine
             .approve_escalation(&escalation_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(
             serde_json::json!({"approved": escalation_id}),
             "escalation approved and executed",
@@ -495,7 +502,7 @@ fn handle_escalations_dismiss(params: Map<String, Value>) -> ControllerFuture {
         engine
             .dismiss_escalation(&escalation_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(
             serde_json::json!({"dismissed": escalation_id}),
             "escalation dismissed",
@@ -513,7 +520,7 @@ fn handle_reflections_list(params: Map<String, Value>) -> ControllerFuture {
         let reflections = store::with_connection(&config.workspace_dir, |conn| {
             reflection_store::list_recent(conn, limit, since_ts)
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(reflections, "reflections listed"))
     })
 }
@@ -530,7 +537,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
         let reflection = store::with_connection(&config.workspace_dir, |conn| {
             reflection_store::get_reflection(conn, &reflection_id)
         })
-        .map_err(|e| e.to_string())?
+        .map_err(|e| format!("{e:#}"))?
         .ok_or_else(|| format!("reflection not found: {reflection_id}"))?;
 
         // Spawn a fresh conversation thread for this action. Reflections never
@@ -558,14 +565,15 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
             }
         };
         let now_iso = chrono::Utc::now().to_rfc3339();
-        crate::openhuman::memory::conversations::ensure_thread(
+        crate::openhuman::memory_conversations::ensure_thread(
             config.workspace_dir.clone(),
-            crate::openhuman::memory::conversations::CreateConversationThread {
+            crate::openhuman::memory_conversations::CreateConversationThread {
                 id: thread_id.clone(),
                 title: thread_title,
                 created_at: now_iso.clone(),
                 parent_thread_id: None,
                 labels: Some(vec!["from_reflection".to_string()]),
+                personality_id: None,
             },
         )
         .map_err(|e| format!("ensure_thread (reflection-spawned) failed: {e}"))?;
@@ -593,7 +601,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
             "source_refs": reflection.source_refs,
             "origin": "subconscious_reflection",
         });
-        let seed_message = crate::openhuman::memory::conversations::ConversationMessage {
+        let seed_message = crate::openhuman::memory_conversations::ConversationMessage {
             id: uuid::Uuid::new_v4().to_string(),
             content: body_md,
             message_type: "text".to_string(),
@@ -601,7 +609,7 @@ fn handle_reflections_act(params: Map<String, Value>) -> ControllerFuture {
             sender: "assistant".to_string(),
             created_at: now_iso,
         };
-        crate::openhuman::memory::conversations::append_message(
+        crate::openhuman::memory_conversations::append_message(
             config.workspace_dir.clone(),
             &thread_id,
             seed_message,
@@ -653,7 +661,7 @@ fn handle_reflections_dismiss(params: Map<String, Value>) -> ControllerFuture {
         store::with_connection(&config.workspace_dir, |conn| {
             reflection_store::mark_dismissed(conn, &reflection_id, now)
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("{e:#}"))?;
         to_json(RpcOutcome::single_log(
             serde_json::json!({"dismissed": reflection_id}),
             "reflection dismissed",

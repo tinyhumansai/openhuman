@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
 import { renderWithProviders } from '../../test/test-utils';
@@ -50,11 +50,26 @@ vi.mock('../../lib/composio/hooks', () => ({
     loading: false,
     error: null,
   }),
+  // Issue #2283: Skills.tsx also consumes useAgentReadyComposioToolkits.
+  // `loading: true` keeps Preview badges off so legacy aria-label
+  // assertions on this page keep passing.
+  useAgentReadyComposioToolkits: () => ({
+    agentReady: new Set<string>(),
+    loading: true,
+    error: null,
+  }),
 }));
 
 describe('Skills page — Channels grid', () => {
+  beforeEach(() => {
+    // The default tab is 'composio'; click 'Channels' to reveal the Channels card.
+  });
+
   it('renders configured channels as tiles in a dedicated card and opens the setup modal on click', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+
+    // Switch to the Channels tab to make the Channels card visible.
+    fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
 
     const channelsHeading = screen.getByRole('heading', { name: 'Channels' });
     expect(channelsHeading).toBeInTheDocument();
@@ -119,6 +134,8 @@ describe('Skills page — Channels grid', () => {
       };
 
       renderWithProviders(<Skills />, { initialEntries: ['/skills'], preloadedState });
+      // Switch to the Channels tab so the Channels card is visible.
+      fireEvent.click(screen.getByRole('tab', { name: 'Channels' }));
       const channelsCard = screen
         .getByRole('heading', { name: 'Channels' })
         .closest('.rounded-2xl');
@@ -132,7 +149,8 @@ describe('Skills page — Channels grid', () => {
   it('does not surface a Channels chip in the category filter inside the Integrations card', () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
-    const integrationsHeading = screen.getByRole('heading', { name: 'Integrations' });
+    // The composio tab is active by default — Composio Integrations card is visible.
+    const integrationsHeading = screen.getByRole('heading', { name: 'Composio Integrations' });
     const integrationsCard = integrationsHeading.closest('.rounded-2xl');
     expect(integrationsCard).not.toBeNull();
     const filterTabs = within(integrationsCard as HTMLElement)

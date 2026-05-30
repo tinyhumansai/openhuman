@@ -1,14 +1,24 @@
-import Markdown from 'react-markdown';
+import type { ReactNode } from 'react';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
+import remarkMath from 'remark-math';
 
 import { OPENHUMAN_LINK_EVENT } from '../../../components/OpenhumanLinkModal';
 import { parseMarkdownTable } from '../../../utils/agentMessageBubbles';
+import { hasLatexContent, normalizeLatexDelimiters } from '../../../utils/latex';
 import { openUrl } from '../../../utils/openUrl';
+import { openWorkspacePath } from '../../../utils/tauriCommands/workspacePaths';
+import { parseWorkspaceHref } from '../../../utils/workspaceLinks';
 import {
   type AgentBubblePosition,
   getAgentBubbleChrome,
   isAllowedExternalHref,
   parseBubbleSegments,
 } from '../utils/format';
+
+const MATH_REMARK_PLUGINS = [remarkMath];
+const MATH_REHYPE_PLUGINS = [rehypeKatex];
+const EMPTY_PLUGINS: [] = [];
 
 /**
  * Pill rendered below an agent bubble for each
@@ -37,6 +47,34 @@ function OpenhumanLinkPill({ path, label }: { path: string; label: string }) {
   );
 }
 
+function transformMarkdownUrl(url: string): string {
+  return parseWorkspaceHref(url) ? url : defaultUrlTransform(url);
+}
+
+function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNode }) {
+  return (
+    <a
+      href={href}
+      onClick={e => {
+        e.preventDefault();
+        const workspaceTarget = parseWorkspaceHref(href);
+        if (workspaceTarget) {
+          void openWorkspacePath(workspaceTarget.path).catch(err => {
+            console.error('workspace open failed:', err);
+          });
+          return;
+        }
+        if (!href || !isAllowedExternalHref(href)) return;
+        void openUrl(href).catch(() => {
+          // Ignore launcher errors from OS URL handler failures.
+        });
+      }}
+      className="cursor-pointer underline">
+      {children}
+    </a>
+  );
+}
+
 export function BubbleMarkdown({
   content,
   tone = 'agent',
@@ -49,55 +87,36 @@ export function BubbleMarkdown({
       ? 'prose-invert prose-p:text-white prose-li:text-white prose-a:text-white prose-code:text-white prose-strong:text-white prose-headings:text-white [&_li::marker]:text-white/85'
       : 'dark:prose-invert prose-a:text-primary-500 prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-headings:text-sm [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300';
 
+  const hasMath = hasLatexContent(content);
+  const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
+
   return (
     <div
       className={`text-sm prose prose-sm max-w-none prose-p:my-1 prose-pre:my-2 prose-pre:rounded-lg prose-code:text-xs prose-headings:font-semibold prose-ul:my-0 prose-ol:my-0 prose-li:my-0 ${proseTone} ${
         tone === 'user' ? 'prose-pre:bg-white/10' : 'prose-pre:bg-stone-300/50'
       } [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:my-0 [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0`}>
       <Markdown
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={e => {
-                e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
-                void openUrl(href).catch(() => {
-                  // Ignore launcher errors from OS URL handler failures.
-                });
-              }}
-              className="cursor-pointer underline">
-              {children}
-            </a>
-          ),
-        }}>
-        {content}
+        urlTransform={transformMarkdownUrl}
+        components={{ a: MarkdownAnchor }}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
+        {rendered}
       </Markdown>
     </div>
   );
 }
 
 export function TableCellMarkdown({ content }: { content: string }) {
+  const hasMath = hasLatexContent(content);
+  const rendered = hasMath ? normalizeLatexDelimiters(content) : content;
   return (
     <div className="prose prose-sm dark:prose-invert max-w-none text-sm text-stone-700 dark:text-neutral-200 prose-p:my-0 prose-ul:my-0 prose-ol:my-0 prose-li:my-0 prose-code:text-xs prose-code:text-primary-700 dark:prose-code:text-primary-300 prose-a:text-primary-500 prose-strong:text-stone-900 dark:prose-strong:text-neutral-100 prose-headings:text-sm prose-headings:font-semibold [&_li::marker]:text-stone-700 dark:[&_li::marker]:text-neutral-300 [&_ul]:my-0 [&_ol]:my-0 [&_ul]:pl-0 [&_ol]:pl-0 [&_ul]:list-inside [&_ol]:list-inside [&_li]:pl-0 [&_li_p]:inline [&_li_p]:m-0">
       <Markdown
-        components={{
-          a: ({ href, children }) => (
-            <a
-              href={href}
-              onClick={e => {
-                e.preventDefault();
-                if (!href || !isAllowedExternalHref(href)) return;
-                void openUrl(href).catch(() => {
-                  // Ignore launcher errors from OS URL handler failures.
-                });
-              }}
-              className="cursor-pointer underline">
-              {children}
-            </a>
-          ),
-        }}>
-        {content}
+        urlTransform={transformMarkdownUrl}
+        components={{ a: MarkdownAnchor }}
+        remarkPlugins={hasMath ? MATH_REMARK_PLUGINS : EMPTY_PLUGINS}
+        rehypePlugins={hasMath ? MATH_REHYPE_PLUGINS : EMPTY_PLUGINS}>
+        {rendered}
       </Markdown>
     </div>
   );

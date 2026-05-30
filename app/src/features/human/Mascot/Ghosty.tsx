@@ -17,6 +17,10 @@ import { visemePath, VISEMES, type VisemeShape } from './visemes';
  *   mouth from `viseme` rather than from `face`.
  * - `happy` — short post-turn acknowledgement before falling back to `idle`.
  * - `concerned` — error / failed tool / unavailable voice path.
+ * - `curious` — attentive/interested; user asked something engaging or agent
+ *   is exploring an interesting problem.
+ * - `proud` — task fully completed after meaningful tool/subagent work.
+ * - `cautious` — gentle warning; less severe than `concerned`.
  *
  * `normal` is the legacy alias for `idle` and stays accepted for backwards
  * compatibility with older callers.
@@ -30,6 +34,9 @@ export type MascotFace =
   | 'speaking'
   | 'happy'
   | 'concerned'
+  | 'curious'
+  | 'proud'
+  | 'cautious'
   | 'normal';
 
 export interface GhostyProps {
@@ -123,6 +130,37 @@ const FACE_PRESETS: Record<Exclude<MascotFace, 'normal'>, FacePreset> = {
     browDy: -2,
     showBrows: true,
     blushOpacity: 0.5,
+  },
+  // Wide, attentive eyes with raised brows — the mascot is engaged and
+  // interested in what is happening.
+  curious: {
+    eyeScaleY: 1.1,
+    eyeScaleX: 1.05,
+    browTilt: -10,
+    browDy: -8,
+    showBrows: true,
+    blushOpacity: 0.8,
+  },
+  // Squinted-happy with full blush — task completed after real work.
+  // Visually distinct from `happy` (less squint, brows soft) so it reads
+  // as satisfaction rather than a quick acknowledgement.
+  proud: {
+    eyeScaleY: 0.55,
+    eyeScaleX: 1.15,
+    browTilt: -4,
+    browDy: -4,
+    showBrows: false,
+    blushOpacity: 1,
+  },
+  // Gentle worry — a heads-up rather than a failure. Softer than `concerned`
+  // (less brow tilt, lighter blush reduction).
+  cautious: {
+    eyeScaleY: 0.9,
+    eyeScaleX: 0.95,
+    browTilt: 10,
+    browDy: -3,
+    showBrows: true,
+    blushOpacity: 0.65,
   },
 };
 
@@ -328,6 +366,15 @@ function restMouthPath(face: MascotFace): string {
     case 'listening':
       // Open soft "o".
       return 'M495,580 Q520,600 545,580 Q520,615 495,580 Z';
+    case 'curious':
+      // Small open oval — slight "oh?" shape.
+      return 'M500,578 Q520,598 540,578 Q520,610 500,578 Z';
+    case 'proud':
+      // Relaxed upward curve, wider than happy but not a full grin.
+      return 'M468,570 Q520,625 572,570 Q520,600 468,570 Z';
+    case 'cautious':
+      // Slight downward turn — concern lite.
+      return 'M482,600 Q520,568 558,600 Q520,585 482,600 Z';
     default:
       return visemePath(VISEMES.REST);
   }

@@ -155,8 +155,16 @@ fn task_board_update_is_stored_and_flushed() {
             id: "task-1".into(),
             title: "Draft".into(),
             status: TaskCardStatus::Todo,
+            objective: None,
+            plan: Vec::new(),
+            assigned_agent: None,
+            allowed_tools: Vec::new(),
+            approval_mode: None,
+            acceptance_criteria: Vec::new(),
+            evidence: Vec::new(),
             notes: None,
             blocker: None,
+            source_metadata: None,
             order: 0,
             updated_at: "2026-05-15T00:00:00Z".into(),
         }],
@@ -216,6 +224,7 @@ fn subagent_lifecycle_records_and_clears_active() {
         mode: "typed".into(),
         dedicated_thread: false,
         prompt_chars: 42,
+        worker_thread_id: None,
     });
     let s = m.snapshot();
     assert_eq!(s.active_subagent.as_deref(), Some("researcher"));

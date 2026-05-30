@@ -18,18 +18,47 @@ const TASK_BOARD_EXTENSION: &str = "json";
 #[serde(rename_all = "snake_case")]
 pub enum TaskCardStatus {
     Todo,
+    /// Plan approval required and pending — the dispatcher parked the card here
+    /// and emitted `TaskPlanAwaitingApproval`; it will not run until a human
+    /// approves (→ `Ready`) or rejects (→ `Rejected`).
+    AwaitingApproval,
+    /// Approved for execution — the dispatcher runs `Ready` cards without a
+    /// further approval check (distinguishes "approved" from the initial
+    /// `Todo`, which the approval gate would otherwise re-park).
+    Ready,
     InProgress,
     Blocked,
     Done,
+    /// Plan approval was denied; the card is not executed.
+    Rejected,
 }
 
 impl TaskCardStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Todo => "todo",
+            Self::AwaitingApproval => "awaiting_approval",
+            Self::Ready => "ready",
             Self::InProgress => "in_progress",
             Self::Blocked => "blocked",
             Self::Done => "done",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskApprovalMode {
+    Required,
+    NotRequired,
+}
+
+impl TaskApprovalMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::NotRequired => "not_required",
         }
     }
 }
@@ -41,9 +70,29 @@ pub struct TaskBoardCard {
     pub title: String,
     pub status: TaskCardStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<TaskApprovalMode>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub acceptance_criteria: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
+    /// Provider/source identifiers for a card ingested from a task source
+    /// (`{provider, source_id, external_id, url, repo?, urgency}`). Set by
+    /// the `task_sources` route; consumed downstream for prioritisation and
+    /// external write-back. `None` for agent/UI-authored cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_metadata: Option<serde_json::Value>,
     #[serde(default)]
     pub order: u32,
     #[serde(default)]
@@ -283,6 +332,20 @@ pub fn normalise_board(board: &mut TaskBoard) {
             .as_ref()
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
+        card.objective = card
+            .objective
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        card.assigned_agent = card
+            .assigned_agent
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        trim_string_vec(&mut card.plan);
+        trim_string_vec(&mut card.allowed_tools);
+        trim_string_vec(&mut card.acceptance_criteria);
+        trim_string_vec(&mut card.evidence);
         card.blocker = card
             .blocker
             .as_ref()
@@ -328,6 +391,13 @@ fn validate_thread_id(thread_id: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+fn trim_string_vec(values: &mut Vec<String>) {
+    values.retain_mut(|value| {
+        *value = value.trim().to_string();
+        !value.is_empty()
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,8 +430,16 @@ mod tests {
                     id: String::new(),
                     title: "  Draft plan  ".into(),
                     status: TaskCardStatus::Todo,
+                    objective: Some("  Ship task briefs  ".into()),
+                    plan: vec!["  extend schema  ".into(), "  ".into()],
+                    assigned_agent: Some("  planner  ".into()),
+                    allowed_tools: vec![" todo ".into(), "".into()],
+                    approval_mode: Some(TaskApprovalMode::Required),
+                    acceptance_criteria: vec!["  tests pass  ".into()],
+                    evidence: vec!["  cargo test  ".into()],
                     notes: Some("  note  ".into()),
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
@@ -369,8 +447,16 @@ mod tests {
                     id: "blocked".into(),
                     title: "Need approval".into(),
                     status: TaskCardStatus::Blocked,
+                    objective: None,
+                    plan: Vec::new(),
+                    assigned_agent: None,
+                    allowed_tools: Vec::new(),
+                    approval_mode: None,
+                    acceptance_criteria: Vec::new(),
+                    evidence: Vec::new(),
                     notes: Some("waiting on user".into()),
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
@@ -380,6 +466,19 @@ mod tests {
 
         let saved = store.put(board).expect("put");
         assert_eq!(saved.cards[0].title, "Draft plan");
+        assert_eq!(
+            saved.cards[0].objective.as_deref(),
+            Some("Ship task briefs")
+        );
+        assert_eq!(saved.cards[0].plan, vec!["extend schema"]);
+        assert_eq!(saved.cards[0].assigned_agent.as_deref(), Some("planner"));
+        assert_eq!(saved.cards[0].allowed_tools, vec!["todo"]);
+        assert_eq!(
+            saved.cards[0].approval_mode,
+            Some(TaskApprovalMode::Required)
+        );
+        assert_eq!(saved.cards[0].acceptance_criteria, vec!["tests pass"]);
+        assert_eq!(saved.cards[0].evidence, vec!["cargo test"]);
         assert_eq!(saved.cards[0].order, 0);
         assert!(saved.cards[0].id.starts_with("task-"));
         assert_eq!(saved.cards[1].blocker.as_deref(), Some("waiting on user"));
@@ -419,8 +518,16 @@ mod tests {
                     id: "empty".into(),
                     title: "   ".into(),
                     status: TaskCardStatus::Todo,
+                    objective: None,
+                    plan: Vec::new(),
+                    assigned_agent: None,
+                    allowed_tools: Vec::new(),
+                    approval_mode: None,
+                    acceptance_criteria: Vec::new(),
+                    evidence: Vec::new(),
                     notes: None,
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
@@ -428,8 +535,16 @@ mod tests {
                     id: "real".into(),
                     title: "Real".into(),
                     status: TaskCardStatus::Todo,
+                    objective: None,
+                    plan: Vec::new(),
+                    assigned_agent: None,
+                    allowed_tools: Vec::new(),
+                    approval_mode: None,
+                    acceptance_criteria: Vec::new(),
+                    evidence: Vec::new(),
                     notes: None,
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },

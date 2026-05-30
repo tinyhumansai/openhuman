@@ -38,6 +38,7 @@ impl Provider for StaticProvider {
                 text: Some("done".into()),
                 tool_calls: vec![],
                 usage: None,
+                reasoning_content: None,
             })
         })
     }
@@ -51,8 +52,9 @@ fn make_agent(provider: Arc<dyn Provider>) -> Agent {
         backend: "none".into(),
         ..crate::openhuman::config::MemoryConfig::default()
     };
-    let mem: Arc<dyn Memory> =
-        Arc::from(crate::openhuman::memory::create_memory(&memory_cfg, &workspace_path).unwrap());
+    let mem: Arc<dyn Memory> = Arc::from(
+        crate::openhuman::memory_store::create_memory(&memory_cfg, &workspace_path).unwrap(),
+    );
 
     Agent::builder()
         .provider_arc(provider)
@@ -125,6 +127,7 @@ fn sanitizers_and_tool_call_helpers_cover_fallback_paths() {
         text: Some(String::new()),
         tool_calls: vec![],
         usage: None,
+        reasoning_content: None,
     };
     let persisted = Agent::persisted_tool_calls_for_history(&response, &calls, 2);
     assert_eq!(persisted[0].id, "parsed-3-1");
@@ -134,10 +137,12 @@ fn sanitizers_and_tool_call_helpers_cover_fallback_paths() {
         ConversationMessage::AssistantToolCalls {
             text: None,
             tool_calls: vec![],
+            reasoning_content: None,
         },
         ConversationMessage::AssistantToolCalls {
             text: None,
             tool_calls: vec![],
+            reasoning_content: None,
         },
     ];
     assert_eq!(Agent::count_iterations(&history), 3);
@@ -211,6 +216,7 @@ async fn run_single_publishes_completed_and_error_events() {
             text: Some("ok".into()),
             tool_calls: vec![],
             usage: Some(UsageInfo::default()),
+            reasoning_content: None,
         }))),
     });
     let mut ok_agent = make_agent(ok_provider);
@@ -311,6 +317,7 @@ fn helper_paths_cover_no_overlap_native_calls_and_truncation() {
         text: Some(String::new()),
         tool_calls: native_calls.clone(),
         usage: None,
+        reasoning_content: None,
     };
     let persisted = Agent::persisted_tool_calls_for_history(&response, &[], 0);
     assert_eq!(persisted.len(), 1);

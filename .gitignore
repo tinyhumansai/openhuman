@@ -8,6 +8,9 @@ remove_dupe_nonsense_issues
 # Diagnostic harness output (scripts/diagnose-cef-runtime.mjs)
 diagnosis-*.json
 
+# Dev-mode keyring file backend (plain-text secrets, dev artifact only)
+dev-keychain.json
+
 # Logs
 logs
 *.log
@@ -32,6 +35,9 @@ dist-web
 
 # pnpm local store (created when --store-dir points into the repo)
 .pnpm-store/
+
+# sccache local compiler cache (used by CI and act)
+.sccache/
 
 # E2E test artifacts (screenshots, logs, traces — never checked in)
 app/test/e2e/artifacts/
@@ -100,3 +106,10 @@ app/test/e2e/.cache/
 .cache/cargo-install/
 test-map.md
 .test-gap-analysis.md
+
+# AI assistant progress tracking
+.kimi/
+.specify/
+.claude/skills/
+.codex-tmp
+*.enc

@@ -604,6 +604,53 @@ export async function memoryTreeGraphExport(
   return out;
 }
 
+/** Response shape for `memory_tree_obsidian_vault_status`. */
+export interface ObsidianVaultStatus {
+  /**
+   * True when the content root (or an ancestor) is already a registered
+   * Obsidian vault, so `obsidian://open?path=` will actually resolve.
+   */
+  registered: boolean;
+  /**
+   * True when an `obsidian.json` was found and parsed (Obsidian is set up).
+   * Lets the UI offer "Open folder as vault" vs. "Install Obsidian".
+   */
+  config_found: boolean;
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+}
+
+/**
+ * Best-effort check of whether the memory-tree content root is a registered
+ * Obsidian vault. Called before firing the `obsidian://open?path=` deep link,
+ * which only resolves vaults already in Obsidian's `obsidian.json` registry —
+ * it cannot register a new vault on its own.
+ *
+ * `obsidianConfigDir` optionally overrides where the core looks for
+ * `obsidian.json` (non-standard installs: Flatpak / Snap / portable). Backed
+ * by `openhuman.memory_tree_obsidian_vault_status`.
+ */
+export async function memoryTreeObsidianVaultStatus(
+  obsidianConfigDir?: string
+): Promise<ObsidianVaultStatus> {
+  console.debug(
+    '[memory-tree-rpc] memoryTreeObsidianVaultStatus: entry override=%s',
+    obsidianConfigDir ? 'set' : 'none'
+  );
+  const resp = await callCoreRpc<ObsidianVaultStatus | ResultEnvelope<ObsidianVaultStatus>>({
+    method: 'openhuman.memory_tree_obsidian_vault_status',
+    // Only send the override when present so the core uses its default probe.
+    params: obsidianConfigDir ? { obsidian_config_dir: obsidianConfigDir } : {},
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeObsidianVaultStatus: exit registered=%s config_found=%s',
+    out.registered,
+    out.config_found
+  );
+  return out;
+}
+
 /**
  * #1574 §4b: per-model embedding re-embed backfill status. The AI settings
  * panel polls this after an embedder change to warn that semantic recall
@@ -628,6 +675,122 @@ export async function memoryTreeBackfillStatus(): Promise<BackfillStatus> {
     '[memory-tree-rpc] memoryTreeBackfillStatus: exit in_progress=%s pending=%d',
     out.in_progress,
     out.pending_jobs
+  );
+  return out;
+}
+
+// ── memory_tree_pipeline_status (#1856 Part 1) ───────────────────────────
+
+/**
+ * Coarse status string emitted by `memory_tree_pipeline_status`. Mapped
+ * verbatim to a colored pill in the status panel — `paused` is the only
+ * state the toggle directly influences.
+ */
+export type MemoryTreePipelineStatusKind = 'running' | 'paused' | 'syncing' | 'error' | 'idle';
+
+/**
+ * Per-state job counters returned in {@link MemoryTreePipelineStatus}. Mirrors
+ * the Rust `PipelineJobCounts` struct exactly — snake_case carried through.
+ */
+export interface MemoryTreePipelineJobCounts {
+  /** Jobs queued and waiting for a worker. */
+  ready: number;
+  /** Jobs currently being processed by a worker. */
+  running: number;
+  /** Jobs that exhausted retries and remain in the table for diagnosis. */
+  failed: number;
+}
+
+/**
+ * Aggregated Memory Tree health snapshot returned by
+ * `openhuman.memory_tree_pipeline_status`. The UI status panel polls this
+ * (every ~1.5s while syncing, ~4s otherwise) and renders the four tiles
+ * directly from the payload — no client-side derivation required.
+ */
+export interface MemoryTreePipelineStatus {
+  /** UI status pill — one of `running` / `paused` / `syncing` / `error` / `idle`. */
+  status: MemoryTreePipelineStatusKind;
+  /**
+   * Optional human-readable reason. Present when `status` is `paused`
+   * (carries the gate mode) or `error` (carries the failed-job count);
+   * `null` otherwise.
+   */
+  reason: string | null;
+  /** Epoch ms of the most-recent chunk timestamp. Zero when the store is empty. */
+  last_sync_ms: number;
+  /** Total `mem_tree_chunks` rows across all sources. */
+  total_chunks: number;
+  /** Recursive on-disk size of the `wiki/` sub-tree under the memory_tree content root, in bytes. */
+  wiki_size_bytes: number;
+  /** Snapshot of `mem_tree_jobs` by status. */
+  pipeline_jobs: MemoryTreePipelineJobCounts;
+  /** Convenience flag: at least one job is currently `running`. */
+  is_syncing: boolean;
+  /** Convenience flag: scheduler-gate mode is `off`. */
+  is_paused: boolean;
+}
+
+/**
+ * Fetch the Memory Tree pipeline status snapshot. Cheap and idempotent —
+ * the handler runs three SQL counters + one recursive dir walk. Safe to
+ * poll at ~1.5s intervals while the panel is mounted.
+ *
+ * Backed by `openhuman.memory_tree_pipeline_status` (#1856 Part 1).
+ */
+export async function memoryTreePipelineStatus(): Promise<MemoryTreePipelineStatus> {
+  console.debug('[memory-tree-rpc] memoryTreePipelineStatus: entry');
+  const resp = await callCoreRpc<
+    MemoryTreePipelineStatus | ResultEnvelope<MemoryTreePipelineStatus>
+  >({ method: 'openhuman.memory_tree_pipeline_status', params: {} });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreePipelineStatus: exit status=%s total=%d syncing=%s paused=%s',
+    out.status,
+    out.total_chunks,
+    out.is_syncing,
+    out.is_paused
+  );
+  return out;
+}
+
+// ── memory_tree_set_enabled (#1856 Part 1) ───────────────────────────────
+
+/**
+ * Wire shape returned by `openhuman.memory_tree_set_enabled`. `changed=false`
+ * means the persisted mode already matched the request (idempotent toggle).
+ */
+export interface MemoryTreeSetEnabledResponse {
+  /** Echo of the requested enabled state (post-write). */
+  enabled: boolean;
+  /** True when the persisted mode flipped; false when the call was a no-op. */
+  changed: boolean;
+  /** New scheduler-gate mode as wire string (`auto` / `off`). */
+  mode: string;
+}
+
+/**
+ * Toggle Memory Tree auto-sync. `enabled=true` flips the scheduler-gate to
+ * `auto`; `enabled=false` flips it to `off`, which pauses every LLM-bound
+ * background worker cooperatively at their next `wait_for_capacity()`
+ * await on the Rust side.
+ *
+ * Backed by `openhuman.memory_tree_set_enabled` (#1856 Part 1). The 20-min
+ * Composio fetch loop is *not* paused by this toggle yet — that lands in
+ * #1856 Part 2.
+ */
+export async function memoryTreeSetEnabled(
+  enabled: boolean
+): Promise<MemoryTreeSetEnabledResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeSetEnabled: entry enabled=%s', enabled);
+  const resp = await callCoreRpc<
+    MemoryTreeSetEnabledResponse | ResultEnvelope<MemoryTreeSetEnabledResponse>
+  >({ method: 'openhuman.memory_tree_set_enabled', params: { enabled } });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeSetEnabled: exit enabled=%s changed=%s mode=%s',
+    out.enabled,
+    out.changed,
+    out.mode
   );
   return out;
 }

@@ -1,14 +1,14 @@
 ---
 name: Type Check
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
+  group:
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.head_ref
     || github.ref }}
   cancel-in-progress: true
 jobs:

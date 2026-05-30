@@ -23,6 +23,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("files"),
         schemas("remove"),
         schemas("sync"),
+        schemas("sync_status"),
     ]
 }
 
@@ -51,6 +52,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("sync"),
             handler: handle_sync,
+        },
+        RegisteredController {
+            schema: schemas("sync_status"),
+            handler: handle_sync_status,
         },
     ]
 }
@@ -184,12 +189,32 @@ pub fn schemas(function: &str) -> ControllerSchema {
         "sync" => ControllerSchema {
             namespace: "vault",
             function: "sync",
-            description: "Walk a vault's root folder and ingest changed files.",
+            description: "Start a background sync of a vault's root folder. Returns immediately. Poll `vault.sync_status` for progress.",
             inputs: vec![vault_id_input("Identifier of the vault to sync.")],
+            outputs: vec![
+                FieldSchema {
+                    name: "status",
+                    ty: TypeSchema::String,
+                    comment: "Always `\"started\"` on success.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "vault_id",
+                    ty: TypeSchema::String,
+                    comment: "The vault that started syncing.",
+                    required: true,
+                },
+            ],
+        },
+        "sync_status" => ControllerSchema {
+            namespace: "vault",
+            function: "sync_status",
+            description: "Return the current sync progress and outcome for a vault.",
+            inputs: vec![vault_id_input("Identifier of the vault to query.")],
             outputs: vec![FieldSchema {
-                name: "report",
-                ty: TypeSchema::Ref("VaultSyncReport"),
-                comment: "Summary of the sync run.",
+                name: "state",
+                ty: TypeSchema::Ref("VaultSyncState"),
+                comment: "Current sync state (Idle / Running / Completed / Failed).",
                 required: true,
             }],
         },
@@ -275,6 +300,13 @@ fn handle_sync(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let vault_id = read_required::<String>(&params, "vault_id")?;
         to_json(crate::openhuman::vault::ops::vault_sync(&config, vault_id.trim()).await?)
+    })
+}
+
+fn handle_sync_status(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let vault_id = read_required::<String>(&params, "vault_id")?;
+        to_json(crate::openhuman::vault::ops::vault_sync_status(vault_id.trim()).await?)
     })
 }
 

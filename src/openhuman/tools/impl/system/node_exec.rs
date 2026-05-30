@@ -23,8 +23,8 @@
 
 use crate::openhuman::agent::host_runtime::RuntimeAdapter;
 use crate::openhuman::javascript::NodeBootstrap;
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -40,7 +40,28 @@ const MAX_OUTPUT_BYTES: usize = 1_048_576;
 /// into spawned node processes. `PATH` gets a prepend of the managed bin
 /// dir before being forwarded.
 const SAFE_ENV_VARS: &[&str] = &[
-    "HOME", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
+    "HOME",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "USER",
+    "SHELL",
+    "TMPDIR",
+    // Windows process creation and child command lookup need these after env_clear().
+    // PATH is rebuilt separately with the managed Node bin dir prepended.
+    "SystemRoot",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "ProgramW6432",
 ];
 
 /// `node_exec` — execute JavaScript through the resolved Node.js runtime.
@@ -99,6 +120,18 @@ impl Tool for NodeExecTool {
         })
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Execute
+    }
+
+    /// Running JavaScript is arbitrary code execution → the `Write` bucket. In
+    /// ask-before-edit this routes through the human approval gate; in Full it
+    /// runs; in read-only `execute` refuses below. Previously `node_exec`
+    /// bypassed the gate entirely — only the rate limiter stood in the way.
+    fn external_effect_with_args(&self, _args: &serde_json::Value) -> bool {
+        self.security.gate_decision(CommandClass::Write) == GateDecision::Prompt
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let inline_code = args
             .get("inline_code")
@@ -131,6 +164,15 @@ impl Tool for NodeExecTool {
             ));
         }
 
+        // Read-only mode performs no acts. `node_exec` runs arbitrary code, so
+        // it must refuse here — it previously skipped the autonomy check
+        // entirely (only the rate limiter applied), letting `node -e '…'` run
+        // even in read-only mode.
+        if !self.security.can_act() {
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: the agent is in read-only mode and cannot execute code.",
+            ));
+        }
         if self.security.is_rate_limited() {
             return Ok(ToolResult::error(
                 "Rate limit exceeded: too many actions in the last hour",
@@ -354,5 +396,15 @@ mod tests {
         let ws = std::path::Path::new("/ws");
         let resolved = resolve_script_path(ws, "scripts/run.js").unwrap();
         assert_eq!(resolved, std::path::Path::new("/ws/scripts/run.js"));
+    }
+
+    #[test]
+    fn safe_env_vars_include_windows_process_essentials() {
+        for var in ["SystemRoot", "COMSPEC", "PATHEXT", "TEMP", "USERPROFILE"] {
+            assert!(
+                SAFE_ENV_VARS.contains(&var),
+                "{var} must be forwarded for Windows child processes"
+            );
+        }
     }
 }

@@ -9,11 +9,13 @@ const getCoreRpcUrl = vi.hoisted(() => vi.fn(async () => 'http://127.0.0.1:7788/
 const testCoreRpcConnection = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true, status: 200 }) as Response)
 );
+const captureException = vi.hoisted(() => vi.fn());
 vi.mock('../../../../services/coreRpcClient', () => ({
   callCoreRpc,
   getCoreRpcUrl,
   testCoreRpcConnection,
 }));
+vi.mock('@sentry/react', () => ({ captureException }));
 
 describe('ContextGatheringStep', () => {
   beforeEach(() => {
@@ -21,6 +23,7 @@ describe('ContextGatheringStep', () => {
     getCoreRpcUrl.mockClear();
     testCoreRpcConnection.mockClear();
     testCoreRpcConnection.mockResolvedValue({ ok: true, status: 200 } as Response);
+    captureException.mockReset();
   });
 
   it('no-Gmail branch: auto-navigates without any RPC', async () => {
@@ -287,6 +290,27 @@ describe('ContextGatheringStep', () => {
 
     // fireEvent not needed — onNext is available via the button but user can also
     // just verify the friendly message is shown
+  });
+
+  it('captures auto-advance onNext rejection to Sentry with the documented tags (#2081)', async () => {
+    vi.useFakeTimers();
+    const failure = new Error('app_state_snapshot timed out');
+    const onNext = vi.fn().mockRejectedValue(failure);
+
+    renderWithProviders(<ContextGatheringStep connectedSources={['notion']} onNext={onNext} />);
+
+    // No-Gmail branch finishes synchronously, then auto-advance fires after 800ms.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(900);
+    });
+
+    expect(onNext).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(captureException).toHaveBeenCalledTimes(1));
+    const [thrown, ctx] = captureException.mock.calls[0];
+    expect(thrown).toBe(failure);
+    expect(ctx).toEqual({ tags: { flow: 'onboarding-complete', step: 'auto-advance' } });
+
+    vi.useRealTimers();
   });
 
   // --------------------------------------------------------------------------

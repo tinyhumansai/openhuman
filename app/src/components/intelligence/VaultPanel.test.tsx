@@ -11,12 +11,14 @@ import { VaultPanel } from './VaultPanel';
 const mockList = vi.fn();
 const mockCreate = vi.fn();
 const mockSync = vi.fn();
+const mockSyncStatus = vi.fn();
 const mockRemove = vi.fn();
 
 vi.mock('../../utils/tauriCommands/vault', () => ({
   openhumanVaultList: (...args: unknown[]) => mockList(...args),
   openhumanVaultCreate: (...args: unknown[]) => mockCreate(...args),
   openhumanVaultSync: (...args: unknown[]) => mockSync(...args),
+  openhumanVaultSyncStatus: (...args: unknown[]) => mockSyncStatus(...args),
   openhumanVaultRemove: (...args: unknown[]) => mockRemove(...args),
 }));
 
@@ -35,11 +37,35 @@ function vault(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Build a completed `CoreVaultSyncState` payload for mockSyncStatus. */
+function syncState(overrides: Record<string, unknown> = {}) {
+  return {
+    result: {
+      vault_id: 'v-1',
+      status: 'completed',
+      scanned: 4,
+      ingested: 3,
+      unchanged: 1,
+      removed: 0,
+      failed: 0,
+      skipped_unsupported: 0,
+      total: 4,
+      started_at_ms: 1_000,
+      finished_at_ms: 2_200,
+      duration_ms: 1_200,
+      errors: [],
+      ...overrides,
+    },
+    logs: [],
+  };
+}
+
 describe('<VaultPanel />', () => {
   beforeEach(() => {
     mockList.mockReset();
     mockCreate.mockReset();
     mockSync.mockReset();
+    mockSyncStatus.mockReset();
     mockRemove.mockReset();
   });
 
@@ -133,20 +159,10 @@ describe('<VaultPanel />', () => {
     mockList
       .mockResolvedValueOnce({ result: [vault()], logs: [] })
       .mockResolvedValueOnce({ result: [vault()], logs: [] });
-    mockSync.mockResolvedValueOnce({
-      result: {
-        vault_id: 'v-1',
-        scanned: 4,
-        ingested: 3,
-        unchanged: 1,
-        removed: 0,
-        failed: 0,
-        skipped_unsupported: 0,
-        duration_ms: 1200,
-        errors: [],
-      },
-      logs: [],
-    });
+    // vault_sync returns immediately with "started"
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    // vault_sync_status returns "completed" on first poll
+    mockSyncStatus.mockResolvedValueOnce(syncState());
     const onToast = vi.fn();
     render(<VaultPanel onToast={onToast} />);
     await waitFor(() => screen.getByTestId('vault-list'));
@@ -168,20 +184,16 @@ describe('<VaultPanel />', () => {
     mockList
       .mockResolvedValueOnce({ result: [vault()], logs: [] })
       .mockResolvedValueOnce({ result: [vault()], logs: [] });
-    mockSync.mockResolvedValueOnce({
-      result: {
-        vault_id: 'v-1',
-        scanned: 2,
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({
         ingested: 1,
         unchanged: 0,
-        removed: 0,
         failed: 1,
-        skipped_unsupported: 0,
         duration_ms: 50,
         errors: ['x.md: read failed'],
-      },
-      logs: [],
-    });
+      })
+    );
     const onToast = vi.fn();
     render(<VaultPanel onToast={onToast} />);
     await waitFor(() => screen.getByTestId('vault-list'));
@@ -207,6 +219,110 @@ describe('<VaultPanel />', () => {
         expect.objectContaining({ type: 'error', title: 'Sync failed' })
       )
     );
+  });
+
+  it('emits error toast when sync status returns failed', async () => {
+    mockList
+      .mockResolvedValueOnce({ result: [vault()], logs: [] })
+      .mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({ status: 'failed', failed: 0, errors: ['disk full'] })
+    );
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          title: expect.stringContaining('Sync failed'),
+          message: expect.stringContaining('disk full'),
+        })
+      )
+    );
+  });
+
+  it('emits error toast when status poll RPC throws', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockRejectedValueOnce(new Error('poll error'));
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'error', title: 'Sync failed', message: 'poll error' })
+      )
+    );
+  });
+
+  it('uses fallback failed-file count message when errors array is empty', async () => {
+    mockList
+      .mockResolvedValueOnce({ result: [vault()], logs: [] })
+      .mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(syncState({ status: 'failed', failed: 3, errors: [] }));
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          message: expect.stringContaining('Failed 3 file(s)'),
+        })
+      )
+    );
+  });
+
+  it('includes skipped_unsupported count in completed toast message', async () => {
+    mockList
+      .mockResolvedValueOnce({ result: [vault()], logs: [] })
+      .mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    mockSyncStatus.mockResolvedValueOnce(
+      syncState({ ingested: 2, skipped_unsupported: 5, duration_ms: 0 })
+    );
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({ message: expect.stringContaining('skipped 5') })
+      )
+    );
+  });
+
+  it('cancels pending poll timer on unmount', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockSync.mockResolvedValueOnce({ result: { status: 'started', vault_id: 'v-1' }, logs: [] });
+    // Always running — the 1 500 ms re-poll timer stays live after poll #1.
+    mockSyncStatus.mockResolvedValue(syncState({ status: 'running', ingested: 1, total: 4 }));
+
+    const { unmount } = render(<VaultPanel />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByText('Sync'));
+
+    // Wait until the first poll fires (0 ms timer) so the 1 500 ms next-poll
+    // timer is scheduled in pollTimers.current.
+    await waitFor(() => expect(mockSyncStatus).toHaveBeenCalledTimes(1));
+
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    unmount();
+
+    // useEffect cleanup must have called clearTimeout for the pending timer.
+    expect(clearSpy).toHaveBeenCalled();
+    clearSpy.mockRestore();
   });
 
   it('removes a vault with purge=true when both confirms accepted', async () => {

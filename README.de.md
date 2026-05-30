@@ -20,7 +20,7 @@
 </p>
  
 <p align="center">
- <strong>OpenHuman ist deine persönliche KI-Superintelligenz. Privat, schlicht und extrem mächtig.</strong>
+ <strong>OpenHuman ist deine persönliche KI-Superintelligenz: Lokaler Speicher, verwaltete Dienste wo nötig, schlicht und mächtig.</strong>
 </p>
 
 
@@ -46,6 +46,8 @@
 
 > **Frühe Beta**: Wird aktiv weiterentwickelt. Mit Ecken und Kanten ist zu rechnen.
 
+> **Lokal + verwaltete Dienste, upfront:** OpenHuman speichert seinen Memory Tree, Obsidian-Style-Markdown-Vault, Workspace-Konfiguration und lokalen Laufzeitstatus auf deiner Maschine. Die standardmäßige verwaltete Erfahrung nutzt weiterhin OpenHuman-gehostete Dienste für Account-Anmeldung, Model-Routing, Web-Search-Proxying und verwaltete Integration/OAuth-Flows über die Composio-Connector-Schicht. Wähle benutzerdefinierte/lokale Einstellungen, wenn du dein eigenes Modell, deine eigene Suche oder Composio-Credentials mitbringen möchtest; einige Echtzeit-Trigger und gehostete Funktionen erfordern weiterhin das verwaltete Backend.
+
 Für Installation und Einstieg lade die App von [tinyhumans.ai/openhuman](https://tinyhumans.ai/openhuman?utm_source=github&utm_medium=readme) herunter oder führe im Terminal aus:
 
 ```bash
@@ -58,6 +60,12 @@ curl -fsSL https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts
 irm https://raw.githubusercontent.com/tinyhumansai/openhuman/main/scripts/install.ps1 | iex
 ```
 
+<!-- TODO: translate (de) — English source mirrored from README.md so non-EN readers get the same install caveats. Please translate. -->
+> **Linux:** the AppImage can crash on launch under Wayland (and on Arch-based distros with `sharun: Interpreter not found!`) — see [#2463](https://github.com/tinyhumansai/openhuman/issues/2463) for the cause and env-var workarounds.
+Arch Linux package maintainers can use the [`openhuman-bin` AUR recipe](./packages/arch/openhuman-bin/);
+once published, Arch users can install it with `yay -S openhuman-bin`.
+<!-- /TODO -->
+
 # Was ist OpenHuman?
 
 OpenHuman ist ein quelloffener, agentenbasierter Assistent, der sich in deinen Alltag einfügt. Jeder Punkt verlinkt auf die ausführliche Beschreibung in der [Doku](https://tinyhumans.gitbook.io/openhuman/).
@@ -66,9 +74,11 @@ OpenHuman ist ein quelloffener, agentenbasierter Assistent, der sich in deinen A
 
 - **[118+ Drittanbieter-Integrationen](https://tinyhumans.gitbook.io/openhuman/features/integrations) mit [Auto-Fetch](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki/auto-fetch)**: Gmail, Notion, GitHub, Slack, Stripe, Calendar, Drive, Linear, Jira und der Rest deines Stacks per **Ein-Klick-OAuth** anbinden. Jede Verbindung wird dem Agenten als typisiertes Tool freigegeben, und alle zwanzig Minuten geht der Core durch jede aktive Verbindung und zieht frische Daten in den [Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/integrations/auto-fetch). Keine Prompts, keine Polling-Schleifen, die du selbst schreiben musst — der Agent hat morgens schon den Kontext für den Tag.
 
+  Verwaltete Integrationen nutzen OpenHumans Composio-Connector-Schicht. OAuth-Handshakes und Integration-Tool-Calls werden standardmäßig über das verwaltete Backend geproxied. Wenn du stattdessen Composio direkt betreiben möchtest, konfiguriere den Direktmodus mit deinem eigenen Composio-API-Key; Echtzeit-Trigger-Webhooks müssen dann von dir selbst gehostet und verkabelt werden.
+
 - **[Memory Tree](https://tinyhumans.gitbook.io/openhuman/features/memory-tree) + [Obsidian-Wiki](https://tinyhumans.gitbook.io/openhuman/features/obsidian-wiki)**: eine lokal-zentrierte Wissensbasis, aufgebaut aus deinen Daten und deinen Aktivitäten. Alles, was du verbindest, wird in Markdown-Chunks von ≤3k Tokens kanonisiert, bewertet und in hierarchische Zusammenfassungs-Bäume gefaltet, gespeichert in **SQLite auf deiner Maschine**. Dieselben Chunks landen als `.md`-Dateien in einem Obsidian-kompatiblen Vault, das du öffnen, durchstöbern und editieren kannst — inspiriert von Karpathys [obsidian-wiki-Workflow](https://x.com/karpathy/status/2039805659525644595).
 
-- **Alles eingebaut**: Web-Suche, ein Web-Fetch-[Scraper](https://tinyhumans.gitbook.io/openhuman/features/native-tools), ein vollständiges Coder-Toolset (Dateisystem, Git, Lint, Test, Grep) und [native Sprache](https://tinyhumans.gitbook.io/openhuman/features/voice) (STT als Eingabe, ElevenLabs TTS als Ausgabe, Lippensynchronisation für das Maskottchen, Live-Google-Meet-Agent) sind ab Werk verdrahtet. [Model-Routing](https://tinyhumans.gitbook.io/openhuman/features/model-routing) schickt jede Aufgabe an das passende LLM (Reasoning, Fast oder Vision) — alles unter einem Abo. Keine "erst-ein-Plugin-installieren-um-Dateien-zu-lesen"-Hürde. [Optional lokale KI über Ollama](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) für On-Device-Workloads.
+- **Alles eingebaut**: Web-Suche, ein Web-Fetch-[Scraper](https://tinyhumans.gitbook.io/openhuman/features/native-tools), ein vollständiges Coder-Toolset (Dateisystem, Git, Lint, Test, Grep) und [native Sprache](https://tinyhumans.gitbook.io/openhuman/features/voice) (STT als Eingabe, ElevenLabs TTS als Ausgabe, Lippensynchronisation für das Maskottchen, Live-Google-Meet-Agent) sind ab Werk verdrahtet. Standardmäßig nutzt [Model-Routing](https://tinyhumans.gitbook.io/openhuman/features/model-routing) das OpenHuman-Backend, um das passende LLM für jede Workload auszuwählen und zu proxien (Reasoning, Fast oder Vision). Ein Abo umfasst alle Modelle. Keine "erst-ein-Plugin-installieren-um-Dateien-zu-lesen"-Hürde. [Optional lokale KI über Ollama](https://tinyhumans.gitbook.io/openhuman/features/model-routing/local-ai) für On-Device-Workloads.
 
 - **[Smarte Token-Kompression (TokenJuice)](https://tinyhumans.gitbook.io/openhuman/features/token-compression)**: Jeder Tool-Aufruf, jedes Scrape-Ergebnis, jeder E-Mail-Text und jeder Such-Payload läuft durch eine Token-Kompressionsschicht, bevor er ein LLM-Modell erreicht. HTML wird zu Markdown konvertiert, lange URLs werden gekürzt, und ausschweifende Tool-Ausgaben werden über eine konfigurierbare Regel-Ebene dedupliziert und zusammengefasst usw. CJK, Emojis und andere Multi-Byte-Texte bleiben Graphem für Graphem erhalten — niemals abgeschnitten. Du erhältst dieselbe Information bei einem Bruchteil der Tokens. Kosten und Latenz sinken um bis zu 80%.
 

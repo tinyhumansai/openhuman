@@ -1,5 +1,5 @@
-use crate::openhuman::security::SecurityPolicy;
-use crate::openhuman::tools::traits::{Tool, ToolResult};
+use crate::openhuman::security::{CommandClass, GateDecision, SecurityPolicy};
+use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
@@ -42,6 +42,41 @@ impl Tool for FileWriteTool {
         })
     }
 
+    fn permission_level(&self) -> PermissionLevel {
+        PermissionLevel::Write
+    }
+
+    /// "Ask before edit": modifying an **existing** file routes through the
+    /// human approval gate in ask-before-edit mode; creating a **new** file is
+    /// free. In Full neither prompts; in read-only `execute` blocks via
+    /// `can_act()`. The existence probe is best-effort (relative to the
+    /// workspace); when the path can't be resolved we fail safe and prompt.
+    ///
+    /// The probe runs at gate-routing time, microseconds before `execute()` in
+    /// the same sequential turn. A create→edit flip in that window would require
+    /// an external process to win the race — outside this gate's threat model,
+    /// which governs the agent, not concurrent writers — and `execute()` still
+    /// enforces workspace containment + symlink refusal regardless, so a write
+    /// that slips through as "create" cannot escape the sandbox. We therefore
+    /// do not re-probe in `execute()`.
+    fn external_effect_with_args(&self, args: &serde_json::Value) -> bool {
+        if self.security.gate_decision(CommandClass::Write) != GateDecision::Prompt {
+            return false; // Full (allow) or read-only (blocked in execute)
+        }
+        let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
+            return true; // unknown path → prompt (fail safe)
+        };
+        let target = if std::path::Path::new(path).is_absolute() {
+            std::path::PathBuf::from(path)
+        } else {
+            self.security.workspace_dir.join(path)
+        };
+        // Sync `stat` — intentionally blocking, since the `Tool` trait makes
+        // this method sync. Fast for local paths; would only need
+        // `block_in_place` if a remote/slow filesystem is ever supported here.
+        target.exists() // exists = edit → prompt; new = create → free
+    }
+
     async fn execute(&self, args: serde_json::Value) -> anyhow::Result<ToolResult> {
         let path = args
             .get("path")
@@ -54,7 +89,9 @@ impl Tool for FileWriteTool {
             .ok_or_else(|| anyhow::anyhow!("Missing 'content' parameter"))?;
 
         if !self.security.can_act() {
-            return Ok(ToolResult::error("Action blocked: autonomy is read-only"));
+            return Ok(ToolResult::error(
+                "[policy-blocked] Action blocked: autonomy is read-only",
+            ));
         }
 
         if self.security.is_rate_limited() {
@@ -320,6 +357,17 @@ mod tests {
 
         assert!(result.is_error);
         assert!(result.output().contains("read-only"));
+        // The readonly block must carry the hard-reject marker so the agent
+        // harness recognizes it and halts on a verbatim repeat instead of
+        // grinding. Ties this tool's literal to the marker const — the
+        // const→detector half is covered by tool_loop's guard tests.
+        assert!(
+            result
+                .output()
+                .contains(crate::openhuman::security::POLICY_BLOCKED_MARKER),
+            "file_write readonly block must carry the hard-reject marker: {}",
+            result.output()
+        );
         assert!(!dir.join("out.txt").exists());
 
         let _ = tokio::fs::remove_dir_all(&dir).await;

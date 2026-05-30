@@ -118,4 +118,55 @@ describe('threadApi', () => {
     mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
     await expect(threadApi.putTaskBoard('thread-1', [])).resolves.toBeNull();
   });
+
+  it('updates a thread title via threads RPC', async () => {
+    const thread = {
+      id: 'thread-1',
+      title: 'Invoice follow-up',
+      chatId: null,
+      isActive: true,
+      messageCount: 3,
+      lastMessageAt: '2026-05-01T09:00:00Z',
+      createdAt: '2026-05-01T08:00:00Z',
+    };
+    mockCallCoreRpc.mockResolvedValueOnce({ data: thread });
+
+    const { threadApi } = await import('./threadApi');
+    const result = await threadApi.updateTitle('thread-1', 'Invoice follow-up');
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.threads_update_title',
+      params: { thread_id: 'thread-1', title: 'Invoice follow-up' },
+    });
+    expect(result).toEqual(thread);
+  });
+
+  it('approves a plan via the todos_decide_plan RPC and rebuilds the board', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({
+      data: { threadId: 'thread-1', cards: [{ id: 'card-1', title: 'T', status: 'ready' }] },
+    });
+
+    const { threadApi } = await import('./threadApi');
+    const board = await threadApi.decidePlan('thread-1', 'card-1', true);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.todos_decide_plan',
+      params: { thread_id: 'thread-1', id: 'card-1', approve: true },
+    });
+    expect(board?.threadId).toBe('thread-1');
+    expect(board?.cards[0].status).toBe('ready');
+  });
+
+  it('returns null from decidePlan when the snapshot has no cards', async () => {
+    mockCallCoreRpc.mockResolvedValueOnce({ data: {} });
+
+    const { threadApi } = await import('./threadApi');
+    const board = await threadApi.decidePlan('thread-1', 'card-1', false);
+
+    expect(mockCallCoreRpc).toHaveBeenCalledWith({
+      method: 'openhuman.todos_decide_plan',
+      params: { thread_id: 'thread-1', id: 'card-1', approve: false },
+    });
+    expect(board).toBeNull();
+  });
 });

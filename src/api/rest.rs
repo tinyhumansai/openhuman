@@ -27,15 +27,40 @@ pub enum BackendApiError {
         /// Provider-specific message id from the URL.
         message_id: String,
     },
+    /// Backend rejected the bearer JWT with `401 Unauthorized`. This is an
+    /// expected user-session state (token expired, revoked, rotated
+    /// server-side) — not a code bug. Callers can route to a re-sign-in
+    /// flow; the auth domain owns recovery. Targets `OPENHUMAN-TAURI-4K8`
+    /// (12 events on `/openai/v1/audio/speech` mascot TTS, but the same
+    /// shape fires on every authed endpoint once the session lapses).
+    #[error("backend rejected session token on {method} {path}")]
+    Unauthorized {
+        /// HTTP method as a static string (`"GET"`, `"POST"`, …).
+        method: String,
+        /// Request path the 401 came back from (no query string).
+        path: String,
+    },
 }
 
 /// Extract `(provider, message_id)` from a backend channel path of the
-/// shape `/channels/<provider>/messages/<id>`. Returns `None` for paths
-/// with a different segment count or non-`channels` first segment.
+/// shape `…/channels/<provider>/messages/<id>`. Returns `None` for paths
+/// that do not contain this four-segment subsequence.
+///
+/// Handles both the canonical four-segment form and paths with an arbitrary
+/// base-path prefix (e.g. `/api/v1/channels/telegram/messages/1103`) via a
+/// sliding window so that `BACKEND_URL` variants with path prefixes do not
+/// silently fall through to `report_error` (OPENHUMAN-TAURI-R7).
 fn parse_message_path(path: &str) -> Option<(&str, &str)> {
     let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    // Fast path: exact four-segment canonical form /channels/<p>/messages/<id>
     if segments.len() == 4 && segments[0] == "channels" && segments[2] == "messages" {
         return Some((segments[1], segments[3]));
+    }
+    // Sliding window: handles base-path prefixes like /api/v1/channels/<p>/messages/<id>
+    for window in segments.windows(4) {
+        if window[0] == "channels" && window[2] == "messages" {
+            return Some((window[1], window[3]));
+        }
     }
     None
 }
@@ -65,11 +90,23 @@ fn build_backend_reqwest_client() -> Result<Client> {
             HeaderValue::from_str(&version).context("invalid x-core-version header value")?,
         );
     }
+    // The Tauri shell sets `OPENHUMAN_TAURI_VERSION` to its own package version
+    // before spawning the in-process core, so backend analytics can attribute
+    // core-originated requests to the desktop shell build that hosts them.
+    if let Ok(raw) = std::env::var("OPENHUMAN_TAURI_VERSION") {
+        if let Some(version) = sanitize_client_version(&raw) {
+            default_headers.insert(
+                HeaderName::from_static("x-tauri-version"),
+                HeaderValue::from_str(&version).context("invalid x-tauri-version header value")?,
+            );
+        }
+    }
 
-    // Force rustls for consistent cross-platform TLS behavior.
-    Client::builder()
+    // Platform-appropriate TLS backend: Windows → schannel (honors the OS
+    // cert store, required for corporate TLS-inspection proxies); macOS /
+    // Linux → rustls. See [`crate::openhuman::tls::tls_client_builder`].
+    crate::openhuman::tls::tls_client_builder()
         .default_headers(default_headers)
-        .use_rustls_tls()
         .http1_only()
         .timeout(Duration::from_secs(120))
         .connect_timeout(Duration::from_secs(15))
@@ -502,6 +539,32 @@ impl BackendOAuthClient {
             let status_code = status.as_u16();
             let status_str = status_code.to_string();
 
+            // 401 on any authed backend endpoint is an expected user-session
+            // state (token expired / revoked / rotated server-side), not a
+            // code bug — every authed endpoint will see this once the session
+            // lapses. Surface a typed `BackendApiError::Unauthorized` so the
+            // auth domain can drive recovery, and skip `report_error` to
+            // avoid Sentry noise. Targets `OPENHUMAN-TAURI-4K8` (mascot TTS
+            // surfaced it first on `/openai/v1/audio/speech`, but the same
+            // shape applies to every `authed_json` path).
+            if status_code == 401 {
+                tracing::info!(
+                    domain = "backend_api",
+                    operation = "authed_json",
+                    method = method.as_str(),
+                    path = url.path(),
+                    status = status_code,
+                    failure = "non_2xx",
+                    "[backend_api] 401 on {} {} — session token rejected, surfacing typed error",
+                    method.as_str(),
+                    url.path(),
+                );
+                return Err(anyhow::Error::new(BackendApiError::Unauthorized {
+                    method: method.as_str().to_string(),
+                    path: url.path().to_string(),
+                }));
+            }
+
             // 404 on `/channels/<provider>/messages/<id>` is an expected
             // state (user deleted the message provider-side, or backend
             // GC'd the relay row) — not a code bug. Surface a typed
@@ -524,6 +587,28 @@ impl BackendOAuthClient {
                         provider: provider.to_string(),
                         message_id: message_id.to_string(),
                     }));
+                }
+                // Defense-in-depth: PATCH/DELETE 404s on any channel-message path that
+                // parse_message_path could not parse (e.g. exotic URL variant with extra
+                // segments). Still an expected backend state — suppress the Sentry event
+                // without propagating a typed error. Targets OPENHUMAN-TAURI-R7.
+                if (method == Method::PATCH || method == Method::DELETE)
+                    && url.path().contains("/channels/")
+                    && url.path().contains("/messages/")
+                {
+                    tracing::debug!(
+                        domain = "backend_api",
+                        operation = "authed_json",
+                        "[backend_api] channel-message 404 on {} {} — path not matched by \
+                         parse_message_path, suppressing Sentry (TAURI-R7 defense-in-depth)",
+                        method.as_str(),
+                        url.path(),
+                    );
+                    anyhow::bail!(
+                        "channel message not found (404) on {} {}",
+                        method.as_str(),
+                        url.path(),
+                    );
                 }
             }
 

@@ -54,6 +54,28 @@ impl EnvLookup for ProcessEnv {
     }
 }
 
+/// Process env lookup that preserves every override except
+/// `OPENHUMAN_WORKSPACE`.
+struct ProcessEnvWithoutWorkspace;
+
+impl EnvLookup for ProcessEnvWithoutWorkspace {
+    fn get(&self, key: &str) -> Option<String> {
+        if key == "OPENHUMAN_WORKSPACE" {
+            None
+        } else {
+            ProcessEnv.get(key)
+        }
+    }
+
+    fn contains(&self, key: &str) -> bool {
+        if key == "OPENHUMAN_WORKSPACE" {
+            false
+        } else {
+            ProcessEnv.contains(key)
+        }
+    }
+}
+
 fn default_config_and_workspace_dirs() -> Result<(PathBuf, PathBuf)> {
     let config_dir = default_config_dir()?;
     Ok((config_dir.clone(), config_dir.join("workspace")))
@@ -106,6 +128,28 @@ pub fn default_root_openhuman_dir() -> Result<PathBuf> {
         .map(|u| u.home_dir().to_path_buf())
         .context("Could not find home directory")?;
     Ok(home.join(default_root_dir_name()))
+}
+
+/// Environment override for the agent's default projects directory.
+pub const PROJECTS_DIR_ENV_VAR: &str = "OPENHUMAN_PROJECTS_DIR";
+
+/// The agent's default **projects home** — a visible, read-write directory
+/// (`~/OpenHuman/projects`) where the coding agent creates and saves projects,
+/// kept distinct from the hidden internal state dir (`~/.openhuman/workspace`,
+/// which also holds `memory_tree` etc.). Overridable via `OPENHUMAN_PROJECTS_DIR`;
+/// falls back to `./OpenHuman/projects` only when the home dir can't be resolved.
+pub fn default_projects_dir() -> PathBuf {
+    if let Ok(p) = std::env::var(PROJECTS_DIR_ENV_VAR) {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    UserDirs::new()
+        .map(|u| u.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("OpenHuman")
+        .join("projects")
 }
 
 fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
@@ -348,29 +392,38 @@ async fn resolve_config_dirs_ignoring_env(
 }
 
 fn decrypt_optional_secret(
-    store: &crate::openhuman::security::SecretStore,
+    store: &crate::openhuman::keyring::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if crate::openhuman::security::SecretStore::is_encrypted(&raw) {
-            *value = Some(
-                store
-                    .decrypt(&raw)
-                    .with_context(|| format!("Failed to decrypt {field_name}"))?,
-            );
+        if crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
+            match store.decrypt(&raw) {
+                Ok(plaintext) => *value = Some(plaintext),
+                Err(e) => {
+                    // Decryption key is inaccessible (e.g. rotated, keyring reset, or
+                    // migrated across machines). Clear the field so config loads
+                    // successfully — the affected integration will be disabled until
+                    // the user re-enters the credential. A hard error here would block
+                    // every config load and make the app unusable.
+                    log::warn!(
+                        "[config] Failed to decrypt {field_name} — field cleared (key inaccessible): {e}"
+                    );
+                    *value = None;
+                }
+            }
         }
     }
     Ok(())
 }
 
 fn encrypt_optional_secret(
-    store: &crate::openhuman::security::SecretStore,
+    store: &crate::openhuman::keyring::SecretStore,
     value: &mut Option<String>,
     field_name: &str,
 ) -> Result<()> {
     if let Some(raw) = value.clone() {
-        if !crate::openhuman::security::SecretStore::is_encrypted(&raw) {
+        if !crate::openhuman::keyring::SecretStore::is_encrypted(&raw) {
             *value = Some(
                 store
                     .encrypt(&raw)
@@ -390,9 +443,26 @@ fn decrypt_config_secrets(config: &mut Config, openhuman_dir: &Path) -> Result<(
     if !config.secrets.encrypt {
         return Ok(());
     }
-    let store = crate::openhuman::security::SecretStore::new(openhuman_dir, true);
+    let store = crate::openhuman::keyring::SecretStore::new(openhuman_dir, true);
 
     decrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
+
+    // Search engines: BYO API keys for direct providers.
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.parallel.api_key,
+        "search.parallel.api_key",
+    )?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.brave.api_key,
+        "search.brave.api_key",
+    )?;
+    decrypt_optional_secret(
+        &store,
+        &mut config.search.querit.api_key,
+        "search.querit.api_key",
+    )?;
 
     // Channels: decrypt every optional secret field.
     //
@@ -487,9 +557,25 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
         .config_path
         .parent()
         .context("Config path must have a parent directory")?;
-    let store = crate::openhuman::security::SecretStore::new(parent_dir, true);
+    let store = crate::openhuman::keyring::SecretStore::new(parent_dir, true);
 
     encrypt_optional_secret(&store, &mut config.api_key, "api_key")?;
+
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.parallel.api_key,
+        "search.parallel.api_key",
+    )?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.brave.api_key,
+        "search.brave.api_key",
+    )?;
+    encrypt_optional_secret(
+        &store,
+        &mut config.search.querit.api_key,
+        "search.querit.api_key",
+    )?;
 
     let ch = &mut config.channels_config;
     if let Some(ref mut tg) = ch.telegram {
@@ -561,101 +647,15 @@ fn encrypt_config_secrets(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
-const ACTIVE_USER_STATE_FILE: &str = "active_user.toml";
+#[path = "load_user_state.rs"]
+mod load_user_state;
+#[cfg(test)]
+pub(crate) use load_user_state::ACTIVE_USER_STATE_FILE;
+pub use load_user_state::{
+    clear_active_user, pre_login_user_dir, read_active_user_id, user_openhuman_dir,
+    write_active_user_id, PRE_LOGIN_USER_ID,
+};
 
-#[derive(Debug, Serialize, Deserialize)]
-struct ActiveUserState {
-    user_id: String,
-}
-
-/// Reads the active user id from `{default_openhuman_dir}/active_user.toml`.
-/// Returns `None` when the file does not exist, is empty, or cannot be parsed.
-pub fn read_active_user_id(default_openhuman_dir: &Path) -> Option<String> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let state: ActiveUserState = toml::from_str(&contents).ok()?;
-    let id = state.user_id.trim().to_string();
-    if id.is_empty() {
-        None
-    } else {
-        Some(id)
-    }
-}
-
-/// Writes the active user id to `{default_openhuman_dir}/active_user.toml`.
-pub fn write_active_user_id(default_openhuman_dir: &Path, user_id: &str) -> Result<()> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
-    let state = ActiveUserState {
-        user_id: user_id.to_string(),
-    };
-    let toml_str = toml::to_string_pretty(&state).context("serialize active_user.toml")?;
-    std::fs::write(&path, toml_str)
-        .with_context(|| format!("Failed to write active user state: {}", path.display()))?;
-    tracing::debug!(user_id = %user_id, path = %path.display(), "active user written");
-    Ok(())
-}
-
-/// Removes the active user marker.  After this, the next config load will
-/// use the default (unauthenticated) openhuman directory.
-pub fn clear_active_user(default_openhuman_dir: &Path) -> Result<()> {
-    let path = default_openhuman_dir.join(ACTIVE_USER_STATE_FILE);
-    if path.exists() {
-        std::fs::remove_file(&path)
-            .with_context(|| format!("Failed to remove active user state: {}", path.display()))?;
-        tracing::debug!(path = %path.display(), "active user cleared");
-    }
-    Ok(())
-}
-
-/// Returns the user-scoped openhuman directory for the given user id:
-/// `{default_openhuman_dir}/users/{user_id}`.
-pub fn user_openhuman_dir(default_openhuman_dir: &Path, user_id: &str) -> PathBuf {
-    default_openhuman_dir.join("users").join(user_id)
-}
-
-/// Stable id used to scope the openhuman directory before any user has
-/// logged in.  All memory, state, config, sessions and workspace files
-/// created on first init land under `{root}/users/{PRE_LOGIN_USER_ID}`
-/// so nothing is ever written directly at the root `.openhuman` path.
-///
-/// On first successful login, this directory is migrated into the real
-/// user-scoped directory (see `credentials::ops::store_session`).
-pub const PRE_LOGIN_USER_ID: &str = "local";
-
-/// Returns the pre-login (unauthenticated) user directory:
-/// `{default_openhuman_dir}/users/local`.
-pub fn pre_login_user_dir(default_openhuman_dir: &Path) -> PathBuf {
-    user_openhuman_dir(default_openhuman_dir, PRE_LOGIN_USER_ID)
-}
-
-/// Try to parse config TOML. On failure, try `.bak`, then fall back to `Config::default()`.
-///
-/// Returns `(config, was_corrupted)` where `was_corrupted == true` means the
-/// primary failed to parse and the caller is responsible for archiving the
-/// corrupt primary and persisting the recovered/default config.
-///
-/// This is a standalone async function (not a method on Config) so it can be
-/// called from both `load_or_init` and `load_from_default_paths`.
-///
-/// **Why the parse runs via `spawn_blocking`:** `toml::from_str::<Config>`
-/// is a recursive-descent parser whose serde-monomorphised `Visitor`
-/// frames for our deeply-nested `Config` cost several KB each. When this
-/// function is called from the bottom of a deep async tower — e.g.
-/// `composio_list_tools` reloading the config per call (#1710 Wave 4),
-/// reached via `chat → orchestrator → delegate_to_integrations_agent →
-/// sub-agent → composio_*` — running the parse inline on the tokio
-/// worker thread blows the ~2 MB worker stack and aborts the in-process
-/// core with `SIGBUS / KERN_PROTECTION_FAILURE` (see `crahs.log`,
-/// 2026-05-17, and `tests/composio_list_tools_stack_overflow_regression.rs`).
-/// Moving the parse onto the blocking-pool gives it a *fresh* thread
-/// stack with no async tower above it, so the same parser frames easily
-/// fit. (An earlier draft of this fix also fronted
-/// `config::ops::load_config_with_timeout` with a per-process cache to
-/// skip the parse on repeat calls, but it was reverted — the in-process
-/// integration tests in `tests/json_rpc_e2e.rs` reuse workspace paths
-/// and load config mid-mutation, racing the cache. The spawn_blocking
-/// move is sufficient on its own once paired with the Tauri worker
-/// stack bump in `app/src-tauri/src/lib.rs`.)
 async fn parse_config_with_recovery(config_path: &Path, contents: &str) -> (Config, bool) {
     let parse_err = match parse_toml_off_worker(contents.to_string()).await {
         Ok(config) => {
@@ -1044,28 +1044,73 @@ impl Config {
         if config_path.exists() {
             #[cfg(unix)]
             {
-                use std::os::unix::fs::PermissionsExt;
+                use std::{fs::Permissions, os::unix::fs::PermissionsExt};
                 if let Ok(meta) = fs::metadata(&config_path).await {
                     if meta.permissions().mode() & 0o004 != 0 {
                         let warned = WARNED_WORLD_READABLE_CONFIGS
                             .get_or_init(|| Mutex::new(HashSet::new()));
-                        let mut warned_guard = warned.lock().unwrap_or_else(|e| e.into_inner());
-                        if warned_guard.insert(config_path.clone()) {
+                        // Only attempt to fix paths not yet successfully chmod'd.
+                        // Cache is advanced only on success so a persistent
+                        // failure re-warns and re-attempts on every load.
+                        let already_fixed = warned
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .contains(&config_path);
+                        if !already_fixed {
                             tracing::warn!(
-                                "Config file {:?} is world-readable (mode {:o}). \
-                                 Consider restricting with: chmod 600 {:?}",
+                                "[config] Config file {:?} is world-readable (mode {:o}); \
+                                 auto-fixing to 600",
                                 config_path,
                                 meta.permissions().mode() & 0o777,
-                                config_path,
                             );
+                            match fs::set_permissions(&config_path, Permissions::from_mode(0o600))
+                                .await
+                            {
+                                Ok(()) => {
+                                    warned
+                                        .lock()
+                                        .unwrap_or_else(|e| e.into_inner())
+                                        .insert(config_path.clone());
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        path = %config_path.display(),
+                                        error = %e,
+                                        "[config] failed to auto-fix config file permissions to 600",
+                                    );
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            let contents = fs::read_to_string(&config_path)
-                .await
-                .context("Failed to read config file")?;
+            // Sentry OPENHUMAN-TAURI-9R (~8k events, Windows): this read can
+            // race the atomic-replace in `Config::save` (temp file →
+            // `fs::rename` over `config_path`). On Windows the in-flight
+            // rename / a transient AV or indexer handle makes the read fail
+            // with ERROR_SHARING_VIOLATION (32) / ERROR_ACCESS_DENIED (5) /
+            // ERROR_DELETE_PENDING (303) even though `config_path.exists()`
+            // just returned true. `inference_status` polls `load_config`
+            // frequently, so each coincidence with a save produced one
+            // "Failed to read config file" event. Retry on the transient
+            // Windows locking codes (the same class `retry_with_backoff_async`
+            // already handles for the auth-profile + team_get_usage paths) so
+            // the read succeeds once the writer releases its handle.
+            // `is_transient_fs_error` is `false` for every non-Windows error
+            // (and for NotFound on Windows), so this is a no-op on
+            // macOS/Linux and never masks a genuinely-unreadable config.
+            let contents = crate::openhuman::util::retry_with_backoff_async(
+                "read config file",
+                5,
+                20,
+                || async {
+                    fs::read_to_string(&config_path).await.with_context(|| {
+                        format!("Failed to read config file: {}", config_path.display())
+                    })
+                },
+            )
+            .await?;
             let (mut config, config_was_corrupted) =
                 parse_config_with_recovery(&config_path, &contents).await;
             config.config_path = config_path.clone();
@@ -1199,6 +1244,52 @@ impl Config {
         Ok(config)
     }
 
+    /// Reload a config from an already-resolved `config.toml` path.
+    ///
+    /// This is for long-lived runtime objects that hold a `Config`
+    /// snapshot and need to observe updates written back to the same
+    /// file. It deliberately bypasses only `OPENHUMAN_WORKSPACE`
+    /// resolution: the caller has already been scoped to a user/workspace,
+    /// and following the process-global workspace env var again can cross
+    /// streams with unrelated tests or runtime tasks that temporarily
+    /// repoint it. Other process env overrides still apply.
+    pub async fn load_from_config_path(config_path: &Path, workspace_dir: &Path) -> Result<Self> {
+        let config_path = config_path.to_path_buf();
+        let workspace_dir = workspace_dir.to_path_buf();
+
+        if !config_path.exists() {
+            let mut config = Config {
+                config_path,
+                workspace_dir,
+                ..Default::default()
+            };
+            config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
+            return Ok(config);
+        }
+
+        let raw = fs::read_to_string(&config_path)
+            .await
+            .with_context(|| format!("reading config.toml from {}", config_path.display()))?;
+        let (mut config, config_was_corrupted) =
+            parse_config_with_recovery(&config_path, &raw).await;
+        config.config_path = config_path;
+        config.workspace_dir = workspace_dir;
+        migrate_legacy_autocomplete_disabled_apps(&mut config);
+        migrate_legacy_inference_url(&mut config);
+        migrate_cloud_provider_slugs(&mut config);
+        config.apply_env_overrides_from(&ProcessEnvWithoutWorkspace);
+
+        if config_was_corrupted {
+            tracing::warn!(
+                path = %config.config_path.display(),
+                "[config] Snapshot reload recovered a corrupted config; skipping persistence"
+            );
+        }
+
+        crate::openhuman::migrations::run_pending(&mut config).await;
+        Ok(config)
+    }
+
     pub fn apply_env_overrides(&mut self) {
         self.apply_env_overrides_from(&ProcessEnv);
     }
@@ -1216,6 +1307,14 @@ impl Config {
         }
 
         set_runtime_proxy_config(self.proxy.clone());
+
+        // Push the embedding request budget into its process-global limiter so
+        // every cloud embed (via the shared `OpenAiEmbedding` chokepoint) is
+        // throttled to the configured rate. Kept here, with the proxy commit,
+        // so the pure overlay stays side-effect-free for tests.
+        crate::openhuman::embeddings::rate_limit::set_embedding_rate_limit(
+            self.memory.embedding_rate_limit_per_min,
+        );
     }
 
     /// Pure-ish env overlay: applies overrides read from `env` to `self`.
@@ -1257,6 +1356,26 @@ impl Config {
                 if (0.0..=2.0).contains(&temp) {
                     self.default_temperature = temp;
                 }
+            }
+        }
+
+        if let Some(raw) = env.get("OPENHUMAN_MAX_ACTIONS_PER_HOUR") {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                match trimmed.parse::<u32>() {
+                    Ok(limit) => self.autonomy.max_actions_per_hour = limit,
+                    Err(_) => tracing::warn!(
+                        value = %raw,
+                        "invalid OPENHUMAN_MAX_ACTIONS_PER_HOUR ignored; expected an unsigned integer"
+                    ),
+                }
+            }
+        }
+
+        if let Some(language) = env.get("OPENHUMAN_OUTPUT_LANGUAGE") {
+            let language = language.trim();
+            if !language.is_empty() {
+                self.output_language = Some(language.to_string());
             }
         }
 
@@ -1328,6 +1447,45 @@ impl Config {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.searxng.timeout_secs = timeout_secs;
+                }
+            }
+        }
+
+        // Unified search engine selector. `OPENHUMAN_SEARCH_ENGINE` picks the
+        // active engine (`disabled` suppresses search tools); per-engine API
+        // keys auto-route to BYO once set.
+        if let Some(engine) = env.get_any(&["OPENHUMAN_SEARCH_ENGINE", "SEARCH_ENGINE"]) {
+            let engine = engine.trim().to_ascii_lowercase();
+            if !engine.is_empty() {
+                self.search.engine = engine;
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_PARALLEL_API_KEY", "PARALLEL_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.parallel.api_key = Some(key);
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_BRAVE_API_KEY", "BRAVE_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.brave.api_key = Some(key);
+            }
+        }
+        if let Some(key) = env.get_any(&["OPENHUMAN_QUERIT_API_KEY", "QUERIT_API_KEY"]) {
+            if !key.trim().is_empty() {
+                self.search.querit.api_key = Some(key);
+            }
+        }
+        if let Some(max) = env.get_any(&["OPENHUMAN_SEARCH_MAX_RESULTS", "SEARCH_MAX_RESULTS"]) {
+            if let Ok(n) = max.parse::<usize>() {
+                if (1..=20).contains(&n) {
+                    self.search.max_results = n;
+                }
+            }
+        }
+        if let Some(t) = env.get_any(&["OPENHUMAN_SEARCH_TIMEOUT_SECS", "SEARCH_TIMEOUT_SECS"]) {
+            if let Ok(n) = t.parse::<u64>() {
+                if n > 0 {
+                    self.search.timeout_secs = n;
                 }
             }
         }
@@ -1657,6 +1815,15 @@ impl Config {
         if let Ok(flag) = std::env::var("OPENHUMAN_MEMORY_EMBED_STRICT") {
             if let Some(strict) = parse_env_bool("OPENHUMAN_MEMORY_EMBED_STRICT", &flag) {
                 self.memory_tree.embedding_strict = strict;
+            }
+        }
+        // Cloud embedding request budget (requests/min) on `memory.*`. `0`
+        // disables throttling. A blank or non-numeric value leaves the
+        // configured/default budget untouched. Committed to the process-global
+        // limiter in `apply_env_overrides`.
+        if let Some(val) = env.get("OPENHUMAN_MEMORY_EMBED_RATE_LIMIT") {
+            if let Ok(per_min) = val.trim().parse::<u32>() {
+                self.memory.embedding_rate_limit_per_min = per_min;
             }
         }
 

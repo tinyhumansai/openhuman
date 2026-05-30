@@ -148,6 +148,8 @@ pub enum EscalationStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubconsciousStatus {
     pub enabled: bool,
+    pub provider_available: bool,
+    pub provider_unavailable_reason: Option<String>,
     pub interval_minutes: u32,
     pub last_tick_at: Option<f64>,
     pub total_ticks: u64,

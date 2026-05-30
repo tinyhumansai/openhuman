@@ -39,6 +39,7 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "local_ai_install_piper",
         "local_ai_whisper_install_status",
         "local_ai_piper_install_status",
+        "local_ai_test_connection",
     ];
     for k in keys {
         let s = schemas(k);

@@ -1,6 +1,45 @@
 use super::*;
+use crate::openhuman::composio::providers::tool_scope::{CuratedTool, ToolScope};
+use crate::openhuman::composio::providers::{
+    registry::register_provider, ComposioProvider, ProviderContext, ProviderUserProfile,
+    SyncOutcome, SyncReason,
+};
+use async_trait::async_trait;
 use std::path::Path;
 use std::sync::Arc;
+
+static PROVIDER_ONLY_CURATED: &[CuratedTool] = &[CuratedTool {
+    slug: "PROVIDERONLY_LIST_ITEMS",
+    scope: ToolScope::Read,
+}];
+
+struct ProviderOnlyCatalog;
+
+#[async_trait]
+impl ComposioProvider for ProviderOnlyCatalog {
+    fn toolkit_slug(&self) -> &'static str {
+        "provideronly"
+    }
+
+    fn curated_tools(&self) -> Option<&'static [CuratedTool]> {
+        Some(PROVIDER_ONLY_CURATED)
+    }
+
+    async fn fetch_user_profile(
+        &self,
+        _ctx: &ProviderContext,
+    ) -> Result<ProviderUserProfile, String> {
+        Ok(ProviderUserProfile::default())
+    }
+
+    async fn sync(
+        &self,
+        _ctx: &ProviderContext,
+        _reason: SyncReason,
+    ) -> Result<SyncOutcome, String> {
+        Ok(SyncOutcome::default())
+    }
+}
 
 struct WorkspaceEnvGuard {
     previous: Option<std::ffi::OsString>,
@@ -13,6 +52,31 @@ impl WorkspaceEnvGuard {
             std::env::set_var("OPENHUMAN_WORKSPACE", path);
         }
         Self { previous }
+    }
+}
+
+struct HomeEnvGuard {
+    previous: Option<std::ffi::OsString>,
+}
+
+impl HomeEnvGuard {
+    fn set(path: &Path) -> Self {
+        let previous = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", path);
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for HomeEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+        }
     }
 }
 
@@ -239,7 +303,10 @@ fn agent_tools_register_when_backend_signed_in() {
     assert_eq!(
         tools.len(),
         5,
-        "backend session present → all 5 generic composio agent tools should register"
+        "backend session present → all 5 generic composio agent tools should register \
+         (list_toolkits, list_connections, authorize, list_tools, execute). Scope \
+         elevation is intentionally NOT exposed as an agent tool — the user must \
+         flip scopes themselves in the Connections UI."
     );
 }
 
@@ -249,7 +316,9 @@ fn agent_tools_register_when_direct_mode_with_stored_key_and_no_backend_session(
     // user with a working personal Composio API key was getting `0`
     // tools registered because the gate hard-bound to
     // `build_composio_client` (backend-only). With the mode-aware probe
-    // in place this now correctly returns the full 5 generic tools.
+    // in place this now correctly returns the full generic tool set
+    // (5 tools: list_toolkits, list_connections, authorize, list_tools,
+    // execute). Scope elevation is not an agent tool — UI-only.
     let tmp = tempfile::tempdir().expect("tempdir");
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
@@ -561,6 +630,51 @@ fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
 }
 
 #[test]
+fn normalized_scope_toolkits_prefers_requested_filter() {
+    use std::collections::HashSet;
+
+    let requested = vec![" OneDrive ".to_string(), "excel".to_string()];
+    let connected: HashSet<String> = ["gmail".to_string()].into_iter().collect();
+
+    assert_eq!(
+        normalized_scope_toolkits(Some(&requested), Some(&connected)),
+        vec!["excel".to_string(), "onedrive".to_string()]
+    );
+}
+
+#[test]
+fn empty_uncurated_toolkits_message_names_agent_unsupported_toolkits() {
+    // Use slugs that have no curated catalog so the message is generated.
+    // onedrive/excel/todoist are catalogued as of #2361, so they're no
+    // longer uncurated and must not be used here.
+    let message = empty_uncurated_toolkits_message(&[
+        "sharepoint".to_string(),
+        "monday".to_string(),
+        "intercom".to_string(),
+    ])
+    .expect("uncurated toolkit message");
+
+    assert!(message.contains("no agent-ready actions"));
+    assert!(message.contains("`sharepoint`"));
+    assert!(message.contains("`monday`"));
+    assert!(message.contains("`intercom`"));
+    assert!(message.contains("curated agent tool catalogs"));
+}
+
+#[test]
+fn empty_uncurated_toolkits_message_ignores_catalogued_toolkits() {
+    assert!(empty_uncurated_toolkits_message(&["gmail".to_string()]).is_none());
+    assert!(empty_uncurated_toolkits_message(&["googlesheets".to_string()]).is_none());
+}
+
+#[test]
+fn empty_uncurated_toolkits_message_uses_provider_curated_tools() {
+    register_provider(Arc::new(ProviderOnlyCatalog));
+
+    assert!(empty_uncurated_toolkits_message(&["provideronly".to_string()]).is_none());
+}
+
+#[test]
 fn render_tools_markdown_handles_empty_response() {
     use crate::openhuman::composio::types::ComposioToolsResponse;
 
@@ -711,10 +825,12 @@ async fn execute_tool_per_call_factory_means_no_baked_client() {
 
     let tmp = tempfile::tempdir().unwrap();
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     // No api_key here — direct-mode factory must reject.
     config.save().await.expect("save fake config to disk");
@@ -757,10 +873,12 @@ async fn list_toolkits_in_direct_mode_returns_empty_without_hitting_backend() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
     config.save().await.expect("save fake config to disk");
@@ -824,10 +942,12 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let _workspace_guard = WorkspaceEnvGuard::set(tmp.path());
+    let _home_guard = HomeEnvGuard::set(tmp.path());
 
     let mut config = crate::openhuman::config::Config::default();
     config.config_path = tmp.path().join("config.toml");
     config.workspace_dir = tmp.path().join("workspace");
+    std::fs::create_dir_all(&config.workspace_dir).expect("create workspace dir");
     config.composio.mode = crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT.to_string();
     config.composio.api_key = Some("test-direct-key".to_string());
     config.save().await.expect("save fake config to disk");

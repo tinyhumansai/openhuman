@@ -6,6 +6,24 @@ use std::sync::LazyLock;
 
 static NO_FILTER: LazyLock<HashSet<String>> = LazyLock::new(HashSet::new);
 
+/// Build a `NamespaceSummary` with a fixed `updated_at` (#2944), so
+/// freshness-label assertions are deterministic.
+fn ns_summary_at(namespace: &str, body: &str, rfc3339: &str) -> NamespaceSummary {
+    NamespaceSummary {
+        namespace: namespace.into(),
+        body: body.into(),
+        updated_at: chrono::DateTime::parse_from_rfc3339(rfc3339)
+            .unwrap()
+            .with_timezone(&chrono::Utc),
+    }
+}
+
+/// `NamespaceSummary` with an arbitrary fixed date, for tests that don't
+/// assert on the freshness stamp itself.
+fn ns_summary(namespace: &str, body: &str) -> NamespaceSummary {
+    ns_summary_at(namespace, body, "2026-01-01T00:00:00Z")
+}
+
 struct TestTool;
 
 #[async_trait]
@@ -50,6 +68,10 @@ fn prompt_builder_assembles_sections() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let rendered = SystemPromptBuilder::with_defaults().build(&ctx).unwrap();
     assert!(rendered.contains("## Tools"));
@@ -81,6 +103,10 @@ fn identity_section_creates_missing_workspace_files() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
 
     let section = IdentitySection;
@@ -121,6 +147,10 @@ fn datetime_section_includes_timestamp_and_timezone() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
 
     let rendered = DateTimeSection.build(&ctx).unwrap();
@@ -163,6 +193,10 @@ fn ctx_with_identity(identity: Option<UserIdentity>) -> PromptContext<'static> {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: identity,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     }
 }
 
@@ -302,6 +336,10 @@ fn tools_section_pformat_renders_signature_not_schema() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
 
     let rendered = ToolsSection.build(&ctx).unwrap();
@@ -342,6 +380,10 @@ fn tools_section_uses_pformat_signature_for_text_dispatchers() {
             include_memory_md: false,
             curated_snapshot: None,
             user_identity: None,
+            personality_soul_md: None,
+            personality_memory_md: None,
+            personality_roster: vec![],
+            workflows: &[],
         };
         let rendered = ToolsSection.build(&ctx).unwrap();
         assert!(
@@ -359,10 +401,15 @@ fn tools_section_uses_pformat_signature_for_text_dispatchers() {
 fn user_memory_section_renders_namespaces_with_headings() {
     let learned = LearnedContextData {
         tree_root_summaries: vec![
-            ("user".into(), "Steven prefers terse Rust answers.".into()),
-            (
-                "conversations".into(),
-                "Recent thread: prompt rework.".into(),
+            ns_summary_at(
+                "user",
+                "Steven prefers terse Rust answers.",
+                "2026-05-25T00:00:00Z",
+            ),
+            ns_summary_at(
+                "conversations",
+                "Recent thread: prompt rework.",
+                "2026-05-25T00:00:00Z",
             ),
         ],
         ..Default::default()
@@ -384,11 +431,61 @@ fn user_memory_section_renders_namespaces_with_headings() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.starts_with("## User Memory\n\n"));
-    assert!(rendered.contains("### user\n\nSteven prefers terse Rust answers."));
-    assert!(rendered.contains("### conversations\n\nRecent thread: prompt rework."));
+    assert!(
+        rendered
+            .contains("### user (last updated 2026-05-25)\n\nSteven prefers terse Rust answers."),
+        "heading must carry the absolute update date (#2944); got:\n{rendered}"
+    );
+    assert!(rendered
+        .contains("### conversations (last updated 2026-05-25)\n\nRecent thread: prompt rework."));
+}
+
+#[test]
+fn memory_date_label_formats_absolute_utc_date() {
+    let dt = chrono::DateTime::parse_from_rfc3339("2026-05-25T18:30:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    // Absolute date, no time-of-day — must stay byte-stable day to day.
+    assert_eq!(memory_date_label(dt), "2026-05-25");
+}
+
+#[test]
+fn user_memory_section_labels_stale_summary_and_warns_against_present_tense() {
+    // #2944 regression: a summary last updated weeks ago must render with
+    // its absolute date, and the section must steer the model to compare
+    // against the current date — so a May-25 briefing is never served as
+    // today's.
+    let learned = LearnedContextData {
+        tree_root_summaries: vec![ns_summary_at(
+            "briefings",
+            "Daily briefing: 2 meetings, proposal due.",
+            "2026-05-25T07:00:00Z",
+        )],
+        ..Default::default()
+    };
+    let rendered = UserMemorySection.build(&ctx_with_learned(learned)).unwrap();
+
+    assert!(
+        rendered.contains("### briefings (last updated 2026-05-25)"),
+        "stale summary must carry its absolute update date; got:\n{rendered}"
+    );
+    // Guardrail: tell the model to cross-check against the current date
+    // and not restate older memory as today's.
+    assert!(
+        rendered.contains("Current Date & Time"),
+        "section must reference the current-date block; got:\n{rendered}"
+    );
+    assert!(
+        rendered.contains("never present older memory as"),
+        "section must forbid presenting stale memory as current; got:\n{rendered}"
+    );
 }
 
 #[test]
@@ -414,6 +511,10 @@ fn user_memory_section_returns_empty_when_no_summaries() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.is_empty());
@@ -541,11 +642,10 @@ fn render_subagent_system_prompt_honors_identity_safety_and_skills_flags() {
 
 #[test]
 fn render_subagent_system_prompt_injects_profile_md_even_when_identity_omitted() {
-    // Regression: the welcome agent sets `omit_identity = true` to
-    // drop the SOUL/IDENTITY preamble (it has its own voice) but it
-    // still needs PROFILE.md to personalise the greeting. PROFILE.md
-    // is gated on its own `include_profile` flag so the welcome path
-    // can opt in without pulling SOUL/IDENTITY back in.
+    // Regression: an agent with `omit_identity = true` drops the SOUL/IDENTITY
+    // preamble but still needs PROFILE.md if `include_profile = true`.
+    // PROFILE.md is gated on its own flag so agents can opt in without
+    // pulling SOUL/IDENTITY back in.
     let workspace = std::env::temp_dir().join(format!(
         "openhuman_prompt_profile_nosoul_{}",
         uuid::Uuid::new_v4()
@@ -570,7 +670,7 @@ fn render_subagent_system_prompt_injects_profile_md_even_when_identity_omitted()
         &[0],
         &tools,
         &[],
-        "You are the welcome agent.",
+        "You are a specialist agent.",
         SubagentRenderOptions {
             include_identity: false,
             include_safety_preamble: false,
@@ -705,7 +805,7 @@ fn render_subagent_system_prompt_silently_skips_missing_profile_md() {
         &[0],
         &tools,
         &[],
-        "You are the welcome agent.",
+        "You are a specialist agent.",
         SubagentRenderOptions::narrow(),
         ToolCallFormat::PFormat,
         &[],
@@ -724,15 +824,13 @@ fn render_subagent_system_prompt_silently_skips_missing_profile_md() {
 }
 
 #[test]
-fn welcome_agent_definition_flags_still_load_profile_md() {
-    // End-to-end-ish check against the real welcome agent flags: the
-    // agent.toml sets omit_identity=true/omit_skills_catalog=true/
-    // omit_safety_preamble=true/omit_profile=false. Mirror that exact
-    // combo and verify PROFILE.md still lands in the rendered prompt.
-    // If someone flips `omit_profile` back to its default (true), this
-    // test breaks.
+fn narrow_agent_with_omit_identity_still_loads_profile_md() {
+    // Verify that an agent configured with omit_identity=true/omit_skills_catalog=true/
+    // omit_safety_preamble=true/omit_profile=false still gets PROFILE.md injected.
+    // This exercises the SubagentRenderOptions::from_definition_flags path for agents
+    // that want PROFILE.md without the full SOUL/IDENTITY preamble.
     let workspace = std::env::temp_dir().join(format!(
-        "openhuman_prompt_welcome_flags_{}",
+        "openhuman_prompt_narrow_agent_flags_{}",
         uuid::Uuid::new_v4()
     ));
     std::fs::create_dir_all(&workspace).unwrap();
@@ -742,13 +840,12 @@ fn welcome_agent_definition_flags_still_load_profile_md() {
     )
     .unwrap();
 
-    // Match `src/openhuman/agent/agents/welcome/agent.toml` exactly.
     let options = SubagentRenderOptions::from_definition_flags(
         true,  // omit_identity
         true,  // omit_safety_preamble
         true,  // omit_skills_catalog
-        false, // omit_profile   — welcome opts IN to PROFILE.md
-        false, // omit_memory_md — welcome opts IN to MEMORY.md too
+        false, // omit_profile   — opts IN to PROFILE.md
+        false, // omit_memory_md — opts IN to MEMORY.md too
     );
 
     let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
@@ -758,7 +855,7 @@ fn welcome_agent_definition_flags_still_load_profile_md() {
         &[0],
         &tools,
         &[],
-        "# Welcome Agent\n\nYou are the welcome agent.",
+        "# Specialist Agent\n\nYou are a specialist.",
         options,
         ToolCallFormat::PFormat,
         &[],
@@ -766,11 +863,11 @@ fn welcome_agent_definition_flags_still_load_profile_md() {
 
     assert!(
         rendered.contains("### PROFILE.md"),
-        "welcome agent (omit_profile=false) must load PROFILE.md, got:\n{rendered}"
+        "agent with omit_profile=false must load PROFILE.md, got:\n{rendered}"
     );
     assert!(
         rendered.contains("Crypto trader"),
-        "PROFILE.md body must reach the welcome agent prompt"
+        "PROFILE.md body must reach the agent prompt"
     );
 
     let _ = std::fs::remove_dir_all(workspace);
@@ -844,7 +941,7 @@ fn render_subagent_system_prompt_injects_memory_md_when_enabled() {
         &[0],
         &tools,
         &[],
-        "You are the welcome agent.",
+        "You are a specialist agent.",
         SubagentRenderOptions {
             include_identity: false,
             include_safety_preamble: false,
@@ -1063,12 +1160,16 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         include_memory_md: true,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
 
-    // Mirror the welcome agent runtime path:
+    // Test a narrow-agent runtime path:
     // `SystemPromptBuilder::for_subagent(body, omit_identity=true, …)`.
     let builder = SystemPromptBuilder::for_subagent(
-        "You are the welcome agent.".into(),
+        "You are a specialist agent.".into(),
         true, // omit_identity  — drops SOUL/IDENTITY preamble
         true, // omit_safety_preamble
         true, // omit_skills_catalog
@@ -1081,11 +1182,11 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
     );
     assert!(
         rendered.contains("### PROFILE.md") && rendered.contains("Jane Doe"),
-        "welcome runtime path must inject PROFILE.md despite omit_identity=true, got:\n{rendered}"
+        "narrow runtime path must inject PROFILE.md despite omit_identity=true, got:\n{rendered}"
     );
     assert!(
         rendered.contains("### MEMORY.md") && rendered.contains("terse Rust"),
-        "welcome runtime path must inject MEMORY.md despite omit_identity=true, got:\n{rendered}"
+        "narrow runtime path must inject MEMORY.md despite omit_identity=true, got:\n{rendered}"
     );
 
     // Mirror the narrow-specialist runtime path (code_executor,
@@ -1106,6 +1207,10 @@ fn for_subagent_builder_injects_user_files_even_when_identity_omitted() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let narrow = builder.build(&ctx_narrow).unwrap();
     assert!(
@@ -1172,10 +1277,7 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         skills: &[],
         dispatcher_instructions: "",
         learned: LearnedContextData {
-            tree_root_summaries: vec![
-                ("user".into(), "kept".into()),
-                ("empty".into(), "   ".into()),
-            ],
+            tree_root_summaries: vec![ns_summary("user", "kept"), ns_summary("empty", "   ")],
             ..Default::default()
         },
         visible_tool_names: &NO_FILTER,
@@ -1186,6 +1288,10 @@ fn prompt_tool_constructors_and_user_memory_skip_empty_bodies() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let rendered = UserMemorySection.build(&ctx).unwrap();
     assert!(rendered.contains("### user"));
@@ -1211,6 +1317,10 @@ fn ctx_with_learned(learned: LearnedContextData) -> PromptContext<'static> {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     }
 }
 
@@ -1306,7 +1416,7 @@ fn user_reflections_render_above_user_memory_when_both_present() {
     // UserMemorySection content).
     let ctx = ctx_with_learned(LearnedContextData {
         reflections: vec!["I want terse answers".into()],
-        tree_root_summaries: vec![("user".into(), "Generic summary".into())],
+        tree_root_summaries: vec![ns_summary("user", "Generic summary")],
         ..Default::default()
     });
     let reflections = UserReflectionsSection.build(&ctx).unwrap();
@@ -1347,6 +1457,10 @@ fn tools_section_empty_for_native() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1377,6 +1491,10 @@ fn tools_section_nonempty_for_pformat() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(
@@ -1409,6 +1527,10 @@ fn tools_section_native_with_dispatcher_instructions_returns_instructions() {
         include_memory_md: false,
         curated_snapshot: None,
         user_identity: None,
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
     let out = ToolsSection.build(&ctx).unwrap();
     assert!(

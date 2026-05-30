@@ -1,8 +1,23 @@
 import { getVersion } from '@tauri-apps/api/app';
 
+import {
+  type OAuthAuthReadinessFailure,
+  type OAuthAuthReadinessResult,
+  oauthAuthReadinessUserMessage,
+  prepareOAuthLoginLaunch,
+  waitForOAuthAuthReadiness,
+} from '../components/oauth/oauthAuthReadiness';
 import { LATEST_APP_DOWNLOAD_URL, MINIMUM_SUPPORTED_APP_VERSION } from './config';
 import { isVersionAtLeast, parseSemverParts } from './semver';
 import { isTauri } from './tauriCommands/common';
+
+export {
+  oauthAuthReadinessUserMessage,
+  prepareOAuthLoginLaunch,
+  waitForOAuthAuthReadiness,
+  type OAuthAuthReadinessFailure,
+  type OAuthAuthReadinessResult,
+};
 
 export type OAuthAppVersionGateResult =
   | { ok: true }

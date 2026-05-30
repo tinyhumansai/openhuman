@@ -4,6 +4,7 @@
 
 * [Welcome to OpenHuman](README.md)
 * [Getting Started](overview/getting-started.md)
+* [Troubleshooting Sign-In](overview/troubleshooting-sign-in.md)
 
 ## Features
 
@@ -20,6 +21,7 @@
   * [Local AI (optional)](features/model-routing/local-ai.md)
 * [Available Tools](features/native-tools/README.md)
   * [Web Search](features/native-tools/web-search.md)
+  * [Image Tools](features/native-tools/image-tools.md)
   * [Web Scraper](features/native-tools/web-scraper.md)
   * [Coder](features/native-tools/coder.md)
   * [Browser & Computer Control](features/native-tools/browser-and-computer.md)
@@ -32,6 +34,7 @@
   * [System & Utilities](features/native-tools/system-and-utilities.md)
 * [Subconscious Loop](features/subconscious.md)
 * [Privacy & Security](features/privacy-and-security.md)
+  * [OS Keyring & Secret Storage](features/os-keyring-and-secret-storage.md)
 * [Platform & Availability](features/platform.md)
 * [Cloud Deploy](features/cloud-deploy.md)
 
@@ -48,6 +51,9 @@
 * [Agent Observability](developing/agent-observability.md)
 * [Architecture](developing/architecture/README.md)
   * [Agent Harness](developing/architecture/agent-harness.md)
+  * [Memory Tree (`src/openhuman/memory_tree/`)](developing/architecture/memory-tree.md)
+  * [MCP Registry (`src/openhuman/mcp_registry/`)](developing/architecture/mcp-registry.md)
+  * [Security (`src/openhuman/security/`)](developing/architecture/security.md)
   * [Frontend (app/src/)](developing/architecture/frontend.md)
   * [Tauri Shell (app/src-tauri/)](developing/architecture/tauri-shell.md)
 

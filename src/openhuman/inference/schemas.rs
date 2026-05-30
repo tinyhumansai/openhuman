@@ -28,20 +28,10 @@ struct InferenceVisionPromptParams {
 }
 
 #[derive(Debug, Deserialize)]
-struct InferenceEmbedParams {
-    inputs: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct InferenceChatMessageParam {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct InferenceChatParams {
-    messages: Vec<InferenceChatMessageParam>,
-    max_tokens: Option<u32>,
+struct InferenceTestProviderModelParams {
+    workload: String,
+    provider: String,
+    prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +111,12 @@ struct InferenceApplyPresetParams {
     tier: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct InferenceOpenAiOAuthCompleteParams {
+    #[serde(alias = "callbackUrl")]
+    callback_url: String,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("status"),
@@ -132,11 +128,14 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("presets"),
         schemas("apply_preset"),
         schemas("diagnostics"),
+        schemas("openai_oauth_start"),
+        schemas("openai_oauth_complete"),
+        schemas("openai_oauth_status"),
+        schemas("openai_oauth_disconnect"),
         schemas("summarize"),
         schemas("prompt"),
         schemas("vision_prompt"),
-        schemas("embed"),
-        schemas("chat"),
+        schemas("test_provider_model"),
         schemas("should_react"),
         schemas("analyze_sentiment"),
     ]
@@ -181,6 +180,22 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_inference_diagnostics,
         },
         RegisteredController {
+            schema: schemas("openai_oauth_start"),
+            handler: handle_inference_openai_oauth_start,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_complete"),
+            handler: handle_inference_openai_oauth_complete,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_status"),
+            handler: handle_inference_openai_oauth_status,
+        },
+        RegisteredController {
+            schema: schemas("openai_oauth_disconnect"),
+            handler: handle_inference_openai_oauth_disconnect,
+        },
+        RegisteredController {
             schema: schemas("summarize"),
             handler: handle_inference_summarize,
         },
@@ -193,12 +208,8 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_inference_vision_prompt,
         },
         RegisteredController {
-            schema: schemas("embed"),
-            handler: handle_inference_embed,
-        },
-        RegisteredController {
-            schema: schemas("chat"),
-            handler: handle_inference_chat,
+            schema: schemas("test_provider_model"),
+            handler: handle_inference_test_provider_model,
         },
         RegisteredController {
             schema: schemas("should_react"),
@@ -313,6 +324,37 @@ pub fn schemas(function: &str) -> ControllerSchema {
                  via `issues`.",
             )],
         },
+        "openai_oauth_start" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_start",
+            description: "Begin ChatGPT/Codex OAuth (PKCE) for the openai cloud provider.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "OAuth start payload with authUrl.")],
+        },
+        "openai_oauth_complete" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_complete",
+            description: "Complete ChatGPT/Codex OAuth using the browser callback URL.",
+            inputs: vec![required_string(
+                "callback_url",
+                "Redirect URL after sign-in (http://127.0.0.1:1455/auth/callback?...).",
+            )],
+            outputs: vec![json_output("result", "OAuth completion payload.")],
+        },
+        "openai_oauth_status" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_status",
+            description: "Whether ChatGPT OAuth credentials are stored for openai.",
+            inputs: vec![],
+            outputs: vec![json_output("status", "OAuth connection status.")],
+        },
+        "openai_oauth_disconnect" => ControllerSchema {
+            namespace: "inference",
+            function: "openai_oauth_disconnect",
+            description: "Remove stored ChatGPT OAuth credentials.",
+            inputs: vec![],
+            outputs: vec![json_output("result", "Disconnect result.")],
+        },
         "summarize" => ControllerSchema {
             namespace: "inference",
             function: "summarize",
@@ -350,30 +392,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("output", "Prompt output text.")],
         },
-        "embed" => ControllerSchema {
+        "test_provider_model" => ControllerSchema {
             namespace: "inference",
-            function: "embed",
-            description: "Generate embeddings for text inputs.",
-            inputs: vec![FieldSchema {
-                name: "inputs",
-                ty: TypeSchema::Array(Box::new(TypeSchema::String)),
-                comment: "Texts to embed.",
-                required: true,
-            }],
-            outputs: vec![json_output("embedding", "Embedding result payload.")],
-        },
-        "chat" => ControllerSchema {
-            namespace: "inference",
-            function: "chat",
-            description: "Multi-turn chat completion via the configured inference provider.",
+            function: "test_provider_model",
+            description: "Run a one-off Hello-world style test against an explicit provider:model binding without saving routing changes.",
             inputs: vec![
-                FieldSchema {
-                    name: "messages",
-                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
-                    comment: "Chat message history [{role, content}]. Last entry is the user turn.",
-                    required: true,
-                },
-                optional_u64("max_tokens", "Optional max output tokens."),
+                required_string("workload", "Workload id context (chat, reasoning, coding, etc.)."),
+                required_string("provider", "Explicit provider string like 'openai:gpt-4o' or 'ollama:llama3.1:8b'."),
+                optional_string("prompt", "Optional prompt text to send; defaults to 'Hello world'."),
             ],
             outputs: vec![json_output("reply", "Assistant reply text.")],
         },
@@ -499,18 +525,38 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
                         generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle,
                         CloudProviderCreds,
                     };
+                    let reserved_count = entries
+                        .iter()
+                        .filter(|e| {
+                            let t = e.slug.trim();
+                            !t.is_empty() && is_slug_reserved(t)
+                        })
+                        .count();
+                    if reserved_count > 0 {
+                        log::debug!(
+                            "[inference] update_model_settings: dropping {} reserved cloud provider slug(s)",
+                            reserved_count
+                        );
+                    }
                     entries
                         .into_iter()
+                        // Silently drop entries whose (non-empty) slug is reserved —
+                        // typically the migration-seeded "openhuman" / "cloud" /
+                        // "pid" built-ins that the frontend echoes back on every
+                        // save (see `migrations::unify_ai_provider_settings`).
+                        // Empty slugs still fall through so the explicit
+                        // validation error below fires for actual frontend
+                        // bugs. `apply_model_settings` re-injects the existing
+                        // reserved entries from the stored config so they
+                        // aren't dropped on save.
+                        .filter(|entry| {
+                            let trimmed = entry.slug.trim();
+                            trimmed.is_empty() || !is_slug_reserved(trimmed)
+                        })
                         .map(|entry| {
                             let slug = entry.slug.trim().to_string();
                             if slug.is_empty() {
                                 return Err("cloud provider slug must not be empty".to_string());
-                            }
-                            if is_slug_reserved(&slug) {
-                                return Err(format!(
-                                    "slug '{}' is reserved and cannot be used for a custom provider",
-                                    slug
-                                ));
                             }
                             let auth_style = match entry
                                 .auth_style
@@ -613,6 +659,41 @@ fn handle_inference_apply_preset(params: Map<String, Value>) -> ControllerFuture
     })
 }
 
+fn handle_inference_openai_oauth_start(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_start(&config).await?)
+    })
+}
+
+fn handle_inference_openai_oauth_complete(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let payload = deserialize_params::<InferenceOpenAiOAuthCompleteParams>(params)?;
+        to_json(
+            crate::openhuman::inference::rpc::inference_openai_oauth_complete(
+                &config,
+                payload.callback_url.trim(),
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_inference_openai_oauth_status(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_status(&config).await?)
+    })
+}
+
+fn handle_inference_openai_oauth_disconnect(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(crate::openhuman::inference::rpc::inference_openai_oauth_disconnect(&config).await?)
+    })
+}
+
 fn handle_inference_diagnostics(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -663,31 +744,18 @@ fn handle_inference_vision_prompt(params: Map<String, Value>) -> ControllerFutur
     })
 }
 
-fn handle_inference_embed(params: Map<String, Value>) -> ControllerFuture {
+fn handle_inference_test_provider_model(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
-        let p = deserialize_params::<InferenceEmbedParams>(params)?;
+        let p = deserialize_params::<InferenceTestProviderModelParams>(params)?;
         let config = config_rpc::load_config_with_timeout().await?;
-        to_json(crate::openhuman::inference::rpc::inference_embed(&config, &p.inputs).await?)
-    })
-}
-
-fn handle_inference_chat(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let p = deserialize_params::<InferenceChatParams>(params)?;
-        let config = config_rpc::load_config_with_timeout().await?;
-        let messages = p
-            .messages
-            .into_iter()
-            .map(
-                |message| crate::openhuman::inference::local::ops::LocalAiChatMessage {
-                    role: message.role,
-                    content: message.content,
-                },
-            )
-            .collect();
         to_json(
-            crate::openhuman::inference::rpc::inference_chat(&config, messages, p.max_tokens)
-                .await?,
+            crate::openhuman::inference::rpc::inference_test_provider_model(
+                &config,
+                &p.workload,
+                &p.provider,
+                p.prompt.as_deref().unwrap_or("Hello world"),
+            )
+            .await?,
         )
     })
 }

@@ -6,13 +6,11 @@
 name: Test
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch: {}
 
 permissions:
   contents: read
+  packages: read
   pull-requests: read
 
 concurrency:

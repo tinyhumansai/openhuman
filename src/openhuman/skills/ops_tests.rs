@@ -550,6 +550,7 @@ fn create_skill_user_scope_scaffolds_skill_md_and_resource_dirs() {
         author: Some("Jane Dev".to_string()),
         tags: vec!["demo".to_string(), "greeting".to_string()],
         allowed_tools: vec!["shell".to_string()],
+        inputs: Vec::new(),
     };
 
     let created = create_skill_inner(Some(home.path()), ws.path(), params)
@@ -1169,4 +1170,141 @@ fn uninstall_skill_rejects_symlinked_skills_root() {
         real_skills.join("real").join("SKILL.md").exists(),
         "target must survive"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `[[inputs]]` editor — Phase 1: schema round-trip.
+//
+// The Create-a-Skill form lets the user declare zero-or-more skill inputs at
+// create time. These tests pin the wire shape and the params round-trip so the
+// payload from `skillsApi.createSkill` lands intact in `CreateSkillParams.inputs`
+// and is identical after TOML emission + re-parse via the registry's
+// `SkillInput` (see Phase 2 for the actual on-disk emit; Phase 1 is JSON only).
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn skill_create_input_def_deserializes_full_row_from_json() {
+    let row: crate::openhuman::skills::ops_create::SkillCreateInputDef =
+        serde_json::from_value(serde_json::json!({
+            "name": "repo",
+            "description": "owner/name slug",
+            "required": true,
+            "type": "string",
+        }))
+        .unwrap();
+    assert_eq!(row.name, "repo");
+    assert_eq!(row.description.as_deref(), Some("owner/name slug"));
+    assert!(row.required);
+    assert_eq!(row.type_.as_deref(), Some("string"));
+}
+
+#[test]
+fn skill_create_input_def_required_defaults_to_true() {
+    // The form sends `required` per row, but other callers (CLI, future
+    // RPC clients) may omit it. The serde default keeps the safer
+    // semantic — a row the user bothered to declare is required.
+    let row: crate::openhuman::skills::ops_create::SkillCreateInputDef =
+        serde_json::from_value(serde_json::json!({
+            "name": "topic",
+        }))
+        .unwrap();
+    assert_eq!(row.name, "topic");
+    assert!(row.description.is_none());
+    assert!(row.required, "required must default to true");
+    assert!(row.type_.is_none());
+}
+
+#[test]
+fn create_skill_params_defaults_inputs_to_empty_vec() {
+    // Old clients that don't know about `inputs` keep working — the
+    // field defaults to an empty vec at deserialise time and `Default`
+    // produces an empty vec too.
+    let params: CreateSkillParams = serde_json::from_value(serde_json::json!({
+        "name": "Hello",
+        "description": "Says hi",
+        "scope": "user",
+    }))
+    .unwrap();
+    assert!(params.inputs.is_empty());
+    assert!(CreateSkillParams::default().inputs.is_empty());
+}
+
+#[test]
+fn create_skill_params_carries_inputs_through_deserialise() {
+    let params: CreateSkillParams = serde_json::from_value(serde_json::json!({
+        "name": "Issue Crusher",
+        "description": "Fix one issue end to end.",
+        "scope": "user",
+        "inputs": [
+            { "name": "repo", "description": "owner/name", "required": true, "type": "string" },
+            { "name": "issue", "description": "issue #", "required": true, "type": "integer" },
+            { "name": "pr_base", "description": "base branch", "required": false }
+        ],
+    }))
+    .unwrap();
+    assert_eq!(params.inputs.len(), 3);
+    assert_eq!(params.inputs[1].name, "issue");
+    assert_eq!(params.inputs[1].type_.as_deref(), Some("integer"));
+    assert!(params.inputs[1].required);
+    assert!(!params.inputs[2].required);
+    assert!(params.inputs[2].type_.is_none());
+}
+
+#[test]
+fn skill_create_input_def_round_trips_through_registry_skill_input() {
+    // Asserts that what the form emits and what the registry parser
+    // accepts are the same shape over TOML — the "parser will accept
+    // what you emit" contract called out in the Phase-1 brief. We
+    // serialise the form-supplied row(s) into a synthetic skill.toml
+    // body, parse it back through the registry's `SkillDefinition`,
+    // and check every field survived.
+    let rows = vec![
+        crate::openhuman::skills::ops_create::SkillCreateInputDef {
+            name: "repo".into(),
+            description: Some("owner/name slug".into()),
+            required: true,
+            type_: Some("string".into()),
+        },
+        crate::openhuman::skills::ops_create::SkillCreateInputDef {
+            name: "issue".into(),
+            description: Some("issue #".into()),
+            required: true,
+            type_: Some("integer".into()),
+        },
+        crate::openhuman::skills::ops_create::SkillCreateInputDef {
+            name: "pr_base".into(),
+            description: None,
+            required: false,
+            type_: None,
+        },
+    ];
+
+    // Hand-build a minimal skill.toml the registry can parse: id +
+    // when_to_use are the only AgentDefinition fields without defaults.
+    let mut toml = String::from("id = \"round-trip\"\nwhen_to_use = \"trip\"\n");
+    for r in &rows {
+        toml.push_str("\n[[inputs]]\n");
+        toml.push_str(&format!("name = \"{}\"\n", r.name));
+        if let Some(d) = &r.description {
+            toml.push_str(&format!("description = \"{}\"\n", d));
+        }
+        toml.push_str(&format!("required = {}\n", r.required));
+        if let Some(t) = &r.type_ {
+            toml.push_str(&format!("type = \"{}\"\n", t));
+        }
+    }
+
+    let parsed: crate::openhuman::skills::registry::SkillDefinition =
+        toml::from_str(&toml).expect("registry must accept what the form emits");
+    assert_eq!(parsed.inputs.len(), 3);
+    assert_eq!(parsed.inputs[0].name, "repo");
+    assert_eq!(parsed.inputs[0].description, "owner/name slug");
+    assert!(parsed.inputs[0].required);
+    assert_eq!(parsed.inputs[0].kind.as_deref(), Some("string"));
+    assert_eq!(parsed.inputs[1].kind.as_deref(), Some("integer"));
+    // `description` defaults to "" in `SkillInput`, not Option::None —
+    // the registry parser flattens missing into empty for back-compat.
+    assert_eq!(parsed.inputs[2].description, "");
+    assert!(!parsed.inputs[2].required);
+    assert!(parsed.inputs[2].kind.is_none());
 }

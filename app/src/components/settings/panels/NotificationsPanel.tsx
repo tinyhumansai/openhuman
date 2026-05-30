@@ -7,6 +7,12 @@ import { type NotificationCategory, setPreference } from '../../../store/notific
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
+interface NotificationsPanelProps {
+  /** When embedded inside the tabbed Notifications page, the parent owns the
+      `<SettingsHeader>` chrome and we render only the body. */
+  embedded?: boolean;
+}
+
 const CATEGORIES: { id: NotificationCategory; title: string; description: string }[] = [
   {
     id: 'messages',
@@ -41,7 +47,7 @@ const CATEGORIES: { id: NotificationCategory; title: string; description: string
   },
 ];
 
-const NotificationsPanel = () => {
+const NotificationsPanel = ({ embedded = false }: NotificationsPanelProps = {}) => {
   const { t } = useT();
   const { navigateBack, breadcrumbs } = useSettingsNavigation();
   const preferences = useAppSelector(s => s.notifications.preferences);
@@ -78,12 +84,14 @@ const NotificationsPanel = () => {
 
   return (
     <div>
-      <SettingsHeader
-        title={t('settings.notifications')}
-        showBackButton={true}
-        onBack={navigateBack}
-        breadcrumbs={breadcrumbs}
-      />
+      {!embedded && (
+        <SettingsHeader
+          title={t('settings.notifications')}
+          showBackButton={true}
+          onBack={navigateBack}
+          breadcrumbs={breadcrumbs}
+        />
+      )}
 
       <div>
         <div className="p-4 space-y-4">

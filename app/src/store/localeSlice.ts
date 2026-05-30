@@ -14,10 +14,12 @@ const PREFIX_TO_LOCALE: Array<[string, Locale]> = [
   ['fr', 'fr'],
   ['bn', 'bn'],
   ['pt', 'pt'],
+  ['de', 'de'],
   ['ru', 'ru'],
   ['id', 'id'],
   ['in', 'id'],
   ['it', 'it'],
+  ['pl', 'pl'],
   ['en', 'en'],
 ];
 
