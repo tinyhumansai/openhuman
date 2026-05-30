@@ -2,8 +2,6 @@
 name: Build Windows
 on:
   workflow_dispatch:
-  push:
-    branches: [fix/windows]
 permissions:
   contents: read
 concurrency:
@@ -11,7 +9,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build-windows:
-    name: 'Desktop: Windows x64'
+    name: "Desktop: Windows x64"
     runs-on: windows-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -123,4 +121,5 @@ jobs:
         with:
           name: windows-cli
           path: |-
-            ${{ steps.core-paths.outputs.core_target_dir }}/${{ steps.core-paths.outputs.core_bin_name }}.exe
+            app/src-tauri/target/x86_64-pc-windows-msvc/release/openhuman-core.exe
+            target/x86_64-pc-windows-msvc/release/openhuman-core.exe

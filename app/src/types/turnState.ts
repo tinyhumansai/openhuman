@@ -67,6 +67,8 @@ export interface PersistedSubagentActivity {
   iterations?: number;
   elapsedMs?: number;
   outputChars?: number;
+  /** Persistent worker sub-thread id backing this delegation (camelCase from core). */
+  workerThreadId?: string;
   toolCalls: PersistedSubagentToolCall[];
 }
 

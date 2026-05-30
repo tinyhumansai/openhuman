@@ -34,7 +34,8 @@ The agent tool layer. Defines the core [`Tool`] trait every agent-callable capab
 | `src/openhuman/tools/impl/filesystem/` | `file_read`, `file_write`, `edit_file`, `apply_patch`, `grep`, `glob_search`, `list_files`, `read_diff`, `csv_export`, `git_operations`, `run_linter`, `run_tests`, `update_memory_md`. |
 | `src/openhuman/tools/impl/browser/` | `browser` (full automation, pluggable backend), `browser_open`, `screenshot`, `image_info`, image output, action parser, native backend, security. |
 | `src/openhuman/tools/impl/computer/` | `mouse`, `keyboard` (native control, default-off), human-path resolution. |
-| `src/openhuman/tools/impl/network/` | `http_request`, `web_fetch`, `curl`, `web_search`, `gitbooks` (search/get-page), `mcp` (list servers/tools, call), `mcp_setup` (5 setup-agent tools), `polymarket` (+ orders, CLOB auth), `gmail_unsubscribe`, `url_guard`. |
+| `src/openhuman/tools/impl/network/` | `http_request`, `web_fetch`, `curl`, `gitbooks` (search/get-page), `mcp` (list servers/tools, call), `mcp_setup` (5 setup-agent tools), `polymarket` (+ orders, CLOB auth), `gmail_unsubscribe`, `url_guard`. |
+| `src/openhuman/search/` | Search engine registry and search-owned agent tools such as `web_search`. |
 | `src/openhuman/tools/impl/system/` | `shell`, `node_exec`, `npm_exec`, `install_tool`, `detect_tools`, `current_time`, `schedule`, `proxy_config`, `pushover`, `lsp`, `tool_stats`, `update_check`, `update_apply`, `insert_sql_record`, `workspace_state`. |
 | `*_tests.rs` / `#[cfg(test)] mod tests` | Co-located/sibling unit tests across the module. |
 
@@ -45,7 +46,7 @@ The agent tool layer. Defines the core [`Tool`] trait every agent-callable capab
 - Policy: `ToolPolicy`, `DefaultToolPolicy`, `PolicyDecision`.
 - Schema: `SchemaCleanr`, `CleaningStrategy`.
 - Controllers: `all_tools_controller_schemas`, `all_tools_registered_controllers`.
-- All built-in tool structs (e.g. `ShellTool`, `FileReadTool`, `EditFileTool`, `GrepTool`, `BrowserTool`, `HttpRequestTool`, `CurlTool`, `WebSearchTool`, `LspTool`, …) via `pub use implementations::*`, plus re-exported domain tool sets.
+- All built-in tool structs (e.g. `ShellTool`, `FileReadTool`, `EditFileTool`, `GrepTool`, `BrowserTool`, `HttpRequestTool`, `CurlTool`, `WebSearchTool`, `LspTool`, …) via `pub use implementations::*`, plus re-exported domain tool sets such as `openhuman::search::tools::*`.
 - `filter_tools_by_user_preference` (crate-internal).
 
 ## RPC / controllers
@@ -71,7 +72,8 @@ This module **owns** the cross-cutting built-in tools (the only ones that belong
 - **Filesystem**: `file_read`, `file_write`, `edit_file`, `apply_patch`, `grep`, `glob`/`glob_search`, `list_files`, `read_diff`, `csv_export`, `git_operations`, `run_linter`, `run_tests`, `update_memory_md`.
 - **System/process**: `shell`, `node_exec`, `npm_exec`, `install_tool`, `detect_tools`, `current_time`, `schedule`, `proxy_config`, `pushover`, `lsp`, `tool_stats`, `update_check`, `update_apply`.
 - **Browser/computer**: `browser`, `browser_open`, `screenshot`, `image_info`, `mouse`, `keyboard`.
-- **Generic network**: `http_request`, `web_fetch`, `curl`, `web_search` (engine-selected), `gitbooks_search`/`gitbooks_get_page`, MCP bridge (`mcp` list/call), `mcp_setup` tools, `gmail_unsubscribe`.
+- **Generic network**: `http_request`, `web_fetch`, `curl`, `gitbooks_search`/`gitbooks_get_page`, MCP bridge (`mcp` list/call), `mcp_setup` tools, `gmail_unsubscribe`.
+- **Search**: `web_search` and provider-specific search families are registered by `openhuman::search::registry`; `search.engine = "disabled"` suppresses this surface entirely.
 
 Domain-owned tools (memory, cron, wallet, composio, codegraph, integrations, whatsapp_data, audio_toolkit, agent sub-dispatch like `spawn_subagent`/`delegate`/`todo`/`plan_exit`/`run_skill`) are **registered** in `all_tools` but implemented in their respective domains and only re-exported through this module.
 
@@ -87,6 +89,7 @@ None. No `store.rs`; the module holds no persisted state. Tools that persist (me
 
 - `openhuman::agent` — `host_runtime` (`RuntimeAdapter`/`NativeRuntime`), `tool_policy::GeneratedToolRuntimeContext`, harness definitions (`AgentDefinition`, `SubagentEntry`) for orchestrator tool synthesis, and the agent-owned dispatch tools re-exported here.
 - `openhuman::config` — `Config`, `BrowserConfig`, `HttpRequestConfig`, `SearchEngine`, `DelegateAgentConfig`; drives all registration gating and `config::rpc::load_config_with_timeout` in RPC handlers.
+- `openhuman::search` — active search engine registry and search-owned tool implementations.
 - `openhuman::security` — `SecurityPolicy` (host/path/command gating threaded into nearly every tool) + `AuditLogger`.
 - `openhuman::memory` — `Memory` trait, injected into memory/preference/stats tools.
 - `openhuman::integrations` — `build_client` backend HTTP client + the integration tool structs (apify, brave, parallel, stock, twilio, tinyfish, google_places, querit, seltz, searxng).

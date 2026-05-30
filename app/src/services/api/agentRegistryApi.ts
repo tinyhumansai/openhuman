@@ -47,6 +47,12 @@ export interface CreateCustomAgentInput {
   tags?: string[];
 }
 
+/** Mirror of the Rust `AgentToolInfo` — one available tool for the picker. */
+export interface AgentToolInfo {
+  name: string;
+  description: string;
+}
+
 /** Patch for `update` — any omitted field is left unchanged. */
 export interface UpdateAgentInput {
   name?: string;
@@ -78,6 +84,18 @@ export const agentRegistryApi = {
       params: { include_disabled: includeDisabled },
     });
     return res?.agents ?? [];
+  },
+
+  /** List every agent tool visible to the orchestrator, with descriptions.
+   *  Used by the agent editor's tool picker; each `name` is a valid
+   *  `tool_allowlist` entry. */
+  availableTools: async (): Promise<AgentToolInfo[]> => {
+    log('availableTools');
+    const res = await callCoreRpc<{ tools?: AgentToolInfo[] }>({
+      method: 'openhuman.agent_registry_available_tools',
+      params: {},
+    });
+    return res?.tools ?? [];
   },
 
   /** Fetch a single entry by id. */

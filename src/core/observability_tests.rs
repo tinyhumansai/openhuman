@@ -164,6 +164,9 @@ fn classifies_embedding_backend_auth_failure() {
     // must classify as SessionExpired so the FE re-login prompt
     // fires (matches the contract introduced by #2786 and
     // exercised by classifies_embedding_api_invalid_token_401_as_session_expired).
+    // Kept as a regression guard against the broader
+    // `is_embedding_backend_auth_failure` matcher re-claiming this
+    // shape — see the guard in that function.
     for raw in [
         r#"Embedding API error 401 Unauthorized: {"success":false,"error":"Invalid token"}"#,
         r#"Embedding API error (401 Unauthorized): {"success":false,"error":"Invalid token"}"#,

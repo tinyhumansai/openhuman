@@ -14,6 +14,7 @@ const NAMESPACE: &str = "agent_registry";
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("list"),
+        schemas("available_tools"),
         schemas("get"),
         schemas("create_custom"),
         schemas("upsert_custom"),
@@ -28,6 +29,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("list"),
             handler: handle_list,
+        },
+        RegisteredController {
+            schema: schemas("available_tools"),
+            handler: handle_available_tools,
         },
         RegisteredController {
             schema: schemas("get"),
@@ -72,6 +77,18 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 name: "agents",
                 ty: TypeSchema::Array(Box::new(TypeSchema::Ref("AgentRegistryEntry"))),
                 comment: "Registry entries in default-first order.",
+                required: true,
+            }],
+        },
+        "available_tools" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "available_tools",
+            description: "List every assignable agent tool (the full built-in tool catalog), with descriptions, for the agent editor's tool picker.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "tools",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("AgentToolInfo"))),
+                comment: "Available tools sorted by name; each name is a valid tool_allowlist entry.",
                 required: true,
             }],
         },
@@ -182,6 +199,13 @@ fn handle_list(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let req = parse_value::<rpc::ListRequest>(Value::Object(params))?;
         to_json(rpc::list_rpc(req).await?)
+    })
+}
+
+fn handle_available_tools(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let req = parse_value::<rpc::AvailableToolsRequest>(Value::Object(params))?;
+        to_json(rpc::available_tools_rpc(req).await?)
     })
 }
 
@@ -296,5 +320,22 @@ mod tests {
     #[should_panic(expected = "unknown agent_registry schema function")]
     fn schemas_panics_on_unknown_function() {
         schemas("missing");
+    }
+
+    #[test]
+    fn available_tools_schema_is_registered_with_tools_output() {
+        let schema = schemas("available_tools");
+        assert_eq!(schema.namespace, NAMESPACE);
+        assert_eq!(schema.function, "available_tools");
+        assert!(schema.inputs.is_empty());
+        let tools = schema
+            .outputs
+            .iter()
+            .find(|field| field.name == "tools")
+            .expect("available_tools should output a `tools` field");
+        assert!(tools.required);
+        assert!(all_controller_schemas()
+            .iter()
+            .any(|s| s.function == "available_tools"));
     }
 }

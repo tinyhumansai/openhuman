@@ -1,5 +1,5 @@
 import debug from 'debug';
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { channelConnectionsApi } from '../../services/api/channelConnectionsApi';
@@ -17,8 +17,13 @@ import type {
   ChannelType,
 } from '../../types/channels';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
-import ChannelFieldInput from './ChannelFieldInput';
-import ChannelStatusBadge from './ChannelStatusBadge';
+import {
+  ChannelAuthFields,
+  ChannelAuthModeCard,
+  ChannelConfigError,
+  ChannelConnectActions,
+  useChannelAuthFormState,
+} from './channelConfigPrimitives';
 
 const log = debug('channels:credential');
 
@@ -42,28 +47,7 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
   const channel = definition.id as ChannelType;
   const channelConnections = useAppSelector(state => state.channelConnections);
 
-  const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
-  const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
-  const [error, setError] = useState<string | null>(null);
-
-  const runBusy = useCallback(async (key: string, task: () => Promise<void>) => {
-    setBusyKeys(prev => ({ ...prev, [key]: true }));
-    setError(null);
-    try {
-      await task();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyKeys(prev => ({ ...prev, [key]: false }));
-    }
-  }, []);
-
-  const updateField = useCallback((compositeKey: string, fieldKey: string, value: string) => {
-    setFieldValues(prev => ({
-      ...prev,
-      [compositeKey]: { ...(prev[compositeKey] ?? {}), [fieldKey]: value },
-    }));
-  }, []);
+  const { busyKeys, fieldValues, error, runBusy, updateField } = useChannelAuthFormState();
 
   const handleConnect = useCallback(
     (spec: AuthModeSpec) => {
@@ -164,11 +148,7 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
 
   return (
     <div className="space-y-3">
-      {error && (
-        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
-          {error}
-        </div>
-      )}
+      {error && <ChannelConfigError message={error} />}
 
       {definition.auth_modes.map(spec => {
         const compositeKey = `${channel}:${spec.mode}`;
@@ -177,60 +157,37 @@ const CredentialChannelConfig = ({ definition }: CredentialChannelConfigProps) =
         const busy = busyKeys[compositeKey] ?? false;
 
         return (
-          <div
+          <ChannelAuthModeCard
             key={spec.mode}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <p className="text-xs text-stone-500 dark:text-neutral-400">{spec.description}</p>
-              <ChannelStatusBadge status={status} />
-            </div>
-
-            {connection?.lastError && (
-              <p className="text-xs text-coral-600 mt-2">{connection.lastError}</p>
-            )}
-
+            description={spec.description}
+            status={status}
+            lastError={connection?.lastError}>
             {spec.fields.length > 0 && status !== 'connected' && (
-              <div className="mt-3 space-y-2">
-                {spec.fields.map(field => (
-                  <ChannelFieldInput
-                    key={field.key}
-                    field={{
-                      ...field,
-                      label: t(`channels.${channel}.fields.${field.key}.label`, field.label),
-                      placeholder: field.placeholder
-                        ? t(
-                            `channels.${channel}.fields.${field.key}.placeholder`,
-                            field.placeholder
-                          )
-                        : field.placeholder,
-                    }}
-                    value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                    onChange={val => updateField(compositeKey, field.key, val)}
-                    disabled={busy}
-                  />
-                ))}
-              </div>
+              <ChannelAuthFields
+                spec={spec}
+                compositeKey={compositeKey}
+                fieldValues={fieldValues}
+                onChange={updateField}
+                disabled={busy}
+                mapField={field => ({
+                  ...field,
+                  label: t(`channels.${channel}.fields.${field.key}.label`, field.label),
+                  placeholder: field.placeholder
+                    ? t(`channels.${channel}.fields.${field.key}.placeholder`, field.placeholder)
+                    : field.placeholder,
+                })}
+              />
             )}
 
-            <div className="mt-3 flex gap-2">
-              {status !== 'connected' && (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => handleConnect(spec)}
-                  className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                  {t('channels.connect', 'Connect')}
-                </button>
-              )}
-              <button
-                type="button"
-                disabled={busy || status === 'disconnected'}
-                onClick={() => handleDisconnect(spec.mode)}
-                className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
-                {t('accounts.disconnect')}
-              </button>
-            </div>
-          </div>
+            <ChannelConnectActions
+              busy={busy}
+              status={status}
+              connectLabel={t('channels.connect', 'Connect')}
+              disconnectLabel={t('accounts.disconnect')}
+              onConnect={() => handleConnect(spec)}
+              onDisconnect={() => handleDisconnect(spec.mode)}
+            />
+          </ChannelAuthModeCard>
         );
       })}
     </div>

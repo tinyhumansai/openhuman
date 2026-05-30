@@ -468,6 +468,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 13.1.1 | Profile Management | VU    | `app/src/components/settings/panels/__tests__/PrivacyPanel.test.tsx` | 🟡     |                       |
 | 13.1.2 | Linked Accounts    | WD    | `auth-access-control.spec.ts`                                        | 🟡     | UI surface unasserted |
 | 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` (this PR) | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
+| 13.1.4 | Wallet Balances Panel | VU | `app/src/components/settings/panels/__tests__/WalletBalancesPanel.test.tsx`, `app/src/services/walletApi.test.ts` | ✅ | Loading/error/empty/loaded states; Retry + Refresh re-invocation; chain badges; truncated address; providerStatus chip |
 
 ### 13.2 Automation & Channels
 
@@ -506,11 +507,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 69                                               |
+| ✅ Covered       | 70                                               |
 | 🟡 Partial       | 27                                               |
 | ❌ Missing       | 26                                               |
 | 🚫 Manual smoke  | 11                                               |
-| **Total leaves** | **134 explicit + nested = 205 product features** |
+| **Total leaves** | **135 explicit + nested = 206 product features** |
 
 PR-A delta: 13 leaves moved from ❌ → ✅ via 5 WDIO specs + 2 Vitest + 1 Rust integration test.
 Remaining gaps tracked under sub-issues #965 (process), #966 (docs), #967 (tools), #968 (auth/perm), #969 (settings), #970 (rewards), #971 (manual smoke).

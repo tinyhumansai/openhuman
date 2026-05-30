@@ -6,6 +6,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import { useCoreState } from '../../../providers/CoreStateProvider';
 import { teamApi } from '../../../services/api/teamApi';
 import { sanitizeError } from '../../../utils/sanitize';
+import { CenteredLoadingState, ErrorBanner, InlineLoadingStatus, Spinner } from '../../ui';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
 
@@ -125,11 +126,7 @@ const TeamInvitesPanel = () => {
 
       <div>
         <div className="p-4 space-y-4">
-          {error && (
-            <div className="rounded-xl bg-coral-500/10 border border-coral-500/20 p-3">
-              <p className="text-xs text-coral-400">{error}</p>
-            </div>
-          )}
+          {error && <ErrorBanner message={error} />}
 
           {/* Generate button */}
           {isAdmin && (
@@ -139,21 +136,7 @@ const TeamInvitesPanel = () => {
               className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium rounded-xl bg-primary-500 hover:bg-primary-600 text-white transition-colors disabled:opacity-50">
               {isGenerating ? (
                 <>
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
+                  <Spinner className="w-4 h-4" />
                   {t('invites.generating')}
                 </>
               ) : (
@@ -174,51 +157,12 @@ const TeamInvitesPanel = () => {
 
           {/* Refreshing indicator - only when loading and has existing data */}
           {isLoadingInvites && invites.length > 0 && (
-            <div className="flex items-center gap-2 px-1 py-2 text-xs text-amber-400">
-              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              {t('invites.refreshing')}
-            </div>
+            <InlineLoadingStatus label={t('invites.refreshing')} />
           )}
 
           {/* Invites list */}
           {isLoadingInvites && invites.length === 0 ? (
-            <div className="flex items-center justify-center py-8">
-              <svg
-                className="w-5 h-5 text-stone-500 dark:text-neutral-400 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24">
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                />
-              </svg>
-              <span className="ml-3 text-sm text-stone-500 dark:text-neutral-400">
-                {t('invites.loading')}
-              </span>
-            </div>
+            <CenteredLoadingState label={t('invites.loading')} />
           ) : invites.length > 0 ? (
             <div className="space-y-2">
               {invites.map(invite => {

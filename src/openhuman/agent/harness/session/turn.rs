@@ -2120,6 +2120,7 @@ impl Agent {
             personality_soul_md: None, // TODO: personality_ctx.soul_md_override
             personality_memory_md: None, // TODO: personality_ctx.memory_md_override
             personality_roster: vec![], // TODO: build_personality_roster(&workspace_dir)
+            workflows: &self.workflows,
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,

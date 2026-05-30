@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { agentRegistryApi, type AgentRegistryEntry } from '../../../services/api/agentRegistryApi';
@@ -8,6 +9,7 @@ vi.mock('../../../services/api/agentRegistryApi', () => ({
   agentRegistryApi: {
     list: vi.fn(),
     get: vi.fn(),
+    availableTools: vi.fn(),
     createCustom: vi.fn(),
     update: vi.fn(),
     setEnabled: vi.fn(),
@@ -15,8 +17,14 @@ vi.mock('../../../services/api/agentRegistryApi', () => ({
   },
 }));
 
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async importOriginal => {
+  const actual = await importOriginal<typeof import('react-router-dom')>();
+  return { ...actual, useNavigate: () => mockNavigate };
+});
+
 vi.mock('../hooks/useSettingsNavigation', () => ({
-  useSettingsNavigation: () => ({ navigateBack: vi.fn() }),
+  useSettingsNavigation: () => ({ navigateBack: vi.fn(), breadcrumbs: [] }),
 }));
 
 vi.mock('../SettingsHeader', () => ({
@@ -25,6 +33,13 @@ vi.mock('../SettingsHeader', () => ({
 
 const mockList = vi.mocked(agentRegistryApi.list);
 const mockSetEnabled = vi.mocked(agentRegistryApi.setEnabled);
+
+const renderPanel = () =>
+  render(
+    <MemoryRouter>
+      <AgentsPanel />
+    </MemoryRouter>
+  );
 
 function agent(overrides: Partial<AgentRegistryEntry> = {}): AgentRegistryEntry {
   return {
@@ -54,7 +69,7 @@ describe('AgentsPanel', () => {
   });
 
   it('lists agents with their source badges', async () => {
-    render(<AgentsPanel />);
+    renderPanel();
     await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
     expect(screen.getByText('Orchestrator')).toBeInTheDocument();
     expect(screen.getByText('Finance')).toBeInTheDocument();
@@ -64,7 +79,7 @@ describe('AgentsPanel', () => {
 
   it('toggles a non-orchestrator agent via setEnabled', async () => {
     mockSetEnabled.mockResolvedValue(agent({ id: 'researcher', enabled: false }));
-    render(<AgentsPanel />);
+    renderPanel();
     await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
 
     const switches = screen.getAllByRole('switch');
@@ -75,17 +90,27 @@ describe('AgentsPanel', () => {
     await waitFor(() => expect(mockSetEnabled).toHaveBeenCalledWith('researcher', false));
   });
 
-  it('opens the create editor', async () => {
-    render(<AgentsPanel />);
+  it('navigates to the create editor page', async () => {
+    renderPanel();
     await waitFor(() => expect(screen.getByText('Researcher')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /New agent/ }));
-    expect(screen.getByRole('button', { name: 'Create agent' })).toBeInTheDocument();
-    expect(screen.getByText('ID')).toBeInTheDocument();
+    expect(mockNavigate).toHaveBeenCalledWith('/settings/agents/new');
+  });
+
+  it('only offers Edit for custom agents and navigates to the edit page', async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Finance')).toBeInTheDocument());
+    // Two built-ins (orchestrator, researcher) + one custom (finance) — only the
+    // custom agent exposes an Edit button.
+    const editButtons = screen.getAllByRole('button', { name: /Edit/ });
+    expect(editButtons).toHaveLength(1);
+    fireEvent.click(editButtons[0]);
+    expect(mockNavigate).toHaveBeenCalledWith('/settings/agents/edit/finance');
   });
 
   it('shows an error when loading fails', async () => {
     mockList.mockRejectedValueOnce(new Error('boom'));
-    render(<AgentsPanel />);
+    renderPanel();
     await waitFor(() => expect(screen.getByText(/Couldn't load agents/)).toBeInTheDocument());
   });
 });

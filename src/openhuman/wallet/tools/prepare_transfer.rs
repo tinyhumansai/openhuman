@@ -44,7 +44,7 @@ impl Tool for WalletPrepareTransferTool {
                 },
                 "evmNetwork": {
                     "type": "string",
-                    "enum": ["ethereum_mainnet", "base_mainnet", "arbitrum_one", "optimism_mainnet", "polygon_mainnet"],
+                    "enum": ["ethereum_mainnet", "base_mainnet", "arbitrum_one", "optimism_mainnet", "polygon_mainnet", "bsc_mainnet"],
                     "description": "Optional EVM network when chain='evm'. Defaults to ethereum_mainnet."
                 }
             },

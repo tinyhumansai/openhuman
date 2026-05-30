@@ -18,8 +18,9 @@ import type {
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
+import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'diagram' | 'centrality';
+type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'diagram' | 'centrality';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -92,6 +93,11 @@ export default function Intelligence() {
       { id: 'tasks', label: t('memory.tab.tasks'), description: t('memory.tab.tasksDescription') },
       { id: 'memory', label: t('memory.tab.memory') },
       { id: 'subconscious', label: t('memory.tab.subconscious') },
+      {
+        id: 'workflows',
+        label: t('memory.tab.workflows'),
+        description: t('memory.tab.workflowsDescription'),
+      },
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
     ];
@@ -178,6 +184,8 @@ export default function Intelligence() {
             )}
 
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
+
+            {activeTab === 'workflows' && <AgentWorkflows />}
 
             {activeTab === 'diagram' && <DiagramViewerTab />}
 

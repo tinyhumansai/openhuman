@@ -19,6 +19,7 @@ pub use crate::openhuman::composio::tools::*;
 pub use crate::openhuman::cron::tools::*;
 pub use crate::openhuman::integrations::tools::*;
 pub use crate::openhuman::memory::tools::*;
+pub use crate::openhuman::search::tools::*;
 pub use crate::openhuman::wallet::tools::*;
 pub use crate::openhuman::whatsapp_data::tools::*;
 pub use implementations::*;

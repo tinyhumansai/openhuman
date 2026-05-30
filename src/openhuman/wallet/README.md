@@ -1,6 +1,8 @@
 # wallet
 
-Core-owned local multi-chain crypto wallet. Owns onboarding metadata (consent + derived per-chain account addresses), secret material at rest (an encrypted recovery phrase stored in the OS keychain or workspace JSON), and the agent-facing **execution surface**: balance reads, network/asset catalogs, chain readiness, and a prepare-then-confirm-then-execute flow for native sends, token transfers, swaps, and contract calls across EVM (Ethereum + Base/Arbitrum/Optimism/Polygon L2s), Bitcoin (P2WPKH), Solana (native + SPL), and Tron (native + TRC20). Signing and broadcast happen in-core from the decrypted recovery phrase; no private keys ever cross the wire. Swaps are quote-only on every chain.
+Core-owned local multi-chain crypto wallet, deliberately **basic**: key/account management plus the primitive on-chain operations. Owns onboarding metadata (consent + derived per-chain account addresses), secret material at rest (an encrypted recovery phrase stored in the OS keychain or workspace JSON), and the agent-facing surface: address + balance reads, network/asset catalogs, chain readiness, a prepare-then-confirm-then-execute flow for **native sends and token transfers** (ERC20 / SPL / TRC20 / BEP20), transaction broadcast, and read-only transaction inspection (status, receipt, lookup) across EVM (Ethereum + Base/Arbitrum/Optimism/Polygon/BNB Chain), Bitcoin (P2WPKH), Solana (native + SPL), and Tron (native + TRC20). Signing and broadcast happen in-core from the decrypted recovery phrase; no private keys ever cross the wire.
+
+Higher-level DeFi affordances (swaps, bridges, generic dapp/contract calls) live in the separate [`web3`](../web3/README.md) module, which builds on the wallet's **crate-internal** `sign_and_broadcast_evm` / `sign_and_broadcast_solana` primitives. They are not part of the wallet's agent / RPC surface.
 
 ## Responsibilities
 
@@ -10,7 +12,8 @@ Core-owned local multi-chain crypto wallet. Owns onboarding metadata (consent + 
 - Build prepared-transaction quotes (validated, fee-estimated, TTL'd) that must be explicitly confirmed before execution.
 - Sign and broadcast confirmed quotes per chain; restore (and TTL-refresh) the quote on failure so it stays retryable.
 - Bind each quote to the chat thread that prepared it so a leaked `quote_id` in a shared channel can't be hijacked from another agent session.
-- Expose three agent tools (`wallet_status`, `wallet_chain_status`, `wallet_prepare_transfer`) and eleven `wallet.*` RPC controllers.
+- Expose six agent tools (`wallet_status`, `wallet_chain_status`, `wallet_prepare_transfer`, `wallet_tx_status`, `wallet_tx_receipt`, `wallet_lookup_tx`) and twelve `wallet.*` RPC controllers.
+- Provide crate-internal `sign_and_broadcast_evm` / `sign_and_broadcast_solana` primitives for the `web3` layer (sign+broadcast an externally-built unsigned transaction). Not exposed to the agent / RPC surface.
 
 ## Key files
 
@@ -18,7 +21,7 @@ Core-owned local multi-chain crypto wallet. Owns onboarding metadata (consent + 
 | --- | --- |
 | `src/openhuman/wallet/mod.rs` | Export-focused module root; module docstring, `mod`/`pub use` re-exports. |
 | `src/openhuman/wallet/ops.rs` | Onboarding metadata + secret persistence: `WalletChain`/`WalletAccount`/`WalletStatus` types, `setup`/`status`, atomic `wallet-state.json` writes (temp-file + fsync), corrupt-state quarantine, keychain load/save/migrate, `validate_setup`, and `secret_material` (crate-internal) used by chain signers. |
-| `src/openhuman/wallet/execution.rs` | Execution surface: balances/network_defaults/supported_assets/chain_status reads, `prepare_transfer`/`prepare_swap`/`prepare_contract_call`/`execute_prepared`, the in-memory quote store (TTL'd, capped at 64), `QuoteOwner` chat-thread binding, amount/address/calldata validation, fee estimation, hex/u256 helpers. |
+| `src/openhuman/wallet/execution.rs` | Execution surface: balances/network_defaults/supported_assets/chain_status reads, `prepare_transfer`/`execute_prepared` (native + token transfers only), `tx_status`/`tx_receipt`/`lookup_tx` readers, the crate-internal `sign_and_broadcast_evm`/`sign_and_broadcast_solana` re-exports, the in-memory quote store (TTL'd, capped at 64), `QuoteOwner` chat-thread binding, amount/address/calldata validation, fee estimation, hex/u256 helpers. |
 | `src/openhuman/wallet/defaults.rs` | `EvmNetwork` enum (chain id, default RPC, explorer base, env var), default RPC/REST URLs for BTC/Solana/Tron, env-override resolution, and per-chain/per-network asset catalogs. |
 | `src/openhuman/wallet/abi.rs` | `encode_erc20_transfer` — encodes `transfer(address,uint256)` calldata via `ethers_core::abi`. |
 | `src/openhuman/wallet/schemas.rs` | RPC controller schemas + `handle_*` dispatchers delegating to `ops`/`execution`; `all_wallet_controller_schemas` / `all_wallet_registered_controllers`. |
@@ -38,28 +41,29 @@ Core-owned local multi-chain crypto wallet. Owns onboarding metadata (consent + 
 
 From `mod.rs` re-exports:
 - **Onboarding (`ops`)**: `setup`, `status`, `WalletAccount`, `WalletChain`, `WalletSetupParams`, `WalletSetupSource`, `WalletStatus`; `pub(crate) secret_material`.
-- **Execution (`execution`)**: `balances`, `chain_status`, `execute_prepared`, `wallet_network_defaults`, `prepare_contract_call`, `prepare_swap`, `prepare_transfer`, `supported_assets`, `prepared_quotes_for_test`; types `BalanceInfo`, `ChainStatus`, `ExecutePreparedParams`, `ExecutionResult`, `PrepareContractCallParams`, `PrepareSwapParams`, `PrepareTransferParams`, `PreparedKind`, `PreparedStatus`, `PreparedTransaction`, `ProviderStatus`, `SupportedAsset`.
+- **Execution (`execution`)**: `balances`, `chain_status`, `execute_prepared`, `wallet_network_defaults`, `prepare_transfer`, `tx_status`, `tx_receipt`, `lookup_tx`, `supported_assets`, `prepared_quotes_for_test`; types `BalanceInfo`, `ChainStatus`, `ExecutePreparedParams`, `ExecutionResult`, `PrepareTransferParams`, `PreparedKind` (NativeTransfer / TokenTransfer), `PreparedStatus`, `PreparedTransaction`, `ProviderStatus`, `SupportedAsset`, `TxState`, `TxStatusInfo`, `TxReceiptInfo`, `TxLookupInfo`. Crate-internal: `sign_and_broadcast_evm`, `sign_and_broadcast_solana`, `RawBroadcastResult`.
 - **Defaults (`defaults`)**: `asset_catalog`, `default_rpc_url`, `env_var_for_chain`, `evm_asset_catalog`, `explorer_tx_url`, `find_asset`, `find_asset_for_network`, `network_defaults`, `rpc_source_for_chain`, `rpc_url_for_chain`, `rpc_url_for_evm_network`, `EvmNetwork`, `RpcSource`, `WalletAssetDefinition`, `WalletNetworkDefaults`.
 - **ABI**: `encode_erc20_transfer`.
 - **Schemas**: `all_controller_schemas`, `all_registered_controllers`, `all_wallet_controller_schemas`, `all_wallet_registered_controllers`, `schemas`, `wallet_schemas`.
 
 ## RPC / controllers
 
-Namespace `wallet` (method form `openhuman.wallet_<function>`), 11 controllers registered via `all_wallet_registered_controllers`:
+Namespace `wallet` (method form `openhuman.wallet_<function>`), 12 controllers registered via `all_wallet_registered_controllers`:
 
 | Function | Purpose |
 | --- | --- |
-| `status` | Onboarding status + safe account metadata. |
+| `status` | Onboarding status + safe account metadata (addresses). |
 | `setup` | Persist consent + derived accounts + encrypted mnemonic (all inputs required). |
 | `balances` | Native-asset balances per account (EVM live; others provider-gated). |
 | `network_defaults` | RPC/explorer/capability flags + asset catalogs per chain. |
-| `supported_assets` | Built-in asset catalog incl. default EVM ERC-20s. |
+| `supported_assets` | Built-in asset catalog incl. default EVM ERC-20s / BEP20s. |
 | `encode_erc20_transfer` | Encode `transfer(address,uint256)` calldata (EVM only). |
 | `chain_status` | Per-chain readiness + active RPC URL. |
 | `prepare_transfer` | Quote a native/token transfer (all four chains). |
-| `prepare_swap` | Quote a swap against a caller-supplied router (≤5000 bps slippage). |
-| `prepare_contract_call` | Quote an EVM contract call from caller calldata. |
-| `execute_prepared` | Confirm (`confirmed: true`) + execute a quote by `quoteId`. |
+| `execute_prepared` | Confirm (`confirmed: true`) + execute a quote by `quoteId` (tx send). |
+| `tx_status` | Check a transaction's lifecycle state (pending/confirmed/failed/not_found) by hash. |
+| `tx_receipt` | Fetch a transaction receipt (success, fee, block) by hash. |
+| `lookup_tx` | Look up the raw transaction payload by hash. |
 
 Wired into the registry in `src/core/all.rs` (controllers + schemas + capability description).
 
@@ -69,6 +73,9 @@ Owned in `tools/`, re-exported via `tools.rs`:
 - `WalletStatusTool` — `wallet_status`
 - `WalletChainStatusTool` — `wallet_chain_status`
 - `WalletPrepareTransferTool` — `wallet_prepare_transfer`
+- `WalletTxStatusTool` — `wallet_tx_status`
+- `WalletTxReceiptTool` — `wallet_tx_receipt`
+- `WalletLookupTxTool` — `wallet_lookup_tx`
 
 All implement `crate::openhuman::tools::traits::Tool` and delegate to the matching `wallet::*` functions. (There is no agent tool for `execute_prepared` here; execution is reached via RPC.)
 
@@ -107,6 +114,6 @@ None. The module publishes/subscribes no `DomainEvent`s and has no `bus.rs`. Cha
 - **Quote-owner binding** (`execution.rs`): `execute_prepared` only runs when the caller's `current_owner()` equals the prepare-time owner. On mismatch it returns the byte-identical `quote '…' not found` error as a true miss — no enumeration oracle. Non-chat callers (CLI / direct RPC / background/cron) have `owner == None` and can only execute quotes they also prepared with no chat context. `current_owner()` relies on the inline `.await` chain in `channels/providers/web.rs::run_chat_task`; detaching the tool loop onto a fresh `tokio::spawn` without re-scoping `APPROVAL_CHAT_CONTEXT` would silently disable the gate.
 - **Quotes are consumed atomically**: `take_quote_for` removes the quote before broadcast so concurrent confirmations can't double-submit; on failure the quote is restored with a refreshed TTL.
 - **Setup requires exactly one account per chain** (EVM, BTC, Solana, Tron) and a non-empty encrypted mnemonic; valid mnemonic word counts are 12/15/18/21/24.
-- **EVM is one `WalletChain::Evm` variant across 5 networks** selected by `EvmNetwork` (defaults to `ethereum_mainnet`); other chains ignore `evmNetwork`. BTC rejects token transfers; contract calls are EVM-only; swaps are quote-only everywhere.
+- **EVM is one `WalletChain::Evm` variant across 6 networks** (Ethereum, Base, Arbitrum, Optimism, Polygon, BNB Chain) selected by `EvmNetwork` (defaults to `ethereum_mainnet`); other chains ignore `evmNetwork`. BTC rejects token transfers. Swaps / bridges / contract calls are not in the wallet — they live in the [`web3`](../web3/README.md) module.
 - **RPC endpoints are overridable** per chain/network via `OPENHUMAN_WALLET_RPC_*` env vars (used by tests pointing at an axum mock). Log lines redact URLs to scheme+host.
 - **`balances`**: only EVM reads live (Ethereum mainnet); BTC/Solana/Tron call their providers but fall back to zero with `ProviderStatus::Missing` on error.
