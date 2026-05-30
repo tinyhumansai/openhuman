@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { computeFreshness } from '../../lib/memory/memoryFreshness';
-import type { GraphRelation } from '../../utils/tauriCommands/memory';
+import { NOW, rel } from '../../test/memoryRelationFactory';
 import { loadFreshness, loadNamespaces, memoryFreshnessApi } from './memoryFreshnessApi';
 
 const mockGraphQuery = vi.fn();
@@ -11,24 +11,6 @@ vi.mock('../../utils/tauriCommands/memory', () => ({
   memoryGraphQuery: (...args: unknown[]) => mockGraphQuery(...args),
   memoryListNamespaces: (...args: unknown[]) => mockListNamespaces(...args),
 }));
-
-const NOW = 1_700_000_000;
-const DAY = 86400;
-
-function rel(subject: string, object: string, agoDays: number): GraphRelation {
-  return {
-    namespace: 'work',
-    subject,
-    predicate: 'p',
-    object,
-    attrs: {},
-    updatedAt: NOW - agoDays * DAY,
-    evidenceCount: 1,
-    orderIndex: null,
-    documentIds: [],
-    chunkIds: [],
-  };
-}
 
 describe('memoryFreshnessApi.loadFreshness', () => {
   beforeEach(() => {

@@ -1,31 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { DAY, NOW, rel } from '../../test/memoryRelationFactory';
 import type { GraphRelation } from '../../utils/tauriCommands/memory';
 import { classify, computeFreshness, recallProbability, strengthFactor } from './memoryFreshness';
-
-const NOW = 1_700_000_000;
-const DAY = 86400;
-
-function rel(
-  subject: string,
-  object: string,
-  agoDays: number,
-  evidenceCount = 1,
-  predicate = 'p'
-): GraphRelation {
-  return {
-    namespace: 'n',
-    subject,
-    predicate,
-    object,
-    attrs: {},
-    updatedAt: NOW - agoDays * DAY,
-    evidenceCount,
-    orderIndex: null,
-    documentIds: [],
-    chunkIds: [],
-  };
-}
 
 describe('strengthFactor', () => {
   it('scales the half-life by evidence with diminishing returns (log2)', () => {
