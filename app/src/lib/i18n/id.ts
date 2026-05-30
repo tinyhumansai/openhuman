@@ -306,7 +306,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} keluar',
   'memory.tab.path': 'Jalur',
   'connectionPath.title': 'Jalur Koneksi',
-  'connectionPath.intro': 'Telusuri rantai relasi terpendek yang menghubungkan dua entitas mana pun — bagaimana graf menghubungkan keduanya, bahkan melalui beberapa lompatan.',
+  'connectionPath.intro':
+    'Telusuri rantai relasi terpendek yang menghubungkan dua entitas mana pun — bagaimana graf menghubungkan keduanya, bahkan melalui beberapa lompatan.',
   'connectionPath.loading': 'Memuat graf…',
   'connectionPath.errorPrefix': 'Tidak dapat memuat graf:',
   'connectionPath.retry': 'Coba lagi',
@@ -318,7 +319,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'Entitas akhir',
   'connectionPath.prompt': 'Pilih dua entitas untuk menelusuri bagaimana keduanya terhubung.',
   'connectionPath.empty': 'Belum ada graf pengetahuan.',
-  'connectionPath.emptyHint': 'Setelah asisten mencatat fakta-fakta terkait, Anda dapat menelusuri koneksi di sini.',
+  'connectionPath.emptyHint':
+    'Setelah asisten mencatat fakta-fakta terkait, Anda dapat menelusuri koneksi di sini.',
   'connectionPath.resultHeading': 'Jalur terpendek',
   'connectionPath.pathSummary': 'Berjarak {length} lompatan',
   'connectionPath.sameMessage': 'Pilih dua entitas yang berbeda.',

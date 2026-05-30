@@ -303,7 +303,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in}',
   'memory.tab.path': 'पथ',
   'connectionPath.title': 'कनेक्शन पथ',
-  'connectionPath.intro': 'किन्हीं दो एंटिटीज़ को जोड़ने वाली संबंधों की सबसे छोटी श्रृंखला का पता लगाएँ — ग्राफ़ उन्हें कैसे जोड़ता है, चाहे कई हॉप्स के पार ही क्यों न हो।',
+  'connectionPath.intro':
+    'किन्हीं दो एंटिटीज़ को जोड़ने वाली संबंधों की सबसे छोटी श्रृंखला का पता लगाएँ — ग्राफ़ उन्हें कैसे जोड़ता है, चाहे कई हॉप्स के पार ही क्यों न हो।',
   'connectionPath.loading': 'ग्राफ़ लोड हो रहा है…',
   'connectionPath.errorPrefix': 'ग्राफ़ लोड नहीं हो सका:',
   'connectionPath.retry': 'पुनः प्रयास करें',
@@ -315,7 +316,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'अंतिम एंटिटी',
   'connectionPath.prompt': 'यह पता लगाने के लिए दो एंटिटीज़ चुनें कि वे कैसे जुड़ी हुई हैं।',
   'connectionPath.empty': 'अभी तक कोई नॉलेज ग्राफ़ नहीं है।',
-  'connectionPath.emptyHint': 'जब असिस्टेंट संबंधित तथ्य रिकॉर्ड कर लेगा, तो आप यहाँ कनेक्शनों का पता लगा सकते हैं।',
+  'connectionPath.emptyHint':
+    'जब असिस्टेंट संबंधित तथ्य रिकॉर्ड कर लेगा, तो आप यहाँ कनेक्शनों का पता लगा सकते हैं।',
   'connectionPath.resultHeading': 'सबसे छोटा पथ',
   'connectionPath.pathSummary': '{length} हॉप(्स) की दूरी पर',
   'connectionPath.sameMessage': 'दो अलग-अलग एंटिटीज़ चुनें।',

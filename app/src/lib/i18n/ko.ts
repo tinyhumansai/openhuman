@@ -303,7 +303,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '들어옴 {in} · 나감 {out}',
   'memory.tab.path': '경로',
   'connectionPath.title': '연결 경로',
-  'connectionPath.intro': '두 엔티티를 잇는 가장 짧은 관계 사슬을 추적합니다 — 여러 홉을 거치더라도 그래프가 둘을 어떻게 연결하는지 보여줍니다.',
+  'connectionPath.intro':
+    '두 엔티티를 잇는 가장 짧은 관계 사슬을 추적합니다 — 여러 홉을 거치더라도 그래프가 둘을 어떻게 연결하는지 보여줍니다.',
   'connectionPath.loading': '그래프를 불러오는 중…',
   'connectionPath.errorPrefix': '그래프를 불러올 수 없습니다:',
   'connectionPath.retry': '다시 시도',
@@ -315,7 +316,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': '끝 엔티티',
   'connectionPath.prompt': '두 엔티티를 선택하여 어떻게 연결되어 있는지 추적하세요.',
   'connectionPath.empty': '아직 지식 그래프가 없습니다.',
-  'connectionPath.emptyHint': '어시스턴트가 관련 정보를 기록하면 여기에서 연결을 추적할 수 있습니다.',
+  'connectionPath.emptyHint':
+    '어시스턴트가 관련 정보를 기록하면 여기에서 연결을 추적할 수 있습니다.',
   'connectionPath.resultHeading': '최단 경로',
   'connectionPath.pathSummary': '{length}홉 떨어져 있음',
   'connectionPath.sameMessage': '서로 다른 두 엔티티를 선택하세요.',

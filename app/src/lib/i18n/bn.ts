@@ -304,7 +304,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': 'xqxqx × xx11x এর জন্য',
   'memory.tab.path': 'পাথ',
   'connectionPath.title': 'সংযোগ পাথ',
-  'connectionPath.intro': 'যেকোনো দুটি এনটিটিকে সংযুক্ত করা সম্পর্কের সবচেয়ে ছোট চেইনটি খুঁজে বের করুন — কয়েকটি হপ পেরিয়ে হলেও গ্রাফ কীভাবে তাদের সংযুক্ত করে।',
+  'connectionPath.intro':
+    'যেকোনো দুটি এনটিটিকে সংযুক্ত করা সম্পর্কের সবচেয়ে ছোট চেইনটি খুঁজে বের করুন — কয়েকটি হপ পেরিয়ে হলেও গ্রাফ কীভাবে তাদের সংযুক্ত করে।',
   'connectionPath.loading': 'গ্রাফ লোড হচ্ছে…',
   'connectionPath.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
   'connectionPath.retry': 'আবার চেষ্টা করুন',
@@ -316,7 +317,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'শেষ এনটিটি',
   'connectionPath.prompt': 'তারা কীভাবে সংযুক্ত তা খুঁজে বের করতে দুটি এনটিটি বেছে নিন।',
   'connectionPath.empty': 'এখনও কোনো নলেজ গ্রাফ নেই।',
-  'connectionPath.emptyHint': 'অ্যাসিস্ট্যান্ট সম্পর্কিত তথ্য রেকর্ড করার পরে, আপনি এখানে সংযোগগুলি খুঁজে বের করতে পারবেন।',
+  'connectionPath.emptyHint':
+    'অ্যাসিস্ট্যান্ট সম্পর্কিত তথ্য রেকর্ড করার পরে, আপনি এখানে সংযোগগুলি খুঁজে বের করতে পারবেন।',
   'connectionPath.resultHeading': 'সবচেয়ে ছোট পাথ',
   'connectionPath.pathSummary': '{length} হপ দূরে',
   'connectionPath.sameMessage': 'দুটি ভিন্ন এনটিটি বেছে নিন।',

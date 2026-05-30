@@ -308,7 +308,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} wej. · {out} wyj.',
   'memory.tab.path': 'Ścieżki',
   'connectionPath.title': 'Ścieżka połączenia',
-  'connectionPath.intro': 'Prześledź najkrótszy łańcuch relacji łączący dowolne dwie encje — jak graf je łączy, nawet poprzez kilka przeskoków.',
+  'connectionPath.intro':
+    'Prześledź najkrótszy łańcuch relacji łączący dowolne dwie encje — jak graf je łączy, nawet poprzez kilka przeskoków.',
   'connectionPath.loading': 'Wczytywanie grafu…',
   'connectionPath.errorPrefix': 'Nie udało się wczytać grafu:',
   'connectionPath.retry': 'Ponów',
@@ -320,7 +321,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'Encja końcowa',
   'connectionPath.prompt': 'Wybierz dwie encje, aby prześledzić, jak są połączone.',
   'connectionPath.empty': 'Brak grafu wiedzy.',
-  'connectionPath.emptyHint': 'Gdy asystent zapisze powiązane fakty, będzie tu można śledzić połączenia.',
+  'connectionPath.emptyHint':
+    'Gdy asystent zapisze powiązane fakty, będzie tu można śledzić połączenia.',
   'connectionPath.resultHeading': 'Najkrótsza ścieżka',
   'connectionPath.pathSummary': 'Odległość: {length} przeskok(ów)',
   'connectionPath.sameMessage': 'Wybierz dwie różne encje.',

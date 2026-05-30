@@ -313,7 +313,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} entrando · {out} saindo',
   'memory.tab.path': 'Caminhos',
   'connectionPath.title': 'Caminho de Conexão',
-  'connectionPath.intro': 'Rastreie a cadeia mais curta de relações que liga duas entidades — como o grafo as conecta, mesmo através de vários saltos.',
+  'connectionPath.intro':
+    'Rastreie a cadeia mais curta de relações que liga duas entidades — como o grafo as conecta, mesmo através de vários saltos.',
   'connectionPath.loading': 'Carregando o grafo…',
   'connectionPath.errorPrefix': 'Não foi possível carregar o grafo:',
   'connectionPath.retry': 'Tentar novamente',
@@ -325,7 +326,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'Entidade final',
   'connectionPath.prompt': 'Escolha duas entidades para rastrear como elas estão conectadas.',
   'connectionPath.empty': 'Ainda não há grafo de conhecimento.',
-  'connectionPath.emptyHint': 'Assim que o assistente registrar fatos relacionados, você poderá rastrear conexões aqui.',
+  'connectionPath.emptyHint':
+    'Assim que o assistente registrar fatos relacionados, você poderá rastrear conexões aqui.',
   'connectionPath.resultHeading': 'Caminho mais curto',
   'connectionPath.pathSummary': 'a {length} salto(s) de distância',
   'connectionPath.sameMessage': 'Escolha duas entidades diferentes.',

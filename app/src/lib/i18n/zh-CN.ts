@@ -292,7 +292,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} 入 · {out} 出',
   'memory.tab.path': '路径',
   'connectionPath.title': '连接路径',
-  'connectionPath.intro': '追溯连接任意两个实体的最短关系链——看看图谱如何将它们关联起来，即使要跨越多个跳数。',
+  'connectionPath.intro':
+    '追溯连接任意两个实体的最短关系链——看看图谱如何将它们关联起来，即使要跨越多个跳数。',
   'connectionPath.loading': '正在加载图谱…',
   'connectionPath.errorPrefix': '无法加载图谱：',
   'connectionPath.retry': '重试',

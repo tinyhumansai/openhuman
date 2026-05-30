@@ -79,4 +79,14 @@ describe('<ConnectionPathPanel />', () => {
     );
     expect(screen.getByText('"Q" is not in the graph.')).toBeInTheDocument();
   });
+
+  it('prompts for two different entities when the endpoints are identical', () => {
+    render(
+      <ConnectionPathPanel
+        hasGraph
+        result={res({ found: true, source: 'A', target: 'A', reason: 'same' })}
+      />
+    );
+    expect(screen.getByText('Pick two different entities.')).toBeInTheDocument();
+  });
 });

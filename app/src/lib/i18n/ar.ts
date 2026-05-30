@@ -300,7 +300,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': 'Xqx0xxx في ×1x',
   'memory.tab.path': 'المسارات',
   'connectionPath.title': 'مسار الاتصال',
-  'connectionPath.intro': 'تتبّع أقصر سلسلة من العلاقات التي تربط أي كيانين — كيف يربط بينهما الرسم البياني، حتى عبر عدة قفزات.',
+  'connectionPath.intro':
+    'تتبّع أقصر سلسلة من العلاقات التي تربط أي كيانين — كيف يربط بينهما الرسم البياني، حتى عبر عدة قفزات.',
   'connectionPath.loading': 'جارٍ تحميل الرسم البياني…',
   'connectionPath.errorPrefix': 'تعذّر تحميل الرسم البياني:',
   'connectionPath.retry': 'إعادة المحاولة',

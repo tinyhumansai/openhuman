@@ -306,7 +306,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} вход · {out} выход',
   'memory.tab.path': 'Пути',
   'connectionPath.title': 'Путь связи',
-  'connectionPath.intro': 'Проследите кратчайшую цепочку связей между любыми двумя сущностями — как граф соединяет их, даже через несколько переходов.',
+  'connectionPath.intro':
+    'Проследите кратчайшую цепочку связей между любыми двумя сущностями — как граф соединяет их, даже через несколько переходов.',
   'connectionPath.loading': 'Загрузка графа…',
   'connectionPath.errorPrefix': 'Не удалось загрузить граф:',
   'connectionPath.retry': 'Повторить',
@@ -318,7 +319,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'Конечная сущность',
   'connectionPath.prompt': 'Выберите две сущности, чтобы проследить, как они связаны.',
   'connectionPath.empty': 'Граф знаний пока пуст.',
-  'connectionPath.emptyHint': 'Как только ассистент запишет связанные факты, вы сможете прослеживать связи здесь.',
+  'connectionPath.emptyHint':
+    'Как только ассистент запишет связанные факты, вы сможете прослеживать связи здесь.',
   'connectionPath.resultHeading': 'Кратчайший путь',
   'connectionPath.pathSummary': 'расстояние — {length} переход(ов)',
   'connectionPath.sameMessage': 'Выберите две разные сущности.',

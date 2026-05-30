@@ -312,7 +312,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} in entrata · {out} in uscita',
   'memory.tab.path': 'Percorsi',
   'connectionPath.title': 'Percorso di connessione',
-  'connectionPath.intro': 'Traccia la catena più breve di relazioni che collega due entità qualsiasi — come il grafo le connette, anche attraverso più passaggi.',
+  'connectionPath.intro':
+    'Traccia la catena più breve di relazioni che collega due entità qualsiasi — come il grafo le connette, anche attraverso più passaggi.',
   'connectionPath.loading': 'Caricamento del grafo…',
   'connectionPath.errorPrefix': 'Impossibile caricare il grafo:',
   'connectionPath.retry': 'Riprova',
@@ -324,7 +325,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'Entità di arrivo',
   'connectionPath.prompt': 'Scegli due entità per tracciare come sono collegate.',
   'connectionPath.empty': 'Nessun grafo della conoscenza ancora.',
-  'connectionPath.emptyHint': 'Una volta che l\'assistente registra fatti correlati, potrai tracciare le connessioni qui.',
+  'connectionPath.emptyHint':
+    "Una volta che l'assistente registra fatti correlati, potrai tracciare le connessioni qui.",
   'connectionPath.resultHeading': 'Percorso più breve',
   'connectionPath.pathSummary': 'Distanti {length} passaggio/i',
   'connectionPath.sameMessage': 'Scegli due entità diverse.',

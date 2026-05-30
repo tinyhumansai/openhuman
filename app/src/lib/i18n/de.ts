@@ -315,7 +315,8 @@ const messages: TranslationMap = {
   'graphCentrality.degreeTitle': '{in} rein · {out} raus',
   'memory.tab.path': 'Pfade',
   'connectionPath.title': 'Verbindungspfad',
-  'connectionPath.intro': 'Verfolge die kürzeste Kette von Beziehungen, die zwei beliebige Entitäten verbindet — wie der Graph sie verknüpft, selbst über mehrere Sprünge hinweg.',
+  'connectionPath.intro':
+    'Verfolge die kürzeste Kette von Beziehungen, die zwei beliebige Entitäten verbindet — wie der Graph sie verknüpft, selbst über mehrere Sprünge hinweg.',
   'connectionPath.loading': 'Graph wird geladen…',
   'connectionPath.errorPrefix': 'Graph konnte nicht geladen werden:',
   'connectionPath.retry': 'Erneut versuchen',
@@ -327,7 +328,8 @@ const messages: TranslationMap = {
   'connectionPath.targetPlaceholder': 'End-Entität',
   'connectionPath.prompt': 'Wähle zwei Entitäten, um zu verfolgen, wie sie verbunden sind.',
   'connectionPath.empty': 'Noch kein Wissensgraph vorhanden.',
-  'connectionPath.emptyHint': 'Sobald der Assistent zusammenhängende Fakten erfasst, kannst du hier Verbindungen verfolgen.',
+  'connectionPath.emptyHint':
+    'Sobald der Assistent zusammenhängende Fakten erfasst, kannst du hier Verbindungen verfolgen.',
   'connectionPath.resultHeading': 'Kürzester Pfad',
   'connectionPath.pathSummary': '{length} Sprung(e) entfernt',
   'connectionPath.sameMessage': 'Wähle zwei verschiedene Entitäten.',
