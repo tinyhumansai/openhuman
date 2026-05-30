@@ -376,10 +376,15 @@ describe('ChatFilesPanel', () => {
 
   it('Download → typed code surfaces the localized headline in the row error', async () => {
     const a = readyArtifact('art-1', 'Climate Deck');
+    // Use a deliberately distinct raw `error` so this test only passes when
+    // the UI renders the localized copy keyed off `code`, not the raw
+    // backend detail. If the row ever regressed to echoing `error` verbatim,
+    // the `queryByText(rawError)` assertion below would catch it.
+    const rawError = 'transport socket closed mid-resolve';
     vi.mocked(downloadArtifact).mockResolvedValueOnce({
       ok: false,
       code: 'NOT_DESKTOP',
-      error: 'Downloads are only available in the desktop app',
+      error: rawError,
     });
     const store = mkStore([
       {
@@ -404,5 +409,7 @@ describe('ChatFilesPanel', () => {
         screen.getByText(/Downloads are only available in the desktop app/)
       ).toBeInTheDocument();
     });
+    // Raw backend detail must NOT leak into the rendered row.
+    expect(screen.queryByText(rawError)).toBeNull();
   });
 });
