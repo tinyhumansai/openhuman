@@ -4522,6 +4522,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Falha no download: {reason}',
   'chat.artifact.retry': 'Tentar novamente',
   'chat.artifact.reveal': 'Mostrar na pasta',
+  'chat.artifact.show_more': 'Mostrar mais',
+  'chat.artifact.show_less': 'Mostrar menos',
 };
 
 export default messages;

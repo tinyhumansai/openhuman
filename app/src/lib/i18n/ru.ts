@@ -4493,6 +4493,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Сбой скачивания: {reason}',
   'chat.artifact.retry': 'Повторить',
   'chat.artifact.reveal': 'Показать в папке',
+  'chat.artifact.show_more': 'Показать больше',
+  'chat.artifact.show_less': 'Свернуть',
 };
 
 export default messages;

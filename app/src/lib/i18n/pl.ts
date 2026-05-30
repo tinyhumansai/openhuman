@@ -4524,6 +4524,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Pobieranie nie powiodło się: {reason}',
   'chat.artifact.retry': 'Spróbuj ponownie',
   'chat.artifact.reveal': 'Pokaż w folderze',
+  'chat.artifact.show_more': 'Pokaż więcej',
+  'chat.artifact.show_less': 'Pokaż mniej',
 };
 
 export default messages;

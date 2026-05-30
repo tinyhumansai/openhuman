@@ -4533,6 +4533,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Error al descargar: {reason}',
   'chat.artifact.retry': 'Reintentar',
   'chat.artifact.reveal': 'Mostrar en la carpeta',
+  'chat.artifact.show_more': 'Ver más',
+  'chat.artifact.show_less': 'Ver menos',
 };
 
 export default messages;

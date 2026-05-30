@@ -4548,6 +4548,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Échec du téléchargement : {reason}',
   'chat.artifact.retry': 'Réessayer',
   'chat.artifact.reveal': 'Afficher dans le dossier',
+  'chat.artifact.show_more': 'Voir plus',
+  'chat.artifact.show_less': 'Voir moins',
 };
 
 export default messages;

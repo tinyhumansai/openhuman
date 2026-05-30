@@ -4237,6 +4237,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': '下载失败：{reason}',
   'chat.artifact.retry': '重试',
   'chat.artifact.reveal': '在文件夹中显示',
+  'chat.artifact.show_more': '显示更多',
+  'chat.artifact.show_less': '收起',
 };
 
 export default messages;
