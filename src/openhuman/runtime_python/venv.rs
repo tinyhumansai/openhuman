@@ -70,11 +70,15 @@ pub async fn ensure_venv(
     let bootstrap = PythonBootstrap::new(config.clone());
     let base = bootstrap.resolve().await.context("resolving base python")?;
 
+    // Log the count, not the raw requirement strings — a caller can
+    // legitimately pass `pkg @ https://user:token@host/...` style
+    // entries (private index URLs, credentialed git refs) and we
+    // don't want those leaking into the structured logs.
     tracing::info!(
         name = name,
         base_python = %base.python_bin.display(),
         venv = %venv_dir.display(),
-        requirements = ?requirements,
+        requirement_count = requirements.len(),
         "[runtime_python::venv] first-call setup — creating venv + pip install (one-time, ~30s)"
     );
 
@@ -180,13 +184,28 @@ async fn create_venv(base: &ResolvedPython, venv_dir: &Path) -> Result<()> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true);
-    let output = cmd.output().await.with_context(|| {
-        format!(
-            "spawning `{} -m venv {}`",
-            base.python_bin.display(),
-            venv_dir.display()
-        )
-    })?;
+    // Bound venv bootstrap by the same overall budget as the pip
+    // install step. Without this `python -m venv` can hang
+    // indefinitely on a stuck interpreter and the parent task has no
+    // way to recover (`kill_on_drop` only triggers when the child
+    // handle drops, which never happens while we await `output()`).
+    let output = tokio::time::timeout(VENV_INSTALL_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| {
+            anyhow!(
+                "`{} -m venv {}` exceeded {}s timeout",
+                base.python_bin.display(),
+                venv_dir.display(),
+                VENV_INSTALL_TIMEOUT.as_secs()
+            )
+        })?
+        .with_context(|| {
+            format!(
+                "spawning `{} -m venv {}`",
+                base.python_bin.display(),
+                venv_dir.display()
+            )
+        })?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         bail!(
