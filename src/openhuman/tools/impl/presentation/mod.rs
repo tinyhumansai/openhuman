@@ -180,7 +180,8 @@ impl Tool for PresentationTool {
 
         tracing::info!(
             target: "presentation",
-            title = %input.title,
+            title_chars = input.title.chars().count(),
+            has_author = input.author.is_some(),
             slide_count = input.slides.len(),
             "[presentation] generation request accepted"
         );
@@ -194,18 +195,35 @@ impl Tool for PresentationTool {
         .await
         .map_err(anyhow::Error::msg)?;
 
-        let script_path = script::materialise_script().await?;
-        let stdin_payload = serde_json::to_vec(&input)?;
-
-        let outcome = self
-            .invoker
-            .run(
-                &script_path,
-                stdin_payload,
-                &output_path,
-                GENERATION_TIMEOUT,
-            )
-            .await?;
+        // Wrap setup + invocation so any failure flips the artifact
+        // from Pending to Failed instead of leaving it stuck in
+        // Pending and surfacing as a partial deck downstream.
+        let outcome = match async {
+            let script_path = script::materialise_script().await?;
+            let stdin_payload = serde_json::to_vec(&input)?;
+            self.invoker
+                .run(
+                    &script_path,
+                    stdin_payload,
+                    &output_path,
+                    GENERATION_TIMEOUT,
+                )
+                .await
+        }
+        .await
+        {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                let reason = format!("presentation generation setup failed: {err}");
+                let _ = fail_artifact(&self.workspace_dir, &meta.id, &reason).await;
+                tracing::warn!(
+                    target: "presentation",
+                    err = %err,
+                    "[presentation] setup/invocation failed before subprocess completion"
+                );
+                return Ok(ToolResult::error(reason));
+            }
+        };
 
         match outcome {
             InvocationOutcome::Success { stdout, stderr } => {
