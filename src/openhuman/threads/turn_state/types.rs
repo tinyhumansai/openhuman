@@ -87,6 +87,11 @@ pub struct SubagentActivity {
     pub elapsed_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_chars: Option<usize>,
+    /// Persistent worker sub-thread backing this delegation, when one was
+    /// created. Lets the UI reopen the full parent↔subagent conversation
+    /// from memory after a cold boot / interrupted turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_thread_id: Option<String>,
     #[serde(default)]
     pub tool_calls: Vec<SubagentToolCall>,
 }

@@ -330,6 +330,29 @@ const en: TranslationMap = {
   'graphCentrality.bridgeBadge': 'connector',
   'graphCentrality.bridgeTitle': 'Connector — more influential than its link count suggests',
   'graphCentrality.degreeTitle': '{in} in · {out} out',
+  'memory.tab.freshness': 'Freshness',
+  'memoryFreshness.title': 'Knowledge Freshness',
+  'memoryFreshness.intro':
+    'Facts the assistant has not reconfirmed lately decay along a forgetting curve. This surfaces what is going stale and worth re-checking, so old facts are not treated as still-certain.',
+  'memoryFreshness.loading': 'Scoring freshness…',
+  'memoryFreshness.errorPrefix': 'Could not load the graph:',
+  'memoryFreshness.retry': 'Retry',
+  'memoryFreshness.empty': 'No knowledge graph yet.',
+  'memoryFreshness.emptyHint':
+    'As the assistant records facts about you, their freshness will be tracked here.',
+  'memoryFreshness.namespaceLabel': 'Namespace',
+  'memoryFreshness.namespaceAll': 'All namespaces',
+  'memoryFreshness.metricFresh': 'Fresh',
+  'memoryFreshness.metricFading': 'Fading',
+  'memoryFreshness.metricStale': 'Stale',
+  'memoryFreshness.recallCaption': 'Average recall {recall}% across {total} facts',
+  'memoryFreshness.queueHeading': 'Re-confirm queue',
+  'memoryFreshness.queueTruncated': 'Showing {shown} of {total} — address these first.',
+  'memoryFreshness.allFresh': 'Every fact is still fresh — nothing to re-confirm.',
+  'memoryFreshness.statusFading': 'fading',
+  'memoryFreshness.statusStale': 'stale',
+  'memoryFreshness.ageLabel': '{days}d old',
+  'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -1790,6 +1813,7 @@ const en: TranslationMap = {
   'mic.permissionDenied': 'Microphone permission denied',
   'mic.failedToStartRecorder': 'Failed to start recorder',
   'mic.transcribing': 'Transcribing...',
+  'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Tap to send',
   'mic.waitingForAgent': 'Waiting for agent...',
   'mic.tapAndSpeak': 'Tap and speak',
@@ -2561,6 +2585,17 @@ const en: TranslationMap = {
   'conversations.taskKanban.updateFailed': 'Could not update task; changes were not saved.',
   'conversations.toolTimeline.turn': 'turn',
   'conversations.toolTimeline.workerThread': 'worker thread',
+  'conversations.subagent.viewProcessing': 'View full processing',
+  'conversations.subagent.parent': 'Parent',
+  'conversations.subagent.thinking': 'Thinking',
+  'conversations.subagent.response': 'Response',
+  'conversations.subagent.toolCalls': 'Tool calls',
+  'conversations.subagent.working': 'Working…',
+  'conversations.subagent.noOutputYet': 'No output yet',
+  'conversations.subagent.close': 'Close',
+  'conversations.subagent.statusRunning': 'running',
+  'conversations.subagent.statusCompleted': 'completed',
+  'conversations.subagent.statusFailed': 'failed',
   'daemon.serviceBlockingGate.body':
     'Retrying in the background. This usually resolves in a few seconds.',
   'daemon.serviceBlockingGate.downloadHint':
@@ -2871,6 +2906,10 @@ const en: TranslationMap = {
   'settings.ai.endpointProtocolRequired': 'Endpoint must start with http:// or https://.',
   'settings.ai.connectProviderDialog': 'Connect {label}',
   'settings.ai.or': 'Or',
+  'settings.ai.codexOauthMissingAuthUrl':
+    'Codex OAuth did not return an authorization URL. Try signing in again.',
+  'settings.ai.codexOauthMissingCallbackUrl':
+    'Paste the redirect URL from your browser after signing in.',
   'settings.ai.openRouterOauthDescription':
     'Sign in with OpenRouter and import a user-controlled API key using PKCE.',
   'settings.ai.connecting': 'Connecting...',
