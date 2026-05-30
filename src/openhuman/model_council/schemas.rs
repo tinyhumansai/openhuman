@@ -166,7 +166,10 @@ mod tests {
         let run = schemas("run");
         assert_eq!(run.namespace, "model_council");
         assert_eq!(run.function, "run");
-        assert_eq!(run.rpc_method_name(), "openhuman.model_council_run");
+        assert_eq!(
+            crate::core::all::rpc_method_name(&run),
+            "openhuman.model_council_run"
+        );
         assert_eq!(run.inputs.len(), 4);
         assert!(run
             .inputs
