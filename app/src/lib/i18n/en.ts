@@ -488,31 +488,6 @@ const en: TranslationMap = {
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
 
-  'graphCohesion.title': 'Graph Cohesion',
-  'graphCohesion.intro':
-    "How tightly knit the neighbourhood is around each entity. Brokers — entities whose neighbours aren't linked to each other — are the single points holding otherwise-separate clusters together, which a frequency or PageRank sort cannot reveal.",
-  'graphCohesion.loading': 'Computing cohesion…',
-  'graphCohesion.errorPrefix': 'Could not load the graph:',
-  'graphCohesion.retry': 'Retry',
-  'graphCohesion.empty': 'No knowledge graph yet.',
-  'graphCohesion.emptyHint':
-    'As the assistant records connected facts about you, their clustering structure will surface here.',
-  'graphCohesion.namespaceLabel': 'Namespace',
-  'graphCohesion.namespaceAll': 'All namespaces',
-  'graphCohesion.metricEntities': 'Entities',
-  'graphCohesion.metricConnections': 'Connections',
-  'graphCohesion.metricTriangles': 'Triangles',
-  'graphCohesion.summaryCaption': 'Average clustering {avg} · transitivity {transitivity}',
-  'graphCohesion.noBrokers': 'No entities with two or more connections yet.',
-  'graphCohesion.rankedHeading': 'Brokers — loosest neighbourhoods',
-  'graphCohesion.colRank': '#',
-  'graphCohesion.colEntity': 'Entity',
-  'graphCohesion.colCohesion': 'Cohesion',
-  'graphCohesion.colLinks': 'Links',
-  'graphCohesion.brokerBadge': 'broker',
-  'graphCohesion.brokerTitle':
-    "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
-
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
   'memoryTree.status.autoSyncLabel': 'Auto-sync',
