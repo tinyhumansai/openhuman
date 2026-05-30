@@ -1,6 +1,7 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { createLogger } from 'redux-logger';
 import {
+  createTransform,
   FLUSH,
   PAUSE,
   PERSIST,
@@ -15,7 +16,7 @@ import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
 import channelConnectionsReducer from './channelConnectionsSlice';
-import chatRuntimeReducer from './chatRuntimeSlice';
+import chatRuntimeReducer, { type ArtifactSnapshot } from './chatRuntimeSlice';
 import companionReducer from './companionSlice';
 import connectivityReducer from './connectivitySlice';
 import coreModeReducer from './coreModeSlice';
@@ -150,12 +151,47 @@ const persistedMascotReducer = persistReducer(mascotPersistConfig, mascotReducer
 const personaPersistConfig = { key: 'persona', storage, whitelist: ['displayName', 'description'] };
 const persistedPersonaReducer = persistReducer(personaPersistConfig, personaReducer);
 
+// chatRuntime is mostly ephemeral (streaming buffers, tool timelines,
+// inference status) — those MUST NOT survive a restart or the UI tries
+// to resume a turn whose live driver has gone. The single exception is
+// `artifactsByThread`: agent-generated files (#3024) survive across
+// restarts so the user can return to a thread and still find a deck
+// they made earlier. Only `status === 'ready'` snapshots are written;
+// in_progress / failed states stay session-scoped via the transform
+// below (a half-written PPT shouldn't reappear as "Generating…" on
+// cold boot).
+type ArtifactsByThread = Record<string, ArtifactSnapshot[]>;
+const artifactsReadyOnlyTransform = createTransform<ArtifactsByThread, ArtifactsByThread>(
+  (inboundState: ArtifactsByThread | undefined) => {
+    if (!inboundState) return {};
+    const filtered: ArtifactsByThread = {};
+    for (const [threadId, list] of Object.entries(inboundState)) {
+      const readyOnly = list.filter(entry => entry.status === 'ready');
+      if (readyOnly.length > 0) {
+        filtered[threadId] = readyOnly;
+      }
+    }
+    return filtered;
+  },
+  // Outbound (rehydrate): trust storage was already ready-only on write.
+  (outboundState: ArtifactsByThread | undefined) => outboundState ?? {},
+  { whitelist: ['artifactsByThread'] }
+);
+
+const chatRuntimePersistConfig = {
+  key: 'chatRuntime',
+  storage,
+  whitelist: ['artifactsByThread'],
+  transforms: [artifactsReadyOnlyTransform],
+};
+const persistedChatRuntimeReducer = persistReducer(chatRuntimePersistConfig, chatRuntimeReducer);
+
 export const store = configureStore({
   reducer: {
     socket: socketReducer,
     connectivity: connectivityReducer,
     thread: persistedThreadReducer,
-    chatRuntime: chatRuntimeReducer,
+    chatRuntime: persistedChatRuntimeReducer,
     companion: companionReducer,
     agentProfiles: agentProfileReducer,
     channelConnections: persistedChannelConnectionsReducer,
