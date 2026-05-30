@@ -109,10 +109,13 @@ describe('ApprovalHistoryPanel', () => {
     await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
   });
 
-  it('keeps the latest result when a refresh supersedes the initial load', async () => {
-    // Drives the `loadSeqRef` last-request-wins path: the mount load resolves
-    // with one set of rows, a refresh fetches a different set, and the newer
-    // response is what remains on screen.
+  it('replaces the list with the refreshed result', async () => {
+    // The reachable refresh behavior: a completed load is replaced by the rows
+    // from a subsequent refresh. (The `loadSeqRef` last-request-wins guard
+    // protects against *overlapping* in-flight loads, but that race is not
+    // reachable from the UI — the Refresh button is `disabled` while a load is
+    // pending, so two concurrent fetches can never be initiated. The guard
+    // stays as defense against React concurrent/StrictMode double-invocation.)
     mockFetch
       .mockResolvedValueOnce([auditRow({ request_id: 'old', tool_name: 'old-tool' })])
       .mockResolvedValueOnce([auditRow({ request_id: 'new', tool_name: 'new-tool' })]);
