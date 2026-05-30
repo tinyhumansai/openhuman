@@ -24,6 +24,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod doctor;
+pub use doctor::{run_doctor, DoctorCounters, DoctorReport, StageHealth};
+
 /// Whether a failure should be retried (`Transient`) or fail fast
 /// (`Unrecoverable`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

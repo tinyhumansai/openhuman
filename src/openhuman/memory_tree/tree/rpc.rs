@@ -448,6 +448,31 @@ pub async fn pipeline_status_rpc(
     ))
 }
 
+/// `memory_tree_doctor` RPC handler (#002 FR-009). Runs the one-shot
+/// pipeline diagnostic and returns the [`DoctorReport`] — per-stage health,
+/// the first blocking cause, the degraded snapshot, and counters. Exposed for
+/// the agent tool + CLI so the agent can self-diagnose an empty/stalled wiki.
+/// Synchronous + cheap (config + queue counters + degraded flags), so no
+/// blocking-pool dispatch is needed.
+pub async fn doctor_rpc(
+    config: &Config,
+) -> Result<RpcOutcome<crate::openhuman::memory_tree::health::DoctorReport>, String> {
+    let report = crate::openhuman::memory_tree::health::run_doctor(config);
+    let summary = if report.healthy {
+        "memory_tree: doctor — healthy".to_string()
+    } else {
+        format!(
+            "memory_tree: doctor — first_blocking_cause={}",
+            report
+                .first_blocking_cause
+                .as_ref()
+                .map(|f| f.code.as_str())
+                .unwrap_or("unknown")
+        )
+    };
+    Ok(RpcOutcome::single_log(report, summary))
+}
+
 /// #002 (FR-004): the typed [`PipelineFailure`] of the most-recently-failed
 /// `mem_tree_jobs` row, when it carries a classified `failure_reason`. Returns
 /// `Ok(None)` when there is no failed job with a typed reason (older failures

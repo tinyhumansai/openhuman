@@ -47,6 +47,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("pipeline_status"),
         schemas("set_enabled"),
         schemas("smart_walk"),
+        schemas("doctor"),
     ]
 }
 
@@ -137,6 +138,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("smart_walk"),
             handler: handle_smart_walk,
+        },
+        RegisteredController {
+            schema: schemas("doctor"),
+            handler: handle_doctor,
         },
     ]
 }
@@ -799,6 +804,52 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "doctor" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "doctor",
+            description: "One-shot Memory pipeline diagnostic (#002). Walks each \
+                stage (embeddings config, scheduler gate, job queue, extraction/recall \
+                degradation, summary-tree precondition) and returns per-stage health, \
+                the single first blocking cause (typed code + i18n remediation key), the \
+                degraded snapshot, and counters. Exposed for the agent's self-diagnosis \
+                and the CLI; cheap (config + queue counters + degraded flags, no live \
+                network probe).",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "healthy",
+                    ty: TypeSchema::Bool,
+                    comment: "True when no stage is blocking (first_blocking_cause is null).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "stages",
+                    ty: TypeSchema::Json,
+                    comment: "Ordered array of { stage, ok, failure?, note } — pipeline \
+                              order, so the first non-ok stage is the first blocking cause.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "first_blocking_cause",
+                    ty: TypeSchema::Json,
+                    comment: "Typed { code, class, remediation_key, detail? } of the first \
+                              non-ok stage; null when healthy.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "degraded",
+                    ty: TypeSchema::Json,
+                    comment: "{ semantic_recall, structure, cause? } degradation snapshot.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "counters",
+                    ty: TypeSchema::Json,
+                    comment: "{ total_chunks, jobs_ready, jobs_running, jobs_failed }.",
+                    required: true,
+                },
+            ],
+        },
         "memory_backfill_status" => ControllerSchema {
             namespace: NAMESPACE,
             function: "memory_backfill_status",
@@ -1235,6 +1286,13 @@ fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture {
             })).collect::<Vec<_>>(),
         });
         to_json(RpcOutcome::new(result, vec![]))
+    })
+}
+
+fn handle_doctor(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(rpc::doctor_rpc(&config).await?)
     })
 }
 
