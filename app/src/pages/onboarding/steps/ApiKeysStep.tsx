@@ -14,6 +14,7 @@ interface ApiKeysStepProps {
 
 type OpenAiOAuthStatus = { connected: boolean; authMethod?: string | null };
 
+// non-display technical sentinel — exempt from i18n
 const OPENAI_OAUTH_CALLBACK_PLACEHOLDER = 'http://127.0.0.1:1455/auth/callback?code=...&state=...';
 
 const ApiKeysStep = ({ onNext, onSkip }: ApiKeysStepProps) => {
