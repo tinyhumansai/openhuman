@@ -188,6 +188,41 @@ export interface PendingApproval {
 }
 
 /**
+ * Lifecycle status of a single agent-generated artifact, as projected
+ * onto the chat runtime per thread.
+ *
+ * - `in_progress` — derived: the producing tool call is in flight; we
+ *   have not yet seen a ready/failed event. UI shows a spinner.
+ * - `ready` — `artifact_ready` socket event received. UI shows a
+ *   download button.
+ * - `failed` — `artifact_failed` socket event received. UI shows the
+ *   reason + a retry hint.
+ */
+export type ArtifactStatus = 'in_progress' | 'ready' | 'failed';
+
+/**
+ * Per-thread snapshot of a single artifact's state. Upserted from
+ * artifact lifecycle socket events; consumed by `ArtifactCard` for
+ * inline message rendering (#2779).
+ */
+export interface ArtifactSnapshot {
+  artifactId: string;
+  /** Kind slug from the Rust `ArtifactKind` enum. */
+  kind: 'presentation' | 'document' | 'image' | 'other';
+  /** Human-readable title; also the on-disk filename stem. */
+  title: string;
+  status: ArtifactStatus;
+  /** Final on-disk size. Only set when `status === 'ready'`. */
+  sizeBytes?: number;
+  /** Relative path under `<workspace>/artifacts/`. Only set when `status === 'ready'`. */
+  path?: string;
+  /** Producer-supplied reason. Only set when `status === 'failed'`. */
+  error?: string;
+  /** When the snapshot was last updated, milliseconds since epoch. */
+  updatedAt: number;
+}
+
+/**
  * Per-thread UI state for an in-flight agent turn (socket events while the user
  * may navigate away from Conversations). The thread slice keeps `activeThreadId`
  * in sync for cross-thread guards; it is cleared from `ChatRuntimeProvider` on
@@ -200,6 +235,13 @@ interface ChatRuntimeState {
   taskBoardByThread: Record<string, TaskBoard>;
   inferenceTurnLifecycleByThread: Record<string, InferenceTurnLifecycle>;
   pendingApprovalByThread: Record<string, PendingApproval>;
+  /**
+   * Per-thread artifact ledger. Snapshots are upserted on
+   * `artifact_ready` / `artifact_failed` socket events keyed on
+   * `artifactId`. `ArtifactCard` reads this slice to render inline
+   * download / retry affordances (#2779).
+   */
+  artifactsByThread: Record<string, ArtifactSnapshot[]>;
   sessionTokenUsage: SessionTokenUsage;
 }
 
@@ -210,8 +252,29 @@ const initialState: ChatRuntimeState = {
   taskBoardByThread: {},
   inferenceTurnLifecycleByThread: {},
   pendingApprovalByThread: {},
+  artifactsByThread: {},
   sessionTokenUsage: { inputTokens: 0, outputTokens: 0, turns: 0, lastUpdated: 0 },
 };
+
+/**
+ * Upsert a single artifact snapshot for a thread. New entries append
+ * in insertion order (matches the timeline ordering the UI expects);
+ * existing entries are replaced in place so the inline card flips
+ * status without remounting.
+ */
+function upsertArtifact(
+  bucket: ArtifactSnapshot[] | undefined,
+  snapshot: ArtifactSnapshot
+): ArtifactSnapshot[] {
+  const list = bucket ?? [];
+  const idx = list.findIndex(entry => entry.artifactId === snapshot.artifactId);
+  if (idx === -1) {
+    return [...list, snapshot];
+  }
+  const next = list.slice();
+  next[idx] = snapshot;
+  return next;
+}
 
 function subagentToolCallFromPersisted(call: PersistedSubagentToolCall): SubagentToolCallEntry {
   return {
@@ -406,6 +469,99 @@ const chatRuntimeSlice = createSlice({
     clearPendingApprovalForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.pendingApprovalByThread[action.payload.threadId];
     },
+    /**
+     * Mark a producer-tool call as in-flight so the `ArtifactCard` can
+     * render a spinner before any ready/failed event arrives. Caller
+     * usually fires this off the corresponding `ChatToolCallEvent`
+     * when the tool is in the known artifact-producing allowlist
+     * (e.g. `generate_presentation`). Re-firing for the same
+     * `artifactId` is a no-op (idempotent upsert).
+     */
+    upsertArtifactInProgressForThread: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        artifactId: string;
+        kind: ArtifactSnapshot['kind'];
+        title: string;
+      }>
+    ) => {
+      const { threadId, artifactId, kind, title } = action.payload;
+      const snapshot: ArtifactSnapshot = {
+        artifactId,
+        kind,
+        title,
+        status: 'in_progress',
+        updatedAt: Date.now(),
+      };
+      state.artifactsByThread[threadId] = upsertArtifact(
+        state.artifactsByThread[threadId],
+        snapshot
+      );
+    },
+    /**
+     * Mark an artifact as ready (download-able). Triggered by the
+     * `artifact_ready` socket event. Promotes status off `in_progress`
+     * and fills in `path` / `sizeBytes` for the download flow.
+     */
+    upsertArtifactReadyForThread: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        artifactId: string;
+        kind: ArtifactSnapshot['kind'];
+        title: string;
+        path: string;
+        sizeBytes: number;
+      }>
+    ) => {
+      const { threadId, artifactId, kind, title, path, sizeBytes } = action.payload;
+      const snapshot: ArtifactSnapshot = {
+        artifactId,
+        kind,
+        title,
+        status: 'ready',
+        path,
+        sizeBytes,
+        updatedAt: Date.now(),
+      };
+      state.artifactsByThread[threadId] = upsertArtifact(
+        state.artifactsByThread[threadId],
+        snapshot
+      );
+    },
+    /**
+     * Mark an artifact as failed. Triggered by the `artifact_failed`
+     * socket event. Promotes status off `in_progress` and persists the
+     * producer-supplied `error` so the card can show a retry hint.
+     */
+    upsertArtifactFailedForThread: (
+      state,
+      action: PayloadAction<{
+        threadId: string;
+        artifactId: string;
+        kind: ArtifactSnapshot['kind'];
+        title: string;
+        error: string;
+      }>
+    ) => {
+      const { threadId, artifactId, kind, title, error } = action.payload;
+      const snapshot: ArtifactSnapshot = {
+        artifactId,
+        kind,
+        title,
+        status: 'failed',
+        error,
+        updatedAt: Date.now(),
+      };
+      state.artifactsByThread[threadId] = upsertArtifact(
+        state.artifactsByThread[threadId],
+        snapshot
+      );
+    },
+    clearArtifactsForThread: (state, action: PayloadAction<{ threadId: string }>) => {
+      delete state.artifactsByThread[action.payload.threadId];
+    },
     beginInferenceTurn: (state, action: PayloadAction<{ threadId: string }>) => {
       state.inferenceTurnLifecycleByThread[action.payload.threadId] = 'started';
     },
@@ -424,6 +580,11 @@ const chatRuntimeSlice = createSlice({
       delete state.taskBoardByThread[action.payload.threadId];
       delete state.inferenceTurnLifecycleByThread[action.payload.threadId];
       delete state.pendingApprovalByThread[action.payload.threadId];
+      // Note: artifactsByThread intentionally NOT cleared here. The
+      // ArtifactCard renders inline in the message timeline, so the
+      // snapshot needs to survive turn boundaries — historic artifacts
+      // stay visible alongside the messages that produced them. Use
+      // `clearArtifactsForThread` if a hard reset is desired.
     },
     clearAllChatRuntime: state => {
       state.inferenceStatusByThread = {};
@@ -432,6 +593,7 @@ const chatRuntimeSlice = createSlice({
       state.taskBoardByThread = {};
       state.inferenceTurnLifecycleByThread = {};
       state.pendingApprovalByThread = {};
+      state.artifactsByThread = {};
     },
     recordChatTurnUsage: (
       state,
@@ -521,6 +683,10 @@ export const {
   clearTaskBoardForThread,
   setPendingApprovalForThread,
   clearPendingApprovalForThread,
+  upsertArtifactInProgressForThread,
+  upsertArtifactReadyForThread,
+  upsertArtifactFailedForThread,
+  clearArtifactsForThread,
   beginInferenceTurn,
   markInferenceTurnStreaming,
   endInferenceTurn,

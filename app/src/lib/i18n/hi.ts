@@ -4446,6 +4446,18 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'आर्टिफैक्ट: {title}',
+  'chat.artifact.generating': '{kind} बना रहा है…',
+  'chat.artifact.ready': 'तैयार',
+  'chat.artifact.failed': 'निर्माण विफल',
+  'chat.artifact.download': 'डाउनलोड',
+  'chat.artifact.downloading': 'डाउनलोड हो रहा है…',
+  'chat.artifact.downloaded': '{path} में सहेजा गया',
+  'chat.artifact.download_failed': 'डाउनलोड विफल: {reason}',
+  'chat.artifact.retry': 'पुनः प्रयास',
+  'chat.artifact.reveal': 'Finder में दिखाएं',
+
 };
 
 export default messages;

@@ -4362,6 +4362,18 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'الملف: {title}',
+  'chat.artifact.generating': 'جارٍ إنشاء {kind}…',
+  'chat.artifact.ready': 'جاهز',
+  'chat.artifact.failed': 'فشل الإنشاء',
+  'chat.artifact.download': 'تنزيل',
+  'chat.artifact.downloading': 'جارٍ التنزيل…',
+  'chat.artifact.downloaded': 'تم الحفظ في {path}',
+  'chat.artifact.download_failed': 'فشل التنزيل: {reason}',
+  'chat.artifact.retry': 'إعادة المحاولة',
+  'chat.artifact.reveal': 'إظهار في Finder',
+
 };
 
 export default messages;

@@ -4405,6 +4405,18 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': '아티팩트: {title}',
+  'chat.artifact.generating': '{kind} 생성 중…',
+  'chat.artifact.ready': '준비됨',
+  'chat.artifact.failed': '생성 실패',
+  'chat.artifact.download': '다운로드',
+  'chat.artifact.downloading': '다운로드 중…',
+  'chat.artifact.downloaded': '{path}에 저장됨',
+  'chat.artifact.download_failed': '다운로드 실패: {reason}',
+  'chat.artifact.retry': '다시 시도',
+  'chat.artifact.reveal': 'Finder에서 보기',
+
 };
 
 export default messages;
