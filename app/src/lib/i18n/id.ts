@@ -4443,6 +4443,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'evidenceTrust.colDegree': 'Rel.',
+  'evidenceTrust.colEntity': 'Entitas',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Kuosien Kepercayaan',
+  'evidenceTrust.degradedHint':
+    'Setiap relasi saat ini membawa evidenceCount = 1, jadi Kuosien Kepercayaan menciut menjadi konstanta. Lensa membutuhkan nilai konfirmasi yang bervariasi untuk memisahkan prolifik-tipis dari sunyi-solid.',
+  'evidenceTrust.degradedTitle': 'Sinyal bukti jarang — isi evidenceCount untuk membuka lensa ini.',
+  'evidenceTrust.empty': 'Belum ada graf pengetahuan.',
+  'evidenceTrust.emptyHint':
+    'Saat asisten mencatat relasi dengan evidenceCount tentang Anda, profil kepercayaan akan muncul di sini.',
+  'evidenceTrust.entitiesHeading': 'Peringkat Kuosien Kepercayaan',
+  'evidenceTrust.errorPrefix': 'Tidak dapat memuat graf:',
+  'evidenceTrust.evidenceLabel': 'bukti {n}',
+  'evidenceTrust.intro':
+    'Kuosien Kepercayaan per entitas = bukti rata-rata per relasi yang melibatkannya. Gini Bukti mengukur seberapa tidak merata bukti terkonsentrasi di antara entitas. Daftar kerja kurang-dikonfirmasi menandai relasi yang buktinya jatuh di bawah ambang yang diturunkan dari graf — antrean tinjauan kurator.',
+  'evidenceTrust.loading': 'Menghitung profil kepercayaan…',
+  'evidenceTrust.metricEntities': 'Entitas berbobot',
+  'evidenceTrust.metricEvidence': 'Total bukti',
+  'evidenceTrust.metricGini': 'Gini bukti',
+  'evidenceTrust.namespaceAll': 'Semua ruang nama',
+  'evidenceTrust.namespaceLabel': 'Ruang nama',
+  'evidenceTrust.noWorklist':
+    'Tidak ada relasi yang kurang dikonfirmasi — setiap pernyataan memenuhi ambang bukti.',
+  'evidenceTrust.pointsTo': 'menunjuk ke',
+  'evidenceTrust.predicatesHeading': 'Indeks Keandalan Predikat',
+  'evidenceTrust.retry': 'Coba lagi',
+  'evidenceTrust.summaryCaption':
+    '{relations} relasi berbeda · ambang kurang-konfirmasi {threshold}',
+  'evidenceTrust.title': 'Kepercayaan tertimbang bukti',
+  'evidenceTrust.worklistHeading': 'Daftar kerja kurang-dikonfirmasi',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

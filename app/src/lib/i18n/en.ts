@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.trust': 'Trust',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,38 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+
+  'evidenceTrust.title': 'Evidence-Weighted Trust',
+  'evidenceTrust.intro':
+    "Trust Quotient per entity = mean evidence per relation it's involved in. Evidence Gini measures how unevenly evidence is concentrated across entities. The under-corroborated worklist flags relations whose evidence falls below a graph-derived threshold — the curator's review queue.",
+  'evidenceTrust.loading': 'Computing trust profile…',
+  'evidenceTrust.errorPrefix': 'Could not load the graph:',
+  'evidenceTrust.retry': 'Retry',
+  'evidenceTrust.empty': 'No knowledge graph yet.',
+  'evidenceTrust.emptyHint':
+    'As the assistant records relations with evidenceCount about you, the trust profile will surface here.',
+  'evidenceTrust.degradedTitle':
+    'Evidence signal sparse — populate evidenceCount to unlock this lens.',
+  'evidenceTrust.degradedHint':
+    'Every relation currently carries evidenceCount = 1, so Trust Quotient collapses to a constant. The lens needs varied corroboration values to separate prolific-thin from quiet-solid.',
+  'evidenceTrust.namespaceLabel': 'Namespace',
+  'evidenceTrust.namespaceAll': 'All namespaces',
+  'evidenceTrust.metricGini': 'Evidence Gini',
+  'evidenceTrust.metricEntities': 'Entities weighted',
+  'evidenceTrust.metricEvidence': 'Total evidence',
+  'evidenceTrust.summaryCaption':
+    '{relations} distinct relations · under-corroboration threshold {threshold}',
+  'evidenceTrust.entitiesHeading': 'Trust Quotient ranking',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colEntity': 'Entity',
+  'evidenceTrust.colTrust': 'Trust Quotient',
+  'evidenceTrust.colDegree': 'Rels',
+  'evidenceTrust.predicatesHeading': 'Predicate Reliability Index',
+  'evidenceTrust.worklistHeading': 'Under-corroborated worklist',
+  'evidenceTrust.noWorklist':
+    'No under-corroborated relations — every assertion meets the evidence threshold.',
+  'evidenceTrust.pointsTo': 'points to',
+  'evidenceTrust.evidenceLabel': 'ev {n}',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -2500,7 +2533,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',

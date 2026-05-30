@@ -4427,6 +4427,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'evidenceTrust.colDegree': 'সম্প.',
+  'evidenceTrust.colEntity': 'সত্তা',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'বিশ্বাস ভাগফল',
+  'evidenceTrust.degradedHint':
+    'প্রতিটি সম্পর্ক বর্তমানে evidenceCount = 1 বহন করে, তাই বিশ্বাস ভাগফল একটি ধ্রুবকে ধ্বসে পড়ে। প্রচুর-পাতলাকে শান্ত-দৃঢ় থেকে আলাদা করতে লেন্সের বৈচিত্র্যপূর্ণ সমর্থন মান প্রয়োজন।',
+  'evidenceTrust.degradedTitle': 'প্রমাণ সংকেত বিরল — এই লেন্স আনলক করতে evidenceCount পূরণ করুন।',
+  'evidenceTrust.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'evidenceTrust.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে evidenceCount সহ সম্পর্ক রেকর্ড করে, বিশ্বাস প্রোফাইল এখানে উঠে আসবে।',
+  'evidenceTrust.entitiesHeading': 'বিশ্বাস ভাগফল র‍্যাঙ্কিং',
+  'evidenceTrust.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'evidenceTrust.evidenceLabel': 'প্রমাণ {n}',
+  'evidenceTrust.intro':
+    'প্রতি-সত্তা বিশ্বাস ভাগফল = এটি যে সম্পর্কে জড়িত সেই সম্পর্ক প্রতি গড় প্রমাণ। প্রমাণ Gini পরিমাপ করে সত্তা জুড়ে প্রমাণ কতটা অসমানভাবে কেন্দ্রীভূত। অপর্যাপ্ত-সমর্থিত কর্মতালিকা সেই সম্পর্কগুলি চিহ্নিত করে যেগুলির প্রমাণ গ্রাফ-উৎসারিত সীমার নিচে পড়ে — কিউরেটরের পর্যালোচনা সারি।',
+  'evidenceTrust.loading': 'বিশ্বাস প্রোফাইল গণনা করা হচ্ছে…',
+  'evidenceTrust.metricEntities': 'ওজনযুক্ত সত্তা',
+  'evidenceTrust.metricEvidence': 'মোট প্রমাণ',
+  'evidenceTrust.metricGini': 'প্রমাণ Gini',
+  'evidenceTrust.namespaceAll': 'সমস্ত নেমস্পেস',
+  'evidenceTrust.namespaceLabel': 'নেমস্পেস',
+  'evidenceTrust.noWorklist':
+    'কোনো অপর্যাপ্ত-সমর্থিত সম্পর্ক নেই — প্রতিটি দাবি প্রমাণ সীমা পূরণ করে।',
+  'evidenceTrust.pointsTo': 'নির্দেশ করে',
+  'evidenceTrust.predicatesHeading': 'বিধেয় নির্ভরযোগ্যতা সূচক',
+  'evidenceTrust.retry': 'পুনরায় চেষ্টা',
+  'evidenceTrust.summaryCaption':
+    '{relations} টি স্বতন্ত্র সম্পর্ক · অপর্যাপ্ত-সমর্থন সীমা {threshold}',
+  'evidenceTrust.title': 'প্রমাণ-ওজনযুক্ত বিশ্বাস',
+  'evidenceTrust.worklistHeading': 'অপর্যাপ্ত-সমর্থিত কর্মতালিকা',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

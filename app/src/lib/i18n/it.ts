@@ -4501,6 +4501,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'evidenceTrust.colDegree': 'Rel.',
+  'evidenceTrust.colEntity': 'Entità',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Quoziente di fiducia',
+  'evidenceTrust.degradedHint':
+    'Ogni relazione attualmente porta evidenceCount = 1, quindi il Quoziente di fiducia collassa a una costante. La lente ha bisogno di valori di corroborazione variati per distinguere prolifico-sottile da silenzioso-solido.',
+  'evidenceTrust.degradedTitle':
+    'Segnale di evidenza scarso — popola evidenceCount per sbloccare questa lente.',
+  'evidenceTrust.empty': 'Ancora nessun grafo della conoscenza.',
+  'evidenceTrust.emptyHint':
+    "Man mano che l'assistente registra relazioni con evidenceCount su di te, qui apparirà il profilo di fiducia.",
+  'evidenceTrust.entitiesHeading': 'Classifica per Quoziente di fiducia',
+  'evidenceTrust.errorPrefix': 'Impossibile caricare il grafo:',
+  'evidenceTrust.evidenceLabel': 'ev. {n}',
+  'evidenceTrust.intro':
+    "Quoziente di fiducia per entità = evidenza media per relazione a cui partecipa. Il Gini di evidenza misura quanto sia distribuita in modo non uniforme l'evidenza tra le entità. La lista delle sotto-corroborate segnala relazioni la cui evidenza scende sotto una soglia derivata dal grafo — la coda di revisione del curatore.",
+  'evidenceTrust.loading': 'Calcolo profilo di fiducia…',
+  'evidenceTrust.metricEntities': 'Entità ponderate',
+  'evidenceTrust.metricEvidence': 'Evidenza totale',
+  'evidenceTrust.metricGini': 'Gini di evidenza',
+  'evidenceTrust.namespaceAll': 'Tutti gli spazi dei nomi',
+  'evidenceTrust.namespaceLabel': 'Spazio dei nomi',
+  'evidenceTrust.noWorklist':
+    'Nessuna relazione sotto-corroborata — ogni asserzione raggiunge la soglia di evidenza.',
+  'evidenceTrust.pointsTo': 'punta a',
+  'evidenceTrust.predicatesHeading': 'Indice di affidabilità dei predicati',
+  'evidenceTrust.retry': 'Riprova',
+  'evidenceTrust.summaryCaption':
+    '{relations} relazioni distinte · soglia di sotto-corroborazione {threshold}',
+  'evidenceTrust.title': "Fiducia pesata sull'evidenza",
+  'evidenceTrust.worklistHeading': 'Lista delle sotto-corroborate',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

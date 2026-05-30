@@ -4501,6 +4501,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'evidenceTrust.colDegree': 'Rel.',
+  'evidenceTrust.colEntity': 'Encja',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Współczynnik zaufania',
+  'evidenceTrust.degradedHint':
+    'Każda relacja obecnie niesie evidenceCount = 1, więc Współczynnik zaufania zwija się do stałej. Soczewka potrzebuje zróżnicowanych wartości potwierdzenia, by oddzielić płodne-cienkie od cichych-solidnych.',
+  'evidenceTrust.degradedTitle':
+    'Sygnał dowodu rzadki — wypełnij evidenceCount, aby odblokować tę soczewkę.',
+  'evidenceTrust.empty': 'Jeszcze brak grafu wiedzy.',
+  'evidenceTrust.emptyHint':
+    'Gdy asystent zapisuje relacje z evidenceCount o tobie, profil zaufania pojawi się tutaj.',
+  'evidenceTrust.entitiesHeading': 'Ranking Współczynnika zaufania',
+  'evidenceTrust.errorPrefix': 'Nie udało się załadować grafu:',
+  'evidenceTrust.evidenceLabel': 'dow. {n}',
+  'evidenceTrust.intro':
+    'Współczynnik zaufania na encję = średni dowód na relację, w której uczestniczy. Gini dowodów mierzy, jak nierównomiernie dowód jest skoncentrowany między encjami. Lista słabo potwierdzonych oznacza relacje, których dowód spada poniżej progu wyprowadzonego z grafu — kolejka rewizji kuratora.',
+  'evidenceTrust.loading': 'Obliczanie profilu zaufania…',
+  'evidenceTrust.metricEntities': 'Encje ważone',
+  'evidenceTrust.metricEvidence': 'Łączny dowód',
+  'evidenceTrust.metricGini': 'Gini dowodów',
+  'evidenceTrust.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'evidenceTrust.namespaceLabel': 'Przestrzeń nazw',
+  'evidenceTrust.noWorklist':
+    'Brak słabo potwierdzonych relacji — każde stwierdzenie osiąga próg dowodu.',
+  'evidenceTrust.pointsTo': 'wskazuje na',
+  'evidenceTrust.predicatesHeading': 'Wskaźnik niezawodności predykatów',
+  'evidenceTrust.retry': 'Spróbuj ponownie',
+  'evidenceTrust.summaryCaption':
+    '{relations} różnych relacji · próg słabego potwierdzenia {threshold}',
+  'evidenceTrust.title': 'Zaufanie ważone dowodem',
+  'evidenceTrust.worklistHeading': 'Lista słabo potwierdzonych',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

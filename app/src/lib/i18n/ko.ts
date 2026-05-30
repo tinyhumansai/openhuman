@@ -4393,6 +4393,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'evidenceTrust.colDegree': '관계',
+  'evidenceTrust.colEntity': '엔티티',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': '신뢰 지수',
+  'evidenceTrust.degradedHint':
+    '모든 관계가 현재 evidenceCount = 1을 가지므로, 신뢰 지수가 상수로 무너집니다. 다작-얇은 것과 조용-견고한 것을 구분하려면 렌즈에 다양한 입증 값이 필요합니다.',
+  'evidenceTrust.degradedTitle':
+    '증거 신호 희소 — 이 렌즈를 잠금 해제하려면 evidenceCount를 채우세요.',
+  'evidenceTrust.empty': '아직 지식 그래프가 없습니다.',
+  'evidenceTrust.emptyHint':
+    '어시스턴트가 사용자에 대해 evidenceCount를 갖는 관계를 기록함에 따라, 신뢰 프로필이 여기에 나타납니다.',
+  'evidenceTrust.entitiesHeading': '신뢰 지수 순위',
+  'evidenceTrust.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'evidenceTrust.evidenceLabel': '증거 {n}',
+  'evidenceTrust.intro':
+    '엔티티당 신뢰 지수 = 관여한 관계당 평균 증거. 증거 Gini는 증거가 엔티티 전체에 얼마나 불균등하게 집중되어 있는지 측정합니다. 입증 부족 작업 목록은 증거가 그래프에서 도출된 임계값 아래로 떨어지는 관계를 표시합니다 — 큐레이터의 검토 대기열.',
+  'evidenceTrust.loading': '신뢰 프로필 계산 중…',
+  'evidenceTrust.metricEntities': '가중 엔티티',
+  'evidenceTrust.metricEvidence': '총 증거',
+  'evidenceTrust.metricGini': '증거 Gini',
+  'evidenceTrust.namespaceAll': '모든 네임스페이스',
+  'evidenceTrust.namespaceLabel': '네임스페이스',
+  'evidenceTrust.noWorklist':
+    '충분히 입증되지 않은 관계 없음 — 모든 주장이 증거 임계값을 충족합니다.',
+  'evidenceTrust.pointsTo': '가리킴',
+  'evidenceTrust.predicatesHeading': '술어 신뢰성 지수',
+  'evidenceTrust.retry': '다시 시도',
+  'evidenceTrust.summaryCaption': '{relations}개 고유 관계 · 입증 부족 임계값 {threshold}',
+  'evidenceTrust.title': '증거 가중 신뢰',
+  'evidenceTrust.worklistHeading': '입증 부족 작업 목록',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

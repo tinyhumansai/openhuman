@@ -4543,6 +4543,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'evidenceTrust.colDegree': 'Rel.',
+  'evidenceTrust.colEntity': 'Entität',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Vertrauensquotient',
+  'evidenceTrust.degradedHint':
+    'Jede Relation trägt derzeit evidenceCount = 1, sodass der Vertrauensquotient zu einer Konstante kollabiert. Die Linse braucht variierte Bestätigungswerte, um produktiv-dünn von leise-solide zu trennen.',
+  'evidenceTrust.degradedTitle':
+    'Evidenzsignal dünn — füllen Sie evidenceCount, um diese Linse freizuschalten.',
+  'evidenceTrust.empty': 'Noch kein Wissensgraph.',
+  'evidenceTrust.emptyHint':
+    'Während der Assistent Relationen mit evidenceCount über Sie erfasst, erscheint hier das Vertrauensprofil.',
+  'evidenceTrust.entitiesHeading': 'Vertrauensquotient-Rangliste',
+  'evidenceTrust.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'evidenceTrust.evidenceLabel': 'Ev. {n}',
+  'evidenceTrust.intro':
+    'Vertrauensquotient pro Entität = mittlere Evidenz pro Relation, an der sie beteiligt ist. Evidenz-Gini misst, wie ungleich Evidenz über Entitäten konzentriert ist. Die unzureichend bestätigte Arbeitsliste markiert Relationen, deren Evidenz unter einer graphabgeleiteten Schwelle liegt — die Prüfschlange des Kurators.',
+  'evidenceTrust.loading': 'Berechne Vertrauensprofil…',
+  'evidenceTrust.metricEntities': 'Gewichtete Entitäten',
+  'evidenceTrust.metricEvidence': 'Gesamtevidenz',
+  'evidenceTrust.metricGini': 'Evidenz-Gini',
+  'evidenceTrust.namespaceAll': 'Alle Namensräume',
+  'evidenceTrust.namespaceLabel': 'Namensraum',
+  'evidenceTrust.noWorklist':
+    'Keine unzureichend bestätigten Relationen — jede Aussage erfüllt die Evidenzschwelle.',
+  'evidenceTrust.pointsTo': 'zeigt auf',
+  'evidenceTrust.predicatesHeading': 'Prädikat-Zuverlässigkeitsindex',
+  'evidenceTrust.retry': 'Wiederholen',
+  'evidenceTrust.summaryCaption':
+    '{relations} verschiedene Relationen · Unterbestätigungsschwelle {threshold}',
+  'evidenceTrust.title': 'Evidenzgewichtetes Vertrauen',
+  'evidenceTrust.worklistHeading': 'Unzureichend bestätigte Arbeitsliste',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

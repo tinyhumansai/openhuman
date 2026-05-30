@@ -4524,6 +4524,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'evidenceTrust.colDegree': 'Rel.',
+  'evidenceTrust.colEntity': 'Entité',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Quotient de confiance',
+  'evidenceTrust.degradedHint':
+    'Chaque relation porte actuellement evidenceCount = 1, donc le Quotient de confiance se réduit à une constante. La lentille a besoin de valeurs de corroboration variées pour distinguer prolifique-mince de discret-solide.',
+  'evidenceTrust.degradedTitle':
+    'Signal de preuve clairsemé — renseignez evidenceCount pour débloquer cette lentille.',
+  'evidenceTrust.empty': 'Pas encore de graphe de connaissances.',
+  'evidenceTrust.emptyHint':
+    "À mesure que l'assistant enregistre des relations avec evidenceCount à votre sujet, le profil de confiance apparaîtra ici.",
+  'evidenceTrust.entitiesHeading': 'Classement par Quotient de confiance',
+  'evidenceTrust.errorPrefix': 'Impossible de charger le graphe :',
+  'evidenceTrust.evidenceLabel': 'pr. {n}',
+  'evidenceTrust.intro':
+    "Quotient de confiance par entité = preuve moyenne par relation à laquelle elle participe. Le Gini de preuve mesure à quel point les preuves sont concentrées inégalement entre les entités. La liste des sous-corroborées signale les relations dont les preuves passent sous un seuil dérivé du graphe — la file d'examen du conservateur.",
+  'evidenceTrust.loading': 'Calcul du profil de confiance…',
+  'evidenceTrust.metricEntities': 'Entités pondérées',
+  'evidenceTrust.metricEvidence': 'Preuves totales',
+  'evidenceTrust.metricGini': 'Gini de preuve',
+  'evidenceTrust.namespaceAll': 'Tous les espaces de noms',
+  'evidenceTrust.namespaceLabel': 'Espace de noms',
+  'evidenceTrust.noWorklist':
+    'Aucune relation insuffisamment corroborée — chaque affirmation atteint le seuil de preuve.',
+  'evidenceTrust.pointsTo': 'pointe vers',
+  'evidenceTrust.predicatesHeading': 'Indice de fiabilité des prédicats',
+  'evidenceTrust.retry': 'Réessayer',
+  'evidenceTrust.summaryCaption':
+    '{relations} relations distinctes · seuil de sous-corroboration {threshold}',
+  'evidenceTrust.title': 'Confiance pondérée par les preuves',
+  'evidenceTrust.worklistHeading': 'Liste des sous-corroborées',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

@@ -4498,6 +4498,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
+  'evidenceTrust.colDegree': 'Rel.',
+  'evidenceTrust.colEntity': 'Entidade',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Quociente de confiança',
+  'evidenceTrust.degradedHint':
+    'Cada relação atualmente carrega evidenceCount = 1, então o Quociente de Confiança colapsa para uma constante. A lente precisa de valores de corroboração variados para separar prolífico-fino de silencioso-sólido.',
+  'evidenceTrust.degradedTitle':
+    'Sinal de evidência esparso — preencha evidenceCount para desbloquear esta lente.',
+  'evidenceTrust.empty': 'Ainda sem grafo de conhecimento.',
+  'evidenceTrust.emptyHint':
+    'À medida que o assistente registra relações com evidenceCount sobre você, o perfil de confiança aparecerá aqui.',
+  'evidenceTrust.entitiesHeading': 'Classificação por Quociente de confiança',
+  'evidenceTrust.errorPrefix': 'Não foi possível carregar o grafo:',
+  'evidenceTrust.evidenceLabel': 'ev. {n}',
+  'evidenceTrust.intro':
+    'Quociente de confiança por entidade = evidência média por relação em que ela participa. O Gini de evidência mede quão desigualmente a evidência se concentra entre as entidades. A lista de sub-corroboradas sinaliza relações cuja evidência cai abaixo de um limiar derivado do grafo — a fila de revisão do curador.',
+  'evidenceTrust.loading': 'Calculando perfil de confiança…',
+  'evidenceTrust.metricEntities': 'Entidades ponderadas',
+  'evidenceTrust.metricEvidence': 'Evidência total',
+  'evidenceTrust.metricGini': 'Gini de evidência',
+  'evidenceTrust.namespaceAll': 'Todos os espaços de nomes',
+  'evidenceTrust.namespaceLabel': 'Espaço de nomes',
+  'evidenceTrust.noWorklist':
+    'Sem relações sub-corroboradas — cada afirmação atinge o limiar de evidência.',
+  'evidenceTrust.pointsTo': 'aponta para',
+  'evidenceTrust.predicatesHeading': 'Índice de confiabilidade de predicados',
+  'evidenceTrust.retry': 'Tentar novamente',
+  'evidenceTrust.summaryCaption':
+    '{relations} relações distintas · limiar de sub-corroboração {threshold}',
+  'evidenceTrust.title': 'Confiança ponderada por evidência',
+  'evidenceTrust.worklistHeading': 'Lista de sub-corroboradas',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

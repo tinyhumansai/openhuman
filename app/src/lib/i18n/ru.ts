@@ -4469,6 +4469,38 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'evidenceTrust.colDegree': 'Отн.',
+  'evidenceTrust.colEntity': 'Сущность',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'Коэффициент доверия',
+  'evidenceTrust.degradedHint':
+    'Каждое отношение в настоящее время несёт evidenceCount = 1, поэтому Коэффициент доверия сворачивается в константу. Линзе нужны разнообразные значения подтверждения, чтобы отделить плодовито-тонкое от тихо-прочного.',
+  'evidenceTrust.degradedTitle':
+    'Сигнал свидетельств разрежён — заполните evidenceCount, чтобы разблокировать эту линзу.',
+  'evidenceTrust.empty': 'Пока нет графа знаний.',
+  'evidenceTrust.emptyHint':
+    'По мере того как ассистент фиксирует отношения с evidenceCount о вас, здесь появится профиль доверия.',
+  'evidenceTrust.entitiesHeading': 'Рейтинг по Коэффициенту доверия',
+  'evidenceTrust.errorPrefix': 'Не удалось загрузить граф:',
+  'evidenceTrust.evidenceLabel': 'св. {n}',
+  'evidenceTrust.intro':
+    'Коэффициент доверия на сущность = среднее свидетельство на отношение, в котором она участвует. Джини свидетельств измеряет, насколько неравномерно свидетельства концентрируются между сущностями. Список недостаточно подтверждённых отмечает отношения, чьи свидетельства падают ниже порога, выведенного из графа — очередь проверки куратора.',
+  'evidenceTrust.loading': 'Вычисление профиля доверия…',
+  'evidenceTrust.metricEntities': 'Сущности с весом',
+  'evidenceTrust.metricEvidence': 'Всего свидетельств',
+  'evidenceTrust.metricGini': 'Джини свидетельств',
+  'evidenceTrust.namespaceAll': 'Все пространства имён',
+  'evidenceTrust.namespaceLabel': 'Пространство имён',
+  'evidenceTrust.noWorklist':
+    'Нет недостаточно подтверждённых отношений — каждое утверждение достигает порога свидетельств.',
+  'evidenceTrust.pointsTo': 'указывает на',
+  'evidenceTrust.predicatesHeading': 'Индекс надёжности предикатов',
+  'evidenceTrust.retry': 'Повторить',
+  'evidenceTrust.summaryCaption':
+    '{relations} различных отношений · порог недоподтверждения {threshold}',
+  'evidenceTrust.title': 'Доверие, взвешенное по свидетельствам',
+  'evidenceTrust.worklistHeading': 'Список недостаточно подтверждённых',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;

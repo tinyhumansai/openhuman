@@ -4434,6 +4434,37 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'evidenceTrust.colDegree': 'सं.',
+  'evidenceTrust.colEntity': 'इकाई',
+  'evidenceTrust.colRank': '#',
+  'evidenceTrust.colTrust': 'विश्वास भागफल',
+  'evidenceTrust.degradedHint':
+    'हर संबंध वर्तमान में evidenceCount = 1 रखता है, इसलिए विश्वास भागफल एक स्थिरांक में सिमट जाता है। प्रचुर-पतले को शांत-ठोस से अलग करने के लिए लेंस को विविध समर्थन मानों की आवश्यकता है।',
+  'evidenceTrust.degradedTitle':
+    'साक्ष्य संकेत विरल — इस लेंस को अनलॉक करने के लिए evidenceCount भरें।',
+  'evidenceTrust.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
+  'evidenceTrust.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में evidenceCount के साथ संबंध दर्ज करता है, विश्वास प्रोफ़ाइल यहाँ उभरेगा।',
+  'evidenceTrust.entitiesHeading': 'विश्वास भागफल रैंकिंग',
+  'evidenceTrust.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'evidenceTrust.evidenceLabel': 'साक्ष्य {n}',
+  'evidenceTrust.intro':
+    'प्रति-इकाई विश्वास भागफल = उस संबंध प्रति औसत साक्ष्य जिसमें वह शामिल है। साक्ष्य Gini मापता है कि इकाइयों में साक्ष्य कितना असमान रूप से केंद्रित है। अपर्याप्त-समर्थित कार्य-सूची उन संबंधों को चिह्नित करती है जिनके साक्ष्य ग्राफ-व्युत्पन्न सीमा से नीचे गिरते हैं — क्यूरेटर की समीक्षा कतार।',
+  'evidenceTrust.loading': 'विश्वास प्रोफ़ाइल गणना हो रही है…',
+  'evidenceTrust.metricEntities': 'भारित इकाइयाँ',
+  'evidenceTrust.metricEvidence': 'कुल साक्ष्य',
+  'evidenceTrust.metricGini': 'साक्ष्य Gini',
+  'evidenceTrust.namespaceAll': 'सभी नेमस्पेस',
+  'evidenceTrust.namespaceLabel': 'नेमस्पेस',
+  'evidenceTrust.noWorklist':
+    'कोई अपर्याप्त-समर्थित संबंध नहीं — हर दावा साक्ष्य सीमा को पूरा करता है।',
+  'evidenceTrust.pointsTo': 'की ओर इशारा करता है',
+  'evidenceTrust.predicatesHeading': 'विधेय विश्वसनीयता सूचकांक',
+  'evidenceTrust.retry': 'पुनः प्रयास',
+  'evidenceTrust.summaryCaption': '{relations} विशिष्ट संबंध · अपर्याप्त-समर्थन सीमा {threshold}',
+  'evidenceTrust.title': 'साक्ष्य-भारित विश्वास',
+  'evidenceTrust.worklistHeading': 'अपर्याप्त-समर्थित कार्य-सूची',
+  'memory.tab.trust': 'Trust',
 };
 
 export default messages;
