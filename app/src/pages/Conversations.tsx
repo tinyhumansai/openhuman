@@ -8,6 +8,7 @@ import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectio
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
 import ArtifactCard from '../components/chat/ArtifactCard';
 import AttachmentPreview from '../components/chat/AttachmentPreview';
+import ChatFilesChip from '../components/chat/ChatFilesChip';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -1517,6 +1518,9 @@ const Conversations = ({
                   +
                 </button>
               </div>
+              {(selectedThreadId ?? activeThreadId) && (
+                <ChatFilesChip threadId={(selectedThreadId ?? activeThreadId) as string} />
+              )}
               <TokenUsagePill />
               <button
                 data-testid="new-thread-button"
@@ -2136,17 +2140,19 @@ const Conversations = ({
           })()}
 
           {(() => {
-            // Surface artifact cards for the shown thread above the composer
+            // Surface in-flight + failed artifact cards above the composer
             // (#2779). Mirrors the approval-card placement so the user sees
-            // the just-generated deck without scrolling. Cards stay visible
-            // across turns until the thread is cleared. ArtifactCard handles
-            // its own download lifecycle (dialog → copy → "Saved to …").
+            // the spinner / error without scrolling. `ready` cards are
+            // delegated to the header ChatFilesChip panel (#3024) so the
+            // chat scroll area isn't permanently occupied — restored decks
+            // are listable from the chip on demand.
             const artifactThreadId = selectedThreadId ?? activeThreadId;
-            const artifacts = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
-            if (artifacts.length === 0) return null;
+            const all = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
+            const live = all.filter(a => a.status !== 'ready');
+            if (live.length === 0) return null;
             return (
               <div className="mb-2 flex flex-col gap-2">
-                {artifacts.map(artifact => (
+                {live.map(artifact => (
                   <ArtifactCard key={artifact.artifactId} artifact={artifact} />
                 ))}
               </div>
