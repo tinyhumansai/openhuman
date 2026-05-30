@@ -4469,6 +4469,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+  'triadClosure.title': 'Подсказки достройки графа',
+  'triadClosure.intro':
+    'Все остальные линзы измеряют связи, которые УЖЕ существуют. Эта вскрывает то, чего НЕДОСТАЁТ: для каждой упорядоченной пары (A, C) без прямого ребра, но с несколькими общими посредниками A→B→C, предлагается создать A→C. Подсказки ранжируются по оценке Адамика–Адара — посредники с малой степенью весят больше, потому что B, знающее лишь A и C, — гораздо более сильное свидетельство, чем мега-узел, знающий всех.',
+  'triadClosure.loading': 'Вычисление подсказок замыкания…',
+  'triadClosure.errorPrefix': 'Не удалось загрузить граф:',
+  'triadClosure.retry': 'Повторить',
+  'triadClosure.empty': 'Пока нет графа знаний.',
+  'triadClosure.emptyHint':
+    'По мере того как ассистент фиксирует связи о вас, здесь появятся предлагаемые замыкающие рёбра.',
+  'triadClosure.namespaceLabel': 'Пространство имён',
+  'triadClosure.namespaceAll': 'Все пространства имён',
+  'triadClosure.metricHints': 'Предлагаемые рёбра',
+  'triadClosure.metricCandidates': 'Пары-кандидаты',
+  'triadClosure.metricSupport': 'Минимальная поддержка',
+  'triadClosure.summaryCaption': '{nodes} сущностей · {edges} направленных рёбер',
+  'triadClosure.truncatedBadge': 'усечено',
+  'triadClosure.truncatedTitle':
+    'Узел-источник с большим числом связей достиг предела клиньев на источник — некоторые подсказки для этого источника могут отсутствовать.',
+  'triadClosure.noCandidates': 'Открытых триад нет — у графа нет клиньев для замыкания.',
+  'triadClosure.allFiltered':
+    '{count} пар-кандидатов отфильтровано по порогу поддержки — у каждого замыкающего клина был лишь один посредник. Снизьте minSupport, чтобы их увидеть.',
+  'triadClosure.rankedHeading': 'Предлагаемые рёбра для рассмотрения',
+  'triadClosure.suggestEdgeTo': 'предложить ребро к',
+  'triadClosure.viaPrefix': 'через',
+  'triadClosure.extraIntermediaries': '+ещё {n}',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

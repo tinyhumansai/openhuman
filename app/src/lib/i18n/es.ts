@@ -4509,6 +4509,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  'triadClosure.title': 'Sugerencias de compleción del grafo',
+  'triadClosure.intro':
+    'Todas las demás lentes miden relaciones que YA existen. Esta revela lo que FALTA: para cada par ordenado (A, C) sin arista directa pero con varios intermediarios compartidos A→B→C, propone crear A→C. Las sugerencias se ordenan por la puntuación Adamic–Adar: los intermediarios de grado bajo pesan más, porque un B que solo conoce a A y a C es una evidencia mucho más fuerte que un mega-hub que conoce a todos.',
+  'triadClosure.loading': 'Calculando sugerencias de cierre…',
+  'triadClosure.errorPrefix': 'No se pudo cargar el grafo:',
+  'triadClosure.retry': 'Reintentar',
+  'triadClosure.empty': 'Aún no hay grafo de conocimiento.',
+  'triadClosure.emptyHint':
+    'A medida que el asistente registra relaciones sobre usted, aquí aparecerán las aristas de cierre sugeridas.',
+  'triadClosure.namespaceLabel': 'Espacio de nombres',
+  'triadClosure.namespaceAll': 'Todos los espacios de nombres',
+  'triadClosure.metricHints': 'Aristas sugeridas',
+  'triadClosure.metricCandidates': 'Pares candidatos',
+  'triadClosure.metricSupport': 'Soporte mínimo',
+  'triadClosure.summaryCaption': '{nodes} entidades · {edges} aristas dirigidas',
+  'triadClosure.truncatedBadge': 'truncado',
+  'triadClosure.truncatedTitle':
+    'Un nodo fuente con muchos enlaces alcanzó el límite de cuñas por fuente; pueden faltar algunas sugerencias para esa fuente.',
+  'triadClosure.noCandidates': 'Sin tríadas abiertas: el grafo no tiene cuñas por cerrar.',
+  'triadClosure.allFiltered':
+    '{count} pares candidatos filtrados por el umbral de soporte — cada cuña de cierre tenía un solo intermediario. Reduzca minSupport para verlas.',
+  'triadClosure.rankedHeading': 'Aristas sugeridas a considerar',
+  'triadClosure.suggestEdgeTo': 'sugerir arista a',
+  'triadClosure.viaPrefix': 'vía',
+  'triadClosure.extraIntermediaries': '+{n} más',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

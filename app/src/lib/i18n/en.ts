@@ -307,6 +307,7 @@ const en: TranslationMap = {
   'memory.tab.namespaces': 'Namespaces',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.completion': 'Completion',
   'memory.tab.settings': 'Settings',
   'memory.tab.council': 'Council',
   'modelCouncil.title': 'Model Council',
@@ -488,6 +489,31 @@ const en: TranslationMap = {
   'graphCohesion.brokerBadge': 'broker',
   'graphCohesion.brokerTitle':
     "Structural hole: this entity's neighbours aren't connected to each other — it's the sole link between them.",
+  'triadClosure.title': 'Graph Completion Hints',
+  'triadClosure.intro':
+    "Every other lens measures relations that ALREADY exist. This one surfaces what's MISSING: for every ordered pair (A, C) with no direct edge but several shared intermediaries A→B→C, propose creating A→C. Hints are ranked by the Adamic–Adar score — low-degree intermediaries weigh more, because a B that only knows A and C is much stronger evidence than a mega-hub that knows everyone.",
+  'triadClosure.loading': 'Computing closure hints…',
+  'triadClosure.errorPrefix': 'Could not load the graph:',
+  'triadClosure.retry': 'Retry',
+  'triadClosure.empty': 'No knowledge graph yet.',
+  'triadClosure.emptyHint':
+    'As the assistant records relations about you, suggested closing edges will surface here.',
+  'triadClosure.namespaceLabel': 'Namespace',
+  'triadClosure.namespaceAll': 'All namespaces',
+  'triadClosure.metricHints': 'Suggested edges',
+  'triadClosure.metricCandidates': 'Candidate pairs',
+  'triadClosure.metricSupport': 'Minimum support',
+  'triadClosure.summaryCaption': '{nodes} entities · {edges} directed edges',
+  'triadClosure.truncatedBadge': 'truncated',
+  'triadClosure.truncatedTitle':
+    'A hub-heavy source node hit the per-source wedge cap — some hints may be missing for that source.',
+  'triadClosure.noCandidates': 'No open triads — the graph has no wedges to close.',
+  'triadClosure.allFiltered':
+    '{count} candidate pairs filtered out by support floor — every closing wedge was single-intermediary. Lower minSupport to see them.',
+  'triadClosure.rankedHeading': 'Suggested edges to consider',
+  'triadClosure.suggestEdgeTo': 'suggest edge to',
+  'triadClosure.viaPrefix': 'via',
+  'triadClosure.extraIntermediaries': '+{n} more',
 
   // Memory Tree status panel (#1856 Part 1)
   'memoryTree.status.title': 'Memory Tree',
@@ -2500,7 +2526,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
+    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',

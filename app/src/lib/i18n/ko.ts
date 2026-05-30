@@ -4393,6 +4393,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+  'triadClosure.title': '그래프 완성 힌트',
+  'triadClosure.intro':
+    '다른 모든 렌즈는 이미 존재하는 관계를 측정합니다. 이 렌즈는 누락된 것을 드러냅니다: 직접 간선은 없지만 여러 공유 중간자 A→B→C가 있는 모든 순서쌍 (A, C)에 대해 A→C 생성을 제안합니다. 힌트는 Adamic–Adar 점수로 순위가 매겨집니다 — 낮은 차수의 중간자가 더 큰 가중치를 가집니다. A와 C만 아는 B가 모두를 아는 메가 허브보다 훨씬 강한 증거이기 때문입니다.',
+  'triadClosure.loading': '폐쇄 힌트 계산 중…',
+  'triadClosure.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'triadClosure.retry': '다시 시도',
+  'triadClosure.empty': '아직 지식 그래프가 없습니다.',
+  'triadClosure.emptyHint':
+    '어시스턴트가 당신에 관한 관계들을 기록함에 따라, 추천 폐쇄 간선이 여기에 드러납니다.',
+  'triadClosure.namespaceLabel': '네임스페이스',
+  'triadClosure.namespaceAll': '모든 네임스페이스',
+  'triadClosure.metricHints': '추천 간선',
+  'triadClosure.metricCandidates': '후보 쌍',
+  'triadClosure.metricSupport': '최소 지지도',
+  'triadClosure.summaryCaption': '엔티티 {nodes}개 · 방향 간선 {edges}개',
+  'triadClosure.truncatedBadge': '잘림',
+  'triadClosure.truncatedTitle':
+    '허브가 많은 소스 노드가 소스당 웨지 한도에 도달했습니다 — 해당 소스에 대한 일부 힌트가 누락될 수 있습니다.',
+  'triadClosure.noCandidates': '열린 트라이어드 없음 — 그래프에 닫을 웨지가 없습니다.',
+  'triadClosure.allFiltered':
+    '지지도 임계값에 의해 후보 쌍 {count}개가 걸러졌습니다 — 각 폐쇄 웨지는 중간자가 하나뿐이었습니다. 보려면 minSupport를 낮추세요.',
+  'triadClosure.rankedHeading': '고려할 추천 간선',
+  'triadClosure.suggestEdgeTo': '간선 추천 — 대상:',
+  'triadClosure.viaPrefix': '경유',
+  'triadClosure.extraIntermediaries': '+{n}개 더',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

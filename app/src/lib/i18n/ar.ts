@@ -4350,6 +4350,31 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+  'triadClosure.title': 'تلميحات إكمال الرسم البياني',
+  'triadClosure.intro':
+    'كل العدسات الأخرى تقيس علاقات موجودة فعلًا. أمّا هذه فتكشف ما هو مفقود: لكل زوج مرتّب (A، C) دون حافة مباشرة لكن مع عدة وسطاء مشتركين A→B→C، تقترح إنشاء A→C. تُرتَّب التلميحات حسب درجة Adamic–Adar — الوسطاء ذوو الدرجة المنخفضة يحملون وزنًا أكبر، لأن B التي لا تعرف سوى A وC دليل أقوى بكثير من محور ضخم يعرف الجميع.',
+  'triadClosure.loading': 'يجري حساب تلميحات الإغلاق…',
+  'triadClosure.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'triadClosure.retry': 'إعادة المحاولة',
+  'triadClosure.empty': 'لا يوجد رسم معرفة بعد.',
+  'triadClosure.emptyHint': 'كلما سجّل المساعد علاقات عنك، ستظهر هنا الحواف المقترحة لإغلاقها.',
+  'triadClosure.namespaceLabel': 'مساحة الأسماء',
+  'triadClosure.namespaceAll': 'كل مساحات الأسماء',
+  'triadClosure.metricHints': 'حواف مقترحة',
+  'triadClosure.metricCandidates': 'أزواج مرشّحة',
+  'triadClosure.metricSupport': 'الحد الأدنى للدعم',
+  'triadClosure.summaryCaption': '{nodes} كيانات · {edges} حواف موجّهة',
+  'triadClosure.truncatedBadge': 'مقتطع',
+  'triadClosure.truncatedTitle':
+    'بلغت عقدة مصدر كثيفة الروابط حدّ الإسفين لكل مصدر — قد تكون بعض التلميحات مفقودة لذلك المصدر.',
+  'triadClosure.noCandidates': 'لا توجد ثلاثيات مفتوحة — ليس في الرسم أيّ إسفين لإغلاقه.',
+  'triadClosure.allFiltered':
+    'تمت تصفية {count} زوجًا مرشّحًا بسبب حد الدعم — كل إسفين إغلاق كان بوسيط واحد فقط. خفّض minSupport لرؤيتها.',
+  'triadClosure.rankedHeading': 'حواف مقترحة للنظر فيها',
+  'triadClosure.suggestEdgeTo': 'اقترح حافة إلى',
+  'triadClosure.viaPrefix': 'عبر',
+  'triadClosure.extraIntermediaries': '+{n} المزيد',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

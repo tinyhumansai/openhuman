@@ -4501,6 +4501,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+  'triadClosure.title': 'Suggerimenti di completamento del grafo',
+  'triadClosure.intro':
+    "Tutte le altre lenti misurano relazioni che GIÀ esistono. Questa rivela ciò che MANCA: per ogni coppia ordinata (A, C) senza arco diretto ma con diversi intermediari comuni A→B→C, propone di creare A→C. I suggerimenti sono ordinati per punteggio Adamic–Adar — gli intermediari a basso grado pesano di più, perché un B che conosce solo A e C è un'evidenza molto più forte di un mega-hub che conosce tutti.",
+  'triadClosure.loading': 'Calcolo dei suggerimenti di chiusura…',
+  'triadClosure.errorPrefix': 'Impossibile caricare il grafo:',
+  'triadClosure.retry': 'Riprova',
+  'triadClosure.empty': 'Ancora nessun grafo della conoscenza.',
+  'triadClosure.emptyHint':
+    "Man mano che l'assistente registra relazioni su di te, qui appariranno gli archi di chiusura suggeriti.",
+  'triadClosure.namespaceLabel': 'Spazio dei nomi',
+  'triadClosure.namespaceAll': 'Tutti gli spazi dei nomi',
+  'triadClosure.metricHints': 'Archi suggeriti',
+  'triadClosure.metricCandidates': 'Coppie candidate',
+  'triadClosure.metricSupport': 'Supporto minimo',
+  'triadClosure.summaryCaption': '{nodes} entità · {edges} archi diretti',
+  'triadClosure.truncatedBadge': 'troncato',
+  'triadClosure.truncatedTitle':
+    'Un nodo sorgente ad alta densità ha raggiunto il limite di cunei per sorgente — alcune indicazioni potrebbero mancare per quella sorgente.',
+  'triadClosure.noCandidates': 'Nessuna triade aperta — il grafo non ha cunei da chiudere.',
+  'triadClosure.allFiltered':
+    '{count} coppie candidate filtrate dalla soglia di supporto — ogni cuneo di chiusura aveva un solo intermediario. Abbassa minSupport per vederle.',
+  'triadClosure.rankedHeading': 'Archi suggeriti da considerare',
+  'triadClosure.suggestEdgeTo': 'suggerisci arco a',
+  'triadClosure.viaPrefix': 'tramite',
+  'triadClosure.extraIntermediaries': '+{n} altri',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

@@ -4543,6 +4543,33 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  'triadClosure.title': 'Graph-Vervollständigungshinweise',
+  'triadClosure.intro':
+    'Jede andere Linse misst Relationen, die BEREITS existieren. Diese deckt auf, was FEHLT: für jedes geordnete Paar (A, C) ohne direkte Kante, aber mit mehreren gemeinsamen Zwischenknoten A→B→C wird das Erzeugen von A→C vorgeschlagen. Hinweise werden nach dem Adamic–Adar-Score gerankt — Zwischenknoten mit niedrigem Grad zählen mehr, denn ein B, das nur A und C kennt, ist viel stärkere Evidenz als ein Mega-Hub, der jeden kennt.',
+  'triadClosure.loading': 'Berechne Schließungshinweise…',
+  'triadClosure.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'triadClosure.retry': 'Wiederholen',
+  'triadClosure.empty': 'Noch kein Wissensgraph.',
+  'triadClosure.emptyHint':
+    'Während der Assistent Relationen über Sie erfasst, erscheinen hier vorgeschlagene schließende Kanten.',
+  'triadClosure.namespaceLabel': 'Namensraum',
+  'triadClosure.namespaceAll': 'Alle Namensräume',
+  'triadClosure.metricHints': 'Vorgeschlagene Kanten',
+  'triadClosure.metricCandidates': 'Kandidatenpaare',
+  'triadClosure.metricSupport': 'Mindest-Support',
+  'triadClosure.summaryCaption': '{nodes} Entitäten · {edges} gerichtete Kanten',
+  'triadClosure.truncatedBadge': 'gekürzt',
+  'triadClosure.truncatedTitle':
+    'Ein hub-lastiger Quellknoten hat das Wedge-Limit pro Quelle erreicht — einige Hinweise könnten für diese Quelle fehlen.',
+  'triadClosure.noCandidates':
+    'Keine offenen Triaden — der Graph hat keine zu schließenden Wedges.',
+  'triadClosure.allFiltered':
+    '{count} Kandidatenpaare durch Support-Schwelle gefiltert — jedes schließende Wedge hatte nur einen Zwischenknoten. Senken Sie minSupport, um sie zu sehen.',
+  'triadClosure.rankedHeading': 'Vorgeschlagene Kanten zur Berücksichtigung',
+  'triadClosure.suggestEdgeTo': 'Kante vorschlagen zu',
+  'triadClosure.viaPrefix': 'über',
+  'triadClosure.extraIntermediaries': '+{n} weitere',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

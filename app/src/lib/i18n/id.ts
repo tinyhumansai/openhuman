@@ -4443,6 +4443,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+  'triadClosure.title': 'Petunjuk Penyempurnaan Graf',
+  'triadClosure.intro':
+    'Setiap lensa lain mengukur relasi yang SUDAH ada. Yang satu ini mengungkap apa yang HILANG: untuk setiap pasangan terurut (A, C) tanpa tepi langsung tetapi dengan beberapa perantara bersama A→B→C, mengusulkan pembuatan A→C. Petunjuk diperingkat berdasarkan skor Adamic–Adar — perantara berderajat rendah berbobot lebih besar, karena B yang hanya mengenal A dan C adalah bukti yang jauh lebih kuat daripada mega-hub yang mengenal semua orang.',
+  'triadClosure.loading': 'Menghitung petunjuk penutupan…',
+  'triadClosure.errorPrefix': 'Tidak dapat memuat graf:',
+  'triadClosure.retry': 'Coba lagi',
+  'triadClosure.empty': 'Belum ada graf pengetahuan.',
+  'triadClosure.emptyHint':
+    'Saat asisten mencatat relasi tentang Anda, tepi penutup yang disarankan akan muncul di sini.',
+  'triadClosure.namespaceLabel': 'Ruang nama',
+  'triadClosure.namespaceAll': 'Semua ruang nama',
+  'triadClosure.metricHints': 'Tepi yang disarankan',
+  'triadClosure.metricCandidates': 'Pasangan kandidat',
+  'triadClosure.metricSupport': 'Dukungan minimum',
+  'triadClosure.summaryCaption': '{nodes} entitas · {edges} tepi terarah',
+  'triadClosure.truncatedBadge': 'dipotong',
+  'triadClosure.truncatedTitle':
+    'Simpul sumber yang padat hub mencapai batas wedge per sumber — beberapa petunjuk mungkin hilang untuk sumber tersebut.',
+  'triadClosure.noCandidates': 'Tidak ada triad terbuka — graf tidak memiliki wedge untuk ditutup.',
+  'triadClosure.allFiltered':
+    '{count} pasangan kandidat tersaring oleh ambang dukungan — setiap wedge penutup hanya memiliki satu perantara. Turunkan minSupport untuk melihatnya.',
+  'triadClosure.rankedHeading': 'Tepi yang disarankan untuk dipertimbangkan',
+  'triadClosure.suggestEdgeTo': 'sarankan tepi ke',
+  'triadClosure.viaPrefix': 'via',
+  'triadClosure.extraIntermediaries': '+{n} lagi',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

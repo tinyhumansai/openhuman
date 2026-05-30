@@ -4427,6 +4427,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+  'triadClosure.title': 'গ্রাফ পরিপূরণ ইঙ্গিত',
+  'triadClosure.intro':
+    'অন্য প্রতিটি লেন্স ইতিমধ্যেই বিদ্যমান সম্পর্ক মাপে। এটি উন্মোচন করে যা অনুপস্থিত: প্রতিটি ক্রমিক জোড়া (A, C) যাদের সরাসরি প্রান্ত নেই কিন্তু একাধিক সাধারণ মধ্যবর্তী A→B→C আছে, তাদের জন্য A→C তৈরির প্রস্তাব দেয়। ইঙ্গিতগুলো Adamic–Adar স্কোর দ্বারা র‍্যাঙ্ক করা হয় — কম-ডিগ্রির মধ্যবর্তী বেশি ওজন বহন করে, কারণ যে B শুধু A আর C কে জানে, তা সবাইকে চেনা মেগা-হাবের চেয়ে অনেক জোরালো প্রমাণ।',
+  'triadClosure.loading': 'সমাপ্তি ইঙ্গিত গণনা করা হচ্ছে…',
+  'triadClosure.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'triadClosure.retry': 'পুনরায় চেষ্টা',
+  'triadClosure.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
+  'triadClosure.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সম্পর্কগুলো রেকর্ড করে, সুপারিশকৃত সমাপ্তি-প্রান্তগুলো এখানে উঠে আসবে।',
+  'triadClosure.namespaceLabel': 'নেমস্পেস',
+  'triadClosure.namespaceAll': 'সমস্ত নেমস্পেস',
+  'triadClosure.metricHints': 'সুপারিশকৃত প্রান্ত',
+  'triadClosure.metricCandidates': 'প্রার্থী জোড়া',
+  'triadClosure.metricSupport': 'ন্যূনতম সমর্থন',
+  'triadClosure.summaryCaption': '{nodes}টি সত্তা · {edges}টি দিকনির্দেশিত প্রান্ত',
+  'triadClosure.truncatedBadge': 'ছাঁটাই করা',
+  'triadClosure.truncatedTitle':
+    'অনেক সংযোগওয়ালা একটি উৎস নোড প্রতি-উৎস ওয়েজ সীমা ছুঁয়ে ফেলেছে — সেই উৎসের জন্য কিছু ইঙ্গিত অনুপস্থিত হতে পারে।',
+  'triadClosure.noCandidates': 'কোনো খোলা ত্রিকা নেই — গ্রাফে বন্ধ করার মতো কোনো ওয়েজ নেই।',
+  'triadClosure.allFiltered':
+    'সমর্থন সীমার কারণে {count}টি প্রার্থী জোড়া ছেঁকে বাদ পড়েছে — প্রতিটি সমাপ্তি-ওয়েজ একক-মধ্যবর্তী ছিল। সেগুলো দেখতে minSupport কমান।',
+  'triadClosure.rankedHeading': 'বিবেচনার জন্য সুপারিশকৃত প্রান্ত',
+  'triadClosure.suggestEdgeTo': 'প্রান্তের সুপারিশ — গন্তব্য:',
+  'triadClosure.viaPrefix': 'মাধ্যমে',
+  'triadClosure.extraIntermediaries': '+{n} আরও',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

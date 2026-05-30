@@ -4434,6 +4434,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  'triadClosure.title': 'ग्राफ पूर्णता संकेत',
+  'triadClosure.intro':
+    'हर दूसरी लेंस उन संबंधों को मापती है जो पहले से मौजूद हैं। यह वह उजागर करती है जो गायब है: हर क्रमित जोड़ी (A, C) के लिए जिसमें कोई सीधा किनारा नहीं है लेकिन कई साझा मध्यवर्ती A→B→C हैं, A→C बनाने का सुझाव देती है। संकेत Adamic–Adar स्कोर से रैंक होते हैं — कम-डिग्री वाले मध्यवर्ती अधिक वज़न रखते हैं, क्योंकि जो B केवल A और C को जानता है वह सब को जानने वाले मेगा-हब से कहीं अधिक मज़बूत प्रमाण है।',
+  'triadClosure.loading': 'समापन संकेत गणना हो रही है…',
+  'triadClosure.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'triadClosure.retry': 'पुनः प्रयास',
+  'triadClosure.empty': 'अभी तक कोई नॉलेज ग्राफ नहीं।',
+  'triadClosure.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में संबंध दर्ज करता है, सुझाए गए समापन-किनारे यहाँ उभरेंगे।',
+  'triadClosure.namespaceLabel': 'नेमस्पेस',
+  'triadClosure.namespaceAll': 'सभी नेमस्पेस',
+  'triadClosure.metricHints': 'सुझाए गए किनारे',
+  'triadClosure.metricCandidates': 'उम्मीदवार जोड़ियाँ',
+  'triadClosure.metricSupport': 'न्यूनतम समर्थन',
+  'triadClosure.summaryCaption': '{nodes} इकाइयाँ · {edges} दिशायुक्त किनारे',
+  'triadClosure.truncatedBadge': 'काट-छाँट किया गया',
+  'triadClosure.truncatedTitle':
+    'अधिक-कनेक्शन वाले स्रोत नोड ने प्रति-स्रोत वेज सीमा को छू लिया — उस स्रोत के लिए कुछ संकेत गायब हो सकते हैं।',
+  'triadClosure.noCandidates': 'कोई खुली त्रिकाएँ नहीं — ग्राफ में बंद करने योग्य कोई वेज नहीं।',
+  'triadClosure.allFiltered':
+    'समर्थन सीमा के कारण {count} उम्मीदवार जोड़ियाँ छन गईं — हर समापन-वेज एकल-मध्यवर्ती था। उन्हें देखने के लिए minSupport कम करें।',
+  'triadClosure.rankedHeading': 'विचार करने योग्य सुझाए गए किनारे',
+  'triadClosure.suggestEdgeTo': 'किनारा सुझाएँ — गंतव्य:',
+  'triadClosure.viaPrefix': 'के माध्यम से',
+  'triadClosure.extraIntermediaries': '+{n} और',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

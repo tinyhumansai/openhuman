@@ -4214,6 +4214,30 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+  'triadClosure.title': '图补全提示',
+  'triadClosure.intro':
+    '其他每个透镜都在度量已经存在的关系,而这个透镜揭示的是缺失的关系:对于每一对有序的 (A, C),它们之间没有直接边,但有若干共享中间者 A→B→C,提议创建 A→C。提示按 Adamic–Adar 分数排序——低度数的中间者权重更大,因为只认识 A 和 C 的 B 远比认识所有人的超级枢纽更有力。',
+  'triadClosure.loading': '正在计算闭合提示…',
+  'triadClosure.errorPrefix': '无法加载图:',
+  'triadClosure.retry': '重试',
+  'triadClosure.empty': '暂无知识图。',
+  'triadClosure.emptyHint': '随着助手记录有关你的关系,建议的闭合边将在此呈现。',
+  'triadClosure.namespaceLabel': '命名空间',
+  'triadClosure.namespaceAll': '所有命名空间',
+  'triadClosure.metricHints': '建议边',
+  'triadClosure.metricCandidates': '候选对',
+  'triadClosure.metricSupport': '最小支持度',
+  'triadClosure.summaryCaption': '{nodes} 个实体 · {edges} 条有向边',
+  'triadClosure.truncatedBadge': '已截断',
+  'triadClosure.truncatedTitle': '一个连接密集的源节点达到了每源楔形上限——对该源可能缺少某些提示。',
+  'triadClosure.noCandidates': '没有开三元组——图中没有可闭合的楔形。',
+  'triadClosure.allFiltered':
+    '{count} 个候选对因支持度下限被过滤掉——每个闭合楔形都只有单一中间者。降低 minSupport 即可查看。',
+  'triadClosure.rankedHeading': '可考虑的建议边',
+  'triadClosure.suggestEdgeTo': '建议边到',
+  'triadClosure.viaPrefix': '经由',
+  'triadClosure.extraIntermediaries': '+{n} 个更多',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

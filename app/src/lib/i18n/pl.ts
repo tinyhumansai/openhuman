@@ -4501,6 +4501,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  'triadClosure.title': 'Podpowiedzi uzupełnienia grafu',
+  'triadClosure.intro':
+    'Każda inna soczewka mierzy relacje, które JUŻ istnieją. Ta ujawnia to, czego BRAKUJE: dla każdej uporządkowanej pary (A, C) bez bezpośredniej krawędzi, ale z kilkoma wspólnymi pośrednikami A→B→C, proponuje utworzenie A→C. Podpowiedzi są rankingowane według wyniku Adamic–Adar — pośrednicy o niskim stopniu ważą więcej, bo B, które zna tylko A i C, to znacznie silniejszy dowód niż mega-węzeł znający wszystkich.',
+  'triadClosure.loading': 'Obliczanie podpowiedzi zamknięcia…',
+  'triadClosure.errorPrefix': 'Nie udało się załadować grafu:',
+  'triadClosure.retry': 'Spróbuj ponownie',
+  'triadClosure.empty': 'Jeszcze brak grafu wiedzy.',
+  'triadClosure.emptyHint':
+    'W miarę jak asystent zapisuje relacje o Tobie, sugerowane krawędzie zamykające pojawią się tutaj.',
+  'triadClosure.namespaceLabel': 'Przestrzeń nazw',
+  'triadClosure.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'triadClosure.metricHints': 'Sugerowane krawędzie',
+  'triadClosure.metricCandidates': 'Pary kandydujące',
+  'triadClosure.metricSupport': 'Minimalne wsparcie',
+  'triadClosure.summaryCaption': '{nodes} encji · {edges} skierowanych krawędzi',
+  'triadClosure.truncatedBadge': 'skrócone',
+  'triadClosure.truncatedTitle':
+    'Węzeł źródłowy o dużej liczbie połączeń osiągnął limit klinów na źródło — dla tego źródła mogą brakować niektóre podpowiedzi.',
+  'triadClosure.noCandidates': 'Brak otwartych triad — graf nie ma klinów do zamknięcia.',
+  'triadClosure.allFiltered':
+    '{count} par kandydujących odfiltrowanych przez próg wsparcia — każdy zamykający klin miał tylko jednego pośrednika. Obniż minSupport, aby je zobaczyć.',
+  'triadClosure.rankedHeading': 'Sugerowane krawędzie do rozważenia',
+  'triadClosure.suggestEdgeTo': 'zaproponuj krawędź do',
+  'triadClosure.viaPrefix': 'przez',
+  'triadClosure.extraIntermediaries': '+{n} więcej',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;

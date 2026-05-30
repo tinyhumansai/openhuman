@@ -4524,6 +4524,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+  'triadClosure.title': 'Suggestions de complétion du graphe',
+  'triadClosure.intro':
+    "Toutes les autres lentilles mesurent les relations qui EXISTENT DÉJÀ. Celle-ci révèle ce qui MANQUE : pour chaque paire ordonnée (A, C) sans arête directe mais avec plusieurs intermédiaires partagés A→B→C, on propose de créer A→C. Les suggestions sont classées par score Adamic–Adar — les intermédiaires de faible degré pèsent plus, car un B qui ne connaît que A et C constitue une preuve bien plus forte qu'un méga-hub qui connaît tout le monde.",
+  'triadClosure.loading': 'Calcul des suggestions de fermeture…',
+  'triadClosure.errorPrefix': 'Impossible de charger le graphe :',
+  'triadClosure.retry': 'Réessayer',
+  'triadClosure.empty': 'Pas encore de graphe de connaissances.',
+  'triadClosure.emptyHint':
+    "À mesure que l'assistant enregistre des relations à votre sujet, les arêtes de fermeture suggérées apparaîtront ici.",
+  'triadClosure.namespaceLabel': 'Espace de noms',
+  'triadClosure.namespaceAll': 'Tous les espaces de noms',
+  'triadClosure.metricHints': 'Arêtes suggérées',
+  'triadClosure.metricCandidates': 'Paires candidates',
+  'triadClosure.metricSupport': 'Support minimum',
+  'triadClosure.summaryCaption': '{nodes} entités · {edges} arêtes dirigées',
+  'triadClosure.truncatedBadge': 'tronqué',
+  'triadClosure.truncatedTitle':
+    'Un nœud source à forte concentration a atteint le plafond de coins par source — certaines suggestions peuvent manquer pour cette source.',
+  'triadClosure.noCandidates': "Aucune triade ouverte — le graphe n'a aucun coin à fermer.",
+  'triadClosure.allFiltered':
+    "{count} paires candidates filtrées par le seuil de support — chaque coin de fermeture n'avait qu'un seul intermédiaire. Abaissez minSupport pour les voir.",
+  'triadClosure.rankedHeading': 'Arêtes suggérées à considérer',
+  'triadClosure.suggestEdgeTo': 'suggérer une arête vers',
+  'triadClosure.viaPrefix': 'via',
+  'triadClosure.extraIntermediaries': '+{n} de plus',
+  'memory.tab.completion': 'Completion',
 };
 
 export default messages;
