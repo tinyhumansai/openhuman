@@ -40,7 +40,10 @@ vi.mock('../../../services/chatService', () => ({
   chatSend: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../../../utils/toolDefinitions', () => ({ getDefaultEnabledTools: vi.fn(() => []) }));
+vi.mock('../../../utils/toolDefinitions', () => ({
+  getDefaultEnabledTools: vi.fn(() => []),
+  getEnabledRustToolNames: vi.fn((ids: string[]) => ids),
+}));
 
 vi.mock('../components/BetaBanner', () => ({ default: () => <div data-testid="beta-banner" /> }));
 

@@ -41,6 +41,7 @@ use crate::openhuman::tools::Tool;
 use crate::openhuman::util::truncate_with_ellipsis;
 
 use anyhow::Result;
+use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -54,6 +55,48 @@ use std::sync::Arc;
 /// operates) we have to peek inside the JSON. See TAURI-RUST-7 for the
 /// failure mode this guards against.
 use super::turn_checkpoint::{assistant_message_has_tool_calls, MAX_ITER_CHECKPOINT_INSTRUCTION};
+
+/// Built-in direct tools that the orchestrator should call by name, not via
+/// `run_skill`.
+const DIRECT_TOOL_NAMES: &[&str] = &[
+    "cron_add",
+    "cron_list",
+    "cron_remove",
+    "cron_update",
+    "cron_run",
+    "cron_runs",
+    "current_time",
+];
+
+/// Recovery shim for legacy/wrong-model calls of the form:
+/// `run_skill({skill_id: "<built-in tool>", inputs: {...}})`.
+///
+/// When this pattern appears, rewrite it into a direct tool call so the turn
+/// can proceed without a manual retry.
+fn normalize_tool_call<'a>(call: &'a ParsedToolCall) -> Cow<'a, ParsedToolCall> {
+    if call.name != "run_skill" {
+        return Cow::Borrowed(call);
+    }
+    let Some(skill_id) = call.arguments.get("skill_id").and_then(|v| v.as_str()) else {
+        return Cow::Borrowed(call);
+    };
+    if !DIRECT_TOOL_NAMES.contains(&skill_id) {
+        return Cow::Borrowed(call);
+    }
+    let Some(inputs) = call.arguments.get("inputs").and_then(|v| v.as_object()) else {
+        return Cow::Borrowed(call);
+    };
+
+    log::warn!(
+        "[agent_loop] rewrote legacy run_skill->{} call into direct tool invocation",
+        skill_id
+    );
+    Cow::Owned(ParsedToolCall {
+        name: skill_id.to_string(),
+        arguments: serde_json::Value::Object(inputs.clone()),
+        tool_call_id: call.tool_call_id.clone(),
+    })
+}
 
 impl Agent {
     /// Executes a single interaction "turn" with the agent.
@@ -697,11 +740,14 @@ impl Agent {
         call: &ParsedToolCall,
         iteration: usize,
     ) -> (ToolExecutionResult, ToolCallRecord) {
+        let normalized_call = normalize_tool_call(call);
+        let call: &ParsedToolCall = &normalized_call;
         // The per-call execution path lives in the shared
         // [`super::agent_tool_exec::run_agent_tool_call`] so `Agent::turn`
         // (when migrated to the turn engine, via `AgentToolSource`) and any
         // direct caller run the identical logic. Progress is emitted through a
-        // `TurnProgress` over this agent's sink.
+        // `TurnProgress` over this agent's sink. Legacy `run_skill`-wrapped
+        // built-in cron tool calls are normalized to direct calls first.
         let progress = super::super::engine::TurnProgress::new(self.on_progress.clone());
         let ctx = super::agent_tool_exec::AgentToolExecCtx {
             tools: &self.tools,
