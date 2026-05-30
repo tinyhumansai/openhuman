@@ -172,7 +172,10 @@ mod tests {
             split_stem_ext("file.pptx"),
             ("file".to_string(), "pptx".to_string())
         );
-        assert_eq!(split_stem_ext("noext"), ("noext".to_string(), String::new()));
+        assert_eq!(
+            split_stem_ext("noext"),
+            ("noext".to_string(), String::new())
+        );
         assert_eq!(
             split_stem_ext(".hidden"),
             (".hidden".to_string(), String::new())
@@ -181,7 +184,10 @@ mod tests {
             split_stem_ext("trailing."),
             ("trailing.".to_string(), String::new())
         );
-        assert_eq!(split_stem_ext("a.b.c"), ("a.b".to_string(), "c".to_string()));
+        assert_eq!(
+            split_stem_ext("a.b.c"),
+            ("a.b".to_string(), "c".to_string())
+        );
     }
 
     #[test]
@@ -228,11 +234,10 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(download_artifact_to_downloads(
-            "/nope".to_string(),
-            "../escape.pptx".to_string()
-        )
-        .await
-        .is_err());
+        assert!(
+            download_artifact_to_downloads("/nope".to_string(), "../escape.pptx".to_string())
+                .await
+                .is_err()
+        );
     }
 }

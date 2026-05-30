@@ -2142,9 +2142,7 @@ const Conversations = ({
             // across turns until the thread is cleared. ArtifactCard handles
             // its own download lifecycle (dialog → copy → "Saved to …").
             const artifactThreadId = selectedThreadId ?? activeThreadId;
-            const artifacts = artifactThreadId
-              ? (artifactsByThread[artifactThreadId] ?? [])
-              : [];
+            const artifacts = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
             if (artifacts.length === 0) return null;
             return (
               <div className="mb-2 flex flex-col gap-2">
