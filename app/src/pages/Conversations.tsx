@@ -40,6 +40,7 @@ import {
   beginInferenceTurn,
   clearRuntimeForThread,
   fetchAndHydrateTurnState,
+  type InferenceStatus,
   setTaskBoardForThread,
   setToolTimelineForThread,
 } from '../store/chatRuntimeSlice';
@@ -84,6 +85,7 @@ import {
   getComposerBlockedSendFeedback,
   handleComposerSlashCommand,
 } from './conversations/composerSendDecision';
+import { runDecidePlan } from './conversations/taskPlanActions';
 import {
   type AgentBubblePosition,
   buildAcceptedInlineCompletion,
@@ -296,6 +298,10 @@ const Conversations = ({
   // from `selectedThreadId` so switching threads mid-turn doesn't move the
   // timer's reference point.
   const sendingThreadIdRef = useRef<string | null>(null);
+  // Previous inference status for the sending thread; lets the rearm effect
+  // distinguish "status was just cleared (chat_done / chat_error)" from
+  // "status was never set yet (in-flight turn pre-status)".
+  const prevInferenceStatusRef = useRef<InferenceStatus | undefined>(undefined);
 
   const getAudioExtension = (mimeType: string): string => {
     const lower = mimeType.toLowerCase();
@@ -493,32 +499,65 @@ const Conversations = ({
       dispatch(setActiveThread(null));
       sendingTimeoutRef.current = null;
       sendingThreadIdRef.current = null;
+      // Reset so the NEXT send starts from a clean "never had a status"
+      // baseline — otherwise the rearm effect could read this turn's last
+      // status as a stale "previous" and falsely treat the next send's
+      // first signal as a chat-done transition.
+      prevInferenceStatusRef.current = undefined;
       pendingSendRef.current = null;
       setPendingSendingThreadId(null);
     }, 120_000);
   };
 
   // Rearm the silence timer on every inference signal for the sending
-  // thread. Tool / iteration / subagent events bump `inferenceStatusByThread`;
-  // pure-text streams (no tools) only bump `streamingAssistantByThread`, so
-  // both must be watched — otherwise a long text stream would trip the
-  // safety timer mid-reply. When the status is cleared (chat_done /
-  // chat_error), drop the timer — the completion handlers own UI cleanup.
+  // thread. Top-level tool / iteration events bump `inferenceStatusByThread`;
+  // pure-text streams (no tools) only bump `streamingAssistantByThread`;
+  // sub-agent activity (a delegated `Research`/`Tools Agent`/`Memory Tree`
+  // turn whose tools run in a child task) bumps `toolTimelineByThread` and
+  // `taskBoardByThread` without necessarily re-emitting a top-level status
+  // change, so all four must be watched — otherwise a long sub-agent loop
+  // would trip the safety timer mid-run even though the user can see the
+  // delegated tools firing in the timeline. When the status is cleared
+  // (chat_done / chat_error), drop the timer — the completion handlers
+  // own UI cleanup.
+  //
+  // `prevInferenceStatusRef` distinguishes "status was just cleared
+  // (chat_done / chat_error transition: defined → undefined)" from "status
+  // was never set yet (the Send handler also dispatches
+  // `setToolTimelineForThread({ entries: [] })` to reset the timeline,
+  // which fires this effect immediately after `armSilenceTimer` — at
+  // that instant the inference status hasn't been published yet)". Only
+  // the real transition should clear our timer.
   useEffect(() => {
     const threadId = sendingThreadIdRef.current;
     if (!threadId || !sendingTimeoutRef.current) return;
     const status = inferenceStatusByThread[threadId];
-    if (status === undefined) {
+    if (status === undefined && prevInferenceStatusRef.current !== undefined) {
       clearTimeout(sendingTimeoutRef.current);
       sendingTimeoutRef.current = null;
       sendingThreadIdRef.current = null;
+      prevInferenceStatusRef.current = undefined;
       return;
     }
+    prevInferenceStatusRef.current = status;
     armSilenceTimer(threadId);
-    // armSilenceTimer is stable (refs + dispatch); depending on the
-    // selector references is enough to rearm on every progress event.
+    // Scope the dependencies to the SENDING thread's slices only, keyed by the
+    // reactive `activeThreadId` (set on send, cleared on done/error/timeout —
+    // so it tracks the in-flight turn for the timer's whole lifetime, unlike
+    // `pendingSendingThreadId` which is released the moment the backend accepts
+    // the send). Depending on the whole maps would rearm this thread's timer
+    // whenever ANY other thread's state changed — unrelated background activity
+    // shouldn't keep a foreground turn's timer alive. armSilenceTimer is stable
+    // (refs + dispatch), so listing the per-thread values is enough to rearm on
+    // every progress event for this thread.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inferenceStatusByThread, streamingAssistantByThread]);
+  }, [
+    activeThreadId,
+    activeThreadId ? inferenceStatusByThread[activeThreadId] : undefined,
+    activeThreadId ? streamingAssistantByThread[activeThreadId] : undefined,
+    activeThreadId ? toolTimelineByThread[activeThreadId] : undefined,
+    activeThreadId ? taskBoardByThread[activeThreadId] : undefined,
+  ]);
 
   useEffect(() => {
     if (
@@ -745,6 +784,10 @@ const Conversations = ({
     // changes for `sendingThreadId`, so long-running agent turns stay alive
     // as long as the backend is emitting signals. A truly hung server still
     // fails fast.
+    // Fresh send: clear the previous-status baseline before arming so the
+    // first inference signal of this turn isn't misread as a chat-done
+    // transition (defined → undefined) left over from the prior turn.
+    prevInferenceStatusRef.current = undefined;
     armSilenceTimer(sendingThreadId);
     dispatch(setToolTimelineForThread({ threadId: sendingThreadId, entries: [] }));
     dispatch(beginInferenceTurn({ threadId: sendingThreadId }));
@@ -777,6 +820,7 @@ const Conversations = ({
         sendingTimeoutRef.current = null;
       }
       sendingThreadIdRef.current = null;
+      prevInferenceStatusRef.current = undefined;
       const msg = err instanceof Error ? err.message : String(err);
       if (
         msg.toLowerCase().includes('blocked by a security policy') ||
@@ -1115,7 +1159,34 @@ const Conversations = ({
       dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
     } catch (error) {
       debug('putTaskBoard failed: %o', error);
-      setSendAdvisory('Could not move task; changes were not saved.');
+      setSendAdvisory(t('conversations.taskKanban.updateFailed'));
+      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
+    }
+  };
+
+  const handleUpdateTaskCard = async (
+    card: TaskBoardCard,
+    nextCard: TaskBoardCard
+  ): Promise<void> => {
+    if (!selectedThreadId || !selectedTaskBoard) return;
+    const now = new Date().toISOString();
+    const nextBoard = {
+      ...selectedTaskBoard,
+      cards: selectedTaskBoard.cards.map(existing =>
+        existing.id === card.id ? { ...nextCard, updatedAt: now } : existing
+      ),
+      updatedAt: now,
+    };
+    dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: nextBoard }));
+    try {
+      const saved = await threadApi.putTaskBoard(selectedThreadId, nextBoard.cards);
+      if (!saved) {
+        throw new Error('Task board update returned no board');
+      }
+      dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: saved }));
+    } catch (error) {
+      debug('putTaskBoard failed: %o', error);
+      setSendAdvisory(t('conversations.taskKanban.updateFailed'));
       dispatch(setTaskBoardForThread({ threadId: selectedThreadId, board: selectedTaskBoard }));
     }
   };
@@ -1553,6 +1624,19 @@ const Conversations = ({
                   disabled={!selectedThreadId}
                   onMove={(card, status) => {
                     void handleMoveTaskCard(card, status);
+                  }}
+                  onUpdateCard={(card, nextCard) => {
+                    void handleUpdateTaskCard(card, nextCard);
+                  }}
+                  onDecidePlan={(card, approve) => {
+                    void runDecidePlan({
+                      threadId: selectedThreadId,
+                      card,
+                      approve,
+                      dispatch,
+                      notify: setSendAdvisory,
+                      t,
+                    });
                   }}
                 />
               )}

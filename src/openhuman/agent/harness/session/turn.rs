@@ -33,7 +33,9 @@ use crate::openhuman::agent_experience::{
     prepend_experience_block, render_experience_hits, AgentExperienceStore, ExperienceQuery,
 };
 use crate::openhuman::agent_tool_policy::render_tool_policy_boundary;
-use crate::openhuman::context::prompt::{LearnedContextData, PromptContext, PromptTool};
+use crate::openhuman::context::prompt::{
+    LearnedContextData, NamespaceSummary, PromptContext, PromptTool,
+};
 use crate::openhuman::context::{ReductionOutcome, ARCHIVIST_EXTRACTION_PROMPT};
 use crate::openhuman::inference::model_context::context_window_for_model;
 use crate::openhuman::inference::provider::{
@@ -60,76 +62,12 @@ use std::sync::Arc;
 /// detect those at the `ChatMessage` boundary (where `bound_cached_transcript_messages`
 /// operates) we have to peek inside the JSON. See TAURI-RUST-7 for the
 /// failure mode this guards against.
-fn assistant_message_has_tool_calls(msg: &ChatMessage) -> bool {
-    if msg.role != "assistant" {
-        return false;
-    }
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(&msg.content) else {
-        return false;
-    };
-    // CodeRabbit follow-up: only treat this as the native tool_calls envelope
-    // when the full expected shape is present:
-    //   - top-level JSON object
-    //   - `content` key present (the envelope `dispatcher.rs` emits — see
-    //     `to_provider_messages`)
-    //   - non-empty `tool_calls` array whose every element carries an `id`
-    //     string, a `name` string, and an `arguments` field
-    // This stops a legitimate assistant text reply that happens to contain
-    // the literal string `tool_calls` from being misclassified and dropped at
-    // the bound-cached-transcript boundary.
-    let Some(obj) = value.as_object() else {
-        return false;
-    };
-    if !obj.contains_key("content") {
-        return false;
-    }
-    let Some(tool_calls) = obj.get("tool_calls").and_then(|tc| tc.as_array()) else {
-        return false;
-    };
-    if tool_calls.is_empty() {
-        return false;
-    }
-    tool_calls.iter().all(|tc| {
-        tc.get("id").and_then(|v| v.as_str()).is_some()
-            && tc.get("name").and_then(|v| v.as_str()).is_some()
-            && tc.get("arguments").is_some()
-    })
-}
-
-/// Instruction appended (as a synthetic user turn) to the provider
-/// messages when a turn hits the tool-call iteration cap. Asks the model
-/// to wrap up with a resumable checkpoint instead of letting the turn die.
-/// Native tools are disabled for this call so the model produces prose,
-/// not yet another tool call. See bug-report-2026-05-26 A1.
-const MAX_ITER_CHECKPOINT_INSTRUCTION: &str = "\
-You have reached the maximum number of tool calls allowed for this single turn, so you cannot call any more tools right now. \
-Do not attempt another tool call. Instead, write a short progress checkpoint for the user with two clearly labelled parts:\n\
-1. **Done so far** — what you have accomplished in this turn, grounded in the tool results above.\n\
-2. **Next steps** — exactly what you plan to do next.\n\
-Write it so you can pick up seamlessly where you left off when the user replies. Be concise.";
-
-/// Build a deterministic checkpoint summary from this turn's tool-call
-/// records. Used only as a safety net when the model-written checkpoint
-/// call fails or returns empty, so a capped turn can never be left without
-/// a well-formed assistant message — which is what silently wedged the
-/// thread before (bug-report-2026-05-26 A1).
-fn build_deterministic_checkpoint(records: &[ToolCallRecord], max_iterations: usize) -> String {
-    let mut out = format!(
-        "I reached the tool-call limit for this turn ({max_iterations} steps), so I paused here.\n\n**Done so far:**\n"
-    );
-    if records.is_empty() {
-        out.push_str("- (no tools completed yet)\n");
-    } else {
-        for r in records {
-            let status = if r.success { "ok" } else { "failed" };
-            out.push_str(&format!("- `{}` — {}\n", r.name, status));
-        }
-    }
-    out.push_str(
-        "\n**Next steps:** I'll continue from here — just reply (e.g. \"continue\") and I'll pick up where I left off.",
-    );
-    out
-}
+#[path = "turn_checkpoint.rs"]
+mod turn_checkpoint;
+use turn_checkpoint::{
+    assistant_message_has_tool_calls, build_deterministic_checkpoint,
+    MAX_ITER_CHECKPOINT_INSTRUCTION,
+};
 
 impl Agent {
     /// Executes a single interaction "turn" with the agent.
@@ -1016,6 +954,12 @@ impl Agent {
                         Some(text.clone())
                     },
                     tool_calls: persisted_tool_calls,
+                    reasoning_content: response
+                        .reasoning_content
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(ToString::to_string),
                 });
 
                 // Persist the transcript **right after** the provider
@@ -2169,6 +2113,13 @@ impl Agent {
             include_memory_md: !self.omit_memory_md,
             curated_snapshot: None,
             user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
+            // TODO(phase-2): Wire personality context into the live agent turn.
+            // Currently personalities only take effect during delegate_to_personality sub-agent runs.
+            // To activate: load the active profile via AgentProfileStore::resolve(), build
+            // PersonalityContext::from_profile(), and populate these fields.
+            personality_soul_md: None, // TODO: personality_ctx.soul_md_override
+            personality_memory_md: None, // TODO: personality_ctx.memory_md_override
+            personality_roster: vec![], // TODO: build_personality_roster(&workspace_dir)
         };
         // Route through the global context manager so every
         // prompt-building call-site — main agent, sub-agent runner,
@@ -2558,12 +2509,19 @@ fn collect_tree_root_summaries(
     workspace_dir: &std::path::Path,
     per_namespace_cap: usize,
     total_cap: usize,
-) -> Vec<(String, String)> {
+) -> Vec<NamespaceSummary> {
     crate::openhuman::memory_tree::tree_runtime::store::collect_root_summaries_with_caps(
         workspace_dir,
         per_namespace_cap,
         total_cap,
     )
+    .into_iter()
+    .map(|(namespace, body, updated_at)| NamespaceSummary {
+        namespace,
+        body,
+        updated_at,
+    })
+    .collect()
 }
 
 /// Sanitize a learned memory entry before injecting into the system prompt.

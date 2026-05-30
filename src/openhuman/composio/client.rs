@@ -689,7 +689,7 @@ const MODE_DIRECT_PAT: &str = COMPOSIO_MODE_DIRECT;
 /// (calls `api.tinyhumans.ai/agent-integrations/composio/*`).
 ///
 /// `Direct` wraps the existing direct-mode HTTP wrapper from
-/// `tools/impl/network/composio.rs` that calls
+/// `composio/tools/direct.rs` that calls
 /// `https://backend.composio.dev/api/v{2,3}` with `x-api-key`. The
 /// direct client does not currently cover every endpoint the
 /// backend-proxied path exposes (no per-toolkit allowlist, no
@@ -801,7 +801,7 @@ pub fn create_composio_client(
 
 // ── Direct-mode response reshapers ──────────────────────────────────
 //
-// The direct-mode `ComposioTool` (in `tools/impl/network/composio.rs`)
+// The direct-mode `ComposioTool` (in `composio/tools/direct.rs`)
 // speaks `backend.composio.dev/api/v3/*` natively. The helpers below
 // reshape those v3 responses into the same envelopes the
 // backend-proxied [`ComposioClient`] returns, so callers in `ops.rs` /

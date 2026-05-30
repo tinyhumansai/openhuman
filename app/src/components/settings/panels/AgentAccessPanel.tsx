@@ -50,6 +50,7 @@ const AgentAccessPanel = () => {
 
   const [level, setLevel] = useState<AutonomyLevel>('supervised');
   const [workspaceOnly, setWorkspaceOnly] = useState(false);
+  const [requireTaskPlanApproval, setRequireTaskPlanApproval] = useState(true);
   const [trustedRoots, setTrustedRoots] = useState<TrustedRoot[]>([]);
   // "Always allow" allowlist — populated by the in-chat "Always allow" button;
   // shown here read-only with a Remove action (the re-protect path).
@@ -78,6 +79,7 @@ const AgentAccessPanel = () => {
         if (cancelled) return;
         setLevel(resp.result.level);
         setWorkspaceOnly(resp.result.workspace_only);
+        setRequireTaskPlanApproval(resp.result.require_task_plan_approval ?? true);
         setTrustedRoots(resp.result.trusted_roots ?? []);
         setAutoApprove(resp.result.auto_approve ?? []);
       } catch (e) {
@@ -100,6 +102,7 @@ const AgentAccessPanel = () => {
   const persist = async (next: {
     level: AutonomyLevel;
     workspaceOnly: boolean;
+    requireTaskPlanApproval: boolean;
     trustedRoots: TrustedRoot[];
     // Only sent when the allowlist itself is being changed. Omitting it leaves
     // the server's `auto_approve` untouched (partial patch) — important so a
@@ -118,6 +121,7 @@ const AgentAccessPanel = () => {
         workspace_only: next.workspaceOnly,
         trusted_roots: next.trustedRoots,
         allow_tool_install: ALLOW_TOOL_INSTALL,
+        require_task_plan_approval: next.requireTaskPlanApproval,
         ...(next.autoApprove !== undefined ? { auto_approve: next.autoApprove } : {}),
       });
       // Only the most recent persist may write UI state back.
@@ -137,12 +141,17 @@ const AgentAccessPanel = () => {
 
   const selectTier = (next: AutonomyLevel) => {
     setLevel(next);
-    void persist({ level: next, workspaceOnly, trustedRoots });
+    void persist({ level: next, workspaceOnly, requireTaskPlanApproval, trustedRoots });
   };
 
   const toggleWorkspaceOnly = (next: boolean) => {
     setWorkspaceOnly(next);
-    void persist({ level, workspaceOnly: next, trustedRoots });
+    void persist({ level, workspaceOnly: next, requireTaskPlanApproval, trustedRoots });
+  };
+
+  const toggleTaskPlanApproval = (next: boolean) => {
+    setRequireTaskPlanApproval(next);
+    void persist({ level, workspaceOnly, requireTaskPlanApproval: next, trustedRoots });
   };
 
   const addRoot = () => {
@@ -156,19 +165,25 @@ const AgentAccessPanel = () => {
     setTrustedRoots(nextRoots);
     setNewRootPath('');
     setNewRootAccess('read');
-    void persist({ level, workspaceOnly, trustedRoots: nextRoots });
+    void persist({ level, workspaceOnly, requireTaskPlanApproval, trustedRoots: nextRoots });
   };
 
   const removeRoot = (path: string) => {
     const nextRoots = trustedRoots.filter(r => r.path !== path);
     setTrustedRoots(nextRoots);
-    void persist({ level, workspaceOnly, trustedRoots: nextRoots });
+    void persist({ level, workspaceOnly, requireTaskPlanApproval, trustedRoots: nextRoots });
   };
 
   const removeAutoApprove = (tool: string) => {
     const nextList = autoApprove.filter(name => name !== tool);
     setAutoApprove(nextList);
-    void persist({ level, workspaceOnly, trustedRoots, autoApprove: nextList });
+    void persist({
+      level,
+      workspaceOnly,
+      requireTaskPlanApproval,
+      trustedRoots,
+      autoApprove: nextList,
+    });
   };
 
   return (
@@ -182,15 +197,19 @@ const AgentAccessPanel = () => {
 
       <div className="p-4 space-y-6">
         {!isTauri() && (
-          <p className="text-sm text-coral">{t('settings.agentAccess.desktopOnly')}</p>
+          <p className="text-sm text-coral-600 dark:text-coral-300">
+            {t('settings.agentAccess.desktopOnly')}
+          </p>
         )}
 
         {isLoading ? (
-          <p className="text-sm text-ink-soft">{t('settings.agentAccess.loading')}</p>
+          <p className="text-sm text-stone-600 dark:text-neutral-400">
+            {t('settings.agentAccess.loading')}
+          </p>
         ) : (
           <>
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-ink">
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
                 {t('settings.agentAccess.accessMode')}
               </h2>
               <div className="grid gap-2">
@@ -201,27 +220,33 @@ const AgentAccessPanel = () => {
                     onClick={() => selectTier(p.id)}
                     className={`text-left rounded-lg border p-3 transition ${
                       level === p.id
-                        ? 'border-primary-500 bg-primary-50'
-                        : 'border-line hover:border-primary-300'
+                        ? 'border-primary-500 bg-primary-50 dark:bg-primary-500/10'
+                        : 'border-stone-200 dark:border-neutral-800 hover:border-primary-300 dark:hover:border-primary-500'
                     }`}>
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-block w-3 h-3 rounded-full border ${
-                          level === p.id ? 'bg-primary-500 border-primary-500' : 'border-line'
+                          level === p.id
+                            ? 'bg-primary-500 border-primary-500'
+                            : 'border-stone-300 dark:border-neutral-700'
                         }`}
                       />
-                      <span className="font-medium text-ink">{p.title}</span>
+                      <span className="font-medium text-stone-900 dark:text-neutral-100">
+                        {p.title}
+                      </span>
                       {p.id === 'supervised' && (
-                        <span className="text-xs text-ink-soft">
+                        <span className="text-xs text-stone-600 dark:text-neutral-400">
                           {t('settings.agentAccess.defaultTag')}
                         </span>
                       )}
                     </div>
-                    <p className="mt-1 text-xs text-ink-soft">{p.description}</p>
+                    <p className="mt-1 text-xs text-stone-600 dark:text-neutral-400">
+                      {p.description}
+                    </p>
                   </button>
                 ))}
                 {level === 'full' && (
-                  <p className="rounded border border-coral/40 bg-coral/5 p-2 text-xs text-coral">
+                  <p className="rounded border border-coral/40 bg-coral/5 dark:bg-coral/10 p-2 text-xs text-coral-600 dark:text-coral-300">
                     {t('settings.agentAccess.fullWarning')}
                   </p>
                 )}
@@ -238,11 +263,30 @@ const AgentAccessPanel = () => {
                   onChange={e => toggleWorkspaceOnly(e.target.checked)}
                 />
                 <span>
-                  <span className="text-sm font-medium text-ink">
+                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
                     {t('settings.agentAccess.confine.label')}
                   </span>
-                  <span className="block text-xs text-ink-soft">
+                  <span className="block text-xs text-stone-600 dark:text-neutral-400">
                     {t('settings.agentAccess.confine.desc')}
+                  </span>
+                </span>
+              </label>
+            </section>
+
+            <section className="space-y-1">
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 cursor-pointer"
+                  checked={requireTaskPlanApproval}
+                  onChange={e => toggleTaskPlanApproval(e.target.checked)}
+                />
+                <span>
+                  <span className="text-sm font-medium text-stone-900 dark:text-neutral-100">
+                    {t('settings.agentAccess.requireTaskPlanApproval.label')}
+                  </span>
+                  <span className="block text-xs text-stone-600 dark:text-neutral-400">
+                    {t('settings.agentAccess.requireTaskPlanApproval.desc')}
                   </span>
                 </span>
               </label>
@@ -250,21 +294,27 @@ const AgentAccessPanel = () => {
 
             {/* Granted folders (trusted roots) — extra read/write reach. */}
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-ink">
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
                 {t('settings.agentAccess.grantedFolders')}
               </h2>
-              <p className="text-xs text-ink-soft">{t('settings.agentAccess.grantedDesc')}</p>
+              <p className="text-xs text-stone-600 dark:text-neutral-400">
+                {t('settings.agentAccess.grantedDesc')}
+              </p>
               {trustedRoots.length === 0 ? (
-                <p className="text-xs text-ink-soft">{t('settings.agentAccess.noneGranted')}</p>
+                <p className="text-xs text-stone-600 dark:text-neutral-400">
+                  {t('settings.agentAccess.noneGranted')}
+                </p>
               ) : (
                 <ul className="space-y-1">
                   {trustedRoots.map(r => (
                     <li
                       key={r.path}
-                      className="flex items-center justify-between rounded border border-line px-2 py-1">
-                      <span className="font-mono text-xs text-ink truncate">{r.path}</span>
+                      className="flex items-center justify-between rounded border border-stone-200 dark:border-neutral-800 px-2 py-1">
+                      <span className="font-mono text-xs text-stone-900 dark:text-neutral-100 truncate">
+                        {r.path}
+                      </span>
                       <span className="flex items-center gap-2">
-                        <span className="text-xs text-ink-soft">
+                        <span className="text-xs text-stone-600 dark:text-neutral-400">
                           {r.access === 'readwrite'
                             ? t('settings.agentAccess.readWrite')
                             : t('settings.agentAccess.readOnly')}
@@ -272,7 +322,7 @@ const AgentAccessPanel = () => {
                         <button
                           type="button"
                           onClick={() => removeRoot(r.path)}
-                          className="text-xs text-coral hover:underline">
+                          className="text-xs text-coral-600 dark:text-coral-300 hover:underline">
                           {t('settings.agentAccess.remove')}
                         </button>
                       </span>
@@ -287,13 +337,13 @@ const AgentAccessPanel = () => {
                   onChange={e => setNewRootPath(e.target.value)}
                   placeholder={t('settings.agentAccess.pathPlaceholder')}
                   aria-label={t('settings.agentAccess.pathPlaceholder')}
-                  className="flex-1 rounded border border-line px-2 py-1 text-xs font-mono"
+                  className="flex-1 rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 px-2 py-1 text-xs font-mono"
                 />
                 <select
                   value={newRootAccess}
                   onChange={e => setNewRootAccess(e.target.value as TrustedAccess)}
                   aria-label={t('settings.agentAccess.accessLevelLabel')}
-                  className="rounded border border-line px-2 py-1 text-xs">
+                  className="rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 px-2 py-1 text-xs">
                   <option value="read">{t('settings.agentAccess.readOnly')}</option>
                   <option value="readwrite">{t('settings.agentAccess.readWrite')}</option>
                 </select>
@@ -310,23 +360,29 @@ const AgentAccessPanel = () => {
                 prompted for, via the in-chat approval card. Read-only here with
                 a Remove action to re-enable prompting for a tool. */}
             <section className="space-y-2">
-              <h2 className="text-sm font-semibold text-ink">
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
                 {t('settings.agentAccess.alwaysAllow')}
               </h2>
-              <p className="text-xs text-ink-soft">{t('settings.agentAccess.alwaysAllowDesc')}</p>
+              <p className="text-xs text-stone-600 dark:text-neutral-400">
+                {t('settings.agentAccess.alwaysAllowDesc')}
+              </p>
               {autoApprove.length === 0 ? (
-                <p className="text-xs text-ink-soft">{t('settings.agentAccess.alwaysAllowNone')}</p>
+                <p className="text-xs text-stone-600 dark:text-neutral-400">
+                  {t('settings.agentAccess.alwaysAllowNone')}
+                </p>
               ) : (
                 <ul className="space-y-1">
                   {autoApprove.map(tool => (
                     <li
                       key={tool}
-                      className="flex items-center justify-between rounded border border-line px-2 py-1">
-                      <span className="font-mono text-xs text-ink truncate">{tool}</span>
+                      className="flex items-center justify-between rounded border border-stone-200 dark:border-neutral-800 px-2 py-1">
+                      <span className="font-mono text-xs text-stone-900 dark:text-neutral-100 truncate">
+                        {tool}
+                      </span>
                       <button
                         type="button"
                         onClick={() => removeAutoApprove(tool)}
-                        className="text-xs text-coral hover:underline">
+                        className="text-xs text-coral-600 dark:text-coral-300 hover:underline">
                         {t('settings.agentAccess.remove')}
                       </button>
                     </li>
@@ -338,13 +394,17 @@ const AgentAccessPanel = () => {
             {/* Auto-save status — changes persist on selection; no manual save. */}
             <div className="min-h-[1.25rem] text-sm" aria-live="polite">
               {error ? (
-                <span className="text-coral">{error}</span>
+                <span className="text-coral-600 dark:text-coral-300">{error}</span>
               ) : isSaving ? (
-                <span className="text-ink-soft">{t('settings.agentAccess.saving')}</span>
+                <span className="text-stone-600 dark:text-neutral-400">
+                  {t('settings.agentAccess.saving')}
+                </span>
               ) : savedNote ? (
-                <span className="text-sage">✓ {savedNote}</span>
+                <span className="text-sage-700 dark:text-sage-300">✓ {savedNote}</span>
               ) : (
-                <span className="text-ink-soft">{t('settings.agentAccess.changesApply')}</span>
+                <span className="text-stone-600 dark:text-neutral-400">
+                  {t('settings.agentAccess.changesApply')}
+                </span>
               )}
             </div>
           </>

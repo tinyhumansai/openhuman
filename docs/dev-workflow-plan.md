@@ -120,7 +120,7 @@ You are an autonomous developer agent. Your job is to pick a GitHub issue and de
 
 **Not blocked on #2707** — can be done now.
 
-The `cron_add` logic exists in the agent tool (`src/openhuman/tools/impl/cron/add.rs`) but isn't exposed as an RPC controller. Need to add it to `src/openhuman/cron/schemas.rs`.
+The `cron_add` logic exists in the agent tool (`src/openhuman/cron/tools/add.rs`) but isn't exposed as an RPC controller. Need to add it to `src/openhuman/cron/schemas.rs`.
 
 **Changes:**
 - `src/openhuman/cron/schemas.rs` — Add `"add"` controller with inputs: `name`, `schedule`, `prompt`, `session_target`, `model`, `agent_id`, `delivery`, `delete_after_run`

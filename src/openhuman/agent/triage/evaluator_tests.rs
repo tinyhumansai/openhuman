@@ -1,7 +1,7 @@
 use super::*;
-use crate::openhuman::agent::agents::BUILTINS;
 use crate::openhuman::agent::bus::{mock_agent_run_turn, AgentTurnResponse};
 use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+use crate::openhuman::agent_registry::agents::BUILTINS;
 use crate::openhuman::inference::provider::Provider;
 use async_trait::async_trait;
 use serde_json::json;

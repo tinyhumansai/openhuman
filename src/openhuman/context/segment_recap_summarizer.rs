@@ -208,7 +208,9 @@ impl Summarizer for SegmentRecapSummarizer {
 fn conversation_message_approx_bytes(msg: &ConversationMessage) -> usize {
     match msg {
         ConversationMessage::Chat(m) => m.content.len(),
-        ConversationMessage::AssistantToolCalls { text, tool_calls } => {
+        ConversationMessage::AssistantToolCalls {
+            text, tool_calls, ..
+        } => {
             text.as_deref().map_or(0, str::len)
                 + tool_calls
                     .iter()

@@ -76,6 +76,35 @@ pub enum DomainEvent {
         agent_id: String,
         error: String,
     },
+    /// High-level orchestration accepted a child agent for execution.
+    AgentOrchestrationSpawned {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        parent_agent_id: Option<String>,
+    },
+    /// High-level orchestration observed a child agent completion.
+    AgentOrchestrationCompleted {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        elapsed_ms: u64,
+        output_chars: usize,
+        iterations: usize,
+    },
+    /// High-level orchestration observed a child agent failure.
+    AgentOrchestrationFailed {
+        session_id: String,
+        orchestration_id: String,
+        agent_id: String,
+        error: String,
+    },
+    /// High-level orchestration closed or cancelled a child agent.
+    AgentOrchestrationClosed {
+        session_id: String,
+        orchestration_id: String,
+        reason: Option<String>,
+    },
 
     // ── Memory ──────────────────────────────────────────────────────────
     /// The configured embedding provider is unreachable or the requested model
@@ -632,6 +661,42 @@ pub enum DomainEvent {
     /// detection (already redacted by the call site) — surfaced to logs,
     /// never to Sentry or the UI verbatim.
     SessionExpired { source: String, reason: String },
+
+    // ── Task sources ─────────────────────────────────────────────────────
+    /// A task source completed a fetch pass.
+    TaskSourceFetched {
+        source_id: String,
+        provider: String,
+        fetched: usize,
+        routed: usize,
+        skipped: usize,
+    },
+    /// A single external task was ingested and routed onto the board.
+    TaskSourceTaskIngested {
+        source_id: String,
+        provider: String,
+        external_id: String,
+        title: String,
+        urgency: f32,
+    },
+    /// A task source fetch pass failed.
+    TaskSourceFetchFailed {
+        source_id: String,
+        provider: String,
+        error: String,
+    },
+    /// A task-board card needs human plan approval before the dispatcher will
+    /// execute it (emitted when `autonomy.require_task_plan_approval` is on and
+    /// the dispatcher parks a `todo` card at `awaiting_approval`).
+    ///
+    /// Surfacing: the parked card is persisted with status `awaiting_approval`,
+    /// so the kanban board renders it with inline Approve/Reject on the next
+    /// board fetch/refresh — that is the current (poll-based) surface and the
+    /// reason this telemetry event has no dedicated subscriber yet. A realtime
+    /// socket bridge (à la `ApprovalRequested` → `approval_request`) is a
+    /// deliberate follow-up; emitting the event now lets that bridge attach
+    /// without a schema change.
+    TaskPlanAwaitingApproval { card_id: String, thread_id: String },
 }
 
 impl DomainEvent {
@@ -643,7 +708,11 @@ impl DomainEvent {
             | Self::AgentError { .. }
             | Self::SubagentSpawned { .. }
             | Self::SubagentCompleted { .. }
-            | Self::SubagentFailed { .. } => "agent",
+            | Self::SubagentFailed { .. }
+            | Self::AgentOrchestrationSpawned { .. }
+            | Self::AgentOrchestrationCompleted { .. }
+            | Self::AgentOrchestrationFailed { .. }
+            | Self::AgentOrchestrationClosed { .. } => "agent",
 
             Self::EmbeddingModelUnhealthy { .. }
             | Self::MemoryStored { .. }
@@ -719,6 +788,12 @@ impl DomainEvent {
 
             Self::SessionExpired { .. } => "auth",
 
+            Self::TaskSourceFetched { .. }
+            | Self::TaskSourceTaskIngested { .. }
+            | Self::TaskSourceFetchFailed { .. } => "task_sources",
+
+            Self::TaskPlanAwaitingApproval { .. } => "agent",
+
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
 
             Self::McpServerInstalled { .. }
@@ -738,6 +813,10 @@ impl DomainEvent {
             Self::SubagentSpawned { .. } => "SubagentSpawned",
             Self::SubagentCompleted { .. } => "SubagentCompleted",
             Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::AgentOrchestrationSpawned { .. } => "AgentOrchestrationSpawned",
+            Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
+            Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
+            Self::AgentOrchestrationClosed { .. } => "AgentOrchestrationClosed",
             Self::MemoryStored { .. } => "MemoryStored",
             Self::MemoryRecalled { .. } => "MemoryRecalled",
             Self::MemorySyncRequested { .. } => "MemorySyncRequested",
@@ -806,6 +885,10 @@ impl DomainEvent {
             Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
+            Self::TaskSourceFetched { .. } => "TaskSourceFetched",
+            Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
+            Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
+            Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
         }
     }
 
@@ -817,7 +900,13 @@ impl DomainEvent {
             | Self::AgentError { session_id, .. } => Some(session_id.as_str()),
             Self::SubagentSpawned { agent_id, .. }
             | Self::SubagentCompleted { agent_id, .. }
-            | Self::SubagentFailed { agent_id, .. } => Some(agent_id.as_str()),
+            | Self::SubagentFailed { agent_id, .. }
+            | Self::AgentOrchestrationSpawned { agent_id, .. }
+            | Self::AgentOrchestrationCompleted { agent_id, .. }
+            | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),
+            Self::AgentOrchestrationClosed {
+                orchestration_id, ..
+            } => Some(orchestration_id.as_str()),
             Self::ChannelMessageReceived { channel, .. }
             | Self::ChannelConnected { channel, .. }
             | Self::ChannelDisconnected { channel, .. } => Some(channel.as_str()),

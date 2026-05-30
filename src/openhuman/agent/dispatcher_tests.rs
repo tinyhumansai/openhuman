@@ -269,6 +269,7 @@ fn assistant_tool_calls(id: &str) -> ConversationMessage {
             name: "shell".into(),
             arguments: "{}".into(),
         }],
+        reasoning_content: None,
     }
 }
 
@@ -398,7 +399,55 @@ fn assistant_tool_calls_multi(ids: &[&str]) -> ConversationMessage {
                 arguments: "{}".into(),
             })
             .collect(),
+        reasoning_content: None,
     }
+}
+
+#[test]
+fn native_dispatcher_serializes_reasoning_content_for_tool_call_turns() {
+    let dispatcher = NativeToolDispatcher;
+    let history = vec![
+        ConversationMessage::AssistantToolCalls {
+            text: Some("calling tools".into()),
+            tool_calls: vec![crate::openhuman::inference::provider::ToolCall {
+                id: "tc-1".into(),
+                name: "shell".into(),
+                arguments: "{}".into(),
+            }],
+            reasoning_content: Some("chain-of-thought replay blob".into()),
+        },
+        tool_results("tc-1"),
+    ];
+
+    let out = dispatcher.to_provider_messages(&history);
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].role, "assistant");
+
+    let payload: serde_json::Value =
+        serde_json::from_str(&out[0].content).expect("assistant payload should be valid JSON");
+    assert_eq!(
+        payload
+            .get("reasoning_content")
+            .and_then(serde_json::Value::as_str),
+        Some("chain-of-thought replay blob")
+    );
+}
+
+#[test]
+fn native_dispatcher_omits_reasoning_content_when_absent() {
+    let dispatcher = NativeToolDispatcher;
+    let history = vec![assistant_tool_calls("tc-1"), tool_results("tc-1")];
+
+    let out = dispatcher.to_provider_messages(&history);
+    assert_eq!(out.len(), 2);
+    assert_eq!(out[0].role, "assistant");
+
+    let payload: serde_json::Value =
+        serde_json::from_str(&out[0].content).expect("assistant payload should be valid JSON");
+    assert!(
+        payload.get("reasoning_content").is_none(),
+        "reasoning_content should be omitted when absent"
+    );
 }
 
 fn tool_results_multi(ids: &[&str]) -> ConversationMessage {

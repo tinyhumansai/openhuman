@@ -343,6 +343,7 @@ fn sample_thread() -> ConversationThread {
         created_at: "2026-01-01T00:00:00Z".into(),
         parent_thread_id: None,
         labels: vec!["work".to_string()],
+        personality_id: None,
     }
 }
 
@@ -493,6 +494,7 @@ async fn create_thread_with_title(_workspace: &tempfile::TempDir, thread_id: &st
             created_at: "2026-01-01T00:00:00Z".to_string(),
             parent_thread_id: None,
             labels: None,
+            personality_id: None,
         },
     )
     .expect("ensure thread");

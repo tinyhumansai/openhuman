@@ -144,8 +144,23 @@ describe('pickConversationAckFace', () => {
     expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '🤔' })).toBe(
       'confused'
     );
+    // ⚠️ is now cautious (heads-up), not concerned.
     expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '⚠️' })).toBe(
+      'cautious'
+    );
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '❌' })).toBe(
       'concerned'
+    );
+  });
+
+  it('maps proud and curious reaction emojis', () => {
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '🏆' })).toBe('proud');
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '⭐' })).toBe('proud');
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '🔍' })).toBe(
+      'curious'
+    );
+    expect(pickConversationAckFace({ full_response: 'Done', reaction_emoji: '🧐' })).toBe(
+      'curious'
     );
   });
 
@@ -162,6 +177,42 @@ describe('pickConversationAckFace', () => {
     expect(
       pickConversationAckFace({
         full_response: 'Sorry, the provider failed and I cannot continue.',
+        reaction_emoji: null,
+      })
+    ).toBe('concerned');
+  });
+
+  it('maps proud text cues', () => {
+    expect(
+      pickConversationAckFace({
+        full_response: 'Successfully completed all tasks done!',
+        reaction_emoji: null,
+      })
+    ).toBe('proud');
+  });
+
+  it('maps cautious text cues', () => {
+    expect(
+      pickConversationAckFace({
+        full_response: 'Heads up, this might cause unexpected side effects.',
+        reaction_emoji: null,
+      })
+    ).toBe('cautious');
+  });
+
+  it('maps curious text cues', () => {
+    expect(
+      pickConversationAckFace({
+        full_response: 'Interesting — let me check what is happening here.',
+        reaction_emoji: null,
+      })
+    ).toBe('curious');
+  });
+
+  it('concerned takes priority over cautious when both patterns match', () => {
+    expect(
+      pickConversationAckFace({
+        full_response: 'Sorry, this failed. Make sure you try again.',
         reaction_emoji: null,
       })
     ).toBe('concerned');
@@ -364,6 +415,127 @@ describe('useHumanMascot state machine', () => {
       );
     });
     expect(result.current.face).toBe('thinking');
+  });
+
+  it('promotes to proud on chat_done when a tool succeeded in the same turn', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onToolResult?.(
+        fakeEvent({ tool_name: 'run', skill_id: 's', output: 'ok', success: true, round: 1 })
+      );
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Here is the result.',
+          reaction_emoji: null,
+          rounds_used: 2,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('proud');
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
+    expect(result.current.face).toBe('idle');
+  });
+
+  it('uses happy (not proud) when no tool work was done', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Here is the result.',
+          reaction_emoji: null,
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('happy');
+  });
+
+  it('promotes to proud on chat_done when a subagent succeeded in the same turn', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onSubagentDone?.(
+        fakeEvent({
+          tool_name: 'researcher',
+          skill_id: 'sa1',
+          message: 'done',
+          success: true,
+          round: 1,
+        })
+      );
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Research complete.',
+          reaction_emoji: null,
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('proud');
+  });
+
+  it('shows concerned when a subagent fails', () => {
+    const { result } = renderHook(() => useHumanMascot());
+    act(() => {
+      capturedListeners?.onSubagentDone?.(
+        fakeEvent({
+          tool_name: 'researcher',
+          skill_id: 'sa1',
+          message: 'failed',
+          success: false,
+          round: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('concerned');
+  });
+
+  it('resets work tracking on each new turn', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    // Turn 1: tool succeeded → proud
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onToolResult?.(
+        fakeEvent({ tool_name: 'run', skill_id: 's', output: 'ok', success: true, round: 1 })
+      );
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Done.',
+          reaction_emoji: null,
+          rounds_used: 2,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('proud');
+    act(() => {
+      vi.advanceTimersByTime(ACK_FACE_HOLD_MS + 1);
+    });
+    // Turn 2: no tool work → happy
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Here you go.',
+          reaction_emoji: null,
+          rounds_used: 1,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('happy');
   });
 
   it('listening overrides streaming speech deltas', () => {

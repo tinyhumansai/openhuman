@@ -15,6 +15,7 @@ fn call(id: &str) -> ConversationMessage {
             name: "t".into(),
             arguments: "{}".into(),
         }],
+        reasoning_content: None,
     }
 }
 

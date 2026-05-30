@@ -137,10 +137,12 @@ fn sanitizers_and_tool_call_helpers_cover_fallback_paths() {
         ConversationMessage::AssistantToolCalls {
             text: None,
             tool_calls: vec![],
+            reasoning_content: None,
         },
         ConversationMessage::AssistantToolCalls {
             text: None,
             tool_calls: vec![],
+            reasoning_content: None,
         },
     ];
     assert_eq!(Agent::count_iterations(&history), 3);

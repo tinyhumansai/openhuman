@@ -225,8 +225,27 @@ Watch out for Tauri plugins that inject JS by default. `tauri-plugin-opener` shi
 - **Controller schema contract**: shared types in `src/core/types.rs` / `src/core/mod.rs` (`ControllerSchema`, `FieldSchema`, `TypeSchema`).
 - **Domain schema files**: per-domain `schemas.rs` (e.g. `src/openhuman/cron/schemas.rs`), exported from domain `mod.rs`.
 - **Controller-only exposure**: expose features to CLI and JSON-RPC via the controller registry. **Do not** add domain branches in `src/core/cli.rs` / `src/core/jsonrpc.rs`.
-- **Light `mod.rs`**: keep domain `mod.rs` export-focused. Operational code in `ops.rs`, `store.rs`, `types.rs`, etc.
+- **Light `mod.rs`**: keep domain `mod.rs` export-focused. Operational code in `ops.rs`, `store.rs`, `types.rs`, etc. See **Canonical module shape** below for the full per-file contract.
 - **`src/core/`** — Transport only. Modules: `all`, `all_tests`, `auth`, `autocomplete_cli_adapter`, `cli`, `cli_tests`, `dispatch`, `event_bus/`, `jsonrpc`, `jsonrpc_tests`, `legacy_aliases`, `logging`, `memory_cli`, `observability`, `rpc_log`, `shutdown`, `socketio`, `types`, plus `agent_cli`. No heavy domain logic here. (There is no `src/core_server/` — older docs that reference `core_server` mean `src/core/`.)
+
+### Canonical module shape
+
+Each high-level domain under `src/openhuman/<domain>/` should follow this file contract. Only `mod.rs` and tests are universal; the rest exist **only when applicable** — do not create empty placeholder files (e.g. a stateless domain has no `store.rs`, a domain that exposes no agent tools has no `tools.rs`).
+
+| File | When | Role |
+| --- | --- | --- |
+| `mod.rs` | always | Export-focused **only**: module docstring + `mod`/`pub mod` decls + `pub use` re-exports, plus the `all_<domain>_controller_schemas` / `all_<domain>_registered_controllers` pair when RPC-facing. **No business logic, no domain-state statics, no domain `impl` blocks.** |
+| `types.rs` | domain has its own types | Serde domain types. |
+| `store.rs` | domain persists state | Persistence layer. |
+| `ops.rs` | domain has logic / handlers | Business logic + entry points returning `RpcOutcome<T>`. **Canonical handler file** (`ops.rs` is the majority convention; `rpc.rs` is legal only where a domain separates a pure-domain API from ops, e.g. `cron` does `pub use ops as rpc`). |
+| `schemas.rs` | RPC-facing | Controller schemas + `handle_*` fns delegating to `ops.rs` (see **Controller migration checklist**). |
+| `tools.rs` | domain owns agent tools | Domain-owned tool impls live here (+ optional `tools/` submodules), re-exported via `src/openhuman/tools/mod.rs` (see AGENTS.md "Tool ownership rule"). Only genuinely cross-cutting tool families (filesystem, browser/computer, generic system/network) stay in `src/openhuman/tools/impl/`. |
+| `bus.rs` | domain has event subscribers | `EventHandler` impls (see **Event bus**). |
+| tests | new/changed behavior | Inline `#[cfg(test)] mod tests` (small modules) **or** a sibling `<file>_tests.rs` via `#[cfg(test)] #[path = "<file>_tests.rs"] mod tests;` (large suites). Both are legal. |
+
+Two clarifications:
+- **Inline tests do not count against "light `mod.rs`".** A `mod.rs` whose non-test body is pure re-exports is already compliant; moving a large inline suite into a sibling `mod_tests.rs` is tidiness, not a correctness requirement.
+- **Narrow thin-facade exception:** pure dispatch forwarders (pick an implementation and forward — no domain state, no I/O of their own) MAY stay in `mod.rs` when being that facade is the module's whole purpose (e.g. `cwd_jail::spawn` / `spawn_with` / `default_backend`). Justify it in the module docstring.
 
 ### Controller migration checklist
 
@@ -347,7 +366,7 @@ Specify → prove in Rust → prove over RPC → surface in the UI → test.
 - **No dynamic imports** in production `app/src` code — static `import` / `import type` only. No `import()`, `React.lazy(() => import(...))`, `await import(...)`. For heavy optional paths, use a static import and guard the call site with `try/catch` or a runtime check. *Exceptions*: Vitest harness patterns in `*.test.ts` / `__tests__` / `test/setup.ts`; ambient `typeof import('…')` in `.d.ts`; config files (e.g. `tailwind.config.js` JSDoc).
 - **Dual socket sync**: when changing the realtime protocol, keep `socketService` / MCP transport aligned with core socket behavior (see `gitbooks/developing/architecture.md` dual-socket section).
 - **i18n for all UI text**: every user-visible string in `app/src/**` (headings, labels, button text, placeholders, status chips, toasts, error messages, dialog copy) must go through `useT()` from `app/src/lib/i18n/I18nContext`. Hard-coded literals in JSX or `label=`/`placeholder=`/`aria-label=` props are not allowed. Add the key to [`app/src/lib/i18n/en.ts`](app/src/lib/i18n/en.ts) in the same PR — other locales fall back to English. Exceptions: developer-only debug logs, code identifiers, and non-display data (URLs, slugs, technical sentinel values).
-- **i18n chunk files — update ALL locales**: the source-of-truth translation files are the **chunk files** under `app/src/lib/i18n/chunks/` (`en-{1..5}.ts` plus `<locale>-{1..5}.ts` for each locale). When adding or changing keys in `en.ts`, you **must also** add them to the corresponding English chunk file (`en-N.ts`) **and** to the same chunk number for every non-English locale (use the English value as a placeholder — translators fill in later). CI enforces parity via `pnpm i18n:check`; missing keys in any locale chunk will fail the i18n coverage gate. Locales: `ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pt`, `ru`, `zh-CN`.
+- **i18n locale files — update ALL locales**: each locale is a **single flat file** at `app/src/lib/i18n/<locale>.ts` (`en.ts` is the source of truth; the chunked `chunks/<locale>-N.ts` layout was retired). When adding or changing keys in `en.ts`, you **must also** add the same key to every non-English locale file (use the English value as a placeholder — translators fill in later). CI enforces parity via `pnpm i18n:check`; a missing or extra key in any locale will fail the i18n coverage gate. Locales: `ar`, `bn`, `de`, `es`, `fr`, `hi`, `id`, `it`, `ko`, `pl`, `pt`, `ru`, `zh-CN`. **`pnpm i18n:english:check`** ([`scripts/i18n-find-english.ts`](scripts/i18n-find-english.ts)) is a second gate that catches values still rendering English — including *stale* English (translated from an older en string that since changed), which `i18n:check` cannot see because it only compares against the current en value. It uses script-coverage for non-Latin locales and English-only function words for Latin locales, with a reviewed `INTENTIONAL_ENGLISH` allowlist for brand names / commands / paths / units / cognates. Add genuinely-English literals to that allowlist; never use it to silence an untranslated string.
 
 ---
 
