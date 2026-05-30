@@ -11,6 +11,7 @@ import MemoryFreshnessTab from '../components/intelligence/MemoryFreshnessTab';
 import MemoryTimelineTab from '../components/intelligence/MemoryTimelineTab';
 import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
 import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
+import NamespaceOverviewTab from '../components/intelligence/NamespaceOverviewTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
 import {
@@ -36,6 +37,7 @@ type IntelligenceTab =
   | 'freshness'
   | 'timeline'
   | 'path'
+  | 'namespaces'
   | 'council';
 
 export default function Intelligence() {
@@ -120,6 +122,7 @@ export default function Intelligence() {
       { id: 'freshness', label: t('memory.tab.freshness') },
       { id: 'timeline', label: t('memory.tab.timeline') },
       { id: 'path', label: t('memory.tab.path') },
+      { id: 'namespaces', label: t('memory.tab.namespaces') },
       { id: 'council', label: t('memory.tab.council') },
     ];
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
@@ -219,6 +222,8 @@ export default function Intelligence() {
             {activeTab === 'timeline' && <MemoryTimelineTab />}
 
             {activeTab === 'path' && <ConnectionPathTab />}
+
+            {activeTab === 'namespaces' && <NamespaceOverviewTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
           </div>

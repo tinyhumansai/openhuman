@@ -287,6 +287,7 @@ const messages: TranslationMap = {
   'memory.tab.calls': 'Llamadas',
   'memory.tab.diagram': 'Diagram',
   'memory.tab.centrality': 'Centrality',
+  'memory.tab.namespaces': 'Espacios de nombres',
   'memory.tab.timeline': 'Timeline',
   'memory.tab.settings': 'Configuración',
   'memory.analyzeNow': 'Analizar ahora',
@@ -308,6 +309,25 @@ const messages: TranslationMap = {
   'memoryTimeline.busiestCaption': 'Busiest: {period} ({count})',
   'memoryTimeline.undatedNote': '{count} fact(s) have no recorded date.',
   'memoryTimeline.truncated': 'Showing the {shown} most recent of {total} months.',
+  'namespaceOverview.title': 'Resumen de espacios de nombres',
+  'namespaceOverview.intro':
+    'Cómo se distribuye tu conocimiento entre contextos: el número de hechos y entidades distintas registradas en cada espacio de nombres.',
+  'namespaceOverview.loading': 'Agregando espacios de nombres…',
+  'namespaceOverview.errorPrefix': 'No se pudo cargar el gráfico:',
+  'namespaceOverview.retry': 'Reintentar',
+  'namespaceOverview.empty': 'Aún no hay gráfico de conocimiento.',
+  'namespaceOverview.emptyHint':
+    'A medida que el asistente registra hechos entre contextos, cada espacio de nombres aparecerá aquí.',
+  'namespaceOverview.metricNamespaces': 'Espacios de nombres',
+  'namespaceOverview.metricFacts': 'Hechos',
+  'namespaceOverview.metricEntities': 'Entidades',
+  'namespaceOverview.heading': 'Por espacio de nombres',
+  'namespaceOverview.unnamespaced': '(sin espacio de nombres)',
+  'namespaceOverview.factsLabel': '{count} hechos',
+  'namespaceOverview.entitiesLabel': '{count} entidades',
+  'namespaceOverview.entitiesShort': '{count} ent.',
+  'namespaceOverview.truncated':
+    'Mostrando los {shown} principales de {total} espacios de nombres.',
   'graphCentrality.title': 'Centralidad del gráfico de conocimiento',
   'graphCentrality.intro':
     'El PageRank sobre su gráfico de memoria muestra los centros de carga y las entidades conectoras que vinculan grupos que de otro modo estarían separados, que un recuento de frecuencia sin procesar no puede revelar.',
