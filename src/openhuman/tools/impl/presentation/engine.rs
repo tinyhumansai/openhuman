@@ -96,7 +96,7 @@ pub(super) async fn generate(
             })
         }
         Ok(Err(join_err)) => {
-            let err = map_join_error(join_err);
+            let err = map_join_error(join_err, deadline_secs);
             tracing::warn!(
                 target: "presentation",
                 elapsed_ms,
@@ -199,21 +199,25 @@ fn map_engine_failure(failure: EngineFailure) -> PresentationError {
     }
 }
 
-fn map_join_error(err: JoinError) -> PresentationError {
+fn map_join_error(err: JoinError, deadline_secs: u64) -> PresentationError {
     // Cancellation is treated as a timeout-equivalent — the only way
     // the spawn_blocking task gets cancelled in this code path is via
     // the outer `tokio::time::timeout` racing with completion, which we
     // already surface above. A bare panic indicates a `ppt-rs` bug or
     // an OOM on the blocking pool; surface as GenerationFailed so the
     // user sees a structured error and the agent can retry with a
-    // smaller deck.
+    // smaller deck. We thread `deadline_secs` from the call site so a
+    // cancellation-flavoured JoinError carries the real budget the
+    // caller configured, not a confusing 0.
     if err.is_panic() {
         PresentationError::GenerationFailed {
             exit_code: -1,
             stderr_truncated: PresentationError::truncate_stderr("presentation engine panicked"),
         }
     } else {
-        PresentationError::GenerationTimeout { timeout_secs: 0 }
+        PresentationError::GenerationTimeout {
+            timeout_secs: deadline_secs,
+        }
     }
 }
 
