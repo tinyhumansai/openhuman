@@ -4240,7 +4240,8 @@ const messages: TranslationMap = {
   'chat.files.delete.failed': 'No se pudo eliminar el archivo. Inténtalo de nuevo.',
   'chat.files.error.not_desktop': 'Las descargas solo están disponibles en la app de escritorio.',
   'chat.files.error.missing_artifact_id': 'Falta el id del artefacto.',
-  'chat.files.error.missing_artifact_path': 'Falta la ruta del artefacto en la respuesta del núcleo.',
+  'chat.files.error.missing_artifact_path':
+    'Falta la ruta del artefacto en la respuesta del núcleo.',
   'chat.files.error.resolve_failed': 'No se pudo resolver el artefacto. Inténtalo de nuevo.',
   'chat.files.error.download_failed': 'La descarga falló. Inténtalo de nuevo.',
   'chat.files.error.delete_failed': 'No se pudo eliminar el archivo. Inténtalo de nuevo.',

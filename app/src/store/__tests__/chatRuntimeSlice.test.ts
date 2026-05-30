@@ -4,6 +4,7 @@ import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   beginInferenceTurn,
   clearAllChatRuntime,
+  clearArtifactsForThread,
   clearInferenceStatusForThread,
   clearPendingApprovalForThread,
   clearRuntimeForThread,
@@ -19,6 +20,7 @@ import reducer, {
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
+  upsertArtifactFailedForThread,
   upsertArtifactInProgressForThread,
   upsertArtifactReadyForThread,
 } from '../chatRuntimeSlice';
@@ -393,6 +395,40 @@ describe('chatRuntimeSlice', () => {
       expect(noId.artifactsByThread['t1']).toHaveLength(1);
     });
 
+    it('replaces an existing snapshot in place (status promotion in_progress → ready)', () => {
+      // Covers the upsertArtifact "found at idx" branch — the snapshot
+      // must update in place so the inline card flips status without
+      // remounting.
+      let state = reducer(
+        undefined,
+        upsertArtifactInProgressForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+        })
+      );
+      expect(state.artifactsByThread['t1']).toHaveLength(1);
+      expect(state.artifactsByThread['t1'][0].status).toBe('in_progress');
+
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 4096,
+        })
+      );
+      // Same artifactId — count must NOT grow; status flips in place.
+      expect(state.artifactsByThread['t1']).toHaveLength(1);
+      expect(state.artifactsByThread['t1'][0].status).toBe('ready');
+      expect(state.artifactsByThread['t1'][0].path).toBe('artifacts/a.pptx');
+      expect(state.artifactsByThread['t1'][0].sizeBytes).toBe(4096);
+    });
+
     it('coexists with in_progress siblings without disturbing them', () => {
       let state = reducer(
         undefined,
@@ -418,6 +454,88 @@ describe('chatRuntimeSlice', () => {
       expect(next.artifactsByThread['t1']).toHaveLength(1);
       expect(next.artifactsByThread['t1'][0].artifactId).toBe('in-flight');
       expect(next.artifactsByThread['t1'][0].status).toBe('in_progress');
+    });
+  });
+
+  describe('upsertArtifactFailedForThread (#3024)', () => {
+    it('appends a new failed snapshot with the producer-supplied error', () => {
+      const next = reducer(
+        undefined,
+        upsertArtifactFailedForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Bad Deck',
+          error: 'python-pptx not installed',
+        })
+      );
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      const entry = next.artifactsByThread['t1'][0];
+      expect(entry.status).toBe('failed');
+      expect(entry.error).toBe('python-pptx not installed');
+      expect(entry.title).toBe('Bad Deck');
+      expect(entry.kind).toBe('presentation');
+    });
+
+    it('promotes an in-flight snapshot to failed in place (same artifactId)', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactInProgressForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+        })
+      );
+      const next = reducer(
+        seeded,
+        upsertArtifactFailedForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+          error: 'timeout',
+        })
+      );
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      expect(next.artifactsByThread['t1'][0].status).toBe('failed');
+      expect(next.artifactsByThread['t1'][0].error).toBe('timeout');
+    });
+  });
+
+  describe('clearArtifactsForThread (#3024)', () => {
+    it('drops the entire bucket for the named thread', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't2',
+          artifactId: 'b',
+          kind: 'document',
+          title: 'B',
+          path: 'artifacts/b.pdf',
+          sizeBytes: 200,
+        })
+      );
+      const next = reducer(state, clearArtifactsForThread({ threadId: 't1' }));
+      expect(next.artifactsByThread['t1']).toBeUndefined();
+      // Sibling thread is untouched.
+      expect(next.artifactsByThread['t2']).toHaveLength(1);
+    });
+
+    it('is safe to call against an unknown thread (no-op)', () => {
+      const next = reducer(undefined, clearArtifactsForThread({ threadId: 'never-seen' }));
+      expect(next.artifactsByThread).toEqual({});
     });
   });
 });

@@ -133,8 +133,7 @@ export async function downloadArtifact(
   // tolerated), don't append again. Prevents `deck.pptx.pptx` when the
   // persisted title is `deck.pptx` and the caller passes `'pptx'`.
   const titleHasExtension = /\.[^./\\]+$/.test(title);
-  const titleHasSameExt =
-    ext.length > 0 && title.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
+  const titleHasSameExt = ext.length > 0 && title.toLowerCase().endsWith(`.${ext.toLowerCase()}`);
   const filename = ext && !titleHasExtension && !titleHasSameExt ? `${title}.${ext}` : title;
 
   try {

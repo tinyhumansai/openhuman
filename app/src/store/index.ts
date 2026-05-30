@@ -15,8 +15,13 @@ import {
 import { E2E_RESTART_APP_AS_RELOAD, IS_DEV } from '../utils/config';
 import accountsReducer from './accountsSlice';
 import agentProfileReducer from './agentProfileSlice';
+import {
+  type ArtifactsByThread,
+  filterArtifactsForPersist,
+  rehydrateArtifactsFromPersist,
+} from './artifactsPersistFilter';
 import channelConnectionsReducer from './channelConnectionsSlice';
-import chatRuntimeReducer, { type ArtifactSnapshot } from './chatRuntimeSlice';
+import chatRuntimeReducer from './chatRuntimeSlice';
 import companionReducer from './companionSlice';
 import connectivityReducer from './connectivitySlice';
 import coreModeReducer from './coreModeSlice';
@@ -160,21 +165,12 @@ const persistedPersonaReducer = persistReducer(personaPersistConfig, personaRedu
 // in_progress / failed states stay session-scoped via the transform
 // below (a half-written PPT shouldn't reappear as "Generating…" on
 // cold boot).
-type ArtifactsByThread = Record<string, ArtifactSnapshot[]>;
+// Pure filter/rehydrate logic lives in `artifactsPersistFilter.ts` so it
+// can be exercised by unit tests without instantiating redux-persist's
+// transform machinery (which expects a running store).
 const artifactsReadyOnlyTransform = createTransform<ArtifactsByThread, ArtifactsByThread>(
-  (inboundState: ArtifactsByThread | undefined) => {
-    if (!inboundState) return {};
-    const filtered: ArtifactsByThread = {};
-    for (const [threadId, list] of Object.entries(inboundState)) {
-      const readyOnly = list.filter(entry => entry.status === 'ready');
-      if (readyOnly.length > 0) {
-        filtered[threadId] = readyOnly;
-      }
-    }
-    return filtered;
-  },
-  // Outbound (rehydrate): trust storage was already ready-only on write.
-  (outboundState: ArtifactsByThread | undefined) => outboundState ?? {},
+  filterArtifactsForPersist,
+  rehydrateArtifactsFromPersist,
   { whitelist: ['artifactsByThread'] }
 );
 

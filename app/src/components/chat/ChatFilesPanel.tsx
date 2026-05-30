@@ -243,7 +243,9 @@ export default function ChatFilesPanel({ threadId, artifacts, onClose }: ChatFil
       // Prefer the localized headline mapped from `code`; if neither
       // code nor a raw detail came back, fall back to the generic
       // delete-failed copy so the user always sees something.
-      setDeleteError(localizeErrorCode(t, outcome.code, outcome.error) || t('chat.files.delete.failed'));
+      setDeleteError(
+        localizeErrorCode(t, outcome.code, outcome.error) || t('chat.files.delete.failed')
+      );
     }
   };
 

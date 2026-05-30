@@ -237,6 +237,143 @@ describe('ChatFilesPanel', () => {
     expect(screen.queryByText('rpc transport closed')).toBeNull();
   });
 
+  it('passes the title-derived extension to downloadArtifact when title carries one', async () => {
+    const a = readyArtifact('art-1', 'climate-deck.pptx');
+    vi.mocked(downloadArtifact).mockResolvedValueOnce({ ok: true, path: '/d/x.pptx' });
+    const store = mkStore([
+      {
+        threadId: THREAD,
+        artifactId: a.artifactId,
+        kind: a.kind,
+        title: a.title,
+        path: a.path!,
+        sizeBytes: a.sizeBytes!,
+      },
+    ]);
+    render(
+      <Provider store={store}>
+        <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={() => {}} />
+      </Provider>
+    );
+    fireEvent.click(screen.getByTestId('chat-files-download-art-1'));
+    await waitFor(() => {
+      expect(downloadArtifact).toHaveBeenCalledWith('art-1', 'climate-deck.pptx', 'pptx');
+    });
+  });
+
+  it.each([
+    ['document' as const, 'pdf'],
+    ['image' as const, 'png'],
+    ['other' as const, 'bin'],
+  ])(
+    'falls back to the per-kind extension default when the title has none (kind=%s → ext=%s)',
+    async (kind, expectedExt) => {
+      const a: ArtifactSnapshot = {
+        artifactId: 'art-1',
+        kind,
+        title: 'no-extension-title',
+        status: 'ready',
+        path: 'artifacts/x',
+        sizeBytes: 1024,
+        updatedAt: Date.now(),
+      };
+      vi.mocked(downloadArtifact).mockResolvedValueOnce({ ok: true, path: '/d/x' });
+      const store = mkStore([
+        {
+          threadId: THREAD,
+          artifactId: a.artifactId,
+          kind: a.kind,
+          title: a.title,
+          path: a.path!,
+          sizeBytes: a.sizeBytes!,
+        },
+      ]);
+      render(
+        <Provider store={store}>
+          <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={() => {}} />
+        </Provider>
+      );
+      fireEvent.click(screen.getByTestId('chat-files-download-art-1'));
+      await waitFor(() => {
+        expect(downloadArtifact).toHaveBeenCalledWith('art-1', 'no-extension-title', expectedExt);
+      });
+    }
+  );
+
+  it('Esc closes the panel via the keydown handler', async () => {
+    const a = readyArtifact('art-1', 'Climate Deck');
+    const onClose = vi.fn();
+    const store = mkStore([
+      {
+        threadId: THREAD,
+        artifactId: a.artifactId,
+        kind: a.kind,
+        title: a.title,
+        path: a.path!,
+        sizeBytes: a.sizeBytes!,
+      },
+    ]);
+    render(
+      <Provider store={store}>
+        <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={onClose} />
+      </Provider>
+    );
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('Esc while a row is in confirm-delete mode dismisses the confirm, NOT the panel', async () => {
+    const a = readyArtifact('art-1', 'Climate Deck');
+    const onClose = vi.fn();
+    const store = mkStore([
+      {
+        threadId: THREAD,
+        artifactId: a.artifactId,
+        kind: a.kind,
+        title: a.title,
+        path: a.path!,
+        sizeBytes: a.sizeBytes!,
+      },
+    ]);
+    render(
+      <Provider store={store}>
+        <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={onClose} />
+      </Provider>
+    );
+    fireEvent.click(screen.getByTestId('chat-files-delete-art-1'));
+    expect(screen.getByText('Delete this file?')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.queryByText('Delete this file?')).toBeNull();
+  });
+
+  it('pointerdown outside the panel closes it (click-outside)', () => {
+    const a = readyArtifact('art-1', 'Climate Deck');
+    const onClose = vi.fn();
+    const store = mkStore([
+      {
+        threadId: THREAD,
+        artifactId: a.artifactId,
+        kind: a.kind,
+        title: a.title,
+        path: a.path!,
+        sizeBytes: a.sizeBytes!,
+      },
+    ]);
+    render(
+      <Provider store={store}>
+        <ChatFilesPanel threadId={THREAD} artifacts={[a]} onClose={onClose} />
+      </Provider>
+    );
+    // Fire a pointerdown event whose target is outside the panel.
+    const outside = document.createElement('div');
+    document.body.appendChild(outside);
+    const evt = new PointerEvent('pointerdown', { bubbles: true });
+    Object.defineProperty(evt, 'target', { value: outside });
+    document.dispatchEvent(evt);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('Download → typed code surfaces the localized headline in the row error', async () => {
     const a = readyArtifact('art-1', 'Climate Deck');
     vi.mocked(downloadArtifact).mockResolvedValueOnce({

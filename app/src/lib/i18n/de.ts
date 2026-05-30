@@ -4275,7 +4275,8 @@ const messages: TranslationMap = {
   'chat.files.error.not_desktop': 'Downloads sind nur in der Desktop-App verfügbar.',
   'chat.files.error.missing_artifact_id': 'Artefakt-ID fehlt.',
   'chat.files.error.missing_artifact_path': 'Artefaktpfad fehlt in der Core-Antwort.',
-  'chat.files.error.resolve_failed': 'Das Artefakt konnte nicht aufgelöst werden. Bitte erneut versuchen.',
+  'chat.files.error.resolve_failed':
+    'Das Artefakt konnte nicht aufgelöst werden. Bitte erneut versuchen.',
   'chat.files.error.download_failed': 'Download fehlgeschlagen. Bitte erneut versuchen.',
   'chat.files.error.delete_failed': 'Datei konnte nicht gelöscht werden. Bitte erneut versuchen.',
 };
