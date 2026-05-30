@@ -377,14 +377,14 @@ export function MicComposer({
         if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
           onError?.(`${t('mic.permissionDenied')}: ${msg}`);
         } else if (err.name === 'NotFoundError' || err.name === 'OverconstrainedError') {
-          onError?.('Selected microphone is unavailable — try a different device.');
+          onError?.(t('mic.deviceUnavailable'));
         } else if (err.name === 'NotReadableError') {
-          onError?.('Microphone is in use by another application.');
+          onError?.(t('mic.deviceInUse'));
         } else {
-          onError?.(`Microphone error: ${msg}`);
+          onError?.(`${t('mic.error')}: ${msg}`);
         }
       } else {
-        onError?.(`Microphone error: ${msg}`);
+        onError?.(`${t('mic.error')}: ${msg}`);
       }
       return;
     }

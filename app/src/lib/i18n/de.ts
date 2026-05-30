@@ -354,6 +354,29 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Connector – einflussreicher als die Anzahl der Links vermuten lässt',
   'graphCentrality.degreeTitle': '{in} rein · {out} raus',
+  'memory.tab.associations': 'Associations',
+  'entityAssociations.title': 'Entity Associations',
+  'entityAssociations.intro':
+    'Entities that share many of the same connections are associated — even when no single fact links them directly. Jaccard similarity surfaces these hidden pairings.',
+  'entityAssociations.loading': 'Scoring associations…',
+  'entityAssociations.errorPrefix': 'Could not load the graph:',
+  'entityAssociations.retry': 'Retry',
+  'entityAssociations.empty': 'No associations yet.',
+  'entityAssociations.emptyHint':
+    'When entities start sharing connections, the strongest pairings will surface here.',
+  'entityAssociations.namespaceLabel': 'Namespace',
+  'entityAssociations.namespaceAll': 'All namespaces',
+  'entityAssociations.metricEntities': 'Entities',
+  'entityAssociations.metricPairs': 'Associations',
+  'entityAssociations.rankedHeading': 'Strongest associations',
+  'entityAssociations.linkedBadge': 'linked',
+  'entityAssociations.inferredBadge': 'inferred',
+  'entityAssociations.linkedTitle': 'These entities are directly connected.',
+  'entityAssociations.inferredTitle':
+    'No direct link — associated only through shared connections.',
+  'entityAssociations.sharedLabel': '{shared} shared',
+  'entityAssociations.pairTitle': '{jaccard}% similar · {shared} of {union} connections shared',
+  'entityAssociations.truncated': 'Showing {shown} of {total} — strongest first.',
   'memory.tab.freshness': 'Freshness',
   'memoryFreshness.title': 'Knowledge Freshness',
   'memoryFreshness.intro':
@@ -377,6 +400,29 @@ const messages: TranslationMap = {
   'memoryFreshness.statusStale': 'stale',
   'memoryFreshness.ageLabel': '{days}d old',
   'memoryFreshness.recallTitle': '{recall}% recall · half-life {halfLife}d',
+  'memory.tab.path': 'Pfade',
+  'connectionPath.title': 'Verbindungspfad',
+  'connectionPath.intro':
+    'Verfolge die kürzeste Kette von Beziehungen, die zwei beliebige Entitäten verbindet — wie der Graph sie verknüpft, selbst über mehrere Sprünge hinweg.',
+  'connectionPath.loading': 'Graph wird geladen…',
+  'connectionPath.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'connectionPath.retry': 'Erneut versuchen',
+  'connectionPath.namespaceLabel': 'Namespace',
+  'connectionPath.namespaceAll': 'Alle Namespaces',
+  'connectionPath.sourceLabel': 'Von',
+  'connectionPath.targetLabel': 'Nach',
+  'connectionPath.sourcePlaceholder': 'Start-Entität',
+  'connectionPath.targetPlaceholder': 'End-Entität',
+  'connectionPath.prompt': 'Wähle zwei Entitäten, um zu verfolgen, wie sie verbunden sind.',
+  'connectionPath.empty': 'Noch kein Wissensgraph vorhanden.',
+  'connectionPath.emptyHint':
+    'Sobald der Assistent zusammenhängende Fakten erfasst, kannst du hier Verbindungen verfolgen.',
+  'connectionPath.resultHeading': 'Kürzester Pfad',
+  'connectionPath.pathSummary': '{length} Sprung(e) entfernt',
+  'connectionPath.sameMessage': 'Wähle zwei verschiedene Entitäten.',
+  'connectionPath.missingSource': '„{entity}“ ist nicht im Graphen enthalten.',
+  'connectionPath.missingTarget': '„{entity}“ ist nicht im Graphen enthalten.',
+  'connectionPath.noPath': 'Keine Verbindung zwischen „{source}“ und „{target}“ gefunden.',
   'memoryTree.status.title': 'Speicherbaum',
   'memoryTree.status.autoSyncLabel': 'Auto Sync',
   'memoryTree.status.autoSyncDescription':
@@ -463,6 +509,18 @@ const messages: TranslationMap = {
   'onboarding.apiKeys.openaiOauthHint':
     'Verwenden Sie ChatGPT Plus/Pro (Abonnement) oder einen OpenAI API-Schlüssel – nicht beides erforderlich.',
   'onboarding.apiKeys.openaiOauthOpening': 'Anmeldung öffnen…',
+  'onboarding.apiKeys.openaiOauthConnect': 'Mit ChatGPT anmelden',
+  'onboarding.apiKeys.openaiOauthConnected': 'Mit ChatGPT verbunden',
+  'onboarding.apiKeys.openaiOauthCallbackHint':
+    'Fügen Sie nach der Anmeldung die vollständige Weiterleitungs-URL aus Ihrem Browser ein (beginnt mit {url}).',
+  'onboarding.apiKeys.oauthDesktopOnly':
+    'Die ChatGPT-Anmeldung ist nur in der Desktop-App verfügbar.',
+  'onboarding.apiKeys.oauthStartFailed':
+    'ChatGPT-Anmeldung konnte nicht gestartet werden. Versuchen Sie es erneut oder verwenden Sie einen API-Schlüssel.',
+  'onboarding.apiKeys.oauthPasteRedirect':
+    'Fügen Sie nach der Anmeldung die Weiterleitungs-URL aus Ihrem Browser ein.',
+  'onboarding.apiKeys.oauthCompleteFailed':
+    'Die ChatGPT-Anmeldung wurde nicht abgeschlossen. Überprüfen Sie die Weiterleitungs-URL und versuchen Sie es erneut.',
   'onboarding.apiKeys.finishSignIn': 'ChatGPT-Anmeldung abschließen',
   'onboarding.apiKeys.orApiKey': 'oder API-Taste',
   'onboarding.apiKeys.anthropicLabel': 'Anthropic API Schlüssel',
@@ -1768,6 +1826,10 @@ const messages: TranslationMap = {
   'mic.unavailable': 'Mikrofon ist nicht verfügbar',
   'mic.permissionDenied': 'Mikrofonberechtigung verweigert',
   'mic.failedToStartRecorder': 'Der Rekorder konnte nicht gestartet werden',
+  'mic.deviceUnavailable':
+    'Ausgewähltes Mikrofon ist nicht verfügbar – versuchen Sie ein anderes Gerät.',
+  'mic.deviceInUse': 'Das Mikrofon wird von einer anderen Anwendung verwendet.',
+  'mic.error': 'Mikrofonfehler',
   'mic.transcribing': 'Transkribieren...',
   'mic.retryingTranscription': 'Retrying... ({attempt} of {max})',
   'mic.tapToSend': 'Zum Senden tippen',
@@ -4183,6 +4245,10 @@ const messages: TranslationMap = {
   'vault.relative.min': 'vor {count}m',
   'vault.relative.hr': 'vor {count}h',
   'vault.relative.day': 'vor {count}d',
+  'vault.openButton': 'Open',
+  'vault.openSuccess': 'Opened in Obsidian',
+  'vault.openFallback': 'Obsidian not found — opened in file manager',
+  'vault.openError': "Couldn't open vault",
   'whatsapp.title': 'WhatsApp',
   'subconscious.interval.fiveMinutes': '5 Min.',
   'subconscious.interval.tenMinutes': '10 Min.',

@@ -53,6 +53,8 @@ export async function seedBrowserCoreMode(page: Page): Promise<void> {
       window.localStorage.setItem('openhuman_core_mode', 'cloud');
       window.localStorage.setItem('openhuman_core_rpc_url', rpcUrl);
       window.localStorage.setItem('openhuman_core_rpc_token', token);
+      window.localStorage.setItem('openhuman:walkthrough_completed', 'true');
+      window.localStorage.removeItem('openhuman:walkthrough_pending');
     },
     { rpcUrl: CORE_RPC_URL, token: CORE_RPC_TOKEN }
   );
@@ -64,6 +66,8 @@ async function applyBrowserCoreModeInPage(page: Page): Promise<void> {
       window.localStorage.setItem('openhuman_core_mode', 'cloud');
       window.localStorage.setItem('openhuman_core_rpc_url', rpcUrl);
       window.localStorage.setItem('openhuman_core_rpc_token', token);
+      window.localStorage.setItem('openhuman:walkthrough_completed', 'true');
+      window.localStorage.removeItem('openhuman:walkthrough_pending');
     },
     { rpcUrl: CORE_RPC_URL, token: CORE_RPC_TOKEN }
   );

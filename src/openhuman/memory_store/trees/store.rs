@@ -107,6 +107,72 @@ pub fn get_tree(config: &Config, id: &str) -> Result<Option<Tree>> {
     })
 }
 
+/// Defensive upper bound on the number of `?` placeholders per batched
+/// `SELECT … WHERE id IN (?,?,…)` query. SQLite's compile-time
+/// `SQLITE_MAX_VARIABLE_NUMBER` has been ≥ 32 766 since 3.32 — 500 leaves
+/// a ~65× safety margin. The current call-site
+/// (`memory_tree::tree::flush::flush_stale_buffers`) passes one tree_id
+/// per stale L0 buffer, so a typical N (tens to low hundreds across all
+/// connected sources) runs the loop exactly once. The window exists so
+/// future callers with larger id slices do not blow up against a host
+/// with a lower compile-time SQLite cap. No volume reduction: all input
+/// ids in → all matching rows out; the merged `HashMap` is byte-
+/// identical to one giant query.
+const TREES_MAX_FETCH_BATCH: usize = 500;
+
+/// Fetch many trees by id in a single SQL round-trip per
+/// [`TREES_MAX_FETCH_BATCH`] window. Replaces the per-id `get_tree`
+/// loop inside paths like the cron-driven `flush_stale_buffers`, where
+/// the previous code did one `SELECT … WHERE id = ?` per stale buffer.
+/// Missing ids are silently absent from the map so callers can preserve
+/// the existing "row missing → warn-and-skip" contract without an extra
+/// `Ok(None)` sentinel per id.
+pub fn get_trees_batch(config: &Config, tree_ids: &[String]) -> Result<HashMap<String, Tree>> {
+    if tree_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    log::debug!(
+        "[tree::store] get_trees_batch: ids={} max_batch={TREES_MAX_FETCH_BATCH}",
+        tree_ids.len()
+    );
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, Tree> = HashMap::with_capacity(tree_ids.len());
+        for window in tree_ids.chunks(TREES_MAX_FETCH_BATCH) {
+            // SAFETY (SQL injection): only the *count* of placeholders is
+            // interpolated into the query string — `?1,?2,…` are numbered
+            // bind slots, never the id values. Every id is bound via typed
+            // `rusqlite::ToSql` params below; nothing user-controlled is
+            // ever formatted into `sql`. Do NOT inline id values here.
+            let placeholders = (1..=window.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT id, kind, scope, root_id, max_level, status,
+                        created_at_ms, last_sealed_at_ms
+                   FROM mem_tree_trees
+                  WHERE id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                window.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(params.as_slice(), row_to_tree)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("Failed to collect trees batch")?;
+            for t in rows {
+                out.insert(t.id.clone(), t);
+            }
+        }
+        log::debug!(
+            "[tree::store] get_trees_batch: requested={} found={}",
+            tree_ids.len(),
+            out.len()
+        );
+        Ok(out)
+    })
+}
+
 /// List every tree of a given kind. Used by the global digest to enumerate
 /// source trees, and by diagnostics. Rows come back ordered by `created_at_ms`
 /// ASC so callers see a stable iteration order.

@@ -288,6 +288,51 @@ fn list_stale_buffers_orders_by_age() {
     assert_eq!(only_oldest[0].tree_id, "tree-1");
 }
 
+// ── get_trees_batch ────────────────────────────────────────────────────
+//
+// Same shape as `chunks::store::get_chunks_batch` /
+// `score::store::get_scores_batch`: present ids decode through the same
+// `row_to_tree` path as the per-id `get_tree` and land in a `HashMap`
+// keyed by id; missing ids are silently absent so the
+// `flush_stale_buffers` orphan-buffer warn-and-skip path keeps working
+// without an extra Ok(None) sentinel per id.
+
+#[test]
+fn get_trees_batch_returns_present_ids_in_map() {
+    let (_tmp, cfg) = test_config();
+    let a = sample_tree("tree-a", "slack:#eng");
+    let b = sample_tree("tree-b", "slack:#design");
+    insert_tree(&cfg, &a).unwrap();
+    insert_tree(&cfg, &b).unwrap();
+
+    let ids = vec!["tree-a".to_string(), "tree-b".to_string()];
+    let map = get_trees_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 2);
+    // Each decoded row must match the per-id `get_tree` path bit-for-bit
+    // — same `row_to_tree` decoder under the hood, so the structs are
+    // equal including the parsed `kind` / `status` enums.
+    assert_eq!(map.get("tree-a").unwrap(), &a);
+    assert_eq!(map.get("tree-b").unwrap(), &b);
+}
+
+#[test]
+fn get_trees_batch_empty_input_and_missing_ids() {
+    // Empty input: empty map (no SQL issued).
+    let (_tmp, cfg) = test_config();
+    let empty = get_trees_batch(&cfg, &[]).unwrap();
+    assert!(empty.is_empty());
+
+    // Missing ids: silently absent so `flush_stale_buffers` can warn
+    // + skip without an extra `Ok(None)` sentinel per id.
+    let a = sample_tree("tree-a", "slack:#eng");
+    insert_tree(&cfg, &a).unwrap();
+    let ids = vec!["tree-a".to_string(), "ghost:no-such".to_string()];
+    let map = get_trees_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get("tree-a").unwrap(), &a);
+    assert!(map.get("ghost:no-such").is_none());
+}
+
 // ── get_summaries_batch ────────────────────────────────────────────────
 //
 // Same shape as `chunks::store::get_chunks_batch` /
