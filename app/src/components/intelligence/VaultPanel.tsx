@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
+import { openUrl, revealPath } from '../../utils/openUrl';
 import {
   type CoreVault,
   type CoreVaultSyncState,
@@ -16,7 +17,6 @@ import {
   openhumanVaultSync,
   openhumanVaultSyncStatus,
 } from '../../utils/tauriCommands/vault';
-import { openUrl, revealPath } from '../../utils/openUrl';
 
 /** How often the UI re-polls for sync progress while a sync is running (ms). */
 const SYNC_POLL_INTERVAL_MS = 1_500;
@@ -264,8 +264,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
   return (
     <div
       className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm"
-      data-testid="vault-panel"
-    >
+      data-testid="vault-panel">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-stone-800 dark:text-neutral-100">
@@ -280,8 +279,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                      px-3 py-1.5 text-xs font-semibold text-primary-700 dark:text-primary-300 shadow-sm
                      transition-colors hover:bg-primary-50 dark:hover:bg-primary-500/15
                      focus:outline-none focus:ring-2 focus:ring-primary-200"
-          data-testid="vault-add-toggle"
-        >
+          data-testid="vault-add-toggle">
           {showForm ? t('common.cancel') : t('vault.add')}
         </button>
       </div>
@@ -290,8 +288,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
         <form
           onSubmit={handleCreate}
           className="mb-3 space-y-2 rounded-md border border-stone-100 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3"
-          data-testid="vault-add-form"
-        >
+          data-testid="vault-add-form">
           <label className="block">
             <span className="text-xs font-medium text-stone-600 dark:text-neutral-300">
               {t('vault.name')}
@@ -339,8 +336,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
               disabled={creating}
               className="rounded-md bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white
                          shadow-sm transition-colors hover:bg-primary-600
-                         disabled:cursor-not-allowed disabled:opacity-50"
-            >
+                         disabled:cursor-not-allowed disabled:opacity-50">
               {creating ? t('vault.creating') : t('vault.create')}
             </button>
           </div>
@@ -371,8 +367,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                   </div>
                   <div
                     className="truncate font-mono text-[11px] text-stone-500 dark:text-neutral-400"
-                    title={v.root_path}
-                  >
+                    title={v.root_path}>
                     {v.root_path}
                   </div>
                   <div className="mt-0.5 text-[11px] text-stone-400 dark:text-neutral-500">
@@ -393,8 +388,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                     className="rounded-md border border-stone-300 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
                                font-semibold text-stone-700 dark:text-neutral-200 shadow-sm transition-colors
                                hover:bg-stone-50 dark:hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
-                    data-testid="vault-open"
-                  >
+                    data-testid="vault-open">
                     {t('vault.openButton')}
                   </button>
                   <button
@@ -403,8 +397,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                     disabled={state === 'sync' || state === 'remove'}
                     className="rounded-md border border-primary-300 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
                                font-semibold text-primary-700 dark:text-primary-300 shadow-sm transition-colors
-                               hover:bg-primary-50 dark:hover:bg-primary-500/15 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
+                               hover:bg-primary-50 dark:hover:bg-primary-500/15 disabled:cursor-not-allowed disabled:opacity-50">
                     {state === 'sync'
                       ? (syncProgress[v.id]?.total ?? 0) > 0
                         ? t('vault.syncingProgress')
@@ -419,8 +412,7 @@ export function VaultPanel({ onToast }: VaultPanelProps) {
                     disabled={state === 'sync' || state === 'remove'}
                     className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-white dark:bg-neutral-900 px-3 py-1.5 text-xs
                                font-semibold text-coral-700 dark:text-coral-300 shadow-sm transition-colors
-                               hover:bg-coral-50 dark:hover:bg-coral-500/10 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
+                               hover:bg-coral-50 dark:hover:bg-coral-500/10 disabled:cursor-not-allowed disabled:opacity-50">
                     {state === 'remove' ? t('vault.removing') : t('common.remove')}
                   </button>
                 </div>
