@@ -98,9 +98,9 @@ const HAPPY_TEXT_RE = /\b(done|completed|fixed|success|successful|ready|all set|
 const PROUD_TEXT_RE =
   /\b(successfully completed|all tasks? (done|finished)|mission accomplished|everything (works?|is working)|all (checks?|tests?) pass(ed)?)\b/i;
 const CURIOUS_TEXT_RE =
-  /\b(interesting|fascinating|curious(ly)?|let me (check|look|investigate)|i('ll)? (look|check) into|actually|turns? out)\b/i;
+  /\b(interesting|fascinating|curious(ly)?|let me (check|look|investigate)|i('ll)? (look|check) into|turns? out to be)\b/i;
 const CAUTIOUS_TEXT_RE =
-  /\b(be careful|warning|caution|heads? up|please note|make sure|important(ly)?|note that|worth (noting|mentioning))\b/i;
+  /\b(be careful|warning|caution|heads? up|please note|make sure|important to note|note that|worth (noting|mentioning))\b/i;
 
 /**
  * Map conversation-level meaning into the short acknowledgement face that
