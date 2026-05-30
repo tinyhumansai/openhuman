@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::io::AsyncWriteExt;
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 
 use super::bootstrap::ResolvedPython;
 use super::process::{spawn_stdio_process, PythonLaunchSpec};
@@ -59,45 +59,58 @@ pub async fn run_python_script_to_completion(
     stdin: Option<Vec<u8>>,
     deadline: Duration,
 ) -> Result<PythonRunOutput> {
+    let started_at = Instant::now();
     let mut child = spawn_stdio_process(resolved, spec)
         .with_context(|| format!("spawning python subprocess for {:?}", spec.script_path))?;
 
+    let timeout_err = || PythonRunTimeout {
+        script: spec.script_path.display().to_string(),
+        timeout_secs: deadline.as_secs(),
+    };
+
     if let Some(payload) = stdin {
         if let Some(mut stdin_handle) = child.stdin.take() {
-            stdin_handle.write_all(&payload).await.with_context(|| {
-                format!(
-                    "writing stdin payload to python subprocess for {:?}",
-                    spec.script_path
-                )
-            })?;
-            stdin_handle.shutdown().await.with_context(|| {
-                format!(
-                    "closing stdin pipe to python subprocess for {:?}",
-                    spec.script_path
-                )
-            })?;
+            let remaining = deadline.saturating_sub(started_at.elapsed());
+            timeout(remaining, stdin_handle.write_all(&payload))
+                .await
+                .map_err(|_| timeout_err())?
+                .with_context(|| {
+                    format!(
+                        "writing stdin payload to python subprocess for {:?}",
+                        spec.script_path
+                    )
+                })?;
+            let remaining = deadline.saturating_sub(started_at.elapsed());
+            timeout(remaining, stdin_handle.shutdown())
+                .await
+                .map_err(|_| timeout_err())?
+                .with_context(|| {
+                    format!(
+                        "closing stdin pipe to python subprocess for {:?}",
+                        spec.script_path
+                    )
+                })?;
         }
     } else if let Some(mut stdin_handle) = child.stdin.take() {
         // Always close stdin so scripts that `sys.stdin.read()` don't
-        // deadlock waiting for a payload that's never coming.
-        let _ = stdin_handle.shutdown().await;
+        // deadlock waiting for a payload that's never coming. Bounded
+        // by the same deadline so a stuck pipe can't strand us.
+        let remaining = deadline.saturating_sub(started_at.elapsed());
+        let _ = timeout(remaining, stdin_handle.shutdown()).await;
     }
 
+    let remaining = deadline.saturating_sub(started_at.elapsed());
     let output_future = child.wait_with_output();
-    let output = match timeout(deadline, output_future).await {
+    let output = match timeout(remaining, output_future).await {
         Ok(result) => result
             .with_context(|| format!("waiting on python subprocess for {:?}", spec.script_path))?,
         Err(_) => {
-            let timeout_err = PythonRunTimeout {
-                script: spec.script_path.display().to_string(),
-                timeout_secs: deadline.as_secs(),
-            };
             tracing::warn!(
                 script = %spec.script_path.display(),
                 timeout_secs = deadline.as_secs(),
                 "[runtime_python::run] python subprocess exceeded deadline — killed"
             );
-            return Err(timeout_err.into());
+            return Err(timeout_err().into());
         }
     };
 
