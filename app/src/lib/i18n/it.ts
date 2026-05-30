@@ -1733,7 +1733,8 @@ const messages: TranslationMap = {
   'mic.unavailable': 'Microfono non disponibile',
   'mic.permissionDenied': 'Permesso microfono negato',
   'mic.failedToStartRecorder': 'Avvio del registratore fallito',
-  'mic.deviceUnavailable': 'Il microfono selezionato non è disponibile — prova un altro dispositivo.',
+  'mic.deviceUnavailable':
+    'Il microfono selezionato non è disponibile — prova un altro dispositivo.',
   'mic.deviceInUse': "Il microfono è in uso da un'altra applicazione.",
   'mic.error': 'Errore del microfono',
   'mic.transcribing': 'Trascrizione...',
