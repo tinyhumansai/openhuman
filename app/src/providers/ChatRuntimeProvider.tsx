@@ -10,6 +10,8 @@ import {
   type ChatIterationStartEvent,
   type ChatSegmentEvent,
   type ChatSubagentDoneEvent,
+  type ChatSubagentTextDeltaEvent,
+  type ChatSubagentThinkingDeltaEvent,
   type ChatTaskBoardUpdatedEvent,
   type ChatToolCallEvent,
   type ChatToolResultEvent,
@@ -19,12 +21,15 @@ import {
 } from '../services/chatService';
 import { store } from '../store';
 import {
+  appendSubagentStreamDelta,
   clearInferenceStatusForThread,
   clearPendingApprovalForThread,
   clearStreamingAssistantForThread,
   endInferenceTurn,
   markInferenceTurnStreaming,
   recordChatTurnUsage,
+  recordSubagentTranscriptTool,
+  resolveSubagentTranscriptTool,
   setInferenceStatusForThread,
   setPendingApprovalForThread,
   setStreamingAssistantForThread,
@@ -297,7 +302,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
     const findPendingDelegationContext = (
       entries: ToolTimelineEntry[],
       round: number
-    ): { sourceToolName?: string; prompt?: string } => {
+    ): { sourceToolName?: string; prompt?: string; spawnEntryId?: string } => {
       for (let i = entries.length - 1; i >= 0; i -= 1) {
         const entry = entries[i];
         if (entry.status !== 'running' || entry.round !== round) continue;
@@ -305,6 +310,7 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           return {
             sourceToolName: entry.name,
             prompt: entry.detail ?? promptFromArgsBuffer(entry.argsBuffer),
+            spawnEntryId: entry.id,
           };
         }
       }
@@ -456,11 +462,19 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
 
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
         const pendingContext = findPendingDelegationContext(existing, event.round);
+        // Collapse the parent's `spawn_subagent`/`delegate_*` tool-call row into
+        // the subagent row so the timeline shows ONE entry per delegation
+        // instead of "Research" (the tool call) + "Researching" (the child).
+        // The tool call's prompt is carried onto the subagent as the parent's
+        // delegation message, which the drawer renders as the opening turn.
+        const base = pendingContext.spawnEntryId
+          ? existing.filter(e => e.id !== pendingContext.spawnEntryId)
+          : existing;
         dispatch(
           setToolTimelineForThread({
             threadId: event.thread_id,
             entries: [
-              ...existing,
+              ...base,
               decorateEntry({
                 id: `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`,
                 name: `subagent:${event.tool_name}`,
@@ -471,9 +485,12 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
                 subagent: {
                   taskId: event.skill_id,
                   agentId: event.tool_name,
+                  workerThreadId: event.subagent?.worker_thread_id,
                   mode: event.subagent?.mode,
                   dedicatedThread: event.subagent?.dedicated_thread,
+                  prompt: pendingContext.prompt,
                   toolCalls: [],
+                  transcript: [],
                 },
               }),
             ],
@@ -562,6 +579,17 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           },
         };
         dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
+        // Mirror the call into the ordered transcript so the drawer renders
+        // it right after the text that triggered it (chronological view).
+        dispatch(
+          recordSubagentTranscriptTool({
+            threadId: event.thread_id,
+            rowId,
+            callId: event.tool_call_id,
+            toolName: event.tool_name,
+            iteration: event.subagent?.child_iteration,
+          })
+        );
       },
       onSubagentToolResult: event => {
         const taskId = event.subagent?.task_id ?? event.skill_id;
@@ -585,6 +613,44 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
         const next = [...existing];
         next[idx] = { ...entry, subagent: { ...entry.subagent, toolCalls: updatedCalls } };
         dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries: next }));
+        dispatch(
+          resolveSubagentTranscriptTool({
+            threadId: event.thread_id,
+            rowId,
+            callId: event.tool_call_id,
+            success: event.success,
+            elapsedMs: event.subagent?.elapsed_ms,
+            outputChars: event.subagent?.output_chars,
+          })
+        );
+      },
+      onSubagentTextDelta: (event: ChatSubagentTextDeltaEvent) => {
+        const taskId = event.subagent?.task_id;
+        const agentId = event.subagent?.agent_id;
+        if (!taskId || !agentId || !event.delta) return;
+        dispatch(
+          appendSubagentStreamDelta({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${taskId}:${agentId}`,
+            kind: 'text',
+            delta: event.delta,
+            iteration: event.subagent?.child_iteration,
+          })
+        );
+      },
+      onSubagentThinkingDelta: (event: ChatSubagentThinkingDeltaEvent) => {
+        const taskId = event.subagent?.task_id;
+        const agentId = event.subagent?.agent_id;
+        if (!taskId || !agentId || !event.delta) return;
+        dispatch(
+          appendSubagentStreamDelta({
+            threadId: event.thread_id,
+            rowId: `${event.thread_id}:subagent:${taskId}:${agentId}`,
+            kind: 'thinking',
+            delta: event.delta,
+            iteration: event.subagent?.child_iteration,
+          })
+        );
       },
       onSegment: (event: ChatSegmentEvent) => {
         const eventKey = `segment:${event.thread_id}:${event.request_id}:${event.segment_index}`;

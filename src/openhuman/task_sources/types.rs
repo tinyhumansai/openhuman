@@ -165,6 +165,12 @@ pub struct TaskSource {
     pub interval_secs: u64,
     pub target: SourceTarget,
     pub max_tasks_per_fetch: u32,
+    /// Static executor routing (G7): a personality / skill / agent handle that
+    /// every card from this source is pre-assigned to, so the dispatcher runs
+    /// it deterministically without the LLM router. `None` leaves cards
+    /// unassigned (router / poller decides).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigned_executor: Option<String>,
     pub created_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_fetch_at: Option<DateTime<Utc>>,
@@ -191,6 +197,8 @@ pub struct TaskSourcePatch {
     pub max_tasks_per_fetch: Option<u32>,
     #[serde(default)]
     pub connection_id: Option<String>,
+    #[serde(default)]
+    pub assigned_executor: Option<String>,
 }
 
 /// An enriched, agent-ready task produced by [`super::enrich`].
@@ -318,6 +326,7 @@ mod tests {
             interval_secs: 1800,
             target: SourceTarget::TodoOnly,
             max_tasks_per_fetch: 25,
+            assigned_executor: None,
             created_at: DateTime::parse_from_rfc3339("2025-01-01T00:00:00Z")
                 .unwrap()
                 .with_timezone(&Utc),

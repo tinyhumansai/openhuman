@@ -22,8 +22,13 @@ import type {
 import { isLocalSessionToken } from '../../utils/localSession';
 import { openUrl } from '../../utils/openUrl';
 import { restartCoreProcess } from '../../utils/tauriCommands/core';
-import ChannelFieldInput from './ChannelFieldInput';
-import ChannelStatusBadge from './ChannelStatusBadge';
+import {
+  ChannelAuthFields,
+  ChannelAuthModeCard,
+  ChannelConfigError,
+  ChannelConnectActions,
+  useChannelAuthFormState,
+} from './channelConfigPrimitives';
 import DiscordServerChannelPicker from './DiscordServerChannelPicker';
 
 const log = debug('channels:discord');
@@ -44,35 +49,15 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
     spec => !isLocalSession || (spec.mode !== 'managed_dm' && spec.mode !== 'oauth')
   );
 
-  const [busyKeys, setBusyKeys] = useState<Record<string, boolean>>({});
-  const [fieldValues, setFieldValues] = useState<Record<string, Record<string, string>>>({});
   const [clearMemoryOnDisconnect, setClearMemoryOnDisconnect] = useState<Record<string, boolean>>(
     {}
   );
-  const [error, setError] = useState<string | null>(null);
+  const { busyKeys, fieldValues, error, setError, runBusy, updateField } =
+    useChannelAuthFormState();
   /** Pending link tokens, keyed by compositeKey (discord:managed_dm). Only present while polling. */
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const pollAbort = useRef<AbortController | null>(null);
-
-  const runBusy = useCallback(async (key: string, task: () => Promise<void>) => {
-    setBusyKeys(prev => ({ ...prev, [key]: true }));
-    setError(null);
-    try {
-      await task();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyKeys(prev => ({ ...prev, [key]: false }));
-    }
-  }, []);
-
-  const updateField = useCallback((compositeKey: string, fieldKey: string, value: string) => {
-    setFieldValues(prev => ({
-      ...prev,
-      [compositeKey]: { ...(prev[compositeKey] ?? {}), [fieldKey]: value },
-    }));
-  }, []);
 
   // Stop polling on unmount
   useEffect(() => {
@@ -257,7 +242,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         }
       });
     },
-    [dispatch, fieldValues, runBusy, startLinkPolling, t]
+    [dispatch, fieldValues, runBusy, setError, startLinkPolling, t]
   );
 
   const handleDisconnect = useCallback(
@@ -287,11 +272,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
 
   return (
     <div className="space-y-3">
-      {error && (
-        <div className="rounded-lg border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300">
-          {error}
-        </div>
-      )}
+      {error && <ChannelConfigError message={error} />}
 
       {isLocalSession && visibleAuthModes.length !== definition.auth_modes.length && (
         <div className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 px-4 py-3 text-sm text-stone-700 dark:text-neutral-200">
@@ -306,43 +287,28 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
         const busy = busyKeys[compositeKey] ?? false;
 
         return (
-          <div
+          <ChannelAuthModeCard
             key={spec.mode}
-            className="rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50 dark:bg-neutral-800/60 p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-stone-900 dark:text-neutral-100">
-                  {t(`channels.authMode.${spec.mode}`)}
-                </p>
-                <p className="text-xs text-stone-500 dark:text-neutral-400 mt-1">
-                  {t(`channels.discord.authMode.${spec.mode}.description`)}
-                </p>
-                {connection?.lastError && (
-                  <p className="text-xs text-coral-600 mt-1">{connection.lastError}</p>
-                )}
-              </div>
-              <ChannelStatusBadge status={status} />
-            </div>
-
+            title={t(`channels.authMode.${spec.mode}`)}
+            description={t(`channels.discord.authMode.${spec.mode}.description`)}
+            status={status}
+            lastError={connection?.lastError}>
             {/* Field inputs — only for non-managed modes */}
             {spec.fields.length > 0 && status !== 'connected' && (
-              <div className="mt-3 space-y-2">
-                {spec.fields.map(field => (
-                  <ChannelFieldInput
-                    key={field.key}
-                    field={{
-                      ...field,
-                      label: t(`channels.discord.fields.${field.key}.label`, field.label),
-                      placeholder: field.placeholder
-                        ? t(`channels.discord.fields.${field.key}.placeholder`, field.placeholder)
-                        : field.placeholder,
-                    }}
-                    value={fieldValues[compositeKey]?.[field.key] ?? ''}
-                    onChange={val => updateField(compositeKey, field.key, val)}
-                    disabled={busy}
-                  />
-                ))}
-              </div>
+              <ChannelAuthFields
+                spec={spec}
+                compositeKey={compositeKey}
+                fieldValues={fieldValues}
+                onChange={updateField}
+                disabled={busy}
+                mapField={field => ({
+                  ...field,
+                  label: t(`channels.discord.fields.${field.key}.label`, field.label),
+                  placeholder: field.placeholder
+                    ? t(`channels.discord.fields.${field.key}.placeholder`, field.placeholder)
+                    : field.placeholder,
+                })}
+              />
             )}
 
             {/* Token card — managed_dm connecting state */}
@@ -399,13 +365,15 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                   <p className="text-xs text-sage-700 dark:text-sage-300 font-medium">
                     {t('channels.discord.accountLinked')}
                   </p>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => handleDisconnect(spec.mode)}
-                    className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
-                    {t('accounts.disconnect')}
-                  </button>
+                  <ChannelConnectActions
+                    busy={busy}
+                    status={status}
+                    connectLabel={t('channels.discord.connect')}
+                    disconnectLabel={t('accounts.disconnect')}
+                    onDisconnect={() => handleDisconnect(spec.mode)}
+                    showConnect={false}
+                    className="mt-0"
+                  />
                 </div>
               </>
             ) : /* Connect / Disconnect buttons for all other modes and states */
@@ -434,24 +402,14 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                     </span>
                   </label>
                 )}
-                <div className="mt-3 flex gap-2">
-                  {status !== 'connected' && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => handleConnect(spec)}
-                      className="rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-600 disabled:opacity-50">
-                      {t('channels.discord.connect')}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={busy || status === 'disconnected'}
-                    onClick={() => handleDisconnect(spec.mode)}
-                    className="rounded-lg border border-stone-200 dark:border-neutral-800 px-3 py-1.5 text-xs font-medium text-stone-600 dark:text-neutral-300 hover:border-stone-300 dark:hover:border-neutral-700 disabled:opacity-50">
-                    {t('accounts.disconnect')}
-                  </button>
-                </div>
+                <ChannelConnectActions
+                  busy={busy}
+                  status={status}
+                  connectLabel={t('channels.discord.connect')}
+                  disconnectLabel={t('accounts.disconnect')}
+                  onConnect={() => handleConnect(spec)}
+                  onDisconnect={() => handleDisconnect(spec.mode)}
+                />
               </>
             ) : null}
 
@@ -467,7 +425,7 @@ const DiscordConfig = ({ definition }: DiscordConfigProps) => {
                 onChannelSelected={channelId => updateField(compositeKey, 'channel_id', channelId)}
               />
             )}
-          </div>
+          </ChannelAuthModeCard>
         );
       })}
     </div>

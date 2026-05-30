@@ -1846,6 +1846,9 @@ fn register_domain_subscribers(
         // Task-sources proactive ingestion: connection-created hook + poll.
         crate::openhuman::task_sources::bus::register_task_sources_subscriber();
         crate::openhuman::task_sources::start_periodic_poll();
+        // Board poller: dispatch the highest-urgency `todo` card on the
+        // task-sources board (catch-all for cards without a proactive trigger).
+        crate::openhuman::agent::task_dispatcher::start_board_poller();
         // Seed memory_sources with active Composio connections so the
         // user sees their connected integrations as memory sources by
         // default. Best-effort: failure is logged but does not block startup.
@@ -2024,36 +2027,19 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         })
         .unwrap_or(true)
     {
-        // Read the active bearer from the in-memory auth subsystem instead of
-        // OPENHUMAN_CORE_TOKEN — same value (init_rpc_token / init_rpc_token_with_value
-        // both populate the OnceLock that get_rpc_token reads), no env crossing.
-        // Init ordering: run_server_inner seeds the auth subsystem above
-        // (line ~1340) before bootstrap_core_runtime runs, so the bearer is
-        // always present here when supplied.
-        let (session_id, ephemeral) = match crate::core::auth::get_rpc_token() {
-            Some(token) => (token.to_string(), false),
-            None => (format!("session-{}", uuid::Uuid::new_v4()), true),
-        };
-        if ephemeral {
-            log::debug!(
-                "[runtime] auth bearer uninitialized; generated ephemeral session_id={session_id} \
-                 for approval gate — `approval_list_pending` is session-agnostic so pending rows \
-                 from prior launches will still be visible, but per-session audit grouping will not \
-                 correlate across restarts"
-            );
-        }
+        // Per-launch correlation token for the approval gate. This is
+        // a fresh UUID every boot — it is NOT derived from the
+        // JSON-RPC bearer (`OPENHUMAN_CORE_TOKEN` / the in-memory
+        // auth subsystem) and carries no credential material, so it
+        // is safe to log, persist, and surface in audit events.
+        // `approval_list_pending` is session-agnostic so pending rows
+        // from prior launches remain visible after restart; only the
+        // per-session audit grouping changes across launches.
+        let session_id = format!("session-{}", uuid::Uuid::new_v4());
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
-        // Never log a token-derived session_id: when OPENHUMAN_CORE_TOKEN is set,
-        // session_id IS that secret. Only the generated ephemeral UUID is safe to
-        // print.
-        let session_label = if ephemeral {
-            session_id.as_str()
-        } else {
-            "<redacted>"
-        };
         log::info!(
-            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_label}) — \
+            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — \
              Prompt-class external-effect tool calls park for approval in interactive chat turns"
         );
         // Bridge ApprovalRequested → `approval_request` web socket event. This MUST

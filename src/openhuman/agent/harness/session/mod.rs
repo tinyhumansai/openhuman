@@ -20,11 +20,14 @@
 //! `crate::openhuman::agent`, which re-exports them from this module.
 //! The child files are an implementation detail.
 
+mod agent_tool_exec;
 mod builder;
 pub mod migration;
 mod runtime;
 pub(crate) mod transcript;
 mod turn;
+mod turn_checkpoint;
+mod turn_engine_adapter;
 mod types;
 
 pub use migration::{migrate_session_layout_if_needed, MigrationOutcome};

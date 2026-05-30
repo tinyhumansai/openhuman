@@ -836,8 +836,8 @@ describe('DevWorkflowPanel', () => {
     renderWithProviders(<Panel />);
 
     await waitFor(() => {
-      // Schedule preset matches — should show the label key
-      expect(screen.getByText('settings.devWorkflow.schedule.every30min')).toBeInTheDocument();
+      // Schedule preset matches — should show the shared label key (migrated to cron namespace)
+      expect(screen.getByText('settings.cron.schedule.every30min')).toBeInTheDocument();
     });
   });
 

@@ -1,0 +1,155 @@
+id = "orchestrator"
+display_name = "Orchestrator"
+when_to_use = "Staff Engineer — routes, judges quality, synthesises. Never writes code itself. You should not normally spawn another orchestrator from inside one."
+temperature = 0.4
+max_iterations = 15
+sandbox_mode = "none"
+
+# Spawn hierarchy: this is the user-facing fast tier (chat model hint).
+# Loader enforces: a `chat` agent must NOT list any other `chat` agent
+# in `subagents` below — handoff goes to `reasoning` (e.g. planner) for
+# long-running deep work, or directly to `worker` specialists for the
+# fast path. See `AgentTier` in `src/openhuman/agent/harness/definition.rs`.
+agent_tier = "chat"
+omit_identity = true
+omit_memory_context = true
+omit_safety_preamble = true
+omit_skills_catalog = true
+# The orchestrator is the user-facing front-line agent — it routes,
+# synthesises, and speaks to the user in their voice. PROFILE.md
+# (onboarding enrichment output) anchors that voice.
+omit_profile = false
+# MEMORY.md — archivist-curated long-term memory — grounds replies in
+# prior conversations and distilled user preferences. Frozen per
+# session (KV-cache contract on `AgentDefinition::omit_memory_md`).
+omit_memory_md = false
+
+# Delegation surface. The `collect_orchestrator_tools` helper reads this
+# at agent-build time and synthesises one `delegate_*` tool per entry:
+#
+#   * Bare agent ids → one `ArchetypeDelegationTool` each, using the
+#     target agent's `delegate_name` override (if any) or `delegate_{id}`
+#     as the tool name, and the target's `when_to_use` as the
+#     LLM-visible tool description.
+#
+#   * `{ skills = "*" }` → one `SkillDelegationTool` per connected
+#     Composio toolkit, all routing to the generic `integrations_agent` with
+#     the toolkit slug pre-filled as `skill_filter`.
+#
+# The orchestrator LLM sees these as first-class entries in its
+# function-calling schema, so routing decisions happen at the tool-
+# selection layer rather than hidden inside a mega-tool's enum param.
+#
+# NOTE: `subagents = [...]` MUST appear before any `[table]` section
+# header — once a TOML table opens, subsequent top-level keys are
+# consumed by that table, and `subagents` would get parsed as
+# `tools.subagents` (which fails because `ToolScope` is an enum).
+subagents = [
+    "researcher",
+    "planner",
+    "code_executor",
+    "tools_agent",
+    "skill_creator",
+    "critic",
+    "archivist",
+    # Crypto wallet & market specialist (#1397). Synthesised into a
+    # `delegate_do_crypto` tool at agent-build time. Route any wallet,
+    # transfer, swap, contract-call, or exchange trading request here —
+    # the agent enforces a strict read → simulate → confirm → execute
+    # contract that the generic delegation surface does not.
+    "crypto_agent",
+    # Prediction-market & event-contract specialist (#2427). Synthesised
+    # into a `delegate_do_prediction_markets` tool at agent-build time.
+    # Route any Polymarket / Kalshi (and future event-contract venue)
+    # market browse, portfolio read, or order request here. The
+    # `tools_agent` wildcard explicitly disallows `polymarket` / `kalshi`
+    # so there is exactly one canonical route — through this delegate —
+    # which keeps the venue-specific approval-gate prompt in scope.
+    "markets_agent",
+    # NOTE: `summarizer` used to be listed here for the runtime-only
+    # oversized-tool-result hook. That path is currently disabled
+    # (`context.summarizer_payload_threshold_tokens = 0`) after recursive
+    # dispatch was observed. The agent definition is still registered via
+    # `agents::loader` so the payload_summarizer machinery can resolve it
+    # if the threshold is ever raised back above zero — it just isn't
+    # exposed to the orchestrator's subagent inventory right now.
+    { skills = "*" },
+]
+
+[model]
+# Front-line conversational agent: TTFT dominates UX. `hint:chat` resolves
+# to the fast chat tier (`reasoning-quick-v1` / Kimi K2.6 Turbo on
+# Fireworks via backend PR #760, 128k context, `supportsThinking: false`).
+# The orchestrator is a planner/router that picks a delegate and
+# synthesises sub-agent output — workload that doesn't benefit from the
+# slower deep-reasoning tier. Sub-agents that need heavier reasoning
+# can still opt into `reasoning-v1` (DeepSeek V4 Pro) via
+# `ModelSpec::Hint("reasoning")` in their own definitions.
+hint = "chat"
+
+[tools]
+# Direct tools — things the orchestrator calls itself rather than
+# delegating.
+#
+# `composio_list_connections` is the orchestrator's only composio_*
+# tool: it exists so the agent can detect newly-authorised integrations
+# mid-session (the session-start fetch froze the Delegation Guide's
+# connected list). Authorisation, toolkit discovery, action listing,
+# and action execution all live downstream in `integrations_agent` —
+# the orchestrator never calls composio_authorize / composio_list_tools
+# / composio_execute directly.
+named = [
+    "query_memory",
+    "memory_store",
+    "save_preference",
+    "memory_forget",
+    "memory_tree",
+    "read_workspace_state",
+    "ask_user_clarification",
+    "spawn_worker_thread",
+    "spawn_parallel_agents",
+    "composio_list_connections",
+    # Time + scheduling — lets the orchestrator answer "what time is it",
+    # "remind me in 10 minutes", "every morning at 8" directly rather than
+    # delegating or telling the user it can't. `current_time` grounds
+    # relative-time parsing; `cron_add` / `cron_list` / `cron_remove`
+    # manage recurring + one-shot agent/shell jobs.
+    "current_time",
+    "cron_add",
+    "cron_list",
+    "cron_remove",
+    # Coding-harness coordination primitives from #1208. `todowrite`
+    # gives the orchestrator a shared todo store to track multi-step
+    # work across delegations; `plan_exit` is the stable marker that
+    # the (forthcoming) plan→build mode runner consumes when a planner
+    # subagent hands a plan back up. Editing/navigation primitives
+    # (grep/glob/edit/apply_patch/lsp) intentionally stay with
+    # downstream agents — the orchestrator coordinates, it doesn't
+    # touch files itself.
+    "todowrite",
+    "plan_exit",
+    # Skill chaining: let an in-flight autonomous skill (e.g.
+    # `github-issue-crusher` after the draft PR is open) spawn another
+    # bundled skill_run (e.g. `pr-review-shepherd` against that PR) as a
+    # fresh background job, so each skill stays narrow + composable.
+    # Thin wrapper over `skills::schemas::spawn_skill_run_background` — the
+    # same helper the `openhuman.skills_run` JSON-RPC controller uses, so
+    # RPC callers and tool callers share one spawn path (iter cap,
+    # transcript isolation, degenerate-response detector all apply).
+    "run_skill",
+    # Self-update — lets the orchestrator answer "am I up to date" /
+    # "update OpenHuman" without sending the user to Settings →
+    # Developer Options. `update_check` is read-only; `update_apply`
+    # is dangerous, requires explicit user consent through
+    # `ask_user_clarification`, and respects
+    # `config.update.rpc_mutations_enabled`. Implementation re-uses
+    # `src/openhuman/update/` end-to-end — no parallel release logic.
+    "update_check",
+    "update_apply",
+    # Workflow tools — let the orchestrator inspect and activate installed
+    # WORKFLOW.md bundles.  `workflow_load` is read-only (inspect a workflow);
+    # `workflow_phase` activates a phase (runs gated scripts, surfaces guidance).
+    # Both are routed through the same security/approval gate as `shell`.
+    "workflow_load",
+    "workflow_phase",
+]

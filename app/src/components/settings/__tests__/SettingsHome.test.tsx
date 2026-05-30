@@ -156,12 +156,13 @@ describe('SettingsHome', () => {
       expect(mockNavigateToSettings).toHaveBeenCalledWith('notifications');
     });
 
-    it('navigates to persona settings when Persona is clicked', async () => {
+    it('navigates to the Agents section when Agents is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
 
-      await user.click(screen.getByText('Persona').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('persona');
+      // Persona, Agent OS access, etc. now live under the Agents section page.
+      await user.click(screen.getByText('Agents').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('agents-settings');
     });
 
     it('navigates to /notifications inbox when Alerts is clicked', async () => {

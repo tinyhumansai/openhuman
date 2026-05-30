@@ -44,6 +44,7 @@ pub async fn add(
     interval_secs: Option<u64>,
     target: Option<SourceTarget>,
     max_tasks_per_fetch: Option<u32>,
+    assigned_executor: Option<String>,
 ) -> Result<RpcOutcome<TaskSource>, String> {
     let defaults = &config.task_sources;
     let interval_secs = interval_secs.unwrap_or(defaults.default_interval_secs);
@@ -66,9 +67,25 @@ pub async fn add(
     )
     .map_err(|e| e.to_string())?;
 
+    // Apply the optional static executor routing (G7) as a follow-up patch so
+    // `add_source`'s signature (and its many callers) stays unchanged.
+    let source = match assigned_executor.filter(|s| !s.trim().is_empty()) {
+        Some(executor) => store::update_source(
+            config,
+            &source.id,
+            TaskSourcePatch {
+                assigned_executor: Some(executor),
+                ..Default::default()
+            },
+        )
+        .map_err(|e| e.to_string())?,
+        None => source,
+    };
+
     tracing::info!(
         source_id = %source.id,
         provider = %source.provider.as_str(),
+        assigned_executor = ?source.assigned_executor,
         "[task_sources:ops] add created source"
     );
     Ok(RpcOutcome::new(source, vec![]))

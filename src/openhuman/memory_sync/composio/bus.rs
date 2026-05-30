@@ -20,7 +20,7 @@
 //!   published as `TriggerEvaluated` / `TriggerEscalated` events on
 //!   the bus.
 //!
-//! [trigger_triage]: crate::openhuman::agent::agents
+//! [trigger_triage]: crate::openhuman::agent_registry::agents
 //!
 //! ## Feature flag
 //!

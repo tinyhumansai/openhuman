@@ -341,14 +341,19 @@ pub fn get_tree_status(config: &Config, namespace: &str) -> Result<TreeStatus> {
 /// and silently dropped — user memory is best-effort context, never a
 /// hard requirement for running a turn or rendering a prompt dump.
 ///
-/// Returns a stable-ordered `Vec<(namespace, body)>` so byte-identical
-/// inputs produce byte-identical output across process restarts (the
-/// renderer downstream relies on this for KV-cache prefix reuse).
+/// Returns a stable-ordered `Vec<(namespace, body, updated_at)>` so
+/// byte-identical inputs produce byte-identical output across process
+/// restarts (the renderer downstream relies on this for KV-cache prefix
+/// reuse). The `updated_at` is the namespace root node's timestamp, so
+/// the prompt renderer can stamp how current each summary is and the
+/// model never serves stale memory as today's (#2944). A plain tuple
+/// (rather than a prompt-layer struct) keeps this module free of any
+/// `agent::prompts` dependency.
 pub fn collect_root_summaries_with_caps(
     workspace_dir: &Path,
     per_namespace_cap: usize,
     total_cap: usize,
-) -> Vec<(String, String)> {
+) -> Vec<(String, String, DateTime<Utc>)> {
     // The store functions all read `config.workspace_dir` and nothing
     // else, so we shim a tiny `Config` from the caller's path. Cheap
     // (a few allocations) and avoids forcing every call site to thread
@@ -440,7 +445,7 @@ pub fn collect_root_summaries_with_caps(
             running_total = total_chars,
             "[tree_summarizer] including namespace in root-summary collection"
         );
-        out.push((ns, final_body));
+        out.push((ns, final_body, node.updated_at));
     }
 
     tracing::info!(
@@ -760,17 +765,27 @@ fn parse_node_markdown(raw: &str, namespace: &str, node_id: &str) -> Result<Tree
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(0);
 
+    // Deterministic fallbacks. `updated_at` now flows into the system
+    // prompt as a freshness stamp (#2944), and the renderer relies on
+    // byte-identical output across process restarts for KV-cache reuse —
+    // `Utc::now()` would change on every read and break that, *and* would
+    // misrepresent an undated legacy node as "fresh today" (the exact
+    // stale-as-current bug this work fixes). For nodes that predate the
+    // `created_at`/`updated_at` frontmatter we fall back to UNIX_EPOCH so
+    // the date is stable and conservatively renders as ancient rather
+    // than current. `updated_at` falls back to `created_at` (its best
+    // available estimate of when the node was last touched).
     let created_at = frontmatter
         .get("created_at")
         .and_then(|v| DateTime::parse_from_rfc3339(v).ok())
         .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+        .unwrap_or(DateTime::<Utc>::UNIX_EPOCH);
 
     let updated_at = frontmatter
         .get("updated_at")
         .and_then(|v| DateTime::parse_from_rfc3339(v).ok())
         .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+        .unwrap_or(created_at);
 
     let metadata = frontmatter.get("metadata").map(|v| v.to_string());
 

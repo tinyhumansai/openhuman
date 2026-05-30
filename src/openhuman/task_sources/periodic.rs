@@ -165,6 +165,7 @@ mod tests {
             interval_secs,
             target: SourceTarget::TodoOnly,
             max_tasks_per_fetch: 25,
+            assigned_executor: None,
             created_at: Utc::now(),
             last_fetch_at: None,
             last_status: None,
