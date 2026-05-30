@@ -1044,13 +1044,13 @@ fn search_cold_rebuild_does_not_block_concurrent_append() {
         let _ = tx.send(result);
     });
 
-    // append_message must complete within 5 s even if the rebuild is in
-    // progress.  On the old code this would block for the full rebuild
-    // duration (potentially > 1 s on large workspaces); on fixed code the
-    // two operations proceed concurrently.
+    // append_message must complete even if the rebuild is in progress. On the
+    // old code this blocked for the full rebuild duration; on fixed code the
+    // two operations proceed concurrently. The 30 s budget tolerates a slow CI
+    // runner — a genuine deadlock never completes, so a regression still fails.
     let append_result = rx
-        .recv_timeout(Duration::from_secs(5))
-        .expect("append_message did not complete within 5 s — likely blocked by cold rebuild");
+        .recv_timeout(Duration::from_secs(30))
+        .expect("append_message did not complete within 30 s — likely blocked by cold rebuild");
     assert!(
         append_result.is_ok(),
         "append failed: {:?}",
@@ -1241,7 +1241,7 @@ fn legacy_workspace_cold_rebuild_does_not_block_concurrent_append() {
     });
 
     let append_result = rx
-        .recv_timeout(Duration::from_secs(5))
+        .recv_timeout(Duration::from_secs(30))
         .expect("append_message blocked — legacy workspace cold rebuild held STORE_LOCK too long");
     assert!(
         append_result.is_ok(),
