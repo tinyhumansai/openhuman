@@ -4105,6 +4105,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     '기본 제공 에이전트는 편집할 수 없습니다. 에이전트 목록에서 활성화, 비활성화 또는 초기화할 수 있습니다.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': '아티팩트: {title}',
+  'chat.artifact.generating': '{kind} 생성 중…',
+  'chat.artifact.ready': '준비됨',
+  'chat.artifact.failed': '생성 실패',
+  'chat.artifact.download': '다운로드',
+  'chat.artifact.downloading': '다운로드 중…',
+  'chat.artifact.downloaded': '{path}에 저장됨',
+  'chat.artifact.download_failed': '다운로드 실패: {reason}',
+  'chat.artifact.retry': '다시 시도',
+  'chat.artifact.reveal': 'Finder에서 보기',
+
 };
 
 export default messages;

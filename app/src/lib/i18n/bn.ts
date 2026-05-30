@@ -4135,6 +4135,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'বিল্ট-ইন এজেন্ট সম্পাদনা করা যাবে না। আপনি এজেন্ট তালিকা থেকে সেগুলো সক্রিয়, নিষ্ক্রিয় বা পুনরায় সেট করতে পারেন।',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'আর্টিফ্যাক্ট: {title}',
+  'chat.artifact.generating': '{kind} তৈরি হচ্ছে…',
+  'chat.artifact.ready': 'প্রস্তুত',
+  'chat.artifact.failed': 'তৈরি ব্যর্থ হয়েছে',
+  'chat.artifact.download': 'ডাউনলোড',
+  'chat.artifact.downloading': 'ডাউনলোড হচ্ছে…',
+  'chat.artifact.downloaded': '{path} এ সংরক্ষিত',
+  'chat.artifact.download_failed': 'ডাউনলোড ব্যর্থ: {reason}',
+  'chat.artifact.retry': 'পুনরায় চেষ্টা',
+  'chat.artifact.reveal': 'Finder-এ দেখান',
+
 };
 
 export default messages;

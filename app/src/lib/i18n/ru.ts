@@ -4176,6 +4176,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Встроенные агенты нельзя редактировать. Вы можете включить, отключить или сбросить их в списке агентов.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Артефакт: {title}',
+  'chat.artifact.generating': 'Создание {kind}…',
+  'chat.artifact.ready': 'Готово',
+  'chat.artifact.failed': 'Сбой генерации',
+  'chat.artifact.download': 'Скачать',
+  'chat.artifact.downloading': 'Скачивание…',
+  'chat.artifact.downloaded': 'Сохранено в {path}',
+  'chat.artifact.download_failed': 'Сбой скачивания: {reason}',
+  'chat.artifact.retry': 'Повторить',
+  'chat.artifact.reveal': 'Показать в Finder',
+
 };
 
 export default messages;

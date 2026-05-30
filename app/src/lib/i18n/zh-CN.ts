@@ -3938,6 +3938,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     '内置智能体不可编辑。您可以在智能体列表中启用、禁用或重置它们。',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': '工件：{title}',
+  'chat.artifact.generating': '正在生成{kind}…',
+  'chat.artifact.ready': '已就绪',
+  'chat.artifact.failed': '生成失败',
+  'chat.artifact.download': '下载',
+  'chat.artifact.downloading': '下载中…',
+  'chat.artifact.downloaded': '已保存到 {path}',
+  'chat.artifact.download_failed': '下载失败：{reason}',
+  'chat.artifact.retry': '重试',
+  'chat.artifact.reveal': '在 Finder 中显示',
+
 };
 
 export default messages;

@@ -4152,6 +4152,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Agen bawaan tidak dapat diedit. Anda dapat mengaktifkan, menonaktifkan, atau meresetnya dari daftar agen.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefak: {title}',
+  'chat.artifact.generating': 'Membuat {kind}…',
+  'chat.artifact.ready': 'Siap',
+  'chat.artifact.failed': 'Gagal dibuat',
+  'chat.artifact.download': 'Unduh',
+  'chat.artifact.downloading': 'Mengunduh…',
+  'chat.artifact.downloaded': 'Disimpan ke {path}',
+  'chat.artifact.download_failed': 'Unduhan gagal: {reason}',
+  'chat.artifact.retry': 'Coba lagi',
+  'chat.artifact.reveal': 'Tampilkan di Finder',
+
 };
 
 export default messages;

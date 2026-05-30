@@ -6,6 +6,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
+import ArtifactCard from '../components/chat/ArtifactCard';
 import AttachmentPreview from '../components/chat/AttachmentPreview';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
@@ -232,6 +233,7 @@ const Conversations = ({
   const inferenceStatusByThread = useAppSelector(
     state => state.chatRuntime.inferenceStatusByThread
   );
+  const artifactsByThread = useAppSelector(state => state.chatRuntime.artifactsByThread);
   const pendingApprovalByThread = useAppSelector(
     state => state.chatRuntime.pendingApprovalByThread
   );
@@ -2131,6 +2133,26 @@ const Conversations = ({
                 <ApprovalRequestCard threadId={approvalThreadId} approval={pendingApproval} />
               </div>
             ) : null;
+          })()}
+
+          {(() => {
+            // Surface artifact cards for the shown thread above the composer
+            // (#2779). Mirrors the approval-card placement so the user sees
+            // the just-generated deck without scrolling. Cards stay visible
+            // across turns until the thread is cleared. ArtifactCard handles
+            // its own download lifecycle (dialog → copy → "Saved to …").
+            const artifactThreadId = selectedThreadId ?? activeThreadId;
+            const artifacts = artifactThreadId
+              ? (artifactsByThread[artifactThreadId] ?? [])
+              : [];
+            if (artifacts.length === 0) return null;
+            return (
+              <div className="mb-2 flex flex-col gap-2">
+                {artifacts.map(artifact => (
+                  <ArtifactCard key={artifact.artifactId} artifact={artifact} />
+                ))}
+              </div>
+            );
           })()}
 
           {composer === 'mic-cloud' ? (

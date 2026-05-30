@@ -4229,6 +4229,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Les agents intégrés ne peuvent pas être modifiés. Vous pouvez les activer, les désactiver ou les réinitialiser depuis la liste des agents.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefact : {title}',
+  'chat.artifact.generating': 'Génération de {kind}…',
+  'chat.artifact.ready': 'Prêt',
+  'chat.artifact.failed': 'Échec de la génération',
+  'chat.artifact.download': 'Télécharger',
+  'chat.artifact.downloading': 'Téléchargement…',
+  'chat.artifact.downloaded': 'Enregistré dans {path}',
+  'chat.artifact.download_failed': 'Échec du téléchargement : {reason}',
+  'chat.artifact.retry': 'Réessayer',
+  'chat.artifact.reveal': 'Afficher dans le Finder',
+
 };
 
 export default messages;

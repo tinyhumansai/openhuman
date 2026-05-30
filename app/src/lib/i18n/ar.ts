@@ -4063,6 +4063,18 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'لا يمكن تعديل العوامل المدمجة. يمكنك تفعيلها أو تعطيلها أو إعادة ضبطها من قائمة العوامل.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'الملف: {title}',
+  'chat.artifact.generating': 'جارٍ إنشاء {kind}…',
+  'chat.artifact.ready': 'جاهز',
+  'chat.artifact.failed': 'فشل الإنشاء',
+  'chat.artifact.download': 'تنزيل',
+  'chat.artifact.downloading': 'جارٍ التنزيل…',
+  'chat.artifact.downloaded': 'تم الحفظ في {path}',
+  'chat.artifact.download_failed': 'فشل التنزيل: {reason}',
+  'chat.artifact.retry': 'إعادة المحاولة',
+  'chat.artifact.reveal': 'إظهار في Finder',
+
 };
 
 export default messages;

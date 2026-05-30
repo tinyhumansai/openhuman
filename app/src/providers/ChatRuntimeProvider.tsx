@@ -35,6 +35,8 @@ import {
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
+  upsertArtifactFailedForThread,
+  upsertArtifactReadyForThread,
   type StreamingAssistantState,
   type ToolTimelineEntry,
   type ToolTimelineEntryStatus,
@@ -773,6 +775,41 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
             });
           }
         });
+      },
+      onArtifactReady: event => {
+        rtLog('artifact_ready', {
+          thread: event.thread_id,
+          artifact_id: event.artifact_id,
+          kind: event.kind,
+          size_bytes: event.size_bytes,
+        });
+        dispatch(
+          upsertArtifactReadyForThread({
+            threadId: event.thread_id,
+            artifactId: event.artifact_id,
+            kind: event.kind,
+            title: event.title,
+            path: event.path,
+            sizeBytes: event.size_bytes,
+          })
+        );
+      },
+      onArtifactFailed: event => {
+        rtLog('artifact_failed', {
+          thread: event.thread_id,
+          artifact_id: event.artifact_id,
+          kind: event.kind,
+          error: event.error,
+        });
+        dispatch(
+          upsertArtifactFailedForThread({
+            threadId: event.thread_id,
+            artifactId: event.artifact_id,
+            kind: event.kind,
+            title: event.title,
+            error: event.error,
+          })
+        );
       },
       onApprovalRequest: (event: ChatApprovalRequestEvent) => {
         rtLog('approval_request', {
