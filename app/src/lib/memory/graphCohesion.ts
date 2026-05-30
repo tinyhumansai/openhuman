@@ -157,10 +157,8 @@ export function computeGraphCohesion(relations: GraphRelation[]): CohesionResult
     nodeCount: adjacency.size,
     edgeCount: edgeDegreeSum / 2,
     triangleCount: closedTripleSum / 3,
-    averageClustering:
-      clusterableCount === 0 ? 0 : round6(clusteringSum / clusterableCount),
-    transitivity:
-      connectedTriples === 0 ? 0 : round6(closedTripleSum / connectedTriples),
+    averageClustering: clusterableCount === 0 ? 0 : round6(clusteringSum / clusterableCount),
+    transitivity: connectedTriples === 0 ? 0 : round6(closedTripleSum / connectedTriples),
   };
 }
 
