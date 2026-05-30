@@ -44,13 +44,15 @@ static CONVERSATION_STORE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 /// updates the warm index) and `with_index` (caller holds the outer
 /// lock, then takes the cache lock to run the search closure).
 ///
-/// `prime_index_if_cold` is the single exception: it takes each lock
-/// independently and never holds both at the same time — it briefly
-/// acquires `CONVERSATION_STORE_LOCK` to snapshot live thread IDs via
-/// `thread_index_unlocked` (header-only, no per-thread I/O), releases
-/// it, reads per-thread JSONL content without any lock, then acquires
-/// `CONVERSATION_INDEX_CACHE` alone to insert the built index.  This is
-/// safe because neither operation calls back into any function that
+/// `prime_index_if_cold` minimises shared locking. It may hold both
+/// locks only momentarily, and always in the `CONVERSATION_STORE_LOCK`
+/// → `CONVERSATION_INDEX_CACHE` order above: while holding the outer
+/// lock to snapshot live thread IDs via `thread_index_unlocked`
+/// (header-only, no per-thread I/O) it re-checks the cache once. It then
+/// releases `CONVERSATION_STORE_LOCK` before reading per-thread JSONL
+/// content (no lock held) and finally acquires `CONVERSATION_INDEX_CACHE`
+/// alone to insert the built index. It never holds both across the slow
+/// JSONL walk, and neither operation calls back into a function that
 /// would acquire the other lock.
 ///
 /// `list_threads_unlocked` MUST NOT be used inside the locked snapshot —
@@ -266,10 +268,13 @@ impl ConversationStore {
             self.thread_index_unlocked()?.into_keys().collect()
         };
         // Build the index with no locks held.  The per-thread JSONL files are
-        // append-only so reads are safe without synchronisation; the worst
-        // case is a message written concurrently is absent from this initial
-        // build — append_message always updates a warm index, so the message
-        // becomes queryable on the next write.
+        // append-only so reads are safe without synchronisation. The worst
+        // case is a message appended during this window: append_message sees a
+        // still-cold cache (we have not inserted yet) and skips its index
+        // update, so that specific message stays absent from the in-memory
+        // index until the next cold rebuild (e.g. a process restart re-reads
+        // JSONL). Later appends index only their own messages, not the raced
+        // one. This is the accepted tradeoff documented in issue #2849.
         let mut idx = InvertedIndex::new();
         for thread_id in &thread_ids {
             let path = self.thread_messages_path(thread_id);
