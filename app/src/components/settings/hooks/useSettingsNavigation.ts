@@ -38,7 +38,6 @@ export type SettingsRoute =
   | 'mascot'
   | 'persona'
   | 'appearance'
-  | 'agent-access'
   | 'approval-history'
   | 'intelligence'
   | 'webhooks-triggers'
@@ -283,13 +282,10 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'appearance':
         return [settingsCrumb];
 
-      // Agent access panel sits at the top level of Settings.
-      case 'agent-access':
-        return [settingsCrumb];
-
-      // Approval history is a leaf under Agent access.
+      // Approval history is a leaf under Agent access, which itself lives under
+      // the Agents section — so the trail is Settings → Agents → Agent access.
       case 'approval-history':
-        return [settingsCrumb, agentAccessCrumb];
+        return [settingsCrumb, agentsCrumb, agentAccessCrumb];
 
       case 'home':
       default:
