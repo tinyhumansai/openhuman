@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 
@@ -68,6 +69,13 @@ def main() -> None:
         help="absolute path where the .pptx should be written",
     )
     args = parser.parse_args()
+
+    # Defence-in-depth: the Rust caller always supplies an absolute
+    # artifact path, but a future regression there must not silently
+    # redirect output to a cwd-relative location.
+    if not os.path.isabs(args.output):
+        _exit_error("argument '--output' must be an absolute path")
+        return
 
     try:
         raw = sys.stdin.read()
