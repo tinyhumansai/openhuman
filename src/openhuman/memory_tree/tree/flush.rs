@@ -47,6 +47,9 @@ pub async fn flush_stale_buffers(
     // Missing rows stay silently absent from the map; the
     // `Some(t) => ... / None => warn-and-skip` orphan-buffer path below
     // preserves the per-id `get_tree` `Ok(None)` semantics.
+    // Preserve list_stale_buffers order so the HashMap lookup below stays
+    // predictable; dedup is purely to avoid redundant DB params (not for
+    // semantic ordering — the per-buffer loop walks `stale` directly).
     let distinct_tree_ids: Vec<String> = {
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
@@ -295,18 +298,18 @@ mod tests {
         assert_eq!(store::count_summaries(&cfg, &tree.id).unwrap(), 0);
     }
 
-    /// Regression for the `get_trees_batch` refactor: two distinct
-    /// trees each carry a stale L0 buffer; `flush_stale_buffers` must
-    /// seal both via a single batched tree-fetch. Pre-refactor this
-    /// path issued N per-buffer `get_tree(...)` round-trips; post-
-    /// refactor it's one `SELECT … WHERE id IN (?,?)` and a per-id
-    /// HashMap lookup. The interesting bit is the HashMap lookup
-    /// keying by tree_id (not by `enumerate()` position over the input
-    /// slice) — with two trees, swapping the lookup key would leak one
-    /// tree's `Tree` into the other tree's seal and either error out
-    /// or write summaries against the wrong `root_id`.
+    /// Happy path: two distinct trees each carry a stale L0 buffer and
+    /// both must be sealed in one `flush_stale_buffers` pass.
+    ///
+    /// Regression for the `get_trees_batch` refactor (replaces N
+    /// per-buffer `get_tree` round-trips with one batched IN query).
+    /// The `assert_eq!(seals, 2)` pins the happy-path count; the two
+    /// per-tree `count_summaries` assertions pin the HashMap-keyed-by-id
+    /// routing contract — swapping the lookup key to `enumerate()` position
+    /// would route one tree's `Tree` into the other tree's seal and write
+    /// summaries against the wrong `root_id`.
     #[tokio::test]
-    async fn flush_seals_multiple_distinct_trees_via_batched_lookup() {
+    async fn flush_seals_multiple_trees_batched_and_routes_by_id() {
         let (_tmp, cfg) = test_config();
         let tree_a = get_or_create_source_tree(&cfg, "slack:#eng").unwrap();
         let tree_b = get_or_create_source_tree(&cfg, "slack:#design").unwrap();

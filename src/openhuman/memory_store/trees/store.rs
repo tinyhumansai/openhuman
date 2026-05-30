@@ -138,6 +138,8 @@ pub fn get_trees_batch(config: &Config, tree_ids: &[String]) -> Result<HashMap<S
                 .map(|i| format!("?{i}"))
                 .collect::<Vec<_>>()
                 .join(",");
+            // placeholders are positional bind params (?1,?2,…) — values are
+            // never interpolated, so this format! is not SQL-injectable.
             let sql = format!(
                 "SELECT id, kind, scope, root_id, max_level, status,
                         created_at_ms, last_sealed_at_ms
@@ -145,10 +147,11 @@ pub fn get_trees_batch(config: &Config, tree_ids: &[String]) -> Result<HashMap<S
                   WHERE id IN ({placeholders})"
             );
             let mut stmt = conn.prepare(&sql)?;
-            let params: Vec<&dyn rusqlite::ToSql> =
-                window.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
             let rows = stmt
-                .query_map(params.as_slice(), row_to_tree)?
+                .query_map(
+                    rusqlite::params_from_iter(window.iter().map(String::as_str)),
+                    row_to_tree,
+                )?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .context("Failed to collect trees batch")?;
             for t in rows {
