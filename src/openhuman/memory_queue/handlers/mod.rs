@@ -120,33 +120,29 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
     let scoring_cfg = score::ScoringConfig::from_config(config);
     let result = score::score_chunk(&chunk_with_body, &scoring_cfg).await?;
     let chunk_embedding: Option<Vec<f32>> = if result.kept {
-        match build_embedder_from_config(config) {
-            Ok(embedder) => match embedder.embed(&body).await {
-                Ok(vector) => match pack_checked(&vector) {
-                    Ok(_) => Some(vector),
-                    Err(e) => {
-                        log::warn!(
-                            "[memory::jobs] embed dim check failed chunk_id={} err={e:#} — skipping embedding",
-                            chunk.id
-                        );
-                        None
-                    }
-                },
-                Err(e) => {
-                    log::warn!(
-                        "[memory::jobs] embed failed chunk_id={} err={e:#} — continuing without embedding",
-                        chunk.id
-                    );
-                    None
-                }
-            },
+        let embedder =
+            build_embedder_from_config(config).context("build embedder in extract handler")?;
+        // Reuse the body already read — avoid a second disk read.
+        let vector = match embedder.embed(&body).await {
+            Ok(v) => v,
             Err(e) => {
-                log::warn!(
-                    "[memory::jobs] build embedder failed err={e:#} — continuing without embedding"
-                );
-                None
+                // #002: classify the embed failure so the worker can fail
+                // fast on unrecoverable causes (budget/auth/dim) and surface
+                // a typed reason, instead of burning the retry budget. The
+                // typed failure is the outer (downcast) error; the original
+                // chain is preserved as context.
+                let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                return Err(anyhow::Error::new(failure)
+                    .context(format!("embed chunk_id={} in extract handler: {e:#}", chunk.id)));
             }
-        }
+        };
+        // Preserve the pre-cutover dimension guard (the job fails fast on a
+        // misconfigured embedder) even though #1574 no longer persists the
+        // packed blob to the legacy `mem_tree_chunks.embedding` column —
+        // the vector now goes to the per-model sidecar instead.
+        pack_checked(&vector)
+            .with_context(|| format!("validate embedding dims for chunk_id={}", chunk.id))?;
+        Some(vector)
     } else {
         None
     };

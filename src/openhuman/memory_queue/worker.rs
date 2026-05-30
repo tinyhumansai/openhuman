@@ -18,9 +18,10 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory_queue::handlers;
 use crate::openhuman::memory_queue::redact::scrub_for_log;
 use crate::openhuman::memory_queue::store::{
-    claim_next, mark_deferred, mark_done, mark_failed, recover_stale_locks, release_running_locks,
-    DEFAULT_LOCK_DURATION_MS,
+    claim_next, mark_deferred, mark_done, mark_failed_typed, recover_stale_locks,
+    release_running_locks, DEFAULT_LOCK_DURATION_MS,
 };
+use crate::openhuman::memory_tree::health::PipelineFailure;
 use crate::openhuman::memory_queue::types::JobOutcome;
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
@@ -257,13 +258,20 @@ pub async fn run_once(config: &Config) -> Result<bool> {
             // the same chain after `scrub_for_log`, since anyhow chains
             // commonly embed upstream HTTP bodies / auth headers.
             let message = format!("{err:#}");
+            // #002: if the error chain carries a typed `PipelineFailure`
+            // (attached at the embed/extract boundary), pass it through so
+            // `mark_failed_typed` can fail fast on unrecoverable causes
+            // (budget/auth/dim) instead of burning the retry budget, and
+            // persist the typed reason for the status/doctor surface.
+            let typed = err.downcast_ref::<PipelineFailure>();
             log::warn!(
-                "[memory::jobs] job failed id={} kind={} err={}",
+                "[memory::jobs] job failed id={} kind={} reason={:?} err={}",
                 job.id,
                 job.kind.as_str(),
+                typed.map(|f| f.code.as_str()),
                 scrub_for_log(&message)
             );
-            mark_failed(config, &job, &message)?;
+            mark_failed_typed(config, &job, &message, typed)?;
         }
     }
 

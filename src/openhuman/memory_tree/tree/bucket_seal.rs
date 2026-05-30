@@ -448,6 +448,10 @@ pub(crate) async fn seal_one_level(
 
     let embedding: Option<Vec<f32>> = match build_embedder_from_config(config) {
         Ok(embedder) => {
+            // Conservative cap. Slack-style chat content (URLs, mentions,
+            // emoji) tokenizes 2-4× higher than the 4-chars/token heuristic.
+            // 1000 approx-tokens (~4000 chars) is comfortably under 8192
+            // even at 4× tokenizer ratio.
             let embed_input = truncate_for_embed(&output.content, 1_000);
             log::info!(
                 "[tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
@@ -466,11 +470,16 @@ pub(crate) async fn seal_one_level(
                     Some(vector)
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[tree::bucket_seal] embed failed during seal tree_id={} level={}: {e:#} — sealing without embedding",
+                    // #002 (T012): classify so the seal job fails fast on
+                    // unrecoverable embed causes (budget/auth/dim) with a typed
+                    // reason instead of retrying; original chain preserved as
+                    // context.
+                    let failure =
+                        crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                    return Err(anyhow::Error::new(failure).context(format!(
+                        "embed summary during seal tree_id={} level={}: {e:#}",
                         tree.id, level
-                    );
-                    None
+                    )));
                 }
             }
         }
