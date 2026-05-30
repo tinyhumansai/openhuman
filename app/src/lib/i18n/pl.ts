@@ -309,6 +309,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': 'łącznik',
   'graphCentrality.bridgeTitle': 'Łącznik — bardziej wpływowy, niż sugeruje liczba linków',
   'graphCentrality.degreeTitle': '{in} wej. · {out} wyj.',
+  'graphCohesion.title': 'Spójność grafu',
+  'graphCohesion.intro':
+    'Jak ściśle powiązane jest sąsiedztwo wokół każdej encji. Brokerzy — encje, których sąsiedzi nie są ze sobą połączeni — to jedyne punkty łączące osobne klastry, czego sortowanie według częstotliwości ani PageRank nie potrafi ujawnić.',
+  'graphCohesion.loading': 'Obliczanie spójności…',
+  'graphCohesion.errorPrefix': 'Nie można załadować grafu:',
+  'graphCohesion.retry': 'Spróbuj ponownie',
+  'graphCohesion.empty': 'Brak grafu wiedzy.',
+  'graphCohesion.emptyHint':
+    'Gdy asystent zarejestruje powiązane fakty na Twój temat, ich struktura grupowania pojawi się tutaj.',
+  'graphCohesion.namespaceLabel': 'Przestrzeń nazw',
+  'graphCohesion.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'graphCohesion.metricEntities': 'Encje',
+  'graphCohesion.metricConnections': 'Połączenia',
+  'graphCohesion.metricTriangles': 'Trójkąty',
+  'graphCohesion.summaryCaption':
+    'Średnie grupowanie {avg} · tranzytywność {transitivity}',
+  'graphCohesion.noBrokers': 'Brak encji z dwoma lub więcej połączeniami.',
+  'graphCohesion.rankedHeading': 'Brokerzy — najluźniejsze sąsiedztwa',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Encja',
+  'graphCohesion.colCohesion': 'Spójność',
+  'graphCohesion.colLinks': 'Linki',
+  'graphCohesion.brokerBadge': 'broker',
+  'graphCohesion.brokerTitle':
+    'Dziura strukturalna: sąsiedzi tej encji nie są ze sobą połączeni — jest ona jedynym łącznikiem między nimi.',
   'memoryTree.status.title': 'Drzewo pamięci',
   'memoryTree.status.autoSyncLabel': 'Automatyczna synchronizacja',
   'memoryTree.status.autoSyncDescription':

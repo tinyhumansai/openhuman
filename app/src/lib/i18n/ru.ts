@@ -307,6 +307,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Коннектор — более влиятельный, чем предполагает количество ссылок.',
   'graphCentrality.degreeTitle': '{in} вход · {out} выход',
+  'graphCohesion.title': 'Связность графа',
+  'graphCohesion.intro':
+    'Насколько плотно связано окружение каждой сущности. Брокеры — сущности, чьи соседи не связаны друг с другом — являются единственными точками, удерживающими иначе разрозненные кластеры вместе, что не может выявить сортировка по частоте или PageRank.',
+  'graphCohesion.loading': 'Вычисление связности…',
+  'graphCohesion.errorPrefix': 'Не удалось загрузить граф:',
+  'graphCohesion.retry': 'Повторить',
+  'graphCohesion.empty': 'Граф знаний пока отсутствует.',
+  'graphCohesion.emptyHint':
+    'По мере того как ассистент фиксирует связанные факты о вас, их кластерная структура отобразится здесь.',
+  'graphCohesion.namespaceLabel': 'Пространство имён',
+  'graphCohesion.namespaceAll': 'Все пространства имён',
+  'graphCohesion.metricEntities': 'Сущности',
+  'graphCohesion.metricConnections': 'Связи',
+  'graphCohesion.metricTriangles': 'Треугольники',
+  'graphCohesion.summaryCaption':
+    'Среднее кластеризация {avg} · транзитивность {transitivity}',
+  'graphCohesion.noBrokers': 'Ещё нет сущностей с двумя или более связями.',
+  'graphCohesion.rankedHeading': 'Брокеры — наименее связные окружения',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Сущность',
+  'graphCohesion.colCohesion': 'Связность',
+  'graphCohesion.colLinks': 'Ссылки',
+  'graphCohesion.brokerBadge': 'брокер',
+  'graphCohesion.brokerTitle':
+    'Структурная дыра: соседи этой сущности не связаны друг с другом — она является единственным звеном между ними.',
   'memoryTree.status.title': 'Дерево памяти',
   'memoryTree.status.autoSyncLabel': 'Автосинхронизация',
   'memoryTree.status.autoSyncDescription':

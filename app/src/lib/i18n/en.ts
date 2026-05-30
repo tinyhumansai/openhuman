@@ -303,7 +303,6 @@ const en: TranslationMap = {
   'memory.tab.calls': 'Calls',
   'memory.tab.diagram': 'Diagram',
   'memory.tab.centrality': 'Centrality',
-  'memory.tab.cohesion': 'Cohesion',
   'memory.tab.settings': 'Settings',
   'memory.analyzeNow': 'Analyze Now',
   'graphCentrality.title': 'Knowledge Graph Centrality',

@@ -314,6 +314,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': 'conector',
   'graphCentrality.bridgeTitle': 'Conector — mais influente do que seu número de links sugere',
   'graphCentrality.degreeTitle': '{in} entrando · {out} saindo',
+  'graphCohesion.title': 'Coesão do grafo',
+  'graphCohesion.intro':
+    'Quão estreitamente conectada é a vizinhança ao redor de cada entidade. Intermediários — entidades cujos vizinhos não estão ligados entre si — são os únicos pontos que mantêm unidas grupos que de outra forma estariam separados, algo que uma ordenação por frequência ou PageRank não consegue revelar.',
+  'graphCohesion.loading': 'Calculando coesão…',
+  'graphCohesion.errorPrefix': 'Não foi possível carregar o grafo:',
+  'graphCohesion.retry': 'Tentar novamente',
+  'graphCohesion.empty': 'Ainda não há grafo de conhecimento.',
+  'graphCohesion.emptyHint':
+    'À medida que o assistente registar factos conectados sobre si, a sua estrutura de agrupamento aparecerá aqui.',
+  'graphCohesion.namespaceLabel': 'Espaço de nomes',
+  'graphCohesion.namespaceAll': 'Todos os espaços de nomes',
+  'graphCohesion.metricEntities': 'Entidades',
+  'graphCohesion.metricConnections': 'Conexões',
+  'graphCohesion.metricTriangles': 'Triângulos',
+  'graphCohesion.summaryCaption':
+    'Agrupamento médio {avg} · transitividade {transitivity}',
+  'graphCohesion.noBrokers': 'Ainda não há entidades com duas ou mais conexões.',
+  'graphCohesion.rankedHeading': 'Intermediários — vizinhanças mais esparsas',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Entidade',
+  'graphCohesion.colCohesion': 'Coesão',
+  'graphCohesion.colLinks': 'Ligações',
+  'graphCohesion.brokerBadge': 'intermediário',
+  'graphCohesion.brokerTitle':
+    'Buraco estrutural: os vizinhos desta entidade não estão conectados entre si — ela é o único elo entre eles.',
   'memoryTree.status.title': 'Árvore da Memória',
   'memoryTree.status.autoSyncLabel': 'Auto-sincronização',
   'memoryTree.status.autoSyncDescription':

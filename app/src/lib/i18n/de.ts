@@ -316,6 +316,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Connector – einflussreicher als die Anzahl der Links vermuten lässt',
   'graphCentrality.degreeTitle': '{in} rein · {out} raus',
+  'graphCohesion.title': 'Graphkohäsion',
+  'graphCohesion.intro':
+    'Wie eng die Nachbarschaft um jede Entität miteinander verknüpft ist. Broker — Entitäten, deren Nachbarn nicht miteinander verbunden sind — sind die einzigen Verbindungspunkte zwischen sonst getrennten Clustern, was eine Sortierung nach Häufigkeit oder PageRank nicht aufdecken kann.',
+  'graphCohesion.loading': 'Kohäsion wird berechnet…',
+  'graphCohesion.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'graphCohesion.retry': 'Erneut versuchen',
+  'graphCohesion.empty': 'Noch kein Wissensgraph vorhanden.',
+  'graphCohesion.emptyHint':
+    'Sobald der Assistent verknüpfte Fakten über Sie erfasst, wird deren Clusterstruktur hier angezeigt.',
+  'graphCohesion.namespaceLabel': 'Namensraum',
+  'graphCohesion.namespaceAll': 'Alle Namensräume',
+  'graphCohesion.metricEntities': 'Entitäten',
+  'graphCohesion.metricConnections': 'Verbindungen',
+  'graphCohesion.metricTriangles': 'Dreiecke',
+  'graphCohesion.summaryCaption':
+    'Durchschnittliche Clusterung {avg} · Transitivität {transitivity}',
+  'graphCohesion.noBrokers': 'Noch keine Entitäten mit zwei oder mehr Verbindungen.',
+  'graphCohesion.rankedHeading': 'Broker — lockerste Nachbarschaften',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Entität',
+  'graphCohesion.colCohesion': 'Kohäsion',
+  'graphCohesion.colLinks': 'Links',
+  'graphCohesion.brokerBadge': 'Broker',
+  'graphCohesion.brokerTitle':
+    'Strukturelles Loch: Die Nachbarn dieser Entität sind nicht miteinander verbunden — sie ist das einzige Bindeglied zwischen ihnen.',
   'memoryTree.status.title': 'Speicherbaum',
   'memoryTree.status.autoSyncLabel': 'Auto Sync',
   'memoryTree.status.autoSyncDescription':

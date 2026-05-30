@@ -147,13 +147,20 @@ export function computeGraphCohesion(relations: GraphRelation[]): CohesionResult
     }
   }
 
+  // Round to 6 decimal places before returning. Floating-point results may
+  // differ at the ULP level between x86-64 and ARM (different FPU rounding),
+  // so rounding to a display-relevant precision makes the displayed value
+  // stable across platforms and devices.
+  const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
   return {
     nodes,
     nodeCount: adjacency.size,
     edgeCount: edgeDegreeSum / 2,
     triangleCount: closedTripleSum / 3,
-    averageClustering: clusterableCount === 0 ? 0 : clusteringSum / clusterableCount,
-    transitivity: connectedTriples === 0 ? 0 : closedTripleSum / connectedTriples,
+    averageClustering:
+      clusterableCount === 0 ? 0 : round6(clusteringSum / clusterableCount),
+    transitivity:
+      connectedTriples === 0 ? 0 : round6(closedTripleSum / connectedTriples),
   };
 }
 
@@ -164,7 +171,7 @@ export function computeGraphCohesion(relations: GraphRelation[]): CohesionResult
  * disconnected. Sorted clustering ASC, then degree DESC (a bigger gap brokered
  * matters more), then id ASC. Pure; derived entirely from the result.
  */
-export function findBrokers(result: CohesionResult, limit = 25): CohesionNode[] {
+export function findBrokers(result: CohesionResult, limit = 100): CohesionNode[] {
   return result.nodes
     .filter(node => node.degree >= 2)
     .sort((a, b) => {

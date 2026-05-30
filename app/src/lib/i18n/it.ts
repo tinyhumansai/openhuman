@@ -313,6 +313,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Connettore — più influente di quanto suggerisca il suo numero di collegamenti',
   'graphCentrality.degreeTitle': '{in} in entrata · {out} in uscita',
+  'graphCohesion.title': 'Coesione del grafo',
+  'graphCohesion.intro':
+    "Quanto è strettamente connesso il vicinato attorno a ogni entità. I broker — entità i cui vicini non sono collegati tra loro — sono gli unici punti che tengono insieme cluster altrimenti separati, cosa che un ordinamento per frequenza o PageRank non può rivelare.",
+  'graphCohesion.loading': 'Calcolo della coesione…',
+  'graphCohesion.errorPrefix': 'Impossibile caricare il grafo:',
+  'graphCohesion.retry': 'Riprova',
+  'graphCohesion.empty': 'Nessun grafo della conoscenza ancora.',
+  'graphCohesion.emptyHint':
+    "Man mano che l'assistente registra fatti connessi su di te, la loro struttura di raggruppamento apparirà qui.",
+  'graphCohesion.namespaceLabel': 'Namespace',
+  'graphCohesion.namespaceAll': 'Tutti i namespace',
+  'graphCohesion.metricEntities': 'Entità',
+  'graphCohesion.metricConnections': 'Connessioni',
+  'graphCohesion.metricTriangles': 'Triangoli',
+  'graphCohesion.summaryCaption':
+    'Raggruppamento medio {avg} · transitività {transitivity}',
+  'graphCohesion.noBrokers': 'Nessuna entità con due o più connessioni ancora.',
+  'graphCohesion.rankedHeading': 'Broker — vicinati più dispersi',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Entità',
+  'graphCohesion.colCohesion': 'Coesione',
+  'graphCohesion.colLinks': 'Link',
+  'graphCohesion.brokerBadge': 'broker',
+  'graphCohesion.brokerTitle':
+    "Buco strutturale: i vicini di questa entità non sono connessi tra loro — è l'unico collegamento tra di essi.",
   'memoryTree.status.title': 'Albero della memoria',
   'memoryTree.status.autoSyncLabel': 'Sincronizzazione automatica',
   'memoryTree.status.autoSyncDescription':

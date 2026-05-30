@@ -307,6 +307,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeTitle':
     'Konektor - lebih berpengaruh daripada jumlah link yang menunjukkan',
   'graphCentrality.degreeTitle': '{in} keluar',
+  'graphCohesion.title': 'Kohesi Graf',
+  'graphCohesion.intro':
+    'Seberapa erat hubungan antar tetangga di sekitar setiap entitas. Perantara — entitas yang tetangganya tidak saling terhubung — adalah satu-satunya titik yang menghubungkan klaster-klaster yang seharusnya terpisah, yang tidak dapat diungkapkan oleh pengurutan frekuensi atau PageRank.',
+  'graphCohesion.loading': 'Menghitung kohesi…',
+  'graphCohesion.errorPrefix': 'Gagal memuat graf:',
+  'graphCohesion.retry': 'Coba lagi',
+  'graphCohesion.empty': 'Belum ada graf pengetahuan.',
+  'graphCohesion.emptyHint':
+    'Saat asisten mencatat fakta-fakta terhubung tentang Anda, struktur pengelompokannya akan muncul di sini.',
+  'graphCohesion.namespaceLabel': 'Namespace',
+  'graphCohesion.namespaceAll': 'Semua namespace',
+  'graphCohesion.metricEntities': 'Entitas',
+  'graphCohesion.metricConnections': 'Koneksi',
+  'graphCohesion.metricTriangles': 'Segitiga',
+  'graphCohesion.summaryCaption':
+    'Rata-rata pengelompokan {avg} · transitivitas {transitivity}',
+  'graphCohesion.noBrokers': 'Belum ada entitas dengan dua koneksi atau lebih.',
+  'graphCohesion.rankedHeading': 'Perantara — tetangga paling longgar',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Entitas',
+  'graphCohesion.colCohesion': 'Kohesi',
+  'graphCohesion.colLinks': 'Tautan',
+  'graphCohesion.brokerBadge': 'perantara',
+  'graphCohesion.brokerTitle':
+    'Lubang struktural: tetangga entitas ini tidak saling terhubung — entitas ini satu-satunya penghubung di antara mereka.',
   'memoryTree.status.title': 'Pohon Memori',
   'memoryTree.status.autoSyncLabel': 'Sinkronisasi otomatis',
   'memoryTree.status.autoSyncDescription':

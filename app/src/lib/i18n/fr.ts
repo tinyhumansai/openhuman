@@ -313,6 +313,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': 'connecteur',
   'graphCentrality.bridgeTitle': 'Connecteur — plus influent que ne le suggère son nombre de liens',
   'graphCentrality.degreeTitle': '{in} en · {out} hors',
+  'graphCohesion.title': 'Cohésion du graphe',
+  'graphCohesion.intro':
+    "Dans quelle mesure le voisinage autour de chaque entité est étroitement lié. Les courtiers — entités dont les voisins ne sont pas reliés entre eux — sont les points uniques reliant des clusters autrement séparés, ce qu'un tri par fréquence ou PageRank ne peut pas révéler.",
+  'graphCohesion.loading': 'Calcul de la cohésion…',
+  'graphCohesion.errorPrefix': 'Impossible de charger le graphe :',
+  'graphCohesion.retry': 'Réessayer',
+  'graphCohesion.empty': "Pas encore de graphe de connaissances.",
+  'graphCohesion.emptyHint':
+    "Au fur et à mesure que l'assistant enregistre des faits connectés sur vous, leur structure de regroupement apparaîtra ici.",
+  'graphCohesion.namespaceLabel': 'Espace de noms',
+  'graphCohesion.namespaceAll': 'Tous les espaces de noms',
+  'graphCohesion.metricEntities': 'Entités',
+  'graphCohesion.metricConnections': 'Connexions',
+  'graphCohesion.metricTriangles': 'Triangles',
+  'graphCohesion.summaryCaption':
+    'Regroupement moyen {avg} · transitivité {transitivity}',
+  'graphCohesion.noBrokers': "Pas encore d'entités avec deux connexions ou plus.",
+  'graphCohesion.rankedHeading': 'Courtiers — voisinages les plus épars',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Entité',
+  'graphCohesion.colCohesion': 'Cohésion',
+  'graphCohesion.colLinks': 'Liens',
+  'graphCohesion.brokerBadge': 'courtier',
+  'graphCohesion.brokerTitle':
+    "Trou structurel : les voisins de cette entité ne sont pas connectés entre eux — elle est le seul lien entre eux.",
   'memoryTree.status.title': 'Arbre de mémoire',
   'memoryTree.status.autoSyncLabel': 'Auto-synchronisation',
   'memoryTree.status.autoSyncDescription':

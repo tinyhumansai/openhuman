@@ -315,6 +315,31 @@ const messages: TranslationMap = {
   'graphCentrality.bridgeBadge': 'conector',
   'graphCentrality.bridgeTitle': 'Conector: más influyente de lo que sugiere su número de enlaces',
   'graphCentrality.degreeTitle': '{in} entra · {out} sale',
+  'graphCohesion.title': 'Cohesión del grafo',
+  'graphCohesion.intro':
+    'Qué tan estrechamente conectado está el vecindario alrededor de cada entidad. Los intermediarios — entidades cuyos vecinos no están vinculados entre sí — son los únicos puntos que mantienen unidos clústeres de otro modo separados, algo que un ordenamiento por frecuencia o PageRank no puede revelar.',
+  'graphCohesion.loading': 'Calculando cohesión…',
+  'graphCohesion.errorPrefix': 'No se pudo cargar el grafo:',
+  'graphCohesion.retry': 'Reintentar',
+  'graphCohesion.empty': 'Aún no hay grafo de conocimiento.',
+  'graphCohesion.emptyHint':
+    'A medida que el asistente registre hechos conectados sobre ti, su estructura de agrupamiento aparecerá aquí.',
+  'graphCohesion.namespaceLabel': 'Espacio de nombres',
+  'graphCohesion.namespaceAll': 'Todos los espacios de nombres',
+  'graphCohesion.metricEntities': 'Entidades',
+  'graphCohesion.metricConnections': 'Conexiones',
+  'graphCohesion.metricTriangles': 'Triángulos',
+  'graphCohesion.summaryCaption':
+    'Agrupamiento promedio {avg} · transitividad {transitivity}',
+  'graphCohesion.noBrokers': 'Aún no hay entidades con dos o más conexiones.',
+  'graphCohesion.rankedHeading': 'Intermediarios — vecindarios más dispersos',
+  'graphCohesion.colRank': '#',
+  'graphCohesion.colEntity': 'Entidad',
+  'graphCohesion.colCohesion': 'Cohesión',
+  'graphCohesion.colLinks': 'Vínculos',
+  'graphCohesion.brokerBadge': 'intermediario',
+  'graphCohesion.brokerTitle':
+    'Agujero estructural: los vecinos de esta entidad no están conectados entre sí — es el único enlace entre ellos.',
   'memoryTree.status.title': 'Árbol de la memoria',
   'memoryTree.status.autoSyncLabel': 'Auto-sincronización',
   'memoryTree.status.autoSyncDescription':
