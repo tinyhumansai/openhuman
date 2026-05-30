@@ -68,36 +68,38 @@ pub async fn run_python_script_to_completion(
         timeout_secs: deadline.as_secs(),
     };
 
-    if let Some(payload) = stdin {
-        if let Some(mut stdin_handle) = child.stdin.take() {
-            let remaining = deadline.saturating_sub(started_at.elapsed());
-            timeout(remaining, stdin_handle.write_all(&payload))
-                .await
-                .map_err(|_| timeout_err())?
-                .with_context(|| {
+    // Drain stdout/stderr concurrently with the stdin write. The
+    // child's stdout/stderr pipes are not consumed until
+    // `wait_with_output()` below, so if the script emits more than
+    // the OS pipe buffer (~64 KiB on Linux) while we're still
+    // writing stdin, the child blocks on its output, stops consuming
+    // stdin, and `write_all` blocks too — classic pipe deadlock.
+    // Spawning the stdin writer on tokio means stdin and output
+    // drain make progress against each other.
+    let stdin_handle = child.stdin.take();
+    let script_path_for_writer = spec.script_path.clone();
+    let stdin_writer = tokio::spawn(async move {
+        if let Some(mut handle) = stdin_handle {
+            if let Some(payload) = stdin {
+                handle.write_all(&payload).await.with_context(|| {
                     format!(
                         "writing stdin payload to python subprocess for {:?}",
-                        spec.script_path
+                        script_path_for_writer
                     )
                 })?;
-            let remaining = deadline.saturating_sub(started_at.elapsed());
-            timeout(remaining, stdin_handle.shutdown())
-                .await
-                .map_err(|_| timeout_err())?
-                .with_context(|| {
-                    format!(
-                        "closing stdin pipe to python subprocess for {:?}",
-                        spec.script_path
-                    )
-                })?;
+            }
+            // Always close stdin so scripts that `sys.stdin.read()`
+            // don't deadlock waiting for a payload that's never
+            // coming (no-payload case included).
+            handle.shutdown().await.with_context(|| {
+                format!(
+                    "closing stdin pipe to python subprocess for {:?}",
+                    script_path_for_writer
+                )
+            })?;
         }
-    } else if let Some(mut stdin_handle) = child.stdin.take() {
-        // Always close stdin so scripts that `sys.stdin.read()` don't
-        // deadlock waiting for a payload that's never coming. Bounded
-        // by the same deadline so a stuck pipe can't strand us.
-        let remaining = deadline.saturating_sub(started_at.elapsed());
-        let _ = timeout(remaining, stdin_handle.shutdown()).await;
-    }
+        anyhow::Ok(())
+    });
 
     let remaining = deadline.saturating_sub(started_at.elapsed());
     let output_future = child.wait_with_output();
@@ -110,9 +112,24 @@ pub async fn run_python_script_to_completion(
                 timeout_secs = deadline.as_secs(),
                 "[runtime_python::run] python subprocess exceeded deadline — killed"
             );
+            // wait_with_output dropped `child`, which kills the
+            // process and breaks the stdin pipe; the writer task
+            // will fail quickly on the closed pipe rather than
+            // outliving the deadline.
+            let _ = stdin_writer.await;
             return Err(timeout_err().into());
         }
     };
+    // Surface stdin writer errors only when the subprocess otherwise
+    // succeeded — if it failed, the stderr it produced is the more
+    // useful signal.
+    if let Ok(Err(err)) = stdin_writer.await {
+        tracing::warn!(
+            script = %spec.script_path.display(),
+            err = %err,
+            "[runtime_python::run] stdin writer task reported error after subprocess completed"
+        );
+    }
 
     let exit_code = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
