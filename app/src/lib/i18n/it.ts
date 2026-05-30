@@ -4218,6 +4218,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Download fallito: {reason}',
   'chat.artifact.retry': 'Riprova',
   'chat.artifact.reveal': 'Mostra nella cartella',
+  'chat.artifact.show_more': 'Mostra altro',
+  'chat.artifact.show_less': 'Mostra meno',
 };
 
 export default messages;

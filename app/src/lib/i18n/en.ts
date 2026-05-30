@@ -4372,6 +4372,8 @@ const en: TranslationMap = {
   'chat.artifact.download_failed': 'Download failed: {reason}',
   'chat.artifact.retry': 'Retry',
   'chat.artifact.reveal': 'Show in folder',
+  'chat.artifact.show_more': 'Show more',
+  'chat.artifact.show_less': 'Show less',
 };
 
 export default en;

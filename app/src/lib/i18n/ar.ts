@@ -4074,6 +4074,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'فشل التنزيل: {reason}',
   'chat.artifact.retry': 'إعادة المحاولة',
   'chat.artifact.reveal': 'عرض في المجلد',
+  'chat.artifact.show_more': 'عرض المزيد',
+  'chat.artifact.show_less': 'عرض أقل',
 };
 
 export default messages;

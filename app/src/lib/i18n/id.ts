@@ -4163,6 +4163,8 @@ const messages: TranslationMap = {
   'chat.artifact.download_failed': 'Unduhan gagal: {reason}',
   'chat.artifact.retry': 'Coba lagi',
   'chat.artifact.reveal': 'Tampilkan di folder',
+  'chat.artifact.show_more': 'Tampilkan selengkapnya',
+  'chat.artifact.show_less': 'Tampilkan lebih sedikit',
 };
 
 export default messages;

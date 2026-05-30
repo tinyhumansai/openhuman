@@ -148,6 +148,16 @@ function FailedIcon() {
   );
 }
 
+/**
+ * Cap the visible failure reason at ~280 chars. Producer-side errors
+ * can be enormous (e.g. a multi-KB pip stderr from a failed venv
+ * setup — observed at 13K chars in dev:app on 2026-05-30) and
+ * dumping that raw into a flex card breaks layout + can freeze the
+ * scrolling page. We collapse by default and let the user expand
+ * via "Show more" if they actually want to read it.
+ */
+const ERROR_REASON_PREVIEW_CHARS = 280;
+
 export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
   const { t } = useT();
   const [download, setDownload] = useState<{
@@ -155,6 +165,7 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
     path?: string;
     error?: string;
   }>({ state: 'idle' });
+  const [errorExpanded, setErrorExpanded] = useState(false);
 
   const handleDownload = async () => {
     setDownload({ state: 'downloading' });
@@ -219,9 +230,24 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
         )}
       </div>
       {artifact.status === 'failed' && artifact.error && (
-        <p className="text-xs text-coral-600 dark:text-coral-400 font-mono mt-1 break-words">
-          {artifact.error}
-        </p>
+        <div className="text-xs text-coral-600 dark:text-coral-400 mt-1">
+          <p
+            className={`font-mono break-words whitespace-pre-wrap ${
+              errorExpanded ? 'max-h-48 overflow-y-auto' : ''
+            }`}>
+            {errorExpanded || artifact.error.length <= ERROR_REASON_PREVIEW_CHARS
+              ? artifact.error
+              : `${artifact.error.slice(0, ERROR_REASON_PREVIEW_CHARS)}…`}
+          </p>
+          {artifact.error.length > ERROR_REASON_PREVIEW_CHARS && (
+            <button
+              type="button"
+              onClick={() => setErrorExpanded(prev => !prev)}
+              className="mt-1 underline text-coral-700 dark:text-coral-300 hover:text-coral-900 dark:hover:text-coral-100">
+              {errorExpanded ? t('chat.artifact.show_less') : t('chat.artifact.show_more')}
+            </button>
+          )}
+        </div>
       )}
       {download.state === 'done' && download.path && (
         <div className="flex items-center gap-2 text-xs text-sage-700 dark:text-sage-300 mt-1">
