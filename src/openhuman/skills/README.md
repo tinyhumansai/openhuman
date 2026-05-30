@@ -23,7 +23,7 @@ Discovery, parsing, and per-turn injection of agentskills.io-style skills (a dir
 
 - `src/openhuman/tools/traits.rs` — `ToolResult` / `ToolContent` shape shared with the tool registry.
 - `src/openhuman/workspace/ops.rs` — workspace bootstrap touches the skill directory layout.
-- `src/openhuman/agent/agents/integrations_agent/prompt.rs` — integrations agent reads the skill catalog.
+- `src/openhuman/agent_registry/agents/integrations_agent/prompt.rs` — integrations agent reads the skill catalog.
 - `src/openhuman/agent/harness/fork_context.rs` — fork context propagates injected skills.
 - `src/openhuman/agent/harness/session/turn.rs` — per-turn injection point.
 - `src/openhuman/agent/prompts/{mod,types}.rs` — render `## Available Skills` catalog section.

@@ -60,7 +60,7 @@ mod bughunt_tests;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
-mod test_support_test;
+mod test_support_tests;
 
 #[cfg(test)]
 mod harness_gap_tests;

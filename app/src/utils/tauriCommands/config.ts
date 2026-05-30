@@ -415,7 +415,7 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
-export type SearchEngineId = 'managed' | 'parallel' | 'brave' | 'querit';
+export type SearchEngineId = 'disabled' | 'managed' | 'parallel' | 'brave' | 'querit';
 
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;

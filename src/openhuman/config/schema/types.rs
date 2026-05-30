@@ -229,6 +229,11 @@ pub struct Config {
     #[serde(default)]
     pub memory_sources: Vec<crate::openhuman::memory_sources::types::MemorySourceEntry>,
 
+    /// User-facing agent registry — shipped default agents plus user-authored
+    /// custom agents and persisted enable/disable/tool-policy overrides.
+    #[serde(default)]
+    pub agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig,
+
     #[serde(default)]
     pub computer_control: ComputerControlConfig,
 
@@ -667,6 +672,7 @@ impl Default for Config {
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
             memory_sources: Vec::new(),
+            agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig::default(),
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),

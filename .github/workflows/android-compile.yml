@@ -2,15 +2,6 @@
 name: Android Compile Sanity
 
 on:
-  pull_request:
-    paths:
-      - 'app/src-tauri-mobile/**'
-      - 'packages/tauri-plugin-ptt/**'
-      - 'src/openhuman/devices/**'
-      - 'app/src/services/transport/**'
-      - 'app/src/lib/tunnel/**'
-      - 'app/src/pages/ios/**'
-      - '.github/workflows/android-compile.yml'
   workflow_dispatch:
 
 permissions:
@@ -36,7 +27,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: '1.93.0'
+          toolchain: "1.93.0"
           targets: aarch64-linux-android
 
       - name: Cache Rust build artifacts
@@ -53,8 +44,8 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'pnpm'
+          node-version: "24"
+          cache: "pnpm"
 
       - name: Install dependencies
         run: bash scripts/ci-cancel-aware.sh pnpm install --frozen-lockfile

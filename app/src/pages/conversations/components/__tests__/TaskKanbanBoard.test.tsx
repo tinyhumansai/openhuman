@@ -35,14 +35,18 @@ const board: TaskBoard = {
 };
 
 describe('TaskKanbanBoard', () => {
-  it('renders kanban columns, cards, notes, and blockers', () => {
+  it('renders the three columns, cards, notes, and blockers', () => {
     render(<TaskKanbanBoard board={board} />);
 
-    expect(screen.getByText('To do')).toBeInTheDocument();
-    expect(screen.getByText('In progress')).toBeInTheDocument();
-    expect(screen.getByText('Blocked')).toBeInTheDocument();
+    // The board surfaces exactly three columns; `blocked` is bucketed into Done.
+    expect(screen.getByText('Pending')).toBeInTheDocument();
+    expect(screen.getByText('Working')).toBeInTheDocument();
     expect(screen.getByText('Done')).toBeInTheDocument();
+    expect(screen.queryByText('To do')).not.toBeInTheDocument();
+    expect(screen.queryByText('Blocked')).not.toBeInTheDocument();
     expect(screen.getByText('Draft plan')).toBeInTheDocument();
+    // The blocked card is still rendered (under Done) with its blocker reason.
+    expect(screen.getByText('Wait for token')).toBeInTheDocument();
     expect(screen.getByText('Prepare the implementation handoff')).toBeInTheDocument();
     expect(screen.getByText('planner')).toBeInTheDocument();
     expect(screen.getByText('approval')).toBeInTheDocument();

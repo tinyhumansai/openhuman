@@ -18,18 +18,31 @@ const TASK_BOARD_EXTENSION: &str = "json";
 #[serde(rename_all = "snake_case")]
 pub enum TaskCardStatus {
     Todo,
+    /// Plan approval required and pending — the dispatcher parked the card here
+    /// and emitted `TaskPlanAwaitingApproval`; it will not run until a human
+    /// approves (→ `Ready`) or rejects (→ `Rejected`).
+    AwaitingApproval,
+    /// Approved for execution — the dispatcher runs `Ready` cards without a
+    /// further approval check (distinguishes "approved" from the initial
+    /// `Todo`, which the approval gate would otherwise re-park).
+    Ready,
     InProgress,
     Blocked,
     Done,
+    /// Plan approval was denied; the card is not executed.
+    Rejected,
 }
 
 impl TaskCardStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Todo => "todo",
+            Self::AwaitingApproval => "awaiting_approval",
+            Self::Ready => "ready",
             Self::InProgress => "in_progress",
             Self::Blocked => "blocked",
             Self::Done => "done",
+            Self::Rejected => "rejected",
         }
     }
 }
@@ -74,6 +87,12 @@ pub struct TaskBoardCard {
     pub notes: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
+    /// Provider/source identifiers for a card ingested from a task source
+    /// (`{provider, source_id, external_id, url, repo?, urgency}`). Set by
+    /// the `task_sources` route; consumed downstream for prioritisation and
+    /// external write-back. `None` for agent/UI-authored cards.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_metadata: Option<serde_json::Value>,
     #[serde(default)]
     pub order: u32,
     #[serde(default)]
@@ -420,6 +439,7 @@ mod tests {
                     evidence: vec!["  cargo test  ".into()],
                     notes: Some("  note  ".into()),
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
@@ -436,6 +456,7 @@ mod tests {
                     evidence: Vec::new(),
                     notes: Some("waiting on user".into()),
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
@@ -506,6 +527,7 @@ mod tests {
                     evidence: Vec::new(),
                     notes: None,
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
@@ -522,6 +544,7 @@ mod tests {
                     evidence: Vec::new(),
                     notes: None,
                     blocker: None,
+                    source_metadata: None,
                     order: 99,
                     updated_at: String::new(),
                 },
