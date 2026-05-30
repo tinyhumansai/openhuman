@@ -4115,7 +4115,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': '{path}에 저장됨',
   'chat.artifact.download_failed': '다운로드 실패: {reason}',
   'chat.artifact.retry': '다시 시도',
-  'chat.artifact.reveal': 'Finder에서 보기',
+  'chat.artifact.reveal': '폴더에서 보기',
 };
 
 export default messages;

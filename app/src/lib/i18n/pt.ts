@@ -4217,7 +4217,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': 'Salvo em {path}',
   'chat.artifact.download_failed': 'Falha no download: {reason}',
   'chat.artifact.retry': 'Tentar novamente',
-  'chat.artifact.reveal': 'Mostrar no Finder',
+  'chat.artifact.reveal': 'Mostrar na pasta',
 };
 
 export default messages;

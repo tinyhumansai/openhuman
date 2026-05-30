@@ -3948,7 +3948,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': '已保存到 {path}',
   'chat.artifact.download_failed': '下载失败：{reason}',
   'chat.artifact.retry': '重试',
-  'chat.artifact.reveal': '在 Finder 中显示',
+  'chat.artifact.reveal': '在文件夹中显示',
 };
 
 export default messages;

@@ -4073,7 +4073,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': 'تم الحفظ في {path}',
   'chat.artifact.download_failed': 'فشل التنزيل: {reason}',
   'chat.artifact.retry': 'إعادة المحاولة',
-  'chat.artifact.reveal': 'إظهار في Finder',
+  'chat.artifact.reveal': 'عرض في المجلد',
 };
 
 export default messages;

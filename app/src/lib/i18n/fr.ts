@@ -4239,7 +4239,7 @@ const messages: TranslationMap = {
   'chat.artifact.downloaded': 'Enregistré dans {path}',
   'chat.artifact.download_failed': 'Échec du téléchargement : {reason}',
   'chat.artifact.retry': 'Réessayer',
-  'chat.artifact.reveal': 'Afficher dans le Finder',
+  'chat.artifact.reveal': 'Afficher dans le dossier',
 };
 
 export default messages;
