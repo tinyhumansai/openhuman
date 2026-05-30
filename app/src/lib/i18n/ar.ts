@@ -4255,7 +4255,8 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'أقصى عدد لأحرف السياق',
   'autocomplete.overlayTtlMs': 'مهلة الطبقة (مللي ثانية)',
   'graphCohesion.brokerBadge': 'وسيط',
-  'graphCohesion.brokerTitle': 'ثقب بنيوي: جيران هذا الكيان غير مترابطين فيما بينهم — وهو الرابط الوحيد بينهم.',
+  'graphCohesion.brokerTitle':
+    'ثقب بنيوي: جيران هذا الكيان غير مترابطين فيما بينهم — وهو الرابط الوحيد بينهم.',
   'graphCohesion.colCohesion': 'التماسك',
   'graphCohesion.colEntity': 'الكيان',
   'graphCohesion.colLinks': 'روابط',
@@ -4263,7 +4264,8 @@ const messages: TranslationMap = {
   'graphCohesion.empty': 'لا يوجد رسم معرفة بعد.',
   'graphCohesion.emptyHint': 'كلما سجّل المساعد حقائق مترابطة عنك، ستظهر هنا بنية تجميعها.',
   'graphCohesion.errorPrefix': 'تعذّر تحميل الرسم البياني:',
-  'graphCohesion.intro': 'مدى تماسك الجوار حول كل كيان. الوسطاء — كيانات لا يرتبط جيرانها ببعضهم — هم النقاط الوحيدة التي تربط بين عناقيد كانت ستظل منفصلة، وهو ما لا يمكن لفرز التكرار أو PageRank الكشف عنه.',
+  'graphCohesion.intro':
+    'مدى تماسك الجوار حول كل كيان. الوسطاء — كيانات لا يرتبط جيرانها ببعضهم — هم النقاط الوحيدة التي تربط بين عناقيد كانت ستظل منفصلة، وهو ما لا يمكن لفرز التكرار أو PageRank الكشف عنه.',
   'graphCohesion.loading': 'يجري حساب التماسك…',
   'graphCohesion.metricConnections': 'الاتصالات',
   'graphCohesion.metricEntities': 'الكيانات',

@@ -4402,15 +4402,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Maksymalna liczba znaków kontekstu',
   'autocomplete.overlayTtlMs': 'Limit czasu nakładki (ms)',
   'graphCohesion.brokerBadge': 'broker',
-  'graphCohesion.brokerTitle': 'Dziura strukturalna: sąsiedzi tej encji nie są ze sobą połączeni — jest ona jedynym łącznikiem między nimi.',
+  'graphCohesion.brokerTitle':
+    'Dziura strukturalna: sąsiedzi tej encji nie są ze sobą połączeni — jest ona jedynym łącznikiem między nimi.',
   'graphCohesion.colCohesion': 'Spójność',
   'graphCohesion.colEntity': 'Encja',
   'graphCohesion.colLinks': 'Łącza',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Jeszcze brak grafu wiedzy.',
-  'graphCohesion.emptyHint': 'W miarę jak asystent zapisuje powiązane fakty o Tobie, ich struktura klasteryzacji pojawi się tutaj.',
+  'graphCohesion.emptyHint':
+    'W miarę jak asystent zapisuje powiązane fakty o Tobie, ich struktura klasteryzacji pojawi się tutaj.',
   'graphCohesion.errorPrefix': 'Nie udało się załadować grafu:',
-  'graphCohesion.intro': 'Jak ściśle spleciona jest okolica wokół każdej encji. Brokerzy — encje, których sąsiedzi nie są ze sobą połączeni — to pojedyncze punkty trzymające razem klastry, które inaczej byłyby oddzielne, czego sortowanie po częstotliwości ani PageRank nie ujawni.',
+  'graphCohesion.intro':
+    'Jak ściśle spleciona jest okolica wokół każdej encji. Brokerzy — encje, których sąsiedzi nie są ze sobą połączeni — to pojedyncze punkty trzymające razem klastry, które inaczej byłyby oddzielne, czego sortowanie po częstotliwości ani PageRank nie ujawni.',
   'graphCohesion.loading': 'Obliczanie spójności…',
   'graphCohesion.metricConnections': 'Połączenia',
   'graphCohesion.metricEntities': 'Encje',

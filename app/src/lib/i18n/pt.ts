@@ -4401,15 +4401,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Máximo de caracteres de contexto',
   'autocomplete.overlayTtlMs': 'Tempo limite da sobreposição (ms)',
   'graphCohesion.brokerBadge': 'intermediador',
-  'graphCohesion.brokerTitle': 'Buraco estrutural: os vizinhos desta entidade não estão conectados entre si — ela é a única ligação entre eles.',
+  'graphCohesion.brokerTitle':
+    'Buraco estrutural: os vizinhos desta entidade não estão conectados entre si — ela é a única ligação entre eles.',
   'graphCohesion.colCohesion': 'Coesão',
   'graphCohesion.colEntity': 'Entidade',
   'graphCohesion.colLinks': 'Ligações',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Ainda sem grafo de conhecimento.',
-  'graphCohesion.emptyHint': 'À medida que o assistente registra fatos conectados sobre você, a estrutura de agrupamento aparecerá aqui.',
+  'graphCohesion.emptyHint':
+    'À medida que o assistente registra fatos conectados sobre você, a estrutura de agrupamento aparecerá aqui.',
   'graphCohesion.errorPrefix': 'Não foi possível carregar o grafo:',
-  'graphCohesion.intro': 'Quão fortemente entrelaçada é a vizinhança ao redor de cada entidade. Intermediadores — entidades cujos vizinhos não estão ligados entre si — são os pontos únicos que mantêm grupos separados unidos, algo que uma ordenação por frequência ou PageRank não pode revelar.',
+  'graphCohesion.intro':
+    'Quão fortemente entrelaçada é a vizinhança ao redor de cada entidade. Intermediadores — entidades cujos vizinhos não estão ligados entre si — são os pontos únicos que mantêm grupos separados unidos, algo que uma ordenação por frequência ou PageRank não pode revelar.',
   'graphCohesion.loading': 'Calculando coesão…',
   'graphCohesion.metricConnections': 'Conexões',
   'graphCohesion.metricEntities': 'Entidades',

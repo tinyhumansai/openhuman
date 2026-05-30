@@ -4411,15 +4411,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Máximo de caracteres de contexto',
   'autocomplete.overlayTtlMs': 'Tiempo de espera de superposición (ms)',
   'graphCohesion.brokerBadge': 'intermediario',
-  'graphCohesion.brokerTitle': 'Hueco estructural: los vecinos de esta entidad no están conectados entre sí — ella es el único enlace entre ellos.',
+  'graphCohesion.brokerTitle':
+    'Hueco estructural: los vecinos de esta entidad no están conectados entre sí — ella es el único enlace entre ellos.',
   'graphCohesion.colCohesion': 'Cohesión',
   'graphCohesion.colEntity': 'Entidad',
   'graphCohesion.colLinks': 'Enlaces',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Aún no hay grafo de conocimiento.',
-  'graphCohesion.emptyHint': 'A medida que el asistente registra hechos conectados sobre usted, su estructura de agrupamiento aparecerá aquí.',
+  'graphCohesion.emptyHint':
+    'A medida que el asistente registra hechos conectados sobre usted, su estructura de agrupamiento aparecerá aquí.',
   'graphCohesion.errorPrefix': 'No se pudo cargar el grafo:',
-  'graphCohesion.intro': 'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios — entidades cuyos vecinos no están conectados entre sí — son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
+  'graphCohesion.intro':
+    'Cuán estrechamente tejido está el vecindario de cada entidad. Los intermediarios — entidades cuyos vecinos no están conectados entre sí — son los puntos únicos que mantienen unidos grupos que de otro modo estarían separados, algo que un orden por frecuencia o PageRank no puede revelar.',
   'graphCohesion.loading': 'Calculando cohesión…',
   'graphCohesion.metricConnections': 'Conexiones',
   'graphCohesion.metricEntities': 'Entidades',

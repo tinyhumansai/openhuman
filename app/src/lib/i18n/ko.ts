@@ -4295,15 +4295,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': '최대 컨텍스트 문자 수',
   'autocomplete.overlayTtlMs': '오버레이 시간 초과 (ms)',
   'graphCohesion.brokerBadge': '브로커',
-  'graphCohesion.brokerTitle': '구조적 공백: 이 엔티티의 이웃들은 서로 연결되어 있지 않습니다 — 이들 사이의 유일한 연결고리입니다.',
+  'graphCohesion.brokerTitle':
+    '구조적 공백: 이 엔티티의 이웃들은 서로 연결되어 있지 않습니다 — 이들 사이의 유일한 연결고리입니다.',
   'graphCohesion.colCohesion': '응집도',
   'graphCohesion.colEntity': '엔티티',
   'graphCohesion.colLinks': '링크',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': '아직 지식 그래프가 없습니다.',
-  'graphCohesion.emptyHint': '어시스턴트가 당신에 관한 연결된 사실들을 기록함에 따라, 그 군집화 구조가 여기에 드러납니다.',
+  'graphCohesion.emptyHint':
+    '어시스턴트가 당신에 관한 연결된 사실들을 기록함에 따라, 그 군집화 구조가 여기에 드러납니다.',
   'graphCohesion.errorPrefix': '그래프를 불러올 수 없습니다:',
-  'graphCohesion.intro': '각 엔티티 주변 이웃이 얼마나 촘촘히 엮여 있는지. 브로커 — 이웃들이 서로 연결되지 않은 엔티티 — 는 그렇지 않으면 분리되었을 클러스터를 묶어주는 단일 지점이며, 빈도나 PageRank 정렬로는 드러낼 수 없는 것입니다.',
+  'graphCohesion.intro':
+    '각 엔티티 주변 이웃이 얼마나 촘촘히 엮여 있는지. 브로커 — 이웃들이 서로 연결되지 않은 엔티티 — 는 그렇지 않으면 분리되었을 클러스터를 묶어주는 단일 지점이며, 빈도나 PageRank 정렬로는 드러낼 수 없는 것입니다.',
   'graphCohesion.loading': '응집도 계산 중…',
   'graphCohesion.metricConnections': '연결',
   'graphCohesion.metricEntities': '엔티티',

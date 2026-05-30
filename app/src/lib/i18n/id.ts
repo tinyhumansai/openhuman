@@ -4344,15 +4344,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Karakter konteks maks',
   'autocomplete.overlayTtlMs': 'Batas waktu overlay (md)',
   'graphCohesion.brokerBadge': 'broker',
-  'graphCohesion.brokerTitle': 'Lubang struktural: tetangga entitas ini tidak saling terhubung — entitas inilah satu-satunya tautan di antara mereka.',
+  'graphCohesion.brokerTitle':
+    'Lubang struktural: tetangga entitas ini tidak saling terhubung — entitas inilah satu-satunya tautan di antara mereka.',
   'graphCohesion.colCohesion': 'Kohesi',
   'graphCohesion.colEntity': 'Entitas',
   'graphCohesion.colLinks': 'Tautan',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Belum ada graf pengetahuan.',
-  'graphCohesion.emptyHint': 'Saat asisten mencatat fakta-fakta terhubung tentang Anda, struktur pengelompokannya akan muncul di sini.',
+  'graphCohesion.emptyHint':
+    'Saat asisten mencatat fakta-fakta terhubung tentang Anda, struktur pengelompokannya akan muncul di sini.',
   'graphCohesion.errorPrefix': 'Tidak dapat memuat graf:',
-  'graphCohesion.intro': 'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker — entitas yang tetangganya tidak saling terhubung — adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
+  'graphCohesion.intro':
+    'Seberapa rapat lingkungan di sekitar setiap entitas terjalin. Broker — entitas yang tetangganya tidak saling terhubung — adalah titik-titik tunggal yang menyatukan klaster yang sebenarnya terpisah, hal yang tidak dapat diungkap oleh pengurutan frekuensi atau PageRank.',
   'graphCohesion.loading': 'Menghitung kohesi…',
   'graphCohesion.metricConnections': 'Koneksi',
   'graphCohesion.metricEntities': 'Entitas',

@@ -4427,15 +4427,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Caractères de contexte maximum',
   'autocomplete.overlayTtlMs': "Délai d'affichage (ms)",
   'graphCohesion.brokerBadge': 'courtier',
-  'graphCohesion.brokerTitle': 'Trou structurel : les voisins de cette entité ne sont pas connectés entre eux — elle est le seul lien entre eux.',
+  'graphCohesion.brokerTitle':
+    'Trou structurel : les voisins de cette entité ne sont pas connectés entre eux — elle est le seul lien entre eux.',
   'graphCohesion.colCohesion': 'Cohésion',
   'graphCohesion.colEntity': 'Entité',
   'graphCohesion.colLinks': 'Liens',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Pas encore de graphe de connaissances.',
-  'graphCohesion.emptyHint': "À mesure que l'assistant enregistre des faits connectés à votre sujet, leur structure de regroupement apparaîtra ici.",
+  'graphCohesion.emptyHint':
+    "À mesure que l'assistant enregistre des faits connectés à votre sujet, leur structure de regroupement apparaîtra ici.",
   'graphCohesion.errorPrefix': 'Impossible de charger le graphe :',
-  'graphCohesion.intro': "À quel point le voisinage de chaque entité est étroitement tissé. Les courtiers — entités dont les voisins ne sont pas liés entre eux — sont les points uniques qui maintiennent ensemble des groupes autrement séparés, ce qu'un tri par fréquence ou PageRank ne peut révéler.",
+  'graphCohesion.intro':
+    "À quel point le voisinage de chaque entité est étroitement tissé. Les courtiers — entités dont les voisins ne sont pas liés entre eux — sont les points uniques qui maintiennent ensemble des groupes autrement séparés, ce qu'un tri par fréquence ou PageRank ne peut révéler.",
   'graphCohesion.loading': 'Calcul de la cohésion…',
   'graphCohesion.metricConnections': 'Connexions',
   'graphCohesion.metricEntities': 'Entités',

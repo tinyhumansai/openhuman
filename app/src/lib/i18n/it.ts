@@ -4404,15 +4404,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Caratteri massimi di contesto',
   'autocomplete.overlayTtlMs': 'Timeout overlay (ms)',
   'graphCohesion.brokerBadge': 'broker',
-  'graphCohesion.brokerTitle': "Buco strutturale: i vicini di questa entità non sono collegati tra loro — essa è l'unico collegamento tra loro.",
+  'graphCohesion.brokerTitle':
+    "Buco strutturale: i vicini di questa entità non sono collegati tra loro — essa è l'unico collegamento tra loro.",
   'graphCohesion.colCohesion': 'Coesione',
   'graphCohesion.colEntity': 'Entità',
   'graphCohesion.colLinks': 'Collegamenti',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Ancora nessun grafo della conoscenza.',
-  'graphCohesion.emptyHint': "Man mano che l'assistente registra fatti connessi su di te, qui apparirà la loro struttura di raggruppamento.",
+  'graphCohesion.emptyHint':
+    "Man mano che l'assistente registra fatti connessi su di te, qui apparirà la loro struttura di raggruppamento.",
   'graphCohesion.errorPrefix': 'Impossibile caricare il grafo:',
-  'graphCohesion.intro': 'Quanto è fittamente intrecciato il vicinato attorno a ciascuna entità. I broker — entità i cui vicini non sono collegati tra loro — sono i punti singoli che tengono uniti gruppi altrimenti separati, cosa che un ordinamento per frequenza o PageRank non può rivelare.',
+  'graphCohesion.intro':
+    'Quanto è fittamente intrecciato il vicinato attorno a ciascuna entità. I broker — entità i cui vicini non sono collegati tra loro — sono i punti singoli che tengono uniti gruppi altrimenti separati, cosa che un ordinamento per frequenza o PageRank non può rivelare.',
   'graphCohesion.loading': 'Calcolo della coesione…',
   'graphCohesion.metricConnections': 'Connessioni',
   'graphCohesion.metricEntities': 'Entità',

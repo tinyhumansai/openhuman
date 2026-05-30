@@ -4327,15 +4327,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'সর্বোচ্চ প্রসঙ্গ অক্ষর',
   'autocomplete.overlayTtlMs': 'ওভারলে টাইমআউট (মিলিসেকেন্ড)',
   'graphCohesion.brokerBadge': 'ব্রোকার',
-  'graphCohesion.brokerTitle': 'কাঠামোগত ছিদ্র: এই সত্তার প্রতিবেশীরা একে অপরের সাথে যুক্ত নয় — এটিই তাদের মধ্যে একমাত্র সংযোগ।',
+  'graphCohesion.brokerTitle':
+    'কাঠামোগত ছিদ্র: এই সত্তার প্রতিবেশীরা একে অপরের সাথে যুক্ত নয় — এটিই তাদের মধ্যে একমাত্র সংযোগ।',
   'graphCohesion.colCohesion': 'সংসক্তি',
   'graphCohesion.colEntity': 'সত্তা',
   'graphCohesion.colLinks': 'লিঙ্ক',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
-  'graphCohesion.emptyHint': 'সহকারী যখন আপনার সম্পর্কে সংযুক্ত তথ্য রেকর্ড করে, তাদের ক্লাস্টারিং কাঠামো এখানে উঠে আসবে।',
+  'graphCohesion.emptyHint':
+    'সহকারী যখন আপনার সম্পর্কে সংযুক্ত তথ্য রেকর্ড করে, তাদের ক্লাস্টারিং কাঠামো এখানে উঠে আসবে।',
   'graphCohesion.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
-  'graphCohesion.intro': 'প্রতিটি সত্তার চারপাশে প্রতিবেশ কতটা দৃঢ়ভাবে বোনা। ব্রোকার — যেসব সত্তার প্রতিবেশী একে অপরের সাথে যুক্ত নয় — তারাই একমাত্র বিন্দু যা পরস্পর-বিচ্ছিন্ন ক্লাস্টারকে একত্রে ধরে রাখে, যা ফ্রিকোয়েন্সি বা PageRank সাজানি প্রকাশ করতে পারে না।',
+  'graphCohesion.intro':
+    'প্রতিটি সত্তার চারপাশে প্রতিবেশ কতটা দৃঢ়ভাবে বোনা। ব্রোকার — যেসব সত্তার প্রতিবেশী একে অপরের সাথে যুক্ত নয় — তারাই একমাত্র বিন্দু যা পরস্পর-বিচ্ছিন্ন ক্লাস্টারকে একত্রে ধরে রাখে, যা ফ্রিকোয়েন্সি বা PageRank সাজানি প্রকাশ করতে পারে না।',
   'graphCohesion.loading': 'সংসক্তি গণনা করা হচ্ছে…',
   'graphCohesion.metricConnections': 'সংযোগ',
   'graphCohesion.metricEntities': 'সত্তা',

@@ -4334,15 +4334,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'अधिकतम संदर्भ वर्ण',
   'autocomplete.overlayTtlMs': 'ओवरले समय-समाप्ति (ms)',
   'graphCohesion.brokerBadge': 'ब्रोकर',
-  'graphCohesion.brokerTitle': 'संरचनात्मक छेद: इस इकाई के पड़ोसी आपस में नहीं जुड़े — यह उनके बीच एकमात्र कड़ी है।',
+  'graphCohesion.brokerTitle':
+    'संरचनात्मक छेद: इस इकाई के पड़ोसी आपस में नहीं जुड़े — यह उनके बीच एकमात्र कड़ी है।',
   'graphCohesion.colCohesion': 'संसक्ति',
   'graphCohesion.colEntity': 'इकाई',
   'graphCohesion.colLinks': 'लिंक',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'अभी तक कोई नॉलेज ग्राफ नहीं।',
-  'graphCohesion.emptyHint': 'जैसे-जैसे सहायक आपके बारे में जुड़े हुए तथ्य दर्ज करता है, उनकी क्लस्टरिंग संरचना यहाँ उभरेगी।',
+  'graphCohesion.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में जुड़े हुए तथ्य दर्ज करता है, उनकी क्लस्टरिंग संरचना यहाँ उभरेगी।',
   'graphCohesion.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
-  'graphCohesion.intro': 'हर इकाई के चारों ओर पड़ोस कितना घनिष्ठ रूप से बुना हुआ है। ब्रोकर — वे इकाइयाँ जिनके पड़ोसी आपस में नहीं जुड़े — एकमात्र बिंदु हैं जो वरना अलग क्लस्टरों को साथ थामे रखते हैं, जिसे आवृत्ति या PageRank-आधारित क्रम नहीं दिखा सकता।',
+  'graphCohesion.intro':
+    'हर इकाई के चारों ओर पड़ोस कितना घनिष्ठ रूप से बुना हुआ है। ब्रोकर — वे इकाइयाँ जिनके पड़ोसी आपस में नहीं जुड़े — एकमात्र बिंदु हैं जो वरना अलग क्लस्टरों को साथ थामे रखते हैं, जिसे आवृत्ति या PageRank-आधारित क्रम नहीं दिखा सकता।',
   'graphCohesion.loading': 'संसक्ति गणना हो रही है…',
   'graphCohesion.metricConnections': 'कनेक्शन',
   'graphCohesion.metricEntities': 'इकाइयाँ',

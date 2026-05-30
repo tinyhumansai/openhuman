@@ -4441,15 +4441,18 @@ const messages: TranslationMap = {
   'autocomplete.maxChars': 'Maximale Kontextzeichen',
   'autocomplete.overlayTtlMs': 'Overlay-Timeout (ms)',
   'graphCohesion.brokerBadge': 'Broker',
-  'graphCohesion.brokerTitle': 'Strukturelles Loch: Die Nachbarn dieser Entität sind nicht miteinander verbunden — sie ist die einzige Verknüpfung zwischen ihnen.',
+  'graphCohesion.brokerTitle':
+    'Strukturelles Loch: Die Nachbarn dieser Entität sind nicht miteinander verbunden — sie ist die einzige Verknüpfung zwischen ihnen.',
   'graphCohesion.colCohesion': 'Kohäsion',
   'graphCohesion.colEntity': 'Entität',
   'graphCohesion.colLinks': 'Verknüpfungen',
   'graphCohesion.colRank': '#',
   'graphCohesion.empty': 'Noch kein Wissensgraph.',
-  'graphCohesion.emptyHint': 'Während der Assistent verbundene Fakten über Sie erfasst, erscheint hier deren Clustering-Struktur.',
+  'graphCohesion.emptyHint':
+    'Während der Assistent verbundene Fakten über Sie erfasst, erscheint hier deren Clustering-Struktur.',
   'graphCohesion.errorPrefix': 'Graph konnte nicht geladen werden:',
-  'graphCohesion.intro': 'Wie eng verwoben die Nachbarschaft jeder Entität ist. Broker — Entitäten, deren Nachbarn untereinander nicht verbunden sind — sind die Einzelpunkte, die sonst getrennte Cluster zusammenhalten, was eine Häufigkeits- oder PageRank-Sortierung nicht aufdecken kann.',
+  'graphCohesion.intro':
+    'Wie eng verwoben die Nachbarschaft jeder Entität ist. Broker — Entitäten, deren Nachbarn untereinander nicht verbunden sind — sind die Einzelpunkte, die sonst getrennte Cluster zusammenhalten, was eine Häufigkeits- oder PageRank-Sortierung nicht aufdecken kann.',
   'graphCohesion.loading': 'Berechne Kohäsion…',
   'graphCohesion.metricConnections': 'Verbindungen',
   'graphCohesion.metricEntities': 'Entitäten',
@@ -4459,7 +4462,8 @@ const messages: TranslationMap = {
   'graphCohesion.noBrokers': 'Noch keine Entitäten mit zwei oder mehr Verbindungen.',
   'graphCohesion.rankedHeading': 'Broker — lockerste Nachbarschaften',
   'graphCohesion.retry': 'Wiederholen',
-  'graphCohesion.summaryCaption': 'Durchschnittliches Clustering {avg} · Transitivität {transitivity}',
+  'graphCohesion.summaryCaption':
+    'Durchschnittliches Clustering {avg} · Transitivität {transitivity}',
   'graphCohesion.title': 'Graph-Kohäsion',
   'memory.tab.cohesion': 'Cohesion',
 };

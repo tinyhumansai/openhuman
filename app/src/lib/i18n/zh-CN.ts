@@ -4132,7 +4132,8 @@ const messages: TranslationMap = {
   'graphCohesion.empty': '暂无知识图。',
   'graphCohesion.emptyHint': '随着助手记录有关你的相互关联的事实,它们的聚类结构将在此呈现。',
   'graphCohesion.errorPrefix': '无法加载图:',
-  'graphCohesion.intro': '每个实体周围的邻域织得有多紧。经纪者——其邻居彼此之间没有连接的实体——是把本应分离的聚类绑在一起的单点,这是频率或 PageRank 排序无法揭示的。',
+  'graphCohesion.intro':
+    '每个实体周围的邻域织得有多紧。经纪者——其邻居彼此之间没有连接的实体——是把本应分离的聚类绑在一起的单点,这是频率或 PageRank 排序无法揭示的。',
   'graphCohesion.loading': '正在计算凝聚度…',
   'graphCohesion.metricConnections': '连接',
   'graphCohesion.metricEntities': '实体',
