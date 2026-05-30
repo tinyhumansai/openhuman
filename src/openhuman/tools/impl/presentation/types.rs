@@ -82,19 +82,31 @@ pub enum PresentationError {
     #[error("invalid input for field '{field}': {reason}")]
     InvalidInput { field: String, reason: String },
 
+    /// No longer constructed after the native-Rust engine swap
+    /// dropped the python-pptx subprocess path. Retained for
+    /// downstream pattern-match stability — callers that exhaustively
+    /// match on `PresentationError` continue to compile across the
+    /// engine swap, and a future runtime-dependent fallback (e.g. a
+    /// LibreOffice headless renderer for a `format = "pdf"` option)
+    /// can re-construct it without an enum-variant bump.
+    #[allow(dead_code)]
     #[error("{name} runtime is not available; install hint: {install_hint}")]
     MissingRuntime { name: String, install_hint: String },
 
+    /// Same rationale as [`Self::MissingRuntime`] — kept around for
+    /// downstream pattern-match stability after the python-pptx
+    /// subprocess path was removed.
+    #[allow(dead_code)]
     #[error("required package '{name}' is not installed; install hint: {install_hint}")]
     MissingPackage { name: String, install_hint: String },
 
-    #[error("python-pptx generation failed (exit={exit_code}): {stderr_truncated}")]
+    #[error("presentation generation failed (exit={exit_code}): {stderr_truncated}")]
     GenerationFailed {
         exit_code: i32,
         stderr_truncated: String,
     },
 
-    #[error("python-pptx generation exceeded {timeout_secs}s timeout")]
+    #[error("presentation generation exceeded {timeout_secs}s timeout")]
     GenerationTimeout { timeout_secs: u64 },
 }
 
