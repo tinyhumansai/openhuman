@@ -47,6 +47,10 @@ const ConnectionPathTab = () => {
     loadNamespaces()
       .then(setNamespaces)
       .catch(() => setNamespaces([]));
+    // Intentional fetch-on-mount. `loading` initializes to true and `error` to
+    // null, so load()'s synchronous setState is a no-op on the first render and
+    // triggers no cascading re-render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load('');
   }, [load]);
 
