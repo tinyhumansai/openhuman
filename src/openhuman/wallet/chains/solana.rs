@@ -21,7 +21,10 @@ use sha2::{Digest, Sha256, Sha512};
 use crate::openhuman::config::rpc as config_rpc;
 
 use super::super::defaults::explorer_tx_url;
-use super::super::execution::{ExecutionResult, PreparedKind, PreparedStatus, PreparedTransaction};
+use super::super::execution::{
+    ExecutionResult, PreparedKind, PreparedStatus, PreparedTransaction, RawBroadcastResult,
+    TxLookupInfo, TxReceiptInfo, TxState, TxStatusInfo,
+};
 use super::super::ops::{secret_material, WalletChain};
 use super::super::rpc::rpc_call;
 
@@ -164,6 +167,26 @@ fn encode_shortvec(value: u16) -> Vec<u8> {
         byte |= 0x80;
         out.push(byte);
     }
+}
+
+/// Decode a Solana compact-u16 (shortvec). Returns `(value, bytes_consumed)`.
+fn decode_shortvec(bytes: &[u8]) -> Result<(u16, usize), String> {
+    let mut value: u32 = 0;
+    let mut shift = 0u32;
+    for (i, byte) in bytes.iter().enumerate() {
+        if i >= 3 {
+            return Err("shortvec too long".to_string());
+        }
+        value |= u32::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            if value > u16::MAX as u32 {
+                return Err("shortvec exceeds u16 range".to_string());
+            }
+            return Ok((value as u16, i + 1));
+        }
+        shift += 7;
+    }
+    Err("shortvec truncated".to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -388,11 +411,6 @@ pub async fn execute_solana_quote(
             }
             build_spl_transfer_message(from_pk, src_ata, dst_ata, amount, recent_blockhash)
         }
-        other => {
-            return Err(format!(
-                "Solana execution only supports native + SPL transfers; got {other:?}"
-            ));
-        }
     };
 
     let signature = signing_key.sign(&message_bytes);
@@ -417,6 +435,203 @@ pub async fn execute_solana_quote(
         transaction_hash: tx_sig,
         explorer_url,
         transaction: quote,
+    })
+}
+
+/// Crate-internal primitive: sign an externally-built, hex-encoded
+/// `VersionedTransaction` (e.g. a deBridge swap/bridge tx) with the wallet's
+/// Solana key and broadcast it. Not exposed as an agent tool or RPC.
+///
+/// Wire layout (Solana transaction): `shortvec(num_signatures)` followed by
+/// `num_signatures * 64` signature slots, then the serialized message. We fill
+/// the signature slot at the index whose `account_keys[i]` equals our pubkey,
+/// signing the full message bytes (legacy or v0 — the message slice includes
+/// the v0 version prefix, which is what Solana signs).
+pub(crate) async fn sign_and_broadcast_versioned(
+    tx_blob_hex: &str,
+) -> Result<RawBroadcastResult, String> {
+    let trimmed = tx_blob_hex.trim();
+    let normalized = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    let mut wire =
+        hex::decode(normalized).map_err(|e| format!("invalid Solana transaction hex blob: {e}"))?;
+
+    let (num_signatures, sig_count_len) = decode_shortvec(&wire)?;
+    let sigs_start = sig_count_len;
+    let message_start = sigs_start + (num_signatures as usize) * 64;
+    if message_start > wire.len() {
+        return Err("Solana tx blob truncated before message".to_string());
+    }
+    let message = &wire[message_start..];
+    if message.is_empty() {
+        return Err("Solana tx blob has empty message".to_string());
+    }
+
+    // Determine message version + header offset.
+    let versioned = message[0] & 0x80 != 0;
+    let header_off = if versioned { 1 } else { 0 };
+    if message.len() < header_off + 3 {
+        return Err("Solana message header truncated".to_string());
+    }
+    let num_required_signatures = message[header_off] as usize;
+    if num_required_signatures == 0 {
+        return Err("Solana message declares zero required signatures".to_string());
+    }
+    // Parse account keys (need at least the signer keys to find our index).
+    let keys_off = header_off + 3;
+    let (account_count, count_len) = decode_shortvec(&message[keys_off..])?;
+    let keys_start = keys_off + count_len;
+    if account_count as usize > num_required_signatures.max(account_count as usize) {
+        // sanity only; continue
+    }
+    let signer_keys = num_required_signatures.min(account_count as usize);
+    if keys_start + signer_keys * 32 > message.len() {
+        return Err("Solana account keys region truncated".to_string());
+    }
+
+    // Derive our signing key.
+    let secret = secret_material(WalletChain::Solana).await?;
+    let config = config_rpc::load_config_with_timeout().await?;
+    let mnemonic =
+        crate::openhuman::encryption::rpc::decrypt_secret(&config, &secret.encrypted_mnemonic)
+            .await?
+            .value;
+    let signing_key = derive_solana_keypair(&mnemonic, &secret.derivation_path)?;
+    let our_pubkey = signing_key.verifying_key().to_bytes();
+
+    // Find our signer index.
+    let mut our_index: Option<usize> = None;
+    for i in 0..signer_keys {
+        let off = keys_start + i * 32;
+        if message[off..off + 32] == our_pubkey {
+            our_index = Some(i);
+            break;
+        }
+    }
+    let our_index = our_index.ok_or_else(|| {
+        format!(
+            "wallet Solana address {} is not a required signer of this transaction",
+            pubkey_to_b58(&our_pubkey)
+        )
+    })?;
+    if our_index >= num_signatures as usize {
+        return Err("Solana signer index exceeds signature slot count".to_string());
+    }
+
+    // Sign the message bytes and write into our signature slot.
+    let signature = signing_key.sign(message);
+    let sig_bytes = signature.to_bytes();
+    let slot_off = sigs_start + our_index * 64;
+    wire[slot_off..slot_off + 64].copy_from_slice(&sig_bytes);
+
+    let tx_sig = broadcast_solana(&wire).await?;
+    debug!("{LOG_PREFIX} sign_and_broadcast_versioned sig={tx_sig}");
+    Ok(RawBroadcastResult {
+        transaction_hash: tx_sig.clone(),
+        explorer_url: explorer_tx_url(WalletChain::Solana, &tx_sig),
+        // Solana fees are dynamic (base + priority) and only known once the tx
+        // is confirmed — leave unset rather than misreporting a free transfer.
+        fee_raw: None,
+    })
+}
+
+/// `getSignatureStatuses` → normalized status.
+pub async fn tx_status(hash: &str) -> Result<TxStatusInfo, String> {
+    #[derive(Deserialize)]
+    struct StatusResp {
+        value: Vec<Option<SigStatus>>,
+    }
+    #[derive(Deserialize)]
+    struct SigStatus {
+        slot: u64,
+        confirmations: Option<u64>,
+        err: Option<serde_json::Value>,
+    }
+    let resp: StatusResp = rpc_call(
+        WalletChain::Solana,
+        "getSignatureStatuses",
+        json!([[hash], {"searchTransactionHistory": true}]),
+    )
+    .await?;
+    let entry = resp.value.into_iter().next().flatten();
+    let (state, confirmations, block_number) = match entry {
+        None => (TxState::NotFound, None, None),
+        Some(status) => {
+            let state = if status.err.is_some() {
+                TxState::Failed
+            } else if status.confirmations.is_none() {
+                // null confirmations means "finalized / rooted".
+                TxState::Confirmed
+            } else {
+                TxState::Pending
+            };
+            (state, status.confirmations, Some(status.slot))
+        }
+    };
+    Ok(TxStatusInfo {
+        chain: WalletChain::Solana,
+        evm_network: None,
+        hash: hash.to_string(),
+        state,
+        confirmations,
+        block_number,
+    })
+}
+
+/// `getTransaction` → normalized receipt with raw passthrough.
+pub async fn tx_receipt(hash: &str) -> Result<TxReceiptInfo, String> {
+    let tx: serde_json::Value = rpc_call(
+        WalletChain::Solana,
+        "getTransaction",
+        json!([hash, {"maxSupportedTransactionVersion": 0, "encoding": "json"}]),
+    )
+    .await?;
+    if tx.is_null() {
+        return Ok(TxReceiptInfo {
+            chain: WalletChain::Solana,
+            evm_network: None,
+            hash: hash.to_string(),
+            found: false,
+            success: None,
+            block_number: None,
+            gas_used: None,
+            fee_raw: None,
+            raw: serde_json::Value::Null,
+        });
+    }
+    let meta = tx.get("meta");
+    let success = meta.map(|m| m.get("err").map(|e| e.is_null()).unwrap_or(true));
+    let fee_raw = meta
+        .and_then(|m| m.get("fee"))
+        .and_then(|v| v.as_u64())
+        .map(|f| f.to_string());
+    let block_number = tx.get("slot").and_then(|v| v.as_u64());
+    Ok(TxReceiptInfo {
+        chain: WalletChain::Solana,
+        evm_network: None,
+        hash: hash.to_string(),
+        found: true,
+        success,
+        block_number,
+        gas_used: None,
+        fee_raw,
+        raw: tx,
+    })
+}
+
+/// `getTransaction` → raw transaction passthrough.
+pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
+    let tx: serde_json::Value = rpc_call(
+        WalletChain::Solana,
+        "getTransaction",
+        json!([hash, {"maxSupportedTransactionVersion": 0, "encoding": "json"}]),
+    )
+    .await?;
+    Ok(TxLookupInfo {
+        chain: WalletChain::Solana,
+        evm_network: None,
+        hash: hash.to_string(),
+        found: !tx.is_null(),
+        raw: tx,
     })
 }
 
@@ -800,5 +1015,120 @@ mod tests {
         let token_program = token_program_id();
         let key3 = &msg[4 + 96..4 + 128];
         assert_eq!(key3, &token_program);
+    }
+
+    #[test]
+    fn decode_shortvec_round_trips_encode() {
+        for v in [0u16, 1, 127, 128, 16_383, 16_384, 65_535] {
+            let enc = encode_shortvec(v);
+            let (decoded, len) = decode_shortvec(&enc).unwrap();
+            assert_eq!(decoded, v, "value {v} round-trips");
+            assert_eq!(len, enc.len(), "consumed length matches for {v}");
+        }
+    }
+
+    /// Build a minimal legacy VersionedTransaction wire with `signer` as the
+    /// sole required signer and an empty signature slot.
+    fn build_unsigned_legacy(signer: &[u8; 32]) -> Vec<u8> {
+        let mut message = Vec::new();
+        message.extend([1u8, 0u8, 0u8]); // header: 1 required sig
+        message.extend(encode_shortvec(1)); // 1 account key
+        message.extend(signer);
+        message.extend([0u8; 32]); // recent blockhash
+        message.extend(encode_shortvec(0)); // 0 instructions
+        let mut wire = Vec::new();
+        wire.extend(encode_shortvec(1)); // 1 signature slot
+        wire.extend([0u8; 64]); // empty sig
+        wire.extend(&message);
+        wire
+    }
+
+    #[tokio::test]
+    async fn sign_and_broadcast_versioned_fills_signature_and_broadcasts() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_quote_store_for_tests();
+        let temp = TempDir::new().unwrap();
+        setup_wallet_in(&temp).await.unwrap();
+
+        let fake_sig = "5xS9pXmqVz8R1nuRZTfsdsAxBdBFmtnAtuYbCsmK5DYzGn5vR4VqWGmiR5McLnYx8oFqLdo62q4qiUZpQyR4Hkn3";
+        let (addr, calls) = start_solana_mock(fake_sig).await;
+        std::env::set_var("OPENHUMAN_WALLET_RPC_SOLANA", format!("http://{addr}"));
+
+        let signer = b58_to_pubkey(sample_solana_address()).unwrap();
+        let wire = build_unsigned_legacy(&signer);
+        let result = sign_and_broadcast_versioned(&hex::encode(&wire))
+            .await
+            .expect("sign+broadcast ok");
+        assert_eq!(result.transaction_hash, fake_sig);
+
+        // The broadcast tx must carry a non-zero signature in slot 0.
+        let send = calls
+            .lock()
+            .iter()
+            .rev()
+            .find(|c| c.get("method").and_then(|v| v.as_str()) == Some("sendTransaction"))
+            .cloned()
+            .expect("sendTransaction recorded");
+        let b64 = send.get("params").and_then(|p| p.as_array()).unwrap()[0]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let raw = B64.decode(b64).unwrap();
+        // shortvec(1) + 64-byte sig; the sig must not be all zeros now.
+        assert_eq!(raw[0], 1);
+        assert!(raw[1..1 + 64].iter().any(|b| *b != 0), "signature filled");
+    }
+
+    #[tokio::test]
+    async fn sign_and_broadcast_versioned_rejects_non_signer() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        reset_quote_store_for_tests();
+        let temp = TempDir::new().unwrap();
+        setup_wallet_in(&temp).await.unwrap();
+
+        // A signer pubkey that is NOT our wallet — sign must refuse.
+        let other = [7u8; 32];
+        let wire = build_unsigned_legacy(&other);
+        let err = sign_and_broadcast_versioned(&hex::encode(&wire))
+            .await
+            .unwrap_err();
+        assert!(err.contains("not a required signer"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn tx_status_reads_signature_status() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let app = Router::new().route(
+            "/",
+            post(|axum::Json(_p): axum::Json<serde_json::Value>| async move {
+                axum::Json(json!({
+                    "jsonrpc": "2.0", "id": 1,
+                    "result": {"context": {"slot": 0}, "value": [
+                        {"slot": 123u64, "confirmations": null, "err": null}
+                    ]}
+                }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        std::env::set_var("OPENHUMAN_WALLET_RPC_SOLANA", format!("http://{addr}"));
+        let info = tx_status("somesig").await.unwrap();
+        assert_eq!(
+            info.state,
+            crate::openhuman::wallet::execution::TxState::Confirmed
+        );
+        assert_eq!(info.block_number, Some(123));
     }
 }

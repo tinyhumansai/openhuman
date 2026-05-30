@@ -155,5 +155,5 @@ pub async fn load_or_default(toolkit: &str) -> UserScopePref {
 }
 
 #[cfg(test)]
-#[path = "user_scopes_test.rs"]
+#[path = "user_scopes_tests.rs"]
 mod tests;

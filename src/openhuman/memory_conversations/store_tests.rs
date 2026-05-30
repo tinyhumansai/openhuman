@@ -23,6 +23,7 @@ fn store_roundtrips_threads_and_messages() {
             title: "Conversation".to_string(),
             created_at: created_at.clone(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
     assert_eq!(thread.message_count, 0);
@@ -61,6 +62,7 @@ fn get_messages_for_new_empty_thread_returns_empty_list() {
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
 
@@ -78,6 +80,7 @@ fn store_updates_message_metadata() {
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
     store
@@ -119,6 +122,7 @@ fn purge_removes_threads_and_messages() {
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
     store
@@ -150,6 +154,7 @@ fn ensure_thread_is_idempotent() {
         title: "Thread".to_string(),
         created_at: "2026-04-10T12:00:00Z".to_string(),
         labels: None,
+        personality_id: None,
     };
     store.ensure_thread(req.clone()).unwrap();
     store.ensure_thread(req).unwrap();
@@ -167,6 +172,7 @@ fn delete_thread_removes_thread_and_messages() {
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -206,6 +212,7 @@ fn get_messages_empty_thread() {
             title: "Empty".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     let messages = store.get_messages("t1").unwrap();
@@ -230,6 +237,7 @@ fn multiple_threads_and_messages() {
                 title: format!("Thread {i}"),
                 created_at: format!("2026-04-10T12:0{i}:00Z"),
                 labels: None,
+                personality_id: None,
             })
             .unwrap();
         store
@@ -268,6 +276,7 @@ fn update_message_nonexistent_returns_error() {
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     let result = store.update_message(
@@ -290,6 +299,7 @@ fn update_thread_title_persists_latest_title() {
             title: "Chat Apr 10 12:00 PM".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -315,6 +325,7 @@ fn store_handles_labels_and_inference() {
             title: "Thread 1".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: Some(vec!["custom".to_string()]),
+            personality_id: None,
         })
         .unwrap();
 
@@ -326,6 +337,7 @@ fn store_handles_labels_and_inference() {
             title: "Morning Briefing".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -337,6 +349,7 @@ fn store_handles_labels_and_inference() {
             title: "System Notification".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -348,6 +361,7 @@ fn store_handles_labels_and_inference() {
             title: "User Chat".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -422,6 +436,7 @@ fn list_threads_does_not_read_per_thread_files_after_first_call() {
             title: "T1".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     for i in 0..3 {
@@ -555,6 +570,7 @@ fn delete_thread_clears_stats_from_index() {
             title: "Doomed".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -590,6 +606,7 @@ fn search_cross_thread_messages_finds_hits_outside_excluded_thread() {
             title: "Chat A".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -616,6 +633,7 @@ fn search_cross_thread_messages_finds_hits_outside_excluded_thread() {
             title: "Chat B".to_string(),
             created_at: "2026-04-10T13:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -656,6 +674,7 @@ fn search_cross_thread_messages_excludes_active_thread() {
             title: "Only".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -697,6 +716,7 @@ fn search_cross_thread_messages_skips_short_terms_and_empty_queries() {
             title: "T".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -735,6 +755,7 @@ fn search_cross_thread_messages_finds_polish_substring_without_diacritics() {
             title: "PL".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -773,6 +794,7 @@ fn search_cross_thread_messages_finds_japanese_bigram_match() {
             title: "JP".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -812,6 +834,7 @@ fn search_cross_thread_messages_rebuilds_index_from_jsonl_after_reopen() {
                 title: "X".to_string(),
                 created_at: "2026-04-10T12:00:00Z".to_string(),
                 labels: None,
+                personality_id: None,
             })
             .unwrap();
         store
@@ -860,6 +883,7 @@ fn cold_search_does_not_serialize_on_outer_lock() {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             parent_thread_id: None,
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store

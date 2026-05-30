@@ -181,7 +181,7 @@ pub fn load_skills(workspace_dir: &Path) -> Vec<SkillDefinition> {
 
     let mut skills: Vec<SkillDefinition> = Vec::new();
 
-    if let Ok(builtins) = crate::openhuman::agent::agents::load_builtins() {
+    if let Ok(builtins) = crate::openhuman::agent_registry::agents::load_builtins() {
         for definition in builtins {
             skills.push(SkillDefinition {
                 definition,

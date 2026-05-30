@@ -81,6 +81,7 @@ fn thread_to_summary(thread: ConversationThread) -> ConversationThreadSummary {
         created_at: thread.created_at,
         parent_thread_id: thread.parent_thread_id,
         labels: thread.labels,
+        personality_id: thread.personality_id,
     }
 }
 
@@ -168,6 +169,7 @@ pub async fn thread_upsert(
             created_at: request.created_at,
             parent_thread_id: request.parent_thread_id,
             labels: request.labels,
+            personality_id: request.personality_id,
         },
     )?;
     Ok(envelope(
@@ -197,6 +199,7 @@ pub async fn thread_create_new(
             // the same default on index rebuild, so this is the single source
             // of truth for default labels.
             labels: request.labels,
+            personality_id: request.personality_id,
         },
     )?;
     tracing::debug!(

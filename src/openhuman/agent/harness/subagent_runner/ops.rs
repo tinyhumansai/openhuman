@@ -31,7 +31,9 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::context::prompt::{
     render_subagent_system_prompt, PromptContext, PromptTool, SubagentRenderOptions,
 };
-use crate::openhuman::inference::provider::{ChatMessage, ChatRequest, Provider, ToolCall};
+use crate::openhuman::inference::provider::{
+    ChatMessage, ChatRequest, Provider, ProviderDelta, ToolCall,
+};
 use crate::openhuman::memory_conversations::ConversationMessage;
 use crate::openhuman::tools::{Tool, ToolCategory, ToolSpec};
 use crate::openhuman::util::truncate_with_ellipsis;
@@ -1089,6 +1091,10 @@ async fn run_typed_mode(
         include_memory_md: !definition.omit_memory_md,
         curated_snapshot: None,
         user_identity: crate::openhuman::app_state::peek_cached_current_user_identity(),
+        personality_soul_md: None,
+        personality_memory_md: None,
+        personality_roster: vec![],
+        workflows: &[],
     };
 
     let system_prompt = match &definition.system_prompt {
@@ -1445,17 +1451,77 @@ async fn run_inner_loop(
                 .await;
         }
 
-        let resp = provider
+        // Stream the child's tokens to the parent's progress sink so the
+        // UI can render the sub-agent's thinking/output live, attributed
+        // to this row via `task_id`. Mirrors the main turn loop
+        // (`session/turn.rs`): only set up the SSE sink when a listener
+        // exists, otherwise the channel buffer would back-pressure the
+        // provider and we'd lose the non-streaming HTTP fast path for
+        // providers that don't implement streaming.
+        let child_iteration_for_stream = (iteration + 1) as u32;
+        let (delta_tx_opt, delta_forwarder) = if let Some(ref sink) = progress_sink {
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<ProviderDelta>(128);
+            let sink = sink.clone();
+            let agent_id_for_stream = agent_id.to_string();
+            let task_id_for_stream = task_id.to_string();
+            let forwarder = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    // Only visible text and reasoning deltas attribute to
+                    // the subagent transcript; tool-call arg fragments are
+                    // already surfaced via SubagentToolCall* lifecycle
+                    // events, so they're dropped here to avoid double-render.
+                    let mapped = match event {
+                        ProviderDelta::TextDelta { delta } => AgentProgress::SubagentTextDelta {
+                            agent_id: agent_id_for_stream.clone(),
+                            task_id: task_id_for_stream.clone(),
+                            delta,
+                            iteration: child_iteration_for_stream,
+                        },
+                        ProviderDelta::ThinkingDelta { delta } => {
+                            AgentProgress::SubagentThinkingDelta {
+                                agent_id: agent_id_for_stream.clone(),
+                                task_id: task_id_for_stream.clone(),
+                                delta,
+                                iteration: child_iteration_for_stream,
+                            }
+                        }
+                        ProviderDelta::ToolCallStart { .. }
+                        | ProviderDelta::ToolCallArgsDelta { .. } => continue,
+                    };
+                    // Await backpressure so streamed deltas arrive in order
+                    // and aren't silently dropped when the downstream
+                    // progress bridge is slow.
+                    if sink.send(mapped).await.is_err() {
+                        break;
+                    }
+                }
+            });
+            (Some(tx), Some(forwarder))
+        } else {
+            (None, None)
+        };
+
+        let chat_result = provider
             .chat(
                 ChatRequest {
                     messages: history.as_slice(),
                     tools: request_tools,
-                    stream: None,
+                    stream: delta_tx_opt.as_ref(),
                 },
                 model,
                 temperature,
             )
-            .await?;
+            .await;
+
+        // Drop the sender so the forwarder task observes channel close and
+        // terminates instead of leaking. This must run on BOTH the success
+        // and error paths — propagating the provider error with `?` before
+        // joining the forwarder would orphan the task and leak the sender.
+        drop(delta_tx_opt);
+        if let Some(forwarder) = delta_forwarder {
+            let _ = forwarder.await;
+        }
+        let resp = chat_result?;
 
         if let Some(ref u) = resp.usage {
             usage.input_tokens += u.input_tokens;

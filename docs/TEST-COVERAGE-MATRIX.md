@@ -190,6 +190,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 4.3.2 | Permission-Based Execution | RU+WD | `src/openhuman/tools/`, `skill-execution-flow.spec.ts`      | ✅     |       |
 | 4.3.3 | Tool Failure Handling      | WD    | `skill-execution-flow.spec.ts`                              | ✅     |       |
 | 4.3.4 | Subagent Mascot Visualization | VU | `app/src/features/human/SubMascotLayer.test.tsx`, `app/src/features/human/HumanPage.test.tsx` | ✅ | Renders spawned/completed/failed subagent timeline rows as colored companion mascots with activity bubbles |
+| 4.3.5 | Image Tool Contracts | RU | `src/openhuman/image/` | ✅ | High-level `image_generation` / `view_image` schema, gating, serialization, prompt guidance, and contract e2e coverage for #2984 |
 
 ---
 
@@ -306,11 +307,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature                                    | Layer | Test path(s)                                                                                                       | Status | Notes                                                                  |
 | ----- | ------------------------------------------ | ----- | ----------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------- |
-| 8.4.1 | Save Preference (general / situational)    | RU    | `src/openhuman/tools/impl/agent/save_preference_tests.rs`                                                         | ✅     | `save_preference` tool → `user_pref_{general,situational}`, topic-keyed |
+| 8.4.1 | Save Preference (general / situational)    | RU    | `src/openhuman/agent/tools/save_preference_tests.rs`                                                         | ✅     | `save_preference` tool → `user_pref_{general,situational}`, topic-keyed |
 | 8.4.2 | Lane A — Standing Prefs in System Prompt   | RU    | `src/openhuman/learning/prompt_sections.rs`, `src/openhuman/agent/harness/session/turn_tests.rs`                  | ✅     | General prefs rendered into the system prompt at thread start          |
 | 8.4.3 | Lane B — Situational Recall (vector-gated) | RU    | `src/openhuman/memory/store/unified/query_tests.rs::recall_relevant_by_vector_gates_on_similarity`                | ✅     | Per-turn; relevant query injects, unrelated suppresses                 |
-| 8.4.4 | Same-Topic Contradiction (replace)         | RU    | `src/openhuman/tools/impl/agent/save_preference_tests.rs::recategorising_moves_pref_between_namespaces`           | ✅     | `ON CONFLICT REPLACE`; a topic lives in exactly one scope              |
-| 8.4.5 | Cross-Topic Contradiction Surfacing        | RU    | `src/openhuman/tools/impl/agent/save_preference_tests.rs::save_surfaces_related_preference_for_contradiction_check` | ✅   | Related prefs surfaced in the tool result for the chat agent to resolve |
+| 8.4.4 | Same-Topic Contradiction (replace)         | RU    | `src/openhuman/agent/tools/save_preference_tests.rs::recategorising_moves_pref_between_namespaces`           | ✅     | `ON CONFLICT REPLACE`; a topic lives in exactly one scope              |
+| 8.4.5 | Cross-Topic Contradiction Surfacing        | RU    | `src/openhuman/agent/tools/save_preference_tests.rs::save_surfaces_related_preference_for_contradiction_check` | ✅   | Related prefs surfaced in the tool result for the chat agent to resolve |
 | 8.4.6 | vector_chunks Model-Signature Recall Guard | RU    | `src/openhuman/memory/store/unified/query_tests.rs::vector_recall_excludes_other_model_signature`                | ✅     | Excludes cross-model vectors; dim-guards legacy rows                   |
 
 ---
@@ -368,7 +369,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ------ | ------------------------- | ----- | ----------------------------------------------------- | ------ | ----- |
 | 10.3.1 | Incoming Message Sync     | RU+WD | `src/openhuman/channels/tests/`, `gmail-flow.spec.ts` | ✅     |       |
 | 10.3.2 | Message Deduplication     | RU    | `src/openhuman/channels/tests/`                       | ✅     |       |
-| 10.3.3 | WhatsApp Agent Retrieval  | RU    | `src/openhuman/tools/impl/whatsapp_data/` (this PR), `tests/json_rpc_e2e.rs::whatsapp_data_agent_tools_e2e_1341` (this PR) | ✅     | Three read-only agent tools wrap the local SQLite store; ingest stays internal-only. See [`docs/whatsapp-data-flow.md`](whatsapp-data-flow.md). |
+| 10.3.3 | WhatsApp Agent Retrieval  | RU    | `src/openhuman/whatsapp_data/tools/` (this PR), `tests/json_rpc_e2e.rs::whatsapp_data_agent_tools_e2e_1341` (this PR) | ✅     | Three read-only agent tools wrap the local SQLite store; ingest stays internal-only. See [`docs/whatsapp-data-flow.md`](whatsapp-data-flow.md). |
 | 10.3.4 | Real-Time vs Delayed Sync | RU    | `src/openhuman/channels/tests/runtime_dispatch.rs`    | ✅     |       |
 
 ### 10.4 Messaging Operations
@@ -467,6 +468,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 13.1.1 | Profile Management | VU    | `app/src/components/settings/panels/__tests__/PrivacyPanel.test.tsx` | 🟡     |                       |
 | 13.1.2 | Linked Accounts    | WD    | `auth-access-control.spec.ts`                                        | 🟡     | UI surface unasserted |
 | 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` (this PR) | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
+| 13.1.4 | Wallet Balances Panel | VU | `app/src/components/settings/panels/__tests__/WalletBalancesPanel.test.tsx`, `app/src/services/walletApi.test.ts` | ✅ | Loading/error/empty/loaded states; Retry + Refresh re-invocation; chain badges; truncated address; providerStatus chip |
 
 ### 13.2 Automation & Channels
 
@@ -505,11 +507,11 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | Status           | Count                                            |
 | ---------------- | ------------------------------------------------ |
-| ✅ Covered       | 69                                               |
+| ✅ Covered       | 70                                               |
 | 🟡 Partial       | 27                                               |
 | ❌ Missing       | 26                                               |
 | 🚫 Manual smoke  | 11                                               |
-| **Total leaves** | **134 explicit + nested = 205 product features** |
+| **Total leaves** | **135 explicit + nested = 206 product features** |
 
 PR-A delta: 13 leaves moved from ❌ → ✅ via 5 WDIO specs + 2 Vitest + 1 Rust integration test.
 Remaining gaps tracked under sub-issues #965 (process), #966 (docs), #967 (tools), #968 (auth/perm), #969 (settings), #970 (rewards), #971 (manual smoke).

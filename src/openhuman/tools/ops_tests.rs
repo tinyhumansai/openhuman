@@ -1019,6 +1019,51 @@ fn all_tools_registers_querit_engine_when_enabled() {
     assert_contains_all(&names, &["web_search_tool", "querit_search"]);
 }
 
+#[test]
+fn all_tools_omits_search_surface_when_search_is_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let security = Arc::new(SecurityPolicy::default());
+    let mem = test_memory(&tmp);
+    let browser = BrowserConfig::default();
+    let http = crate::openhuman::config::HttpRequestConfig::default();
+    let mut cfg = test_config(&tmp);
+    cfg.api_url = Some("https://backend.example.test".to_string());
+    cfg.search.engine = crate::openhuman::config::SEARCH_ENGINE_DISABLED.into();
+    cfg.search.brave.api_key = Some("test-brave-key".into());
+    cfg.search.querit.api_key = Some("test-querit-key".into());
+    cfg.integrations.tinyfish.enabled = true;
+    store_test_session_token(&cfg);
+
+    let tools = all_tools(
+        Arc::new(cfg.clone()),
+        &security,
+        AuditLogger::disabled(),
+        mem,
+        &browser,
+        &http,
+        tmp.path(),
+        &HashMap::new(),
+        &cfg,
+    );
+    let names = tool_names(&tools);
+
+    for search_tool in [
+        "web_search_tool",
+        "brave_news_search",
+        "brave_image_search",
+        "brave_video_search",
+        "querit_search",
+        "tinyfish_search",
+        "tinyfish_fetch",
+        "tinyfish_agent_run",
+    ] {
+        assert!(
+            !names.iter().any(|name| name == search_tool),
+            "did not expect search tool `{search_tool}` when search is disabled; got: {names:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn all_tools_executes_apify_family_against_fake_backend() {
     let backend = integration_test_support::spawn_fake_integration_backend().await;

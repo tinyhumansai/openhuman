@@ -1,3 +1,4 @@
+mod ingest;
 mod provider;
 mod sync;
 #[cfg(test)]

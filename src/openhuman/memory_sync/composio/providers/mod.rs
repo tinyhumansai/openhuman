@@ -276,14 +276,16 @@ pub fn agent_ready_toolkits() -> Vec<&'static str> {
 }
 
 pub use descriptions::toolkit_description;
-pub(crate) use helpers::pick_str;
+pub(crate) use helpers::{first_array_str, merge_extra, pick_str};
 pub use registry::{
     all_providers, get_provider, init_default_providers, register_provider, ProviderArc,
 };
 pub use scope_lookup::{curated_scope_for, toolkit_has_scope};
 pub use tool_scope::{classify_unknown, find_curated, toolkit_from_slug, CuratedTool, ToolScope};
 pub use traits::ComposioProvider;
-pub use types::{ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason};
+pub use types::{
+    NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+};
 pub use user_scopes::{load_or_default as load_user_scope_or_default, UserScopePref};
 
 #[cfg(test)]

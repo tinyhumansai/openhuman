@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { store } from '../../../../store';
 import type { ToolTimelineEntry } from '../../../../store/chatRuntimeSlice';
@@ -74,6 +75,62 @@ describe('SubagentActivityBlock', () => {
     expect(calls[1].textContent).toContain('running');
     expect(calls[1].textContent).toContain('·t2');
     expect(calls[2].textContent).toContain('error');
+  });
+
+  it('shows a live preview of streamed visible text (preferred over thinking)', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [
+            { kind: 'thinking', iteration: 1, text: 'pondering the request' },
+            { kind: 'text', iteration: 1, text: 'Here is what I found so far about the topic' },
+          ],
+        }}
+      />
+    );
+    const preview = screen.getByTestId('subagent-preview');
+    expect(preview.textContent).toContain('Here is what I found so far');
+    // Visible text takes precedence, so the thinking tail is not shown.
+    expect(preview.textContent).not.toContain('pondering');
+  });
+
+  it('falls back to the thinking tail while only reasoning has streamed', () => {
+    renderInStore(
+      <SubagentActivityBlock
+        subagent={{
+          taskId: 't',
+          agentId: 'researcher',
+          toolCalls: [],
+          transcript: [{ kind: 'thinking', iteration: 1, text: 'I should search the web first' }],
+        }}
+      />
+    );
+    expect(screen.getByTestId('subagent-preview').textContent).toContain(
+      'I should search the web first'
+    );
+  });
+
+  it('renders the view-processing button only when onView is provided', async () => {
+    const onView = vi.fn();
+    const { rerender } = renderInStore(
+      <SubagentActivityBlock subagent={{ taskId: 't', agentId: 'researcher', toolCalls: [] }} />
+    );
+    expect(screen.queryByTestId('subagent-view-processing')).toBeNull();
+
+    rerender(
+      <Provider store={store}>
+        <SubagentActivityBlock
+          subagent={{ taskId: 't', agentId: 'researcher', toolCalls: [] }}
+          onView={onView}
+        />
+      </Provider>
+    );
+    const btn = screen.getByTestId('subagent-view-processing');
+    await userEvent.click(btn);
+    expect(onView).toHaveBeenCalledTimes(1);
   });
 });
 

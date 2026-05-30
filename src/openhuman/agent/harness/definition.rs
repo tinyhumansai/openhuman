@@ -3,7 +3,7 @@
 //! An [`AgentDefinition`] fully specifies a sub-agent: its core prompt, model,
 //! allowed tool set, runtime limits, and which sections of the parent system
 //! prompt to omit. Built-in definitions live in
-//! [`crate::openhuman::agent::agents`] — one subfolder per agent, each
+//! [`crate::openhuman::agent_registry::agents`] — one subfolder per agent, each
 //! holding an `agent.toml` (metadata) and `prompt.md` (system prompt). A
 //! thin wrapper in [`super::builtin_definitions`] loads them and appends
 //! the synthetic `fork` definition. Users can ship custom definitions as
@@ -167,8 +167,8 @@ pub struct AgentDefinition {
     /// so that reading a TOML makes the distinction obvious: `tools` is
     /// "what I execute directly", `subagents` is "what I can delegate to".
     ///
-    /// [`ArchetypeDelegationTool`]: crate::openhuman::tools::impl::agent::ArchetypeDelegationTool
-    /// [`SkillDelegationTool`]: crate::openhuman::tools::impl::agent::SkillDelegationTool
+    /// [`ArchetypeDelegationTool`]: crate::openhuman::agent_orchestration::tools::ArchetypeDelegationTool
+    /// [`SkillDelegationTool`]: crate::openhuman::agent_orchestration::tools::SkillDelegationTool
     #[serde(default)]
     pub subagents: Vec<SubagentEntry>,
 
@@ -481,7 +481,7 @@ pub enum SandboxMode {
 #[serde(tag = "kind", content = "path")]
 pub enum DefinitionSource {
     /// Built-in definition shipped as part of the binary (loaded from
-    /// [`crate::openhuman::agent::agents`]).
+    /// [`crate::openhuman::agent_registry::agents`]).
     #[default]
     Builtin,
     /// Loaded from a TOML file at the given absolute path.
@@ -572,15 +572,17 @@ impl AgentDefinitionRegistry {
         // merged in — a workspace TOML can legally replace a built-in
         // (same id) and is held to the same spawn-hierarchy contract
         // as the bundled set. See
-        // [`super::super::agents::loader::validate_tier_hierarchy`].
+        // [`crate::openhuman::agent_registry::agents::loader::validate_tier_hierarchy`].
         let snapshot: Vec<AgentDefinition> = reg.list().into_iter().cloned().collect();
-        super::super::agents::validate_tier_hierarchy(&snapshot).map_err(|e| {
-            anyhow::anyhow!(
-                "agent registry rejected after merging workspace overrides from {}: {}",
-                workspace.display(),
-                e
-            )
-        })?;
+        crate::openhuman::agent_registry::agents::validate_tier_hierarchy(&snapshot).map_err(
+            |e| {
+                anyhow::anyhow!(
+                    "agent registry rejected after merging workspace overrides from {}: {}",
+                    workspace.display(),
+                    e
+                )
+            },
+        )?;
 
         Ok(reg)
     }

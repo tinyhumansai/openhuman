@@ -42,7 +42,60 @@ pub struct SyncTarget {
 }
 
 /// List active Composio connections that have a native memory-sync provider.
+///
+/// When memory_sources entries exist with `kind=composio` and `enabled=true`,
+/// those are used as the authoritative source list (user curated). When no
+/// memory_sources composio entries exist, falls back to scanning all active
+/// Composio connections (legacy behavior).
 pub async fn list_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, String> {
+    init_default_composio_sync_providers();
+
+    // Try memory_sources registry first (user-curated list).
+    let registry_sources = crate::openhuman::memory_sources::list_enabled_by_kind(
+        crate::openhuman::memory_sources::SourceKind::Composio,
+    )
+    .await
+    .unwrap_or_default();
+
+    if !registry_sources.is_empty() {
+        let from_registry: Vec<SyncTarget> = registry_sources
+            .into_iter()
+            .filter_map(|s| {
+                let toolkit = s.toolkit?;
+                let connection_id = s.connection_id?;
+                get_composio_sync_provider(&toolkit).map(|_| SyncTarget {
+                    toolkit,
+                    connection_id,
+                })
+            })
+            .collect();
+        if !from_registry.is_empty() {
+            tracing::debug!(
+                count = from_registry.len(),
+                "[composio:sync] using memory_sources registry for sync targets"
+            );
+            return Ok(from_registry);
+        }
+        // Registry has entries but none yielded a valid target (missing
+        // fields or unregistered toolkit). Fall through to a fresh scan
+        // rather than reporting an empty target list — otherwise newly
+        // connected integrations stay invisible until reconcile runs.
+        tracing::debug!(
+            "[composio:sync] registry yielded zero valid targets; falling back to connection scan"
+        );
+    } else {
+        tracing::debug!(
+            "[composio:sync] no memory_sources entries; falling back to connection scan"
+        );
+    }
+
+    scan_active_sync_targets(config).await
+}
+
+/// Scan all active Composio connections that have a native memory-sync
+/// provider. Always hits Composio directly — does not consult the
+/// memory_sources registry. Used by reconciliation to seed the registry.
+pub async fn scan_active_sync_targets(config: &Config) -> Result<Vec<SyncTarget>, String> {
     init_default_composio_sync_providers();
 
     let kind =
