@@ -15,6 +15,7 @@ use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use axum::{Json, Router};
+use chrono::{Duration, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use tempfile::{Builder, TempDir};
 
@@ -411,11 +412,13 @@ async fn round22_cron_add_tool_covers_validation_and_markdown_edges() {
         .output()
         .contains("delivery.to is required"));
 
+    let future_at = (Utc::now() + Duration::days(7)).to_rfc3339_opts(SecondsFormat::Secs, true);
+
     let created = tool
         .execute_with_options(
             json!({
                 "name": "round22_agent_once",
-                "schedule": { "kind": "at", "at": "2026-05-31T00:00:00Z" },
+                "schedule": { "kind": "at", "at": future_at },
                 "job_type": "agent",
                 "prompt": "collect validation notes",
                 "session_target": "main",
