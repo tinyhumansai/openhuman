@@ -44,10 +44,10 @@ pub async fn tree_summarizer_run(
 ) -> Result<RpcOutcome<Value>, String> {
     store::validate_namespace(namespace)?;
 
-    let provider = create_provider(config)?;
+    let (provider, model) = create_provider(config)?;
     let ts = Utc::now();
 
-    match engine::run_summarization(config, provider.as_ref(), namespace.trim(), ts).await {
+    match engine::run_summarization(config, provider.as_ref(), &model, namespace.trim(), ts).await {
         Ok(Some(node)) => Ok(RpcOutcome::single_log(
             serde_json::to_value(&node).map_err(|e| e.to_string())?,
             format!(
@@ -126,9 +126,9 @@ pub async fn tree_summarizer_rebuild(
 ) -> Result<RpcOutcome<Value>, String> {
     store::validate_namespace(namespace)?;
 
-    let provider = create_provider(config)?;
+    let (provider, model) = create_provider(config)?;
 
-    let status = engine::rebuild_tree(config, provider.as_ref(), namespace.trim())
+    let status = engine::rebuild_tree(config, provider.as_ref(), &model, namespace.trim())
         .await
         .map_err(|e| format!("rebuild failed: {e:#}"))?;
 
@@ -144,15 +144,32 @@ pub async fn tree_summarizer_rebuild(
 
 // ── Helper ─────────────────────────────────────────────────────────────
 
+/// Build the (provider, model) pair the summarizer runs on (#002 FR-007).
+///
+/// Historically this hard-required local AI ("private + offline"), which left
+/// "Build Summary Trees" dead for cloud-only setups (Tencent/OpenRouter with
+/// no local Ollama). It now falls back to the **configured cloud chat
+/// provider** for the summarization role when local AI is off, returning that
+/// provider's model id alongside it so the engine targets the right model
+/// (the engine no longer assumes the local model id). The UI shows a
+/// persistent indicator that summaries are cloud-processed when this path is
+/// active (privacy note) — no separate consent gate.
 fn create_provider(
     config: &Config,
-) -> Result<Box<dyn crate::openhuman::inference::provider::traits::Provider>, String> {
-    // Tree summarization runs exclusively on local AI to keep memory
-    // processing private and offline — no backend calls.
-    if !config.local_ai.runtime_enabled {
-        return Err("tree summarizer requires local_ai to be enabled in config".to_string());
+) -> Result<(Box<dyn crate::openhuman::inference::provider::traits::Provider>, String), String> {
+    if config.local_ai.runtime_enabled {
+        // Local path: Ollama + the user's local chat model.
+        let provider = create_local_ai_provider(config)?;
+        return Ok((provider, config.local_ai.chat_model_id.clone()));
     }
-    create_local_ai_provider(config)
+
+    // Cloud fallback: build the configured provider for the summarization
+    // role (maps to `memory_provider`; the summarizer sub-agent already
+    // declares hint = "summarization"). `create_chat_provider` returns
+    // (provider, model) so the engine targets the model that actually backs
+    // this provider.
+    crate::openhuman::inference::provider::factory::create_chat_provider("summarization", config)
+        .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
 }
 
 /// Create a provider backed by the local Ollama instance for summarization,
@@ -230,14 +247,26 @@ mod tests {
     }
 
     #[test]
-    fn create_provider_requires_local_ai_runtime() {
+    fn create_provider_uses_local_model_when_local_ai_enabled() {
+        // #002 FR-007: local path returns the user's local chat model.
+        let mut cfg = Config::default();
+        cfg.local_ai.runtime_enabled = true;
+        cfg.local_ai.chat_model_id = "qwen2.5:7b".to_string();
+        let (_provider, model) = create_provider(&cfg).expect("local provider should build");
+        assert_eq!(model, "qwen2.5:7b");
+    }
+
+    #[test]
+    fn create_provider_falls_back_to_cloud_when_local_ai_off() {
+        // #002 FR-007: previously this hard-errored ("requires local_ai to be
+        // enabled"), which left Build Summary Trees dead for cloud-only setups.
+        // It now builds the configured cloud provider for the summarization
+        // role and returns a non-empty model — no error.
         let mut cfg = Config::default();
         cfg.local_ai.runtime_enabled = false;
-        let err = match create_provider(&cfg) {
-            Ok(_) => panic!("runtime-disabled config should fail"),
-            Err(err) => err,
-        };
-        assert!(err.contains("requires local_ai to be enabled"));
+        let (_provider, model) =
+            create_provider(&cfg).expect("cloud fallback should build, not error");
+        assert!(!model.trim().is_empty(), "cloud fallback must resolve a model");
     }
 
     #[test]
@@ -403,18 +432,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tree_summarizer_run_and_rebuild_require_local_ai() {
+    async fn tree_summarizer_run_skips_cleanly_with_cloud_fallback_and_empty_buffer() {
+        // #002 FR-007: with local AI off, run/rebuild no longer hard-error on
+        // the provider precondition — they build the cloud provider and proceed.
+        // With an empty buffer, `run` reports the normal "no buffered data" skip
+        // (NOT a "requires local_ai" error), proving the precondition is gone.
         let (_tmp, mut cfg) = config_in_tempdir();
         cfg.local_ai.runtime_enabled = false;
 
-        let run_err = tree_summarizer_run(&cfg, "team")
+        let outcome = tree_summarizer_run(&cfg, "team")
             .await
-            .expect_err("run should require local ai");
-        assert!(run_err.contains("requires local_ai to be enabled"));
+            .expect("run should not error on the provider precondition");
+        assert_eq!(
+            outcome.value,
+            json!({ "skipped": true, "reason": "no buffered data" })
+        );
 
-        let rebuild_err = tree_summarizer_rebuild(&cfg, "team")
+        // Rebuild on an empty tree returns the (zero-node) status, not an error.
+        let rebuilt = tree_summarizer_rebuild(&cfg, "team")
             .await
-            .expect_err("rebuild should require local ai");
-        assert!(rebuild_err.contains("requires local_ai to be enabled"));
+            .expect("rebuild should not error on the provider precondition");
+        assert_eq!(rebuilt.value["total_nodes"], 0);
     }
 }

@@ -33,6 +33,7 @@ const MAX_SUMMARY_CHARS: usize = 20_000 * 4;
 pub async fn run_summarization(
     config: &Config,
     provider: &dyn Provider,
+    model: &str,
     namespace: &str,
     _ts: DateTime<Utc>,
 ) -> Result<Option<TreeNode>> {
@@ -79,7 +80,6 @@ pub async fn run_summarization(
             combined
         };
 
-        let model = &config.local_ai.chat_model_id;
         let hour_summary = summarize_to_limit(
             provider,
             &to_summarize,
@@ -138,16 +138,9 @@ pub async fn run_summarization(
     ] {
         for (node_id, node_level) in &all_propagation_ids {
             if *node_level == level && seen.insert(node_id.clone()) {
-                propagate_node(
-                    config,
-                    provider,
-                    namespace,
-                    node_id,
-                    level,
-                    &config.local_ai.chat_model_id,
-                )
-                .await
-                .with_context(|| format!("propagate {node_id}"))?;
+                propagate_node(config, provider, namespace, node_id, level, model)
+                    .await
+                    .with_context(|| format!("propagate {node_id}"))?;
             }
         }
     }
@@ -166,6 +159,7 @@ pub async fn run_summarization(
 pub async fn rebuild_tree(
     config: &Config,
     provider: &dyn Provider,
+    model: &str,
     namespace: &str,
 ) -> Result<TreeStatus> {
     tracing::debug!("[tree_summarizer] rebuilding tree for namespace '{namespace}'");
@@ -240,7 +234,6 @@ pub async fn rebuild_tree(
     }
 
     // Propagate bottom-up: days, then months, then years, then root
-    let model = &config.local_ai.chat_model_id;
     for day_id in &day_ids {
         propagate_node(config, provider, namespace, day_id, NodeLevel::Day, model).await?;
     }
@@ -529,7 +522,7 @@ fn collect_hour_leaves_recursive(
 ///
 /// This should be called once at application startup. The task runs
 /// indefinitely, sleeping until the next hour boundary.
-pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>) {
+pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>, model: String) {
     tracing::debug!("[tree_summarizer] hourly loop started");
 
     loop {
@@ -557,7 +550,7 @@ pub async fn run_hourly_loop(config: Config, provider: Box<dyn Provider>) {
         let ts = Utc::now();
         let namespaces = discover_active_namespaces(&config);
         for ns in &namespaces {
-            match run_summarization(&config, provider.as_ref(), ns, ts).await {
+            match run_summarization(&config, provider.as_ref(), &model, ns, ts).await {
                 Ok(Some(node)) => {
                     tracing::debug!(
                         "[tree_summarizer] hourly job completed for '{}': node {} ({} tokens)",
