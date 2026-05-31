@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub mod doctor;
-pub use doctor::{run_doctor, DoctorCounters, DoctorReport, StageHealth};
+pub use doctor::{async_run_doctor, run_doctor, DoctorCounters, DoctorReport, StageHealth};
 
 /// Whether a failure should be retried (`Transient`) or fail fast
 /// (`Unrecoverable`).
@@ -326,9 +326,12 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 static SEMANTIC_RECALL_DEGRADED: AtomicBool = AtomicBool::new(false);
 static STRUCTURE_DEGRADED: AtomicBool = AtomicBool::new(false);
-/// Last degradation cause as a `FailureCode` discriminant + 1 (0 = none), so
-/// the status surface can name *why* recall/structure is degraded.
-static DEGRADED_CAUSE: AtomicU8 = AtomicU8::new(0);
+/// Per-flag degradation cause as a `FailureCode` discriminant (0 = none).
+/// Tracked separately per flag so clearing one degradation can't leave the
+/// other reporting a stale cause (e.g. mark recall, mark structure, clear
+/// structure → recall must still report its OWN cause, not structure's).
+static SEMANTIC_RECALL_CAUSE: AtomicU8 = AtomicU8::new(0);
+static STRUCTURE_CAUSE: AtomicU8 = AtomicU8::new(0);
 
 fn code_to_u8(code: FailureCode) -> u8 {
     match code {
@@ -362,32 +365,29 @@ fn u8_to_code(v: u8) -> Option<FailureCode> {
 /// lead the user to the fix. Idempotent / cheap; safe to call per embed-stage.
 pub fn mark_semantic_recall_degraded(cause: FailureCode) {
     SEMANTIC_RECALL_DEGRADED.store(true, Ordering::Relaxed);
-    DEGRADED_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
+    SEMANTIC_RECALL_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
 }
 
 /// Clear the semantic-recall degraded flag — call when an embed succeeds, so
-/// the surface recovers once the user fixes the provider.
+/// the surface recovers once the user fixes the provider. Clears only this
+/// flag's cause; a still-active structure degradation keeps its own.
 pub fn clear_semantic_recall_degraded() {
     SEMANTIC_RECALL_DEGRADED.store(false, Ordering::Relaxed);
-    // Only clear the shared cause when structure isn't also degraded.
-    if !STRUCTURE_DEGRADED.load(Ordering::Relaxed) {
-        DEGRADED_CAUSE.store(0, Ordering::Relaxed);
-    }
+    SEMANTIC_RECALL_CAUSE.store(0, Ordering::Relaxed);
 }
 
 /// Record that wiki structure is degraded (extraction yielded nothing across
 /// the board). `cause` is typically [`FailureCode::ExtractionTimeout`].
 pub fn mark_structure_degraded(cause: FailureCode) {
     STRUCTURE_DEGRADED.store(true, Ordering::Relaxed);
-    DEGRADED_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
+    STRUCTURE_CAUSE.store(code_to_u8(cause), Ordering::Relaxed);
 }
 
 /// Clear the structure degraded flag — call when extraction yields entities.
+/// Clears only this flag's cause.
 pub fn clear_structure_degraded() {
     STRUCTURE_DEGRADED.store(false, Ordering::Relaxed);
-    if !SEMANTIC_RECALL_DEGRADED.load(Ordering::Relaxed) {
-        DEGRADED_CAUSE.store(0, Ordering::Relaxed);
-    }
+    STRUCTURE_CAUSE.store(0, Ordering::Relaxed);
 }
 
 /// Test-only serialization + reset for the process-global degraded flags.
@@ -406,7 +406,8 @@ pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|p| p.into_inner());
     SEMANTIC_RECALL_DEGRADED.store(false, Ordering::Relaxed);
     STRUCTURE_DEGRADED.store(false, Ordering::Relaxed);
-    DEGRADED_CAUSE.store(0, Ordering::Relaxed);
+    SEMANTIC_RECALL_CAUSE.store(0, Ordering::Relaxed);
+    STRUCTURE_CAUSE.store(0, Ordering::Relaxed);
     g
 }
 
@@ -416,8 +417,14 @@ pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
 pub fn current_degraded_state() -> DegradedState {
     let semantic_recall = SEMANTIC_RECALL_DEGRADED.load(Ordering::Relaxed);
     let structure = STRUCTURE_DEGRADED.load(Ordering::Relaxed);
-    let cause = if semantic_recall || structure {
-        u8_to_code(DEGRADED_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
+    // Each flag carries its own cause; pick the most actionable one to surface.
+    // Structure degradation (extraction failing → empty wiki) is reported first
+    // because it's the more severe "built but useless" symptom; otherwise the
+    // recall cause. Either way the cause reflects a CURRENTLY-active flag.
+    let cause = if structure {
+        u8_to_code(STRUCTURE_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
+    } else if semantic_recall {
+        u8_to_code(SEMANTIC_RECALL_CAUSE.load(Ordering::Relaxed)).map(PipelineFailure::new)
     } else {
         None
     };
@@ -614,5 +621,43 @@ mod tests {
         let out = truncate_detail(&long);
         assert!(out.chars().count() <= 201, "got {}", out.chars().count());
         assert!(out.ends_with('…'));
+    }
+
+    /// Regression (CodeRabbit): per-flag causes. Mark recall, then structure,
+    /// then clear structure — recall must still report its OWN cause, not the
+    /// (now-cleared) structure cause. With the old single shared slot this
+    /// surfaced the wrong remediation.
+    #[test]
+    fn degraded_cause_is_per_flag_not_shared() {
+        let _g = test_guard(); // resets both flags + causes
+
+        // Recall degraded for embeddings reason; structure degraded for extraction.
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        mark_structure_degraded(FailureCode::ExtractionTimeout);
+
+        // Structure takes precedence while both are active.
+        let s = current_degraded_state();
+        assert!(s.semantic_recall && s.structure);
+        assert_eq!(
+            s.cause.as_ref().map(|c| c.code),
+            Some(FailureCode::ExtractionTimeout)
+        );
+
+        // Clear structure — recall stays, and its cause must be the RECALL one,
+        // not the cleared structure cause.
+        clear_structure_degraded();
+        let s = current_degraded_state();
+        assert!(s.semantic_recall && !s.structure);
+        assert_eq!(
+            s.cause.as_ref().map(|c| c.code),
+            Some(FailureCode::EmbeddingsUnconfigured),
+            "recall must keep its own cause after structure clears"
+        );
+
+        // Clear recall too — fully healthy, no cause.
+        clear_semantic_recall_degraded();
+        let s = current_degraded_state();
+        assert!(!s.is_degraded());
+        assert!(s.cause.is_none());
     }
 }

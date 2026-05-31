@@ -717,10 +717,13 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "status",
                     ty: TypeSchema::Enum {
-                        variants: vec!["running", "paused", "syncing", "error", "idle"],
+                        variants: vec![
+                            "running", "paused", "syncing", "degraded", "error", "idle",
+                        ],
                     },
-                    comment: "Coarse, UI-shaped status. paused wins over error wins \
-                              over syncing wins over running wins over idle.",
+                    comment: "Coarse, UI-shaped status. Precedence: paused > error > \
+                              degraded > syncing > running > idle. `degraded` (#002) = \
+                              the pipeline runs but recall/structure is reduced.",
                     required: true,
                 },
                 FieldSchema {
@@ -767,6 +770,36 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "is_paused",
                     ty: TypeSchema::Bool,
                     comment: "True when scheduler-gate mode is `off`.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "degraded",
+                    ty: TypeSchema::Json,
+                    comment: "#002 (FR-002/FR-004): object `{ semantic_recall: bool, \
+                              structure: bool, cause: PipelineFailure | null }`. The \
+                              pipeline ran but output quality is reduced — \
+                              `semantic_recall` when embeddings were skipped, \
+                              `structure` when extraction yielded nothing. Distinct \
+                              from a hard `error`. Always present (serde default).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "first_blocking_cause",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
+                    comment: "#002 (FR-004): the single most-urgent typed cause as a \
+                              `PipelineFailure` object `{ code, class, remediation_key }`. \
+                              A failed job's classified reason wins over a soft \
+                              degradation cause. null when healthy. The UI resolves \
+                              `remediation_key` and renders it verbatim.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "extraction_coverage",
+                    ty: TypeSchema::F64,
+                    comment: "#002 (FR-010): fraction [0.0, 1.0] of chunks with ≥1 \
+                              indexed entity. Near 0 with total_chunks > 0 means \
+                              extraction produces no structure. Best-effort — 0.0 on a \
+                              DB error.",
                     required: true,
                 },
             ],

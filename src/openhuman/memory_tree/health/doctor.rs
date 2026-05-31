@@ -183,19 +183,20 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         stages.push(StageHealth::ok("extraction", "no degradation recorded"));
     }
 
-    // 5. Summary-tree precondition — `tree_runtime::create_provider` requires
-    //    local AI today. Flag it as a precondition (not a hard error) so the
-    //    user knows "Build Summary Trees" needs local AI on this setup.
-    stages.push(if config.local_ai.runtime_enabled {
-        StageHealth::ok(
-            "summary_tree",
-            "local AI enabled — Build Summary Trees can run",
-        )
+    // 5. Summary-tree precondition. Reuse the runtime's own capability check
+    //    (`tree_runtime::ops::summarizer_available`) so the doctor matches what
+    //    "Build Summary Trees" will actually do — since #002 FR-007 it runs on
+    //    the configured cloud provider when local AI is off, so local-AI-off is
+    //    NOT a fault by itself. Only `bad` when no provider resolves at all.
+    let (summary_ok, summary_note) =
+        crate::openhuman::memory_tree::tree_runtime::ops::summarizer_available(config);
+    stages.push(if summary_ok {
+        StageHealth::ok("summary_tree", summary_note)
     } else {
         StageHealth::bad(
             "summary_tree",
             PipelineFailure::new(FailureCode::LocalModelUnavailable),
-            "local AI is off — Build Summary Trees requires it (or enable the cloud summarizer)",
+            summary_note,
         )
     });
 
@@ -211,6 +212,30 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         first_blocking_cause,
         degraded,
         counters,
+    }
+}
+
+/// Async wrapper around [`run_doctor`] for async call sites (the RPC + agent
+/// tool). `run_doctor` does synchronous SQLite reads (chunk/job counts +
+/// extraction coverage); a contended DB could pin a Tokio worker for the
+/// busy-timeout window, so offload the whole diagnostic to a blocking thread.
+pub async fn async_run_doctor(config: &Config) -> DoctorReport {
+    let cfg = config.clone();
+    match tokio::task::spawn_blocking(move || run_doctor(&cfg)).await {
+        Ok(report) => report,
+        Err(join_err) => {
+            // The blocking task panicked — surface a degraded-but-shaped report
+            // rather than propagating, since the doctor is a best-effort
+            // diagnostic and callers expect a report, not an error.
+            log::warn!("[memory_tree::health::doctor] run_doctor task failed: {join_err}");
+            DoctorReport {
+                healthy: false,
+                stages: Vec::new(),
+                first_blocking_cause: Some(PipelineFailure::new(FailureCode::Transient)),
+                degraded: current_degraded_state(),
+                counters: DoctorCounters::default(),
+            }
+        }
     }
 }
 
@@ -292,26 +317,39 @@ mod tests {
         assert!(gate.note.contains("paused"));
     }
 
+    /// #002 FR-007 (CodeRabbit): local AI being off must NOT flag summary_tree
+    /// as broken — the summarizer falls back to the configured cloud provider.
+    /// The doctor reuses `tree_runtime::ops::summarizer_available`, so the
+    /// stage's health tracks real provider resolution, not a hard local-AI gate.
     #[test]
-    fn local_ai_off_flags_summary_tree_precondition() {
+    fn local_ai_off_does_not_auto_fail_summary_tree() {
         let _g = super::super::test_guard();
         let (_tmp, mut cfg) = test_config();
         cfg.embeddings_provider = Some("ollama:bge-m3".into()); // embeddings ok
-        cfg.local_ai.runtime_enabled = false; // but summary tree needs local AI
+        cfg.local_ai.runtime_enabled = false; // cloud-fallback path
 
         let report = run_doctor(&cfg);
-        assert!(!report.healthy);
-        // Embeddings ok, so the first blocking cause is the summary-tree stage.
-        assert_eq!(
-            report.first_blocking_cause.map(|f| f.code),
-            Some(FailureCode::LocalModelUnavailable)
-        );
         let tree = report
             .stages
             .iter()
             .find(|s| s.stage == "summary_tree")
             .unwrap();
-        assert!(!tree.ok);
+        // Whatever summarizer_available resolves, the stage must mirror it —
+        // and it must NOT be the old "local AI required" hard failure. If it's
+        // bad, it's because NO provider resolved, never just because local is off.
+        assert_eq!(
+            tree.ok,
+            crate::openhuman::memory_tree::tree_runtime::ops::summarizer_available(&cfg).0,
+            "summary_tree health must mirror the runtime capability check"
+        );
+        if !tree.ok {
+            // A bad stage names the no-provider case, not LocalModelUnavailable-by-default.
+            assert!(
+                tree.note.contains("no summarization provider"),
+                "unexpected summary_tree failure note: {}",
+                tree.note
+            );
+        }
     }
 
     #[test]

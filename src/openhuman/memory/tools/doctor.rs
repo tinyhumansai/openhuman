@@ -7,7 +7,7 @@
 //! security-gate (matching the read-only memory tools).
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::health::run_doctor;
+use crate::openhuman::memory_tree::health::async_run_doctor;
 use crate::openhuman::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::json;
@@ -42,7 +42,7 @@ impl Tool for MemoryDoctorTool {
     }
 
     async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
-        let report = run_doctor(&self.config);
+        let report = async_run_doctor(&self.config).await;
         // Serialize the structured report so the model gets the typed stages +
         // first_blocking_cause + counters verbatim (it can summarize for the
         // user from there). serde of a plain struct can't fail here.

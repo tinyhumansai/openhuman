@@ -274,13 +274,14 @@ pub struct PipelineJobCounts {
 ///   active sync, failed > 0 implies degraded.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PipelineStatusResponse {
-    /// Aggregated status string: `running` | `paused` | `syncing` | `error`
-    /// | `idle`. Derivation:
+    /// Aggregated status string: `running` | `paused` | `syncing` |
+    /// `degraded` | `error` | `idle`. Derivation:
     /// 1. `is_paused` (scheduler-gate `off`) wins → `paused`.
     /// 2. otherwise failed > 0 → `error`.
-    /// 3. otherwise running > 0 → `syncing`.
-    /// 4. otherwise total_chunks > 0 → `running`.
-    /// 5. otherwise → `idle`.
+    /// 3. otherwise degraded (#002, recall/structure reduced) → `degraded`.
+    /// 4. otherwise running > 0 → `syncing`.
+    /// 5. otherwise total_chunks > 0 → `running`.
+    /// 6. otherwise → `idle`.
     pub status: String,
     /// Optional human-readable reason — populated when status is
     /// `paused` or `error`. `None` otherwise.
@@ -418,26 +419,28 @@ pub async fn pipeline_status_rpc(
         &degraded,
     );
 
-    // #002 (FR-004): the first blocking cause the UI renders verbatim. The
-    // most-recent failed job's classified reason wins (a hard failure is more
-    // urgent than a soft degradation); otherwise fall back to the active
-    // degradation cause. `None` when healthy.
-    let first_blocking_cause = latest_failed_job_failure(config)
-        .unwrap_or(None)
-        .or_else(|| degraded.cause.clone());
-
-    // #002 (FR-010 / US5): extraction coverage. Best-effort — a DB error
-    // degrades to 0.0 rather than failing the whole status RPC.
-    let extraction_coverage = {
+    // #002: both of these touch SQLite, so run them off the async runtime
+    // thread in a single blocking task (a contended DB could otherwise pin a
+    // Tokio worker for the busy-timeout window). Best-effort — failures degrade
+    // to (None, 0.0) rather than failing the polled status RPC.
+    //   - first_blocking_cause (FR-004): the most-recent failed job's typed
+    //     reason, surfaced verbatim by the UI.
+    //   - extraction_coverage (FR-010/US5): fraction of chunks with structure.
+    let (latest_failure, extraction_coverage) = {
         let cfg = config.clone();
         tokio::task::spawn_blocking(move || {
-            crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg)
+            let failure = latest_failed_job_failure(&cfg).unwrap_or(None);
+            let coverage = crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg)
+                .unwrap_or(0.0);
+            (failure, coverage)
         })
         .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or(0.0)
+        .unwrap_or((None, 0.0))
     };
+
+    // A hard failed-job reason is more urgent than a soft degradation; fall
+    // back to the active degradation cause, then `None` when healthy.
+    let first_blocking_cause = latest_failure.or_else(|| degraded.cause.clone());
 
     let payload = PipelineStatusResponse {
         status: status.clone(),
@@ -477,7 +480,8 @@ pub async fn pipeline_status_rpc(
 pub async fn doctor_rpc(
     config: &Config,
 ) -> Result<RpcOutcome<crate::openhuman::memory_tree::health::DoctorReport>, String> {
-    let report = crate::openhuman::memory_tree::health::run_doctor(config);
+    // Offload the doctor's blocking SQLite reads off the async runtime thread.
+    let report = crate::openhuman::memory_tree::health::async_run_doctor(config).await;
     let summary = if report.healthy {
         "memory_tree: doctor — healthy".to_string()
     } else {

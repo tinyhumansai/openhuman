@@ -178,6 +178,39 @@ fn create_provider(
         .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
 }
 
+/// Whether a summarization provider can be resolved for "Build Summary Trees"
+/// under the current config — the single source of truth the memory doctor
+/// reuses so its `summary_tree` stage matches the runtime path (#002 FR-007).
+///
+/// Mirrors [`create_provider`]'s decision without building the heavy provider:
+/// local AI enabled ⇒ available; otherwise available iff the configured
+/// summarization-role provider resolves (the cloud fallback). Returns
+/// `(available, note)` so the doctor can explain which path will run.
+pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
+    if config.local_ai.runtime_enabled {
+        return (
+            true,
+            "local AI enabled — Build Summary Trees runs on the local model",
+        );
+    }
+    // Cloud fallback: a summarization provider resolves from config (the
+    // managed backend backstops this, so it's effectively always available
+    // for a logged-in user). Build it to confirm rather than guessing.
+    match crate::openhuman::inference::provider::factory::create_chat_provider(
+        "summarization",
+        config,
+    ) {
+        Ok(_) => (
+            true,
+            "local AI off — Build Summary Trees runs on the configured cloud provider",
+        ),
+        Err(_) => (
+            false,
+            "no summarization provider available — enable local AI or configure a cloud provider in Settings → AI",
+        ),
+    }
+}
+
 /// Create a provider backed by the local Ollama instance for summarization,
 /// wrapped in `ReliableProvider` for retry/backoff on transient failures.
 fn create_local_ai_provider(
