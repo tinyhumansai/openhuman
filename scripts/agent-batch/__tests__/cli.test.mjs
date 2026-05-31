@@ -131,9 +131,11 @@ test("direct agent-batch subcommands print help with exit 0", () => {
     [OVERLAP, /usage: overlap\.mjs <spec\.json>/],
     [STATUS, /usage: status\.mjs <spec\.json> \[--post\] \[--fixture <file>\]/],
   ]) {
-    const r = run(script, ["--help"]);
-    assert.strictEqual(r.status, 0, r.stderr);
-    assert.match(r.stdout, usage);
-    assert.strictEqual(r.stderr, "");
+    for (const flag of ["--help", "-h"]) {
+      const r = run(script, [flag]);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.match(r.stdout, usage);
+      assert.strictEqual(r.stderr, "");
+    }
   }
 });
