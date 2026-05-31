@@ -879,8 +879,9 @@ pub struct DeleteChunkResponse {
 
 /// Which graph the UI is asking for.
 ///
-/// `Tree` returns summary nodes connected by parent_id (current
-/// Obsidian-style summary tree). `Contacts` returns raw chunks
+/// `Tree` returns the summary tree (summary nodes connected by
+/// parent_id) plus the leaf chunks hanging off it, bounded to ~1000
+/// nodes with summaries prioritized. `Contacts` returns raw chunks
 /// connected to the person entities they mention via the inverted
 /// `mem_tree_entity_index` — i.e. the document↔contact graph.
 ///
@@ -1071,10 +1072,26 @@ pub async fn obsidian_vault_status_rpc(
 }
 
 /// Tree mode: summary nodes joined to their owning tree for the
-/// human-readable scope. Edges are encoded implicitly via
-/// `GraphNode.parent_id`.
+/// human-readable scope, plus the leaf chunks that hang off them. Edges
+/// are encoded implicitly via `GraphNode.parent_id` (a chunk's
+/// `parent_id` is its `parent_summary_id`, which matches a summary node's
+/// `id`).
+///
+/// Budget: summary (tree) nodes are **always kept in full** — they are
+/// the skeleton of the graph — then leaf chunks fill the remaining budget
+/// up to [`MAX_TREE_NODES`], most-recent first. Without the leaves the UI
+/// graph showed only the handful of sealed summaries (e.g. ~20) while
+/// Obsidian, which renders every `.md` on disk, showed hundreds; the
+/// chunks are the bulk of the tree. Unsealed chunks have a null
+/// `parent_summary_id` and render as orphan nodes — matching Obsidian's
+/// `showOrphans` view.
 fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
-    let nodes = with_connection(cfg, |conn| {
+    /// Hard cap on total nodes returned in Tree mode. The custom
+    /// force-simulation in the UI does all-pairs repulsion (O(n²)), so
+    /// this bounds both the wire payload and the layout cost.
+    const MAX_TREE_NODES: usize = 1000;
+
+    let mut nodes = with_connection(cfg, |conn| {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
                     s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
@@ -1119,6 +1136,62 @@ fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> 
             .context("collect tree-mode summary rows")?;
         Ok(rows)
     })?;
+
+    // Fill the remaining budget with leaf chunks, most-recent first.
+    // Summaries are kept whole; only the chunk tail is truncated when a
+    // very large workspace would blow past MAX_TREE_NODES.
+    let chunk_budget = MAX_TREE_NODES.saturating_sub(nodes.len());
+    if chunk_budget == 0 {
+        return Ok((nodes, Vec::new()));
+    }
+
+    let chunk_nodes = with_connection(cfg, |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, parent_summary_id, content, time_range_start_ms, time_range_end_ms
+               FROM mem_tree_chunks
+              ORDER BY timestamp_ms DESC
+              LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![chunk_budget as i64], |row| {
+                let id: String = row.get(0)?;
+                let parent_id: Option<String> = row.get(1)?;
+                let content: String = row.get(2)?;
+                let time_range_start_ms: i64 = row.get(3)?;
+                let time_range_end_ms: i64 = row.get(4)?;
+                // First line, trimmed for graph hover legibility — same
+                // treatment as Contacts mode chunk labels.
+                let label = content
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(72)
+                    .collect::<String>();
+                Ok(GraphNode {
+                    kind: "chunk".into(),
+                    id,
+                    label,
+                    tree_kind: None,
+                    tree_scope: None,
+                    tree_id: None,
+                    level: None,
+                    // parent_summary_id matches a summary node's `id`,
+                    // so the UI draws the chunk→summary edge directly.
+                    // Null for unsealed chunks → orphan node.
+                    parent_id: parent_id.filter(|s| !s.is_empty()),
+                    child_count: None,
+                    time_range_start_ms: Some(time_range_start_ms),
+                    time_range_end_ms: Some(time_range_end_ms),
+                    file_basename: None,
+                    entity_kind: None,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect tree-mode leaf chunk rows")?;
+        Ok(rows)
+    })?;
+    nodes.extend(chunk_nodes);
     Ok((nodes, Vec::new()))
 }
 

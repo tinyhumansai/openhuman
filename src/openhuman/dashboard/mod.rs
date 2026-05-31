@@ -11,6 +11,7 @@
 
 mod ops;
 mod schemas;
+pub mod tools;
 mod types;
 
 pub use ops::model_health;

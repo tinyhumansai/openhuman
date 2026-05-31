@@ -207,7 +207,7 @@ static THREAD_SESSIONS: Lazy<Mutex<HashMap<String, SessionEntry>>> =
 
 static IN_FLIGHT: Lazy<Mutex<HashMap<String, InFlightEntry>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 static TEST_FORCED_RUN_CHAT_TASK_ERROR: Lazy<Mutex<Option<String>>> =
     Lazy::new(|| Mutex::new(None));
 /// Key for the per-thread runtime maps (`THREAD_SESSIONS`, `IN_FLIGHT`).
@@ -237,13 +237,64 @@ pub(crate) use web_errors::{
     classify_inference_error, inference_budget_exceeded_user_message,
     is_inference_budget_exceeded_error,
 };
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[allow(unused_imports)]
 pub(crate) use web_errors::{
     extract_provider_error_detail, extract_provider_name, generic_inference_error_user_message,
     is_action_budget_exhausted, is_fallback_chain_exhausted, is_non_retryable_rate_limit_text,
     parse_retry_after_secs_from_str, retry_after_hint, with_provider_detail, ClassifiedError,
 };
+
+#[cfg(any(test, debug_assertions))]
+pub mod test_support {
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct ClassifiedErrorSnapshot {
+        pub error_type: &'static str,
+        pub message: String,
+        pub source: &'static str,
+        pub retryable: bool,
+        pub retry_after_ms: Option<u64>,
+        pub provider: Option<String>,
+        pub fallback_available: Option<bool>,
+    }
+
+    pub fn classify_error_for_test(err: &str) -> ClassifiedErrorSnapshot {
+        let classified = super::classify_inference_error(err);
+        ClassifiedErrorSnapshot {
+            error_type: classified.error_type,
+            message: classified.message,
+            source: classified.source,
+            retryable: classified.retryable,
+            retry_after_ms: classified.retry_after_ms,
+            provider: classified.provider,
+            fallback_available: classified.fallback_available,
+        }
+    }
+
+    pub fn extracted_provider_detail_for_test(err: &str) -> Option<String> {
+        super::extract_provider_error_detail(err)
+    }
+
+    pub fn retry_after_secs_for_test(err: &str) -> Option<u64> {
+        super::parse_retry_after_secs_from_str(err)
+    }
+
+    pub fn is_non_retryable_rate_limit_for_test(lower: &str) -> bool {
+        super::is_non_retryable_rate_limit_text(lower)
+    }
+
+    pub fn key_for_test(thread_id: &str) -> String {
+        super::key_for(thread_id)
+    }
+
+    pub fn event_session_id_for_test(client_id: &str, thread_id: &str) -> String {
+        super::event_session_id_for(client_id, thread_id)
+    }
+
+    pub async fn set_forced_run_chat_task_error_for_test(message: Option<&str>) {
+        super::set_test_forced_run_chat_task_error(message).await;
+    }
+}
 
 fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     match action {
@@ -257,7 +308,7 @@ fn prompt_guard_user_message(action: PromptEnforcementAction) -> &'static str {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub(super) async fn set_test_forced_run_chat_task_error(message: Option<&str>) {
     let mut slot = TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await;
     *slot = message.map(str::to_string);
@@ -570,7 +621,7 @@ pub async fn invalidate_thread_sessions(thread_id: &str) {
     let mut sessions = THREAD_SESSIONS.lock().await;
     let keys_to_remove: Vec<String> = sessions
         .keys()
-        .filter(|k| k.ends_with(&format!("::{thread_id}")))
+        .filter(|k| k.as_str() == thread_id || k.ends_with(&format!("::{thread_id}")))
         .cloned()
         .collect();
     for key in &keys_to_remove {
@@ -665,7 +716,7 @@ async fn run_chat_task(
     profile_id: Option<String>,
     locale: Option<String>,
 ) -> Result<WebChatTaskResult, String> {
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     {
         let mut slot = TEST_FORCED_RUN_CHAT_TASK_ERROR.lock().await;
         if let Some(forced) = slot.take() {
@@ -1103,13 +1154,15 @@ fn spawn_progress_bridge(
                     dedicated_thread,
                     prompt_chars,
                     worker_thread_id,
+                    display_name,
                 } => {
+                    let label = display_name.as_deref().unwrap_or(&agent_id);
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        message: Some(format!("Sub-agent '{agent_id}' spawned")),
+                        message: Some(format!("Sub-agent '{label}' spawned")),
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
                         round: Some(round),
@@ -1118,6 +1171,7 @@ fn spawn_progress_bridge(
                             dedicated_thread: Some(dedicated_thread),
                             prompt_chars: Some(prompt_chars as u64),
                             worker_thread_id,
+                            display_name,
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1169,26 +1223,64 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
+                AgentProgress::SubagentAwaitingUser {
+                    agent_id,
+                    task_id,
+                    question,
+                    worker_thread_id,
+                } => {
+                    log::debug!(
+                        "[web_channel][bridge] subagent_awaiting_user agent_id={} task_id={} client_id={} thread_id={} request_id={}",
+                        agent_id,
+                        task_id,
+                        client_id,
+                        thread_id,
+                        request_id,
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_awaiting_user".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        message: Some(question),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        success: Some(true),
+                        round: Some(round),
+                        subagent: Some(SubagentProgressDetail {
+                            worker_thread_id,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
                 AgentProgress::SubagentIterationStarted {
                     agent_id,
                     task_id,
                     iteration,
                     max_iterations,
+                    extended_policy,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_iteration_start".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        message: Some(format!(
-                            "Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}"
-                        )),
+                        message: Some(if extended_policy {
+                            format!("Sub-agent '{agent_id}' step {iteration}")
+                        } else {
+                            format!("Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}")
+                        }),
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
                         round: Some(round),
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
-                            child_max_iterations: Some(max_iterations),
+                            child_max_iterations: if extended_policy {
+                                None
+                            } else {
+                                Some(max_iterations)
+                            },
                             ..Default::default()
                         }),
                         ..Default::default()

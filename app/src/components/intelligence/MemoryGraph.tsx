@@ -10,19 +10,52 @@
  *   - all-pairs Coulomb repulsion pushes overlapping nodes apart
  *   - centring force keeps the cloud anchored in the viewport
  *
- * Click a summary node → opens the matching `.md` file through the
- * shared workspace path command. This keeps Memory graph file actions on
- * the same guarded contract as chat workspace links.
+ * Colour: in tree mode each level lights up in its own hue (mirroring the
+ * Obsidian `path:L{n}` groups) with a soft glow on summary nodes; leaves
+ * stay a quiet slate.
  *
- * Pure SVG, no external graph dep — keeps the bundle small and the
- * rendering deterministic for tests/screenshots.
+ * Interaction: drag a node to reposition it, drag the background to pan,
+ * scroll to zoom, and "Reset view" recentres. Click a summary node →
+ * opens the matching `.md` file through the shared workspace path
+ * command (skipped when the pointer was dragging). This keeps Memory
+ * graph file actions on the same guarded contract as chat workspace links.
+ *
+ * Rendering: where WebGL is available we use a Pixi.js + d3-force canvas
+ * ({@link PixiGraph}) — the same stack Obsidian's graph runs on, smooth
+ * well past the 1000-node cap. Without WebGL (e.g. jsdom under test) it
+ * falls back to a deterministic pure-SVG renderer with the same colours,
+ * interactions and click/preview behaviour.
  */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+  useCallback,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import { type GraphEdge, type GraphMode, type GraphNode } from '../../utils/tauriCommands';
 import { openWorkspacePath, previewWorkspaceText } from '../../utils/tauriCommands/workspacePaths';
+import {
+  CONTACT_COLOR,
+  LEAF_COLOR,
+  levelColor,
+  nodeColor,
+  nodeRadius,
+  supportsWebGL,
+  VIEWPORT_H,
+  VIEWPORT_W,
+  ZOOM_MAX,
+  ZOOM_MIN,
+} from './memoryGraphLayout';
 import { summaryWorkspacePath } from './memoryWorkspacePaths';
+import { PixiGraph } from './PixiGraph';
+
+/** Detected once — WebGL availability decides Pixi vs the SVG fallback. */
+const HAS_WEBGL = supportsWebGL();
 
 interface SimNode extends GraphNode {
   x: number;
@@ -49,33 +82,24 @@ interface SummaryPreviewState {
   error: string | null;
 }
 
-/** Per-node-kind palette. Source/topic/global preserved for tree mode. */
-const SUMMARY_TREE_COLOR: Record<string, string> = {
-  source: '#4A83DD',
-  topic: '#E8A653',
-  global: '#7BB489',
-};
-const NODE_COLOR: Record<string, string> = {
-  chunk: '#4A83DD',
-  contact: '#A78BFA', // violet — matches the Obsidian button accent
-};
-
-const VIEWPORT_W = 1100;
-const VIEWPORT_H = 640;
-
-function nodeColor(node: GraphNode): string {
-  if (node.kind === 'summary') {
-    return SUMMARY_TREE_COLOR[node.tree_kind ?? ''] ?? '#94a3b8';
-  }
-  return NODE_COLOR[node.kind] ?? '#94a3b8';
-}
-
-function nodeRadius(node: GraphNode): number {
-  if (node.kind === 'summary') {
-    return Math.max(4, 10 - (node.level ?? 0) * 0.8);
-  }
-  if (node.kind === 'contact') return 9;
-  return 4; // chunk
+/**
+ * Map a pointer's client coords into the SVG's viewBox coordinate space
+ * (SVG fallback only). Returns null without a live CTM (e.g. jsdom) so the
+ * pan/zoom handlers degrade to no-ops under test.
+ */
+function clientToViewBox(
+  svg: SVGSVGElement | null,
+  clientX: number,
+  clientY: number
+): { x: number; y: number } | null {
+  if (!svg || typeof svg.getScreenCTM !== 'function') return null;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) return null;
+  const inv = ctm.inverse();
+  return {
+    x: inv.a * clientX + inv.c * clientY + inv.e,
+    y: inv.b * clientX + inv.d * clientY + inv.f,
+  };
 }
 
 /**
@@ -141,6 +165,109 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
   const [previewingPath, setPreviewingPath] = useState<string | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
 
+  // Pan / zoom transform applied to the graph group, plus the live drag
+  // state. Node positions live in the memoised `sim` buffer and are
+  // mutated in place during a node drag; `bumpTick` forces a re-render so
+  // the moved node repaints without re-running the physics.
+  const [view, setView] = useState({ tx: 0, ty: 0, scale: 1 });
+  const [, bumpTick] = useReducer((c: number) => c + 1, 0);
+  const [grabbing, setGrabbing] = useState(false);
+  // Bumped by "Reset view" — the Pixi renderer watches it to recentre.
+  const [resetSignal, bumpReset] = useReducer((c: number) => c + 1, 0);
+  // Flips true if Pixi fails to init at runtime → fall back to SVG even
+  // though supportsWebGL() was true at module load.
+  const [pixiFailed, setPixiFailed] = useState(false);
+  const useWebGL = HAS_WEBGL && !pixiFailed;
+  const dragRef = useRef<
+    | { kind: 'node'; node: SimNode; dx: number; dy: number }
+    | { kind: 'pan'; vbStartX: number; vbStartY: number; tx0: number; ty0: number }
+    | null
+  >(null);
+  // True once the pointer moved during the current gesture — guards the
+  // node click so a drag doesn't also open the summary file.
+  const movedRef = useRef(false);
+
+  const clientToGraph = useCallback(
+    (clientX: number, clientY: number) => {
+      const vb = clientToViewBox(svgRef.current, clientX, clientY);
+      if (!vb) return null;
+      return { x: (vb.x - view.tx) / view.scale, y: (vb.y - view.ty) / view.scale };
+    },
+    [view]
+  );
+
+  const onNodePointerDown = useCallback(
+    (e: ReactPointerEvent, n: SimNode) => {
+      // Stop the background pan from also starting on this pointer down.
+      e.stopPropagation();
+      movedRef.current = false;
+      const g = clientToGraph(e.clientX, e.clientY);
+      if (!g) return;
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+      dragRef.current = { kind: 'node', node: n, dx: g.x - n.x, dy: g.y - n.y };
+      setGrabbing(true);
+    },
+    [clientToGraph]
+  );
+
+  const onBackgroundPointerDown = useCallback(
+    (e: ReactPointerEvent) => {
+      movedRef.current = false;
+      const vb = clientToViewBox(svgRef.current, e.clientX, e.clientY);
+      if (!vb) return;
+      (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+      dragRef.current = { kind: 'pan', vbStartX: vb.x, vbStartY: vb.y, tx0: view.tx, ty0: view.ty };
+      setGrabbing(true);
+    },
+    [view]
+  );
+
+  const onPointerMove = useCallback(
+    (e: ReactPointerEvent) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (d.kind === 'node') {
+        const g = clientToGraph(e.clientX, e.clientY);
+        if (!g) return;
+        d.node.x = g.x - d.dx;
+        d.node.y = g.y - d.dy;
+        movedRef.current = true;
+        bumpTick();
+      } else {
+        const vb = clientToViewBox(svgRef.current, e.clientX, e.clientY);
+        if (!vb) return;
+        movedRef.current = true;
+        setView(v => ({ ...v, tx: d.tx0 + (vb.x - d.vbStartX), ty: d.ty0 + (vb.y - d.vbStartY) }));
+      }
+    },
+    [clientToGraph]
+  );
+
+  const endDrag = useCallback(() => {
+    dragRef.current = null;
+    setGrabbing(false);
+  }, []);
+
+  const onWheelZoom = useCallback((e: ReactWheelEvent) => {
+    const vb = clientToViewBox(svgRef.current, e.clientX, e.clientY);
+    if (!vb) return;
+    setView(v => {
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      const scale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.scale * factor));
+      // Keep the graph point under the cursor fixed while zooming.
+      const gx = (vb.x - v.tx) / v.scale;
+      const gy = (vb.y - v.ty) / v.scale;
+      return { scale, tx: vb.x - gx * scale, ty: vb.y - gy * scale };
+    });
+  }, []);
+
+  const resetView = useCallback(() => {
+    // SVG fallback resets its transform; the Pixi canvas listens on the
+    // reset signal. Both are bumped so the button works in either path.
+    setView({ tx: 0, ty: 0, scale: 1 });
+    bumpReset();
+  }, []);
+
   const openSummary = useCallback(async (node: GraphNode) => {
     const path = summaryWorkspacePath(node);
     if (!path) return;
@@ -172,8 +299,9 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
     }
   }, []);
 
-  // Run the force simulation once when nodes arrive. Memoised so panning /
-  // zooming the SVG doesn't re-run physics.
+  // Build edges and (for the SVG fallback) seed positions + relax. The
+  // O(n²) relax only runs when WebGL is unavailable; the Pixi path runs
+  // its own d3-force simulation instead.
   const sim = useMemo(() => {
     if (!nodes || nodes.length === 0) return null;
     const idIndex = new Map<string, number>();
@@ -207,9 +335,9 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
         edgeIndices.push([a, b]);
       }
     }
-    relaxLayout(sim, edgeIndices);
+    if (!useWebGL) relaxLayout(sim, edgeIndices);
     return { sim, edges: edgeIndices };
-  }, [nodes, edges, mode]);
+  }, [nodes, edges, mode, useWebGL]);
 
   if (nodes.length === 0) {
     return (
@@ -223,23 +351,22 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
 
   if (!sim) return null;
 
-  // Distinct legend rows for the active mode.
+  // Distinct legend rows for the active mode. Tree mode lists the levels
+  // actually present (each lit in its own colour) plus a leaf row when
+  // chunks are shown.
   const legend =
     mode === 'tree'
-      ? Array.from(new Set(nodes.map(n => n.tree_kind ?? '')))
-          .filter(Boolean)
-          .map(kind => ({
-            label:
-              kind === 'source'
-                ? t('graph.source')
-                : kind === 'topic'
-                  ? t('graph.topic')
-                  : t('graph.global'),
-            color: SUMMARY_TREE_COLOR[kind] ?? '#94a3b8',
-          }))
+      ? [
+          ...Array.from(new Set(nodes.filter(n => n.kind === 'summary').map(n => n.level ?? 0)))
+            .sort((a, b) => a - b)
+            .map(lvl => ({ label: `L${lvl}`, color: levelColor(lvl) })),
+          ...(nodes.some(n => n.kind === 'chunk')
+            ? [{ label: t('graph.document'), color: LEAF_COLOR }]
+            : []),
+        ]
       : [
-          { label: t('graph.document'), color: NODE_COLOR.chunk },
-          { label: t('graph.contact'), color: NODE_COLOR.contact },
+          { label: t('graph.document'), color: LEAF_COLOR },
+          { label: t('graph.contact'), color: CONTACT_COLOR },
         ];
   const hoveredSummaryPath = hovered?.kind === 'summary' ? summaryWorkspacePath(hovered) : null;
 
@@ -271,50 +398,93 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
               {item.label}
             </span>
           ))}
+          <button
+            type="button"
+            onClick={resetView}
+            data-testid="memory-graph-reset-view"
+            className="rounded-md border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium text-stone-600 shadow-sm hover:bg-stone-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800">
+            {t('graph.resetView')}
+          </button>
         </div>
       </div>
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${VIEWPORT_W} ${VIEWPORT_H}`}
-        className="block w-full"
-        style={{ height: 'min(640px, calc(100vh - 22rem))', cursor: 'grab' }}
-        data-testid="memory-graph-svg">
-        <g stroke="#cbd5e1" strokeWidth={0.6} opacity={0.7}>
-          {sim.edges.map(([ai, bi], idx) => {
-            const a = sim.sim[ai];
-            const b = sim.sim[bi];
-            return <line key={idx} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
-          })}
-        </g>
-        <g>
-          {sim.sim.map(n => {
-            const r = nodeRadius(n);
-            const fill = nodeColor(n);
-            const isHover = hovered?.id === n.id;
-            return (
-              <circle
-                key={n.id}
-                cx={n.x}
-                cy={n.y}
-                r={isHover ? r + 2 : r}
-                fill={fill}
-                stroke={isHover ? '#0f172a' : '#ffffff'}
-                strokeWidth={isHover ? 1.4 : 0.8}
-                style={{ cursor: 'pointer', transition: 'r 120ms ease' }}
-                onMouseEnter={() => setHovered(n)}
-                onClick={() => {
-                  if (n.kind === 'summary') void openSummary(n);
-                }}
-                data-testid={`memory-graph-node-${n.id}`}>
-                <title>{tooltipFor(n, t)}</title>
-              </circle>
-            );
-          })}
-        </g>
-      </svg>
+      {useWebGL ? (
+        <PixiGraph
+          nodes={nodes}
+          edges={edges}
+          mode={mode}
+          dark={
+            typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+          }
+          resetSignal={resetSignal}
+          onHover={setHovered}
+          onOpen={n => {
+            if (n.kind === 'summary') void openSummary(n);
+          }}
+          onError={() => setPixiFailed(true)}
+        />
+      ) : (
+        <svg
+          ref={svgRef}
+          viewBox={`0 0 ${VIEWPORT_W} ${VIEWPORT_H}`}
+          className="block w-full touch-none select-none"
+          style={{
+            height: 'min(640px, calc(100vh - 22rem))',
+            cursor: grabbing ? 'grabbing' : 'grab',
+          }}
+          onPointerDown={onBackgroundPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerLeave={endDrag}
+          onWheel={onWheelZoom}
+          data-testid="memory-graph-svg">
+          {/* Pan / zoom group — drag the background to pan, scroll to zoom. */}
+          <g transform={`translate(${view.tx} ${view.ty}) scale(${view.scale})`}>
+            <g stroke="#cbd5e1" strokeWidth={0.6} opacity={0.7}>
+              {sim.edges.map(([ai, bi], idx) => {
+                const a = sim.sim[ai];
+                const b = sim.sim[bi];
+                return <line key={idx} x1={a.x} y1={a.y} x2={b.x} y2={b.y} />;
+              })}
+            </g>
+            <g>
+              {sim.sim.map(n => {
+                const r = nodeRadius(n);
+                const fill = nodeColor(n);
+                const isHover = hovered?.id === n.id;
+                // Leaves stay flat; summary / contact nodes glow in their
+                // own colour so the tree levels "light up".
+                const glow =
+                  n.kind === 'chunk' ? undefined : `drop-shadow(0 0 ${isHover ? 7 : 4}px ${fill})`;
+                return (
+                  <circle
+                    key={n.id}
+                    cx={n.x}
+                    cy={n.y}
+                    r={isHover ? r + 2 : r}
+                    fill={fill}
+                    stroke={isHover ? '#0f172a' : '#ffffff'}
+                    strokeWidth={isHover ? 1.4 : 0.8}
+                    style={{ cursor: grabbing ? 'grabbing' : 'pointer', filter: glow }}
+                    onPointerDown={e => onNodePointerDown(e, n)}
+                    onMouseEnter={() => setHovered(n)}
+                    onClick={() => {
+                      // A drag ends with a click event too — skip the open
+                      // when the pointer actually moved.
+                      if (movedRef.current) return;
+                      if (n.kind === 'summary') void openSummary(n);
+                    }}
+                    data-testid={`memory-graph-node-${n.id}`}>
+                    <title>{tooltipFor(n, t)}</title>
+                  </circle>
+                );
+              })}
+            </g>
+          </g>
+        </svg>
+      )}
       {hovered && (
         <div
-          className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
+          className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 dark:bg-neutral-900/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
           data-testid="memory-graph-tooltip">
           {hovered.kind === 'summary' ? (
             <>

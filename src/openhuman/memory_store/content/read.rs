@@ -690,7 +690,6 @@ mod tests {
                 body: &node.content,
             },
             "slack-eng",
-            None,
         )
         .unwrap();
         with_connection(&cfg, |conn| {

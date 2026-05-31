@@ -720,6 +720,118 @@ fn clear_composio_sync_state_removes_only_target_namespace() {
     assert_eq!(other_count, 1);
 }
 
+// ── tree-mode graph export (summaries + leaf chunks) ────────────────────
+
+/// Insert a tree row and one summary node under it.
+fn insert_tree_summary(cfg: &Config, tree_id: &str, scope: &str, summary_id: &str, level: i64) {
+    with_connection(cfg, |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO mem_tree_trees (id, kind, scope, created_at_ms)
+             VALUES (?1, 'source', ?2, 0)",
+            params![tree_id, scope],
+        )?;
+        conn.execute(
+            "INSERT INTO mem_tree_summaries (
+                id, tree_id, tree_kind, level, child_ids_json, content, token_count,
+                entities_json, topics_json, time_range_start_ms, time_range_end_ms,
+                score, sealed_at_ms, deleted
+             ) VALUES (?1, ?2, 'source', ?3, '[]', 'summary body', 1, '[]', '[]', 0, 0, 0.0, 0, 0)",
+            params![summary_id, tree_id, level],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Insert a leaf chunk, optionally linked to a parent summary.
+fn insert_chunk_with_parent(
+    cfg: &Config,
+    id: &str,
+    parent_summary_id: Option<&str>,
+    timestamp_ms: i64,
+    content: &str,
+) {
+    with_connection(cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_chunks (
+                id, source_kind, source_id, source_ref, owner, timestamp_ms,
+                time_range_start_ms, time_range_end_ms, tags_json, content,
+                token_count, seq_in_source, created_at_ms, lifecycle_status,
+                content_path, parent_summary_id
+             ) VALUES (?1, 'chat', 'slack:#eng', NULL, 'tester', ?2, ?2, ?2, '[]', ?3, 1, 0, ?2, 'seeded', NULL, ?4)",
+            params![id, timestamp_ms, content, parent_summary_id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn tree_graph_includes_leaf_chunks_linked_to_their_summary() {
+    let (_tmp, cfg) = test_config();
+    insert_tree_summary(&cfg, "tree-1", "slack:#eng", "summary:1:L1-aaa", 1);
+    insert_chunk_with_parent(
+        &cfg,
+        "chunk-sealed",
+        Some("summary:1:L1-aaa"),
+        1_700_000_000_000,
+        "first line of sealed chunk\nmore body",
+    );
+    insert_chunk_with_parent(
+        &cfg,
+        "chunk-orphan",
+        None,
+        1_700_000_000_001,
+        "orphan chunk body",
+    );
+
+    let resp = graph_export_rpc(&cfg, GraphMode::Tree).await.unwrap().value;
+
+    // Before this fix tree mode returned only the summary node; the
+    // leaves were invisible in the UI while Obsidian showed them all.
+    assert_eq!(resp.nodes.len(), 3, "summary + both leaf chunks");
+
+    let summary = resp.nodes.iter().find(|n| n.kind == "summary").unwrap();
+    assert_eq!(summary.id, "summary:1:L1-aaa");
+
+    let sealed = resp.nodes.iter().find(|n| n.id == "chunk-sealed").unwrap();
+    assert_eq!(sealed.kind, "chunk");
+    // A chunk's parent_id == its parent summary's node id, so the UI's
+    // parent_id edge logic draws the chunk→summary link directly.
+    assert_eq!(sealed.parent_id.as_deref(), Some("summary:1:L1-aaa"));
+    // Label is the trimmed first line of the chunk content.
+    assert_eq!(sealed.label, "first line of sealed chunk");
+
+    let orphan = resp.nodes.iter().find(|n| n.id == "chunk-orphan").unwrap();
+    assert!(
+        orphan.parent_id.is_none(),
+        "unsealed chunk has no parent → renders as an orphan node"
+    );
+
+    // Tree mode encodes edges via parent_id; the explicit edges array
+    // stays empty.
+    assert!(resp.edges.is_empty());
+}
+
+#[tokio::test]
+async fn tree_graph_keeps_summaries_first_then_chunks() {
+    let (_tmp, cfg) = test_config();
+    insert_tree_summary(&cfg, "tree-1", "slack:#eng", "summary:1:L1-aaa", 1);
+    insert_chunk_with_parent(
+        &cfg,
+        "chunk-1",
+        Some("summary:1:L1-aaa"),
+        1_700_000_000_000,
+        "a chunk",
+    );
+
+    let resp = graph_export_rpc(&cfg, GraphMode::Tree).await.unwrap().value;
+    // Summaries are emitted ahead of chunks so a budget truncation drops
+    // chunk tails, never the tree skeleton.
+    assert_eq!(resp.nodes[0].kind, "summary");
+    assert!(resp.nodes.iter().any(|n| n.kind == "chunk"));
+}
+
 #[tokio::test]
 async fn obsidian_status_registered_when_override_config_lists_content_root() {
     let (_tmp, cfg) = test_config();

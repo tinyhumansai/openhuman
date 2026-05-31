@@ -26,7 +26,7 @@ interface PresetOption {
 
 const AgentAccessPanel = () => {
   const { t } = useT();
-  const { navigateBack, breadcrumbs } = useSettingsNavigation();
+  const { navigateBack, navigateToSettings, breadcrumbs } = useSettingsNavigation();
 
   // Tier presets — built inside the component so titles/descriptions resolve
   // through `t()` (i18n). Order matters: it's the display order.
@@ -389,6 +389,24 @@ const AgentAccessPanel = () => {
                   ))}
                 </ul>
               )}
+            </section>
+
+            {/* Approval history — read-only audit trail of past decisions,
+                backed by the gate's durable decided-rows store. */}
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-ink">
+                {t('settings.agentAccess.approvalHistory')}
+              </h2>
+              <p className="text-xs text-ink-soft">
+                {t('settings.agentAccess.approvalHistoryDesc')}
+              </p>
+              <button
+                type="button"
+                onClick={() => navigateToSettings('approval-history')}
+                data-testid="agent-access-approval-history-link"
+                className="rounded border border-line px-3 py-1 text-xs text-ink hover:border-primary-300">
+                {t('settings.agentAccess.viewApprovalHistory')}
+              </button>
             </section>
 
             {/* Auto-save status — changes persist on selection; no manual save. */}

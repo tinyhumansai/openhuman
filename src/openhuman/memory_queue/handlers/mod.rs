@@ -12,14 +12,11 @@
 use anyhow::{Context, Result};
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::tree_global::digest::{self, DigestOutcome};
 use crate::openhuman::memory::tree_source::get_or_create_source_tree;
-use crate::openhuman::memory::tree_topic::curator;
 use crate::openhuman::memory_queue::store;
 use crate::openhuman::memory_queue::types::{
-    AppendBufferPayload, AppendTarget, DigestDailyPayload, ExtractChunkPayload, FlushStalePayload,
-    Job, JobKind, JobOutcome, NewJob, NodeRef, ReembedBackfillPayload, SealPayload,
-    TopicRoutePayload,
+    AppendBufferPayload, AppendTarget, ExtractChunkPayload, FlushStalePayload, Job, JobKind,
+    JobOutcome, NewJob, NodeRef, ReembedBackfillPayload, SealPayload,
 };
 use crate::openhuman::memory_store::chunks::store as chunk_store;
 use crate::openhuman::memory_store::content::{
@@ -46,8 +43,6 @@ pub async fn handle_job(config: &Config, job: &Job) -> Result<JobOutcome> {
         JobKind::ExtractChunk => handle_extract(config, job).await,
         JobKind::AppendBuffer => handle_append_buffer(config, job).await,
         JobKind::Seal => handle_seal(config, job).await,
-        JobKind::TopicRoute => handle_topic_route(config, job).await,
-        JobKind::DigestDaily => handle_digest_daily(config, job).await,
         JobKind::FlushStale => handle_flush_stale(config, job).await,
         JobKind::ReembedBackfill => handle_reembed_backfill(config, job).await,
     }
@@ -115,20 +110,11 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
     } else {
         None
     };
-    let route_job = if result.kept {
-        Some(NewJob::topic_route(&TopicRoutePayload {
-            node: NodeRef::Leaf {
-                chunk_id: chunk.id.clone(),
-            },
-        })?)
-    } else {
-        None
-    };
 
     // #1574: resolve the active embedding signature once (probe-stable,
     // config-derived) so the sidecar write below is keyed correctly.
     let active_sig = chunk_store::tree_active_signature(config);
-    let (did_enqueue_source, did_enqueue_route) = chunk_store::with_connection(config, |conn| {
+    let did_enqueue_source = chunk_store::with_connection(config, |conn| {
         let tx = conn.unchecked_transaction()?;
         score::persist_score_tx(
             &tx,
@@ -167,19 +153,15 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
             )?;
         }
 
-        // Enqueue follow-up jobs inside the SAME transaction so they are
-        // atomically visible with the lifecycle update.
+        // Enqueue the source append-buffer follow-up inside the SAME
+        // transaction so it is atomically visible with the lifecycle update.
         let mut eq_src = false;
-        let mut eq_route = false;
         if let Some(ref j) = source_job {
             eq_src = store::enqueue_tx(&tx, j)?.is_some();
         }
-        if let Some(ref j) = route_job {
-            eq_route = store::enqueue_tx(&tx, j)?.is_some();
-        }
 
         tx.commit()?;
-        Ok((eq_src, eq_route))
+        Ok(eq_src)
     })?;
 
     // Phase MD-content: rewrite the `tags:` block in the on-disk chunk file
@@ -227,9 +209,6 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
 
     // Signal workers after the tx commits (no atomicity requirement on signaling).
     if did_enqueue_source {
-        super::worker::wake_workers();
-    }
-    if did_enqueue_route {
         super::worker::wake_workers();
     }
 
@@ -435,76 +414,6 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<JobOutcome> {
     }
 
     super::worker::wake_workers();
-    Ok(JobOutcome::Done)
-}
-
-async fn handle_topic_route(config: &Config, job: &Job) -> Result<JobOutcome> {
-    let payload: TopicRoutePayload =
-        serde_json::from_str(&job.payload_json).context("parse TopicRoute payload")?;
-
-    // Resolve the source node id and verify it exists. `mem_tree_entity_index`
-    // already indexes both chunks and summaries via `node_kind`, so the
-    // canonical-id loop below is identical for either case.
-    let node_id: String = match &payload.node {
-        NodeRef::Leaf { chunk_id } => {
-            if chunk_store::get_chunk(config, chunk_id)?.is_none() {
-                log::warn!("[memory::jobs] topic_route chunk missing chunk_id={chunk_id}");
-                return Ok(JobOutcome::Done);
-            }
-            chunk_id.clone()
-        }
-        NodeRef::Summary { summary_id } => {
-            if crate::openhuman::memory_store::trees::store::get_summary(config, summary_id)?
-                .is_none()
-            {
-                log::warn!("[memory::jobs] topic_route summary missing summary_id={summary_id}");
-                return Ok(JobOutcome::Done);
-            }
-            summary_id.clone()
-        }
-    };
-
-    let entity_ids = score_store::list_entity_ids_for_node(config, &node_id)?;
-    if entity_ids.is_empty() {
-        log::debug!("[memory::jobs] topic_route no entities for node_id={node_id} — skipping");
-        return Ok(JobOutcome::Done);
-    }
-
-    for entity_id in entity_ids {
-        let _ = curator::maybe_spawn_topic_tree(config, &entity_id).await?;
-        if let Some(tree) = crate::openhuman::memory_store::trees::store::get_tree_by_scope(
-            config,
-            crate::openhuman::memory_store::trees::types::TreeKind::Topic,
-            &entity_id,
-        )? {
-            let job = NewJob::append_buffer(&AppendBufferPayload {
-                node: payload.node.clone(),
-                target: AppendTarget::Topic {
-                    tree_id: tree.id.clone(),
-                },
-            })?;
-            if store::enqueue(config, &job)?.is_some() {
-                super::worker::wake_workers();
-            }
-        }
-    }
-    Ok(JobOutcome::Done)
-}
-
-async fn handle_digest_daily(config: &Config, job: &Job) -> Result<JobOutcome> {
-    let payload: DigestDailyPayload =
-        serde_json::from_str(&job.payload_json).context("parse DigestDaily payload")?;
-    let day = chrono::NaiveDate::parse_from_str(&payload.date_iso, "%Y-%m-%d")
-        .with_context(|| format!("invalid digest date {}", payload.date_iso))?;
-    match digest::end_of_day_digest(config, day).await? {
-        DigestOutcome::Emitted { daily_id, .. } => {
-            log::info!("[memory::jobs] emitted digest daily_id={daily_id}");
-        }
-        DigestOutcome::EmptyDay => {}
-        DigestOutcome::Skipped { existing_id } => {
-            log::debug!("[memory::jobs] digest skipped existing_id={existing_id}");
-        }
-    }
     Ok(JobOutcome::Done)
 }
 

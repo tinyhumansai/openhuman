@@ -149,6 +149,7 @@ pub fn all_tools_with_runtime(
         // returns a single text result. See
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
+        Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
@@ -196,6 +197,7 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
+        Box::new(SmartMemoryWalkTool),
         // Explicit user-preference pinning — always registered so the model
         // can save user-stated preferences regardless of whether the full
         // inference-based learning subsystem is enabled.  The preference
@@ -249,6 +251,200 @@ pub fn all_tools_with_runtime(
             Arc::clone(&runtime),
             Arc::clone(&audit),
         )),
+        // Knowledge & memory tools (agent-tool expansion). Read/bounded-write
+        // ship default-ON; the overextending siblings (people_refresh_address_book —
+        // bulk OS contacts ingest with a permission prompt) ship default-OFF via
+        // `tools::user_filter`. (The vault domain was removed upstream in #3040.)
+        Box::new(PeopleListTool),
+        Box::new(PeopleResolveTool),
+        Box::new(PeopleScoreTool),
+        Box::new(PeopleGetTool),
+        Box::new(PeopleAddAliasTool),
+        Box::new(PeopleRecordInteractionTool),
+        Box::new(PeopleRefreshAddressBookTool),
+        // Skills metadata tools. `skill_run` is already exposed by RunSkillTool
+        // above, so it is not duplicated. Reads ship default-ON; the
+        // create/install/uninstall mutators ship default-OFF via
+        // `tools::user_filter` (install also fetches remote content).
+        Box::new(SkillListTool::new(config.clone())),
+        Box::new(SkillDescribeTool::new(config.clone())),
+        Box::new(SkillReadResourceTool::new(config.clone())),
+        Box::new(SkillRecentRunsTool::new(config.clone())),
+        Box::new(SkillReadRunLogTool::new(config.clone())),
+        Box::new(SkillCreateTool::new(config.clone())),
+        Box::new(SkillInstallFromUrlTool::new(config.clone())),
+        Box::new(SkillUninstallTool),
+        // Threads (conversation) tools. Read/bounded-write ship default-ON;
+        // the destructive thread_delete / thread_purge_all ship default-OFF
+        // via `tools::user_filter` (thread_destructive toggle).
+        Box::new(ThreadListTool),
+        Box::new(ThreadReadTool),
+        Box::new(ThreadCreateTool),
+        Box::new(ThreadUpdateTitleTool),
+        Box::new(ThreadUpdateLabelsTool),
+        Box::new(ThreadMessageListTool),
+        Box::new(ThreadMessageAppendTool),
+        Box::new(ThreadMessageUpdateTool),
+        Box::new(ThreadTitleGenerateTool),
+        Box::new(ThreadTurnStateGetTool),
+        Box::new(ThreadTurnStateListTool),
+        Box::new(ThreadTurnStateClearTool),
+        Box::new(ThreadTaskBoardReadTool::new(config.clone())),
+        Box::new(ThreadTaskBoardWriteTool::new(config.clone())),
+        Box::new(ThreadDeleteTool),
+        Box::new(ThreadPurgeAllTool),
+        // Learning (user-profile facet cache) tools. Reads ship default-ON;
+        // every mutator ships default-OFF via `tools::user_filter`
+        // (learning_manage toggle) — they persistently rewrite the assistant's
+        // model of the user. enrich_profile also flags external_effect.
+        Box::new(LearningListFacetsTool),
+        Box::new(LearningGetFacetTool),
+        Box::new(LearningCacheStatsTool),
+        Box::new(LearningUpdateFacetTool),
+        Box::new(LearningPinFacetTool),
+        Box::new(LearningUnpinFacetTool),
+        Box::new(LearningForgetFacetTool),
+        Box::new(LearningRebuildCacheTool),
+        Box::new(LearningResetCacheTool),
+        Box::new(LearningSaveProfileTool),
+        Box::new(LearningEnrichProfileTool),
+        // Task & workflow productivity tools (issue: agent-tool expansion).
+        // Read/observe + bounded-write tools are registered here; the
+        // destructive/overextending siblings (artifact_delete, todo_remove/
+        // replace/clear, task_source_add/update/remove,
+        // agent_workflow_uninstall) are registered too but ship default-OFF
+        // via `tools::user_filter` (their toggle IDs default off in
+        // onboarding). The per-call permission ladder still gates them.
+        Box::new(AgentWorkflowListTool::new(config.clone())),
+        Box::new(AgentWorkflowReadTool),
+        Box::new(AgentWorkflowPhaseInfoTool),
+        Box::new(AgentWorkflowCreateTool),
+        Box::new(AgentWorkflowUninstallTool),
+        Box::new(ArtifactListTool::new(config.clone())),
+        Box::new(ArtifactGetTool::new(config.clone())),
+        Box::new(ArtifactDeleteTool::new(config.clone())),
+        Box::new(TodoListTool::new(config.clone())),
+        Box::new(TodoAddTool::new(config.clone())),
+        Box::new(TodoEditTool::new(config.clone())),
+        Box::new(TodoUpdateStatusTool::new(config.clone())),
+        Box::new(TodoDecidePlanTool::new(config.clone())),
+        Box::new(TodoRemoveTool::new(config.clone())),
+        Box::new(TodoReplaceTool::new(config.clone())),
+        Box::new(TodoClearTool::new(config.clone())),
+        Box::new(TaskSourceListTool::new(config.clone())),
+        Box::new(TaskSourceGetTool::new(config.clone())),
+        Box::new(TaskSourceFetchTool::new(config.clone())),
+        Box::new(TaskSourceListTasksTool::new(config.clone())),
+        Box::new(TaskSourcePreviewFilterTool::new(config.clone())),
+        Box::new(TaskSourceStatusTool::new(config.clone())),
+        Box::new(TaskSourceAddTool::new(config.clone())),
+        Box::new(TaskSourceUpdateTool::new(config.clone())),
+        Box::new(TaskSourceRemoveTool::new(config.clone())),
+        // System & self-management: observability (default-ON) + service
+        // lifecycle. doctor/health/cost/dashboard/security reads are default-ON.
+        // service_status / daemon_host_prefs_get default-ON; the lifecycle
+        // mutators ship default-OFF via `tools::user_filter` (service_lifecycle).
+        Box::new(DoctorHealthTool::new(config.clone())),
+        Box::new(DoctorModelsTool::new(config.clone())),
+        Box::new(HealthSnapshotTool),
+        Box::new(HealthSystemInfoTool),
+        Box::new(CostDashboardTool::new(config.clone())),
+        Box::new(CostDailyHistoryTool::new(config.clone())),
+        Box::new(CostSummaryTool::new(config.clone())),
+        Box::new(DashboardModelHealthTool::new(config.clone())),
+        Box::new(SecurityPolicyInfoTool::new(config.clone())),
+        Box::new(ServiceStatusTool::new(config.clone())),
+        Box::new(DaemonHostPrefsGetTool::new(config.clone())),
+        Box::new(ServiceStartTool::new(config.clone())),
+        Box::new(ServiceStopTool::new(config.clone())),
+        Box::new(ServiceRestartTool),
+        Box::new(ServiceShutdownTool),
+        Box::new(ServiceInstallTool::new(config.clone())),
+        Box::new(ServiceUninstallTool::new(config.clone())),
+        Box::new(DaemonHostPrefsSetTool::new(config.clone())),
+        // Config: read-only surface (default-ON). The config_update_* mutators
+        // are deferred (their apply fns take non-Deserialize patch structs);
+        // see config/tools.rs.
+        Box::new(ConfigSnapshotTool::new(config.clone())),
+        Box::new(ConfigClientConfigTool),
+        Box::new(ConfigAutonomyTool),
+        Box::new(ConfigSearchTool),
+        Box::new(ConfigRuntimeFlagsTool),
+        Box::new(ConfigResolveApiUrlTool),
+        Box::new(ConfigDataPathsTool),
+        // Account & money. Reads default-ON; billing money-movers (billing_writes)
+        // and team admin ops (team_admin) ship default-OFF via `tools::user_filter`.
+        // credentials exposes only non-secret reads.
+        Box::new(ReferralStatsTool::new(config.clone())),
+        Box::new(ReferralClaimTool::new(config.clone())),
+        Box::new(BillingPlanTool::new(config.clone())),
+        Box::new(BillingBalanceTool::new(config.clone())),
+        Box::new(BillingTransactionsTool::new(config.clone())),
+        Box::new(BillingAutoRechargeTool::new(config.clone())),
+        Box::new(BillingCardsTool::new(config.clone())),
+        Box::new(BillingCouponsTool::new(config.clone())),
+        Box::new(BillingPortalTool::new(config.clone())),
+        Box::new(BillingPurchasePlanTool::new(config.clone())),
+        Box::new(BillingTopUpTool::new(config.clone())),
+        Box::new(BillingCoinbaseChargeTool::new(config.clone())),
+        Box::new(BillingSetupIntentTool::new(config.clone())),
+        Box::new(BillingUpdateCardTool::new(config.clone())),
+        Box::new(BillingDeleteCardTool::new(config.clone())),
+        Box::new(BillingRedeemCouponTool::new(config.clone())),
+        Box::new(BillingUpdateAutoRechargeTool::new(config.clone())),
+        Box::new(TeamListTool::new(config.clone())),
+        Box::new(TeamUsageTool::new(config.clone())),
+        Box::new(TeamGetTool::new(config.clone())),
+        Box::new(TeamListMembersTool::new(config.clone())),
+        Box::new(TeamListInvitesTool::new(config.clone())),
+        Box::new(TeamCreateTool::new(config.clone())),
+        Box::new(TeamUpdateTool::new(config.clone())),
+        Box::new(TeamDeleteTool::new(config.clone())),
+        Box::new(TeamSwitchTool::new(config.clone())),
+        Box::new(TeamJoinTool::new(config.clone())),
+        Box::new(TeamLeaveTool::new(config.clone())),
+        Box::new(TeamCreateInviteTool::new(config.clone())),
+        Box::new(TeamRevokeInviteTool::new(config.clone())),
+        Box::new(TeamRemoveMemberTool::new(config.clone())),
+        Box::new(TeamChangeMemberRoleTool::new(config.clone())),
+        Box::new(CredentialListTool::new(config.clone())),
+        Box::new(SessionStateTool::new(config.clone())),
+        Box::new(SessionGetUserTool::new(config.clone())),
+        Box::new(OAuthConnectUrlTool::new(config.clone())),
+        Box::new(OAuthListTool::new(config.clone())),
+        // Desktop perception, MCP registry, workspace persona. Observe/connect/
+        // call tools default-ON; OS permission prompts (screen_permissions),
+        // MCP install/uninstall (mcp_manage), and persona/workspace writers
+        // (workspace_manage) ship default-OFF via `tools::user_filter`.
+        Box::new(ScreenStatusTool),
+        Box::new(ScreenCaptureImageRefTool),
+        Box::new(ScreenVisionRecentTool),
+        Box::new(ScreenVisionFlushTool),
+        Box::new(ScreenRefreshPermissionsTool),
+        Box::new(ScreenCaptureNowTool),
+        Box::new(ScreenCaptureTestTool),
+        Box::new(ScreenSessionStartTool),
+        Box::new(ScreenSessionStopTool),
+        Box::new(ScreenInputActionTool),
+        Box::new(ScreenGlobeStartTool),
+        Box::new(ScreenGlobePollTool),
+        Box::new(ScreenGlobeStopTool),
+        Box::new(ScreenRequestPermissionsTool),
+        Box::new(ScreenRequestPermissionTool),
+        Box::new(McpRegistrySearchTool::new(config.clone())),
+        Box::new(McpRegistryGetTool::new(config.clone())),
+        Box::new(McpRegistryInstalledListTool::new(config.clone())),
+        Box::new(McpRegistryStatusTool::new(config.clone())),
+        Box::new(McpRegistryConnectTool::new(config.clone())),
+        Box::new(McpRegistryDisconnectTool),
+        Box::new(McpRegistryToolCallTool),
+        Box::new(McpRegistryConfigAssistTool::new(config.clone())),
+        Box::new(McpRegistryInstallTool::new(config.clone())),
+        Box::new(McpRegistryUninstallTool::new(config.clone())),
+        Box::new(WorkspaceReadPersonaTool::new(config.clone())),
+        Box::new(WorkspaceUpdatePersonaTool::new(config.clone())),
+        Box::new(WorkspaceResetPersonaTool::new(config.clone())),
+        Box::new(WorkspaceInitTool),
     ];
 
     if browser_config.enabled {

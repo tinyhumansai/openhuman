@@ -35,9 +35,21 @@ test.describe('Settings - Account Preferences', () => {
     await gotoSettingsRoute(page, '/settings/account');
 
     await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible();
-    await expect(page.getByTestId('settings-nav-recovery-phrase')).toBeVisible();
     await expect(page.getByTestId('settings-nav-team')).toBeVisible();
     await expect(page.getByTestId('settings-nav-privacy')).toBeVisible();
+    await expect(page.getByTestId('settings-nav-migration')).toBeVisible();
+    // Recovery phrase + wallet balances moved out of Account into the Crypto hub.
+    await expect(page.getByTestId('settings-nav-recovery-phrase')).toHaveCount(0);
+  });
+
+  test('renders the crypto settings section route with recovery phrase + balances', async ({
+    page,
+  }) => {
+    await gotoSettingsRoute(page, '/settings/crypto');
+
+    await expect(page.getByRole('heading', { name: 'Crypto' })).toBeVisible();
+    await expect(page.getByTestId('settings-nav-recovery-phrase')).toBeVisible();
+    await expect(page.getByTestId('settings-nav-wallet-balances')).toBeVisible();
   });
 
   test('saves a generated recovery phrase and exposes configured wallet state', async ({

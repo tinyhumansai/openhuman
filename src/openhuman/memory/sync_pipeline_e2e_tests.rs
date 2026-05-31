@@ -24,21 +24,15 @@ use crate::core::event_bus::{
     init_global as init_event_bus, subscribe_global, DomainEvent, EventHandler, SubscriptionHandle,
 };
 use crate::openhuman::config::Config;
-use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
 use crate::openhuman::memory::ingest_pipeline::ingest_chat;
 use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyncTrigger};
-use crate::openhuman::memory::tree_global::digest::{end_of_day_digest, DigestOutcome};
-use crate::openhuman::memory::tree_topic::curator::{force_recompute, SpawnOutcome};
 use crate::openhuman::memory_queue::{self, count_total, drain_until_idle, JobStatus};
 use crate::openhuman::memory_store::chunks::store::{
     count_chunks, count_chunks_by_lifecycle_status, CHUNK_STATUS_BUFFERED,
 };
-use crate::openhuman::memory_store::trees::{
-    hotness, store as tree_store,
-    types::{HotnessCounters, TreeKind},
-};
+use crate::openhuman::memory_store::trees::{store as tree_store, types::TreeKind};
 use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::retrieval::{query_source, query_topic, search_entities};
+use crate::openhuman::memory_tree::retrieval::{query_source, search_entities};
 use crate::openhuman::memory_tree::score::store::lookup_entity;
 
 // ── helpers ─────────────────────────────────────────────────────────────
@@ -299,67 +293,8 @@ async fn multi_batch_volume_builds_full_tree() {
         .iter()
         .any(|m| m.canonical_id == "email:alice@example.com"));
 
-    // ── Global digest ──────────────────────────────────────────────────
-
-    let provider: Arc<dyn ChatProvider> = Arc::new(StaticChatProvider::new("daily digest summary"));
-
-    let digest_day = Utc.timestamp_millis_opt(base_ts).unwrap().date_naive();
-
-    let digest_outcome = test_override::with_provider(Arc::clone(&provider), async {
-        end_of_day_digest(&cfg, digest_day).await.unwrap()
-    })
-    .await;
-
-    match &digest_outcome {
-        DigestOutcome::Emitted {
-            source_count,
-            daily_id,
-            ..
-        } => {
-            assert!(*source_count >= 1);
-            assert!(!daily_id.is_empty());
-        }
-        DigestOutcome::EmptyDay => {
-            // Acceptable — timestamp alignment may miss the exact day.
-        }
-        DigestOutcome::Skipped { .. } => {
-            panic!("first run should not skip");
-        }
-    }
-
-    // ── Topic tree ─────────────────────────────────────────────────────
-
-    let mut counters = HotnessCounters::fresh("email:alice@example.com", 0);
-    counters.mention_count_30d = 500;
-    counters.distinct_sources = 2;
-    counters.last_seen_ms = Some(Utc::now().timestamp_millis());
-    counters.query_hits_30d = 5;
-    hotness::upsert(&cfg, &counters).unwrap();
-
-    let spawn = test_override::with_provider(Arc::clone(&provider), async {
-        force_recompute(&cfg, "email:alice@example.com")
-            .await
-            .unwrap()
-    })
-    .await;
-
-    match &spawn {
-        SpawnOutcome::Spawned { tree_id, .. } | SpawnOutcome::TreeExists { tree_id, .. } => {
-            assert!(tree_id.starts_with("topic:"));
-        }
-        other => panic!("expected Spawned or TreeExists, got {other:?}"),
-    }
-
-    // Drain backfill follow-up jobs.
-    drain_until_idle(&cfg).await.unwrap();
-
-    let topic_trees = tree_store::list_trees_by_kind(&cfg, TreeKind::Topic).unwrap();
-    assert!(!topic_trees.is_empty());
-
-    let topic_resp = query_topic(&cfg, "email:alice@example.com", None, None, 10)
-        .await
-        .unwrap();
-    assert!(!topic_resp.hits.is_empty());
+    // (The global-digest and topic-spawn steps were removed with those
+    // trees — source trees plus the entity index are the substrate.)
 
     // Verify event stream.
     tokio::task::yield_now().await;

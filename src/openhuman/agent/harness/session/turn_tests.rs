@@ -112,6 +112,27 @@ impl Tool for EchoTool {
     }
 }
 
+struct CronAddProbeTool;
+
+#[async_trait]
+impl Tool for CronAddProbeTool {
+    fn name(&self) -> &str {
+        "cron_add"
+    }
+
+    fn description(&self) -> &str {
+        "cron add probe"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        Ok(ToolResult::success(format!("cron_add_args={args}")))
+    }
+}
+
 struct CountingTool {
     calls: Arc<AtomicUsize>,
 }
@@ -607,6 +628,40 @@ async fn execute_tool_call_reports_unknown_tool() {
 }
 
 #[tokio::test]
+async fn execute_tool_call_rewrites_legacy_run_skill_for_builtin_cron_tools() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(CronAddProbeTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+    let call = ParsedToolCall {
+        name: "run_skill".into(),
+        arguments: serde_json::json!({
+            "skill_id": "cron_add",
+            "inputs": {
+              "name": "water-reminder",
+              "schedule": { "kind": "every", "every_ms": 60000 },
+              "job_type": "agent",
+              "prompt": "remind me to drink water"
+            }
+        }),
+        tool_call_id: Some("tc-run-skill-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(result.success, "{}", result.output);
+    assert_eq!(result.name, "cron_add");
+    assert_eq!(record.name, "cron_add");
+    assert!(result.output.contains("\"every_ms\":60000"));
+}
+
+#[tokio::test]
 async fn execute_tool_call_denies_tool_above_channel_permission() {
     let calls = Arc::new(AtomicUsize::new(0));
     let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
@@ -834,6 +889,12 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
         },
         crate::openhuman::config::ContextConfig::default(),
     );
+    // Suppress the memory-tree eager prefetch — it reads the real workspace
+    // via `load_config_with_timeout`, not the injected loader, so leaving it
+    // on would make this test depend on whatever is in `~/.openhuman`. This
+    // test exercises the injected memory context + tool cycle, not the
+    // prefetch; marking it already-prefetched skips that path deterministically.
+    agent.last_tree_prefetch_at = Some(std::time::Instant::now());
 
     let response = agent
         .turn("hello world")
@@ -911,6 +972,10 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
         ChatMessage::system("cached-system"),
         ChatMessage::assistant("cached-assistant"),
     ]);
+    // Skip the memory-tree eager prefetch (reads the real workspace, not the
+    // injected loader) so the user message stays exactly "fresh" regardless
+    // of local `~/.openhuman` content.
+    agent.last_tree_prefetch_at = Some(std::time::Instant::now());
 
     let response = agent.turn("fresh").await.expect("turn should succeed");
     assert_eq!(response, "cached-final");

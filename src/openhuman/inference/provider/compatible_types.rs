@@ -98,7 +98,14 @@ pub(crate) struct ResponsesRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct ResponsesInput {
     pub(crate) role: String,
-    pub(crate) content: String,
+    pub(crate) content: Vec<ResponsesContentPart>,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ResponsesContentPart {
+    #[serde(rename = "type")]
+    pub(crate) kind: String,
+    pub(crate) text: String,
 }
 
 // ── Response bodies ───────────────────────────────────────────────────────────

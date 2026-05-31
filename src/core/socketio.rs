@@ -256,6 +256,11 @@ pub struct SubagentProgressDetail {
     /// uses it to reopen the full parent↔subagent conversation from memory.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub worker_thread_id: Option<String>,
+    /// Human-readable display name from the agent registry (e.g.
+    /// "Researcher", "Coding Agent"). The frontend uses this for
+    /// consistent agent labels across timeline, sub-mascots, and drawer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

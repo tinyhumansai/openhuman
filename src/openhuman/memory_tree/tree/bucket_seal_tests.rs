@@ -790,7 +790,6 @@ async fn hydrate_summary_inputs_batch_preserves_order_and_skips_missing_ids() {
                 body: &n.content,
             },
             "slack-eng",
-            None,
         )
         .unwrap()
     };

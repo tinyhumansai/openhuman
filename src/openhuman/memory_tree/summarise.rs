@@ -169,8 +169,21 @@ pub fn fallback_summary(inputs: &[SummaryInput], budget: u32) -> SummaryOutput {
 }
 
 fn build_user_prompt(inputs: &[SummaryInput], per_input_cap_tokens: u32) -> String {
+    // Higher-priority inputs (by score) lead the prompt so the most
+    // important source material — e.g. commit messages and closed/merged
+    // issues & PRs, which carry a priority boost at ingest — is summarised
+    // first and is least likely to be truncated under budget pressure.
+    // `sort_by` is stable, so chronological order is preserved among
+    // equal-score inputs.
+    let mut order: Vec<&SummaryInput> = inputs.iter().collect();
+    order.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     let mut out = String::new();
-    for inp in inputs {
+    for inp in order {
         let trimmed = inp.content.trim();
         if trimmed.is_empty() {
             continue;

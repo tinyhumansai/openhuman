@@ -1,6 +1,6 @@
 {
   "name": "openhuman-app",
-  "version": "0.57.2",
+  "version": "0.57.3",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -92,10 +92,12 @@
     "@types/three": "^0.183.1",
     "buffer": "^6.0.3",
     "cmdk": "^1.1.1",
+    "d3-force": "^3.0.0",
     "debug": "^4.4.3",
     "katex": "^0.16.47",
     "lottie-react": "^2.4.1",
     "os-browserify": "^0.3.0",
+    "pixi.js": "^8.18.1",
     "process": "^0.11.10",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
@@ -129,6 +131,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
+    "@types/d3-force": "^3.0.10",
     "@types/debug": "^4.1.12",
     "@types/node": "^25.0.10",
     "@types/react": "^19.1.8",

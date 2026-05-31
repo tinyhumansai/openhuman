@@ -68,6 +68,12 @@ pub struct AddRequest {
     #[serde(default)]
     pub paths: Vec<String>,
     #[serde(default)]
+    pub max_commits: Option<u32>,
+    #[serde(default)]
+    pub max_issues: Option<u32>,
+    #[serde(default)]
+    pub max_prs: Option<u32>,
+    #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]
     pub since_days: Option<u32>,
@@ -105,6 +111,12 @@ pub async fn add_rpc(req: AddRequest) -> Result<RpcOutcome<AddResponse>, String>
         url: req.url,
         branch: req.branch,
         paths: req.paths,
+        // Per-type GitHub sync caps default to DEFAULT_GITHUB_ITEM_LIMIT
+        // (2000) in the reader when None. Overrides are applied via the
+        // update/patch path (`MemorySourcePatch`).
+        max_commits: req.max_commits,
+        max_issues: req.max_issues,
+        max_prs: req.max_prs,
         query: req.query,
         since_days: req.since_days,
         max_items: req.max_items,

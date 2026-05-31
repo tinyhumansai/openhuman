@@ -176,6 +176,33 @@ describe('Skills page — Composio catalog fallback', () => {
     expect(previewBadges).toHaveLength(0);
   });
 
+  it('marks connected Zoho Mail as preview when the agent cannot use it yet', () => {
+    composioToolkits = ['zoho_mail'];
+    composioConnectionByToolkit = new Map([
+      ['zoho_mail', { id: 'ca_zoho', toolkit: 'zoho_mail', status: 'ACTIVE' }],
+    ]);
+    agentReadyState = { agentReady: new Set<string>(['gmail']), loading: false, error: null };
+
+    renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
+
+    const integrationsSection = screen
+      .getByRole('heading', { name: 'Composio Integrations' })
+      .closest('.rounded-2xl');
+    expect(integrationsSection).not.toBeNull();
+    const zohoTile = within(integrationsSection as HTMLElement).getByRole('button', {
+      name: /Zoho Mail.*Preview/i,
+    });
+
+    expect(within(zohoTile).getByTestId('composio-preview-badge-zoho_mail')).toHaveTextContent(
+      'Preview'
+    );
+    expect(within(zohoTile).getAllByText('Preview')).toHaveLength(2);
+
+    fireEvent.click(zohoTile);
+
+    expect(screen.getByText(/Agent integration coming soon/i)).toBeInTheDocument();
+  });
+
   it('shows a local-mode composio API key banner when no key is configured', async () => {
     sessionToken = 'header.payload.local';
     composioModeStatus = { result: { mode: 'direct', api_key_set: false }, logs: [] };

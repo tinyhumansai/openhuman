@@ -18,7 +18,7 @@ use crate::openhuman::memory::ingest_pipeline::ingest_chat;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
 use crate::openhuman::memory_tree::retrieval::{
-    drill_down, fetch_leaves, query_global, query_source, query_topic, search_entities,
+    drill_down, fetch_leaves, query_source, search_entities,
 };
 
 fn test_config() -> (TempDir, Config) {
@@ -86,15 +86,6 @@ async fn end_to_end_three_chat_batches() {
         .expect("alice should be discoverable via search");
     assert!(alice.mention_count >= 1);
 
-    // ── query_topic on alice should return at least one hit.
-    let by_email = query_topic(&cfg, "email:alice@example.com", None, None, 20)
-        .await
-        .unwrap();
-    assert!(
-        !by_email.hits.is_empty(),
-        "alice has been ingested — query_topic should see her"
-    );
-
     // ── query_source by source_id returns what we put in (chunks get
     // surfaced directly since none of the channels seal — 2 short msgs
     // per channel is under the seal budget).
@@ -111,50 +102,15 @@ async fn end_to_end_three_chat_batches() {
         "query_source total must be >= hits.len()"
     );
 
-    // ── query_global: no daily digest has been built yet → empty.
-    let global = query_global(&cfg, 7).await.unwrap();
-    assert!(
-        global.hits.is_empty(),
-        "end_of_day_digest hasn't been called, so global is empty"
-    );
-
     // ── drill_down on a bogus id returns empty (no error).
     let empty_drill = drill_down(&cfg, "bogus:id", 1, None, None).await.unwrap();
     assert!(empty_drill.is_empty());
 
-    // ── fetch_leaves: find a guaranteed leaf hit from alice's topic results
-    // and assert that fetch_leaves hydrates it correctly.
-    use crate::openhuman::memory_tree::retrieval::types::NodeKind;
-    let leaf_hit = by_email
-        .hits
-        .iter()
-        .find(|h| h.node_kind == NodeKind::Leaf)
-        .expect("alice's topic hits should include at least one leaf chunk");
-    let got = fetch_leaves(&cfg, &[leaf_hit.node_id.clone()])
+    // ── fetch_leaves on a bogus id hydrates nothing (no error).
+    let none = fetch_leaves(&cfg, &["ghost:nonexistent".to_string()])
         .await
         .unwrap();
-    assert_eq!(
-        got.len(),
-        1,
-        "fetch_leaves must hydrate the known leaf chunk id"
-    );
-}
-
-#[tokio::test]
-async fn topic_entity_surfaces_after_ingest() {
-    let (_tmp, cfg) = test_config();
-    ingest_chat(&cfg, "slack:#eng", "alice", vec![], chat_about_phoenix(0))
-        .await
-        .unwrap();
-    // Per Phase 3a topic-as-entity promotion, `topic:phoenix` should be
-    // present in the entity index if the scorer extracts phoenix as a
-    // topic. We hard-assert query_topic returns a well-formed response
-    // but don't insist on a non-zero hit count — topic extraction is a
-    // scorer-level choice out of Phase 4's control.
-    let resp = query_topic(&cfg, "topic:phoenix", None, None, 10)
-        .await
-        .unwrap();
-    assert!(resp.total >= resp.hits.len());
+    assert!(none.is_empty());
 }
 
 // ── Phase 4 (#710): embedding + semantic rerank tests ───────────────────

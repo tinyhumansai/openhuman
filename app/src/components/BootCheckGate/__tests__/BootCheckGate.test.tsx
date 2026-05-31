@@ -222,15 +222,34 @@ describe('BootCheckGate — picker (unset mode)', () => {
     );
   });
 
-  it('rejects public HTTP cloud URLs', () => {
+  it('warns about public HTTP cloud URLs but does not block them', async () => {
+    mockRunBootCheck.mockResolvedValue({ kind: 'match' });
+
     renderGate();
 
     fireEvent.click(screen.getByText('Run on the Cloud (Complex)'));
     const urlInput = screen.getByPlaceholderText(/https:\/\/core\.example\.com/);
     fireEvent.change(urlInput, { target: { value: 'http://core.example.com/rpc' } });
+
+    // Non-blocking warning shows inline as soon as the public HTTP URL is typed.
+    expect(screen.getByText(/traffic will not be encrypted/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText(/Bearer token/i), {
+      target: { value: 'tok-1234' },
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
 
-    expect(screen.getByText(/HTTP core URLs are only allowed/)).toBeInTheDocument();
+    // The boot check still proceeds with the HTTP URL.
+    await waitFor(() => {
+      expect(mockRunBootCheck).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'cloud',
+          url: 'http://core.example.com/rpc',
+          token: 'tok-1234',
+        }),
+        expect.any(Object)
+      );
+    });
   });
 
   it('clears the token error as soon as the user types into the token field', () => {

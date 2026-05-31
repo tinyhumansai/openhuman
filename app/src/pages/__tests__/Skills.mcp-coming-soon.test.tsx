@@ -1,4 +1,4 @@
-import { fireEvent, screen } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import '../../test/mockDefaultSkillStatusHooks';
@@ -34,14 +34,31 @@ vi.mock('../../lib/composio/hooks', () => ({
   }),
 }));
 
+vi.mock('../../services/api/mcpClientsApi', () => ({
+  mcpClientsApi: {
+    installedList: vi.fn().mockResolvedValue([]),
+    status: vi.fn().mockResolvedValue([]),
+    registrySearch: vi.fn().mockResolvedValue({ servers: [], page: 1, total_pages: 1 }),
+    registryGet: vi.fn().mockResolvedValue(null),
+    install: vi.fn().mockResolvedValue({}),
+    connect: vi.fn().mockResolvedValue({ tools: [] }),
+    disconnect: vi.fn().mockResolvedValue({}),
+    uninstall: vi.fn().mockResolvedValue({}),
+    configAssist: vi.fn().mockResolvedValue({}),
+  },
+}));
+
 describe('Skills page — MCP tab', () => {
-  it('shows a coming soon placeholder for MCP server management', () => {
+  it('renders the live MCP servers tab (not a coming-soon placeholder)', async () => {
     renderWithProviders(<Skills />, { initialEntries: ['/skills'] });
 
     fireEvent.click(screen.getByRole('tab', { name: 'MCP Servers' }));
 
-    expect(screen.getAllByRole('heading', { name: 'MCP Servers' })).toHaveLength(2);
-    expect(screen.getByText(/MCP server management is coming soon/i)).toBeInTheDocument();
-    expect(screen.getByText('Coming Soon')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByText('No MCP servers installed yet.') ||
+          screen.getByText('Loading MCP servers...')
+      ).toBeInTheDocument();
+    });
   });
 });

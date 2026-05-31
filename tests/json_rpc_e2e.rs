@@ -2767,7 +2767,6 @@ async fn json_rpc_memory_tree_end_to_end() {
         "openhuman.memory_tree_ingest".to_string(),
         "openhuman.memory_tree_list_chunks".to_string(),
         "openhuman.memory_tree_get_chunk".to_string(),
-        "openhuman.memory_tree_trigger_digest".to_string(),
     ];
     assert!(
         controllers.len() >= expected_methods.len(),
@@ -3996,12 +3995,21 @@ async fn json_rpc_wallet_execution_surface_round_trips() {
         "expected providerStatus=ready for configured chain rows: {result}"
     );
 
-    // balances: zero placeholders for each derived account.
+    // balances: one row per native asset. The EVM account fans out into one
+    // row per displayed network (Ethereum, Base, BNB Chain), so 3 EVM rows +
+    // BTC + Solana + Tron = 6.
     let balances = post_json_rpc(&rpc_base, 2004, "openhuman.wallet_balances", json!({})).await;
     let body = assert_no_jsonrpc_error(&balances, "wallet_balances");
     let result = body.get("result").unwrap_or(&body);
     let rows = result.as_array().expect("balances array");
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), 6);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.get("chain").and_then(Value::as_str) == Some("evm"))
+            .count(),
+        3,
+        "expected 3 EVM network rows: {result}"
+    );
     // Every row reports a raw integer string. Don't require zero — the
     // BTC/Solana/Tron default REST endpoints may have network access in CI
     // and return non-placeholder values for the deterministic test addresses.
@@ -8303,6 +8311,319 @@ async fn mcp_clients_lifecycle() {
         disc_body.get("status").and_then(Value::as_str),
         Some("disconnected"),
         "disconnect noop should return status=disconnected: {disc_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// MCP clients **happy path** over real JSON-RPC: install → connect → tool_call
+/// → update_env (reconnect) → disconnect against a real stdio MCP subprocess
+/// (the `test-mcp-stub` binary), with the registry lookup served hermetically
+/// from the SQLite detail cache (issue #3039 acceptance: "JSON-RPC E2E —
+/// happy-path install/connect/tool_call against stub server over HTTP RPC").
+///
+/// No npx, no network: we pre-seed `smithery:detail:<name>` with a detail whose
+/// stdio `exampleConfig.command` points at the stub binary, so
+/// `mcp_clients_install` resolves the launch command to the stub.
+#[tokio::test]
+async fn mcp_clients_install_connect_tool_call_happy_path() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+    let user_scoped_dir = openhuman_home.join("users").join("local");
+    write_min_config(&user_scoped_dir, &mock_origin);
+
+    // Seed the registry detail cache so `registry_get` resolves offline to a
+    // stdio connection whose command is the hermetic stub binary. The config we
+    // load here resolves the same workspace dir the RPC handlers use, so the
+    // cache row lands in the DB the install path reads.
+    let stub_path = env!("CARGO_BIN_EXE_test-mcp-stub");
+    let qualified_name = "@openhuman-test/echo";
+    let detail = serde_json::json!({
+        "qualifiedName": qualified_name,
+        "displayName": "Test Echo",
+        "description": "Stub MCP server for the json_rpc_e2e happy path.",
+        "connections": [{
+            "type": "stdio",
+            "published": true,
+            "exampleConfig": { "command": stub_path, "args": [] }
+        }]
+    });
+    let seed_config = openhuman_core::openhuman::config::load_config_with_timeout()
+        .await
+        .expect("load config for cache seed");
+    openhuman_core::openhuman::mcp_registry::store::set_cached(
+        &seed_config,
+        &format!("smithery:detail:{qualified_name}"),
+        &detail.to_string(),
+    )
+    .expect("seed smithery detail cache");
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // ── 1. install resolves the stub command from the seeded detail ──────────
+    let install = post_json_rpc(
+        &rpc_base,
+        9920,
+        "openhuman.mcp_clients_install",
+        json!({ "qualified_name": qualified_name, "env": {} }),
+    )
+    .await;
+    let install_result = assert_no_jsonrpc_error(&install, "mcp_clients_install (happy path)");
+    let install_body = install_result.get("result").unwrap_or(install_result);
+    let server_id = install_body
+        .get("server")
+        .and_then(|s| s.get("server_id"))
+        .and_then(Value::as_str)
+        .expect("install returns a server.server_id")
+        .to_string();
+
+    // ── 2. connect spawns the stub and lists its one `echo` tool ─────────────
+    let connect = post_json_rpc(
+        &rpc_base,
+        9921,
+        "openhuman.mcp_clients_connect",
+        json!({ "server_id": server_id }),
+    )
+    .await;
+    let connect_result = assert_no_jsonrpc_error(&connect, "mcp_clients_connect (happy path)");
+    let connect_body = connect_result.get("result").unwrap_or(connect_result);
+    assert_eq!(
+        connect_body.get("status").and_then(Value::as_str),
+        Some("connected"),
+        "connect should report connected: {connect_body}"
+    );
+    let tools = connect_body
+        .get("tools")
+        .and_then(Value::as_array)
+        .expect("connect returns a tools array");
+    assert!(
+        tools
+            .iter()
+            .any(|t| t.get("name").and_then(Value::as_str) == Some("echo")),
+        "stub should advertise the echo tool: {tools:?}"
+    );
+
+    // ── 3. tool_call echoes the input back, is_error=false ───────────────────
+    let tool_call = post_json_rpc(
+        &rpc_base,
+        9922,
+        "openhuman.mcp_clients_tool_call",
+        json!({
+            "server_id": server_id,
+            "tool_name": "echo",
+            "arguments": { "message": "hello over rpc" }
+        }),
+    )
+    .await;
+    let tc_result = assert_no_jsonrpc_error(&tool_call, "mcp_clients_tool_call (happy path)");
+    let tc_body = tc_result.get("result").unwrap_or(tc_result);
+    assert_eq!(
+        tc_body.get("is_error"),
+        Some(&json!(false)),
+        "echo tool_call should not be an error: {tc_body}"
+    );
+    assert!(
+        tc_body.to_string().contains("hello over rpc"),
+        "echo tool_call should round-trip the input payload: {tc_body}"
+    );
+
+    // ── 4. update_env reconfigures + reconnects (no uninstall/reinstall) ─────
+    let update_env = post_json_rpc(
+        &rpc_base,
+        9923,
+        "openhuman.mcp_clients_update_env",
+        json!({ "server_id": server_id, "env": { "EXAMPLE_TOKEN": "rotated" } }),
+    )
+    .await;
+    let ue_result = assert_no_jsonrpc_error(&update_env, "mcp_clients_update_env (happy path)");
+    let ue_body = ue_result.get("result").unwrap_or(ue_result);
+    assert_eq!(
+        ue_body.get("status").and_then(Value::as_str),
+        Some("connected"),
+        "update_env should reconnect: {ue_body}"
+    );
+    let env_keys = ue_body
+        .get("env_keys")
+        .and_then(Value::as_array)
+        .expect("update_env returns env_keys");
+    assert!(
+        env_keys.iter().any(|k| k.as_str() == Some("EXAMPLE_TOKEN")),
+        "update_env should persist the new env key: {env_keys:?}"
+    );
+
+    // Verify the reconnected session is still functional: call echo again.
+    let tool_call2 = post_json_rpc(
+        &rpc_base,
+        9925,
+        "openhuman.mcp_clients_tool_call",
+        json!({
+            "server_id": server_id,
+            "tool_name": "echo",
+            "arguments": { "message": "hello after reconfigure" }
+        }),
+    )
+    .await;
+    let tc2_result =
+        assert_no_jsonrpc_error(&tool_call2, "mcp_clients_tool_call (after update_env)");
+    let tc2_body = tc2_result.get("result").unwrap_or(tc2_result);
+    assert_eq!(
+        tc2_body.get("is_error"),
+        Some(&json!(false)),
+        "echo tool_call after reconfigure should not be an error: {tc2_body}"
+    );
+    assert!(
+        tc2_body.to_string().contains("hello after reconfigure"),
+        "echo tool_call after reconfigure should round-trip the input payload: {tc2_body}"
+    );
+
+    // ── 5. disconnect cleans up the subprocess ───────────────────────────────
+    let disconnect = post_json_rpc(
+        &rpc_base,
+        9924,
+        "openhuman.mcp_clients_disconnect",
+        json!({ "server_id": server_id }),
+    )
+    .await;
+    let disc_result = assert_no_jsonrpc_error(&disconnect, "mcp_clients_disconnect (happy path)");
+    let disc_body = disc_result.get("result").unwrap_or(disc_result);
+    assert_eq!(
+        disc_body.get("status").and_then(Value::as_str),
+        Some("disconnected"),
+        "disconnect should report disconnected: {disc_body}"
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+/// Registry settings RPC: the getter reports `*_set` booleans without ever
+/// echoing secret values; the setter persists and clears them (issue #3039
+/// gap A6).
+#[tokio::test]
+async fn mcp_clients_registry_settings_roundtrip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _smithery_guard = EnvVarGuard::unset("SMITHERY_API_KEY");
+    let _official_token_guard = EnvVarGuard::unset("MCP_OFFICIAL_REGISTRY_TOKEN");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+    write_min_config(&openhuman_home.join("users").join("local"), &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Initially nothing is set.
+    let get1 = post_json_rpc(
+        &rpc_base,
+        9930,
+        "openhuman.mcp_clients_registry_settings_get",
+        json!({}),
+    )
+    .await;
+    let get1_result = assert_no_jsonrpc_error(&get1, "registry_settings_get (initial)");
+    let get1_body = get1_result.get("result").unwrap_or(get1_result);
+    assert_eq!(get1_body.get("smithery_api_key_set"), Some(&json!(false)));
+    assert_eq!(get1_body.get("mcp_official_token_set"), Some(&json!(false)));
+
+    // Set a key + base override.
+    let set1 = post_json_rpc(
+        &rpc_base,
+        9931,
+        "openhuman.mcp_clients_registry_settings_set",
+        json!({
+            "smithery_api_key": "sk-secret-value",
+            "mcp_official_base": "https://registry.example.test"
+        }),
+    )
+    .await;
+    let set1_result = assert_no_jsonrpc_error(&set1, "registry_settings_set (set)");
+    let set1_body = set1_result.get("result").unwrap_or(set1_result);
+    assert_eq!(set1_body.get("smithery_api_key_set"), Some(&json!(true)));
+    assert_eq!(
+        set1_body.get("mcp_official_base").and_then(Value::as_str),
+        Some("https://registry.example.test"),
+    );
+    // The secret value is NEVER echoed back anywhere in the response.
+    assert!(
+        !set1.to_string().contains("sk-secret-value"),
+        "registry_settings_set must not echo the secret value"
+    );
+
+    // Read-after-write: verify getter reflects the persisted state.
+    let get2 = post_json_rpc(
+        &rpc_base,
+        9933,
+        "openhuman.mcp_clients_registry_settings_get",
+        json!({}),
+    )
+    .await;
+    let get2_result = assert_no_jsonrpc_error(&get2, "registry_settings_get (after set)");
+    let get2_body = get2_result.get("result").unwrap_or(get2_result);
+    assert_eq!(get2_body.get("smithery_api_key_set"), Some(&json!(true)));
+    assert_eq!(
+        get2_body.get("mcp_official_base").and_then(Value::as_str),
+        Some("https://registry.example.test"),
+    );
+    // Getter must never return the raw secret.
+    assert!(
+        !get2.to_string().contains("sk-secret-value"),
+        "registry_settings_get must not return the secret value"
+    );
+
+    // Clearing with an empty string flips the boolean back to false.
+    let set2 = post_json_rpc(
+        &rpc_base,
+        9932,
+        "openhuman.mcp_clients_registry_settings_set",
+        json!({ "smithery_api_key": "" }),
+    )
+    .await;
+    let set2_result = assert_no_jsonrpc_error(&set2, "registry_settings_set (clear)");
+    let set2_body = set2_result.get("result").unwrap_or(set2_result);
+    assert_eq!(set2_body.get("smithery_api_key_set"), Some(&json!(false)));
+    // The base override persists across the clear of an unrelated field.
+    assert_eq!(
+        set2_body.get("mcp_official_base").and_then(Value::as_str),
+        Some("https://registry.example.test"),
+    );
+
+    // Read-after-clear: verify getter reflects the cleared state.
+    let get3 = post_json_rpc(
+        &rpc_base,
+        9934,
+        "openhuman.mcp_clients_registry_settings_get",
+        json!({}),
+    )
+    .await;
+    let get3_result = assert_no_jsonrpc_error(&get3, "registry_settings_get (after clear)");
+    let get3_body = get3_result.get("result").unwrap_or(get3_result);
+    assert_eq!(get3_body.get("smithery_api_key_set"), Some(&json!(false)));
+    // Base override should persist even after clearing the API key.
+    assert_eq!(
+        get3_body.get("mcp_official_base").and_then(Value::as_str),
+        Some("https://registry.example.test"),
     );
 
     mock_join.abort();

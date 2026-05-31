@@ -11,9 +11,6 @@
  *   │   Sync button, status chip, chunk count, freshness)   │
  *   └───────────────────────────────────────────────────────┘
  *   ┌───────────────────────────────────────────────────────┐
- *   │  VaultPanel — Obsidian vault link / folder picker     │
- *   └───────────────────────────────────────────────────────┘
- *   ┌───────────────────────────────────────────────────────┐
  *   │  WhatsAppMemorySection                                │
  *   └───────────────────────────────────────────────────────┘
  *   ┌───────────────────────────────────────────────────────┐
@@ -51,7 +48,6 @@ import { MemoryGraph } from './MemoryGraph';
 import { MemorySourcesRegistry } from './MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
 import { ObsidianVaultSection } from './ObsidianVaultSection';
-import { VaultPanel } from './VaultPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
 interface MemoryWorkspaceProps {
@@ -214,7 +210,6 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     <div className="space-y-4" data-testid="memory-workspace">
       <MemoryTreeStatusPanel onToast={onToast} />
       <MemorySourcesRegistry onToast={onToast} />
-      <VaultPanel onToast={onToast} />
       <WhatsAppMemorySection />
 
       <div

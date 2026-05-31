@@ -251,6 +251,63 @@ async fn prepare_transfer_rejects_unknown_asset_symbol() {
 }
 
 #[tokio::test]
+async fn balances_fans_evm_account_into_eth_base_bsc_rows() {
+    let _guard = TEST_LOCK.lock();
+    let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let temp = TempDir::new().unwrap();
+    setup_wallet_in(&temp).await.unwrap();
+    // Point all three displayed EVM networks at a mock returning 1e18 wei.
+    let (addr, _estimate_calls, _raw_txs) = start_mock_rpc().await.unwrap();
+    for var in [
+        "OPENHUMAN_WALLET_RPC_EVM",
+        "OPENHUMAN_WALLET_RPC_BASE",
+        "OPENHUMAN_WALLET_RPC_BSC",
+    ] {
+        std::env::set_var(var, format!("http://{addr}"));
+    }
+
+    let rows = balances().await.unwrap().value;
+
+    // One row per displayed EVM network plus BTC / Solana / Tron.
+    let evm_rows: Vec<_> = rows
+        .iter()
+        .filter(|row| row.chain == WalletChain::Evm)
+        .collect();
+    assert_eq!(evm_rows.len(), 3, "expected 3 EVM rows, got {evm_rows:?}");
+    let networks: Vec<EvmNetwork> = evm_rows.iter().filter_map(|row| row.evm_network).collect();
+    assert!(networks.contains(&EvmNetwork::EthereumMainnet));
+    assert!(networks.contains(&EvmNetwork::BaseMainnet));
+    assert!(networks.contains(&EvmNetwork::BscMainnet));
+    // Native symbols differ by network: ETH on Ethereum/Base, BNB on BNB Chain.
+    let bnb = evm_rows
+        .iter()
+        .find(|row| row.evm_network == Some(EvmNetwork::BscMainnet))
+        .expect("bsc row present");
+    assert_eq!(bnb.asset_symbol, "BNB");
+    // Mock RPC returns 1e18 wei for eth_getBalance on every network.
+    assert_eq!(bnb.raw, "1000000000000000000");
+    assert!(matches!(bnb.provider_status, ProviderStatus::Ready));
+    // The non-EVM chains each still produce exactly one row.
+    for chain in [WalletChain::Btc, WalletChain::Solana, WalletChain::Tron] {
+        assert_eq!(
+            rows.iter().filter(|row| row.chain == chain).count(),
+            1,
+            "expected one row for {chain:?}"
+        );
+    }
+
+    for var in [
+        "OPENHUMAN_WALLET_RPC_EVM",
+        "OPENHUMAN_WALLET_RPC_BASE",
+        "OPENHUMAN_WALLET_RPC_BSC",
+    ] {
+        std::env::remove_var(var);
+    }
+}
+
+#[tokio::test]
 async fn tx_status_rejects_empty_hash() {
     let err = tx_status(WalletChain::Evm, None, "   ").await.unwrap_err();
     assert!(err.contains("tx hash is empty"), "got: {err}");

@@ -666,9 +666,12 @@ fn legacy_embeddings_migrate_to_sidecar_once() {
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
+        // A full init runs every one-shot migration in sequence, so the gate
+        // lands on the latest version (the global/topic purge), not just the
+        // embedding migration's.
         assert_eq!(
-            v, TREE_EMBEDDING_MIGRATION_VERSION,
-            "version gate must be set"
+            v, GLOBAL_TOPIC_PURGE_MIGRATION_VERSION,
+            "version gate must be set to the latest migration"
         );
         Ok(())
     })
@@ -960,5 +963,248 @@ fn validate_reembed_skip_key_rejects_empty_and_oversized() {
     assert_eq!(
         validate_reembed_skip_key("chunk_id", "  trimmed  ").unwrap(),
         "trimmed"
+    );
+}
+
+// ---------- get_chunks_batch ----------
+//
+// Contract: equivalent to looping `get_chunk` per id but in
+// `O(ceil(n / MAX_FETCH_BATCH))` SQLite round-trips. The map carries
+// only ids that exist; missing ids are silently absent (same as the
+// per-row helper returning Ok(None)).
+
+#[test]
+fn get_chunks_batch_returns_present_ids_in_map() {
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#eng", 1, 1_700_000_000_000);
+    let c3 = sample_chunk("slack:#ops", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+
+    let ids = vec![c1.id.clone(), c2.id.clone(), c3.id.clone()];
+    let map = get_chunks_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 3);
+    assert_eq!(map.get(&c1.id), Some(&c1));
+    assert_eq!(map.get(&c2.id), Some(&c2));
+    assert_eq!(map.get(&c3.id), Some(&c3));
+}
+
+#[test]
+fn get_chunks_batch_empty_input_and_missing_ids() {
+    // Empty input: empty map (no SQL issued).
+    let (_tmp, cfg) = test_config();
+    let empty = get_chunks_batch(&cfg, &[]).unwrap();
+    assert!(empty.is_empty());
+
+    // Missing ids: silently absent (mirrors per-row Ok(None)).
+    // `fetch_leaves` relies on this so partial-result detection
+    // (`hits.len() < ids.len()`) keeps working unchanged.
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+    let ids = vec![
+        c.id.clone(),
+        "ghost:no-such-1".into(),
+        "ghost:no-such-2".into(),
+    ];
+    let map = get_chunks_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get(&c.id), Some(&c));
+    assert!(map.get("ghost:no-such-1").is_none());
+    assert!(map.get("ghost:no-such-2").is_none());
+}
+
+// ---------- get_chunk_embeddings_for_signature_batch ----------
+//
+// Contract: equivalent to looping `get_chunk_embedding_for_signature`
+// per id, but in O(ceil(n / MAX_EMBEDDING_BATCH)) round-trips instead
+// of O(n). The map contains only ids that have a vector under the
+// requested signature; absent rows are silently dropped (same as the
+// per-row helper returning Ok(None)).
+
+#[test]
+fn batch_embedding_lookup_returns_only_signature_scoped_rows() {
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#eng", 1, 1_700_000_000_000);
+    let c3 = sample_chunk("slack:#eng", 2, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+
+    let sig_a = "openai/text-embedding-3-small@1536";
+    let sig_b = "local/bge-small@384";
+    set_chunk_embedding_for_signature(&cfg, &c1.id, sig_a, &[0.1, 0.2]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c2.id, sig_a, &[0.3, 0.4]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c3.id, sig_b, &[0.5, 0.6, 0.7]).unwrap();
+
+    let ids = vec![c1.id.clone(), c2.id.clone(), c3.id.clone()];
+    let map_a = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig_a).unwrap();
+    assert_eq!(map_a.len(), 2, "only c1 and c2 are under sig_a");
+    assert_eq!(map_a.get(&c1.id).cloned(), Some(vec![0.1, 0.2]));
+    assert_eq!(map_a.get(&c2.id).cloned(), Some(vec![0.3, 0.4]));
+    assert!(map_a.get(&c3.id).is_none(), "c3 has only sig_b");
+
+    let map_b = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig_b).unwrap();
+    assert_eq!(map_b.len(), 1);
+    assert_eq!(map_b.get(&c3.id).cloned(), Some(vec![0.5, 0.6, 0.7]));
+}
+
+#[test]
+fn batch_embedding_lookup_empty_input_returns_empty_map() {
+    let (_tmp, cfg) = test_config();
+    let map = get_chunk_embeddings_for_signature_batch(&cfg, &[], "any/sig@1").unwrap();
+    assert!(map.is_empty());
+}
+
+#[test]
+fn batch_embedding_lookup_unknown_ids_absent_from_map() {
+    // Pre-batch contract: per-row helper returned Ok(None) for missing
+    // chunks. Batch helper must mirror that — missing ids absent from
+    // the map, present ids carry their vector. The retrieval rerank
+    // path depends on this so absent rows get the
+    // (NEG_INFINITY, false) sink-to-bottom treatment.
+    let (_tmp, cfg) = test_config();
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+    let sig = "openai/text-embedding-3-small@1536";
+    set_chunk_embedding_for_signature(&cfg, &c.id, sig, &[0.1]).unwrap();
+
+    let ids = vec![
+        c.id.clone(),
+        "ghost:no-such-chunk-1".into(),
+        "ghost:no-such-chunk-2".into(),
+    ];
+    let map = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig).unwrap();
+    assert_eq!(map.len(), 1);
+    assert_eq!(map.get(&c.id).cloned(), Some(vec![0.1]));
+}
+
+#[test]
+fn batch_embedding_lookup_splits_id_list_above_per_batch_threshold() {
+    // Validates the `chunks(MAX_EMBEDDING_BATCH)` window loop in
+    // `get_chunk_embeddings_for_signature_batch`. We pass > 500 ids in
+    // one call; the helper must internally split them into multiple
+    // `IN (...)` queries and merge results into a single map. 3 of the
+    // 501 ids actually carry embeddings; the other 498 are unknown
+    // strings and must be absent from the returned map (no error).
+    let (_tmp, cfg) = test_config();
+    let c1 = sample_chunk("slack:#a", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#b", 0, 1_700_000_000_000);
+    let c3 = sample_chunk("slack:#c", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone(), c3.clone()]).unwrap();
+    let sig = "openai/text-embedding-3-small@1536";
+    set_chunk_embedding_for_signature(&cfg, &c1.id, sig, &[1.0]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c2.id, sig, &[2.0]).unwrap();
+    set_chunk_embedding_for_signature(&cfg, &c3.id, sig, &[3.0]).unwrap();
+
+    // Build 501 ids: 3 real + 498 ghosts. The 501-element vec crosses
+    // the 500-per-batch boundary, forcing two `IN (...)` queries.
+    let mut ids: Vec<String> = (0..498).map(|i| format!("ghost:{i}")).collect();
+    ids.push(c1.id.clone());
+    ids.push(c2.id.clone());
+    ids.push(c3.id.clone());
+    assert_eq!(ids.len(), 501);
+
+    let map = get_chunk_embeddings_for_signature_batch(&cfg, &ids, sig).unwrap();
+    assert_eq!(map.len(), 3, "only the 3 real ids should be present");
+    assert_eq!(map.get(&c1.id).cloned(), Some(vec![1.0]));
+    assert_eq!(map.get(&c2.id).cloned(), Some(vec![2.0]));
+    assert_eq!(map.get(&c3.id).cloned(), Some(vec![3.0]));
+}
+
+/// The one-shot purge migration deletes global + topic trees (rows, summaries,
+/// buffers, jobs, and on-disk summary folders) while leaving source trees and
+/// non-retired jobs untouched, and runs exactly once (PRAGMA user_version gate).
+#[test]
+fn global_topic_purge_removes_only_global_and_topic() {
+    let (_tmp, cfg) = test_config();
+    // First open initialises the schema and runs both migrations (sets
+    // user_version = 2).
+    upsert_chunks(&cfg, &[sample_chunk("slack:#eng", 0, 1_700_000_000_000)]).unwrap();
+
+    // On-disk: a legacy per-day global folder, the singleton global folder, a
+    // topic folder, and a source folder that must survive.
+    let summaries = cfg
+        .memory_tree_content_root()
+        .join("wiki")
+        .join("summaries");
+    for d in [
+        "global-2026-05-28",
+        "global",
+        "topic-alice",
+        "source-slack-eng",
+    ] {
+        std::fs::create_dir_all(summaries.join(d).join("L0")).unwrap();
+    }
+
+    with_connection(&cfg, |conn| {
+        // Seed one tree of each kind, each with a summary.
+        for (id, kind) in [
+            ("source:s1", "source"),
+            ("global:g1", "global"),
+            ("topic:t1", "topic"),
+        ] {
+            conn.execute(
+                "INSERT INTO mem_tree_trees (id, kind, scope, max_level, status, created_at_ms) \
+                 VALUES (?1, ?2, ?2, 0, 'active', 0)",
+                params![id, kind],
+            )?;
+            conn.execute(
+                "INSERT INTO mem_tree_summaries \
+                 (id, tree_id, tree_kind, level, content, token_count, \
+                  time_range_start_ms, time_range_end_ms, sealed_at_ms) \
+                 VALUES (?1, ?2, ?3, 0, 'x', 1, 0, 0, 0)",
+                params![format!("sum-{id}"), id, kind],
+            )?;
+        }
+        // Seed retired + surviving job rows.
+        for (jid, kind) in [
+            ("j1", "topic_route"),
+            ("j2", "digest_daily"),
+            ("j3", "extract_chunk"),
+        ] {
+            conn.execute(
+                "INSERT INTO mem_tree_jobs (id, kind, payload_json, available_at_ms, created_at_ms) \
+                 VALUES (?1, ?2, '{}', 0, 0)",
+                params![jid, kind],
+            )?;
+        }
+        // Re-arm the gate so the purge runs against the seeded rows.
+        conn.pragma_update(None, "user_version", 1i64)?;
+        super::purge_global_topic_trees(conn, &cfg)?;
+
+        // Trees: only the source tree survives.
+        let trees: i64 =
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_trees", [], |r| r.get(0))?;
+        assert_eq!(trees, 1, "only the source tree should remain");
+        let kind: String =
+            conn.query_row("SELECT kind FROM mem_tree_trees", [], |r| r.get(0))?;
+        assert_eq!(kind, "source");
+
+        // Summaries: only the source summary survives.
+        let summaries_left: i64 =
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_summaries", [], |r| r.get(0))?;
+        assert_eq!(summaries_left, 1);
+
+        // Jobs: retired kinds gone, extract_chunk kept.
+        let jobs_left: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT kind FROM mem_tree_jobs ORDER BY kind")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        assert_eq!(jobs_left, vec!["extract_chunk".to_string()]);
+
+        // Gate advanced — a second run is a no-op.
+        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        assert_eq!(version, 2);
+        Ok(())
+    })
+    .unwrap();
+
+    // On-disk: global*/topic-* folders gone, source-* kept.
+    assert!(!summaries.join("global-2026-05-28").exists());
+    assert!(!summaries.join("global").exists());
+    assert!(!summaries.join("topic-alice").exists());
+    assert!(
+        summaries.join("source-slack-eng").exists(),
+        "source summary folder must survive the purge"
     );
 }

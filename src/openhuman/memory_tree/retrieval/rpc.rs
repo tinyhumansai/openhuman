@@ -12,10 +12,8 @@ use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_tree::retrieval::{
     drill_down::drill_down,
     fetch::fetch_leaves,
-    global::query_global,
     search::search_entities,
     source::query_source,
-    topic::query_topic,
     types::{EntityMatch, QueryResponse, RetrievalHit},
 };
 use crate::openhuman::memory_tree::score::extract::EntityKind;
@@ -73,85 +71,6 @@ pub async fn query_source_rpc(
             "memory_tree: query_source has_source_id={} source_kind={:?} has_query={} hits={}",
             req.source_id.is_some(),
             req.source_kind,
-            req.query.is_some(),
-            n
-        ),
-    ))
-}
-
-// ── query_global ──────────────────────────────────────────────────────
-
-/// Request body for `memory_tree_query_global`.
-///
-/// The consolidated `memory_tree` tool schema advertises `time_window_days`
-/// (consistent with `query_source` / `query_topic`), while the standalone
-/// tool uses `window_days`. Accept both via serde alias so callers using
-/// either field name succeed.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QueryGlobalRequest {
-    #[serde(alias = "window_days")]
-    pub time_window_days: u32,
-}
-
-/// JSON-RPC handler body for `memory_tree_query_global`.
-pub async fn query_global_rpc(
-    config: &Config,
-    req: QueryGlobalRequest,
-) -> Result<RpcOutcome<QueryResponse>, String> {
-    let resp = query_global(config, req.time_window_days)
-        .await
-        .map_err(|e| format!("query_global: {e}"))?;
-    let n = resp.hits.len();
-    Ok(RpcOutcome::single_log(
-        resp,
-        format!("memory_tree: query_global hits={n}"),
-    ))
-}
-
-// ── query_topic ───────────────────────────────────────────────────────
-
-/// Request body for `memory_tree_query_topic`.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct QueryTopicRequest {
-    pub entity_id: String,
-    #[serde(default)]
-    pub time_window_days: Option<u32>,
-    /// Phase 4 (#710) — optional natural-language query for semantic
-    /// rerank. When unset, falls back to the classic score DESC order.
-    #[serde(default)]
-    pub query: Option<String>,
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-/// JSON-RPC handler body for `memory_tree_query_topic`.
-pub async fn query_topic_rpc(
-    config: &Config,
-    req: QueryTopicRequest,
-) -> Result<RpcOutcome<QueryResponse>, String> {
-    let limit = req.limit.unwrap_or(0);
-    let resp = query_topic(
-        config,
-        &req.entity_id,
-        req.time_window_days,
-        req.query.as_deref(),
-        limit,
-    )
-    .await
-    .map_err(|e| format!("query_topic: {e}"))?;
-    let n = resp.hits.len();
-    // entity_id can be an email or handle — log only the kind prefix
-    // ("email:", "handle:", etc.) not the full value.
-    let entity_kind_prefix = req
-        .entity_id
-        .split_once(':')
-        .map(|(k, _)| k)
-        .unwrap_or("unknown");
-    Ok(RpcOutcome::single_log(
-        resp,
-        format!(
-            "memory_tree: query_topic entity_kind={} has_query={} hits={}",
-            entity_kind_prefix,
             req.query.is_some(),
             n
         ),
@@ -409,73 +328,6 @@ mod tests {
         };
         let err = query_source_rpc(&cfg, req).await.unwrap_err();
         assert!(err.contains("unknown source kind: bogus"), "got {err}");
-    }
-
-    // ── query_global_rpc ──────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn query_global_rpc_returns_response_for_valid_window() {
-        let (_tmp, cfg) = test_config();
-        let req = QueryGlobalRequest {
-            time_window_days: 7,
-        };
-        let outcome = query_global_rpc(&cfg, req).await.unwrap();
-        assert!(outcome.value.hits.is_empty());
-        assert_eq!(outcome.logs.len(), 1);
-        assert!(
-            outcome.logs[0].contains("query_global hits=0"),
-            "log: {}",
-            outcome.logs[0]
-        );
-    }
-
-    #[test]
-    fn query_global_request_accepts_both_field_names() {
-        // The consolidated memory_tree tool schema uses "time_window_days"
-        // while the standalone tool uses "window_days". Both must deserialize.
-        let from_alias: QueryGlobalRequest =
-            serde_json::from_value(serde_json::json!({"window_days": 7}))
-                .expect("legacy window_days alias should deserialize");
-        assert_eq!(from_alias.time_window_days, 7);
-
-        let from_primary: QueryGlobalRequest =
-            serde_json::from_value(serde_json::json!({"time_window_days": 30}))
-                .expect("primary time_window_days should deserialize");
-        assert_eq!(from_primary.time_window_days, 30);
-    }
-    // ── query_topic_rpc ───────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn query_topic_rpc_logs_entity_kind_prefix_for_colon_separated_id() {
-        let (_tmp, cfg) = test_config();
-        let req = QueryTopicRequest {
-            entity_id: "email:alice@example.com".into(),
-            time_window_days: None,
-            query: None,
-            limit: None,
-        };
-        let outcome = query_topic_rpc(&cfg, req).await.unwrap();
-        let log = &outcome.logs[0];
-        assert!(log.contains("entity_kind=email"), "log: {log}");
-        // PII redaction — the raw email must NOT appear anywhere in the log.
-        assert!(!log.contains("alice@example.com"), "log leaked PII: {log}");
-    }
-
-    #[tokio::test]
-    async fn query_topic_rpc_logs_unknown_when_entity_id_has_no_colon() {
-        let (_tmp, cfg) = test_config();
-        let req = QueryTopicRequest {
-            entity_id: "nocolonhere".into(),
-            time_window_days: None,
-            query: None,
-            limit: None,
-        };
-        let outcome = query_topic_rpc(&cfg, req).await.unwrap();
-        assert!(
-            outcome.logs[0].contains("entity_kind=unknown"),
-            "log: {}",
-            outcome.logs[0]
-        );
     }
 
     // ── search_entities_rpc ───────────────────────────────────────────

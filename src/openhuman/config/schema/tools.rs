@@ -388,6 +388,11 @@ pub struct McpClientConfig {
     /// Identity block sent during initialize.
     #[serde(default)]
     pub client_identity: McpClientIdentityConfig,
+    /// Optional auth/overrides for the MCP *registry* browse APIs (Smithery +
+    /// the official modelcontextprotocol/registry). Each value falls back to
+    /// the corresponding env var when unset (issue #3039 gap A6).
+    #[serde(default)]
+    pub registry_auth: McpRegistryAuthConfig,
 }
 
 impl Default for McpClientConfig {
@@ -396,8 +401,33 @@ impl Default for McpClientConfig {
             enabled: defaults::default_true(),
             servers: Vec::new(),
             client_identity: McpClientIdentityConfig::default(),
+            registry_auth: McpRegistryAuthConfig::default(),
         }
     }
+}
+
+/// Registry-browse auth + endpoint overrides. Lets a user who hits Smithery
+/// rate limits (or needs an authenticated official-registry endpoint) supply
+/// credentials from the desktop app instead of editing env vars. Each field is
+/// config-first with an env-var fallback so existing CI/Docker deployments that
+/// only set env vars keep working unchanged.
+///
+/// Secrets are write-only over RPC: the getter reports whether each secret is
+/// *set* (a boolean) and never echoes the value back.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct McpRegistryAuthConfig {
+    /// Smithery API key. Falls back to `SMITHERY_API_KEY`.
+    #[serde(default)]
+    pub smithery_api_key: Option<String>,
+    /// Base URL override for the official registry. Falls back to
+    /// `MCP_OFFICIAL_REGISTRY_BASE` (non-secret).
+    #[serde(default)]
+    pub mcp_official_base: Option<String>,
+    /// Bearer token for the official registry. Falls back to
+    /// `MCP_OFFICIAL_REGISTRY_TOKEN`.
+    #[serde(default)]
+    pub mcp_official_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

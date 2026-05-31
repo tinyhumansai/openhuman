@@ -65,6 +65,15 @@ pub struct MemorySourceEntry {
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
+    /// Max commits to pull per sync (default 2000 when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_commits: Option<u32>,
+    /// Max issues to pull per sync (default 2000 when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_issues: Option<u32>,
+    /// Max pull requests to pull per sync (default 2000 when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_prs: Option<u32>,
 
     // ── TwitterQuery ──
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -246,6 +255,9 @@ mod tests {
             url: None,
             branch: None,
             paths: Vec::new(),
+            max_commits: None,
+            max_issues: None,
+            max_prs: None,
             query: None,
             since_days: None,
             max_items: None,

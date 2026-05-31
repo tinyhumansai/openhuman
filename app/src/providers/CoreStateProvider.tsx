@@ -223,6 +223,13 @@ function normalizeSnapshot(
     localState: {
       encryptionKey: result.localState.encryptionKey ?? null,
       onboardingTasks: result.localState.onboardingTasks ?? null,
+      keyringConsent: result.localState.keyringConsent ?? null,
+    },
+    keyringStatus: result.keyringStatus ?? {
+      available: true,
+      failureReason: null,
+      activeMode: 'os_keyring',
+      backendName: 'os',
     },
     runtime: {
       screenIntelligence: result.runtime?.screenIntelligence ?? null,

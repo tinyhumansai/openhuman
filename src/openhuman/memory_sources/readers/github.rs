@@ -13,10 +13,23 @@ use crate::openhuman::config::Config;
 use crate::openhuman::memory_sources::types::{
     ContentType, MemorySourceEntry, SourceContent, SourceItem, SourceKind,
 };
+use crate::openhuman::memory_store::content::raw::RawKind;
 
 use super::SourceReader;
 
 const DEFAULT_BRANCH: &str = "main";
+
+/// Default number of items of **each** type (commits, issues, PRs) to pull
+/// when the source entry doesn't override it. Tunable per-source via
+/// `max_commits` / `max_issues` / `max_prs` on [`MemorySourceEntry`].
+pub(crate) const DEFAULT_GITHUB_ITEM_LIMIT: u32 = 2000;
+
+/// GitHub REST API maximum page size (`per_page`).
+const GH_PAGE_SIZE: u32 = 100;
+
+/// Hard ceiling on pagination loops so a misbehaving API (always returning a
+/// full page) can never spin forever even if `max` is enormous.
+const GH_MAX_PAGES: u32 = 1000;
 
 pub struct GithubReader;
 
@@ -26,7 +39,7 @@ pub struct GithubReader;
 /// shape — extra segments like `/tree/main` or `/blob/...` are rejected
 /// so callers can't accidentally derive the wrong owner/repo from a
 /// deep link.
-fn parse_github_url(url: &str) -> Result<(String, String), String> {
+pub(crate) fn parse_github_url(url: &str) -> Result<(String, String), String> {
     let trimmed = url.trim();
     let rest = trimmed
         .strip_prefix("https://github.com/")
@@ -84,6 +97,42 @@ impl ItemKind {
     }
 }
 
+// ── Raw-archive coordinates ─────────────────────────────────────────
+
+/// Slugifiable raw-archive source id for a repo URL.
+///
+/// Returns `github.com/<owner>/<repo>`, which slugifies (via
+/// `slugify_source_id`) to `github-com-<owner>-<repo>` so a source's
+/// commits/issues/PRs land under
+/// `raw/github-com-<owner>-<repo>/{commits,issues,prs}/`.
+pub(crate) fn repo_archive_source_id(url: &str) -> Option<String> {
+    let (owner, repo) = parse_github_url(url).ok()?;
+    Some(format!("github.com/{owner}/{repo}"))
+}
+
+/// Chunk-store source id for a single repo item.
+///
+/// `github:<owner>/<repo>:<item_id>` keeps the per-item dedup key (each
+/// commit/issue/PR is an immutable document) while producing a clean
+/// `chunks/document/github-<owner>-<repo>-…` scope instead of the opaque
+/// `mem_src:src_<uuid>:…` form.
+pub(crate) fn chunk_source_id(url: &str, item_id: &str) -> Option<String> {
+    let (owner, repo) = parse_github_url(url).ok()?;
+    Some(format!("github:{owner}/{repo}:{item_id}"))
+}
+
+/// Map a [`SourceItem`] id (`commit:<sha>`, `issue:<n>`, `pr:<n>`) to its
+/// raw-archive [`RawKind`] and the clean uid used as the filename suffix.
+pub(crate) fn raw_archive_coords(item_id: &str) -> Option<(RawKind, String)> {
+    let (kind, rest) = ItemKind::from_id(item_id)?;
+    let raw_kind = match kind {
+        ItemKind::Commit => RawKind::Commit,
+        ItemKind::Issue => RawKind::Issue,
+        ItemKind::PullRequest => RawKind::PullRequest,
+    };
+    Some((raw_kind, rest.to_string()))
+}
+
 // ── gh CLI helpers ──────────────────────────────────────────────────
 
 const GH_CLI_TIMEOUT: Duration = Duration::from_secs(30);
@@ -138,6 +187,11 @@ async fn api_get(path: &str) -> Result<String, String> {
 struct GhCommit {
     sha: String,
     commit: GhCommitInner,
+    /// Top-level GitHub user that authored the commit (distinct from the
+    /// embedded git author identity). Present when the commit author maps
+    /// to a GitHub account; absent for unlinked email-only authors.
+    #[serde(default)]
+    author: Option<GhUser>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -212,18 +266,27 @@ impl SourceReader for GithubReader {
         let (owner, repo) = parse_github_url(url)?;
         let use_gh = gh_available();
 
+        // Per-type sync caps. Default to the last DEFAULT_GITHUB_ITEM_LIMIT
+        // of each type; a source entry may override any of them.
+        let max_commits = source.max_commits.unwrap_or(DEFAULT_GITHUB_ITEM_LIMIT);
+        let max_issues = source.max_issues.unwrap_or(DEFAULT_GITHUB_ITEM_LIMIT);
+        let max_prs = source.max_prs.unwrap_or(DEFAULT_GITHUB_ITEM_LIMIT);
+
         tracing::debug!(
             owner = %owner,
             repo = %repo,
             use_gh = use_gh,
+            max_commits,
+            max_issues,
+            max_prs,
             "[memory_sources:github] listing items"
         );
 
         let mut items = Vec::new();
         let mut errors = Vec::new();
 
-        // Commits (last 30)
-        match list_commits(&owner, &repo, use_gh).await {
+        // Commits (most recent `max_commits`)
+        match list_commits(&owner, &repo, max_commits, use_gh).await {
             Ok(commits) => items.extend(commits),
             Err(e) => {
                 tracing::warn!(error = %e, "[memory_sources:github] failed to list commits");
@@ -231,8 +294,8 @@ impl SourceReader for GithubReader {
             }
         }
 
-        // Issues (last 30 open + recently closed)
-        match list_issues(&owner, &repo, use_gh).await {
+        // Issues (most recent `max_issues`, open + closed)
+        match list_issues(&owner, &repo, max_issues, use_gh).await {
             Ok(issues) => items.extend(issues),
             Err(e) => {
                 tracing::warn!(error = %e, "[memory_sources:github] failed to list issues");
@@ -240,8 +303,8 @@ impl SourceReader for GithubReader {
             }
         }
 
-        // Pull requests (last 30)
-        match list_prs(&owner, &repo, use_gh).await {
+        // Pull requests (most recent `max_prs`, open + closed)
+        match list_prs(&owner, &repo, max_prs, use_gh).await {
             Ok(prs) => items.extend(prs),
             Err(e) => {
                 tracing::warn!(error = %e, "[memory_sources:github] failed to list PRs");
@@ -319,13 +382,55 @@ async fn fetch_github(api_path: &str, use_gh: bool) -> Result<String, String> {
 
 // ── List helpers ────────────────────────────────────────────────────
 
-async fn list_commits(owner: &str, repo: &str, use_gh: bool) -> Result<Vec<SourceItem>, String> {
-    let json_str =
-        fetch_github(&format!("repos/{owner}/{repo}/commits?per_page=30"), use_gh).await?;
+/// Fetch up to `max` rows from a paginated GitHub list endpoint.
+///
+/// Walks `?per_page=100&page=N` until `max` rows are collected or the API
+/// returns a short page (the last page). `extra_query` is appended verbatim
+/// (e.g. `"state=all"`). The result is truncated to exactly `max`.
+async fn fetch_all_pages<T: serde::de::DeserializeOwned>(
+    owner: &str,
+    repo: &str,
+    resource: &str,
+    extra_query: &str,
+    max: u32,
+    use_gh: bool,
+) -> Result<Vec<T>, String> {
+    let mut out: Vec<T> = Vec::new();
+    let mut page = 1u32;
 
-    // Try parsing as array of commit objects
-    let commits: Vec<GhCommit> =
-        serde_json::from_str(&json_str).map_err(|e| format!("parse commits: {e}"))?;
+    while (out.len() as u32) < max && page <= GH_MAX_PAGES {
+        let remaining = max - out.len() as u32;
+        let per_page = remaining.min(GH_PAGE_SIZE);
+        let mut path = format!("repos/{owner}/{repo}/{resource}?per_page={per_page}&page={page}");
+        if !extra_query.is_empty() {
+            path.push('&');
+            path.push_str(extra_query);
+        }
+
+        let json_str = fetch_github(&path, use_gh).await?;
+        let batch: Vec<T> = serde_json::from_str(&json_str)
+            .map_err(|e| format!("parse {resource} page {page}: {e}"))?;
+        let got = batch.len();
+        out.extend(batch);
+
+        // Short page ⇒ no more rows upstream.
+        if got < per_page as usize {
+            break;
+        }
+        page += 1;
+    }
+
+    out.truncate(max as usize);
+    Ok(out)
+}
+
+async fn list_commits(
+    owner: &str,
+    repo: &str,
+    max: u32,
+    use_gh: bool,
+) -> Result<Vec<SourceItem>, String> {
+    let commits: Vec<GhCommit> = fetch_all_pages(owner, repo, "commits", "", max, use_gh).await?;
 
     Ok(commits
         .into_iter()
@@ -346,38 +451,61 @@ async fn list_commits(owner: &str, repo: &str, use_gh: bool) -> Result<Vec<Sourc
         .collect())
 }
 
-async fn list_issues(owner: &str, repo: &str, use_gh: bool) -> Result<Vec<SourceItem>, String> {
-    let json_str = fetch_github(
-        &format!("repos/{owner}/{repo}/issues?per_page=30&state=all"),
-        use_gh,
-    )
-    .await?;
+async fn list_issues(
+    owner: &str,
+    repo: &str,
+    max: u32,
+    use_gh: bool,
+) -> Result<Vec<SourceItem>, String> {
+    // The `/issues` endpoint interleaves PRs. Page through FULL pages
+    // (per_page=100) and accumulate only non-PR items until we've collected
+    // `max` actual issues or the endpoint is exhausted — otherwise a repo with
+    // many interleaved PRs would yield fewer than `max` issues. We can't reuse
+    // `fetch_all_pages` here because it shrinks `per_page` to the raw-row
+    // remainder and counts PRs against the budget.
+    let mut out: Vec<SourceItem> = Vec::new();
+    let mut page = 1u32;
 
-    let issues: Vec<GhIssue> =
-        serde_json::from_str(&json_str).map_err(|e| format!("parse issues: {e}"))?;
+    while (out.len() as u32) < max && page <= GH_MAX_PAGES {
+        let path =
+            format!("repos/{owner}/{repo}/issues?per_page={GH_PAGE_SIZE}&page={page}&state=all");
+        let json_str = fetch_github(&path, use_gh).await?;
+        let batch: Vec<GhIssue> = serde_json::from_str(&json_str)
+            .map_err(|e| format!("parse issues page {page}: {e}"))?;
+        let got = batch.len();
 
-    Ok(issues
-        .into_iter()
-        .filter(|i| i.pull_request.is_none()) // filter out PRs from issues endpoint
-        .map(|i| {
+        for i in batch {
+            if i.pull_request.is_some() {
+                continue; // drop PRs surfaced by the issues endpoint
+            }
             let ts = i.updated_at.as_deref().and_then(parse_iso_ts);
-            SourceItem {
+            out.push(SourceItem {
                 id: format!("issue:{}", i.number),
                 title: format!("#{} {}", i.number, i.title),
                 updated_at_ms: ts,
+            });
+            if out.len() as u32 >= max {
+                break;
             }
-        })
-        .collect())
+        }
+
+        // Short page ⇒ no more rows upstream.
+        if got < GH_PAGE_SIZE as usize {
+            break;
+        }
+        page += 1;
+    }
+
+    Ok(out)
 }
 
-async fn list_prs(owner: &str, repo: &str, use_gh: bool) -> Result<Vec<SourceItem>, String> {
-    let json_str = fetch_github(
-        &format!("repos/{owner}/{repo}/pulls?per_page=30&state=all"),
-        use_gh,
-    )
-    .await?;
-
-    let prs: Vec<GhPr> = serde_json::from_str(&json_str).map_err(|e| format!("parse PRs: {e}"))?;
+async fn list_prs(
+    owner: &str,
+    repo: &str,
+    max: u32,
+    use_gh: bool,
+) -> Result<Vec<SourceItem>, String> {
+    let prs: Vec<GhPr> = fetch_all_pages(owner, repo, "pulls", "state=all", max, use_gh).await?;
 
     Ok(prs
         .into_iter()
@@ -418,6 +546,15 @@ async fn read_commit(
         })
         .unwrap_or_default();
 
+    // GitHub login of the committer, rendered as an `@handle` so the
+    // entity extractor registers it as a `handle:` entity in the memory
+    // tree (unique committers become first-class entities).
+    let handle = commit
+        .author
+        .as_ref()
+        .map(|u| format!("@{}", u.login))
+        .unwrap_or_default();
+
     let date = commit
         .commit
         .committer
@@ -433,10 +570,16 @@ async fn read_commit(
         .unwrap_or("")
         .to_string();
 
+    let author_line = if handle.is_empty() {
+        author.clone()
+    } else {
+        format!("{author} ({handle})")
+    };
+
     let body = format!(
         "# Commit: {title}\n\n\
          **SHA:** {sha}\n\
-         **Author:** {author}\n\
+         **Author:** {author_line}\n\
          **Date:** {date}\n\n\
          ## Message\n\n\
          {}",
@@ -453,6 +596,7 @@ async fn read_commit(
             "repo": repo,
             "sha": sha,
             "author": author,
+            "author_handle": commit.author.as_ref().map(|u| u.login.clone()),
         }),
     })
 }
@@ -479,10 +623,16 @@ async fn read_issue(
     // Fetch comments
     let comments = fetch_issue_comments(owner, repo, number, use_gh).await;
 
+    // Unique participants (author + commenters), rendered as `@handle`s so
+    // each becomes a `handle:` entity in the memory tree.
+    let participants =
+        unique_handles(std::iter::once(author).chain(comments.iter().map(|c| c.user.as_str())));
+
     let mut body = format!(
         "# Issue #{number}: {title}\n\n\
          **State:** {state}\n\
-         **Author:** {author}\n\
+         **Author:** @{author}\n\
+         **Participants:** {participants}\n\
          **Labels:** {label_str}\n\
          **Created:** {created}\n\
          **Updated:** {updated}\n\n\
@@ -503,7 +653,7 @@ async fn read_issue(
         body.push_str("\n\n## Comments\n");
         for comment in &comments {
             body.push_str(&format!(
-                "\n### {} ({})\n\n{}\n",
+                "\n### @{} ({})\n\n{}\n",
                 comment.user, comment.created_at, comment.body
             ));
         }
@@ -550,10 +700,16 @@ async fn read_pr(
     // Fetch review comments
     let comments = fetch_issue_comments(owner, repo, number, use_gh).await;
 
+    // Unique participants (author + commenters), rendered as `@handle`s so
+    // each becomes a `handle:` entity in the memory tree.
+    let participants =
+        unique_handles(std::iter::once(author).chain(comments.iter().map(|c| c.user.as_str())));
+
     let mut body = format!(
         "# PR #{number}: {title}\n\n\
          **State:** {state} ({merged})\n\
-         **Author:** {author}\n\
+         **Author:** @{author}\n\
+         **Participants:** {participants}\n\
          **Labels:** {label_str}\n\
          **Created:** {created}\n\
          **Updated:** {updated}\n\n\
@@ -575,7 +731,7 @@ async fn read_pr(
         body.push_str("\n\n## Comments\n");
         for comment in &comments {
             body.push_str(&format!(
-                "\n### {} ({})\n\n{}\n",
+                "\n### @{} ({})\n\n{}\n",
                 comment.user, comment.created_at, comment.body
             ));
         }
@@ -652,6 +808,29 @@ fn parse_iso_ts(s: &str) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
+/// Render GitHub logins as a deduped, order-preserving, space-separated
+/// list of `@handle`s. Empty / `unknown` logins are skipped; an empty
+/// result renders as `none`. Used so unique committers/commenters surface
+/// as `handle:` entities in the memory tree.
+fn unique_handles<'a>(logins: impl Iterator<Item = &'a str>) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for login in logins {
+        let l = login.trim();
+        if l.is_empty() || l == "unknown" {
+            continue;
+        }
+        if seen.insert(l.to_string()) {
+            out.push(format!("@{l}"));
+        }
+    }
+    if out.is_empty() {
+        "none".to_string()
+    } else {
+        out.join(" ")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,5 +877,54 @@ mod tests {
     fn item_kind_rejects_invalid() {
         assert!(ItemKind::from_id("unknown:123").is_none());
         assert!(ItemKind::from_id("noprefix").is_none());
+    }
+
+    #[test]
+    fn repo_archive_source_id_slugs_to_repo_folder() {
+        // `github.com/<owner>/<repo>` → slugify → `github-com-<owner>-<repo>`.
+        assert_eq!(
+            repo_archive_source_id("https://github.com/tinyhumansai/openhuman").as_deref(),
+            Some("github.com/tinyhumansai/openhuman")
+        );
+        assert!(repo_archive_source_id("not-a-url").is_none());
+    }
+
+    #[test]
+    fn chunk_source_id_is_clean_and_per_item() {
+        assert_eq!(
+            chunk_source_id("https://github.com/org/repo", "commit:abc123").as_deref(),
+            Some("github:org/repo:commit:abc123")
+        );
+        assert_eq!(
+            chunk_source_id("https://github.com/org/repo", "pr:42").as_deref(),
+            Some("github:org/repo:pr:42")
+        );
+    }
+
+    #[test]
+    fn unique_handles_dedups_and_skips_unknown() {
+        assert_eq!(
+            unique_handles(["alice", "bob", "alice", "unknown", ""].into_iter()),
+            "@alice @bob"
+        );
+        assert_eq!(unique_handles(["unknown", ""].into_iter()), "none");
+        assert_eq!(unique_handles(std::iter::empty()), "none");
+    }
+
+    #[test]
+    fn raw_archive_coords_maps_kind_and_uid() {
+        assert_eq!(
+            raw_archive_coords("commit:deadbeef"),
+            Some((RawKind::Commit, "deadbeef".to_string()))
+        );
+        assert_eq!(
+            raw_archive_coords("issue:7"),
+            Some((RawKind::Issue, "7".to_string()))
+        );
+        assert_eq!(
+            raw_archive_coords("pr:99"),
+            Some((RawKind::PullRequest, "99".to_string()))
+        );
+        assert!(raw_archive_coords("bogus:1").is_none());
     }
 }

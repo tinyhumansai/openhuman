@@ -62,6 +62,8 @@ export const BACKGROUND_WORKLOADS: WorkloadId[] = [
   'subconscious',
 ];
 export const ALL_WORKLOADS: WorkloadId[] = [...CHAT_WORKLOADS, ...BACKGROUND_WORKLOADS];
+export const OPENAI_CODEX_OAUTH_MISSING_AUTH_URL = 'OPENAI_CODEX_OAUTH_MISSING_AUTH_URL';
+export const OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL = 'OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL';
 
 /** Provider reference parsed from a stored provider-string.
  *
@@ -114,6 +116,12 @@ export interface ModelInfo {
 
 export interface ProviderModelTestResult {
   reply: string;
+}
+
+export interface OpenAiCodexOAuthStartResult {
+  authUrl: string;
+  state?: string;
+  redirectUri?: string;
 }
 
 const PROVIDER_MODEL_TEST_TIMEOUT_MS = 120_000;
@@ -326,6 +334,33 @@ export async function clearCloudProviderKey(slug: string): Promise<void> {
   // Clear the new-style key. Legacy bare-slug entries are left as-is
   // since we can't be sure they aren't used by other things.
   await authRemoveProviderCredentials({ provider: authKeyForSlug(slug), profile: 'default' });
+}
+
+export async function startOpenAiCodexOAuth(): Promise<OpenAiCodexOAuthStartResult> {
+  const res = await callCoreRpc<{ result: OpenAiCodexOAuthStartResult }>({
+    method: 'openhuman.inference_openai_oauth_start',
+    params: {},
+  });
+  const authUrl = res?.result?.authUrl?.trim();
+  if (!authUrl) {
+    throw new Error(OPENAI_CODEX_OAUTH_MISSING_AUTH_URL);
+  }
+  return res.result;
+}
+
+export async function completeOpenAiCodexOAuth(callbackUrl: string): Promise<void> {
+  const callback = callbackUrl.trim();
+  if (!callback) {
+    throw new Error(OPENAI_CODEX_OAUTH_MISSING_CALLBACK_URL);
+  }
+  await callCoreRpc({
+    method: 'openhuman.inference_openai_oauth_complete',
+    params: { callback_url: callback },
+  });
+}
+
+export async function importOpenAiCodexCliAuth(): Promise<void> {
+  await callCoreRpc({ method: 'openhuman.inference_openai_oauth_import_codex_cli', params: {} });
 }
 
 /**

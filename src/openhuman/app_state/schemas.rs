@@ -1,3 +1,4 @@
+use serde::de::{self, DeserializeOwned};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -9,10 +10,12 @@ use super::ops::StoredAppStatePatch;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct UpdateLocalStateParams {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     encryption_key: Option<Option<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     onboarding_tasks: Option<Option<super::ops::StoredOnboardingTasks>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    keyring_consent: Option<Option<crate::openhuman::keyring_consent::ConsentPreference>>,
 }
 
 pub fn all_app_state_controller_schemas() -> Vec<ControllerSchema> {
@@ -62,6 +65,10 @@ pub fn app_state_schemas(function: &str) -> ControllerSchema {
                     "onboardingTasks",
                     "Set or clear locally stored onboarding task progress.",
                 ),
+                optional_json(
+                    "keyringConsent",
+                    "Set or clear the user's keyring consent preference.",
+                ),
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -100,6 +107,7 @@ fn handle_update_local_state(params: Map<String, Value>) -> ControllerFuture {
         crate::openhuman::app_state::update_local_state(StoredAppStatePatch {
             encryption_key: payload.encryption_key,
             onboarding_tasks: payload.onboarding_tasks,
+            keyring_consent: payload.keyring_consent,
         })
         .await?
         .into_cli_compatible_json()
@@ -112,6 +120,21 @@ fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
         ty: TypeSchema::Json,
         comment,
         required: false,
+    }
+}
+
+fn deserialize_nullable_patch<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    match value {
+        Some(value) => T::deserialize(value)
+            .map(Some)
+            .map(Some)
+            .map_err(de::Error::custom),
+        None => Ok(Some(None)),
     }
 }
 
@@ -143,7 +166,7 @@ mod tests {
         let s = app_state_schemas("update_local_state");
         assert_eq!(s.namespace, "app_state");
         assert_eq!(s.function, "update_local_state");
-        assert_eq!(s.inputs.len(), 2);
+        assert_eq!(s.inputs.len(), 3);
         for input in &s.inputs {
             assert!(!input.required, "input '{}' should be optional", input.name);
         }
@@ -199,5 +222,16 @@ mod tests {
         let params: UpdateLocalStateParams =
             serde_json::from_value(serde_json::Value::Object(m)).unwrap();
         assert!(params.encryption_key.is_some());
+    }
+
+    #[test]
+    fn deserialize_update_local_state_params_with_null_clears_value() {
+        let mut m = Map::new();
+        m.insert("encryptionKey".into(), serde_json::Value::Null);
+        m.insert("onboardingTasks".into(), serde_json::Value::Null);
+        let params: UpdateLocalStateParams =
+            serde_json::from_value(serde_json::Value::Object(m)).unwrap();
+        assert_eq!(params.encryption_key, Some(None));
+        assert!(matches!(params.onboarding_tasks, Some(None)));
     }
 }

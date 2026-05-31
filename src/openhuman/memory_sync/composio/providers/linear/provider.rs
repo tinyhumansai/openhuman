@@ -1,5 +1,5 @@
 //! Linear provider — incremental sync of issues assigned to the
-//! authenticated user, with per-item persistence into the Memory Tree.
+//! authenticated user, with per-issue memory_tree ingest.
 //!
 //! On each sync pass:
 //!
@@ -9,8 +9,8 @@
 //!   4. Page through `LINEAR_LIST_LINEAR_ISSUES` filtered to the viewer as
 //!      assignee, ordered by `updatedAt` descending. Stop early once we hit
 //!      issues older than the cursor or a page without a next-page cursor.
-//!   5. For each issue, persist as a single memory document if it's new
-//!      *or* edited since the last sync.
+//!   5. For each issue, ingest into memory_tree if it's new *or* edited
+//!      since the last sync.
 //!   6. Advance the cursor to the newest `updatedAt` seen and save.
 //!
 //! Privacy posture: we only pull issues the user is assigned to, never
@@ -21,10 +21,8 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    persist_single_item, SyncState,
-};
+use super::{ingest::ingest_issue_into_memory_tree, sync};
+use crate::openhuman::memory_sync::composio::providers::sync_state::{extract_item_id, SyncState};
 use crate::openhuman::memory_sync::composio::providers::{
     merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask, ProviderContext,
     ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
@@ -252,12 +250,7 @@ impl ComposioProvider for LinearProvider {
 
             // ── Per-item dedup + persist ─────────────────────────────
             for issue in &issues {
-                let Some(issue_id) =
-                    crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id(
-                        issue,
-                        ISSUE_ID_PATHS,
-                    )
-                else {
+                let Some(issue_id) = extract_item_id(issue, ISSUE_ID_PATHS) else {
                     tracing::debug!("[composio:linear] issue missing ID, skipping");
                     continue;
                 };
@@ -294,17 +287,15 @@ impl ComposioProvider for LinearProvider {
 
                 let title_text = sync::extract_issue_title(issue)
                     .unwrap_or_else(|| format!("Linear issue {issue_id}"));
-                let doc_id = format!("composio-linear-issue-{issue_id}");
                 let title = format!("Linear: {title_text}");
 
-                match persist_single_item(
-                    &memory,
-                    "linear",
-                    &doc_id,
+                match ingest_issue_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &issue_id,
                     &title,
+                    updated.as_deref(),
                     issue,
-                    "linear",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
@@ -317,7 +308,7 @@ impl ComposioProvider for LinearProvider {
                         tracing::warn!(
                             issue_id = %issue_id,
                             error = %e,
-                            "[composio:linear] failed to persist issue (continuing)"
+                            "[composio:linear] failed to ingest issue into memory_tree (continuing)"
                         );
                     }
                 }
@@ -481,11 +472,7 @@ impl ComposioProvider for LinearProvider {
 
 /// Map a raw Linear issue payload into a [`NormalizedTask`].
 fn normalize_linear_issue(issue: &serde_json::Value) -> Option<NormalizedTask> {
-    let external_id =
-        crate::openhuman::memory_sync::composio::providers::sync_state::extract_item_id(
-            issue,
-            ISSUE_ID_PATHS,
-        )?;
+    let external_id = extract_item_id(issue, ISSUE_ID_PATHS)?;
     let title =
         sync::extract_issue_title(issue).unwrap_or_else(|| format!("Linear issue {external_id}"));
     Some(NormalizedTask {

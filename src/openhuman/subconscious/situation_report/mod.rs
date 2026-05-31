@@ -9,15 +9,16 @@
 //!    reflection LLM can disambiguate body-text mentions — "Cyrus said X"
 //!    is the user iff `Cyrus` (or the email/handle) appears in this list.
 //! 3. **Pending Tasks** (kept): subconscious task list from SQLite.
-//! 4. **Hotness deltas** (new): top movers in `mem_tree_entity_hotness`
-//!    since the last tick. Highest signal density. Items tagged `(you)`
-//!    are the user's own identifiers (#1365).
-//! 5. **Recently-sealed summaries** (new): rows from `mem_tree_summaries`
+//! 4. **Recently-sealed summaries** (new): rows from `mem_tree_summaries`
 //!    grouped by tree.
-//! 6. **Latest global L0 digest** (new): most recent daily digest body.
-//! 7. **`query_global` recap window** (new): since `last_tick_at`.
-//! 8. **Recent reflections** (new): the last N reflections from the
+//! 5. **Source-tree recap window** (new): recent source summaries since
+//!    `last_tick_at`.
+//! 6. **Recent reflections** (new): the last N reflections from the
 //!    subconscious store, used by the LLM as anti-double-emit context.
+//!
+//! The hotness-deltas and global-L0-digest sections were removed with the
+//! topic/global trees (the entity-hotness signal was a topic-curator
+//! byproduct, and there is no longer a global digest node).
 //!
 //! Sections are appended in priority order; truncation drops the tail
 //! when `token_budget` is exceeded. The legacy unified-store sections
@@ -32,8 +33,6 @@ use crate::openhuman::config::Config;
 
 use super::reflection::Reflection;
 
-mod digest;
-mod hotness;
 mod query_window;
 pub(crate) mod reflections;
 mod summaries;
@@ -74,25 +73,15 @@ pub async fn build_situation_report(
     let tasks_section = build_tasks_section(workspace_dir);
     append_section(&mut report, &mut remaining, &tasks_section);
 
-    // Section 3: hotness deltas (highest priority memory-tree signal).
-    let hotness_section = hotness::build_section(config, workspace_dir, last_tick_at).await;
-    append_section(&mut report, &mut remaining, &hotness_section);
-
-    // Section 4: recently-sealed summaries since last tick.
+    // Section 4: recently-sealed source summaries since last tick.
     let summaries_section = summaries::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &summaries_section);
 
-    // Section 5: latest global L0 digest body — gated by `last_tick_at`
-    // so a digest the previous tick already saw doesn't get re-fed and
-    // re-cited (which was producing duplicate reflections).
-    let digest_section = digest::build_section(config, last_tick_at).await;
-    append_section(&mut report, &mut remaining, &digest_section);
-
-    // Section 6: query_global recap window since last tick.
+    // Section 5: source-tree recap window since last tick.
     let recap_section = query_window::build_section(config, last_tick_at).await;
     append_section(&mut report, &mut remaining, &recap_section);
 
-    // Section 7: previous reflections (anti-double-emit context).
+    // Section 6: previous reflections (anti-double-emit context).
     let reflections_section = reflections::build_section(recent_reflections);
     append_section(&mut report, &mut remaining, &reflections_section);
 
