@@ -389,7 +389,9 @@ async fn run_summarization_drains_buffer_and_writes_hour_node() {
     store::buffer_write(&cfg, ns, "entry two", &ts, None).unwrap();
 
     let provider = StubProvider::with_reply("hour leaf summary from LLM");
-    let last_node = run_summarization(&cfg, &provider, "test-model", ns, ts).await.unwrap();
+    let last_node = run_summarization(&cfg, &provider, "test-model", ns, ts)
+        .await
+        .unwrap();
 
     let node = last_node.expect("non-empty buffer must return an hour node");
     log::debug!(
@@ -423,7 +425,9 @@ async fn run_summarization_builds_ancestor_chain() {
     store::buffer_write(&cfg, ns, "test content", &ts, None).unwrap();
 
     let provider = StubProvider::with_reply("summary text");
-    run_summarization(&cfg, &provider, "test-model", ns, ts).await.unwrap();
+    run_summarization(&cfg, &provider, "test-model", ns, ts)
+        .await
+        .unwrap();
 
     // Day, month, year, and root must all be present.
     assert!(
@@ -534,7 +538,9 @@ async fn rebuild_tree_restores_buffer_and_rewrites_ancestors() {
     store::buffer_write(&cfg, ns, "pending buffer item", &ts, None).unwrap();
     let provider = StubProvider::with_reply("rebuilt summary");
 
-    let status = rebuild_tree(&cfg, &provider, "test-model", ns).await.unwrap();
+    let status = rebuild_tree(&cfg, &provider, "test-model", ns)
+        .await
+        .unwrap();
     assert!(status.total_nodes >= 5, "expected leaf + ancestor chain");
 
     let restored_buffer = store::buffer_read(&cfg, ns).unwrap();
@@ -598,9 +604,16 @@ async fn rebuild_tree_partial_success_when_one_level_fails() {
         .expect("partial failure must not abort the rebuild");
 
     // The hour leaves (written before propagation) survive.
-    assert!(status.total_nodes >= 2, "hour leaves must survive a partial rebuild");
-    assert!(store::read_node(&cfg, ns, "2024/03/15/10").unwrap().is_some());
-    assert!(store::read_node(&cfg, ns, "2024/03/15/11").unwrap().is_some());
+    assert!(
+        status.total_nodes >= 2,
+        "hour leaves must survive a partial rebuild"
+    );
+    assert!(store::read_node(&cfg, ns, "2024/03/15/10")
+        .unwrap()
+        .is_some());
+    assert!(store::read_node(&cfg, ns, "2024/03/15/11")
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test]

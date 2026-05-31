@@ -658,7 +658,10 @@ mod tests {
         let (_tmp, cfg) = test_config();
 
         // Job A: drive to terminal failure (max_attempts=1, unrecoverable).
-        let mut a = NewJob::extract_chunk(&ExtractChunkPayload { chunk_id: "a".into() }).unwrap();
+        let mut a = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "a".into(),
+        })
+        .unwrap();
         a.max_attempts = Some(1);
         let id_a = enqueue(&cfg, &a).unwrap().unwrap();
         let claim_a = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
@@ -669,10 +672,16 @@ mod tests {
             Some(&PipelineFailure::new(FailureCode::BudgetExhausted)),
         )
         .unwrap();
-        assert_eq!(get_job(&cfg, &id_a).unwrap().unwrap().status, JobStatus::Failed);
+        assert_eq!(
+            get_job(&cfg, &id_a).unwrap().unwrap().status,
+            JobStatus::Failed
+        );
 
         // Job B: leave ready (untouched control).
-        let b = NewJob::extract_chunk(&ExtractChunkPayload { chunk_id: "b".into() }).unwrap();
+        let b = NewJob::extract_chunk(&ExtractChunkPayload {
+            chunk_id: "b".into(),
+        })
+        .unwrap();
         let id_b = enqueue(&cfg, &b).unwrap().unwrap();
 
         let requeued = requeue_failed(&cfg).unwrap();
@@ -687,7 +696,10 @@ mod tests {
         assert!(row_a.completed_at_ms.is_none());
 
         // B was already ready — still ready, not double-counted.
-        assert_eq!(get_job(&cfg, &id_b).unwrap().unwrap().status, JobStatus::Ready);
+        assert_eq!(
+            get_job(&cfg, &id_b).unwrap().unwrap().status,
+            JobStatus::Ready
+        );
     }
 
     #[test]

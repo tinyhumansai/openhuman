@@ -505,9 +505,7 @@ pub struct RetryFailedResponse {
 /// budget, typed reason cleared) so jobs that failed under a now-fixed config
 /// re-run without re-ingesting source data. Backs the "Retry failed" button;
 /// the same `requeue_failed` is also called automatically on sync start.
-pub async fn retry_failed_rpc(
-    config: &Config,
-) -> Result<RpcOutcome<RetryFailedResponse>, String> {
+pub async fn retry_failed_rpc(config: &Config) -> Result<RpcOutcome<RetryFailedResponse>, String> {
     let cfg = config.clone();
     let requeued = tokio::task::spawn_blocking(move || {
         crate::openhuman::memory_queue::store::requeue_failed(&cfg)
@@ -534,18 +532,19 @@ fn latest_failed_job_failure(
 ) -> Result<Option<crate::openhuman::memory_tree::health::PipelineFailure>, String> {
     use crate::openhuman::memory_tree::health::{FailureClass, FailureCode, PipelineFailure};
 
-    let row: Option<(Option<String>, Option<String>)> = chunk_store::with_connection(config, |conn| {
-        conn.query_row(
-            "SELECT failure_reason, failure_class FROM mem_tree_jobs
+    let row: Option<(Option<String>, Option<String>)> =
+        chunk_store::with_connection(config, |conn| {
+            conn.query_row(
+                "SELECT failure_reason, failure_class FROM mem_tree_jobs
               WHERE status = 'failed' AND failure_reason IS NOT NULL
               ORDER BY completed_at_ms DESC LIMIT 1",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(Into::into)
-    })
-    .map_err(|e| format!("latest_failed_job_failure: {e:#}"))?;
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .map_err(|e| format!("latest_failed_job_failure: {e:#}"))?;
 
     let Some((Some(reason), class)) = row else {
         return Ok(None);
@@ -977,8 +976,14 @@ mod tests {
         assert!(reason.unwrap().contains("off"));
 
         // error beats degraded / syncing / running / idle
-        let (s, reason) =
-            derive_pipeline_status(false, SchedulerGateMode::Auto, true, 2, 100, &recall_degraded);
+        let (s, reason) = derive_pipeline_status(
+            false,
+            SchedulerGateMode::Auto,
+            true,
+            2,
+            100,
+            &recall_degraded,
+        );
         assert_eq!(s, "error");
         assert!(reason.unwrap().contains("2 failed"));
 

@@ -460,46 +460,46 @@ pub(crate) async fn seal_one_level(
     // (build_write_embedder returns None) rather than writing a fake all-zero
     // vector. The summary is sealed embedding-less (re-embeddable later) and
     // the semantic-recall degraded flag is already set with a typed cause.
-    let embedding: Option<Vec<f32>> =
-        match build_write_embedder(config).context("build embedder during seal")? {
-            None => {
-                log::warn!(
-                    "[tree::bucket_seal] embeddings unavailable for tree_id={} level={}→{} \
+    let embedding: Option<Vec<f32>> = match build_write_embedder(config)
+        .context("build embedder during seal")?
+    {
+        None => {
+            log::warn!(
+                "[tree::bucket_seal] embeddings unavailable for tree_id={} level={}→{} \
                      — sealing summary without embedding (semantic recall degraded)",
-                    tree.id,
-                    level,
-                    target_level
-                );
-                None
-            }
-            Some(embedder) => {
-                let v = match embedder.embed(&embed_input).await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        // #002: classify so the seal job fails fast on
-                        // unrecoverable embed causes (budget/auth/dim) with a
-                        // typed reason instead of retrying; original chain
-                        // preserved as context.
-                        let failure =
-                            crate::openhuman::memory_tree::health::classify_embed_error(&e);
-                        return Err(anyhow::Error::new(failure).context(format!(
-                            "embed summary during seal tree_id={} level={}: {e:#}",
-                            tree.id, level
-                        )));
-                    }
-                };
-                log::debug!(
-                    "[tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
-                    tree.id,
-                    level,
-                    target_level,
-                    output.content.len(),
-                    embedder.name()
-                );
-                crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
-                Some(v)
-            }
-        };
+                tree.id,
+                level,
+                target_level
+            );
+            None
+        }
+        Some(embedder) => {
+            let v = match embedder.embed(&embed_input).await {
+                Ok(v) => v,
+                Err(e) => {
+                    // #002: classify so the seal job fails fast on
+                    // unrecoverable embed causes (budget/auth/dim) with a
+                    // typed reason instead of retrying; original chain
+                    // preserved as context.
+                    let failure = crate::openhuman::memory_tree::health::classify_embed_error(&e);
+                    return Err(anyhow::Error::new(failure).context(format!(
+                        "embed summary during seal tree_id={} level={}: {e:#}",
+                        tree.id, level
+                    )));
+                }
+            };
+            log::debug!(
+                "[tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
+                tree.id,
+                level,
+                target_level,
+                output.content.len(),
+                embedder.name()
+            );
+            crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
+            Some(v)
+        }
+    };
 
     // Build the new summary node.
     let now = Utc::now();

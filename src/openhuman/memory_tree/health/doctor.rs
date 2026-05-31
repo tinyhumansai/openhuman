@@ -187,7 +187,10 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
     //    local AI today. Flag it as a precondition (not a hard error) so the
     //    user knows "Build Summary Trees" needs local AI on this setup.
     stages.push(if config.local_ai.runtime_enabled {
-        StageHealth::ok("summary_tree", "local AI enabled — Build Summary Trees can run")
+        StageHealth::ok(
+            "summary_tree",
+            "local AI enabled — Build Summary Trees can run",
+        )
     } else {
         StageHealth::bad(
             "summary_tree",
@@ -238,7 +241,11 @@ mod tests {
         let cause = report.first_blocking_cause.expect("should have a cause");
         assert_eq!(cause.code, FailureCode::EmbeddingsUnconfigured);
         // The embeddings stage is non-ok with the same code.
-        let embed = report.stages.iter().find(|s| s.stage == "embeddings").unwrap();
+        let embed = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "embeddings")
+            .unwrap();
         assert!(!embed.ok);
     }
 
@@ -250,10 +257,18 @@ mod tests {
         cfg.local_ai.runtime_enabled = true;
 
         let report = run_doctor(&cfg);
-        assert!(report.healthy, "expected healthy, got {:?}", report.first_blocking_cause);
+        assert!(
+            report.healthy,
+            "expected healthy, got {:?}",
+            report.first_blocking_cause
+        );
         assert!(report.first_blocking_cause.is_none());
         // Every stage ok.
-        assert!(report.stages.iter().all(|s| s.ok), "stages: {:?}", report.stages);
+        assert!(
+            report.stages.iter().all(|s| s.ok),
+            "stages: {:?}",
+            report.stages
+        );
     }
 
     #[test]
@@ -268,7 +283,11 @@ mod tests {
         let report = run_doctor(&cfg);
         // Paused is reported but does NOT make the pipeline unhealthy.
         assert!(report.healthy);
-        let gate = report.stages.iter().find(|s| s.stage == "scheduler_gate").unwrap();
+        let gate = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "scheduler_gate")
+            .unwrap();
         assert!(gate.ok);
         assert!(gate.note.contains("paused"));
     }
@@ -287,7 +306,11 @@ mod tests {
             report.first_blocking_cause.map(|f| f.code),
             Some(FailureCode::LocalModelUnavailable)
         );
-        let tree = report.stages.iter().find(|s| s.stage == "summary_tree").unwrap();
+        let tree = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "summary_tree")
+            .unwrap();
         assert!(!tree.ok);
     }
 

@@ -213,7 +213,8 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
         || lower.contains("quota")
         || lower.contains("payment required")
     {
-        return PipelineFailure::new(FailureCode::BudgetExhausted).with_detail(truncate_detail(msg));
+        return PipelineFailure::new(FailureCode::BudgetExhausted)
+            .with_detail(truncate_detail(msg));
     }
 
     // Parse the HTTP status out of the `Embedding API error (<status>): ...`
@@ -234,7 +235,9 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
             // budget? No — be conservative: only the known codes above are
             // unrecoverable; other 4xx fall through to transient so we don't
             // wedge on a transient 408/425.
-            500..=599 => PipelineFailure::new(FailureCode::Transient).with_detail(truncate_detail(msg)),
+            500..=599 => {
+                PipelineFailure::new(FailureCode::Transient).with_detail(truncate_detail(msg))
+            }
             _ => PipelineFailure::new(FailureCode::Transient).with_detail(truncate_detail(msg)),
         };
     }
@@ -250,7 +253,11 @@ pub fn classify_embed_error_str(msg: &str) -> PipelineFailure {
 fn parse_http_status(msg: &str) -> Option<u16> {
     let open = msg.find('(')?;
     let rest = &msg[open + 1..];
-    let digits: String = rest.trim_start().chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = rest
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     if digits.len() == 3 {
         digits.parse().ok()
     } else {
@@ -440,7 +447,11 @@ mod tests {
     fn every_code_has_class_and_nonempty_remediation_key() {
         for code in ALL_CODES {
             let key = code.remediation_key();
-            assert!(!key.is_empty(), "{} has empty remediation key", code.as_str());
+            assert!(
+                !key.is_empty(),
+                "{} has empty remediation key",
+                code.as_str()
+            );
             assert!(
                 key.starts_with("memory.health.remediation."),
                 "{} remediation key has unexpected prefix: {key}",
@@ -474,7 +485,10 @@ mod tests {
         let f = PipelineFailure::new(FailureCode::BudgetExhausted);
         assert_eq!(f.code, FailureCode::BudgetExhausted);
         assert_eq!(f.class, FailureClass::Unrecoverable);
-        assert_eq!(f.remediation_key, "memory.health.remediation.budget_exhausted");
+        assert_eq!(
+            f.remediation_key,
+            "memory.health.remediation.budget_exhausted"
+        );
         assert!(f.detail.is_none());
         assert!(f.is_unrecoverable());
     }
@@ -577,7 +591,9 @@ mod tests {
         // The embed error is commonly `.context()`-wrapped on the way up;
         // the flattened `{err:#}` must still classify.
         let base = anyhow::anyhow!("Embedding API error (402 Payment Required): out of budget");
-        let wrapped = base.context("cloud embeddings failed").context("seal embed");
+        let wrapped = base
+            .context("cloud embeddings failed")
+            .context("seal embed");
         let f = classify_embed_error(&wrapped);
         assert_eq!(f.code, FailureCode::BudgetExhausted);
     }

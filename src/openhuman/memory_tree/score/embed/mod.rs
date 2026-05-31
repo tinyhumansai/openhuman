@@ -37,9 +37,9 @@ pub mod openai_compat;
 
 pub use cloud::CloudEmbedder;
 pub use factory::{build_embedder_from_config, build_write_embedder};
-pub use openai_compat::OpenAiCompatEmbedder;
 pub use inert::InertEmbedder;
 pub use ollama::OllamaEmbedder;
+pub use openai_compat::OpenAiCompatEmbedder;
 
 /// Embedding dimensionality used across the memory tree.
 ///

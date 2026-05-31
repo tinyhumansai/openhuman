@@ -203,7 +203,8 @@ async fn embed_sends_dimensions_when_opted_in() {
         }),
     );
     let url = start_mock(app).await;
-    let p = OpenAiEmbedding::new(&url, "k", "text-embedding-3-large", 1024).with_send_dimensions(true);
+    let p =
+        OpenAiEmbedding::new(&url, "k", "text-embedding-3-large", 1024).with_send_dimensions(true);
     p.embed(&["test"]).await.unwrap();
 }
 

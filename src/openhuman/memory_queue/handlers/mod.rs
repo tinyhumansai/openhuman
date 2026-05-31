@@ -161,8 +161,9 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
                 // persists the packed blob to the legacy
                 // `mem_tree_chunks.embedding` column — the vector now goes to
                 // the per-model sidecar instead.
-                pack_checked(&vector)
-                    .with_context(|| format!("validate embedding dims for chunk_id={}", chunk.id))?;
+                pack_checked(&vector).with_context(|| {
+                    format!("validate embedding dims for chunk_id={}", chunk.id)
+                })?;
                 // A real embed succeeded — recall is healthy again.
                 crate::openhuman::memory_tree::health::clear_semantic_recall_degraded();
                 Some(vector)

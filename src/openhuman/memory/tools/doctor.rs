@@ -84,7 +84,10 @@ mod tests {
         let result = tool.execute(json!({})).await.unwrap();
         assert!(!result.is_error);
         let out = result.output();
-        assert!(out.contains("\"healthy\""), "report should serialize: {out}");
+        assert!(
+            out.contains("\"healthy\""),
+            "report should serialize: {out}"
+        );
         assert!(
             out.contains("embeddings_unconfigured") || out.contains("\"healthy\": false"),
             "misconfigured workspace should surface a blocking cause: {out}"

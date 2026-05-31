@@ -156,7 +156,13 @@ pub async fn tree_summarizer_rebuild(
 /// active (privacy note) — no separate consent gate.
 fn create_provider(
     config: &Config,
-) -> Result<(Box<dyn crate::openhuman::inference::provider::traits::Provider>, String), String> {
+) -> Result<
+    (
+        Box<dyn crate::openhuman::inference::provider::traits::Provider>,
+        String,
+    ),
+    String,
+> {
     if config.local_ai.runtime_enabled {
         // Local path: Ollama + the user's local chat model.
         let provider = create_local_ai_provider(config)?;
@@ -266,7 +272,10 @@ mod tests {
         cfg.local_ai.runtime_enabled = false;
         let (_provider, model) =
             create_provider(&cfg).expect("cloud fallback should build, not error");
-        assert!(!model.trim().is_empty(), "cloud fallback must resolve a model");
+        assert!(
+            !model.trim().is_empty(),
+            "cloud fallback must resolve a model"
+        );
     }
 
     #[test]

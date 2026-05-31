@@ -306,9 +306,15 @@ mod tests {
         cfg.memory_tree.embedding_model = None;
         // No auth-profiles.json, no local workload model → no usable provider.
         let e = build_write_embedder(&cfg).expect("factory must not error");
-        assert!(e.is_none(), "no provider → skip embedding (None), not inert");
+        assert!(
+            e.is_none(),
+            "no provider → skip embedding (None), not inert"
+        );
         let d = current_degraded_state();
-        assert!(d.semantic_recall, "semantic recall must be flagged degraded");
+        assert!(
+            d.semantic_recall,
+            "semantic recall must be flagged degraded"
+        );
         assert_eq!(
             d.cause.map(|c| c.code),
             Some(FailureCode::EmbeddingsUnconfigured)

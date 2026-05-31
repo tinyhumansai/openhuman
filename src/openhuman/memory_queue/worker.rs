@@ -21,8 +21,8 @@ use crate::openhuman::memory_queue::store::{
     claim_next, mark_deferred, mark_done, mark_failed_typed, recover_stale_locks,
     release_running_locks, DEFAULT_LOCK_DURATION_MS,
 };
-use crate::openhuman::memory_tree::health::PipelineFailure;
 use crate::openhuman::memory_queue::types::JobOutcome;
+use crate::openhuman::memory_tree::health::PipelineFailure;
 
 /// Number of concurrent job-worker tasks. Each worker claims one job
 /// at a time via `claim_next` (atomic UPDATE under SQLite WAL with
