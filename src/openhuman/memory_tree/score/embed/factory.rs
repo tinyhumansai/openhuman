@@ -106,6 +106,18 @@ pub fn build_embedder_from_config(config: &Config) -> Result<Box<dyn Embedder>> 
                     model, endpoint, timeout_ms
                 );
                 Ok(Box::new(OllamaEmbedder::new(endpoint, model, timeout_ms)))
+            } else if let Some(openai) =
+                super::openai_compat::OpenAiCompatEmbedder::try_from_config(config)?
+            {
+                // #002 FR-015: the user configured OpenAI / a custom
+                // OpenAI-compatible endpoint in Settings → AI → Embeddings.
+                // Honour it (it used to be ignored, silently falling through
+                // to the managed-budget backend below).
+                log::debug!(
+                    "[memory_tree::embed::factory] using user OpenAI-compatible embeddings ({})",
+                    openai.name()
+                );
+                Ok(Box::new(openai))
             } else if cloud_session_available(config) {
                 // Default for logged-in users: cloud (OpenHuman backend /
                 // Voyage `voyage-3.5`, 1024 dims). Matches the main
@@ -199,6 +211,17 @@ pub fn build_write_embedder(config: &Config) -> Result<Option<Box<dyn Embedder>>
         return Ok(Some(Box::new(OllamaEmbedder::new(
             endpoint, model, timeout_ms,
         ))));
+    }
+
+    // #002 FR-015: user-configured OpenAI / custom OpenAI-compatible
+    // embeddings. This MUST win over the managed-cloud fallback below — the
+    // whole bug was that `embeddings_provider = "openai"` matched no branch
+    // and silently fell through to the managed-budget backend, ignoring the
+    // user's own key. 1024-dim is requested (the OpenAI path now sends the
+    // `dimensions` param) so 3-large complies with the tree's EMBEDDING_DIM.
+    if let Some(openai) = super::openai_compat::OpenAiCompatEmbedder::try_from_config(config)? {
+        clear_semantic_recall_degraded();
+        return Ok(Some(Box::new(openai)));
     }
 
     // Cloud session present → managed Voyage. Auth/budget failures surface at

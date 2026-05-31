@@ -38,16 +38,16 @@ pub fn create_embedding_provider(
             let base_url = crate::openhuman::inference::local::ollama_base_url();
             Ok(Box::new(OllamaEmbedding::try_new(&base_url, model, dims)?))
         }
-        "openai" => Ok(Box::new(OpenAiEmbedding::new(
-            "https://api.openai.com",
-            "",
-            model,
-            dims,
-        ))),
+        "openai" => Ok(Box::new(
+            OpenAiEmbedding::new("https://api.openai.com", "", model, dims)
+                .with_send_dimensions(true),
+        )),
         "cohere" => Ok(Box::new(CohereEmbedding::new("", model, dims))),
         name if name.starts_with("custom:") => {
             let base_url = name.strip_prefix("custom:").unwrap_or("");
-            Ok(Box::new(OpenAiEmbedding::new(base_url, "", model, dims)))
+            Ok(Box::new(
+                OpenAiEmbedding::new(base_url, "", model, dims).with_send_dimensions(true),
+            ))
         }
         "none" => Ok(Box::new(NoopEmbedding)),
         unknown => Err(anyhow::anyhow!(
@@ -78,20 +78,22 @@ pub fn create_embedding_provider_with_credentials(
             let base_url = crate::openhuman::inference::local::ollama_base_url();
             Ok(Box::new(OllamaEmbedding::try_new(&base_url, model, dims)?))
         }
-        "openai" => Ok(Box::new(OpenAiEmbedding::new(
-            "https://api.openai.com",
-            api_key,
-            model,
-            dims,
-        ))),
+        "openai" => Ok(Box::new(
+            OpenAiEmbedding::new("https://api.openai.com", api_key, model, dims)
+                .with_send_dimensions(true),
+        )),
         "cohere" => Ok(Box::new(CohereEmbedding::new(api_key, model, dims))),
         "custom" => {
             let url = custom_endpoint.unwrap_or("");
-            Ok(Box::new(OpenAiEmbedding::new(url, api_key, model, dims)))
+            Ok(Box::new(
+                OpenAiEmbedding::new(url, api_key, model, dims).with_send_dimensions(true),
+            ))
         }
         name if name.starts_with("custom:") => {
             let url = custom_endpoint.unwrap_or_else(|| name.strip_prefix("custom:").unwrap_or(""));
-            Ok(Box::new(OpenAiEmbedding::new(url, api_key, model, dims)))
+            Ok(Box::new(
+                OpenAiEmbedding::new(url, api_key, model, dims).with_send_dimensions(true),
+            ))
         }
         "none" => Ok(Box::new(NoopEmbedding)),
         unknown => Err(anyhow::anyhow!(
