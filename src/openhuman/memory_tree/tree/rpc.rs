@@ -317,6 +317,12 @@ pub struct PipelineStatusResponse {
     /// `remediation_key`) instead of re-deriving a cause from raw counters.
     #[serde(default)]
     pub first_blocking_cause: Option<crate::openhuman::memory_tree::health::PipelineFailure>,
+    /// #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
+    /// `[0.0, 1.0]`. Near 0 with `total_chunks > 0` means extraction is
+    /// producing no structure (the "empty-but-built wiki"). Additive
+    /// (`#[serde(default)]` → 0.0 for older clients).
+    #[serde(default)]
+    pub extraction_coverage: f32,
 }
 
 /// `memory_tree_pipeline_status` RPC handler (#1856 Part 1).
@@ -420,6 +426,19 @@ pub async fn pipeline_status_rpc(
         .unwrap_or(None)
         .or_else(|| degraded.cause.clone());
 
+    // #002 (FR-010 / US5): extraction coverage. Best-effort — a DB error
+    // degrades to 0.0 rather than failing the whole status RPC.
+    let extraction_coverage = {
+        let cfg = config.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg)
+        })
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or(0.0)
+    };
+
     let payload = PipelineStatusResponse {
         status: status.clone(),
         reason: reason.clone(),
@@ -431,6 +450,7 @@ pub async fn pipeline_status_rpc(
         is_paused,
         degraded,
         first_blocking_cause,
+        extraction_coverage,
     };
 
     log::debug!(

@@ -689,6 +689,34 @@ pub fn count_chunks(config: &Config) -> Result<u64> {
     })
 }
 
+/// #002 (FR-010 / US5): extraction coverage — the fraction of chunks that have
+/// at least one indexed entity in `mem_tree_entity_index`, in `[0.0, 1.0]`.
+///
+/// Turns "wiki built / not built" into a quality signal: a value near 0 with a
+/// non-zero chunk count means extraction is producing nothing (the model is
+/// timing out / failing), even though chunks exist — the "empty-but-built
+/// wiki" symptom. Joins the entity index against `mem_tree_chunks.id` so the
+/// numerator is node-kind-agnostic (we only count entity rows whose `node_id`
+/// is an actual chunk). Returns `0.0` when there are no chunks.
+pub fn extraction_coverage(config: &Config) -> Result<f32> {
+    with_connection(config, |conn| {
+        let total: i64 =
+            conn.query_row("SELECT COUNT(*) FROM mem_tree_chunks", [], |r| r.get(0))?;
+        if total <= 0 {
+            return Ok(0.0);
+        }
+        let covered: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mem_tree_chunks c
+              WHERE EXISTS (
+                  SELECT 1 FROM mem_tree_entity_index e WHERE e.node_id = c.id
+              )",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok((covered.max(0) as f32) / (total as f32))
+    })
+}
+
 /// Set the lifecycle status column for `chunk_id`. See `CHUNK_STATUS_*`.
 pub fn set_chunk_lifecycle_status(config: &Config, chunk_id: &str, status: &str) -> Result<()> {
     with_connection(config, |conn| {

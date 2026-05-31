@@ -806,6 +806,12 @@ export interface MemoryTreePipelineStatus {
    * the pipeline is healthy.
    */
   first_blocking_cause?: MemoryTreePipelineFailure | null;
+  /**
+   * #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
+   * `[0.0, 1.0]`. Near 0 with `total_chunks > 0` ⇒ extraction is producing no
+   * structure ("empty-but-built wiki"). Optional for back-compat.
+   */
+  extraction_coverage?: number;
 }
 
 /**

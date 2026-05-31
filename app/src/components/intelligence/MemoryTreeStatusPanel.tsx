@@ -358,6 +358,20 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
         </div>
       </div>
 
+      {/* #002 (FR-010 / US5): extraction coverage. Only meaningful once chunks
+          exist; near-0% with chunks present means the wiki is built but has no
+          structure (the extraction model is failing). */}
+      {!loading && status && status.total_chunks > 0 && status.extraction_coverage != null ? (
+        <div
+          className="text-xs text-stone-500 dark:text-neutral-400"
+          data-testid="memory-tree-extraction-coverage">
+          {t('memoryTree.status.extractionCoverage').replace(
+            '{pct}',
+            String(Math.round((status.extraction_coverage ?? 0) * 100))
+          )}
+        </div>
+      ) : null}
+
       {/* Auto-sync toggle row — markup mirrors AIPanel's inline ToggleRow */}
       <div
         className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2"

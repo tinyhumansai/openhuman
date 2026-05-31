@@ -510,6 +510,7 @@ const en: TranslationMap = {
   // panel resolves verbatim, so the cause + fix come from one source of truth.
   'memoryTree.status.degradedRecall': 'Semantic recall disabled',
   'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
+  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
   'memory.health.remediation.budget_exhausted':
     'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
   'memory.health.remediation.auth_missing':

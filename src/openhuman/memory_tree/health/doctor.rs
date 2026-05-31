@@ -58,18 +58,25 @@ impl StageHealth {
 
 /// Current pipeline counters, mirrored from the status surface so the doctor
 /// is a one-call snapshot.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+// No `Eq`: `extraction_coverage` is an f32 (PartialEq is sufficient for tests).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct DoctorCounters {
     pub total_chunks: u64,
     pub jobs_ready: u64,
     pub jobs_running: u64,
     pub jobs_failed: u64,
+    /// #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
+    /// `[0.0, 1.0]`. Near 0 with `total_chunks > 0` means extraction is
+    /// producing no structure.
+    #[serde(default)]
+    pub extraction_coverage: f32,
 }
 
 /// The full diagnostic. `first_blocking_cause` is the failure of the first
 /// non-ok stage in pipeline order (`stages` is already ordered), so a caller
 /// can act on one thing; `healthy` is the convenience roll-up.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+// No `Eq`: transitively contains `DoctorCounters` (f32).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DoctorReport {
     pub healthy: bool,
     pub stages: Vec<StageHealth>,
@@ -95,6 +102,7 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         jobs_ready: queue::count_by_status(config, JobStatus::Ready).unwrap_or(0),
         jobs_running: queue::count_by_status(config, JobStatus::Running).unwrap_or(0),
         jobs_failed: queue::count_by_status(config, JobStatus::Failed).unwrap_or(0),
+        extraction_coverage: chunks::extraction_coverage(config).unwrap_or(0.0),
     };
 
     let mut stages = Vec::new();
