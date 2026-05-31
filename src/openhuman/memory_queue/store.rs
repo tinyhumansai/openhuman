@@ -372,6 +372,39 @@ pub fn recover_stale_locks(config: &Config) -> Result<usize> {
     })
 }
 
+/// Requeue every terminally-`failed` job back to `ready` (#002 FR-011).
+///
+/// Used by the "auto-retry on next sync" hook and the manual
+/// `memory_tree_retry_failed` RPC: once the user fixes the underlying cause
+/// (e.g. adds an embeddings key, switches to a faster extraction model), the
+/// jobs that failed under the old config should re-run without re-ingesting
+/// source data. Resets `attempts` to 0 (a fresh retry budget), clears the
+/// typed `failure_reason` / `failure_class` and `last_error`, and makes the
+/// row immediately available. Returns the number of jobs requeued.
+pub fn requeue_failed(config: &Config) -> Result<u64> {
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        let n = conn.execute(
+            "UPDATE mem_tree_jobs
+                SET status = 'ready',
+                    attempts = 0,
+                    available_at_ms = ?1,
+                    locked_until_ms = NULL,
+                    started_at_ms = NULL,
+                    completed_at_ms = NULL,
+                    last_error = NULL,
+                    failure_reason = NULL,
+                    failure_class = NULL
+              WHERE status = 'failed'",
+            params![now_ms],
+        )?;
+        if n > 0 {
+            log::info!("[memory::jobs] requeued {n} failed job(s) for retry");
+        }
+        Ok(n as u64)
+    })
+}
+
 /// Release this process's in-flight job locks on a *graceful* shutdown:
 /// flip every `running` row back to `ready` so the work is immediately
 /// re-claimable on next launch instead of waiting out the lease and
@@ -616,6 +649,47 @@ mod tests {
     /// attempts-bounded retry path — the job bounces back to `ready` with a
     /// future `available_at_ms` and does NOT set the typed columns (they are
     /// only persisted on a terminal classified failure).
+    /// T028 (FR-011): `requeue_failed` flips terminal `failed` jobs back to
+    /// `ready` with a fresh attempt budget and the typed failure cleared, so
+    /// they re-run after the cause is fixed. Non-failed jobs are untouched.
+    #[test]
+    fn requeue_failed_resets_failed_jobs_only() {
+        use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};
+        let (_tmp, cfg) = test_config();
+
+        // Job A: drive to terminal failure (max_attempts=1, unrecoverable).
+        let mut a = NewJob::extract_chunk(&ExtractChunkPayload { chunk_id: "a".into() }).unwrap();
+        a.max_attempts = Some(1);
+        let id_a = enqueue(&cfg, &a).unwrap().unwrap();
+        let claim_a = claim_next(&cfg, DEFAULT_LOCK_DURATION_MS).unwrap().unwrap();
+        mark_failed_typed(
+            &cfg,
+            &claim_a,
+            "Insufficient budget",
+            Some(&PipelineFailure::new(FailureCode::BudgetExhausted)),
+        )
+        .unwrap();
+        assert_eq!(get_job(&cfg, &id_a).unwrap().unwrap().status, JobStatus::Failed);
+
+        // Job B: leave ready (untouched control).
+        let b = NewJob::extract_chunk(&ExtractChunkPayload { chunk_id: "b".into() }).unwrap();
+        let id_b = enqueue(&cfg, &b).unwrap().unwrap();
+
+        let requeued = requeue_failed(&cfg).unwrap();
+        assert_eq!(requeued, 1, "only the failed job should requeue");
+
+        let row_a = get_job(&cfg, &id_a).unwrap().unwrap();
+        assert_eq!(row_a.status, JobStatus::Ready);
+        assert_eq!(row_a.attempts, 0, "attempt budget reset");
+        assert_eq!(row_a.failure_reason, None, "typed reason cleared");
+        assert_eq!(row_a.failure_class, None);
+        assert_eq!(row_a.last_error, None);
+        assert!(row_a.completed_at_ms.is_none());
+
+        // B was already ready — still ready, not double-counted.
+        assert_eq!(get_job(&cfg, &id_b).unwrap().unwrap().status, JobStatus::Ready);
+    }
+
     #[test]
     fn mark_failed_typed_transient_still_retries() {
         use crate::openhuman::memory_tree::health::{FailureCode, PipelineFailure};

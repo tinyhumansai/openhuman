@@ -48,6 +48,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("set_enabled"),
         schemas("smart_walk"),
         schemas("doctor"),
+        schemas("retry_failed"),
     ]
 }
 
@@ -142,6 +143,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("doctor"),
             handler: handle_doctor,
+        },
+        RegisteredController {
+            schema: schemas("retry_failed"),
+            handler: handle_retry_failed,
         },
     ]
 }
@@ -850,6 +855,23 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "retry_failed" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "retry_failed",
+            description: "Requeue every terminally-failed mem_tree_jobs row back to \
+                `ready` (#002 FR-011) so jobs that failed under a now-fixed config \
+                (e.g. after adding an embeddings key) re-run without re-ingesting \
+                source data. Resets the attempt budget and clears the typed failure \
+                reason. Backs the 'Retry failed' button; the same requeue also runs \
+                automatically at the start of each sync.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "requeued",
+                ty: TypeSchema::U64,
+                comment: "Number of failed jobs flipped back to ready for retry.",
+                required: true,
+            }],
+        },
         "memory_backfill_status" => ControllerSchema {
             namespace: NAMESPACE,
             function: "memory_backfill_status",
@@ -1293,6 +1315,13 @@ fn handle_doctor(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
         to_json(rpc::doctor_rpc(&config).await?)
+    })
+}
+
+fn handle_retry_failed(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(rpc::retry_failed_rpc(&config).await?)
     })
 }
 

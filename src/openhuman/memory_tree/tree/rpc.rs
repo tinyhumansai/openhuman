@@ -473,6 +473,36 @@ pub async fn doctor_rpc(
     Ok(RpcOutcome::single_log(report, summary))
 }
 
+/// Response from `memory_tree_retry_failed` (#002 FR-011).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RetryFailedResponse {
+    /// Number of `failed` jobs flipped back to `ready` for retry.
+    pub requeued: u64,
+}
+
+/// `memory_tree_retry_failed` RPC handler (#002 FR-011). Flips every
+/// terminally-`failed` `mem_tree_jobs` row back to `ready` (fresh attempt
+/// budget, typed reason cleared) so jobs that failed under a now-fixed config
+/// re-run without re-ingesting source data. Backs the "Retry failed" button;
+/// the same `requeue_failed` is also called automatically on sync start.
+pub async fn retry_failed_rpc(
+    config: &Config,
+) -> Result<RpcOutcome<RetryFailedResponse>, String> {
+    let cfg = config.clone();
+    let requeued = tokio::task::spawn_blocking(move || {
+        crate::openhuman::memory_queue::store::requeue_failed(&cfg)
+    })
+    .await
+    .map_err(|e| format!("retry_failed join error: {e}"))?
+    .map_err(|e| format!("retry_failed: {e:#}"))?;
+    // Wake the worker pool so the requeued jobs are picked up promptly.
+    crate::openhuman::memory_queue::wake_workers();
+    Ok(RpcOutcome::single_log(
+        RetryFailedResponse { requeued },
+        format!("memory_tree: retry_failed requeued={requeued}"),
+    ))
+}
+
 /// #002 (FR-004): the typed [`PipelineFailure`] of the most-recently-failed
 /// `mem_tree_jobs` row, when it carries a classified `failure_reason`. Returns
 /// `Ok(None)` when there is no failed job with a typed reason (older failures
@@ -1045,7 +1075,10 @@ mod tests {
             "ingest must populate last_sync_ms (got {})",
             out.last_sync_ms
         );
-        // No jobs running ⇒ running status, not syncing/error.
+        // No jobs running ⇒ running status, not syncing/error. (We hold
+        // `test_guard()` which resets the process-global degraded flags on
+        // entry and serialises against every other flag-touching test, so the
+        // status reflects this workspace's state, not a sibling's leak.)
         assert_eq!(out.status, "running");
         assert!(!out.is_syncing);
     }
