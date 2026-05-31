@@ -6413,6 +6413,7 @@
         bindLearningNoteEvents();
         bindWorkflowIntentEvents();
         bindAnswerStudioEvents();
+        bindSourceDecisionTableEvents();
         bindGraphEvents();
         bindSourceContextEvents();
         renderEvidenceWorkbench();
@@ -8159,13 +8160,7 @@
       function renderSourceDecisionTable(table, messageIndex) {
         if (!table || typeof table !== "object") return "";
         const status = ["ready", "needs_data", "needs_review", "needs_source"].includes(table.status) ? table.status : "needs_review";
-        const statusLabel = status === "ready"
-          ? "可进入验证"
-          : status === "needs_data"
-            ? "先补业务数据"
-            : status === "needs_source"
-              ? "缺少来源"
-              : "先复核来源";
+        const statusLabel = sourceDecisionStatusLabel(status);
         const rows = Array.isArray(table.rows) ? table.rows.filter((item) => Number.isInteger(item?.sourceIndex)).slice(0, 6) : [];
         const nextPrompt = String(table.nextPrompt || "").trim();
         const body = rows.length
@@ -8177,7 +8172,12 @@
               <strong>${escapeHtml(table.title || "来源决策表")}</strong>
               <p class="source-decision-summary">${escapeHtml(table.summary || "把本轮来源拆成可复核的行动判断。")}</p>
             </div>
-            <span class="source-decision-status">${escapeHtml(statusLabel)}</span>
+            <div class="source-decision-actions">
+              <span class="source-decision-status">${escapeHtml(statusLabel)}</span>
+              <button class="evidence-button" type="button" data-source-decision-copy="${Number(messageIndex)}">复制 Markdown</button>
+              <button class="evidence-button" type="button" data-source-decision-download="${Number(messageIndex)}" data-source-decision-format="markdown">下载 Markdown</button>
+              <button class="evidence-button" type="button" data-source-decision-download="${Number(messageIndex)}" data-source-decision-format="csv">下载 CSV</button>
+            </div>
           </header>
           ${body}
           <div class="source-decision-actions">
@@ -8185,6 +8185,13 @@
           </div>
           <p class="source-decision-boundary">${escapeHtml(table.boundary || "来源决策表是系统整理的决策辅助，不是新的作者原文证据。")}</p>
         </section>`;
+      }
+
+      function sourceDecisionStatusLabel(status) {
+        if (status === "ready") return "可进入验证";
+        if (status === "needs_data") return "先补业务数据";
+        if (status === "needs_source") return "缺少来源";
+        return "先复核来源";
       }
 
       function renderSourceDecisionRow(row, messageIndex) {
@@ -8216,6 +8223,179 @@
             ${row.prompt ? `<button class="diagnosis-prompt" type="button" data-notebook-guide-prompt="${escapeAttribute(row.prompt)}">继续判断</button>` : ""}
           </div>
         </article>`;
+      }
+
+      function bindSourceDecisionTableEvents() {
+        document.querySelectorAll("[data-source-decision-copy]").forEach((button) => {
+          button.addEventListener("click", () => copySourceDecisionTable(button));
+        });
+        document.querySelectorAll("[data-source-decision-download]").forEach((button) => {
+          button.addEventListener("click", () => downloadSourceDecisionTable(button));
+        });
+      }
+
+      async function copySourceDecisionTable(button) {
+        const { table } = sourceDecisionTableForButton(button);
+        const markdown = sourceDecisionMarkdown(table);
+        const originalText = button.textContent;
+        try {
+          await writeClipboardText(markdown);
+          button.textContent = "已复制";
+          notesEl.innerHTML = `<p class="status">已复制本轮来源决策表。它是系统整理，不是作者原文证据。</p>`;
+        } catch (error) {
+          button.textContent = "复制失败";
+          notesEl.innerHTML = `<p class="error">复制失败：${escapeHtml(error.message || "浏览器暂时不允许写入剪贴板。")}</p>`;
+        } finally {
+          window.setTimeout(() => {
+            button.textContent = originalText;
+          }, 1400);
+        }
+      }
+
+      function downloadSourceDecisionTable(button) {
+        const { table, messageIndex } = sourceDecisionTableForButton(button);
+        const format = button.dataset.sourceDecisionFormat === "csv" ? "csv" : "markdown";
+        const ext = format === "csv" ? "csv" : "md";
+        const content = format === "csv" ? sourceDecisionCsv(table) : sourceDecisionMarkdown(table);
+        if (!String(content || "").trim()) {
+          notesEl.innerHTML = `<p class="status">当前回答没有可导出的来源决策表。</p>`;
+          return;
+        }
+        const filename = sourceDecisionDownloadFilename(table, messageIndex, ext);
+        downloadTextFile(
+          content,
+          filename,
+          ext === "csv" ? "text/csv;charset=utf-8" : "text/markdown;charset=utf-8",
+        );
+        notesEl.innerHTML = `<p class="status">已导出本轮来源决策表：${escapeHtml(filename)}。请把它当作复核清单，不要当成新的作者原文证据。</p>`;
+      }
+
+      function sourceDecisionTableForButton(button) {
+        const rawIndex = button?.dataset?.sourceDecisionCopy || button?.dataset?.sourceDecisionDownload || "";
+        const parsedIndex = Number(rawIndex);
+        const messageIndex = Number.isInteger(parsedIndex)
+          ? parsedIndex
+          : messageIndexFromElement(button?.closest(".message.assistant"));
+        return {
+          messageIndex,
+          table: Number.isInteger(messageIndex) && messageIndex >= 0 ? messages[messageIndex]?.sourceDecisionTable : undefined,
+        };
+      }
+
+      function sourceDecisionDownloadFilename(table, messageIndex, ext) {
+        const title = table?.title || "来源决策表";
+        const suffix = Number.isInteger(messageIndex) && messageIndex >= 0 ? `回答${messageIndex + 1}` : "本轮回答";
+        return sanitizeDownloadFilename(`${title}-${suffix}.${ext}`);
+      }
+
+      function sourceDecisionMarkdown(table) {
+        const safeTable = table && typeof table === "object" ? table : { status: "needs_source" };
+        const rows = sourceDecisionRows(safeTable);
+        const boundary = sourceDecisionBoundary(safeTable);
+        const lines = [
+          `# ${String(safeTable.title || "来源决策表").trim()}`,
+          "",
+          `状态：${sourceDecisionStatusLabel(safeTable.status)}`,
+          "",
+          `边界：${boundary}`,
+        ];
+        if (safeTable.summary) {
+          lines.push("", `摘要：${String(safeTable.summary).trim()}`);
+        }
+        if (!rows.length) {
+          lines.push(
+            "",
+            "## 状态",
+            "",
+            "这轮不能生成来源决策表：没有可定位的作者原文来源。",
+            "",
+            "系统整理，不是作者原文证据。",
+          );
+          return lines.join("\n");
+        }
+        lines.push(
+          "",
+          "| 来源 | 作者/标题/日期 | 作者原文摘录 | 能支持什么 | 不能证明什么 | 下一步验证 |",
+          "|---|---|---|---|---|---|",
+        );
+        rows.forEach((row) => {
+          const sourceLabel = `来源 ${Number(row.sourceIndex) + 1}`;
+          const meta = [row.author || "未知作者", row.title || "未命名来源", row.date || ""].filter(Boolean).join(" / ");
+          const validation = [row.validation, row.nextAction].filter(Boolean).join("；");
+          lines.push([
+            sourceDecisionMarkdownCell(sourceLabel),
+            sourceDecisionMarkdownCell(meta),
+            sourceDecisionMarkdownCell(row.quote || "未提供摘录"),
+            sourceDecisionMarkdownCell(row.supports || "只能作为本轮问题的原文核对线索。"),
+            sourceDecisionMarkdownCell(row.cannotProve || "不能替代你的产品数据和真实验证。"),
+            sourceDecisionMarkdownCell(validation || "先核对原文，再补业务数据。"),
+          ].join(" | ").replace(/^/, "| ").replace(/$/, " |"));
+        });
+        lines.push("", "说明：上表的“能支持什么、不能证明什么、下一步验证”是系统整理，不是作者原文证据。");
+        return lines.join("\n");
+      }
+
+      function sourceDecisionCsv(table) {
+        const safeTable = table && typeof table === "object" ? table : { status: "needs_source" };
+        const rows = sourceDecisionRows(safeTable);
+        const boundary = sourceDecisionBoundary(safeTable);
+        const statusLabel = sourceDecisionStatusLabel(safeTable.status);
+        const csvRows = [
+          ["rowType", "status", "sourceIndex", "author", "title", "date", "quote", "supports", "cannotProve", "validation", "nextAction", "boundary"],
+          ["summary", statusLabel, "", "", safeTable.title || "来源决策表", "", safeTable.summary || "", "", "", "", "", boundary],
+        ];
+        if (!rows.length) {
+          csvRows.push(["no_source", statusLabel, "", "", "", "", "这轮不能生成来源决策表：没有可定位的作者原文来源。", "", "不能伪造作者原文证据。", "先补可定位来源。", "", boundary]);
+        } else {
+          rows.forEach((row) => {
+            csvRows.push([
+              "source",
+              statusLabel,
+              Number(row.sourceIndex) + 1,
+              row.author || "未知作者",
+              row.title || "未命名来源",
+              row.date || "",
+              row.quote || "",
+              row.supports || "只能作为本轮问题的原文核对线索。",
+              row.cannotProve || "不能替代你的产品数据和真实验证。",
+              row.validation || "先核对原文，再补业务数据。",
+              row.nextAction || "",
+              boundary,
+            ]);
+          });
+        }
+        return csvRows.map((row) => row.map(csvCell).join(",")).join("\n");
+      }
+
+      function sourceDecisionRows(table) {
+        return Array.isArray(table?.rows)
+          ? table.rows.filter((row) => Number.isInteger(row?.sourceIndex)).slice(0, 6)
+          : [];
+      }
+
+      function sourceDecisionBoundary(table) {
+        return String(table?.boundary || "来源决策表是系统整理的决策辅助，不是新的作者原文证据。").trim();
+      }
+
+      function sourceDecisionMarkdownCell(value) {
+        const text = String(value || "").replace(/\r?\n+/g, "<br>").replace(/\|/g, "\\|").trim();
+        return text || "-";
+      }
+
+      function csvCell(value) {
+        return `"${String(value ?? "").replace(/\r?\n+/g, " ").replace(/"/g, '""')}"`;
+      }
+
+      function downloadTextFile(content, filename, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
       }
 
       function renderSynthesisSupportAction(item, messageIndex) {

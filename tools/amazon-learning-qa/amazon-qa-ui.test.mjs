@@ -396,6 +396,28 @@ test("assistant answers expose a clickable source decision table", () => {
   assert.doesNotMatch(html, /source-decision-table[\s\S]{0,1400}saveLearningNote/);
 });
 
+test("source decision table can export this answer audit without becoming evidence", () => {
+  assert.match(html, /bindSourceDecisionTableEvents/);
+  assert.match(html, /copySourceDecisionTable/);
+  assert.match(html, /downloadSourceDecisionTable/);
+  assert.match(html, /sourceDecisionMarkdown/);
+  assert.match(html, /sourceDecisionCsv/);
+  assert.match(html, /data-source-decision-copy/);
+  assert.match(html, /data-source-decision-download/);
+  assert.match(html, /data-source-decision-format="csv"/);
+  assert.match(html, /复制 Markdown/);
+  assert.match(html, /下载 Markdown/);
+  assert.match(html, /下载 CSV/);
+  assert.match(html, /rowType", "status", "sourceIndex", "author", "title", "date", "quote", "supports", "cannotProve", "validation", "nextAction", "boundary"/);
+  assert.match(html, /这轮不能生成来源决策表：没有可定位的作者原文来源/);
+  assert.match(html, /不能伪造作者原文证据/);
+  assert.match(html, /请把它当作复核清单，不要当成新的作者原文证据/);
+  assert.match(html, /downloadTextFile/);
+  assert.match(html, /writeClipboardText\(markdown\)/);
+  assert.doesNotMatch(html, /source-decision-table[\s\S]{0,2200}data-dossier-source-decision/);
+  assert.doesNotMatch(html, /downloadSourceDecisionTable[\s\S]{0,2200}saveLearningNote/);
+});
+
 test("assistant answers expose local token and cost footprint", () => {
   assert.match(html, /renderUsageFootprint/);
   assert.match(html, /usageFootprint:\s*payload\.usageFootprint/);
