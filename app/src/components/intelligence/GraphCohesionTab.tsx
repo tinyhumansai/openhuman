@@ -40,9 +40,15 @@ const GraphCohesionTab = () => {
   useEffect(() => {
     // Namespaces are optional UI sugar; a failure to list them must not block
     // the cohesion view, so swallow that error specifically.
-    loadNamespaces()
-      .then(setNamespaces)
-      .catch(() => setNamespaces([]));
+    const loadNamespaceOptions = async (): Promise<void> => {
+      try {
+        setNamespaces(await loadNamespaces());
+      } catch {
+        setNamespaces([]);
+      }
+    };
+
+    void loadNamespaceOptions();
     void load('');
   }, [load]);
 

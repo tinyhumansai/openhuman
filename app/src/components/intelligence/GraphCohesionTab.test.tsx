@@ -41,9 +41,9 @@ describe('<GraphCohesionTab />', () => {
   it('loads cohesion (all namespaces) on mount and renders the result', async () => {
     render(<GraphCohesionTab />);
     expect(mockLoadCohesion).toHaveBeenCalledWith(undefined);
-    await waitFor(() =>
-      expect(screen.getByText('Brokers — loosest neighbourhoods')).toBeInTheDocument()
-    );
+    // Assert on the broker table rather than a locale-specific heading so the
+    // test does not break on copy-only or i18n changes.
+    await waitFor(() => expect(screen.getByRole('table')).toBeInTheDocument());
   });
 
   it('shows the namespace selector and re-queries on change', async () => {
