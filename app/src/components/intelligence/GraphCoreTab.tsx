@@ -3,12 +3,15 @@
  * delegates all rendering to the pure <GraphCorePanel>. Read-only — the result
  * is recomputed from the live graph, never persisted.
  */
+import debug from 'debug';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { CoreResult } from '../../lib/memory/graphCore';
 import { loadCore, loadNamespaces } from '../../services/api/graphCoreApi';
 import GraphCorePanel from './GraphCorePanel';
+
+const log = debug('graph-core:tab');
 
 const GraphCoreTab = () => {
   const { t } = useT();
@@ -23,14 +26,23 @@ const GraphCoreTab = () => {
 
   const load = useCallback(async (ns: string) => {
     const requestId = (latestRequestId.current += 1);
+    log('load:start request=%d namespace=%s', requestId, ns || '(all)');
     setLoading(true);
     setError(null);
     try {
       const next = await loadCore(ns || undefined);
-      if (requestId !== latestRequestId.current) return;
+      if (requestId !== latestRequestId.current) {
+        log('load:stale request=%d (newer load in flight)', requestId);
+        return;
+      }
+      log('load:success request=%d nodes=%d degeneracy=%d', requestId, next.nodeCount, next.degeneracy);
       setResult(next);
     } catch (err) {
-      if (requestId !== latestRequestId.current) return;
+      if (requestId !== latestRequestId.current) {
+        log('load:stale-error request=%d', requestId);
+        return;
+      }
+      log('load:error request=%d %o', requestId, err);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       if (requestId === latestRequestId.current) setLoading(false);
@@ -40,9 +52,17 @@ const GraphCoreTab = () => {
   useEffect(() => {
     // Namespaces are optional UI sugar; a failure to list them must not block
     // the core view, so swallow that error specifically.
-    loadNamespaces()
-      .then(setNamespaces)
-      .catch(() => setNamespaces([]));
+    const loadNamespaceOptions = async (): Promise<void> => {
+      try {
+        const next = await loadNamespaces();
+        log('namespaces:loaded count=%d', next.length);
+        setNamespaces(next);
+      } catch (err) {
+        log('namespaces:error (non-blocking) %o', err);
+        setNamespaces([]);
+      }
+    };
+    void loadNamespaceOptions();
     void load('');
   }, [load]);
 
