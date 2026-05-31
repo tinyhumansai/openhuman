@@ -553,7 +553,7 @@ async fn round20_polymarket_covers_discovery_errors_rpc_allowance_and_write_gate
 }
 
 #[tokio::test]
-async fn round20_spawn_subagent_covers_validation_schema_and_disabled_worker_branch() {
+async fn round20_spawn_subagent_covers_validation_schema_and_legacy_thread_flag() {
     let _lock = env_lock();
     let tool = SpawnSubagentTool::new();
 
@@ -590,9 +590,14 @@ async fn round20_spawn_subagent_covers_validation_schema_and_disabled_worker_bra
             "dedicated_thread": true
         }))
         .await
-        .expect("dedicated thread disabled returns tool result");
+        .expect("dedicated thread returns tool result");
     assert!(dedicated_thread.is_error);
-    assert!(dedicated_thread.output().contains("temporarily disabled"));
+    let dedicated_output = dedicated_thread.output();
+    assert!(!dedicated_output.contains("temporarily disabled"));
+    assert!(
+        dedicated_output.contains("AgentDefinitionRegistry has not been initialised")
+            || dedicated_output.contains("no parent context")
+    );
 }
 
 async fn start_loopback(app: Router) -> String {
