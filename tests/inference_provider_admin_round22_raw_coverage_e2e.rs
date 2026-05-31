@@ -92,6 +92,20 @@ impl Drop for EnvVarGuard {
     }
 }
 
+/// Process-wide lock serialising tests that mutate global env vars via
+/// [`EnvVarGuard`]. `cargo llvm-cov` runs integration tests multi-threaded
+/// so without this guard concurrent tests race on `OPENHUMAN_WORKSPACE` and
+/// `Config::load_or_init()` resolves the wrong workspace. Each env-mutating
+/// test must call `env_lock()` and hold the returned guard for its whole body.
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[tokio::test]
 async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edges() {
     let (base, state) = serve_mock().await;
@@ -209,6 +223,7 @@ async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edg
 
 #[tokio::test]
 async fn provider_admin_model_listing_covers_openrouter_validation_and_local_synthesis() {
+    let _env_guard = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -291,6 +306,7 @@ async fn provider_admin_model_listing_covers_openrouter_validation_and_local_syn
 
 #[tokio::test]
 async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
+    let _env_guard = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -491,6 +507,7 @@ async fn reliable_provider_covers_chat_tools_streaming_and_context_bail_edges() 
 
 #[tokio::test]
 async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_fake_bins() {
+    let _env_guard = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);

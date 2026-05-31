@@ -74,8 +74,18 @@ impl Drop for EnvVarGuard {
     }
 }
 
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[tokio::test]
 async fn http_models_and_chat_use_mocked_ollama_without_real_runtime() {
+    let _env_guard = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -225,6 +235,7 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
 
 #[tokio::test]
 async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries() {
+    let _env_guard = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let scripts = tempdir().expect("scripts");
