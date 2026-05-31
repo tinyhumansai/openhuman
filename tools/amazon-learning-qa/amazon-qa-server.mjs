@@ -73,6 +73,7 @@ const DEFAULT_TOKEN = "openhuman-amazon-local-token";
 const MAX_SESSION_MESSAGES = 64;
 const NOTEBOOK_BOUNDARY = "学习专题会话保存的是用户问题、系统整理、来源引用和学习路径；它不是作者原文证据，不能混入 amazon-learning 作者资料库。";
 const LEARNING_NOTE_BOUNDARY = "学习笔记保存的是用户整理或系统回答摘录；它不是作者原文证据，只有用户主动转成“我的资料”后才会作为用户资料参与问答。";
+const TEST_NOTEBOOK_ID_PATTERNS = [/^amazon-qa-smoke-/i, /^feedback-check-/i];
 
 let coreProcess = null;
 let sourceTreeDrainProcess = null;
@@ -237,7 +238,11 @@ async function routeRequest(request, response, context) {
   }
 
   if (request.method === "GET" && url.pathname === "/api/notebooks") {
-    sendJson(response, 200, { notebooks: await listNotebooks(context.namespace) });
+    const notebookList = await listNotebooks(context.namespace);
+    sendJson(response, 200, {
+      notebooks: notebookList.notebooks,
+      hiddenTestNotebookCount: notebookList.hiddenTestNotebookCount,
+    });
     return;
   }
 
@@ -512,6 +517,7 @@ async function routeRequest(request, response, context) {
       learningQueue: payload.learningQueue,
       knowledgeGapRadar: payload.knowledgeGapRadar,
       nextBestSource: payload.nextBestSource,
+      usageFootprint: payload.usageFootprint,
       learningMemoryReminder: payload.learningMemoryReminder,
       sourceControls,
       userSourceControls,
@@ -599,6 +605,7 @@ function normalizeSessionHistory(history) {
       learningQueue: normalizeLearningQueue(entry.learningQueue),
       knowledgeGapRadar: normalizeKnowledgeGapRadar(entry.knowledgeGapRadar),
       nextBestSource: normalizeNextBestSource(entry.nextBestSource),
+      usageFootprint: normalizeUsageFootprint(entry.usageFootprint),
       learningMemoryReminder: normalizeLearningMemoryReminderForMessage(entry.learningMemoryReminder),
       sourceControls: normalizeSourceControls(entry.sourceControls),
       userSourceControls: normalizeUserSourceControls(entry.userSourceControls),
@@ -903,10 +910,16 @@ async function listNotebooks(namespace) {
   try {
     names = await readdir(dir);
   } catch {
-    return [];
+    return { notebooks: [], hiddenTestNotebookCount: 0 };
   }
   const notebooks = [];
-  for (const name of names.filter((item) => item.endsWith(".json")).slice(0, 200)) {
+  let hiddenTestNotebookCount = 0;
+  for (const name of names.filter((item) => item.endsWith(".json")).slice(0, 260)) {
+    const notebookId = name.replace(/\.json$/i, "");
+    if (isTestNotebookId(notebookId)) {
+      hiddenTestNotebookCount += 1;
+      continue;
+    }
     try {
       const raw = await readFile(path.join(dir, name), "utf8");
       notebooks.push(notebookSummary(normalizeNotebookRecord(namespace, JSON.parse(raw))));
@@ -916,9 +929,17 @@ async function listNotebooks(namespace) {
       }
     }
   }
-  return notebooks
-    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))
-    .slice(0, 50);
+  return {
+    notebooks: notebooks
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || 0) - Date.parse(a.updatedAt || a.createdAt || 0))
+      .slice(0, 50),
+    hiddenTestNotebookCount,
+  };
+}
+
+function isTestNotebookId(id) {
+  const value = String(id || "").trim();
+  return TEST_NOTEBOOK_ID_PATTERNS.some((pattern) => pattern.test(value));
 }
 
 async function readNotebook(namespace, id) {
@@ -1031,7 +1052,7 @@ function buildNotebookStudyPack(notebook) {
     id: record.id,
     title: record.title,
     topic: record.topic,
-    boundary: NOTEBOOK_BOUNDARY,
+    boundary: `${NOTEBOOK_BOUNDARY} 当前学习包是本地文字预览：问答和引用可用，完整来源树学习仍可能处理中；不包含音频或视频功能。`,
     updatedAt: record.updatedAt,
     overview: {
       questions,
@@ -1112,8 +1133,8 @@ function buildNotebookStudioPack(pack) {
     },
   ].filter((section) => section.items.length > 0);
   return {
-    title: `${pack.title || "亚马逊学习专题"} · Studio 产物包`,
-    boundary: "Studio 产物是基于本专题来源和问答的系统整理；作者原文证据仍以来源账本为准。",
+    title: `${pack.title || "亚马逊学习专题"} · 本地学习包预览`,
+    boundary: "本地学习包预览基于本专题来源和问答做文字整理；作者原文证据仍以来源账本为准，完整来源树学习可能仍在后台处理，不包含音频或视频功能。",
     reportSections,
     mindMap,
     masteryQuiz,
@@ -1175,7 +1196,7 @@ function buildNotebookMasteryQuiz(pack) {
 
   reviewQuestions.slice(0, 4).forEach((item) => add({
     question: item.question,
-    expectedAnswer: item.answer || item.prompt || "回到专题学习包和来源账本复核。",
+    expectedAnswer: item.answer || item.prompt || "回到本地学习包预览和来源账本复核。",
     explanation: item.boundary || "复习题用于检查理解，不会写入原始知识库。",
     kind: "review",
   }));
@@ -1523,7 +1544,7 @@ function notebookStudioExportMarkdown(pack, studio) {
   const lines = [];
   lines.push(notebookStudyPackMarkdown(pack).trim());
   lines.push("");
-  lines.push("## Studio 产物包");
+  lines.push("## 本地学习包预览");
   lines.push("");
   lines.push(`边界：${studio.boundary}`);
   for (const section of studio.reportSections || []) {
@@ -1726,6 +1747,28 @@ function normalizeAnswerEffectiveness(effectiveness) {
     status,
     updatedAt: typeof effectiveness.updatedAt === "string" ? effectiveness.updatedAt.slice(0, 40) : "",
     question: typeof effectiveness.question === "string" ? effectiveness.question.slice(0, 240) : "",
+  };
+}
+
+function normalizeUsageFootprint(footprint) {
+  if (!footprint || typeof footprint !== "object") return undefined;
+  const estimate = footprint.estimate && typeof footprint.estimate === "object" ? footprint.estimate : {};
+  return {
+    mode: typeof footprint.mode === "string" ? footprint.mode.slice(0, 40) : "local_ollama",
+    model: typeof footprint.model === "string" ? footprint.model.slice(0, 100) : "",
+    cloudBillableTokens: Number.isFinite(Number(footprint.cloudBillableTokens)) ? Math.max(0, Math.floor(Number(footprint.cloudBillableTokens))) : 0,
+    cloudBillableCostText: typeof footprint.cloudBillableCostText === "string" ? footprint.cloudBillableCostText.slice(0, 180) : "",
+    summary: typeof footprint.summary === "string" ? footprint.summary.slice(0, 240) : "",
+    boundary: typeof footprint.boundary === "string" ? footprint.boundary.slice(0, 260) : "",
+    estimate: {
+      questionTokens: Number.isFinite(Number(estimate.questionTokens)) ? Math.max(0, Math.floor(Number(estimate.questionTokens))) : 0,
+      retrievalTokens: Number.isFinite(Number(estimate.retrievalTokens)) ? Math.max(0, Math.floor(Number(estimate.retrievalTokens))) : 0,
+      sourceTokens: Number.isFinite(Number(estimate.sourceTokens)) ? Math.max(0, Math.floor(Number(estimate.sourceTokens))) : 0,
+      answerTokens: Number.isFinite(Number(estimate.answerTokens)) ? Math.max(0, Math.floor(Number(estimate.answerTokens))) : 0,
+      totalCloudEquivalentTokens: Number.isFinite(Number(estimate.totalCloudEquivalentTokens))
+        ? Math.max(0, Math.floor(Number(estimate.totalCloudEquivalentTokens)))
+        : 0,
+    },
   };
 }
 
@@ -2216,9 +2259,10 @@ function normalizeEvidenceAudit(audit) {
   const checks = Array.isArray(audit.checks) ? audit.checks : [];
   const counts = audit.counts && typeof audit.counts === "object" ? audit.counts : {};
   const feedback = ["useful", "citation_wrong", "retry"].includes(audit.feedback) ? audit.feedback : "";
+  const label = String(audit.label || "").replace("可信度较高", "引用支撑较充分");
   return {
     level: ["high", "medium", "low"].includes(audit.level) ? audit.level : "low",
-    label: String(audit.label || "").slice(0, 40),
+    label: label.slice(0, 40),
     summary: String(audit.summary || "").slice(0, 260),
     counts: {
       sources: Number(counts.sources || 0),
@@ -2254,7 +2298,7 @@ function normalizeEvidenceAudit(audit) {
           .filter((item) => item.concept)
           .slice(0, 4)
       : [],
-    caution: String(audit.caution || "").slice(0, 260),
+    caution: String(audit.caution || "").replace("可信度检查", "引用核对").slice(0, 260),
     feedback,
   };
 }
@@ -2262,8 +2306,9 @@ function normalizeEvidenceAudit(audit) {
 function normalizeSourceTrust(trust) {
   if (!trust || typeof trust !== "object") return undefined;
   const categories = Array.isArray(trust.categories) ? trust.categories : [];
+  const title = String(trust.title || "本轮来源核对状态").replace("本轮来源可信链路", "本轮来源核对状态");
   return {
-    title: String(trust.title || "本轮来源可信链路").slice(0, 100),
+    title: title.slice(0, 100),
     status: ["source_backed", "needs_source"].includes(trust.status) ? trust.status : "needs_source",
     label: String(trust.label || "").slice(0, 140),
     summary: String(trust.summary || "").slice(0, 260),

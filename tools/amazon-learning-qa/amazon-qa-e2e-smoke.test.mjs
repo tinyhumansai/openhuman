@@ -131,14 +131,14 @@ function sourceSelectionPayload() {
 function studyPackPayload() {
   return {
     title: "主图视觉点击率转化率怎么优化？",
-    boundary: "专题学习包是系统整理，不是作者原文证据。",
+    boundary: "本地学习包预览是系统整理，不是作者原文证据；不包含音频或视频功能。",
     takeaways: [{ label: "主图", text: "先看点击入口。", identity: "来源支撑的系统整理", support: "source_backed" }],
     checklist: [{ label: "核对证据", reason: "先看原文。" }],
     reviewQuestions: [{ question: "核心判断是什么？", answer: "先看点击入口。" }],
     concepts: [{ label: "主图" }],
     sourceLedger: [{ title: "新手必看！亚马逊测款实战指南", author: "飞翔的波波", identity: "作者原文证据来源" }],
     markdown: "# 主图视觉点击率转化率怎么优化？\n\n## 来源账本\n- 飞翔的波波 · 新手必看！亚马逊测款实战指南\n",
-    exportMarkdown: "# 主图视觉点击率转化率怎么优化？\n\n## 来源账本\n- 飞翔的波波 · 新手必看！亚马逊测款实战指南\n\n## Studio 产物包\n\n### 系统掌握度自测（非作者证据）\n",
+    exportMarkdown: "# 主图视觉点击率转化率怎么优化？\n\n## 来源账本\n- 飞翔的波波 · 新手必看！亚马逊测款实战指南\n\n## 本地学习包预览\n\n### 系统掌握度自测（非作者证据）\n",
     studio: {
       reportSections: [{ title: "核心结论", items: ["先看点击入口。"] }],
       flashcards: [{ front: "核心判断是什么？", back: "先看点击入口。" }],

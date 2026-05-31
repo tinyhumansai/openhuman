@@ -72,7 +72,7 @@ export function validateAmazonQaSmoke(input = {}, options = {}) {
   assertSmoke(Array.isArray(studyPack.sourceLedger), "Notebook study pack is missing the source ledger.");
   assertSmoke(String(studyPack.boundary || "").includes("不是作者原文证据"), "Notebook study pack boundary is missing.");
   assertSmoke(String(studyPack.markdown || "").includes("## 来源账本"), "Notebook study pack markdown is incomplete.");
-  assertSmoke(String(studyPack.exportMarkdown || "").includes("## Studio 产物包"), "Notebook Studio export markdown is missing.");
+  assertSmoke(String(studyPack.exportMarkdown || "").includes("## 本地学习包预览"), "Notebook learning pack export markdown is missing.");
   assertSmoke(String(studyPack.exportMarkdown || "").includes("系统掌握度自测"), "Notebook Studio export markdown is missing the mastery self-test.");
   assertSmoke(Array.isArray(studyPack.studio?.reportSections), "Notebook Studio pack is missing report sections.");
   assertSmoke(Array.isArray(studyPack.studio?.flashcards), "Notebook Studio pack is missing flashcards.");

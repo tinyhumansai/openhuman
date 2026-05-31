@@ -2208,9 +2208,9 @@ test("buildQaPayload exposes a source trust chain without promoting product inpu
   );
 
   assert.ok(payload.sourceTrust);
-  assert.equal(payload.sourceTrust.title, "本轮来源可信链路");
+  assert.equal(payload.sourceTrust.title, "本轮来源核对状态");
   assert.equal(payload.sourceTrust.status, "source_backed");
-  assert.match(payload.sourceTrust.boundary, /有来源不等于已验证/);
+  assert.match(payload.sourceTrust.boundary, /有来源不等于已经人工核验或业务验证完成/);
   assert.match(payload.sourceTrust.boundary, /用户产品材料不是作者原文证据/);
   assert.match(payload.sourceTrust.boundary, /实验复盘不是作者原文证据/);
 
@@ -2462,12 +2462,23 @@ test("buildQaPayload includes answer trust audit", () => {
   const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT);
 
   assert.ok(payload.evidenceAudit);
-  assert.match(payload.evidenceAudit.label, /复核|重查|可信/);
+  assert.match(payload.evidenceAudit.label, /复核|重查|引用/);
   assert.equal(payload.evidenceAudit.level, "medium");
   assert.ok(payload.evidenceAudit.counts.sourceEvidence >= 1);
   assert.ok(payload.evidenceAudit.checks.some((check) => check.id === "source_coverage"));
   assert.ok(payload.evidenceAudit.checks.some((check) => check.id === "claim_boundary"));
   assert.match(payload.evidenceAudit.checks.find((check) => check.id === "conflict_scan").message, /未发现明显冲突|不能证明.*没有冲突/);
+});
+
+test("buildQaPayload exposes local usage footprint and cloud cost boundary", () => {
+  const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT);
+
+  assert.ok(payload.usageFootprint);
+  assert.equal(payload.usageFootprint.mode, "local_ollama");
+  assert.equal(payload.usageFootprint.cloudBillableTokens, 0);
+  assert.match(payload.usageFootprint.summary, /云端计费 token 为 0/);
+  assert.ok(payload.usageFootprint.estimate.totalCloudEquivalentTokens > 0);
+  assert.match(payload.usageFootprint.boundary, /不是云模型账单/);
 });
 
 test("buildQaPayload allows high trust when sources are fresh, broad, and not conflicting", () => {
@@ -2493,7 +2504,7 @@ test("buildQaPayload allows high trust when sources are fresh, broad, and not co
   const payload = buildQaPayload("主图点击率怎么优化？", cleanContext);
 
   assert.equal(payload.evidenceAudit.level, "high");
-  assert.match(payload.evidenceAudit.label, /可信度较高/);
+  assert.match(payload.evidenceAudit.label, /引用支撑较充分/);
   assert.equal(payload.evidenceAudit.counts.conflictSignals, 0);
 });
 

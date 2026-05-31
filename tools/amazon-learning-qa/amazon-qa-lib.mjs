@@ -424,6 +424,14 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     topicSourceTree,
     knowledgeGapRadar,
   });
+  const usageFootprint = buildUsageFootprint({
+    question,
+    retrievalQuestion,
+    answer,
+    sources,
+    rankedEvidence,
+    evidenceChain,
+  });
 
   return {
     question,
@@ -449,10 +457,63 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     learningQueue,
     knowledgeGapRadar,
     nextBestSource,
+    usageFootprint,
     learningMemoryReminder,
     suggestedQuestions: DEFAULT_SUGGESTED_QUESTIONS,
     rawContext: normalizedContext,
   };
+}
+
+export function buildUsageFootprint(input = {}) {
+  const question = String(input.question || "");
+  const retrievalQuestion = String(input.retrievalQuestion || question);
+  const answer = String(input.answer || "");
+  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const rankedEvidence = Array.isArray(input.rankedEvidence) ? input.rankedEvidence : [];
+  const evidenceClaims = Array.isArray(input.evidenceChain?.claims) ? input.evidenceChain.claims : [];
+  const sourceText = sources
+    .slice(0, 5)
+    .map((source) => [source?.author, source?.title, source?.excerpt].filter(Boolean).join("\n"))
+    .join("\n\n");
+  const evidenceText = rankedEvidence
+    .slice(0, 8)
+    .map((item) => item?.quote || item?.text || "")
+    .filter(Boolean)
+    .join("\n");
+  const claimText = evidenceClaims
+    .slice(0, 10)
+    .map((claim) => claim?.text || "")
+    .filter(Boolean)
+    .join("\n");
+  const questionTokens = estimateChineseMixedTokens(question);
+  const retrievalTokens = estimateChineseMixedTokens(retrievalQuestion);
+  const sourceTokens = estimateChineseMixedTokens(`${sourceText}\n${evidenceText}\n${claimText}`);
+  const answerTokens = estimateChineseMixedTokens(answer);
+  const totalCloudEquivalentTokens = questionTokens + retrievalTokens + sourceTokens + answerTokens;
+  return {
+    mode: "local_ollama",
+    model: "mxbai-embed-large:latest",
+    cloudBillableTokens: 0,
+    cloudBillableCostText: "当前本机 Ollama 模式不产生 OpenAI 云端 token 费用。",
+    estimate: {
+      questionTokens,
+      retrievalTokens,
+      sourceTokens,
+      answerTokens,
+      totalCloudEquivalentTokens,
+    },
+    summary: `本轮在本机运行，云端计费 token 为 0；如果改接云模型，这轮大约相当于 ${totalCloudEquivalentTokens} token。`,
+    boundary: "这是按问题、检索上下文、来源摘录和答案文本估算的参考值，不是云模型账单；实际费用会随模型、提示词和带入来源长度变化。",
+  };
+}
+
+function estimateChineseMixedTokens(text) {
+  const value = String(text || "").trim();
+  if (!value) return 0;
+  const cjkCount = (value.match(/[\u3400-\u9fff]/g) || []).length;
+  const latinWords = (value.replace(/[\u3400-\u9fff]/g, " ").match(/[a-zA-Z0-9_.:/%-]+/g) || []).length;
+  const punctuation = (value.match(/[^\s\w\u3400-\u9fff]/g) || []).length;
+  return Math.max(1, Math.ceil(cjkCount * 0.75 + latinWords * 1.25 + punctuation * 0.2));
 }
 
 export function buildProductInputSummary(input = {}) {
@@ -635,11 +696,11 @@ export function buildSourceTrustChain(input = {}) {
     : "本轮没有可定位的作者原文证据，不能把回答沉淀为可靠结论。";
 
   return {
-    title: "本轮来源可信链路",
+    title: "本轮来源核对状态",
     status,
     label: status === "source_backed" ? "有作者原文支撑，但业务适配仍需验证" : "缺少作者原文证据",
     summary,
-    boundary: "有来源不等于已验证；作者原文证据、二次摘要/系统整理、用户产品材料和实验复盘必须分开看。用户产品材料不是作者原文证据，实验复盘不是作者原文证据。",
+    boundary: "有来源不等于已经人工核验或业务验证完成；作者原文证据、二次摘要/系统整理、用户产品材料和实验复盘必须分开看。用户产品材料不是作者原文证据，实验复盘不是作者原文证据。",
     sourceTree: sourceTree ? {
       title: sourceTree.title,
       status: sourceTree.status,
@@ -793,7 +854,7 @@ export function buildEvidenceAudit(input = {}) {
     },
     checks,
     conflictSignals,
-    caution: "可信度检查用于帮助你判断答案边界，不会替代原文阅读和真实业务验证。",
+    caution: "引用核对用于帮助你判断答案边界，不会替代原文阅读、人工核验和真实业务验证。",
   };
 }
 
@@ -1697,7 +1758,7 @@ function uniqueOrdered(items, limit = 20) {
 }
 
 function evidenceAuditLabel(level) {
-  if (level === "high") return "可信度较高";
+  if (level === "high") return "引用支撑较充分";
   if (level === "medium") return "需要人工复核";
   return "需要重查";
 }

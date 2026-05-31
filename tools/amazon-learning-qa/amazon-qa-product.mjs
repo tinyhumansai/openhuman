@@ -343,14 +343,30 @@ async function writeHandoff() {
   console.log(HANDOFF_PATH);
 }
 
-function handoffMarkdown(report) {
+export function handoffMarkdown(report) {
+  const deliveryStatus = report.ok
+    ? (report.warnings?.length ? "本机问答验收通过（仍有提醒）" : "本机验收通过")
+    : "未通过本机验收";
+  const capabilityTitle = report.ok ? "本机已验证能力" : "当前可用能力（未通过完整验收）";
+  const learningState = report.service.learningStatus === "ready"
+    ? "完整学习层已就绪"
+    : `完整来源树学习仍在处理中：等待 ${report.service.sourceTreeQueuedJobs}，完成 ${report.service.sourceTreeDoneJobs}，失败 ${report.service.sourceTreeFailedJobs}`;
   return `# 亚马逊学习问答交付说明
 
 生成时间：${report.generatedAt}
 
+## 交付边界先说明
+
+- 验收状态：${deliveryStatus}
+- 运行形态：本机入口 ${report.url}，不是 Vercel 线上部署
+- 部署限制：当前不能原样部署到 Vercel。原因：${report.deployment.reason}
+- 现实交付方式：${report.deployment.realisticTarget}
+- 学习状态：${learningState}
+- 音视频：本次不包含音频或视频录制、转写、播放、剪辑、生成、上传功能
+
 ## 当前状态
 
-- 本地入口：${report.url}
+- 本机入口：${report.url}
 - 问答状态：${report.service.answerStatus === "ready" ? "可问答、可引用" : "未完全就绪"}
 - 资料：${report.service.documents} 篇
 - 我的资料：${report.service.userSourceCount || 0} 份
@@ -368,14 +384,15 @@ ${PRODUCT_COMMAND} smoke
 ${PRODUCT_COMMAND} handoff
 \`\`\`
 
-## 已交付能力
+## ${capabilityTitle}
 
-- 单点入口：继续使用 ${report.url}
-- 本地语义问答：1779 篇资料、14597 个片段已完成本地向量索引
+- 本机入口：继续使用 ${report.url}
+- 本地语义问答：${report.service.documents} 篇资料、${report.service.chunks} 个片段，语义索引 ${report.service.embedded}/${report.service.chunks}
 - 我的资料：可以粘贴自己的资料，勾选后只围绕这些资料问答，并在回答里引用该资料；系统会把它标为用户材料，不会当成三位作者的原文证据
 - 学习笔记：可以手写笔记，也可以把某次回答保存为笔记；笔记不会自动变成作者证据，只有手动转成“我的资料”后才参与问答
 - 连续追问：会话会保留上下文，用于第二轮、第三轮继续问
 - 来源引用：回答会附带作者、文章标题、摘录和原文线索
+- 本轮运行成本：页面展示本机运行的云端 token 为 0，并给出如果改接云模型时的大致 token 参考
 - 问前资料选择和意图确认：输入问题后可以先判断本轮该限定哪些来源，并确认是方法学习、产品诊断还是实验复盘，再用这些资料提问
 - 本轮结果确认：每次回答后可以标记“这次有效、需要补来源、切换意图、补产品数据”，确认结果会留在本地历史里，并把下一步追问填好
 - 学习闭环状态：左侧会汇总本会话回答数、有效数、待确认数和待处理数，并根据用户确认结果给出下一步动作
@@ -384,11 +401,11 @@ ${PRODUCT_COMMAND} handoff
 - 知识缺口雷达：每次回答会提示下一步优先补的作者来源、产品数据或复核动作；它只做学习导航，不会改变作者原文证据边界
 - 下一步资料选择：每次回答会推荐先读哪条来源、还要补哪类材料，并明确推荐理由不是新的作者证据
 - 有限批次深加工：来源树增强只能在页面按 10/50/250 条分批启动，每批跑完自动暂停，避免长时间无边界运行
-- 专题学习包：专题会话可直接阅读报告章节、复习卡、思维导图预览、来源表、掌握度自测和亚马逊行动实验计划，并可导出 Markdown、JSON、复习卡 CSV、来源表 CSV
+- 本地学习包预览：专题会话可阅读文字报告、复习卡、思维导图预览、来源表、掌握度自测和亚马逊行动实验计划，并可导出 Markdown、JSON、复习卡 CSV、来源表 CSV；完整来源树学习仍以状态栏为准
 
 ## 明确不包含
 
-- 本次只交付文字问答、来源阅读、学习路径和本地知识库验证，不包含音视频录制、转写、播放、剪辑、生成或上传功能
+- 本次只交付文字问答、来源阅读、学习路径和本地知识库验证，不包含音频或视频录制、转写、播放、剪辑、生成或上传功能
 
 ## 验收方式
 
@@ -402,14 +419,8 @@ ${PRODUCT_COMMAND} handoff
 - 检查每条回答下方是否出现“下一步资料选择”，点击“定位来源”后应跳到对应来源卡片
 - 点击某条回答下方“保存回答为笔记”，确认左侧“学习笔记”出现记录，再把它手动转成“我的资料”
 - 在“我的资料”里粘贴一段带唯一测试词的资料，勾选“本轮只问已勾选的我的资料”，确认回答只引用这份资料
-- 在左侧专题会话里点击“学习包”，检查是否出现报告章节、复习卡预览、思维导图预览、掌握度自测、亚马逊行动实验计划和来源数据表
+- 在左侧专题会话里点击“学习包”，检查是否出现本地学习包预览、复习卡预览、思维导图预览、掌握度自测、亚马逊行动实验计划和来源数据表
 - 运行 \`${PRODUCT_COMMAND} smoke\`，应返回两轮问答、来源账本、复习卡、思维导图节点、掌握度自测和行动实验计划数量
-
-## 部署边界
-
-当前不能原样部署到 Vercel。原因：${report.deployment.reason}
-
-现实交付方式：${report.deployment.realisticTarget}
 
 ## 下一步
 

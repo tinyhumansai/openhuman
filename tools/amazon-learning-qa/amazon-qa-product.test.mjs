@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildProductDoctorReport } from "./amazon-qa-product.mjs";
+import { buildProductDoctorReport, handoffMarkdown } from "./amazon-qa-product.mjs";
 
 const READY_STATUS = {
   health: {
@@ -69,6 +69,44 @@ test("product doctor fails the delivery gate when semantic vectors are incomplet
   } finally {
     restore();
   }
+});
+
+test("handoff uses real status, local deployment boundary, and no audio/video scope", () => {
+  const report = {
+    ok: false,
+    warnings: [],
+    generatedAt: "2026-05-31T00:00:00.000Z",
+    url: "http://127.0.0.1:7790",
+    service: {
+      answerStatus: "partial",
+      documents: 100,
+      userSourceCount: 1,
+      learningNoteCount: 2,
+      chunks: 200,
+      embedded: 20,
+      coverage: 10,
+      learningStatus: "processing",
+      sourceTreeQueuedJobs: 9,
+      sourceTreeDoneJobs: 1,
+      sourceTreeFailedJobs: 0,
+    },
+    deployment: {
+      reason: "本地依赖",
+      realisticTarget: "本机或 VPS",
+    },
+    nextActions: ["补齐语义索引"],
+  };
+  const markdown = handoffMarkdown(report);
+
+  assert.match(markdown, /交付边界先说明/);
+  assert.match(markdown, /未通过本机验收/);
+  assert.match(markdown, /本机入口/);
+  assert.match(markdown, /不是 Vercel 线上部署/);
+  assert.match(markdown, /100 篇资料、200 个片段，语义索引 20\/200/);
+  assert.match(markdown, /本地学习包预览/);
+  assert.match(markdown, /不包含音频或视频/);
+  assert.doesNotMatch(markdown, /1779 篇资料、14597 个片段已完成/);
+  assert.doesNotMatch(markdown, /## 已交付能力/);
 });
 
 function mockFetch({ status, models }) {

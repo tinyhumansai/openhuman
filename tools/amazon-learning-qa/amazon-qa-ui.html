@@ -921,6 +921,52 @@
         color: var(--accent);
       }
 
+      .usage-footprint {
+        border: 1px solid rgba(14, 107, 96, 0.18);
+        background: #f8fbf9;
+        padding: 12px 14px;
+        display: grid;
+        gap: 9px;
+        overflow-wrap: anywhere;
+      }
+
+      .usage-footprint header {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .usage-footprint strong {
+        font-size: 13px;
+      }
+
+      .usage-footprint p,
+      .usage-footprint span {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
+      .usage-footprint-metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .usage-footprint-metrics span {
+        border: 1px solid rgba(14, 107, 96, 0.14);
+        background: #fff;
+        padding: 8px;
+      }
+
+      .usage-footprint-metrics b {
+        display: block;
+        color: var(--ink);
+        font-size: 15px;
+      }
+
       .learning-effectiveness-summary {
         border: 1px solid rgba(14, 107, 96, 0.16);
         background: #fbfffd;
@@ -5312,6 +5358,7 @@
         .message.assistant,
         .bubble,
         .answer-effectiveness,
+        .usage-footprint,
         .answer-panel-group,
         .source,
         .sources {
@@ -5341,6 +5388,12 @@
 
         .graph-legend {
           font-size: 11px;
+        }
+
+        .usage-footprint header,
+        .usage-footprint-metrics {
+          grid-template-columns: 1fr 1fr;
+          display: grid;
         }
 
         .answer-brief-head,
@@ -5711,6 +5764,7 @@
       let sessionId = initialSessionFromUrl || localStorage.getItem(SESSION_KEY) || "";
       let messages = readSavedMessages();
       let notebooks = [];
+      let hiddenTestNotebookCount = 0;
       let dossiers = [];
       let selectedDossier = null;
       let selectedDossierWorkbench = null;
@@ -6161,6 +6215,7 @@
               learningQueue: payload.learningQueue,
               knowledgeGapRadar: payload.knowledgeGapRadar,
               nextBestSource: payload.nextBestSource,
+              usageFootprint: payload.usageFootprint,
               learningMemoryReminder: payload.learningMemoryReminder,
               sourceControls: payload.sourceControls || sourceControls,
               userSourceControls: payload.userSourceControls || userSourceControls,
@@ -6237,6 +6292,7 @@
           <div class="bubble${errorClass}">${content}</div>
           ${isUser || message.loading || message.error ? "" : renderAnswerNoteActions(message, messageIndex)}
           ${isUser || message.loading || message.error ? "" : renderAnswerEffectiveness(message, messageIndex)}
+          ${isUser ? "" : renderUsageFootprint(message.usageFootprint)}
           ${isUser ? "" : renderKnowledgeGapRadar(message.knowledgeGapRadar, messageIndex)}
           ${isUser ? "" : renderNextBestSource(message.nextBestSource, messageIndex)}
           ${isUser || message.learningQueue ? "" : renderNextStepPanel(message, messageIndex)}
@@ -6289,6 +6345,26 @@
         if (value === "switch_intent") return { value, label: "已标记需要切换意图。下一问会先重新确认你要做方法学习、产品诊断、实验复盘还是补来源检索。" };
         if (value === "add_product_data") return { value, label: "已标记需要补产品数据。下一问会把你的真实产品材料和作者原文分开处理。" };
         return { value: "", label: "还未确认这次回答是否解决问题。" };
+      }
+
+      function renderUsageFootprint(footprint) {
+        if (!footprint || typeof footprint !== "object") return "";
+        const estimate = footprint.estimate && typeof footprint.estimate === "object" ? footprint.estimate : {};
+        const metrics = [
+          ["问题", estimate.questionTokens],
+          ["检索", estimate.retrievalTokens],
+          ["来源", estimate.sourceTokens],
+          ["答案", estimate.answerTokens],
+        ].map(([label, value]) => `<span><b>${escapeHtml(Number(value || 0))}</b>${escapeHtml(label)}</span>`).join("");
+        return `<section class="usage-footprint" aria-label="本轮运行成本">
+          <header>
+            <strong>本轮运行成本</strong>
+            <span>${escapeHtml(Number(footprint.cloudBillableTokens || 0))} 云端 token</span>
+          </header>
+          <p>${escapeHtml(footprint.summary || "当前本机运行，不产生云端 token 费用。")}</p>
+          <div class="usage-footprint-metrics">${metrics}</div>
+          <p>${escapeHtml(footprint.boundary || "这里只是按文本长度估算，实际云模型费用会随模型和上下文变化。")}</p>
+        </section>`;
       }
 
       function renderLearningEffectivenessSummary() {
@@ -6638,7 +6714,7 @@
         const items = buildAnswerStudioItems(message, messageIndex);
         if (items.length === 0) return "";
         const available = items.filter((item) => item.available !== false).length;
-        return `<section class="answer-studio" data-answer-studio-index="${messageIndex}" aria-label="本轮学习 Studio">
+        return `<section class="answer-studio" data-answer-studio-index="${messageIndex}" aria-label="本轮学习工作台">
           <header>
             <span class="answer-studio-title">
               <strong>本轮学习入口</strong>
@@ -6707,7 +6783,7 @@
             title: "不能确认",
             text: synthesisGap?.message || synthesisGap?.reason || notebookGap?.reason || message.evidenceAudit?.caution || "有来源不等于已经适用于你的产品，仍需要用真实页面和业务数据验证。",
             actions: message.evidenceAudit
-              ? [{ action: "focus", target: ".evidence-audit", label: "看可信度" }]
+              ? [{ action: "focus", target: ".evidence-audit", label: "看引用核对" }]
               : message.notebookGuide
                 ? [{ action: "focus", target: ".notebook-guide", label: "看缺口" }]
                 : [],
@@ -7498,17 +7574,18 @@
         const categories = Array.isArray(trust.categories) ? trust.categories.slice(0, 5) : [];
         if (categories.length === 0) return "";
         const status = trust.status === "source_backed" ? "source_backed" : "needs_source";
-        return `<section class="source-trust" data-status="${escapeAttribute(status)}" aria-label="本轮来源可信链路">
+        const trustTitle = String(trust.title || "本轮来源核对状态").replace("本轮来源可信链路", "本轮来源核对状态");
+        return `<section class="source-trust" data-status="${escapeAttribute(status)}" aria-label="本轮来源核对状态">
           <header>
             <div>
-              <strong>${escapeHtml(trust.title || "本轮来源可信链路")}</strong>
+              <strong>${escapeHtml(trustTitle)}</strong>
               <p class="source-trust-summary">${escapeHtml(trust.summary || "先看作者原文证据，再看系统整理。")}</p>
             </div>
             <span class="source-trust-status">${escapeHtml(trust.label || (status === "source_backed" ? "有作者原文支撑" : "缺少作者原文证据"))}</span>
           </header>
           <div class="source-trust-grid">${categories.map((item) => renderSourceTrustItem(item, messageIndex)).join("")}</div>
           ${renderSourceTreeRoute(trust.sourceTree)}
-          <p class="source-trust-boundary">${escapeHtml(trust.boundary || "有来源不等于已验证；用户产品材料不是作者原文证据，实验复盘不是作者原文证据。")}</p>
+          <p class="source-trust-boundary">${escapeHtml(trust.boundary || "有来源不等于已经人工核验或业务验证完成；用户产品材料不是作者原文证据，实验复盘不是作者原文证据。")}</p>
         </section>`;
       }
 
@@ -7549,7 +7626,7 @@
               .join("")
           : "";
         return `<article class="source-trust-item" data-kind="${escapeAttribute(item?.id || "")}" data-state="${escapeAttribute(item?.status || "missing")}">
-          <strong>${escapeHtml(item?.label || SOURCE_TRUST_LABELS[item?.id] || "可信分类")}</strong>
+          <strong>${escapeHtml(item?.label || SOURCE_TRUST_LABELS[item?.id] || "核对分类")}</strong>
           <span class="source-trust-count">${escapeHtml(count ? `${count} 项` : "暂无")}</span>
           <p>${escapeHtml(item?.description || "")}</p>
           ${sourceButtons || claimButtons ? `<div class="source-trust-actions">${sourceButtons}${claimButtons}</div><div class="source-context-slot"></div>` : ""}
@@ -7599,14 +7676,14 @@
             : feedbackValue === "useful"
               ? "已标记本回答有帮助；这只是答案层面的反馈，不会自动采纳具体证据。"
               : "";
-        return `<section class="evidence-audit" data-level="${escapeAttribute(audit.level || "medium")}" aria-label="答案可信度">
+        return `<section class="evidence-audit" data-level="${escapeAttribute(audit.level || "medium")}" aria-label="答案引用核对">
           <header>
             <div>
-              <strong>答案可信度</strong>
+              <strong>答案引用核对</strong>
               <p class="claim-meta">${escapeHtml(audit.summary || "检查本次答案的来源支撑和推断边界。")}</p>
-              ${audit.caution ? `<p class="claim-meta">${escapeHtml(audit.caution)}</p>` : ""}
+              ${audit.caution ? `<p class="claim-meta">${escapeHtml(String(audit.caution).replace("可信度检查", "引用核对"))}</p>` : ""}
             </div>
-            <span class="audit-level">${escapeHtml(audit.label || "")}</span>
+            <span class="audit-level">${escapeHtml(String(audit.label || "").replace("可信度较高", "引用支撑较充分"))}</span>
           </header>
           <div class="audit-grid">${checks}</div>
           ${conflictPanel}
@@ -10122,11 +10199,32 @@
           synthesisAnswer: compactSynthesisAnswer(message.synthesisAnswer),
           notebookGuide: compactNotebookGuide(message.notebookGuide),
           graph: compactGraph(message.graph),
+          usageFootprint: compactUsageFootprint(message.usageFootprint),
           sourceScope: message.sourceScope,
           sourceControls: message.sourceControls,
           userSourceControls: message.userSourceControls,
         }));
         return safeLocalSet(HISTORY_KEY, JSON.stringify(compact));
+      }
+
+      function compactUsageFootprint(footprint) {
+        if (!footprint || typeof footprint !== "object") return undefined;
+        const estimate = footprint.estimate && typeof footprint.estimate === "object" ? footprint.estimate : {};
+        return {
+          mode: compactText(footprint.mode, 40),
+          model: compactText(footprint.model, 100),
+          cloudBillableTokens: Number(footprint.cloudBillableTokens || 0),
+          cloudBillableCostText: compactText(footprint.cloudBillableCostText, 160),
+          summary: compactText(footprint.summary, 220),
+          boundary: compactText(footprint.boundary, 240),
+          estimate: {
+            questionTokens: Number(estimate.questionTokens || 0),
+            retrievalTokens: Number(estimate.retrievalTokens || 0),
+            sourceTokens: Number(estimate.sourceTokens || 0),
+            answerTokens: Number(estimate.answerTokens || 0),
+            totalCloudEquivalentTokens: Number(estimate.totalCloudEquivalentTokens || 0),
+          },
+        };
       }
 
       function compactGraph(graph) {
@@ -10841,10 +10939,10 @@
         if (conflictSignals.length === 0 && !feedback) return undefined;
         return {
           level: audit.level,
-          label: audit.label,
+          label: String(audit.label || "").replace("可信度较高", "引用支撑较充分"),
           feedback,
           summary: compactText(audit.summary, 220),
-          caution: compactText(audit.caution, 220),
+          caution: compactText(String(audit.caution || "").replace("可信度检查", "引用核对"), 220),
           conflictSignals,
         };
       }
@@ -10877,7 +10975,7 @@
           : [];
         if (categories.length === 0) return undefined;
         return {
-          title: compactText(trust.title || "本轮来源可信链路", 100),
+          title: compactText(String(trust.title || "本轮来源核对状态").replace("本轮来源可信链路", "本轮来源核对状态"), 100),
           status: compactText(trust.status || "needs_source", 40),
           label: compactText(trust.label, 140),
           summary: compactText(trust.summary, 260),
@@ -13336,6 +13434,7 @@
         try {
           const payload = await fetchJson("/api/notebooks");
           notebooks = Array.isArray(payload.notebooks) ? payload.notebooks : [];
+          hiddenTestNotebookCount = Number(payload.hiddenTestNotebookCount || 0);
           renderNotebooks();
         } catch (error) {
           notebooksEl.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
@@ -13343,11 +13442,14 @@
       }
 
       function renderNotebooks() {
+        const hiddenNotice = hiddenTestNotebookCount > 0
+          ? `<p class="status">已隐藏 ${escapeHtml(hiddenTestNotebookCount)} 个验收测试会话，避免混入真实专题。</p>`
+          : "";
         if (!notebooks.length) {
-          notebooksEl.innerHTML = `<p class="status">提问后会自动保存为专题会话，刷新或重启后可恢复。</p>`;
+          notebooksEl.innerHTML = `${hiddenNotice}<p class="status">提问后会自动保存为专题会话，刷新或重启后可恢复。</p>`;
           return;
         }
-        notebooksEl.innerHTML = notebooks
+        notebooksEl.innerHTML = hiddenNotice + notebooks
           .slice(0, 8)
           .map((notebook) => {
             const active = notebook.id === sessionId;
@@ -13444,7 +13546,7 @@
         }
         notebookStudyPackEl.hidden = false;
         if (pack.loading) {
-          notebookStudyPackEl.innerHTML = `<p class="status">正在整理专题学习包...</p>`;
+          notebookStudyPackEl.innerHTML = `<p class="status">正在整理本地学习包预览...</p>`;
           return;
         }
         if (pack.error) {
@@ -13454,7 +13556,7 @@
         const overview = pack.overview || {};
         notebookStudyPackEl.innerHTML = `<header>
           <span class="study-pack-title">
-            <strong>${escapeHtml(pack.title || "专题学习包")}</strong>
+            <strong>${escapeHtml(pack.title || "本地学习包预览")}</strong>
             <span>${escapeHtml(pack.topic || "")}</span>
           </span>
           <span class="study-pack-actions">
@@ -13470,7 +13572,7 @@
           <div class="study-pack-metric"><strong>${Number(overview.conceptCount || 0)}</strong><span>概念</span></div>
           <div class="study-pack-metric"><strong>${Number(overview.graphNodes || 0)}</strong><span>图谱节点</span></div>
         </div>
-        <p class="study-pack-boundary">${escapeHtml(pack.boundary || "专题学习包是系统整理，不是作者原文证据。")}</p>
+        <p class="study-pack-boundary">${escapeHtml(pack.boundary || "本地学习包预览是系统整理，不是作者原文证据；不包含音频或视频功能。")}</p>
         ${renderStudyPackCards("学习要点", pack.takeaways, renderStudyPackTakeaway)}
         ${renderStudyPackCards("执行清单", pack.checklist, renderStudyPackChecklistItem)}
         ${renderStudyPackCards("复习题", pack.reviewQuestions, renderStudyPackReviewQuestion)}
@@ -13523,7 +13625,7 @@
         const masteryCount = Array.isArray(studio.masteryQuiz?.items) ? studio.masteryQuiz.items.length : 0;
         const actionCount = Array.isArray(studio.actionPlan?.steps) ? studio.actionPlan.steps.length : 0;
         return `<section class="study-pack-section">
-          <strong>Studio 产物包</strong>
+          <strong>本地学习包预览</strong>
           <div class="study-pack-studio-actions">
             <button class="small-action" type="button" data-study-pack-download-flashcards ${flashcardCount ? "" : "disabled"}>下载复习卡 CSV</button>
             <button class="small-action" type="button" data-study-pack-download-sources ${sourceCount ? "" : "disabled"}>下载来源表 CSV</button>
@@ -13542,14 +13644,14 @@
           ${renderStudyPackStudioFlashcards(studio.flashcards)}
           ${renderStudyPackStudioMindMap(studio.mindMap)}
           ${renderStudyPackStudioSourceTable(studio.sourceTable)}
-          <p class="study-pack-boundary">${escapeHtml(studio.boundary || "Studio 产物是系统整理；作者原文证据仍以来源账本为准。")}</p>
+          <p class="study-pack-boundary">${escapeHtml(studio.boundary || "本地学习包预览是文字整理；作者原文证据仍以来源账本为准，不包含音频或视频功能。")}</p>
         </section>`;
       }
 
       function renderStudyPackStudioReport(sections) {
         const safeSections = Array.isArray(sections) ? sections.filter((section) => section?.title && Array.isArray(section.items) && section.items.length).slice(0, 6) : [];
         if (!safeSections.length) return "";
-        return `<div class="study-pack-report" aria-label="Studio 报告章节">${safeSections.map((section) => `<article class="study-pack-report-card">
+        return `<div class="study-pack-report" aria-label="本地学习包报告章节">${safeSections.map((section) => `<article class="study-pack-report-card">
           <strong>${escapeHtml(section.title)}</strong>
           <ul>${section.items.slice(0, 8).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
         </article>`).join("")}</div>`;
@@ -13749,7 +13851,7 @@
         link.click();
         link.remove();
         window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        notesEl.innerHTML = `<p class="status">已导出专题学习包：${escapeHtml(filename)}。</p>`;
+        notesEl.innerHTML = `<p class="status">已导出本地学习包预览：${escapeHtml(filename)}。</p>`;
       }
 
       function renderStudyPackCards(title, items, renderer) {

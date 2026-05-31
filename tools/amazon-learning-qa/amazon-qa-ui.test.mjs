@@ -147,6 +147,10 @@ test("sidebar exposes restorable topic notebooks and preserves answer graphs", (
   assert.match(html, /payload\.notebook/);
   assert.match(html, /upsertNotebook/);
   assert.match(html, /graph:\s*compactGraph\(message\.graph\)/);
+  assert.match(html, /hiddenTestNotebookCount/);
+  assert.match(html, /已隐藏/);
+  assert.match(serverSource, /TEST_NOTEBOOK_ID_PATTERNS/);
+  assert.match(serverSource, /hiddenTestNotebookCount/);
   assert.match(html, /专题会话是系统整理，不是作者原文证据/);
 });
 
@@ -156,12 +160,12 @@ test("topic notebooks can render a source-bound study pack", () => {
   assert.match(html, /renderNotebookStudyPack/);
   assert.match(html, /\/api\/notebooks\/\$\{encodeURIComponent\(id\)\}\/study-pack/);
   assert.match(html, /data-notebook-study-pack/);
-  assert.match(html, /专题学习包/);
+  assert.match(html, /本地学习包预览/);
   assert.match(html, /来源账本/);
   assert.match(html, /复制 Markdown/);
   assert.match(html, /下载 Markdown/);
   assert.match(html, /下载 JSON/);
-  assert.match(html, /Studio 产物包/);
+  assert.doesNotMatch(html, /Studio 产物包/);
   assert.match(html, /renderStudyPackStudio/);
   assert.match(html, /renderStudyPackStudioReport/);
   assert.match(html, /renderStudyPackStudioActionPlan/);
@@ -365,17 +369,26 @@ test("assistant answers expose a source trust chain with explicit evidence class
   assert.match(html, /renderSourceTrustCard/);
   assert.match(html, /sourceTrust:\s*payload\.sourceTrust/);
   assert.match(html, /sourceTrust:\s*compactSourceTrust\(message\.sourceTrust\)/);
-  assert.match(html, /本轮来源可信链路/);
+  assert.match(html, /本轮来源核对状态/);
   assert.match(html, /作者原文证据/);
   assert.match(html, /二次摘要\/系统整理/);
   assert.match(html, /用户产品材料/);
   assert.match(html, /实验\/复盘/);
   assert.match(html, /不足以确认/);
-  assert.match(html, /有来源不等于已验证/);
+  assert.match(html, /有来源不等于已经人工核验或业务验证完成/);
   assert.match(html, /用户产品材料不是作者原文证据/);
   assert.match(html, /实验复盘不是作者原文证据/);
   assert.doesNotMatch(html, /source-trust[\s\S]{0,1200}data-dossier-source-decision/);
   assert.doesNotMatch(html, /source-trust[\s\S]{0,1200}saveLearningNote/);
+});
+
+test("assistant answers expose local token and cost footprint", () => {
+  assert.match(html, /renderUsageFootprint/);
+  assert.match(html, /usageFootprint:\s*payload\.usageFootprint/);
+  assert.match(html, /usageFootprint:\s*compactUsageFootprint\(message\.usageFootprint\)/);
+  assert.match(html, /本轮运行成本/);
+  assert.match(html, /云端 token/);
+  assert.match(html, /当前本机运行，不产生云端 token 费用/);
 });
 
 test("assistant answers expose and preserve a knowledge gap radar", () => {
