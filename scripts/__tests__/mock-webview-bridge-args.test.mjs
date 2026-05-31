@@ -22,7 +22,7 @@ test('mock-webview-bridge --help prints usage without opening a listener', () =>
 });
 
 test('mock-webview-bridge rejects invalid ports before WebSocket startup', () => {
-  for (const args of [['nope'], ['0'], ['65536'], ['9826', 'extra']]) {
+  for (const args of [['nope'], ['0'], ['65536'], ['9826', 'extra'], ['9826', '']]) {
     const result = run(args);
 
     assert.equal(result.status, 2, result.stdout);

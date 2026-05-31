@@ -11,12 +11,13 @@ function usage() {
 }
 
 function readPortArg() {
-  const [rawPort, extra] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const [rawPort] = args;
   if (rawPort === '--help' || rawPort === '-h') {
     console.log(usage());
     process.exit(0);
   }
-  if (extra) {
+  if (args.length > 1) {
     console.error(usage());
     process.exit(2);
   }
