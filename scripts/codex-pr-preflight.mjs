@@ -42,11 +42,19 @@ function runCheck(label, ok, details = '') {
 }
 
 function sameFilesystemPath(left, right) {
+  let resolvedLeft;
+  let resolvedRight;
   try {
-    return fs.realpathSync(left) === fs.realpathSync(right);
+    resolvedLeft = fs.realpathSync(left);
   } catch {
-    return path.resolve(left) === path.resolve(right);
+    resolvedLeft = path.resolve(left);
   }
+  try {
+    resolvedRight = fs.realpathSync(right);
+  } catch {
+    resolvedRight = path.resolve(right);
+  }
+  return resolvedLeft === resolvedRight;
 }
 
 function summarize(checks) {
