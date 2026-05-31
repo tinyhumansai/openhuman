@@ -776,11 +776,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "degraded",
                     ty: TypeSchema::Json,
                     comment: "#002 (FR-002/FR-004): object `{ semantic_recall: bool, \
-                              structure: bool, cause: PipelineFailure | null }`. The \
-                              pipeline ran but output quality is reduced — \
-                              `semantic_recall` when embeddings were skipped, \
-                              `structure` when extraction yielded nothing. Distinct \
-                              from a hard `error`. Always present (serde default).",
+                              structure: bool, cause?: PipelineFailure }`. The pipeline \
+                              ran but output quality is reduced — `semantic_recall` when \
+                              embeddings were skipped, `structure` when extraction \
+                              yielded nothing. `cause` is the single precedence-resolved \
+                              failure (structure over semantic_recall) and is OMITTED \
+                              when no degradation is active; the recall/structure flags \
+                              are tracked independently behind it. The object itself is \
+                              always present (serde default). Distinct from a hard `error`.",
                     required: true,
                 },
                 FieldSchema {
@@ -795,12 +798,14 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 FieldSchema {
                     name: "extraction_coverage",
-                    ty: TypeSchema::F64,
+                    ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
                     comment: "#002 (FR-010): fraction [0.0, 1.0] of chunks with ≥1 \
                               indexed entity. Near 0 with total_chunks > 0 means \
-                              extraction produces no structure. Best-effort — 0.0 on a \
-                              DB error.",
-                    required: true,
+                              extraction produces no structure. `null` when the metric \
+                              could not be measured (DB read error) — deliberately \
+                              distinct from a genuine `0.0` so a broken measurement is \
+                              never misreported as a structure failure.",
+                    required: false,
                 },
             ],
         },

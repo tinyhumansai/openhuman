@@ -68,6 +68,12 @@ pub enum FailureCode {
     LocalModelUnavailable,
     /// The extraction model timed out / exhausted retries.
     ExtractionTimeout,
+    /// No summarization provider could be resolved for "Build Summary Trees"
+    /// — neither local AI nor a configured cloud chat provider. Distinct from
+    /// [`LocalModelUnavailable`](Self::LocalModelUnavailable), which implies the
+    /// local path was selected; this covers the cloud-only setup whose provider
+    /// failed to resolve, so the remediation names both paths.
+    SummarizerUnavailable,
     /// Catch-all transient failure (network 5xx, timeout, truncated JSON).
     Transient,
 }
@@ -83,6 +89,7 @@ impl FailureCode {
             Self::EmbeddingDimMismatch => "embedding_dim_mismatch",
             Self::LocalModelUnavailable => "local_model_unavailable",
             Self::ExtractionTimeout => "extraction_timeout",
+            Self::SummarizerUnavailable => "summarizer_unavailable",
             Self::Transient => "transient",
         }
     }
@@ -96,6 +103,7 @@ impl FailureCode {
             "embedding_dim_mismatch" => Self::EmbeddingDimMismatch,
             "local_model_unavailable" => Self::LocalModelUnavailable,
             "extraction_timeout" => Self::ExtractionTimeout,
+            "summarizer_unavailable" => Self::SummarizerUnavailable,
             "transient" => Self::Transient,
             _ => return None,
         })
@@ -120,6 +128,7 @@ impl FailureCode {
             Self::EmbeddingDimMismatch => "memory.health.remediation.embedding_dim_mismatch",
             Self::LocalModelUnavailable => "memory.health.remediation.local_model_unavailable",
             Self::ExtractionTimeout => "memory.health.remediation.extraction_timeout",
+            Self::SummarizerUnavailable => "memory.health.remediation.summarizer_unavailable",
             Self::Transient => "memory.health.remediation.transient",
         }
     }
@@ -342,7 +351,8 @@ fn code_to_u8(code: FailureCode) -> u8 {
         FailureCode::EmbeddingDimMismatch => 5,
         FailureCode::LocalModelUnavailable => 6,
         FailureCode::ExtractionTimeout => 7,
-        FailureCode::Transient => 8,
+        FailureCode::SummarizerUnavailable => 8,
+        FailureCode::Transient => 9,
     }
 }
 
@@ -355,7 +365,8 @@ fn u8_to_code(v: u8) -> Option<FailureCode> {
         5 => FailureCode::EmbeddingDimMismatch,
         6 => FailureCode::LocalModelUnavailable,
         7 => FailureCode::ExtractionTimeout,
-        8 => FailureCode::Transient,
+        8 => FailureCode::SummarizerUnavailable,
+        9 => FailureCode::Transient,
         _ => return None,
     })
 }
@@ -439,7 +450,7 @@ pub fn current_degraded_state() -> DegradedState {
 mod tests {
     use super::*;
 
-    const ALL_CODES: [FailureCode; 8] = [
+    const ALL_CODES: [FailureCode; 9] = [
         FailureCode::BudgetExhausted,
         FailureCode::AuthMissing,
         FailureCode::AuthInvalid,
@@ -447,6 +458,7 @@ mod tests {
         FailureCode::EmbeddingDimMismatch,
         FailureCode::LocalModelUnavailable,
         FailureCode::ExtractionTimeout,
+        FailureCode::SummarizerUnavailable,
         FailureCode::Transient,
     ];
 

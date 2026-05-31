@@ -182,24 +182,20 @@ fn create_provider(
 /// under the current config — the single source of truth the memory doctor
 /// reuses so its `summary_tree` stage matches the runtime path (#002 FR-007).
 ///
-/// Mirrors [`create_provider`]'s decision without building the heavy provider:
+/// Routes through [`create_provider`] (the SAME resolver the runtime uses) so
+/// the doctor can never drift from what "Build Summary Trees" actually does:
 /// local AI enabled ⇒ available; otherwise available iff the configured
-/// summarization-role provider resolves (the cloud fallback). Returns
-/// `(available, note)` so the doctor can explain which path will run.
+/// summarization-role provider resolves (the cloud fallback). The provider it
+/// builds is dropped — construction is cheap (no network) and confirming by
+/// build beats guessing. Returns `(available, note)` so the doctor can explain
+/// which path will run.
 pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
-    if config.local_ai.runtime_enabled {
-        return (
+    let local = config.local_ai.runtime_enabled;
+    match create_provider(config) {
+        Ok(_) if local => (
             true,
             "local AI enabled — Build Summary Trees runs on the local model",
-        );
-    }
-    // Cloud fallback: a summarization provider resolves from config (the
-    // managed backend backstops this, so it's effectively always available
-    // for a logged-in user). Build it to confirm rather than guessing.
-    match crate::openhuman::inference::provider::factory::create_chat_provider(
-        "summarization",
-        config,
-    ) {
+        ),
         Ok(_) => (
             true,
             "local AI off — Build Summary Trees runs on the configured cloud provider",

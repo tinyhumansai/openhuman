@@ -320,10 +320,13 @@ pub struct PipelineStatusResponse {
     pub first_blocking_cause: Option<crate::openhuman::memory_tree::health::PipelineFailure>,
     /// #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
     /// `[0.0, 1.0]`. Near 0 with `total_chunks > 0` means extraction is
-    /// producing no structure (the "empty-but-built wiki"). Additive
-    /// (`#[serde(default)]` → 0.0 for older clients).
+    /// producing no structure (the "empty-but-built wiki"). `None` when the
+    /// metric could not be measured (DB read error) — deliberately distinct
+    /// from a genuine `Some(0.0)` so the status surface never misreports a
+    /// broken measurement path as a structure failure. Additive
+    /// (`#[serde(default)]` → `None` for older clients).
     #[serde(default)]
-    pub extraction_coverage: f32,
+    pub extraction_coverage: Option<f32>,
 }
 
 /// `memory_tree_pipeline_status` RPC handler (#1856 Part 1).
@@ -422,20 +425,22 @@ pub async fn pipeline_status_rpc(
     // #002: both of these touch SQLite, so run them off the async runtime
     // thread in a single blocking task (a contended DB could otherwise pin a
     // Tokio worker for the busy-timeout window). Best-effort — failures degrade
-    // to (None, 0.0) rather than failing the polled status RPC.
+    // to `None` rather than failing the polled status RPC.
     //   - first_blocking_cause (FR-004): the most-recent failed job's typed
     //     reason, surfaced verbatim by the UI.
     //   - extraction_coverage (FR-010/US5): fraction of chunks with structure.
+    //     `None` (not `0.0`) on a read error, so a broken measurement path is
+    //     never mistaken for a genuine 0% extraction rate.
     let (latest_failure, extraction_coverage) = {
         let cfg = config.clone();
         tokio::task::spawn_blocking(move || {
             let failure = latest_failed_job_failure(&cfg).unwrap_or(None);
-            let coverage = crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg)
-                .unwrap_or(0.0);
+            let coverage =
+                crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg).ok();
             (failure, coverage)
         })
         .await
-        .unwrap_or((None, 0.0))
+        .unwrap_or((None, None))
     };
 
     // A hard failed-job reason is more urgent than a soft degradation; fall

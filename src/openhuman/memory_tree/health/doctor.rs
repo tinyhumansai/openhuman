@@ -195,7 +195,7 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
     } else {
         StageHealth::bad(
             "summary_tree",
-            PipelineFailure::new(FailureCode::LocalModelUnavailable),
+            PipelineFailure::new(FailureCode::SummarizerUnavailable),
             summary_note,
         )
     });

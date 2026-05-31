@@ -727,6 +727,7 @@ export type MemoryTreeFailureCode =
   | 'embedding_dim_mismatch'
   | 'local_model_unavailable'
   | 'extraction_timeout'
+  | 'summarizer_unavailable'
   | 'transient';
 
 /**

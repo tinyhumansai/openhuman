@@ -525,6 +525,8 @@ const en: TranslationMap = {
     'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
   'memory.health.remediation.extraction_timeout':
     'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
