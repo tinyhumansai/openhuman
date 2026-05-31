@@ -35,7 +35,12 @@ const GraphCoreTab = () => {
         log('load:stale request=%d (newer load in flight)', requestId);
         return;
       }
-      log('load:success request=%d nodes=%d degeneracy=%d', requestId, next.nodeCount, next.degeneracy);
+      log(
+        'load:success request=%d nodes=%d degeneracy=%d',
+        requestId,
+        next.nodeCount,
+        next.degeneracy
+      );
       setResult(next);
     } catch (err) {
       if (requestId !== latestRequestId.current) {

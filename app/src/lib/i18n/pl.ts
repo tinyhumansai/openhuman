@@ -4418,12 +4418,15 @@ const messages: TranslationMap = {
   'graphCore.colLinks': 'Links',
   'graphCore.colRank': '#',
   'graphCore.coreBadge': 'core',
-  'graphCore.coreTitle': 'In the densest {degeneracy}-core — every member here keeps at least {degeneracy} links to other core members.',
+  'graphCore.coreTitle':
+    'In the densest {degeneracy}-core — every member here keeps at least {degeneracy} links to other core members.',
   'graphCore.degeneracyCaption': 'Densest shell: {degeneracy}-core · {coreSize} entities',
   'graphCore.empty': 'No knowledge graph yet.',
-  'graphCore.emptyHint': 'As the assistant records connected facts about you, the densely-linked core will surface here.',
+  'graphCore.emptyHint':
+    'As the assistant records connected facts about you, the densely-linked core will surface here.',
   'graphCore.errorPrefix': 'Could not load the graph:',
-  'graphCore.intro': 'k-core decomposition separates the load-bearing core of your knowledge — entities mutually reinforced by many interlinked facts — from the periphery of leaves and bridges. A high-degree hub of one-off facts still has coreness 1; depth, not degree, marks the core.',
+  'graphCore.intro':
+    'k-core decomposition separates the load-bearing core of your knowledge — entities mutually reinforced by many interlinked facts — from the periphery of leaves and bridges. A high-degree hub of one-off facts still has coreness 1; depth, not degree, marks the core.',
   'graphCore.loading': 'Computing core structure…',
   'graphCore.metricConnections': 'Connections',
   'graphCore.metricDegeneracy': 'Degeneracy',
