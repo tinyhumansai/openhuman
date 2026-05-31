@@ -41,6 +41,14 @@ function runCheck(label, ok, details = '') {
   return { label, ok, details };
 }
 
+function sameFilesystemPath(left, right) {
+  try {
+    return fs.realpathSync(left) === fs.realpathSync(right);
+  } catch {
+    return path.resolve(left) === path.resolve(right);
+  }
+}
+
 function summarize(checks) {
   const failed = checks.filter((check) => !check.ok);
   for (const check of checks) {
@@ -75,7 +83,7 @@ function main() {
 
   checks.push(runCheck('working directory exists', fs.existsSync(repoRoot), repoRoot));
   if (options.strictPath) {
-    checks.push(runCheck('expected repo path', path.resolve(repoRoot) === path.resolve(options.expectedPath), `expected ${options.expectedPath}, got ${repoRoot}`));
+    checks.push(runCheck('expected repo path', sameFilesystemPath(repoRoot, options.expectedPath), `expected ${options.expectedPath}, got ${repoRoot}`));
   }
 
   for (const file of REQUIRED_FILES) {
