@@ -580,7 +580,7 @@ async fn approval_gate_rpc_decision_resumes_parked_tool_and_records_execution() 
     let config = Config::load_or_init()
         .await
         .expect("load config for approval gate");
-    let gate = ApprovalGate::init_global(config, "worker-b-approval-session");
+    let gate = ApprovalGate::init_global(config, "session-worker-b-approval");
     let gate_for_task = gate.clone();
 
     let approval_task = tokio::spawn(async move {
