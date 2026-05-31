@@ -648,14 +648,19 @@ async fn round16_spawn_subagent_tool_and_runner_error_success_paths() {
 
     let disabled_thread = tool
         .execute(json!({
-            "agent_id": "researcher",
-            "prompt": "do work",
-            "dedicated_thread": true
+                "agent_id": "researcher",
+                "prompt": "do work",
+                "dedicated_thread": true
         }))
         .await
         .expect("dedicated thread returns tool result");
     assert!(disabled_thread.is_error);
-    assert!(disabled_thread.output().contains("temporarily disabled"));
+    let disabled_output = disabled_thread.output();
+    assert!(!disabled_output.contains("temporarily disabled"));
+    assert!(
+        disabled_output.contains("AgentDefinitionRegistry has not been initialised")
+            || disabled_output.contains("no parent context")
+    );
 
     let provider = Arc::new(ScriptedProvider::new(vec![response(
         Some("subagent final answer that will be clipped"),
