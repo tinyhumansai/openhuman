@@ -4401,6 +4401,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': '평균 군집계수 {avg} · 전이성 {transitivity}',
   'graphCohesion.title': '그래프 응집도',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': '도달 범위',
+  'graphReach.title': '그래프 도달 범위',
+  'graphReach.intro':
+    '이심률은 엔티티가 도달할 수 있는 모든 것으로부터 얼마나 멀리 있는지를 나타냅니다 — 가장 긴 최단 경로. 지름은 가장 넓은 간격이고, 반지름은 가장 작은 간격이며, 중심은 가장 적은 홉으로 전체 클러스터에 도달하는 엔티티입니다. 차수도 PageRank도 중심을 드러내지 못합니다.',
+  'graphReach.loading': '도달 범위 계산 중…',
+  'graphReach.errorPrefix': '그래프를 불러올 수 없습니다:',
+  'graphReach.retry': '재시도',
+  'graphReach.empty': '아직 지식 그래프가 없습니다.',
+  'graphReach.emptyHint':
+    '어시스턴트가 당신에 대한 연결된 사실을 기록하면, 메모리의 형태와 중심이 여기에 표시됩니다.',
+  'graphReach.namespaceLabel': '네임스페이스',
+  'graphReach.namespaceAll': '모든 네임스페이스',
+  'graphReach.metricEntities': '엔티티',
+  'graphReach.metricDiameter': '지름',
+  'graphReach.metricRadius': '반지름',
+  'graphReach.summaryCaption': '{components}개 구성요소 · 가장 큰 것에 {giant}개',
+  'graphReach.summaryCaptionOne': '구성요소 1개 · {giant}개 엔티티',
+  'graphReach.summaryCaptionOneAndOne': '구성요소 1개 · 엔티티 1개',
+  'graphReach.rankedHeading': '가장 중심적인 엔티티',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': '엔티티',
+  'graphReach.colEccentricity': '이심률',
+  'graphReach.colLinks': '링크',
+  'graphReach.centerBadge': '중심',
+  'graphReach.centerTitle':
+    '클러스터의 중심 — 가능한 가장 적은 홉으로 연결된 모든 엔티티에 도달합니다 (이심률이 반지름과 같음).',
 };
 
 export default messages;

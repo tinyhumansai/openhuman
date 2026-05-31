@@ -4434,6 +4434,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'গড় ক্লাস্টারিং {avg} · সংক্রমণতা {transitivity}',
   'graphCohesion.title': 'গ্রাফ সংসক্তি',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'পৌঁছানো',
+  'graphReach.title': 'গ্রাফ রিচ',
+  'graphReach.intro':
+    'এক্সেন্ট্রিসিটি হলো একটি সত্তা তার পৌঁছানো সবকিছু থেকে কতটা দূরে — তার দীর্ঘতম সংক্ষিপ্ততম পথ। ডায়ামিটার হলো সবচেয়ে বড় এই ব্যবধান, রেডিয়াস হলো সবচেয়ে ছোট, এবং কেন্দ্র হলো সেই সত্তা যা সবচেয়ে কম হপে পুরো ক্লাস্টারে পৌঁছায়। ডিগ্রি বা PageRank কেউই কেন্দ্র প্রকাশ করে না।',
+  'graphReach.loading': 'রিচ গণনা করা হচ্ছে…',
+  'graphReach.errorPrefix': 'গ্রাফ লোড করা যায়নি:',
+  'graphReach.retry': 'পুনরায় চেষ্টা',
+  'graphReach.empty': 'এখনো কোনো জ্ঞান গ্রাফ নেই।',
+  'graphReach.emptyHint':
+    'সহকারী আপনার সম্পর্কে সংযুক্ত তথ্য রেকর্ড করার সাথে সাথে আপনার স্মৃতির আকৃতি ও কেন্দ্র এখানে প্রদর্শিত হবে।',
+  'graphReach.namespaceLabel': 'নেমস্পেস',
+  'graphReach.namespaceAll': 'সমস্ত নেমস্পেস',
+  'graphReach.metricEntities': 'সত্তাসমূহ',
+  'graphReach.metricDiameter': 'ডায়ামিটার',
+  'graphReach.metricRadius': 'রেডিয়াস',
+  'graphReach.summaryCaption': '{components}টি উপাংশ · সবচেয়ে বড়টিতে {giant}টি',
+  'graphReach.summaryCaptionOne': '১টি উপাংশ · {giant}টি সত্তা',
+  'graphReach.summaryCaptionOneAndOne': '১টি উপাংশ · ১টি সত্তা',
+  'graphReach.rankedHeading': 'সবচেয়ে কেন্দ্রীয় সত্তাসমূহ',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'সত্তা',
+  'graphReach.colEccentricity': 'এক্সেন্ট্রিসিটি',
+  'graphReach.colLinks': 'লিঙ্কসমূহ',
+  'graphReach.centerBadge': 'কেন্দ্র',
+  'graphReach.centerTitle':
+    'তার ক্লাস্টারের একটি কেন্দ্র — সবচেয়ে কম সম্ভব হপে প্রতিটি সংযুক্ত সত্তায় পৌঁছায় (এক্সেন্ট্রিসিটি রেডিয়াসের সমান)।',
 };
 
 export default messages;

@@ -4551,6 +4551,32 @@ const messages: TranslationMap = {
     'Durchschnittliches Clustering {avg} · Transitivität {transitivity}',
   'graphCohesion.title': 'Graph-Kohäsion',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Reichweite',
+  'graphReach.title': 'Graph-Reichweite',
+  'graphReach.intro':
+    'Die Exzentrizität gibt an, wie weit eine Entität von allem entfernt ist, was sie erreichen kann — ihr längster kürzester Pfad. Der Durchmesser ist die größte solche Lücke, der Radius die kleinste, und das Zentrum ist die Entität, die den gesamten Cluster in den wenigsten Schritten erreicht. Weder Grad noch PageRank zeigt das Zentrum.',
+  'graphReach.loading': 'Berechne Reichweite…',
+  'graphReach.errorPrefix': 'Graph konnte nicht geladen werden:',
+  'graphReach.retry': 'Wiederholen',
+  'graphReach.empty': 'Noch kein Wissensgraph.',
+  'graphReach.emptyHint':
+    'Während der Assistent verbundene Fakten über Sie erfasst, erscheinen hier die Form und das Zentrum Ihres Gedächtnisses.',
+  'graphReach.namespaceLabel': 'Namensraum',
+  'graphReach.namespaceAll': 'Alle Namensräume',
+  'graphReach.metricEntities': 'Entitäten',
+  'graphReach.metricDiameter': 'Durchmesser',
+  'graphReach.metricRadius': 'Radius',
+  'graphReach.summaryCaption': '{components} Komponenten · größte enthält {giant}',
+  'graphReach.summaryCaptionOne': '1 Komponente · {giant} Entitäten',
+  'graphReach.summaryCaptionOneAndOne': '1 Komponente · 1 Entität',
+  'graphReach.rankedHeading': 'Zentralste Entitäten',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Entität',
+  'graphReach.colEccentricity': 'Exzentrizität',
+  'graphReach.colLinks': 'Verknüpfungen',
+  'graphReach.centerBadge': 'Zentrum',
+  'graphReach.centerTitle':
+    'Ein Zentrum seines Clusters — erreicht jede verbundene Entität in den wenigsten möglichen Schritten (Exzentrizität entspricht dem Radius).',
 };
 
 export default messages;

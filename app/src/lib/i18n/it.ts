@@ -4512,6 +4512,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Raggruppamento medio {avg} · transitività {transitivity}',
   'graphCohesion.title': 'Coesione del grafo',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Raggiungibilità',
+  'graphReach.title': 'Raggiungibilità del grafo',
+  'graphReach.intro':
+    "L'eccentricità indica quanto un'entità sia lontana da tutto ciò che può raggiungere — il suo percorso più corto più lungo. Il diametro è il divario più ampio, il raggio il più piccolo, e il centro è l'entità che raggiunge l'intero cluster nel minor numero di salti. Né il grado né PageRank evidenziano il centro.",
+  'graphReach.loading': 'Calcolo raggiungibilità…',
+  'graphReach.errorPrefix': 'Impossibile caricare il grafo:',
+  'graphReach.retry': 'Riprova',
+  'graphReach.empty': 'Nessun grafo della conoscenza ancora.',
+  'graphReach.emptyHint':
+    "Man mano che l'assistente registra fatti connessi su di te, la forma e il centro della tua memoria appariranno qui.",
+  'graphReach.namespaceLabel': 'Namespace',
+  'graphReach.namespaceAll': 'Tutti i namespace',
+  'graphReach.metricEntities': 'Entità',
+  'graphReach.metricDiameter': 'Diametro',
+  'graphReach.metricRadius': 'Raggio',
+  'graphReach.summaryCaption': '{components} componenti · il più grande ha {giant}',
+  'graphReach.summaryCaptionOne': '1 componente · {giant} entità',
+  'graphReach.summaryCaptionOneAndOne': '1 componente · 1 entità',
+  'graphReach.rankedHeading': 'Entità più centrali',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Entità',
+  'graphReach.colEccentricity': 'Eccentricità',
+  'graphReach.colLinks': 'Connessioni',
+  'graphReach.centerBadge': 'centro',
+  'graphReach.centerTitle':
+    "Un centro del suo cluster — raggiunge ogni entità connessa nel minor numero possibile di salti (l'eccentricità è uguale al raggio).",
 };
 
 export default messages;

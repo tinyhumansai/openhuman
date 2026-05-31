@@ -4478,6 +4478,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Средняя кластеризация {avg} · транзитивность {transitivity}',
   'graphCohesion.title': 'Связность графа',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Охват',
+  'graphReach.title': 'Охват графа',
+  'graphReach.intro':
+    'Эксцентриситет показывает, насколько далеко вершина находится от всего, чего она может достичь — её самый длинный кратчайший путь. Диаметр — это наибольший такой разрыв, радиус — наименьший, а центр — вершина, которая достигает всего кластера за наименьшее число шагов. Ни степень, ни PageRank не выявляют центр.',
+  'graphReach.loading': 'Вычисление охвата…',
+  'graphReach.errorPrefix': 'Не удалось загрузить граф:',
+  'graphReach.retry': 'Повторить',
+  'graphReach.empty': 'Граф знаний пока отсутствует.',
+  'graphReach.emptyHint':
+    'По мере того как ассистент записывает связанные факты о вас, форма и центр вашей памяти появятся здесь.',
+  'graphReach.namespaceLabel': 'Пространство имён',
+  'graphReach.namespaceAll': 'Все пространства имён',
+  'graphReach.metricEntities': 'Сущности',
+  'graphReach.metricDiameter': 'Диаметр',
+  'graphReach.metricRadius': 'Радиус',
+  'graphReach.summaryCaption': '{components} компонент · наибольший содержит {giant}',
+  'graphReach.summaryCaptionOne': '1 компонент · {giant} сущностей',
+  'graphReach.summaryCaptionOneAndOne': '1 компонент · 1 сущность',
+  'graphReach.rankedHeading': 'Наиболее центральные сущности',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Сущность',
+  'graphReach.colEccentricity': 'Эксцентриситет',
+  'graphReach.colLinks': 'Связи',
+  'graphReach.centerBadge': 'центр',
+  'graphReach.centerTitle':
+    'Центр своего кластера — достигает каждой связанной сущности за наименьшее возможное число шагов (эксцентриситет равен радиусу).',
 };
 
 export default messages;

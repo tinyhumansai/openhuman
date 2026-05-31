@@ -6,6 +6,7 @@ import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
 import EntityAssociationsTab from '../components/intelligence/EntityAssociationsTab';
 import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
 import GraphCohesionTab from '../components/intelligence/GraphCohesionTab';
+import GraphReachTab from '../components/intelligence/GraphReachTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
 import MemoryFreshnessTab from '../components/intelligence/MemoryFreshnessTab';
@@ -35,6 +36,7 @@ type IntelligenceTab =
   | 'diagram'
   | 'centrality'
   | 'cohesion'
+  | 'reach'
   | 'associations'
   | 'freshness'
   | 'timeline'
@@ -121,6 +123,7 @@ export default function Intelligence() {
       { id: 'diagram', label: t('memory.tab.diagram') },
       { id: 'centrality', label: t('memory.tab.centrality') },
       { id: 'cohesion', label: t('memory.tab.cohesion') },
+      { id: 'reach', label: t('memory.tab.reach') },
       { id: 'associations', label: t('memory.tab.associations') },
       { id: 'freshness', label: t('memory.tab.freshness') },
       { id: 'timeline', label: t('memory.tab.timeline') },
@@ -219,6 +222,8 @@ export default function Intelligence() {
             {activeTab === 'centrality' && <GraphCentralityTab />}
 
             {activeTab === 'cohesion' && <GraphCohesionTab />}
+
+            {activeTab === 'reach' && <GraphReachTab />}
 
             {activeTab === 'associations' && <EntityAssociationsTab />}
 

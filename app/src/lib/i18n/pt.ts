@@ -4508,6 +4508,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Agrupamento médio {avg} · transitividade {transitivity}',
   'graphCohesion.title': 'Coesão do grafo',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Alcance',
+  'graphReach.title': 'Alcance do grafo',
+  'graphReach.intro':
+    'A excentricidade mede o quão longe uma entidade está de tudo o que pode alcançar — seu caminho mais curto mais longo. O diâmetro é a maior dessas distâncias, o raio é a menor, e o centro é a entidade que alcança todo o cluster em menos saltos. Nem o grau nem o PageRank revelam o centro.',
+  'graphReach.loading': 'A calcular alcance…',
+  'graphReach.errorPrefix': 'Não foi possível carregar o grafo:',
+  'graphReach.retry': 'Tentar novamente',
+  'graphReach.empty': 'Ainda não há grafo de conhecimento.',
+  'graphReach.emptyHint':
+    'À medida que o assistente regista factos conectados sobre si, a forma e o centro da sua memória aparecerão aqui.',
+  'graphReach.namespaceLabel': 'Espaço de nomes',
+  'graphReach.namespaceAll': 'Todos os espaços de nomes',
+  'graphReach.metricEntities': 'Entidades',
+  'graphReach.metricDiameter': 'Diâmetro',
+  'graphReach.metricRadius': 'Raio',
+  'graphReach.summaryCaption': '{components} componentes · o maior tem {giant}',
+  'graphReach.summaryCaptionOne': '1 componente · {giant} entidades',
+  'graphReach.summaryCaptionOneAndOne': '1 componente · 1 entidade',
+  'graphReach.rankedHeading': 'Entidades mais centrais',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Entidade',
+  'graphReach.colEccentricity': 'Excentricidade',
+  'graphReach.colLinks': 'Ligações',
+  'graphReach.centerBadge': 'centro',
+  'graphReach.centerTitle':
+    'Um centro do seu cluster — alcança cada entidade conectada no menor número possível de saltos (a excentricidade é igual ao raio).',
 };
 
 export default messages;

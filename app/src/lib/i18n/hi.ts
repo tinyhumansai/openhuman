@@ -4442,6 +4442,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'औसत क्लस्टरिंग {avg} · सकर्मकता {transitivity}',
   'graphCohesion.title': 'ग्राफ संसक्ति',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'पहुंच',
+  'graphReach.title': 'ग्राफ पहुंच',
+  'graphReach.intro':
+    'विकेंद्रता बताती है कि एक इकाई अपनी पहुंच की हर चीज़ से कितनी दूर है — उसका सबसे लंबा सबसे छोटा पथ। व्यास सबसे बड़ा ऐसा अंतर है, त्रिज्या सबसे छोटा, और केंद्र वह इकाई है जो सबसे कम चरणों में पूरे क्लस्टर तक पहुंचती है। न डिग्री और न PageRank केंद्र को उजागर करता है।',
+  'graphReach.loading': 'पहुंच की गणना हो रही है…',
+  'graphReach.errorPrefix': 'ग्राफ लोड नहीं हो सका:',
+  'graphReach.retry': 'पुनः प्रयास',
+  'graphReach.empty': 'अभी तक कोई ज्ञान ग्राफ नहीं है।',
+  'graphReach.emptyHint':
+    'जैसे-जैसे सहायक आपके बारे में जुड़े हुए तथ्य दर्ज करेगा, आपकी स्मृति की आकृति और केंद्र यहाँ दिखेगा।',
+  'graphReach.namespaceLabel': 'नेमस्पेस',
+  'graphReach.namespaceAll': 'सभी नेमस्पेस',
+  'graphReach.metricEntities': 'इकाइयाँ',
+  'graphReach.metricDiameter': 'व्यास',
+  'graphReach.metricRadius': 'त्रिज्या',
+  'graphReach.summaryCaption': '{components} घटक · सबसे बड़े में {giant}',
+  'graphReach.summaryCaptionOne': '1 घटक · {giant} इकाइयाँ',
+  'graphReach.summaryCaptionOneAndOne': '1 घटक · 1 इकाई',
+  'graphReach.rankedHeading': 'सर्वाधिक केंद्रीय इकाइयाँ',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'इकाई',
+  'graphReach.colEccentricity': 'विकेंद्रता',
+  'graphReach.colLinks': 'लिंक',
+  'graphReach.centerBadge': 'केंद्र',
+  'graphReach.centerTitle':
+    'अपने क्लस्टर का एक केंद्र — न्यूनतम संभव चरणों में हर जुड़ी इकाई तक पहुंचता है (विकेंद्रता त्रिज्या के बराबर है)।',
 };
 
 export default messages;

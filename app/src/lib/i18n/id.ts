@@ -4451,6 +4451,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Pengelompokan rata-rata {avg} · transitivitas {transitivity}',
   'graphCohesion.title': 'Kohesi Graf',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Jangkauan',
+  'graphReach.title': 'Jangkauan Graf',
+  'graphReach.intro':
+    'Eksentrisitas mengukur seberapa jauh suatu entitas dari semua yang bisa dijangkaunya — jalur terpendek terpanjangnya. Diameter adalah celah terlebar, radius adalah yang tersempit, dan pusat adalah entitas yang menjangkau seluruh kluster dalam lompatan paling sedikit. Baik derajat maupun PageRank tidak mengungkapkan pusat.',
+  'graphReach.loading': 'Menghitung jangkauan…',
+  'graphReach.errorPrefix': 'Tidak dapat memuat graf:',
+  'graphReach.retry': 'Coba lagi',
+  'graphReach.empty': 'Belum ada graf pengetahuan.',
+  'graphReach.emptyHint':
+    'Saat asisten mencatat fakta-fakta yang terhubung tentang Anda, bentuk dan pusat memori Anda akan muncul di sini.',
+  'graphReach.namespaceLabel': 'Namespace',
+  'graphReach.namespaceAll': 'Semua namespace',
+  'graphReach.metricEntities': 'Entitas',
+  'graphReach.metricDiameter': 'Diameter',
+  'graphReach.metricRadius': 'Radius',
+  'graphReach.summaryCaption': '{components} komponen · terbesar berisi {giant}',
+  'graphReach.summaryCaptionOne': '1 komponen · {giant} entitas',
+  'graphReach.summaryCaptionOneAndOne': '1 komponen · 1 entitas',
+  'graphReach.rankedHeading': 'Entitas paling sentral',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Entitas',
+  'graphReach.colEccentricity': 'Eksentrisitas',
+  'graphReach.colLinks': 'Tautan',
+  'graphReach.centerBadge': 'pusat',
+  'graphReach.centerTitle':
+    'Pusat klusternya — menjangkau setiap entitas yang terhubung dalam lompatan sesedikit mungkin (eksentrisitas sama dengan radius).',
 };
 
 export default messages;

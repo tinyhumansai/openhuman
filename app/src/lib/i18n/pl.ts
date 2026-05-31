@@ -4509,6 +4509,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Średnia klasteryzacja {avg} · tranzytywność {transitivity}',
   'graphCohesion.title': 'Spójność grafu',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Zasięg',
+  'graphReach.title': 'Zasięg grafu',
+  'graphReach.intro':
+    'Ekscentryczność mierzy, jak daleko wierzchołek jest od wszystkiego, co może osiągnąć — jego najdłuższa najkrótsza ścieżka. Średnica to największa taka odległość, promień — najmniejsza, a centrum to wierzchołek, który dociera do całego klastra w najmniejszej liczbie skoków. Ani stopień, ani PageRank nie ujawniają centrum.',
+  'graphReach.loading': 'Obliczanie zasięgu…',
+  'graphReach.errorPrefix': 'Nie udało się załadować grafu:',
+  'graphReach.retry': 'Ponów',
+  'graphReach.empty': 'Brak grafu wiedzy.',
+  'graphReach.emptyHint':
+    'Gdy asystent zarejestruje powiązane fakty na Twój temat, kształt i centrum Twojej pamięci pojawią się tutaj.',
+  'graphReach.namespaceLabel': 'Przestrzeń nazw',
+  'graphReach.namespaceAll': 'Wszystkie przestrzenie nazw',
+  'graphReach.metricEntities': 'Encje',
+  'graphReach.metricDiameter': 'Średnica',
+  'graphReach.metricRadius': 'Promień',
+  'graphReach.summaryCaption': '{components} składowych · największa zawiera {giant}',
+  'graphReach.summaryCaptionOne': '1 składowa · {giant} encji',
+  'graphReach.summaryCaptionOneAndOne': '1 składowa · 1 encja',
+  'graphReach.rankedHeading': 'Najbardziej centralne encje',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Encja',
+  'graphReach.colEccentricity': 'Ekscentryczność',
+  'graphReach.colLinks': 'Powiązania',
+  'graphReach.centerBadge': 'centrum',
+  'graphReach.centerTitle':
+    'Centrum swojego klastra — dociera do każdej połączonej encji w możliwie najmniejszej liczbie skoków (ekscentryczność równa promieniowi).',
 };
 
 export default messages;

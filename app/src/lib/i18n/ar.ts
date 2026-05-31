@@ -4359,6 +4359,31 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'متوسط التجميع {avg} · التعدّي {transitivity}',
   'graphCohesion.title': 'تماسك الرسم البياني',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'الوصول',
+  'graphReach.title': 'وصول الرسم البياني',
+  'graphReach.intro':
+    'الانحراف هو مدى بُعد كيان ما عن كل ما يمكنه الوصول إليه — أطول أقصر مسار له. القطر هو أوسع هذه الفجوات، نصف القطر هو أصغرها، والمركز هو الكيان الذي يصل إلى المجموعة بأكملها في أقل عدد من الخطوات. لا الدرجة ولا PageRank يكشفان المركز.',
+  'graphReach.loading': 'جارٍ حساب الوصول…',
+  'graphReach.errorPrefix': 'تعذّر تحميل الرسم البياني:',
+  'graphReach.retry': 'إعادة المحاولة',
+  'graphReach.empty': 'لا يوجد رسم بياني للمعرفة بعد.',
+  'graphReach.emptyHint': 'بينما يسجّل المساعد حقائق مترابطة عنك، ستظهر هنا شكل ذاكرتك ومركزها.',
+  'graphReach.namespaceLabel': 'النطاق',
+  'graphReach.namespaceAll': 'جميع النطاقات',
+  'graphReach.metricEntities': 'الكيانات',
+  'graphReach.metricDiameter': 'القطر',
+  'graphReach.metricRadius': 'نصف القطر',
+  'graphReach.summaryCaption': '{components} مكونات · أكبرها يضم {giant}',
+  'graphReach.summaryCaptionOne': 'مكوّن واحد · {giant} كيانات',
+  'graphReach.summaryCaptionOneAndOne': 'مكوّن واحد · كيان واحد',
+  'graphReach.rankedHeading': 'أكثر الكيانات مركزيةً',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'الكيان',
+  'graphReach.colEccentricity': 'الانحراف',
+  'graphReach.colLinks': 'الروابط',
+  'graphReach.centerBadge': 'مركز',
+  'graphReach.centerTitle':
+    'مركز مجموعته — يصل إلى كل كيان متصل في أقل عدد ممكن من الخطوات (الانحراف يساوي نصف القطر).',
 };
 
 export default messages;

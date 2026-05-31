@@ -4536,6 +4536,32 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Regroupement moyen {avg} · transitivité {transitivity}',
   'graphCohesion.title': 'Cohésion du graphe',
   'memory.tab.cohesion': 'Cohesion',
+  'memory.tab.reach': 'Portée',
+  'graphReach.title': 'Portée du graphe',
+  'graphReach.intro':
+    "L'excentricité mesure la distance entre une entité et tout ce qu'elle peut atteindre — son plus long chemin le plus court. Le diamètre est l'écart le plus large, le rayon le plus petit, et le centre est l'entité qui atteint tout le cluster en le moins de sauts. Ni le degré ni PageRank ne révèlent le centre.",
+  'graphReach.loading': 'Calcul de la portée…',
+  'graphReach.errorPrefix': 'Impossible de charger le graphe :',
+  'graphReach.retry': 'Réessayer',
+  'graphReach.empty': 'Pas encore de graphe de connaissances.',
+  'graphReach.emptyHint':
+    "Au fur et à mesure que l'assistant enregistre des faits connectés sur vous, la forme et le centre de votre mémoire apparaîtront ici.",
+  'graphReach.namespaceLabel': 'Espace de noms',
+  'graphReach.namespaceAll': 'Tous les espaces de noms',
+  'graphReach.metricEntities': 'Entités',
+  'graphReach.metricDiameter': 'Diamètre',
+  'graphReach.metricRadius': 'Rayon',
+  'graphReach.summaryCaption': '{components} composantes · la plus grande contient {giant}',
+  'graphReach.summaryCaptionOne': '1 composante · {giant} entités',
+  'graphReach.summaryCaptionOneAndOne': '1 composante · 1 entité',
+  'graphReach.rankedHeading': 'Entités les plus centrales',
+  'graphReach.colRank': '#',
+  'graphReach.colEntity': 'Entité',
+  'graphReach.colEccentricity': 'Excentricité',
+  'graphReach.colLinks': 'Liens',
+  'graphReach.centerBadge': 'centre',
+  'graphReach.centerTitle':
+    "Un centre de son cluster — atteint chaque entité connectée en le moins de sauts possible (l'excentricité est égale au rayon).",
 };
 
 export default messages;
