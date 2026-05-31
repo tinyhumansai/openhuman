@@ -467,6 +467,57 @@ mod tests {
     }
 
     #[test]
+    fn write_embedder_routes_to_openai_when_memory_provider_is_openai() {
+        // #002 FR-015 regression: the headline bug was that a user-configured
+        // OpenAI embeddings provider (`config.memory.embedding_provider =
+        // "openai"`) matched no factory branch and silently fell through to the
+        // managed-budget backend. Lock the routing in at the FACTORY level —
+        // `openai_compat`'s own tests only cover `try_from_config` in isolation,
+        // so a factory refactor could re-break this with those tests still green.
+        //
+        // Note the two distinct config fields the factory reads: the top-level
+        // `embeddings_provider` (here unset, so the "none"/`ollama:` branches do
+        // not match) vs `memory.embedding_provider` (the unified Embeddings-
+        // settings field that drives the OpenAI/custom detection).
+        let _guard = degraded_flag_lock();
+        use crate::openhuman::memory_tree::health::{
+            current_degraded_state, mark_semantic_recall_degraded, FailureCode,
+        };
+        mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None; // top-level workload routing: unset
+        cfg.memory.embedding_provider = "openai".to_string();
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        let e = build_write_embedder(&cfg)
+            .expect("factory must not error")
+            .expect("openai provider → Some(embedder), must NOT fall through to skip/cloud");
+        assert_eq!(
+            e.name(),
+            "openai",
+            "must route to the user's OpenAI embeddings, not the managed backend"
+        );
+        assert!(
+            !current_degraded_state().semantic_recall,
+            "a usable OpenAI provider must clear the degraded flag"
+        );
+    }
+
+    #[test]
+    fn read_embedder_routes_to_openai_when_memory_provider_is_openai() {
+        // Same FR-015 routing, read path (`build_embedder_from_config`).
+        let (_tmp, mut cfg) = test_config();
+        cfg.memory_tree.embedding_endpoint = None;
+        cfg.memory_tree.embedding_model = None;
+        cfg.embeddings_provider = None;
+        cfg.memory.embedding_provider = "openai".to_string();
+        cfg.memory.embedding_model = "text-embedding-3-large".to_string();
+        let e = build_embedder_from_config(&cfg).expect("openai path should build");
+        assert_eq!(e.name(), "openai");
+    }
+
+    #[test]
     fn explicit_endpoint_override_wins_over_local_ai_flag() {
         // Power-user override beats the checkbox.
         let (_tmp, mut cfg) = test_config();
