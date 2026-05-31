@@ -38,6 +38,8 @@ fn mk_running_job(kind: JobKind, payload_json: String) -> Job {
         created_at_ms: now_ms,
         started_at_ms: Some(now_ms),
         completed_at_ms: None,
+        failure_reason: None,
+        failure_class: None,
     }
 }
 

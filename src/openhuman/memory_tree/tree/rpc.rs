@@ -512,8 +512,7 @@ pub struct RetryFailedResponse {
 /// `memory_tree_retry_failed` RPC handler (#002 FR-011). Flips every
 /// terminally-`failed` `mem_tree_jobs` row back to `ready` (fresh attempt
 /// budget, typed reason cleared) so jobs that failed under a now-fixed config
-/// re-run without re-ingesting source data. Backs the "Retry failed" button;
-/// the same `requeue_failed` is also called automatically on sync start.
+/// re-run without re-ingesting source data. Backs the "Retry failed" button.
 pub async fn retry_failed_rpc(config: &Config) -> Result<RpcOutcome<RetryFailedResponse>, String> {
     let cfg = config.clone();
     let requeued = tokio::task::spawn_blocking(move || {
