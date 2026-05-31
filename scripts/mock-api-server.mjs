@@ -9,10 +9,10 @@ function usage() {
 
 function parsePortValue(value, label) {
   const port = Number(value);
-  if (Number.isInteger(port) && port > 0) {
+  if (Number.isInteger(port) && port > 0 && port <= 65535) {
     return port;
   }
-  throw new Error(`${label} must be a positive integer`);
+  throw new Error(`${label} must be an integer between 1 and 65535`);
 }
 
 function readPortArg() {
@@ -20,7 +20,7 @@ function readPortArg() {
   if (idx >= 0) {
     const value = process.argv[idx + 1];
     if (!value || value.startsWith("-")) {
-      console.error("[mock-api-server] --port requires a positive integer");
+      console.error("[mock-api-server] --port requires an integer between 1 and 65535");
       process.exit(2);
     }
     try {

@@ -22,11 +22,11 @@ test('mock-api-server --help prints usage without opening a listener', () => {
 });
 
 test('mock-api-server rejects invalid explicit ports before startup', () => {
-  for (const args of [['--port', 'nope'], ['--port'], ['-p', '--help']]) {
+  for (const args of [['--port', 'nope'], ['--port', '65536'], ['--port'], ['-p', '--help']]) {
     const result = run(args);
 
     assert.equal(result.status, 2, result.stdout);
-    assert.match(result.stderr, /--port .*positive integer|--port must be a positive integer/);
+    assert.match(result.stderr, /--port .*integer between 1 and 65535/);
     assert.doesNotMatch(result.stderr, /Failed to start/);
   }
 });
