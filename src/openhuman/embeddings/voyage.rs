@@ -31,6 +31,23 @@ impl VoyageEmbedding {
             inner: OpenAiEmbedding::new(VOYAGE_API_BASE, api_key, model, dims),
         }
     }
+
+    /// Construct a Voyage-compatible provider with a custom API base URL.
+    ///
+    /// The hosted Voyage endpoint remains the default for [`Self::new`]; this
+    /// constructor supports local mocks and compatible deployments.
+    pub fn new_with_base_url(api_key: &str, model: &str, dims: usize, base_url: &str) -> Self {
+        let model = if model.is_empty() {
+            VOYAGE_DEFAULT_MODEL
+        } else {
+            model
+        };
+        let dims = if dims == 0 { VOYAGE_DEFAULT_DIMS } else { dims };
+
+        Self {
+            inner: OpenAiEmbedding::new(base_url, api_key, model, dims),
+        }
+    }
 }
 
 #[async_trait]

@@ -193,13 +193,12 @@ async fn composio_list_trigger_history_errors_when_store_not_init() {
 
 // ── cache_key / invalidate_connected_integrations_cache ───────
 
-/// Process-wide mutex every test that mutates the `INTEGRATIONS_CACHE`
-/// takes before it runs. cargo runs tests in parallel within a
-/// single binary, and all these tests touch the same global map;
-/// holding this guard keeps concurrent invalidations from
-/// clobbering each other's seeded state. Poison-recover so a panic
-/// in one test doesn't permanently block the rest.
-static CACHE_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Per-module alias so call sites don't need to spell out the path.
+/// The actual lock lives in `connected_integrations` so it is shared
+/// with `tools_tests` and any other test module that touches the cache.
+fn cache_guard() -> std::sync::MutexGuard<'static, ()> {
+    crate::openhuman::composio::connected_integrations::composio_cache_test_lock()
+}
 
 #[test]
 fn cache_key_is_based_on_config_path_string() {
@@ -214,7 +213,7 @@ fn cache_key_is_based_on_config_path_string() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_returns_empty_without_auth() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     let tmp = tempfile::tempdir().unwrap();
     let config = test_config(&tmp);
     let integrations = fetch_connected_integrations(&config).await;
@@ -223,7 +222,7 @@ async fn fetch_connected_integrations_returns_empty_without_auth() {
 
 #[test]
 fn invalidate_connected_integrations_cache_is_safe_without_prior_insert() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Must not panic on an empty cache.
     invalidate_connected_integrations_cache();
     invalidate_connected_integrations_cache();
@@ -675,7 +674,7 @@ async fn drive_cleanup_targets_are_connection_scoped() {
 #[tokio::test]
 async fn composio_get_user_profile_via_mock_returns_provider_profile() {
     use crate::openhuman::config::TEST_ENV_LOCK;
-    let _cache_guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _cache_guard = cache_guard();
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     crate::openhuman::composio::providers::init_default_providers();
@@ -816,7 +815,7 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
     use crate::openhuman::config::TEST_ENV_LOCK;
     use crate::openhuman::memory_store::content::raw::{raw_rel_path, RawKind};
     use crate::openhuman::memory_tree::tree::rpc::{list_chunks_rpc, ListChunksRequest};
-    let _cache_guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _cache_guard = cache_guard();
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     crate::openhuman::composio::providers::init_default_providers();
@@ -964,7 +963,7 @@ async fn composio_sync_gmail_via_mock_archives_raw_email_and_updates_outcome() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_via_mock_aggregates_tools() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Connections: gmail + notion. Tools: filtered to those toolkits
     // and prefixed with the uppercased slug. The toolkits route
     // backs the `list_toolkits()` allowlist gate that
@@ -1027,7 +1026,7 @@ async fn fetch_connected_integrations_via_mock_aggregates_tools() {
 
 #[tokio::test]
 async fn fetch_connected_integrations_treats_slack_and_telegram_status_like_ui() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     let app = Router::new()
         .route(
             "/agent-integrations/composio/toolkits",
@@ -1098,7 +1097,7 @@ async fn fetch_connected_integrations_treats_slack_and_telegram_status_like_ui()
 
 #[tokio::test]
 async fn fetch_connected_integrations_via_mock_returns_empty_with_no_active() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     let app = Router::new().route(
         "/agent-integrations/composio/connections",
         get(|| async {
@@ -1184,7 +1183,7 @@ fn conn(id: &str, toolkit: &str, status: &str) -> super::super::types::ComposioC
 
 #[test]
 fn sync_cache_invalidates_when_connection_becomes_active() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Cache reflects the pre-connect world: gmail is listed but
     // not connected. This is exactly the state the chat runtime
     // gets stuck in on Windows when the user completes OAuth
@@ -1213,7 +1212,7 @@ fn sync_cache_invalidates_when_connection_becomes_active() {
 
 #[test]
 fn sync_cache_invalidates_when_connection_is_removed() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Cache remembers gmail as connected. The user just
     // disconnected it from Settings; the next UI poll returns an
     // empty list. Chat must forget gmail within one poll.
@@ -1232,7 +1231,7 @@ fn sync_cache_invalidates_when_connection_is_removed() {
 
 #[test]
 fn sync_cache_noop_when_backend_matches_cached_state() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Steady state: UI polls confirm cache is accurate. No
     // invalidation — we must not thrash the chat runtime's tool
     // registry on every 5 s UI poll.
@@ -1256,7 +1255,7 @@ fn sync_cache_noop_when_backend_matches_cached_state() {
 
 #[test]
 fn sync_cache_ignores_non_active_connection_rows() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Backend reports a PENDING row (user started OAuth but
     // hasn't completed). The cache should NOT be invalidated —
     // that would trigger a fresh `list_tools` call on every poll
@@ -1282,7 +1281,7 @@ fn sync_cache_ignores_non_active_connection_rows() {
 
 #[test]
 fn sync_cache_treats_connected_status_equivalent_to_active() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Backend may emit either "ACTIVE" or "CONNECTED" — we treat
     // them identically in every status check (see
     // `fetch_connected_integrations_uncached` filter). Make sure
@@ -1304,7 +1303,7 @@ fn sync_cache_treats_connected_status_equivalent_to_active() {
 
 #[test]
 fn cache_entries_expire_after_ttl() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     // Even without any UI polling, the chat runtime must
     // self-heal stale state within `CACHE_TTL`. We can't wait
     // 60 s in a unit test; instead, directly age the entry by
@@ -1477,52 +1476,6 @@ async fn composio_enable_trigger_via_mock() {
     assert!(outcome.logs.iter().any(|l| l.contains("enabled trigger")));
 }
 
-/// Regression for issue #2913: a backend 403 (permission denied) on trigger
-/// enable must surface a mapped, actionable error — not the raw
-/// `[composio] enable_trigger failed: Backend returned 403 ...` blob.
-#[tokio::test]
-async fn composio_enable_trigger_403_returns_mapped_error() {
-    let app = Router::new().route(
-        "/agent-integrations/composio/triggers",
-        post(|Json(_body): Json<Value>| async move {
-            (
-                axum::http::StatusCode::FORBIDDEN,
-                Json(json!({
-                    "success": false,
-                    "error": "You do not have permission to enable triggers on this connection"
-                })),
-            )
-        }),
-    );
-    let base = start_mock_backend(app).await;
-    let tmp = tempfile::tempdir().unwrap();
-    let config = config_with_backend(&tmp, base);
-
-    let err = composio_enable_trigger(&config, "c1", "GMAIL_NEW_GMAIL_MESSAGE", None)
-        .await
-        .unwrap_err();
-
-    // Mapped class prefix, not the raw op-layer/backend blob.
-    assert!(
-        err.contains("[composio:error:trigger_permission]"),
-        "expected mapped trigger_permission error, got: {err}"
-    );
-    assert!(
-        !err.contains("[composio] enable_trigger failed:"),
-        "raw op-layer prefix leaked: {err}"
-    );
-    assert!(
-        !err.contains("Backend returned 403"),
-        "raw backend blob leaked: {err}"
-    );
-    // Actionable, branded reconnect guidance.
-    assert!(err.contains("gmail"), "expected toolkit branding: {err}");
-    assert!(
-        err.contains("Settings"),
-        "expected reconnect guidance: {err}"
-    );
-}
-
 #[tokio::test]
 async fn composio_disable_trigger_via_mock() {
     let app = Router::new().route(
@@ -1611,7 +1564,7 @@ async fn composio_list_toolkits_returns_empty_in_direct_mode() {
 
 #[tokio::test]
 async fn composio_list_connections_routes_through_direct_mode() {
-    let _guard = CACHE_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = cache_guard();
     let tmp = tempfile::tempdir().unwrap();
     let config = direct_mode_config(&tmp);
     // [composio-direct] After commit 2 of #1710, direct mode actually

@@ -2084,6 +2084,8 @@ const messages: TranslationMap = {
   'bootCheck.validUrlRequired':
     'Ça ne ressemble pas à une URL valide (essaie https://core.example.com/rpc)',
   'bootCheck.tokenRequired': "On aura besoin d'un token d'authentification pour se connecter.",
+  'bootCheck.httpPublicWarning':
+    'Ceci est une URL HTTP en clair sur un hôte public — le trafic ne sera pas chiffré. Utilisez HTTPS sauf si vous faites confiance à ce réseau.',
   'bootCheck.chooseCoreMode': 'Sélectionner un runtime',
   'bootCheck.connectToCore': 'Connecte-toi à ton runtime',
   'bootCheck.desktopDescription':

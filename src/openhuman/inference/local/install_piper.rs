@@ -53,8 +53,19 @@ enum ArchiveKind {
 /// Per-OS Piper release asset URL. The Piper project publishes one
 /// archive per OS/architecture under the `latest` release alias. Names
 /// have been stable across recent releases.
+/// Read a Piper base-URL override, treating empty / whitespace-only values as
+/// unset and stripping surrounding whitespace + trailing slashes so the asset
+/// paths concatenated onto it never produce a doubled slash.
+fn piper_base_override(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+}
+
 fn binary_download_asset() -> Option<BinaryAsset> {
-    let base = "https://github.com/rhasspy/piper/releases/latest/download";
+    let base = piper_base_override("OPENHUMAN_PIPER_RELEASE_BASE_URL")
+        .unwrap_or_else(|| "https://github.com/rhasspy/piper/releases/latest/download".to_string());
     if cfg!(target_os = "windows") {
         return Some(BinaryAsset {
             url: format!("{base}/piper_windows_amd64.zip"),
@@ -97,9 +108,12 @@ fn voice_download_urls(voice_id: &str) -> (String, String) {
     // We only support the bundled default — multi-voice support is
     // tracked separately. The path components mirror the voice id.
     let (lang_short, locale, name, quality) = decode_voice_id(voice_id);
-    let base = format!(
-        "https://huggingface.co/rhasspy/piper-voices/resolve/main/{lang_short}/{locale}/{name}/{quality}"
-    );
+    let base = match piper_base_override("OPENHUMAN_PIPER_VOICES_BASE_URL") {
+        Some(root) => format!("{root}/{lang_short}/{locale}/{name}/{quality}"),
+        None => format!(
+            "https://huggingface.co/rhasspy/piper-voices/resolve/main/{lang_short}/{locale}/{name}/{quality}"
+        ),
+    };
     let stem = format!("{locale}-{name}-{quality}");
     (
         format!("{base}/{stem}.onnx"),

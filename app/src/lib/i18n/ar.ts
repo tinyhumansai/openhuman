@@ -1995,6 +1995,8 @@ const messages: TranslationMap = {
   'bootCheck.urlMustStartWith': 'يجب أن يبدأ عنوان URL بـ http:// أو https://',
   'bootCheck.validUrlRequired': 'لا يبدو أن هذا عنوان URL صالح (جرّب https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'سنحتاج إلى رمز مصادقة للاتصال.',
+  'bootCheck.httpPublicWarning':
+    'هذا عنوان HTTP عادي على مضيف عام — لن تكون حركة البيانات مشفّرة. استخدم HTTPS ما لم تكن تثق بهذه الشبكة.',
   'bootCheck.chooseCoreMode': 'اختر بيئة التشغيل',
   'bootCheck.connectToCore': 'اتصل ببيئة تشغيلك',
   'bootCheck.desktopDescription': 'يحتاج OpenHuman إلى بيئة تشغيل للعمل. اختر مكانها.',

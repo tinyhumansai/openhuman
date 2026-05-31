@@ -49,6 +49,19 @@ pub(crate) struct CachedIntegrations {
 pub(crate) static INTEGRATIONS_CACHE: LazyLock<RwLock<HashMap<String, CachedIntegrations>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
+/// Crate-wide test serialization lock for all tests that mutate or read
+/// the process-global `INTEGRATIONS_CACHE`. Defined here so it is shared
+/// by every `cfg(test)` module in this crate (ops_tests, tools_tests, …).
+/// Poison-recovery (`unwrap_or_else`) keeps a panicking test from
+/// permanently blocking later ones.
+#[cfg(test)]
+pub(crate) fn composio_cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 /// Derive a stable cache key from a [`Config`]. We use the stringified
 /// `config_path` because it uniquely identifies a user context (it
 /// resolves to the per-user openhuman dir).

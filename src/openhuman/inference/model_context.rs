@@ -13,6 +13,11 @@ use crate::openhuman::config::{
 const TIER_LARGE_CONTEXT: u64 = 200_000;
 const TIER_STANDARD_CONTEXT: u64 = 128_000;
 const TIER_LOCAL_CONTEXT: u64 = 8_192;
+/// Summarization tier. `summarization-v1` resolves to a long-context flash
+/// model (currently DeepSeek v4 flash, ~1M tokens). `extract_from_result`
+/// uses this window to single-shot whole oversized payloads instead of
+/// chunking, so it must reflect the real backing model's capacity.
+const TIER_SUMMARIZATION_CONTEXT: u64 = 1_000_000;
 
 /// How a pattern in [`MODEL_CONTEXT_PATTERNS`] is matched against a model id.
 #[derive(Copy, Clone)]
@@ -93,7 +98,8 @@ pub fn context_window_for_model(model: &str) -> Option<u64> {
 fn tier_context_window(model: &str) -> Option<u64> {
     match model {
         MODEL_REASONING_V1 | MODEL_AGENTIC_V1 | MODEL_CODING_V1 => Some(TIER_LARGE_CONTEXT),
-        MODEL_REASONING_QUICK_V1 | "summarization-v1" | "chat" => Some(TIER_STANDARD_CONTEXT),
+        "summarization-v1" => Some(TIER_SUMMARIZATION_CONTEXT),
+        MODEL_REASONING_QUICK_V1 | "chat" => Some(TIER_STANDARD_CONTEXT),
         m if m.starts_with("gemma") || m.contains(":1b") || m.contains("270m") => {
             Some(TIER_LOCAL_CONTEXT)
         }
@@ -112,6 +118,12 @@ mod tests {
         assert_eq!(
             context_window_for_model("reasoning-quick-v1"),
             Some(128_000)
+        );
+        // summarization-v1 maps to a ~1M-token flash model so the extractor can
+        // single-shot whole oversized payloads.
+        assert_eq!(
+            context_window_for_model("summarization-v1"),
+            Some(1_000_000)
         );
     }
 

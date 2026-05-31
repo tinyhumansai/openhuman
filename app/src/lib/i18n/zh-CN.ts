@@ -1936,6 +1936,8 @@ const messages: TranslationMap = {
   'bootCheck.urlMustStartWith': 'URL 必须以 http:// 或 https:// 开头',
   'bootCheck.validUrlRequired': '请输入有效的 URL（例如 https://core.example.com/rpc）',
   'bootCheck.tokenRequired': '请输入核心认证令牌。',
+  'bootCheck.httpPublicWarning':
+    '这是公网主机上的纯 HTTP 地址——流量不会被加密。除非你信任该网络，否则请使用 HTTPS。',
   'bootCheck.chooseCoreMode': '选择核心模式',
   'bootCheck.connectToCore': '连接到你的核心',
   'bootCheck.desktopDescription': 'OpenHuman 需要一个运行中的核心才能工作。请选择连接方式。',

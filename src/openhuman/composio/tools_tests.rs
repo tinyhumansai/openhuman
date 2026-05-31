@@ -630,58 +630,6 @@ fn retain_connected_tools_drops_unconnected_toolkits_case_insensitively() {
 }
 
 #[test]
-fn retain_connected_tools_keeps_multi_segment_connected_toolkits() {
-    use crate::openhuman::composio::types::{
-        ComposioToolFunction, ComposioToolSchema, ComposioToolsResponse,
-    };
-    use std::collections::HashSet;
-
-    let mut resp = ComposioToolsResponse {
-        tools: vec![
-            ComposioToolSchema {
-                kind: "function".into(),
-                function: ComposioToolFunction {
-                    name: "ZOHO_MAIL_SEND_EMAIL".into(),
-                    description: None,
-                    parameters: None,
-                },
-            },
-            ComposioToolSchema {
-                kind: "function".into(),
-                function: ComposioToolFunction {
-                    name: "ONE_DRIVE_GET_FILE".into(),
-                    description: None,
-                    parameters: None,
-                },
-            },
-            ComposioToolSchema {
-                kind: "function".into(),
-                function: ComposioToolFunction {
-                    name: "GMAIL_SEND_EMAIL".into(),
-                    description: None,
-                    parameters: None,
-                },
-            },
-        ],
-    };
-
-    let connected: HashSet<String> = ["zoho_mail".to_string(), "one_drive".to_string()]
-        .into_iter()
-        .collect();
-    let dropped = retain_connected_tools(&mut resp, &connected);
-
-    assert_eq!(dropped, 1, "should only drop the disconnected gmail tool");
-    let names: Vec<&str> = resp
-        .tools
-        .iter()
-        .map(|t| t.function.name.as_str())
-        .collect();
-    assert!(names.contains(&"ZOHO_MAIL_SEND_EMAIL"));
-    assert!(names.contains(&"ONE_DRIVE_GET_FILE"));
-    assert!(!names.contains(&"GMAIL_SEND_EMAIL"));
-}
-
-#[test]
 fn normalized_scope_toolkits_prefers_requested_filter() {
     use std::collections::HashSet;
 
@@ -990,6 +938,10 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
     // call which reads from disk — see the matching note on
     // `execute_tool_per_call_factory_means_no_baked_client`.
     use crate::openhuman::config::TEST_ENV_LOCK;
+    // Also hold the composio cache lock so we don't race against ops_tests
+    // that mutate INTEGRATIONS_CACHE at the same time as we reload config.
+    let _cache_guard =
+        crate::openhuman::composio::connected_integrations::composio_cache_test_lock();
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");

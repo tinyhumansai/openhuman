@@ -2014,6 +2014,8 @@ const messages: TranslationMap = {
   'bootCheck.urlMustStartWith': 'URL은 http:// 또는 https://로 시작해야 합니다',
   'bootCheck.validUrlRequired': '유효한 URL처럼 보이지 않습니다(예: https://core.example.com/rpc)',
   'bootCheck.tokenRequired': '연결하려면 인증 토큰이 필요합니다.',
+  'bootCheck.httpPublicWarning':
+    '공개 호스트의 일반 HTTP URL입니다 — 트래픽이 암호화되지 않습니다. 이 네트워크를 신뢰하지 않는다면 HTTPS를 사용하세요.',
   'bootCheck.chooseCoreMode': '런타임 선택',
   'bootCheck.connectToCore': '런타임에 연결',
   'bootCheck.desktopDescription':

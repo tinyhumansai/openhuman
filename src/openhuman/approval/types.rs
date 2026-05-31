@@ -31,6 +31,27 @@ pub struct PendingApproval {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
+impl PendingApproval {
+    /// Construct a [`PendingApproval`]. Provided so integration tests and
+    /// external callers are not blocked by the `#[non_exhaustive]` attribute.
+    pub fn new(
+        request_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        action_summary: impl Into<String>,
+        args_redacted: serde_json::Value,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Self {
+        Self {
+            request_id: request_id.into(),
+            tool_name: tool_name.into(),
+            action_summary: action_summary.into(),
+            args_redacted,
+            created_at: Utc::now(),
+            expires_at,
+        }
+    }
+}
+
 /// Durable audit row for an approval request after a decision.
 ///
 /// See [`PendingApproval`] for the rationale behind omitting

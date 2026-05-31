@@ -9,10 +9,13 @@
 
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use axum::extract::State;
 use axum::http::header::AUTHORIZATION;
+use axum::routing::post;
+use axum::{Json, Router};
 use serde_json::{json, Value};
 use tempfile::tempdir;
 
@@ -114,6 +117,59 @@ async fn serve_on_ephemeral() -> (
     let app = build_core_http_router(false);
     let handle = tokio::spawn(async move { axum::serve(listener, app).await });
     (addr, handle)
+}
+
+#[derive(Clone, Default)]
+struct MockEmbeddingState {
+    requests: Arc<Mutex<Vec<Value>>>,
+    auth_headers: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+async fn mock_openai_embeddings(
+    State(state): State<MockEmbeddingState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    state
+        .requests
+        .lock()
+        .expect("mock requests lock")
+        .push(body);
+    state
+        .auth_headers
+        .lock()
+        .expect("mock auth headers lock")
+        .push(
+            headers
+                .get(AUTHORIZATION)
+                .and_then(|value| value.to_str().ok())
+                .map(ToOwned::to_owned),
+        );
+    Json(json!({
+        "object": "list",
+        "data": [
+            { "object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3] },
+            { "object": "embedding", "index": 1, "embedding": [0.4, 0.5, 0.6] }
+        ],
+        "model": "mock-embedding-model"
+    }))
+}
+
+async fn serve_mock_embeddings() -> (
+    String,
+    MockEmbeddingState,
+    tokio::task::JoinHandle<Result<(), std::io::Error>>,
+) {
+    let state = MockEmbeddingState::default();
+    let router = Router::new()
+        .route("/v1/embeddings", post(mock_openai_embeddings))
+        .with_state(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock embedding server");
+    let addr = listener.local_addr().expect("mock embedding local_addr");
+    let join = tokio::spawn(async move { axum::serve(listener, router).await });
+    (format!("http://{addr}"), state, join)
 }
 
 async fn post_json_rpc(rpc_base: &str, id: i64, method: &str, params: Value) -> Value {
@@ -521,6 +577,95 @@ async fn embeddings_embed_with_none_returns_empty_vectors() {
         vectors.is_empty(),
         "noop provider must return empty vectors array: {vectors:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn embeddings_embed_with_custom_openai_endpoint_round_trips_vectors_and_api_key() {
+    let _lock = embeddings_e2e_env_lock();
+    let (rpc_base, _tmp, _guards, _join) = setup_embeddings_test().await;
+    let (mock_base, mock_state, mock_join) = serve_mock_embeddings().await;
+
+    let set_key = post_json_rpc(
+        &rpc_base,
+        45,
+        "openhuman.embeddings_set_api_key",
+        json!({ "provider": "custom", "api_key": "custom-embedding-key" }),
+    )
+    .await;
+    assert_no_rpc_error(&set_key, "embeddings_set_api_key custom");
+
+    let update = post_json_rpc(
+        &rpc_base,
+        46,
+        "openhuman.embeddings_update_settings",
+        json!({
+            "provider": "custom",
+            "custom_endpoint": mock_base,
+            "model": "mock-embedding-model",
+            "dimensions": 3,
+            "confirm_wipe": true
+        }),
+    )
+    .await;
+    let update_result = assert_no_rpc_error(&update, "embeddings_update_settings custom");
+    let update_inner = update_result.get("result").unwrap_or(update_result);
+    let expected_provider = format!("custom:{mock_base}");
+    assert_eq!(
+        update_inner.get("provider").and_then(Value::as_str),
+        Some(expected_provider.as_str())
+    );
+
+    let embed = post_json_rpc(
+        &rpc_base,
+        47,
+        "openhuman.embeddings_embed",
+        json!({ "inputs": ["first custom text", "second custom text"] }),
+    )
+    .await;
+    let embed_result = assert_no_rpc_error(&embed, "embeddings_embed custom");
+    let inner = embed_result.get("result").unwrap_or(embed_result);
+
+    assert_eq!(
+        inner.get("provider").and_then(Value::as_str),
+        Some("custom")
+    );
+    assert_eq!(
+        inner.get("model").and_then(Value::as_str),
+        Some("mock-embedding-model")
+    );
+    assert_eq!(inner.get("count").and_then(Value::as_u64), Some(2));
+    assert_eq!(inner.get("dimensions").and_then(Value::as_u64), Some(3));
+    let last_component = inner
+        .pointer("/vectors/1/2")
+        .and_then(Value::as_f64)
+        .expect("second vector third component");
+    assert!(
+        (last_component - 0.6).abs() < 0.000_001,
+        "expected f32-roundtripped component near 0.6, got {last_component}"
+    );
+
+    let requests = mock_state.requests.lock().expect("mock requests lock");
+    assert_eq!(requests.len(), 1, "custom endpoint should be called once");
+    assert_eq!(
+        requests[0].get("model").and_then(Value::as_str),
+        Some("mock-embedding-model")
+    );
+    assert_eq!(
+        requests[0].pointer("/input/0").and_then(Value::as_str),
+        Some("first custom text")
+    );
+    drop(requests);
+
+    let auth_headers = mock_state
+        .auth_headers
+        .lock()
+        .expect("mock auth headers lock");
+    assert_eq!(
+        auth_headers.first().and_then(|value| value.as_deref()),
+        Some("Bearer custom-embedding-key")
+    );
+
+    mock_join.abort();
 }
 
 #[tokio::test(flavor = "multi_thread")]

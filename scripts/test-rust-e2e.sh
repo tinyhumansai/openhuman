@@ -34,15 +34,31 @@ ALL_E2E_SUITES=(
   agent_retrieval_e2e
   autocomplete_memory_e2e
   calendar_grounding_e2e
+  config_auth_app_state_connectivity_e2e
+  composio_post_oauth_retry_e2e
+  cwd_jail_e2e
+  domain_modules_e2e
+  embeddings_rpc_e2e
+  inference_provider_e2e
   json_rpc_e2e
   keyring_secretstore_fresh_e2e
   keyring_secretstore_e2e
   linux_cef_deb_runtime_e2e
   live_routing_e2e
+  mcp_registry_e2e
+  mcp_setup_e2e
+  memory_artifacts_e2e
   memory_graph_sync_e2e
   memory_roundtrip_e2e
+  memory_sources_e2e
+  memory_tree_summarizer_e2e
+  memory_tree_walk_e2e
+  ollama_embeddings_fallback_e2e
   screen_intelligence_vision_e2e
   subconscious_e2e
+  vault_sync_e2e
+  worker_b_domain_e2e
+  worker_c_modules_e2e
 )
 
 # Parse args: --suite <name> can be passed multiple times to filter.

@@ -139,6 +139,8 @@ mod tests {
 
     #[tokio::test]
     async fn execute_accepts_window_days_alias() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (_workspace, _cfg) = isolated_config(&tmp).await;
         let tool = MemoryTreeQueryGlobalTool;
         let req: QueryGlobalRequest =
             serde_json::from_value(json!({"window_days": 7})).expect("alias should deserialize");

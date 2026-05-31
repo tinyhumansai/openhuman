@@ -115,6 +115,29 @@ const RATELIMIT_MAX_ATTEMPTS: u32 = 6;
 /// Fixed inter-call sleep applied after every successful execute_tool.
 const INTER_CALL_PACING: Duration = Duration::from_secs(20);
 
+fn inter_call_pacing() -> Duration {
+    // Read per call so the slack sync e2e tests can control pacing at runtime
+    // via the env var. The only repeated-cost concern is the misconfiguration
+    // warning, which we emit at most once to avoid log spam on every
+    // `execute_tool`.
+    match std::env::var("OPENHUMAN_SLACK_INTER_CALL_PACING_MS") {
+        Ok(s) => match s.trim().parse::<u64>() {
+            Ok(ms) => Duration::from_millis(ms),
+            _ => {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    log::warn!(
+                        "[composio:slack] OPENHUMAN_SLACK_INTER_CALL_PACING_MS={s:?} not a \
+                         non-negative integer; falling back to default {INTER_CALL_PACING:?}"
+                    );
+                });
+                INTER_CALL_PACING
+            }
+        },
+        Err(_) => INTER_CALL_PACING,
+    }
+}
+
 /// Resolve the JSON dump directory from `OPENHUMAN_SLACK_DUMP_DIR`.
 fn dump_dir() -> Option<PathBuf> {
     std::env::var_os("OPENHUMAN_SLACK_DUMP_DIR").map(PathBuf::from)
@@ -178,7 +201,7 @@ pub(super) async fn execute_with_retry(
             .await
             .map_err(|e| format!("{description}: {e:#}"))?;
         if resp.successful {
-            tokio::time::sleep(INTER_CALL_PACING).await;
+            tokio::time::sleep(inter_call_pacing()).await;
             return Ok((resp, attempt));
         }
         let err_str = resp.error.as_deref().unwrap_or("provider failure");

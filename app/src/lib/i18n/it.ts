@@ -2068,6 +2068,8 @@ const messages: TranslationMap = {
   'bootCheck.urlMustStartWith': "L'URL deve iniziare con http:// o https://",
   'bootCheck.validUrlRequired': 'Non sembra un URL valido (prova https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'Servirà un token di autenticazione per connettersi.',
+  'bootCheck.httpPublicWarning':
+    'Questo è un URL HTTP in chiaro su un host pubblico — il traffico non sarà cifrato. Usa HTTPS a meno che tu non ti fidi di questa rete.',
   'bootCheck.chooseCoreMode': 'Seleziona un runtime',
   'bootCheck.connectToCore': 'Connetti al tuo runtime',
   'bootCheck.desktopDescription':

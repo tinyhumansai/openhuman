@@ -2058,6 +2058,8 @@ const messages: TranslationMap = {
   'bootCheck.validUrlRequired':
     'To nie wygląda na prawidłowy adres URL (spróbuj https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'Aby się połączyć, potrzebujemy tokenu uwierzytelniania.',
+  'bootCheck.httpPublicWarning':
+    'To zwykły adres HTTP na publicznym hoście — ruch nie będzie szyfrowany. Użyj HTTPS, chyba że ufasz tej sieci.',
   'bootCheck.chooseCoreMode': 'Wybierz środowisko',
   'bootCheck.connectToCore': 'Połącz się ze swoim środowiskiem',
   'bootCheck.desktopDescription':

@@ -2037,6 +2037,8 @@ const messages: TranslationMap = {
   'bootCheck.urlMustStartWith': 'URL harus diawali dengan http:// atau https://',
   'bootCheck.validUrlRequired': 'Itu bukan URL yang valid (coba https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'Kami memerlukan token autentikasi untuk terhubung.',
+  'bootCheck.httpPublicWarning':
+    'Ini adalah URL HTTP biasa pada host publik — lalu lintas tidak akan dienkripsi. Gunakan HTTPS kecuali Anda memercayai jaringan ini.',
   'bootCheck.chooseCoreMode': 'Pilih Runtime',
   'bootCheck.connectToCore': 'Hubungkan ke Runtime Anda',
   'bootCheck.desktopDescription':

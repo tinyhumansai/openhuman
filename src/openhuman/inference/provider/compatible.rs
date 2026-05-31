@@ -2096,6 +2096,164 @@ impl Provider for OpenAiCompatibleProvider {
         .boxed()
     }
 
+    fn stream_chat_with_history(
+        &self,
+        messages: &[ChatMessage],
+        model: &str,
+        temperature: f64,
+        options: StreamOptions,
+    ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
+        let credential = match self.credential_for_request() {
+            Ok(value) => value.map(str::to_string),
+            Err(err) => {
+                return stream::once(async move { Err(StreamError::Provider(err.to_string())) })
+                    .boxed();
+            }
+        };
+
+        let effective_messages = if self.merge_system_into_user {
+            Self::flatten_system_messages(messages)
+        } else {
+            messages.to_vec()
+        };
+        let api_messages = effective_messages
+            .into_iter()
+            .map(|message| Message {
+                role: message.role,
+                content: message.content,
+            })
+            .collect();
+
+        let request = ApiChatRequest {
+            model: model.to_string(),
+            messages: api_messages,
+            temperature: self.effective_temperature(model, temperature),
+            stream: Some(options.enabled),
+            tools: None,
+            tool_choice: None,
+        };
+
+        let url = self.chat_completions_url();
+        let client = self.http_client();
+        let auth_header = self.auth_header.clone();
+        let provider_name = self.name.clone();
+        let model_owned = model.to_string();
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
+
+        tokio::spawn(async move {
+            let mut req_builder = client.post(&url).json(&request);
+            req_builder = match (&auth_header, credential.as_deref()) {
+                (AuthStyle::None, _) | (_, None) => req_builder,
+                (AuthStyle::Bearer, Some(credential)) => {
+                    req_builder.header("Authorization", format!("Bearer {credential}"))
+                }
+                (AuthStyle::XApiKey, Some(credential)) => {
+                    req_builder.header("x-api-key", credential)
+                }
+                (AuthStyle::Anthropic, Some(credential)) => req_builder
+                    .header("x-api-key", credential)
+                    .header("anthropic-version", "2023-06-01"),
+                (AuthStyle::Custom(header), Some(credential)) => {
+                    req_builder.header(header, credential)
+                }
+            };
+            req_builder = req_builder.header("Accept", "text/event-stream");
+
+            let response = match req_builder.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    crate::core::observability::report_error(
+                        error.to_string().as_str(),
+                        "llm_provider",
+                        "stream_chat_history",
+                        &[
+                            ("provider", provider_name.as_str()),
+                            ("model", model_owned.as_str()),
+                            ("failure", "transport"),
+                        ],
+                    );
+                    let _ = tx.send(Err(StreamError::Http(error))).await;
+                    return;
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let status_str = status.as_u16().to_string();
+                let raw_error = match response.text().await {
+                    Ok(error) => error,
+                    Err(_) => format!("HTTP error: {status}"),
+                };
+                let sanitized_error = super::sanitize_api_error(&raw_error);
+                let message = format!("{status}: {sanitized_error}");
+                if super::is_budget_exhausted_http_400(status, &raw_error) {
+                    super::log_budget_exhausted_http_400(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_custom_openai_upstream_bad_request_http_400(
+                    provider_name.as_str(),
+                    status,
+                    &raw_error,
+                ) {
+                    super::log_custom_openai_upstream_bad_request_http_400(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_access_policy_denied_http_403(status, &raw_error) {
+                    super::log_provider_access_policy_denied_http_403(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_config_rejection_http(
+                    status,
+                    provider_name.as_str(),
+                    &raw_error,
+                ) {
+                    super::log_provider_config_rejection(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::should_report_provider_http_failure(status) {
+                    crate::core::observability::report_error(
+                        message.as_str(),
+                        "llm_provider",
+                        "stream_chat_history",
+                        &[
+                            ("provider", provider_name.as_str()),
+                            ("model", model_owned.as_str()),
+                            ("status", status_str.as_str()),
+                            ("failure", "non_2xx"),
+                        ],
+                    );
+                }
+                let _ = tx.send(Err(StreamError::Provider(message))).await;
+                return;
+            }
+
+            let mut chunk_stream = sse_bytes_to_chunks(response, options.count_tokens);
+            while let Some(chunk) = chunk_stream.next().await {
+                if tx.send(chunk).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|chunk| (chunk, rx))
+        })
+        .boxed()
+    }
+
     async fn warmup(&self) -> anyhow::Result<()> {
         if let Some(credential) = self.credential.as_ref() {
             // Hit the chat completions URL with a GET to establish the connection pool.

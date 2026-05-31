@@ -2253,6 +2253,8 @@ const en: TranslationMap = {
   'bootCheck.validUrlRequired':
     "That doesn't look like a valid URL (try https://core.example.com/rpc)",
   'bootCheck.tokenRequired': "We'll need an auth token to connect.",
+  'bootCheck.httpPublicWarning':
+    'This is a plain HTTP URL on a public host — traffic will not be encrypted. Use HTTPS unless you trust this network.',
   'bootCheck.chooseCoreMode': 'Select a Runtime',
   'bootCheck.connectToCore': 'Connect to Your Runtime',
   'bootCheck.desktopDescription': 'OpenHuman needs a runtime to think. Pick where it should live.',

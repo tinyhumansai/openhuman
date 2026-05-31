@@ -56,15 +56,6 @@ struct SeenRequest {
     body: Value,
 }
 
-/// Serialise every test that mutates process-wide env vars (`OPENHUMAN_WORKSPACE`,
-/// `OPENHUMAN_OLLAMA_BASE_URL`, `OLLAMA_BIN`, `PATH`).  Although the test binary
-/// is compiled with `#[tokio::test]` (multi-threaded runtime), cargo runs tests
-/// in parallel OS threads by default, so without this lock concurrent tests race
-/// on the shared env and `Config::load_or_init()` reads the wrong workspace.
-/// Acquire via `ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())` at the top
-/// of each test that calls `EnvVarGuard::set` / `EnvVarGuard::unset`.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
@@ -218,9 +209,6 @@ async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edg
 
 #[tokio::test]
 async fn provider_admin_model_listing_covers_openrouter_validation_and_local_synthesis() {
-    // Hold the file-level env lock for the full test so concurrent tests don't
-    // race on OPENHUMAN_WORKSPACE / OPENHUMAN_OLLAMA_BASE_URL.
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -303,7 +291,6 @@ async fn provider_admin_model_listing_covers_openrouter_validation_and_local_syn
 
 #[tokio::test]
 async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -504,7 +491,6 @@ async fn reliable_provider_covers_chat_tools_streaming_and_context_bail_edges() 
 
 #[tokio::test]
 async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_fake_bins() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);

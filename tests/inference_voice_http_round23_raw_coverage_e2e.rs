@@ -38,10 +38,6 @@ struct MockState {
     requests: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
-/// Serialise tests that mutate process-wide env vars so they don't race on
-/// `OPENHUMAN_WORKSPACE` when cargo runs them in parallel threads.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
@@ -80,7 +76,6 @@ impl Drop for EnvVarGuard {
 
 #[tokio::test]
 async fn http_models_and_chat_use_mocked_ollama_without_real_runtime() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -230,7 +225,6 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
 
 #[tokio::test]
 async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries() {
-    let _env = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let scripts = tempdir().expect("scripts");

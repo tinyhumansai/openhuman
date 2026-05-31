@@ -2035,6 +2035,8 @@ const messages: TranslationMap = {
   'bootCheck.validUrlRequired':
     'এটি বৈধ URL মনে হচ্ছে না (চেষ্টা করুন https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'সংযোগ করতে একটি অথ টোকেন প্রয়োজন।',
+  'bootCheck.httpPublicWarning':
+    'এটি একটি পাবলিক হোস্টে সাধারণ HTTP URL — ট্রাফিক এনক্রিপ্ট করা হবে না। এই নেটওয়ার্কে আস্থা না থাকলে HTTPS ব্যবহার করুন।',
   'bootCheck.chooseCoreMode': 'একটি রানটাইম বেছে নিন',
   'bootCheck.connectToCore': 'আপনার রানটাইমে সংযুক্ত হন',
   'bootCheck.desktopDescription':

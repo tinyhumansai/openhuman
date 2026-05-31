@@ -942,14 +942,14 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           const currentState = store.getState();
           const threadMessages = currentState.thread.messagesByThreadId[event.thread_id] ?? [];
           const lastMsg = threadMessages[threadMessages.length - 1];
-          // For the generic 'inference' type the server may send a raw internal error string;
-          // use the safe user-facing constant instead. For all other classified types
-          // (rate_limited, timeout, auth_error, etc.) the message comes from
-          // classify_inference_error() in web.rs and is already user-friendly.
-          const errorContent =
-            event.error_type === 'inference'
-              ? USER_FACING_AGENT_ERROR_MESSAGE
-              : event.message || USER_FACING_AGENT_ERROR_MESSAGE;
+          // Every error_type — including the generic 'inference' fallback — carries a
+          // user-facing `message` produced by classify_inference_error() in web_errors.rs.
+          // For 'inference' that message is the friendly summary PLUS the real, sanitized
+          // upstream provider error appended as a `> quote` block (secret-scrubbed and
+          // length-capped server-side via with_provider_detail()/sanitize_api_error()), so
+          // surfacing it tells the user *why* the turn failed instead of a blanket apology.
+          // The hardcoded constant is only a last-resort fallback for an empty/missing message.
+          const errorContent = event.message || USER_FACING_AGENT_ERROR_MESSAGE;
           if (!(lastMsg?.sender === 'agent' && lastMsg?.content === errorContent)) {
             void dispatch(
               addInferenceResponse({ content: errorContent, threadId: event.thread_id })

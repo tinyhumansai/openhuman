@@ -28,11 +28,41 @@ fn ensure_https(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn is_loopback_http_url(url: &str) -> bool {
+    // Parse rather than prefix-match: a raw `starts_with("http://127.0.0.1:")`
+    // is fooled by userinfo smuggling like
+    // `http://127.0.0.1:8080@evil.com/api/v3/tools`, which reqwest routes to the
+    // *parsed* host (`evil.com`). Verify the actual scheme + host and reject any
+    // embedded credentials so the insecure-loopback path can never leak the
+    // `x-api-key` header to a non-loopback host.
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    match parsed.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn is_loopback_http_base(url: &str) -> bool {
+    is_loopback_http_url(&format!("{}/", url.trim_end_matches('/')))
+}
+
 /// A tool that proxies actions to the Composio managed tool platform.
 pub struct ComposioTool {
     api_key: String,
     default_entity_id: String,
     security: Arc<SecurityPolicy>,
+    base_v2: String,
     /// Base URL for Composio v3 endpoints (`{base}/tools`). Production
     /// always uses [`COMPOSIO_API_BASE_V3`] via [`Self::new`]; the
     /// `#[cfg(test)]` `new_with_v3_base` constructor lets unit tests point
@@ -40,6 +70,7 @@ pub struct ComposioTool {
     /// base-URL injection the backend `ComposioClient` gets through
     /// `IntegrationClient::new` in `client_tests.rs`.
     base_v3: String,
+    allow_insecure_loopback: bool,
 }
 
 impl ComposioTool {
@@ -48,13 +79,41 @@ impl ComposioTool {
         default_entity_id: Option<&str>,
         security: Arc<SecurityPolicy>,
     ) -> Self {
-        // Production always pins the real HTTPS v3 endpoint.
+        // Production always pins the real HTTPS endpoints.
         Self::new_internal(
             api_key,
             default_entity_id,
             security,
+            COMPOSIO_API_BASE_V2.to_string(),
             COMPOSIO_API_BASE_V3.to_string(),
+            false,
         )
+    }
+
+    /// Debug-test seam for raw integration coverage: construct a direct
+    /// Composio tool against explicit v2/v3 base URLs. Non-HTTPS URLs are
+    /// accepted only for loopback hosts and only in debug builds.
+    #[cfg(debug_assertions)]
+    pub fn new_with_base_urls_for_loopback(
+        api_key: &str,
+        default_entity_id: Option<&str>,
+        security: Arc<SecurityPolicy>,
+        base_v2: String,
+        base_v3: String,
+    ) -> anyhow::Result<Self> {
+        for base in [&base_v2, &base_v3] {
+            if !base.starts_with("https://") && !is_loopback_http_base(base) {
+                anyhow::bail!("debug Composio base URL must be HTTPS or loopback HTTP");
+            }
+        }
+        Ok(Self::new_internal(
+            api_key,
+            default_entity_id,
+            security,
+            base_v2,
+            base_v3,
+            true,
+        ))
     }
 
     /// Test-only seam: construct with an explicit Composio v3 base URL so
@@ -73,7 +132,14 @@ impl ComposioTool {
         security: Arc<SecurityPolicy>,
         base_v3: String,
     ) -> Self {
-        Self::new_internal(api_key, default_entity_id, security, base_v3)
+        Self::new_internal(
+            api_key,
+            default_entity_id,
+            security,
+            COMPOSIO_API_BASE_V2.to_string(),
+            base_v3,
+            true,
+        )
     }
 
     /// Shared constructor body. Private so the injectable `base_v3` cannot be
@@ -83,7 +149,9 @@ impl ComposioTool {
         api_key: &str,
         default_entity_id: Option<&str>,
         security: Arc<SecurityPolicy>,
+        base_v2: String,
         base_v3: String,
+        allow_insecure_loopback: bool,
     ) -> Self {
         let trimmed = api_key.trim();
         if trimmed.len() != api_key.len() {
@@ -103,12 +171,21 @@ impl ComposioTool {
             api_key: trimmed.to_string(),
             default_entity_id: normalize_entity_id(default_entity_id.unwrap_or("default")),
             security,
+            base_v2,
             base_v3,
+            allow_insecure_loopback,
         }
     }
 
     fn client(&self) -> Client {
         crate::openhuman::config::build_runtime_proxy_client_with_timeouts("tool.composio", 60, 10)
+    }
+
+    fn ensure_request_url(&self, url: &str) -> anyhow::Result<()> {
+        if self.allow_insecure_loopback && is_loopback_http_url(url) {
+            return Ok(());
+        }
+        ensure_https(url)
     }
 
     /// List available Composio apps/actions for the authenticated user.
@@ -133,7 +210,7 @@ impl ComposioTool {
     }
 
     async fn list_actions_v3(&self, app_name: Option<&str>) -> anyhow::Result<Vec<ComposioAction>> {
-        let url = format!("{COMPOSIO_API_BASE_V3}/tools");
+        let url = format!("{}/tools", self.base_v3);
         let mut req = self.client().get(&url).header("x-api-key", &self.api_key);
 
         req = req.query(&[("limit", "200")]);
@@ -155,7 +232,7 @@ impl ComposioTool {
     }
 
     async fn list_actions_v2(&self, app_name: Option<&str>) -> anyhow::Result<Vec<ComposioAction>> {
-        let mut url = format!("{COMPOSIO_API_BASE_V2}/actions");
+        let mut url = format!("{}/actions", self.base_v2);
         if let Some(app) = app_name {
             url = format!("{url}?appNames={app}");
         }
@@ -334,14 +411,15 @@ impl ComposioTool {
         entity_id: Option<&str>,
         connected_account_ref: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
-        let (url, body) = Self::build_execute_action_v3_request(
+        let (_default_url, body) = Self::build_execute_action_v3_request(
             tool_slug,
             params,
             entity_id,
             connected_account_ref,
         );
+        let url = format!("{}/tools/{tool_slug}/execute", self.base_v3);
 
-        ensure_https(&url)?;
+        self.ensure_request_url(&url)?;
 
         let resp = self
             .client()
@@ -369,7 +447,7 @@ impl ComposioTool {
         params: serde_json::Value,
         entity_id: Option<&str>,
     ) -> anyhow::Result<serde_json::Value> {
-        let url = format!("{COMPOSIO_API_BASE_V2}/actions/{action_name}/execute");
+        let url = format!("{}/actions/{action_name}/execute", self.base_v2);
 
         let mut body = json!({
             "input": params,
@@ -445,7 +523,7 @@ impl ComposioTool {
             }
         };
 
-        let url = format!("{COMPOSIO_API_BASE_V3}/connected_accounts/link");
+        let url = format!("{}/connected_accounts/link", self.base_v3);
         let body = json!({
             "auth_config_id": auth_config_id,
             "user_id": entity_id,
@@ -477,7 +555,7 @@ impl ComposioTool {
         app_name: &str,
         entity_id: &str,
     ) -> anyhow::Result<String> {
-        let url = format!("{COMPOSIO_API_BASE_V2}/connectedAccounts");
+        let url = format!("{}/connectedAccounts", self.base_v2);
 
         let body = json!({
             "integrationId": app_name,
@@ -518,8 +596,8 @@ impl ComposioTool {
     /// This matches the same upstream shape drift handled by
     /// `de_string_or_object` in `composio/types.rs`.
     pub async fn list_connected_accounts(&self) -> anyhow::Result<Vec<ComposioConnectedAccount>> {
-        let url = format!("{COMPOSIO_API_BASE_V3}/connected_accounts");
-        ensure_https(&url)?;
+        let url = format!("{}/connected_accounts", self.base_v3);
+        self.ensure_request_url(&url)?;
 
         let resp = self
             .client()
@@ -555,7 +633,7 @@ impl ComposioTool {
     }
 
     async fn resolve_auth_config_id(&self, app_name: &str) -> anyhow::Result<String> {
-        let url = format!("{COMPOSIO_API_BASE_V3}/auth_configs");
+        let url = format!("{}/auth_configs", self.base_v3);
 
         let resp = self
             .client()

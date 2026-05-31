@@ -2049,6 +2049,8 @@ const messages: TranslationMap = {
   'bootCheck.validUrlRequired':
     'Похоже, это не корректный URL (попробуй https://core.example.com/rpc)',
   'bootCheck.tokenRequired': 'Для подключения нужен токен авторизации.',
+  'bootCheck.httpPublicWarning':
+    'Это обычный HTTP-адрес на публичном хосте — трафик не будет зашифрован. Используйте HTTPS, если вы не доверяете этой сети.',
   'bootCheck.chooseCoreMode': 'Выбрать среду выполнения',
   'bootCheck.connectToCore': 'Подключиться к среде выполнения',
   'bootCheck.desktopDescription':

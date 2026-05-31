@@ -1,5 +1,11 @@
 use super::*;
+use crate::openhuman::channels::email_channel::EmailConfig;
 use crate::openhuman::channels::providers::yuanbao::YuanbaoConfig;
+use crate::openhuman::config::schema::{
+    ChannelsConfig, DingTalkConfig, DiscordConfig, IMessageConfig, IrcConfig, LarkConfig,
+    MatrixConfig, MattermostConfig, QQConfig, SignalConfig, SlackConfig, TelegramConfig,
+    WhatsAppConfig,
+};
 use crate::openhuman::memory_store::chunks::store as memory_tree_store;
 use crate::openhuman::memory_store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
@@ -37,6 +43,155 @@ fn sample_chat_chunk(source_id: &str, seq: u32) -> Chunk {
         created_at: ts,
         partial_message: false,
     }
+}
+
+#[test]
+fn channel_config_connected_covers_config_backed_modes() {
+    let mut config = Config::default();
+
+    config.channels_config.telegram = Some(TelegramConfig {
+        bot_token: "telegram-token".into(),
+        allowed_users: vec![],
+        stream_mode: Default::default(),
+        draft_update_interval_ms: 1000,
+        silent_streaming: true,
+        mention_only: false,
+    });
+    config.channels_config.discord = Some(DiscordConfig {
+        bot_token: "discord-token".into(),
+        guild_id: None,
+        channel_id: None,
+        allowed_users: vec![],
+        listen_to_bots: false,
+        mention_only: false,
+    });
+    config.channels_config.slack = Some(SlackConfig {
+        bot_token: "slack-token".into(),
+        app_token: None,
+        channel_id: None,
+        allowed_users: vec![],
+    });
+    config.channels_config.mattermost = Some(MattermostConfig {
+        url: "https://mattermost.example".into(),
+        bot_token: "mattermost-token".into(),
+        channel_id: None,
+        allowed_users: vec![],
+        thread_replies: None,
+        mention_only: None,
+    });
+    config.channels_config.imessage = Some(IMessageConfig {
+        allowed_contacts: vec![],
+    });
+    config.channels_config.matrix = Some(MatrixConfig {
+        homeserver: "https://matrix.example".into(),
+        access_token: "matrix-token".into(),
+        user_id: None,
+        device_id: None,
+        room_id: "!room:matrix.example".into(),
+        allowed_users: vec![],
+    });
+    config.channels_config.signal = Some(SignalConfig {
+        http_url: "http://127.0.0.1:8080".into(),
+        account: "+15550100".into(),
+        group_id: None,
+        allowed_from: vec![],
+        ignore_attachments: false,
+        ignore_stories: false,
+    });
+    config.channels_config.whatsapp = Some(WhatsAppConfig {
+        access_token: Some("whatsapp-token".into()),
+        phone_number_id: Some("phone-id".into()),
+        verify_token: Some("verify".into()),
+        app_secret: None,
+        session_path: None,
+        pair_phone: None,
+        pair_code: None,
+        allowed_numbers: vec![],
+    });
+    let parsed_linq: ChannelsConfig = toml::from_str(
+        r#"
+[linq]
+api_token = "linq-token"
+from_phone = "+15550101"
+"#,
+    )
+    .expect("linq channel config should parse");
+    config.channels_config.linq = parsed_linq.linq;
+    config.channels_config.email = Some(EmailConfig {
+        imap_host: "imap.example".into(),
+        imap_port: 993,
+        imap_folder: "INBOX".into(),
+        smtp_host: "smtp.example".into(),
+        smtp_port: 465,
+        smtp_tls: true,
+        username: "bot@example.com".into(),
+        password: "email-password".into(),
+        from_address: "bot@example.com".into(),
+        idle_timeout_secs: 1740,
+        allowed_senders: vec![],
+    });
+    config.channels_config.irc = Some(IrcConfig {
+        server: "irc.example".into(),
+        port: 6697,
+        nickname: "openhuman".into(),
+        username: None,
+        channels: vec!["#ops".into()],
+        allowed_users: vec![],
+        server_password: None,
+        nickserv_password: None,
+        sasl_password: None,
+        verify_tls: None,
+    });
+    config.channels_config.lark = Some(LarkConfig {
+        app_id: "lark-app".into(),
+        app_secret: "lark-secret".into(),
+        encrypt_key: None,
+        verification_token: None,
+        allowed_users: vec![],
+        use_feishu: false,
+        receive_mode: Default::default(),
+        port: None,
+    });
+    config.channels_config.dingtalk = Some(DingTalkConfig {
+        client_id: "dingtalk-client".into(),
+        client_secret: "dingtalk-secret".into(),
+        allowed_users: vec![],
+    });
+    config.channels_config.qq = Some(QQConfig {
+        app_id: "qq-app".into(),
+        app_secret: "qq-secret".into(),
+        allowed_users: vec![],
+    });
+    config.channels_config.yuanbao = Some(YuanbaoConfig::default());
+
+    for (channel, mode) in [
+        ("telegram", ChannelAuthMode::BotToken),
+        ("discord", ChannelAuthMode::BotToken),
+        ("slack", ChannelAuthMode::BotToken),
+        ("mattermost", ChannelAuthMode::BotToken),
+        ("imessage", ChannelAuthMode::ManagedDm),
+        ("matrix", ChannelAuthMode::ApiKey),
+        ("signal", ChannelAuthMode::ApiKey),
+        ("whatsapp", ChannelAuthMode::ApiKey),
+        ("linq", ChannelAuthMode::ApiKey),
+        ("email", ChannelAuthMode::ApiKey),
+        ("irc", ChannelAuthMode::ApiKey),
+        ("lark", ChannelAuthMode::ApiKey),
+        ("dingtalk", ChannelAuthMode::ApiKey),
+        ("qq", ChannelAuthMode::ApiKey),
+        ("yuanbao", ChannelAuthMode::ApiKey),
+    ] {
+        assert!(
+            channel_config_connected(&config, channel, mode),
+            "{channel}/{mode:?} should be connected from config"
+        );
+    }
+
+    assert!(!channel_config_connected(
+        &config,
+        "unknown",
+        ChannelAuthMode::ApiKey
+    ));
 }
 
 #[tokio::test]

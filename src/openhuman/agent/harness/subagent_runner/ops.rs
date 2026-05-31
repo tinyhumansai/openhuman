@@ -1387,7 +1387,15 @@ fn apply_handoff(
         cleaned
     };
     let tokens = cleaned.len().div_ceil(4);
-    if !skip_cleaning && tokens > HANDOFF_OVERSIZE_THRESHOLD_TOKENS {
+    // Allow test harnesses (lib tests AND integration test binaries) to lower
+    // the threshold so the handoff path can be exercised on payloads that
+    // survive tokenjuice's compaction cap. Never consulted in production
+    // (the env var is absent) so there is zero runtime cost.
+    let effective_threshold = std::env::var("OPENHUMAN_TEST_HANDOFF_THRESHOLD_TOKENS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(HANDOFF_OVERSIZE_THRESHOLD_TOKENS);
+    if !skip_cleaning && tokens > effective_threshold {
         let id = cache.store(tool_name.to_string(), cleaned.clone());
         let placeholder = build_handoff_placeholder(tool_name, &id, &cleaned);
         tracing::info!(
@@ -1396,7 +1404,7 @@ fn apply_handoff(
             tool = %tool_name,
             raw_tokens = tokens,
             raw_bytes = cleaned.len(),
-            threshold_tokens = HANDOFF_OVERSIZE_THRESHOLD_TOKENS,
+            threshold_tokens = effective_threshold,
             result_id = %id,
             "[subagent_runner:handoff] stashed oversized tool output; substituted placeholder into history"
         );
