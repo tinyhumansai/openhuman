@@ -54,6 +54,23 @@ function askPayload(question, overrides = {}) {
     },
     notebookGuide: { status: "source_backed", briefing: [{ label: "主图", text: "先看点击入口。" }] },
     synthesisAnswer: { status: "source_backed", points: [{ label: "主图", text: "先看点击入口。" }] },
+    sourceDecisionTable: {
+      title: "来源决策表",
+      status: "needs_data",
+      summary: "把作者原文拆成可复核的行动判断。",
+      rows: [
+        {
+          sourceIndex: 0,
+          quote: "点击率反映主图吸引力。",
+          supports: "可支持先看主图点击入口。",
+          cannotProve: "不能证明改主图一定提升转化。",
+          validation: "补充 CTR 和 CVR。",
+          canUseAsEvidence: false,
+          sourceCanUseAsEvidence: true,
+        },
+      ],
+      boundary: "来源决策表是系统整理的决策辅助，不是新的作者原文证据。",
+    },
     learningQueue: { items: [{ id: "queue:evidence", label: "核对证据" }] },
     knowledgeGapRadar: {
       title: "知识缺口雷达",

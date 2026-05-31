@@ -1544,6 +1544,28 @@ test("buildQaPayload discloses stable template fallback cost separately from loc
   assert.match(payload.answerGeneration.boundary, /模板回答/);
 });
 
+test("buildQaPayload creates a source decision table without promoting action advice to evidence", () => {
+  const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT);
+  const table = payload.sourceDecisionTable;
+
+  assert.equal(table.title, "来源决策表");
+  assert.ok(table.rows.length >= 1);
+  assert.ok(table.rows.every((row) => Number.isInteger(row.sourceIndex)));
+  assert.ok(table.rows.every((row) => row.quote && row.supports && row.cannotProve && row.validation));
+  assert.ok(table.rows.every((row) => row.canUseAsEvidence === false && row.sourceCanUseAsEvidence === true));
+  assert.match(table.boundary, /不是新的作者原文证据/);
+});
+
+test("buildQaPayload keeps source decision table conservative without author evidence", () => {
+  const payload = buildQaPayload("量子芯片低温纠错架构怎么搭？", MAIN_IMAGE_CONTEXT);
+  const table = payload.sourceDecisionTable;
+
+  assert.equal(table.status, "needs_source");
+  assert.deepEqual(table.rows, []);
+  assert.match(table.summary, /没有可绑定的作者原文|不能生成/);
+  assert.match(table.boundary, /没有原文/);
+});
+
 test("buildAnswerGraph creates question, concept, source, and author nodes", () => {
   const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT);
   const graph = buildAnswerGraph(payload.question, payload.answer, payload.sources, payload.question, payload.rankedEvidence, payload.evidenceChain);

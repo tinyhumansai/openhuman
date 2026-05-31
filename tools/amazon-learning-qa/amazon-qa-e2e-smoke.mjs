@@ -127,6 +127,7 @@ export function validateAmazonQaSmoke(input = {}, options = {}) {
     secondRadarStatus: input.second.knowledgeGapRadar?.status || "",
     secondRadarGaps: Array.isArray(input.second.knowledgeGapRadar?.gaps) ? input.second.knowledgeGapRadar.gaps.length : 0,
     secondNextBestSourceKind: input.second.nextBestSource?.recommended?.kind || "",
+    secondDecisionRows: Array.isArray(input.second.sourceDecisionTable?.rows) ? input.second.sourceDecisionTable.rows.length : 0,
     secondAnswerMode: input.second.answerGeneration?.mode || "template",
     secondAnswerModel: input.second.answerGeneration?.model || "",
     secondTopicSources: input.second.topicSourceTree.sources.length,
@@ -240,6 +241,15 @@ function assertAskPayload(payload, label) {
   );
   assertSmoke(payload.notebookGuide && typeof payload.notebookGuide === "object", `The ${label} has no learning brief.`);
   assertSmoke(payload.synthesisAnswer && typeof payload.synthesisAnswer === "object", `The ${label} has no synthesis answer.`);
+  assertSmoke(payload.sourceDecisionTable && typeof payload.sourceDecisionTable === "object", `The ${label} has no source decision table.`);
+  assertSmoke(
+    String(payload.sourceDecisionTable?.boundary || "").includes("不是新的作者原文证据"),
+    `The ${label} source decision table is missing its evidence boundary.`,
+  );
+  assertSmoke(
+    payload.sourceDecisionTable.status === "needs_source" || Array.isArray(payload.sourceDecisionTable.rows),
+    `The ${label} source decision table has no rows or no-source state.`,
+  );
   if (payload.answerGeneration) {
     assertSmoke(payload.answerGeneration.mode === "local_ollama", `The ${label} answer generation mode is not local Ollama.`);
     assertSmoke(payload.answerGeneration.model, `The ${label} answer generation has no model.`);

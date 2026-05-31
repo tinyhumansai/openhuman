@@ -415,6 +415,14 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     sourceStudyPack,
     learningCard,
   });
+  const sourceDecisionTable = buildSourceDecisionTable({
+    question,
+    retrievalQuestion,
+    sources,
+    evidenceChain,
+    validationPack,
+    knowledgeGapRadar,
+  });
   const nextBestSource = buildNextBestSourceRoute({
     question,
     retrievalQuestion,
@@ -460,6 +468,7 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     workflowIntent,
     learningQueue,
     knowledgeGapRadar,
+    sourceDecisionTable,
     nextBestSource,
     usageFootprint,
     learningMemoryReminder,
@@ -2407,6 +2416,104 @@ function knowledgeGapRadarSummary(status, priority, metrics = {}) {
   if (status === "needs_data") return `本轮已有 ${metrics.evidenceCount || 0} 条作者证据，下一步要补你的产品数据。`;
   if (status === "ready_to_validate") return "本轮来源边界较清楚，下一步进入小范围业务验证。";
   return "先看优先级最高的缺口，再继续追问。";
+}
+
+export function buildSourceDecisionTable(input = {}) {
+  const question = String(input.question || "").trim();
+  const retrievalQuestion = String(input.retrievalQuestion || question).trim();
+  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const claims = Array.isArray(input.evidenceChain?.claims) ? input.evidenceChain.claims : [];
+  const sourceClaims = claims
+    .filter((claim) => claim?.type === "source_evidence" && Number.isInteger(claim.sourceIndex))
+    .filter((claim) => sources[claim.sourceIndex])
+    .slice(0, 6);
+  const dataRequests = Array.isArray(input.validationPack?.dataRequests) ? input.validationPack.dataRequests.filter((item) => item?.label).slice(0, 6) : [];
+  const priorityGap = input.knowledgeGapRadar?.priority;
+  const topic = compactGraphLabel(retrievalQuestion || question || "本轮问题", 90);
+
+  if (sourceClaims.length === 0) {
+    return {
+      title: "来源决策表",
+      status: "needs_source",
+      summary: "当前没有可绑定的作者原文，不能生成来源决策表。",
+      columns: ["来源", "能支持什么", "不能证明什么", "下一步"],
+      rows: [],
+      nextPrompt: priorityGap?.prompt || `请重新检索「${topic}」的作者原文证据，并优先给出可引用片段。`,
+      boundary: "来源决策表只由作者原文证据生成；没有原文时不能用系统整理或用户材料补位。",
+    };
+  }
+
+  const authorCount = uniqueOrdered(sourceClaims.map((claim) => claim.author || sources[claim.sourceIndex]?.author || "").filter(Boolean), 8).length;
+  const sourceCount = uniqueOrdered(sourceClaims.map((claim) => claim.sourceIndex), 8).length;
+  const rows = sourceClaims.map((claim, index) => {
+    const source = sources[claim.sourceIndex] || {};
+    const quote = compactGraphLabel(claim.quote || claim.text || source.excerpt || "", 260);
+    const request = dataRequests[index % Math.max(1, dataRequests.length)] || null;
+    return {
+      id: `source-decision:${claim.id || index}`,
+      sourceIndex: claim.sourceIndex,
+      claimId: claim.id || "",
+      author: compactGraphLabel(source.author || claim.author || "未知作者", 80),
+      title: compactGraphLabel(source.title || claim.title || `来源 ${claim.sourceIndex + 1}`, 120),
+      date: compactGraphLabel(source.date || claim.date || "", 32),
+      quote,
+      supports: sourceDecisionSupportText({ question, retrievalQuestion, claim, source, quote }),
+      cannotProve: sourceDecisionBoundaryText({ question, retrievalQuestion, claim, source }),
+      validation: request
+        ? `补充「${compactGraphLabel(request.label, 48)}」：${compactGraphLabel(request.verifies || request.reason || "用于判断是否适合你的产品。", 120)}`
+        : "先回到原文核对，再补你的 CTR、CVR、关键词、价格或评价数据。",
+      nextAction: sourceDecisionNextAction({ claim, source, quote, index }),
+      prompt: `请只基于这条来源，说明它对「${topic}」能支持什么、不能证明什么，并给出我的下一步验证动作：${quote}`,
+      canUseAsEvidence: false,
+      sourceCanUseAsEvidence: true,
+    };
+  });
+
+  const status = sourceCount < 2 || authorCount < 2
+    ? "needs_review"
+    : dataRequests.length > 0
+      ? "needs_data"
+      : "ready";
+  const statusText = status === "ready"
+    ? "来源覆盖可以进入小范围验证。"
+    : status === "needs_data"
+      ? "来源已有基础支撑，下一步要补你的业务数据。"
+      : "来源或作者视角仍偏少，先复核再行动。";
+  return {
+    title: "来源决策表",
+    status,
+    summary: `把 ${rows.length} 条作者原文拆成“能支持什么、不能证明什么、下一步怎么验证”。${statusText}`,
+    columns: ["来源", "能支持什么", "不能证明什么", "下一步"],
+    rows,
+    nextPrompt: dataRequests.length > 0
+      ? `我补充这些数据：${dataRequests.map((item) => item.label).slice(0, 4).join("、")}。请结合来源决策表判断下一步优先级。`
+      : `请把「${topic}」对应的来源决策表转成 7 天小实验清单。`,
+    boundary: "来源决策表是系统整理的决策辅助，不是新的作者原文证据；每行只能引用绑定来源，最终行动必须回到来源和你的真实业务数据核对。",
+  };
+}
+
+function sourceDecisionSupportText(input = {}) {
+  const text = `${input.claim?.text || ""}\n${input.quote || ""}\n${input.source?.title || ""}`;
+  if (/主图|图片|视觉|点击率|CTR/i.test(text)) return "可支持先把主图/视觉作为点击入口问题核对。";
+  if (/转化率|CVR|Listing|页面|文案|评价/i.test(text)) return "可支持把转化承接放回 Listing、评价、价格和页面说服力一起判断。";
+  if (/广告|SP|SBV|投放|关键词/i.test(text)) return "可支持把广告和关键词作为验证流量质量的线索，而不是直接替代页面判断。";
+  return `可作为「${compactGraphLabel(input.retrievalQuestion || input.question || "本轮问题", 60)}」的原文核对线索。`;
+}
+
+function sourceDecisionBoundaryText(input = {}) {
+  const text = `${input.claim?.text || ""}\n${input.quote || ""}\n${input.source?.title || ""}`;
+  if (/主图|图片|视觉/i.test(text)) return "不能单独证明改主图一定提升转化，还要看关键词、价格、评价和页面承接。";
+  if (/转化率|Listing|页面|文案/i.test(text)) return "不能直接替你判断当前 Listing 哪一项最差，缺少你的真实数据。";
+  if (/广告|关键词|投放/i.test(text)) return "不能证明应该先加预算或先开广告，只能提示要分开看流量和页面。";
+  return "不能替代你的产品数据、竞品环境和实际实验结果。";
+}
+
+function sourceDecisionNextAction(input = {}) {
+  const quote = input.quote || input.claim?.quote || input.source?.excerpt || "";
+  if (/主图|图片|视觉|点击率|CTR/i.test(quote)) return "先对比主图与前 10 个竞品的首屏差异，再看 CTR 是否低于同词同位。";
+  if (/转化率|CVR|Listing|页面|评价|价格/i.test(quote)) return "补充 CTR、CVR、价格、评分和评价数，把点击问题与承接问题拆开判断。";
+  if (/广告|关键词|投放|SBV|SP/i.test(quote)) return "按关键词或广告位分组查看 CTR/CVR，不把搜索广告和视频广告混在一起判断。";
+  return `先读来源 ${Number(input.index || 0) + 1} 的原文上下文，再把它转成一条可验证检查。`;
 }
 
 export function buildNextBestSourceRoute(input = {}) {

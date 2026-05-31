@@ -535,6 +535,7 @@ async function routeRequest(request, response, context) {
       workflowIntent: payload.workflowIntent,
       learningQueue: payload.learningQueue,
       knowledgeGapRadar: payload.knowledgeGapRadar,
+      sourceDecisionTable: payload.sourceDecisionTable,
       nextBestSource: payload.nextBestSource,
       usageFootprint: payload.usageFootprint,
       learningMemoryReminder: payload.learningMemoryReminder,
@@ -841,6 +842,7 @@ function normalizeSessionHistory(history) {
       workflowIntent: normalizeWorkflowIntent(entry.workflowIntent),
       learningQueue: normalizeLearningQueue(entry.learningQueue),
       knowledgeGapRadar: normalizeKnowledgeGapRadar(entry.knowledgeGapRadar),
+      sourceDecisionTable: normalizeSourceDecisionTable(entry.sourceDecisionTable),
       nextBestSource: normalizeNextBestSource(entry.nextBestSource),
       usageFootprint: normalizeUsageFootprint(entry.usageFootprint),
       learningMemoryReminder: normalizeLearningMemoryReminderForMessage(entry.learningMemoryReminder),
@@ -2115,6 +2117,38 @@ function normalizeKnowledgeGapRadar(radar) {
       radar.boundary || "知识缺口雷达只决定下一步补资料、补数据或复核路径，不改变作者原文证据边界。",
       420,
     ),
+  };
+}
+
+function normalizeSourceDecisionTable(table) {
+  if (!table || typeof table !== "object") return undefined;
+  const safeText = (value, max = 240) => String(value || "").slice(0, max);
+  const rows = Array.isArray(table.rows)
+    ? table.rows.map((item, index) => ({
+        id: safeText(item?.id || `source-decision:${index}`, 100),
+        sourceIndex: Number.isInteger(item?.sourceIndex) ? item.sourceIndex : undefined,
+        claimId: safeText(item?.claimId, 100),
+        author: safeText(item?.author, 80),
+        title: safeText(item?.title, 140),
+        date: safeText(item?.date, 32),
+        quote: safeText(item?.quote, 420),
+        supports: safeText(item?.supports, 280),
+        cannotProve: safeText(item?.cannotProve, 280),
+        validation: safeText(item?.validation, 280),
+        nextAction: safeText(item?.nextAction, 280),
+        prompt: safeText(item?.prompt, 560),
+        canUseAsEvidence: item?.canUseAsEvidence === true,
+        sourceCanUseAsEvidence: item?.sourceCanUseAsEvidence === true,
+      })).filter((item) => Number.isInteger(item.sourceIndex) && item.quote).slice(0, 6)
+    : [];
+  return {
+    title: safeText(table.title || "来源决策表", 100),
+    status: ["ready", "needs_source", "needs_review", "needs_data"].includes(table.status) ? table.status : "needs_review",
+    summary: safeText(table.summary, 360),
+    columns: Array.isArray(table.columns) ? table.columns.map((item) => safeText(item, 60)).filter(Boolean).slice(0, 6) : [],
+    rows,
+    nextPrompt: safeText(table.nextPrompt, 560),
+    boundary: safeText(table.boundary || "来源决策表是系统整理的决策辅助，不是新的作者原文证据。", 480),
   };
 }
 

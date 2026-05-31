@@ -382,6 +382,20 @@ test("assistant answers expose a source trust chain with explicit evidence class
   assert.doesNotMatch(html, /source-trust[\s\S]{0,1200}saveLearningNote/);
 });
 
+test("assistant answers expose a clickable source decision table", () => {
+  assert.match(html, /renderSourceDecisionTable/);
+  assert.match(html, /sourceDecisionTable:\s*payload\.sourceDecisionTable/);
+  assert.match(html, /sourceDecisionTable:\s*compactSourceDecisionTable\(message\.sourceDecisionTable\)/);
+  assert.match(serverSource, /normalizeSourceDecisionTable/);
+  assert.match(html, /来源决策表/);
+  assert.match(html, /能支持什么/);
+  assert.match(html, /不能证明什么/);
+  assert.match(html, /data-source-context-target/);
+  assert.match(html, /data-source-target/);
+  assert.match(html, /不是新的作者原文证据/);
+  assert.doesNotMatch(html, /source-decision-table[\s\S]{0,1400}saveLearningNote/);
+});
+
 test("assistant answers expose local token and cost footprint", () => {
   assert.match(html, /renderUsageFootprint/);
   assert.match(html, /usageFootprint:\s*payload\.usageFootprint/);

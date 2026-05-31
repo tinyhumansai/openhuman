@@ -1314,6 +1314,104 @@
         gap: 8px;
       }
 
+      .source-decision-table {
+        border: 1px solid rgba(14, 107, 96, 0.18);
+        background: #fbfffd;
+        padding: 14px 16px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .source-decision-table header {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+
+      .source-decision-table header strong {
+        font-size: 15px;
+      }
+
+      .source-decision-status {
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .source-decision-table[data-status="needs_source"] .source-decision-status,
+      .source-decision-table[data-status="needs_review"] .source-decision-status {
+        color: var(--accent-2);
+      }
+
+      .source-decision-summary,
+      .source-decision-boundary,
+      .source-decision-meta {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+        margin: 0;
+      }
+
+      .source-decision-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .source-decision-row {
+        border: 1px solid rgba(23, 23, 23, 0.1);
+        background: #fff;
+        display: grid;
+        grid-template-columns: minmax(130px, 0.75fr) repeat(3, minmax(0, 1fr));
+        gap: 0;
+        min-width: 0;
+      }
+
+      .source-decision-cell {
+        padding: 10px;
+        display: grid;
+        gap: 6px;
+        border-left: 1px solid rgba(23, 23, 23, 0.08);
+        min-width: 0;
+      }
+
+      .source-decision-cell:first-child {
+        border-left: 0;
+      }
+
+      .source-decision-cell span {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .source-decision-cell strong {
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .source-decision-cell p,
+      .source-decision-cell blockquote {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.55;
+        overflow-wrap: anywhere;
+      }
+
+      .source-decision-cell blockquote {
+        color: var(--muted);
+        border-left: 2px solid rgba(14, 107, 96, 0.24);
+        padding-left: 8px;
+      }
+
+      .source-decision-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
       .evidence-audit {
         border: 1px solid rgba(14, 107, 96, 0.16);
         background: #fbfffd;
@@ -5440,6 +5538,7 @@
         .knowledge-gap-radar header,
         .next-best-source header,
         .synthesis-answer header,
+        .source-decision-table header,
         .author-perspective summary,
         .topic-source-tree header,
         .source-study header,
@@ -5460,6 +5559,7 @@
 
         .business-decision header,
         .business-decision-grid,
+        .source-decision-row,
         .source-trust-grid,
         .knowledge-gap-metrics,
         .knowledge-gap-list,
@@ -5472,12 +5572,15 @@
 
         .source-trust-status,
         .knowledge-gap-status,
-        .next-best-source-status {
+        .next-best-source-status,
+        .source-decision-status {
           text-align: left;
         }
 
         .knowledge-gap-actions .evidence-button,
         .next-best-source-actions .evidence-button,
+        .source-decision-actions .evidence-button,
+        .source-decision-actions .diagnosis-prompt,
         .answer-effectiveness-button {
           width: 100%;
           justify-content: center;
@@ -6237,6 +6340,7 @@
               sourceTreeCalibration: payload.sourceTreeCalibration,
               synthesisAnswer: payload.synthesisAnswer,
               notebookGuide: payload.notebookGuide,
+              sourceDecisionTable: payload.sourceDecisionTable,
               graph: payload.graph,
               topicSourceTree: payload.topicSourceTree,
               sourceStudyPack: payload.sourceStudyPack,
@@ -6690,6 +6794,7 @@
       function renderPrimaryLearningPack(message, messageIndex) {
         return [
           renderSynthesisAnswer(message.synthesisAnswer, messageIndex),
+          renderSourceDecisionTable(message.sourceDecisionTable, messageIndex),
           renderNotebookGuide(message.notebookGuide, messageIndex),
         ].filter(Boolean).join("");
       }
@@ -8049,6 +8154,68 @@
       function renderNotebookGuidePrompts(prompts) {
         const rows = Array.isArray(prompts) ? prompts.filter(Boolean).slice(0, 3) : [];
         return rows.length ? `<div class="notebook-guide-actions">${rows.map((prompt) => `<button class="diagnosis-prompt" type="button" data-notebook-guide-prompt="${escapeAttribute(prompt)}">${escapeHtml(compactText(prompt, 54))}</button>`).join("")}</div>` : "";
+      }
+
+      function renderSourceDecisionTable(table, messageIndex) {
+        if (!table || typeof table !== "object") return "";
+        const status = ["ready", "needs_data", "needs_review", "needs_source"].includes(table.status) ? table.status : "needs_review";
+        const statusLabel = status === "ready"
+          ? "可进入验证"
+          : status === "needs_data"
+            ? "先补业务数据"
+            : status === "needs_source"
+              ? "缺少来源"
+              : "先复核来源";
+        const rows = Array.isArray(table.rows) ? table.rows.filter((item) => Number.isInteger(item?.sourceIndex)).slice(0, 6) : [];
+        const nextPrompt = String(table.nextPrompt || "").trim();
+        const body = rows.length
+          ? `<div class="source-decision-grid">${rows.map((row) => renderSourceDecisionRow(row, messageIndex)).join("")}</div>`
+          : `<article class="source-decision-row"><div class="source-decision-cell"><span>状态</span><strong>缺少作者原文</strong><p>这轮不能生成来源决策表，请先补可定位来源。</p></div></article>`;
+        return `<section class="source-decision-table" data-status="${escapeAttribute(status)}" aria-label="来源决策表">
+          <header>
+            <div>
+              <strong>${escapeHtml(table.title || "来源决策表")}</strong>
+              <p class="source-decision-summary">${escapeHtml(table.summary || "把本轮来源拆成可复核的行动判断。")}</p>
+            </div>
+            <span class="source-decision-status">${escapeHtml(statusLabel)}</span>
+          </header>
+          ${body}
+          <div class="source-decision-actions">
+            ${nextPrompt ? `<button class="diagnosis-prompt" type="button" data-notebook-guide-prompt="${escapeAttribute(nextPrompt)}">${escapeHtml(compactText(nextPrompt, 56))}</button>` : ""}
+          </div>
+          <p class="source-decision-boundary">${escapeHtml(table.boundary || "来源决策表是系统整理的决策辅助，不是新的作者原文证据。")}</p>
+        </section>`;
+      }
+
+      function renderSourceDecisionRow(row, messageIndex) {
+        const target = `${messageIndex}-${row.sourceIndex}`;
+        const meta = [row.author, row.date, row.title].filter(Boolean).join(" · ");
+        return `<article class="source-decision-row">
+          <div class="source-decision-cell">
+            <span>作者原文</span>
+            <strong>${escapeHtml(row.title || `来源 ${row.sourceIndex + 1}`)}</strong>
+            ${meta ? `<p class="source-decision-meta">${escapeHtml(compactText(meta, 90))}</p>` : ""}
+            ${row.quote ? `<blockquote>${escapeHtml(compactText(row.quote, 160))}</blockquote>` : ""}
+            <div class="source-decision-actions">
+              <button class="evidence-button" type="button" data-source-context-target="${escapeAttribute(target)}" data-source-context-quote="${escapeAttribute(row.quote || "")}">原文上下文</button>
+              <button class="evidence-button" type="button" data-source-target="${escapeAttribute(target)}">定位来源</button>
+            </div>
+          </div>
+          <div class="source-decision-cell">
+            <span>能支持什么</span>
+            <p>${escapeHtml(row.supports || "只能作为本轮问题的原文核对线索。")}</p>
+          </div>
+          <div class="source-decision-cell">
+            <span>不能证明什么</span>
+            <p>${escapeHtml(row.cannotProve || "不能替代你的产品数据和真实验证。")}</p>
+          </div>
+          <div class="source-decision-cell">
+            <span>下一步</span>
+            <p>${escapeHtml(row.validation || row.nextAction || "先核对原文，再补业务数据。")}</p>
+            ${row.nextAction ? `<p class="source-decision-meta">${escapeHtml(row.nextAction)}</p>` : ""}
+            ${row.prompt ? `<button class="diagnosis-prompt" type="button" data-notebook-guide-prompt="${escapeAttribute(row.prompt)}">继续判断</button>` : ""}
+          </div>
+        </article>`;
       }
 
       function renderSynthesisSupportAction(item, messageIndex) {
@@ -10232,6 +10399,7 @@
           learningQueue: compactLearningQueue(message.learningQueue),
           knowledgeGapRadar: compactKnowledgeGapRadar(message.knowledgeGapRadar),
           nextBestSource: compactNextBestSource(message.nextBestSource),
+          sourceDecisionTable: compactSourceDecisionTable(message.sourceDecisionTable),
           topicSourceTree: compactTopicSourceTree(message.topicSourceTree),
           sourceStudyPack: compactSourceStudyPack(message.sourceStudyPack),
           authorPerspectiveRoom: compactAuthorPerspectiveRoom(message.authorPerspectiveRoom),
@@ -10391,6 +10559,41 @@
             radar.boundary || "知识缺口雷达只决定下一步补资料、补数据或复核路径，不改变作者原文证据边界。",
             360,
           ),
+        };
+      }
+
+      function compactSourceDecisionTable(table) {
+        if (!table || typeof table !== "object") return undefined;
+        const rows = Array.isArray(table.rows)
+          ? table.rows
+              .map((item, index) => ({
+                id: compactText(item?.id || `source-decision:${index}`, 100),
+                sourceIndex: Number.isInteger(item?.sourceIndex) ? item.sourceIndex : undefined,
+                claimId: compactText(item?.claimId, 100),
+                author: compactText(item?.author, 80),
+                title: compactText(item?.title, 140),
+                date: compactText(item?.date, 32),
+                quote: compactText(item?.quote, 320),
+                supports: compactText(item?.supports, 220),
+                cannotProve: compactText(item?.cannotProve, 220),
+                validation: compactText(item?.validation, 220),
+                nextAction: compactText(item?.nextAction, 220),
+                prompt: compactText(item?.prompt, 420),
+                canUseAsEvidence: item?.canUseAsEvidence === true,
+                sourceCanUseAsEvidence: item?.sourceCanUseAsEvidence === true,
+              }))
+              .filter((item) => Number.isInteger(item.sourceIndex) && item.quote)
+              .slice(0, 6)
+          : [];
+        if (rows.length === 0 && table.status !== "needs_source") return undefined;
+        return {
+          title: compactText(table.title || "来源决策表", 100),
+          status: compactText(table.status || "needs_review", 40),
+          summary: compactText(table.summary, 300),
+          columns: Array.isArray(table.columns) ? table.columns.map((item) => compactText(item, 60)).filter(Boolean).slice(0, 6) : [],
+          rows,
+          nextPrompt: compactText(table.nextPrompt, 420),
+          boundary: compactText(table.boundary, 360),
         };
       }
 
