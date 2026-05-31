@@ -8,7 +8,7 @@ use crate::openhuman::inference::provider::traits::{
 };
 
 use super::compatible_types::{
-    ApiChatResponse, ResponsesInput, ResponsesResponse, StreamChunkResponse,
+    ApiChatResponse, ResponsesContentPart, ResponsesInput, ResponsesResponse, StreamChunkResponse,
 };
 
 // ── Think-tag stripping ───────────────────────────────────────────────────────
@@ -241,7 +241,14 @@ pub(crate) fn build_responses_prompt(
 
         input.push(ResponsesInput {
             role: normalize_responses_role(&message.role).to_string(),
-            content: message.content.clone(),
+            content: vec![ResponsesContentPart {
+                kind: if message.role == "assistant" {
+                    "output_text".to_string()
+                } else {
+                    "input_text".to_string()
+                },
+                text: message.content.clone(),
+            }],
         });
     }
 

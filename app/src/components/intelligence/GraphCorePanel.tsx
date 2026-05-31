@@ -9,6 +9,7 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { type CoreResult, kCoreSize } from '../../lib/memory/graphCore';
 
 const MAX_ROWS = 25;
+const MAX_SHELLS = 10;
 
 interface GraphCorePanelProps {
   result: CoreResult | null;
@@ -142,7 +143,7 @@ const GraphCorePanel = ({ result, loading, error, onRetry }: GraphCorePanelProps
           {t('graphCore.shellsHeading')}
         </h3>
         <ul className="space-y-1">
-          {result.shells.map(shell => (
+          {result.shells.slice(0, MAX_SHELLS).map(shell => (
             <li key={shell.k} className="flex items-center gap-2 text-[11px] tabular-nums">
               <span className="w-16 shrink-0 text-stone-600 dark:text-neutral-300">
                 {t('graphCore.shellLabel').replace('{k}', String(shell.k))}
@@ -160,6 +161,14 @@ const GraphCorePanel = ({ result, loading, error, onRetry }: GraphCorePanelProps
               </span>
             </li>
           ))}
+          {result.shells.length > MAX_SHELLS && (
+            <li className="text-[11px] text-stone-400 dark:text-neutral-500 pl-[4.5rem]">
+              {t('graphCore.shellsMore').replace(
+                '{count}',
+                String(result.shells.length - MAX_SHELLS)
+              )}
+            </li>
+          )}
         </ul>
       </section>
 

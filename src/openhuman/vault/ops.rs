@@ -3,6 +3,7 @@
 use chrono::Utc;
 use futures::FutureExt;
 use sha2::{Digest, Sha256};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 use crate::openhuman::config::Config;
@@ -14,7 +15,9 @@ use crate::rpc::RpcOutcome;
 use super::state;
 use super::store;
 use super::sync;
-use super::types::{Vault, VaultFile, VaultSyncState, VaultSyncStatus};
+use super::types::{
+    Vault, VaultFile, VaultSyncState, VaultSyncStatus, VaultWriteMarkdownReport, VaultWriteState,
+};
 
 /// Derive a stable memory namespace for a vault without embedding the raw UUID.
 ///
@@ -63,13 +66,15 @@ pub async fn vault_create(
         exclude_globs.len(),
     );
     let namespace = vault_namespace_for_id(&id);
+    let canonical_root = root
+        .canonicalize()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| trimmed_root.to_string());
+    let (write_state, write_state_reason) = store::vault_write_state_for_root_path(&canonical_root);
     let vault = Vault {
         id: id.clone(),
         name: trimmed_name.to_string(),
-        root_path: root
-            .canonicalize()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| trimmed_root.to_string()),
+        root_path: canonical_root,
         host_os: Some(store::current_host_os().to_string()),
         namespace,
         include_globs,
@@ -77,6 +82,8 @@ pub async fn vault_create(
         created_at: Utc::now(),
         last_synced_at: None,
         file_count: 0,
+        write_state,
+        write_state_reason,
     };
 
     store::insert_vault(config, &vault).map_err(|e| e.to_string())?;
@@ -104,6 +111,81 @@ pub async fn vault_get(config: &Config, id: &str) -> Result<RpcOutcome<Vault>, S
     Ok(RpcOutcome::single_log(vault, "vault loaded"))
 }
 
+/// Write an explicitly approved markdown/wiki artifact into a registered vault.
+pub async fn vault_write_markdown(
+    config: &Config,
+    id: &str,
+    rel_path: &str,
+    content: &str,
+    overwrite: bool,
+    approved: bool,
+) -> Result<RpcOutcome<VaultWriteMarkdownReport>, String> {
+    let id = id.trim();
+    if id.is_empty() {
+        return Err("vault_id must not be empty".to_string());
+    }
+    if !approved {
+        log::debug!("[vault] write_markdown: rejected missing approval id={id}");
+        return Err("vault markdown writes require explicit user approval".to_string());
+    }
+
+    let vault = store::get_vault(config, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("vault not found: {id}"))?;
+    let (write_state, write_reason) = store::vault_write_state_for_root_path(&vault.root_path);
+    if write_state != VaultWriteState::Writable {
+        log::debug!(
+            "[vault] write_markdown: rejected non-writable id={id} state={write_state:?} reason={write_reason:?}"
+        );
+        return Err(store::vault_write_state_reason_message(write_reason.as_deref()).to_string());
+    }
+
+    let rel = validate_markdown_rel_path(rel_path)?;
+    let bytes = content.as_bytes().len() as u64;
+    let root = std::fs::canonicalize(&vault.root_path)
+        .map_err(|err| format!("failed to resolve vault folder: {err}"))?;
+    ensure_existing_ancestors_stay_in_root(&root, &rel)?;
+    let target = root.join(&rel);
+    let parent = target
+        .parent()
+        .ok_or_else(|| "target path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent)
+        .map_err(|err| format!("failed to create vault note directory: {err}"))?;
+    let parent_canon = std::fs::canonicalize(parent)
+        .map_err(|err| format!("failed to resolve vault note directory: {err}"))?;
+    if !parent_canon.starts_with(&root) {
+        return Err("vault note path resolves outside the vault folder".to_string());
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(&target) {
+        if meta.file_type().is_symlink() {
+            return Err("refusing to write through a symlink inside the vault".to_string());
+        }
+    }
+    let created = !target.exists();
+    if !created && !overwrite {
+        return Err(
+            "vault markdown file already exists; set overwrite=true to update it".to_string(),
+        );
+    }
+
+    log::debug!(
+        "[vault] write_markdown: writing id={id} rel_path={} bytes={bytes} overwrite={overwrite} created={created}",
+        rel.display()
+    );
+    std::fs::write(&target, content)
+        .map_err(|err| format!("failed to write vault markdown file: {err}"))?;
+
+    Ok(RpcOutcome::single_log(
+        VaultWriteMarkdownReport {
+            vault_id: id.to_string(),
+            rel_path: rel.to_string_lossy().replace('\\', "/"),
+            bytes_written: bytes,
+            created,
+        },
+        format!("vault markdown written: {id}"),
+    ))
+}
+
 pub async fn vault_files(config: &Config, id: &str) -> Result<RpcOutcome<Vec<VaultFile>>, String> {
     let id = id.trim();
     if id.is_empty() {
@@ -115,6 +197,82 @@ pub async fn vault_files(config: &Config, id: &str) -> Result<RpcOutcome<Vec<Vau
     let files = store::list_files(config, id).map_err(|e| e.to_string())?;
     log::debug!("[vault] files: id={id} count={}", files.len());
     Ok(RpcOutcome::single_log(files, "vault files listed"))
+}
+
+fn validate_markdown_rel_path(raw: &str) -> Result<PathBuf, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("rel_path must not be empty".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("rel_path must be relative to the vault folder".to_string());
+    }
+
+    let mut clean = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => clean.push(part),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                return Err("rel_path must not contain '..' segments".to_string());
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err("rel_path must stay inside the vault folder".to_string());
+            }
+        }
+    }
+    if clean.as_os_str().is_empty() {
+        return Err("rel_path must name a markdown file".to_string());
+    }
+    let ext = clean
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !matches!(ext.to_ascii_lowercase().as_str(), "md" | "markdown") {
+        return Err("rel_path must end with .md or .markdown".to_string());
+    }
+    Ok(clean)
+}
+
+fn ensure_existing_ancestors_stay_in_root(root: &Path, rel_path: &Path) -> Result<(), String> {
+    let Some(parent) = rel_path.parent() else {
+        return Ok(());
+    };
+
+    let mut current = root.to_path_buf();
+    for component in parent.components() {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        let next = current.join(part);
+        match std::fs::symlink_metadata(&next) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let resolved = std::fs::canonicalize(&next)
+                    .map_err(|err| format!("failed to resolve vault note directory: {err}"))?;
+                if !resolved.starts_with(root) {
+                    return Err(
+                        "vault note directory resolves outside the vault folder".to_string()
+                    );
+                }
+                current = resolved;
+            }
+            Ok(meta) if meta.is_dir() => {
+                current = next;
+            }
+            Ok(_) => {
+                return Err("vault note parent path is not a directory".to_string());
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                break;
+            }
+            Err(err) => {
+                return Err(format!("failed to inspect vault note directory: {err}"));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 pub async fn vault_remove(

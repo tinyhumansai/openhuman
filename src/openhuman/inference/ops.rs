@@ -472,6 +472,20 @@ pub async fn inference_openai_oauth_complete(
     result
 }
 
+pub async fn inference_openai_oauth_import_codex_cli(
+    config: &Config,
+) -> Result<RpcOutcome<Value>, String> {
+    debug!("{LOG_PREFIX} openai_oauth_import_codex_cli:start");
+    let result =
+        crate::openhuman::inference::openai_oauth::import_openai_oauth_from_codex_cli(config)
+            .map(|payload| RpcOutcome::single_log(payload, "openai oauth imported from codex cli"));
+    match &result {
+        Ok(_) => debug!("{LOG_PREFIX} openai_oauth_import_codex_cli:ok"),
+        Err(err) => error!(error = %err, "{LOG_PREFIX} openai_oauth_import_codex_cli:error"),
+    }
+    result
+}
+
 pub async fn inference_openai_oauth_status(config: &Config) -> Result<RpcOutcome<Value>, String> {
     debug!("{LOG_PREFIX} openai_oauth_status:start");
     let result =

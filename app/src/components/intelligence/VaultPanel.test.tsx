@@ -14,12 +14,20 @@ const mockSync = vi.fn();
 const mockSyncStatus = vi.fn();
 const mockRemove = vi.fn();
 
+const mockOpenUrl = vi.fn();
+const mockRevealPath = vi.fn();
+
 vi.mock('../../utils/tauriCommands/vault', () => ({
   openhumanVaultList: (...args: unknown[]) => mockList(...args),
   openhumanVaultCreate: (...args: unknown[]) => mockCreate(...args),
   openhumanVaultSync: (...args: unknown[]) => mockSync(...args),
   openhumanVaultSyncStatus: (...args: unknown[]) => mockSyncStatus(...args),
   openhumanVaultRemove: (...args: unknown[]) => mockRemove(...args),
+}));
+
+vi.mock('../../utils/openUrl', () => ({
+  openUrl: (...args: unknown[]) => mockOpenUrl(...args),
+  revealPath: (...args: unknown[]) => mockRevealPath(...args),
 }));
 
 function vault(overrides: Record<string, unknown> = {}) {
@@ -33,6 +41,8 @@ function vault(overrides: Record<string, unknown> = {}) {
     created_at: '2026-05-17T10:00:00Z',
     last_synced_at: null,
     file_count: 0,
+    write_state: 'writable',
+    write_state_reason: 'writable',
     ...overrides,
   };
 }
@@ -67,6 +77,8 @@ describe('<VaultPanel />', () => {
     mockSync.mockReset();
     mockSyncStatus.mockReset();
     mockRemove.mockReset();
+    mockOpenUrl.mockReset();
+    mockRevealPath.mockReset();
   });
 
   afterEach(() => {
@@ -101,6 +113,35 @@ describe('<VaultPanel />', () => {
     expect(screen.getByText('A')).toBeTruthy();
     expect(screen.getByText(/42 file/)).toBeTruthy();
     expect(screen.getByText(/synced 30s ago/)).toBeTruthy();
+    expect(screen.getByTestId('vault-write-state-v-A')).toHaveTextContent('Writable');
+    expect(screen.getByText(/Approved markdown/)).toBeTruthy();
+  });
+
+  it('shows read-only and unavailable vault write states with reasons', async () => {
+    mockList.mockResolvedValueOnce({
+      result: [
+        vault({
+          id: 'v-readonly',
+          name: 'Read only',
+          write_state: 'read_only',
+          write_state_reason: 'read_only',
+        }),
+        vault({
+          id: 'v-missing',
+          name: 'Missing',
+          write_state: 'unavailable',
+          write_state_reason: 'unavailable',
+        }),
+      ],
+      logs: [],
+    });
+    render(<VaultPanel />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    expect(screen.getByTestId('vault-write-state-v-readonly')).toHaveTextContent('Read-only');
+    expect(screen.getByText('Vault folder is read-only on this device.')).toBeTruthy();
+    expect(screen.getByTestId('vault-write-state-v-missing')).toHaveTextContent('Unavailable');
+    expect(screen.getByText('Vault folder is not available on this device.')).toBeTruthy();
   });
 
   it('toggles the add form and creates a vault on submit', async () => {
@@ -402,5 +443,58 @@ describe('<VaultPanel />', () => {
       )
     );
     confirmSpy.mockRestore();
+  });
+
+  it('open vault fires obsidian deep link and shows success toast', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockOpenUrl.mockResolvedValueOnce(undefined);
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByTestId('vault-open'));
+    await waitFor(() =>
+      expect(mockOpenUrl).toHaveBeenCalledWith(
+        'obsidian://open?path=' + encodeURIComponent('/Users/me/notes')
+      )
+    );
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'info', title: 'Opened in Obsidian' })
+    );
+  });
+
+  it('open vault falls back to revealPath when obsidian deep link fails', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockOpenUrl.mockRejectedValueOnce(new Error('scheme not handled'));
+    mockRevealPath.mockResolvedValueOnce(undefined);
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByTestId('vault-open'));
+    await waitFor(() => expect(mockOpenUrl).toHaveBeenCalled());
+    await waitFor(() => expect(mockRevealPath).toHaveBeenCalledWith('/Users/me/notes'));
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        title: 'Obsidian not found — opened in file manager',
+      })
+    );
+  });
+
+  it('open vault shows error toast when both obsidian and reveal fail', async () => {
+    mockList.mockResolvedValueOnce({ result: [vault()], logs: [] });
+    mockOpenUrl.mockRejectedValueOnce(new Error('scheme not handled'));
+    mockRevealPath.mockRejectedValueOnce(new Error('permission denied'));
+    const onToast = vi.fn();
+    render(<VaultPanel onToast={onToast} />);
+    await waitFor(() => screen.getByTestId('vault-list'));
+
+    fireEvent.click(screen.getByTestId('vault-open'));
+    await waitFor(() => expect(mockOpenUrl).toHaveBeenCalled());
+    await waitFor(() => expect(mockRevealPath).toHaveBeenCalled());
+    expect(onToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', title: "Couldn't open vault" })
+    );
   });
 });

@@ -3,6 +3,7 @@ use crate::openhuman::config::Config;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::HashMap;
 
 // ── Phase 2: embedding column accessors ─────────────────────────────────
 
@@ -286,4 +287,114 @@ fn embedding_from_blob(bytes: &[u8], dim: i64, label: &str) -> Result<Option<Vec
         );
     }
     Ok(Some(floats))
+}
+/// SQLite's compile-time hard cap on `?` parameters per prepared statement is
+/// `SQLITE_MAX_VARIABLE_NUMBER` (32 766 since SQLite 3.32, bundled with
+/// rusqlite). We chunk well below that for two reasons:
+///
+/// 1. **Headroom against schema growth.** The batched query binds one `?` per
+///    chunk_id *plus* the `model_signature` parameter. Picking 500 as the
+///    per-chunk cap gives ~65× safety margin even if a future caller bumps
+///    `LOOKUP_HEADROOM` from 200 into the thousands — the batch helper
+///    silently splits the request, the caller sees no semantic change.
+/// 2. **Sane SQL string length.** A 500-`?` `IN(...)` clause is ~1 KB of SQL
+///    text — small enough that prepare-and-discard per chunk is cheap and the
+///    planner produces a simple covered-index lookup.
+///
+/// Lowering this constant is safe (just more round-trips). Raising it past
+/// the SQLite limit will fail at prepare time with `too many SQL variables`.
+const MAX_EMBEDDING_BATCH: usize = 500;
+
+/// Batched read of chunk embeddings under a single `model_signature`.
+///
+/// Returns a `HashMap<chunk_id, Vec<f32>>` containing **only the chunks
+/// that have a vector under `model_signature`**. Missing chunks are simply
+/// absent from the map — callers handle them the same way as a `None`
+/// return from the single-row [`get_chunk_embedding_for_signature`].
+///
+/// ## Why this exists
+///
+/// The retrieval rerank path (`memory_tree::retrieval::topic::
+/// rerank_by_semantic_similarity`) used to call the single-row helper inside
+/// a `for h in hits { spawn_blocking(...).await }` loop. With
+/// `LOOKUP_HEADROOM = 200` that meant 200 sequential SQLite round-trips on
+/// every entity-scoped query with `query=…`. This helper collapses that to
+/// `ceil(n / MAX_EMBEDDING_BATCH)` round-trips while preserving the exact
+/// `Option<Vec<f32>>` semantics of the per-row helper (missing row → absent
+/// key → caller treats as `None`).
+///
+/// Order of input ids is irrelevant; callers re-decorate from the returned
+/// map by id, so the rerank loop preserves its original hit iteration
+/// order and therefore its tie-break behaviour.
+pub fn get_chunk_embeddings_for_signature_batch(
+    config: &Config,
+    chunk_ids: &[String],
+    model_signature: &str,
+) -> Result<HashMap<String, Vec<f32>>> {
+    if chunk_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, Vec<f32>> = HashMap::with_capacity(chunk_ids.len());
+        // Chunk the id list to stay safely under SQLite's
+        // SQLITE_MAX_VARIABLE_NUMBER cap. For the current
+        // LOOKUP_HEADROOM=200 callsite this loop executes exactly once;
+        // the chunking only kicks in if a future caller passes >500
+        // ids in a single batch.
+        for window in chunk_ids.chunks(MAX_EMBEDDING_BATCH) {
+            // Build `IN (?,?,?,...)` with `window.len()` placeholders.
+            // model_signature is bound as the last parameter (?{n+1}).
+            let placeholders = std::iter::repeat_n("?", window.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT chunk_id, vector, dim
+                   FROM mem_tree_chunk_embeddings
+                  WHERE chunk_id IN ({placeholders})
+                    AND model_signature = ?{sig_idx}",
+                sig_idx = window.len() + 1,
+            );
+            let mut stmt = conn
+                .prepare(&sql)
+                .context("prepare get_chunk_embeddings_for_signature_batch")?;
+            // Bind chunk_ids then model_signature. rusqlite wants
+            // ToSql trait objects in a uniform iterator.
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::with_capacity(window.len() + 1);
+            for id in window {
+                params.push(id as &dyn rusqlite::ToSql);
+            }
+            params.push(&model_signature as &dyn rusqlite::ToSql);
+            let rows = stmt
+                .query_map(params.as_slice(), |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Vec<u8>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .context("query get_chunk_embeddings_for_signature_batch")?;
+            for row in rows {
+                let (chunk_id, bytes, dim) = row?;
+                // Reuse the single-row decoder so corrupt-blob errors
+                // surface with the same diagnostic shape as the
+                // single-row path.
+                if let Some(v) = embedding_from_blob(&bytes, dim, "chunk embedding")? {
+                    out.insert(chunk_id, v);
+                }
+            }
+        }
+        Ok(out)
+    })
+}
+
+/// Batched read of chunk embeddings under the **active** model signature.
+/// Convenience wrapper mirroring [`get_chunk_embedding`] for the per-row
+/// path: resolves `tree_active_signature(config)` exactly once and forwards
+/// to [`get_chunk_embeddings_for_signature_batch`].
+pub fn get_chunk_embeddings_batch(
+    config: &Config,
+    chunk_ids: &[String],
+) -> Result<HashMap<String, Vec<f32>>> {
+    let signature = tree_active_signature(config);
+    get_chunk_embeddings_for_signature_batch(config, chunk_ids, &signature)
 }

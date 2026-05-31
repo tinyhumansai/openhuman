@@ -38,6 +38,29 @@ import LanguageSelect from '../LanguageSelect';
 const log = debug('boot-check');
 const logError = debug('boot-check:error');
 
+/**
+ * Plain HTTP to a public host is insecure (unencrypted traffic), but we no
+ * longer block it — return a non-blocking warning string so the UI can nudge
+ * the user toward HTTPS while still letting them proceed. Returns null when the
+ * URL is empty, unparseable, HTTPS, or points at a local/private host.
+ */
+function httpPublicHostWarning(
+  rawUrl: string,
+  t: (key: string, fallback?: string) => string
+): string | null {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = new URL(normalizeRpcUrl(trimmed));
+    if (parsed.protocol === 'http:' && !isLocalOrPrivateNetworkHost(parsed.hostname)) {
+      return t('bootCheck.httpPublicWarning');
+    }
+  } catch {
+    // Unparseable URL — the error path in validateInputs handles messaging.
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -107,6 +130,7 @@ function ModePicker({ onConfirm }: PickerProps) {
   const [cloudUrl, setCloudUrl] = useState('');
   const [cloudToken, setCloudToken] = useState('');
   const [urlError, setUrlError] = useState<string | null>(null);
+  const [urlWarning, setUrlWarning] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [testStatus, setTestStatus] = useState<TestStatus>({ kind: 'idle' });
 
@@ -133,12 +157,6 @@ function ModePicker({ onConfirm }: PickerProps) {
       const parsed = new URL(normalizedUrl);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         setUrlError(t('bootCheck.urlMustStartWith'));
-        return null;
-      }
-      if (parsed.protocol === 'http:' && !isLocalOrPrivateNetworkHost(parsed.hostname)) {
-        setUrlError(
-          'HTTP core URLs are only allowed for localhost or private network hosts. Use HTTPS for public hosts.'
-        );
         return null;
       }
     } catch {
@@ -287,13 +305,18 @@ function ModePicker({ onConfirm }: PickerProps) {
                 placeholder={t('bootCheck.rpcUrlPlaceholder')}
                 value={cloudUrl}
                 onChange={e => {
-                  setCloudUrl(e.target.value);
+                  const next = e.target.value;
+                  setCloudUrl(next);
                   setUrlError(null);
+                  setUrlWarning(httpPublicHostWarning(next, t));
                   setTestStatus({ kind: 'idle' });
                 }}
                 className="rounded-lg border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm text-stone-900 dark:text-neutral-100 placeholder-stone-400 dark:placeholder-neutral-500 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500"
               />
               {urlError && <p className="text-xs text-red-600">{urlError}</p>}
+              {!urlError && urlWarning && (
+                <p className="text-xs text-amber-600 dark:text-amber-500">{urlWarning}</p>
+              )}
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs font-medium text-stone-700 dark:text-neutral-200">

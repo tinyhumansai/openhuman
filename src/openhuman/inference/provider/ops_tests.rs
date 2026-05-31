@@ -201,6 +201,25 @@ fn openrouter_detection_matches_builtin_slug_or_host() {
     )));
 }
 
+#[test]
+fn openai_codex_models_url_includes_client_version_query() {
+    let url = append_query_param(
+        "https://chatgpt.com/backend-api/codex/models",
+        "client_version",
+        openai_codex_client_version(),
+    );
+    let parsed = reqwest::Url::parse(&url).expect("url");
+
+    assert_eq!(parsed.path(), "/backend-api/codex/models");
+    assert_eq!(
+        parsed
+            .query_pairs()
+            .find(|(key, _)| key == "client_version")
+            .map(|(_, value)| value.into_owned()),
+        Some(openai_codex_client_version().to_string())
+    );
+}
+
 #[tokio::test]
 async fn openrouter_invalid_key_fails_before_models_catalog_probe() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -883,18 +902,36 @@ fn parse_models_response_returns_models_for_well_formed_data_array() {
 }
 
 #[test]
+fn parse_models_response_returns_models_for_codex_models_array() {
+    let body = serde_json::json!({
+        "models": [
+            { "slug": "gpt-5.5", "owned_by_organization": "openai", "max_context_window": 272000 },
+            "gpt-5.4",
+        ],
+    });
+
+    let models = parse_models_response(&body).expect("Codex models body must parse");
+
+    assert_eq!(models.len(), 2);
+    assert_eq!(models[0].id, "gpt-5.5");
+    assert_eq!(models[0].owned_by.as_deref(), Some("openai"));
+    assert_eq!(models[0].context_window, Some(272000));
+    assert_eq!(models[1].id, "gpt-5.4");
+}
+
+#[test]
 fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
-    // (1) `data` field completely absent — original Sentry message
-    // shape, kept for backward fingerprint with the well-known
-    // "wrong endpoint" misconfiguration.
-    let body = serde_json::json!({ "object": "list", "models": [] });
-    let err = parse_models_response(&body).expect_err("no data field must fail");
+    // (1) `data`/`models` fields completely absent — wrong endpoint
+    // misconfiguration. Codex uses `models`, so it is accepted alongside
+    // OpenAI-compatible `data`.
+    let body = serde_json::json!({ "object": "list", "items": [] });
+    let err = parse_models_response(&body).expect_err("no model catalog field must fail");
     assert!(
-        err.contains("missing `data` field"),
+        err.contains("missing `data` or `models` field"),
         "no-data error should say `missing`: {err}"
     );
     assert!(
-        err.contains("object, models") || err.contains("models, object"),
+        err.contains("items") && err.contains("object"),
         "no-data error should list actual keys: {err}"
     );
 
@@ -923,6 +960,26 @@ fn parse_models_response_distinguishes_missing_data_field_from_wrong_type() {
             "wrong-type error must name the actual JSON kind ({label}): {err}"
         );
     }
+}
+
+#[test]
+fn openai_codex_model_hints_are_merged_without_duplicates() {
+    let mut models = vec![ModelInfo {
+        id: "gpt-5.4".to_string(),
+        owned_by: Some("openai-codex".to_string()),
+        context_window: Some(128000),
+    }];
+
+    merge_openai_codex_model_hints(&mut models);
+
+    let ids = models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ids,
+        vec!["gpt-5.4", "gpt-5.5", "gpt-5.3-codex-spark", "gpt-5.3-codex"]
+    );
 }
 
 // ── synthesize_local_runtime_entry (TAURI-RUST-28Z fallback) ────────────

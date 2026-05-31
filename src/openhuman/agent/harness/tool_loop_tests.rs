@@ -1,6 +1,6 @@
 use super::*;
 use crate::openhuman::inference::provider::traits::ProviderCapabilities;
-use crate::openhuman::inference::provider::ChatResponse;
+use crate::openhuman::inference::provider::{ChatRequest, ChatResponse};
 use crate::openhuman::tools::{ToolResult, ToolScope};
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -1266,7 +1266,7 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
         workspace_dir: std::env::temp_dir(),
         ..crate::openhuman::config::Config::default()
     };
-    crate::openhuman::approval::ApprovalGate::init_global(cfg, "loop-gate-e2e-session");
+    crate::openhuman::approval::ApprovalGate::init_global(cfg, "session-loop-gate-e2e");
 
     let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let provider = ScriptedProvider {

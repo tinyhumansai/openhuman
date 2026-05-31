@@ -1,14 +1,16 @@
 import type { ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 
 import CostDashboardPanel from '../components/dashboard/CostDashboardPanel';
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
 import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentAccessPanel from '../components/settings/panels/AgentAccessPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
+import AgentEditorPage from '../components/settings/panels/AgentEditorPage';
 import AgentsPanel from '../components/settings/panels/AgentsPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
+import ApprovalHistoryPanel from '../components/settings/panels/ApprovalHistoryPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import AutonomyPanel from '../components/settings/panels/AutonomyPanel';
@@ -48,6 +50,7 @@ import ToolPolicyDiagnosticsPanel from '../components/settings/panels/ToolPolicy
 import ToolsPanel from '../components/settings/panels/ToolsPanel';
 import VoiceDebugPanel from '../components/settings/panels/VoiceDebugPanel';
 import VoicePanel from '../components/settings/panels/VoicePanel';
+import WalletBalancesPanel from '../components/settings/panels/WalletBalancesPanel';
 import WebhooksDebugPanel from '../components/settings/panels/WebhooksDebugPanel';
 import SettingsHome from '../components/settings/SettingsHome';
 import SettingsSectionPage from '../components/settings/SettingsSectionPage';
@@ -143,6 +146,16 @@ const ToolsIcon = (
     />
   </svg>
 );
+const NotificationSettingsIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
+    />
+  </svg>
+);
 const LlmIcon = (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path
@@ -174,6 +187,39 @@ const VoiceIcon = (
   </svg>
 );
 
+const AgentAccessIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+    />
+  </svg>
+);
+
+const PersonaIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+    />
+  </svg>
+);
+
+const WalletIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
+    />
+  </svg>
+);
+
 const WrappedSettingsPage = ({
   children,
   maxWidthClass = 'max-w-lg',
@@ -193,6 +239,7 @@ const WrappedSettingsPage = ({
 
 const Settings = () => {
   const { t } = useT();
+  const navigate = useNavigate();
 
   const wrapSettingsPage = (element: ReactNode, opts?: { maxWidthClass?: string }) => (
     <WrappedSettingsPage maxWidthClass={opts?.maxWidthClass}>
@@ -204,13 +251,6 @@ const Settings = () => {
   );
 
   const accountSettingsItems = [
-    {
-      id: 'recovery-phrase',
-      title: t('pages.settings.account.recoveryPhrase'),
-      description: t('pages.settings.account.recoveryPhraseDesc'),
-      route: 'recovery-phrase',
-      icon: RecoveryPhraseIcon,
-    },
     {
       id: 'team',
       title: t('pages.settings.account.team'),
@@ -231,6 +271,44 @@ const Settings = () => {
       description: t('pages.settings.account.migrationDesc'),
       route: 'migration',
       icon: MigrationIcon,
+    },
+  ];
+
+  // Notifications hub (lives under Advanced) — gathers the Alerts inbox and the
+  // notification preferences/routing panel under one section page.
+  const notificationsHubItems = [
+    {
+      id: 'alerts',
+      title: t('nav.alerts'),
+      description: t('settings.alertsDesc'),
+      // Alerts is the top-level inbox at `/notifications`, outside the settings
+      // tree, so navigate explicitly instead of via `navigateToSettings`.
+      onClick: () => navigate('/notifications'),
+      icon: NotificationsIcon,
+    },
+    {
+      id: 'notification-settings',
+      title: t('settings.notificationsHub.settingsItem'),
+      description: t('settings.notificationsHub.settingsItemDesc'),
+      route: 'notifications',
+      icon: NotificationSettingsIcon,
+    },
+  ];
+
+  const cryptoSettingsItems = [
+    {
+      id: 'recovery-phrase',
+      title: t('pages.settings.account.recoveryPhrase'),
+      description: t('pages.settings.account.recoveryPhraseDesc'),
+      route: 'recovery-phrase',
+      icon: RecoveryPhraseIcon,
+    },
+    {
+      id: 'wallet-balances',
+      title: t('pages.settings.account.walletBalances'),
+      description: t('pages.settings.account.walletBalancesDesc'),
+      route: 'wallet-balances',
+      icon: WalletIcon,
     },
   ];
 
@@ -303,13 +381,6 @@ const Settings = () => {
       icon: LlmIcon,
     },
     {
-      id: 'autonomy',
-      title: t('settings.developerMenu.autonomy.title'),
-      description: t('settings.developerMenu.autonomy.desc'),
-      route: 'autonomy',
-      icon: LlmIcon,
-    },
-    {
       id: 'local-model-debug',
       title: t('settings.developerMenu.localModelDebug.title'),
       description: t('settings.developerMenu.localModelDebug.desc'),
@@ -336,6 +407,37 @@ const Settings = () => {
       description: t('settings.costDashboard.desc'),
       route: 'cost-dashboard',
       icon: LlmIcon,
+    },
+  ];
+
+  const agentsSettingsItems = [
+    {
+      id: 'agents',
+      title: t('settings.agents.title'),
+      description: t('settings.agents.subtitle'),
+      route: 'agents',
+      icon: ToolsIcon,
+    },
+    {
+      id: 'persona',
+      title: t('settings.persona.menuTitle'),
+      description: t('settings.persona.menuDesc'),
+      route: 'persona',
+      icon: PersonaIcon,
+    },
+    {
+      id: 'autonomy',
+      title: t('settings.developerMenu.autonomy.title'),
+      description: t('settings.developerMenu.autonomy.desc'),
+      route: 'autonomy',
+      icon: LlmIcon,
+    },
+    {
+      id: 'agent-access',
+      title: t('settings.agentAccess.title'),
+      description: t('settings.agentAccess.menuDesc'),
+      route: 'agent-access',
+      icon: AgentAccessIcon,
     },
   ];
 
@@ -408,6 +510,36 @@ const Settings = () => {
             />
           )}
         />
+        <Route
+          path="agents-settings"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.agentsSection.title')}
+              description={t('settings.agentsSection.description')}
+              items={agentsSettingsItems}
+            />
+          )}
+        />
+        <Route
+          path="crypto"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.cryptoSection.title')}
+              description={t('settings.cryptoSection.description')}
+              items={cryptoSettingsItems}
+            />
+          )}
+        />
+        <Route
+          path="notifications-hub"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.notificationsHub.title')}
+              description={t('settings.notificationsHub.description')}
+              items={notificationsHubItems}
+            />
+          )}
+        />
         {/* Account & Billing leaf panels */}
         <Route path="recovery-phrase" element={wrapSettingsPage(<RecoveryPhrasePanel />)} />
         <Route path="team" element={wrapSettingsPage(<TeamPanel />)} />
@@ -426,6 +558,7 @@ const Settings = () => {
         <Route path="billing" element={<BillingPanel />} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
         <Route path="migration" element={wrapSettingsPage(<MigrationPanel />)} />
+        <Route path="wallet-balances" element={wrapSettingsPage(<WalletBalancesPanel />)} />
         {/* Features leaf panels */}
         <Route path="screen-intelligence" element={wrapSettingsPage(<ScreenIntelligencePanel />)} />
         <Route path="autocomplete" element={wrapSettingsPage(<AutocompletePanel />)} />
@@ -435,7 +568,10 @@ const Settings = () => {
         <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
+        <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
         <Route path="agents" element={wrapSettingsPage(<AgentsPanel />)} />
+        <Route path="agents/new" element={wrapSettingsPage(<AgentEditorPage />)} />
+        <Route path="agents/edit/:id" element={wrapSettingsPage(<AgentEditorPage />)} />
         <Route path="tools" element={wrapSettingsPage(<ToolsPanel />)} />
         <Route path="companion" element={wrapSettingsPage(<CompanionPanel />)} />
         {/* Developer Options */}

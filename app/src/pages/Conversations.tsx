@@ -78,6 +78,7 @@ import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
 import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
 import { LimitPill } from './conversations/components/LimitPill';
+import { SubagentDrawer } from './conversations/components/SubagentDrawer';
 import { TaskKanbanBoard } from './conversations/components/TaskKanbanBoard';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
 import {
@@ -201,6 +202,9 @@ const Conversations = ({
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  // Sub-agent whose full live transcript is open in the drawer, keyed by the
+  // owning timeline row's spawn `taskId`. Null when the drawer is closed.
+  const [openSubagentTaskId, setOpenSubagentTaskId] = useState<string | null>(null);
   const [inputMode, setInputMode] = useState<InputMode>('text');
   const [replyMode, setReplyMode] = useState<ReplyMode>('text');
   const [isRecording, setIsRecording] = useState(false);
@@ -1069,6 +1073,12 @@ const Conversations = ({
   const selectedThreadToolTimeline = selectedThreadId
     ? (toolTimelineByThread[selectedThreadId] ?? [])
     : [];
+  // Re-derive the open subagent's live activity (and its row status) from the
+  // timeline on every render so the drawer streams token-by-token as
+  // subagent_text_delta / subagent_thinking_delta events land in Redux.
+  const openSubagentEntry = openSubagentTaskId
+    ? selectedThreadToolTimeline.find(entry => entry.subagent?.taskId === openSubagentTaskId)
+    : undefined;
   const selectedTaskBoard = selectedThreadId ? (taskBoardByThread[selectedThreadId] ?? null) : null;
   const hasTaskBoard = Boolean(selectedTaskBoard?.cards.length);
   const visibleMessages = messages.filter(msg => !msg.extraMetadata?.hidden);
@@ -1644,7 +1654,10 @@ const Conversations = ({
                 <div key={msg.id}>
                   {shouldRenderTimelineBeforeLatestAgentMessage &&
                     latestVisibleAgentMessage?.id === msg.id && (
-                      <ToolTimelineBlock entries={selectedThreadToolTimeline} />
+                      <ToolTimelineBlock
+                        entries={selectedThreadToolTimeline}
+                        onViewSubagent={sub => setOpenSubagentTaskId(sub.taskId)}
+                      />
                     )}
                   <div
                     className={`group/msg flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -1929,7 +1942,10 @@ const Conversations = ({
               {/* Tool call timeline */}
               {selectedThreadToolTimeline.length > 0 &&
                 !shouldRenderTimelineBeforeLatestAgentMessage && (
-                  <ToolTimelineBlock entries={selectedThreadToolTimeline} />
+                  <ToolTimelineBlock
+                    entries={selectedThreadToolTimeline}
+                    onViewSubagent={sub => setOpenSubagentTaskId(sub.taskId)}
+                  />
                 )}
               {isSending && rustChat && (
                 <div className="flex justify-start px-1">
@@ -2310,6 +2326,11 @@ const Conversations = ({
       <ConfirmationModal
         modal={deleteModal}
         onClose={() => setDeleteModal(prev => ({ ...prev, isOpen: false }))}
+      />
+      <SubagentDrawer
+        subagent={openSubagentEntry?.subagent ?? null}
+        status={openSubagentEntry?.status}
+        onClose={() => setOpenSubagentTaskId(null)}
       />
     </div>
   );

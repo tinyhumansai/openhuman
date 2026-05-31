@@ -112,8 +112,8 @@ export default function ScheduledCronCard({
   // dashboard's grouped-skill card.
   const containerClass = `rounded-2xl border shadow-soft transition-colors ${
     isActive
-      ? 'border-sage-200 dark:border-sage-500/30 bg-sage-50 dark:bg-sage-500/10'
-      : 'border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900'
+      ? 'border-sage-200 dark:border-sage-500/30 bg-gradient-to-br from-sage-50 via-white to-sage-100 dark:from-sage-500/10 dark:via-neutral-900 dark:to-sage-500/5'
+      : 'border-stone-200 dark:border-neutral-800 bg-gradient-to-br from-white via-stone-50 to-stone-100/60 dark:from-neutral-900 dark:via-neutral-900 dark:to-neutral-800/80'
   }`;
 
   const headingRow = (
@@ -250,7 +250,7 @@ export default function ScheduledCronCard({
           onClick();
         }
       }}
-      className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40 rounded-2xl"
+      className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 cursor-pointer rounded-2xl transition-colors hover:bg-stone-100/80 dark:hover:bg-neutral-800/70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40"
     >
       {headingRow}
       {rightCluster}

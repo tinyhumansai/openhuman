@@ -357,6 +357,11 @@ pub struct PromptContext<'a> {
     /// Non-self personality roster entries for the master agent's prompt.
     /// Empty for non-master agents.
     pub personality_roster: Vec<PersonalityRosterEntry>,
+    /// Agent workflows available in this session. Injected into the prompt
+    /// so agents know which workflows they can invoke via `workflow_phase`.
+    /// Empty when no workflows are installed or the harness has not yet loaded
+    /// them (sub-agent paths, tests, etc.).
+    pub workflows: &'a [crate::openhuman::agent_workflows::Workflow],
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

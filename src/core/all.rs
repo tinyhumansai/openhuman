@@ -130,6 +130,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     // Local procedural operating experience for agent self-learning
     controllers
         .extend(crate::openhuman::agent_experience::all_agent_experience_registered_controllers());
+    // Agent workflows — phase-keyed guidance bound to task lifecycle
+    controllers
+        .extend(crate::openhuman::agent_workflows::all_agent_workflows_registered_controllers());
     // System and process health monitoring
     controllers.extend(crate::openhuman::health::all_health_registered_controllers());
     // Diagnostic tools
@@ -166,6 +169,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
+    // Model Council: multi-model deliberation (parallel members + chair synthesis)
+    controllers.extend(crate::openhuman::model_council::all_model_council_registered_controllers());
     // Unified inference domain: text / vision / local runtime / cloud providers.
     // (Formerly split across inference, local_ai, and providers namespaces.)
     controllers.extend(crate::openhuman::inference::all_inference_registered_controllers());
@@ -226,6 +231,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::test_support::all_test_support_registered_controllers());
     // Local wallet metadata and onboarding status
     controllers.extend(crate::openhuman::wallet::all_wallet_registered_controllers());
+    // High-level web3 surface (swaps / bridges / dapp calls) over the wallet
+    controllers.extend(crate::openhuman::web3::all_web3_registered_controllers());
     // Local assistive surfaces over third-party provider apps
     controllers.extend(
         crate::openhuman::provider_surfaces::all_provider_surfaces_registered_controllers(),
@@ -303,6 +310,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::agent::all_agent_controller_schemas());
     schemas.extend(crate::openhuman::agent_registry::all_agent_registry_controller_schemas());
     schemas.extend(crate::openhuman::agent_experience::all_agent_experience_controller_schemas());
+    schemas.extend(crate::openhuman::agent_workflows::all_agent_workflows_controller_schemas());
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
@@ -321,6 +329,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
+    schemas.extend(crate::openhuman::model_council::all_model_council_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_local_ai_controller_schemas());
     schemas.extend(crate::openhuman::embeddings::all_embeddings_controller_schemas());
@@ -352,6 +361,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     #[cfg(feature = "e2e-test-support")]
     schemas.extend(crate::openhuman::test_support::all_test_support_controller_schemas());
     schemas.extend(crate::openhuman::wallet::all_wallet_controller_schemas());
+    schemas.extend(crate::openhuman::web3::all_web3_controller_schemas());
     schemas.extend(crate::openhuman::provider_surfaces::all_provider_surfaces_controller_schemas());
     schemas.extend(crate::openhuman::text_input::all_text_input_controller_schemas());
     schemas.extend(crate::openhuman::voice::all_voice_controller_schemas());
@@ -464,6 +474,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
             "E2E test support — wipe sidecar state in-place between specs.",
         ),
         "wallet" => Some("Local wallet onboarding status and derived multi-chain account metadata."),
+        "web3_swap" => Some("Single-chain crypto swaps via deBridge, built on the local wallet."),
+        "web3_bridge" => Some("Cross-chain crypto bridges via deBridge DLN, built on the local wallet."),
+        "web3_dapp" => Some("Generic EVM dapp contract calls signed by the local wallet."),
         "provider_surfaces" => Some(
             "Local-first assistive surfaces for provider events, respond queues, and drafts.",
         ),

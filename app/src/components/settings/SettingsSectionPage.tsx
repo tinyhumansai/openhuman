@@ -9,7 +9,14 @@ export interface SettingsSectionItem {
   title: string;
   description?: string;
   icon: ReactNode;
-  route: string;
+  /**
+   * Settings sub-route to navigate to (under `/settings/`). Optional when an
+   * explicit `onClick` is supplied — e.g. an item that links to a top-level
+   * route outside the settings tree (the Alerts inbox at `/notifications`).
+   */
+  route?: string;
+  /** Overrides the default `navigateToSettings(route)` navigation when set. */
+  onClick?: () => void;
 }
 
 interface SettingsSectionPageProps {
@@ -46,7 +53,7 @@ const SettingsSectionPage = ({ title, description, items, footer }: SettingsSect
               icon={item.icon}
               title={item.title}
               description={item.description}
-              onClick={() => navigateToSettings(item.route)}
+              onClick={item.onClick ?? (() => item.route && navigateToSettings(item.route))}
               testId={`settings-nav-${item.id}`}
               isFirst={index === 0}
               isLast={index === items.length - 1}
