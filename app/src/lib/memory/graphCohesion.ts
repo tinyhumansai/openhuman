@@ -2,7 +2,7 @@
  * Graph Cohesion — pure clustering-coefficient & triangle engine.
  *
  * The memory knowledge graph is a set of (subject)-[predicate]->(object)
- * triples. This lens forgets edge DIRECTION and asks a different question from
+ * triples. This lens forgets edge direction and asks a different question from
  * the centrality lens: not "which entities are important" but "how tightly knit
  * is the neighbourhood AROUND each entity". Two structural signals fall out:
  *
