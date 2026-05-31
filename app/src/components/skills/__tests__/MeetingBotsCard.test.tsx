@@ -150,11 +150,32 @@ describe('MeetingBotsCard', () => {
   });
 
   it('leaves the owner display name empty when no Persona name is set', () => {
-    // Default preloadedState — persona slice initial state is { displayName: '' }.
+    // Default preloadedState — persona slice initial state is
+    // { displayName: '', description: '' } (see personaSlice.ts).
     renderWithProviders(<MeetingBotsCard />);
     fireEvent.click(screen.getByTestId('meeting-bots-banner'));
     const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
     expect(ownerInput.value).toBe('');
+  });
+
+  // Dirty-flag contract: once the user has typed into the field, a
+  // subsequent Persona update from the slice must NOT overwrite their
+  // input. The pre-edit case is covered by the "pre-fills" test above.
+  it('does not overwrite user-typed owner name when Persona slice updates later', () => {
+    const { store } = renderWithProviders(<MeetingBotsCard />, {
+      preloadedState: { persona: { displayName: 'Hemanth', description: '' } },
+    });
+    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
+    const ownerInput = screen.getByLabelText(/your name in the call/i) as HTMLInputElement;
+    // Sanity: pre-fill landed.
+    expect(ownerInput.value).toBe('Hemanth');
+    // User types over it.
+    fireEvent.change(ownerInput, { target: { value: 'Alice' } });
+    expect(ownerInput.value).toBe('Alice');
+    // Persona name changes underneath (e.g. user edits Settings in another window).
+    store.dispatch({ type: 'persona/setPersonaDisplayName', payload: 'Nova' });
+    // User's typed value wins — does NOT flip to 'Nova'.
+    expect(ownerInput.value).toBe('Alice');
   });
 });
 
