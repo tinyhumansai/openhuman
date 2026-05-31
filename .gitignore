@@ -17,6 +17,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Local Amazon learning Q&A data and generated artifacts
+openhuman-kb/
+tools/amazon-learning-qa/openhuman-kb/
+tools/amazon-learning-qa/output/
+.playwright-cli/
+
 package-lock.json
 
 node_modules
