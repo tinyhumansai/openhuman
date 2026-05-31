@@ -27,10 +27,8 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    persist_single_item, SyncState,
-};
+use super::{ingest::ingest_task_into_memory_tree, sync};
+use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
     first_array_str, merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask,
     ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
@@ -371,10 +369,9 @@ impl ComposioProvider for ClickUpProvider {
                         .unwrap_or_else(|| format!("ClickUp task {task_id}"));
                     let title = format!("ClickUp: {title_text}");
 
-                    let conn_id = ctx.connection_id.as_deref().unwrap_or("unknown");
                     match ingest_task_into_memory_tree(
                         &ctx.config,
-                        conn_id,
+                        &connection_id,
                         &task_id,
                         &title,
                         updated.as_deref(),
