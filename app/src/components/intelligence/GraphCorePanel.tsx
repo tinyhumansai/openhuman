@@ -9,6 +9,11 @@ import { useT } from '../../lib/i18n/I18nContext';
 import { type CoreResult, kCoreSize } from '../../lib/memory/graphCore';
 
 const MAX_ROWS = 25;
+// Cap the shell histogram so a high-degeneracy graph (many coreness levels)
+// can't render an unbounded run of bars and overflow the panel. Shells are
+// sorted densest-first (k DESC), so the cap keeps the most meaningful deep
+// shells and folds the rest into a "+N more" footer.
+const MAX_SHELLS = 12;
 
 interface GraphCorePanelProps {
   result: CoreResult | null;
@@ -24,9 +29,19 @@ const GraphCorePanel = ({ result, loading, error, onRetry }: GraphCorePanelProps
     () => (result ? kCoreSize(result, result.degeneracy) : 0),
     [result]
   );
-  const maxShellCount = useMemo(
-    () => (result ? result.shells.reduce((max, s) => (s.count > max ? s.count : max), 0) : 0),
+  const displayedShells = useMemo(
+    () => (result ? result.shells.slice(0, MAX_SHELLS) : []),
     [result]
+  );
+  const hiddenShellCount = useMemo(
+    () => (result ? result.shells.length - displayedShells.length : 0),
+    [result, displayedShells]
+  );
+  // Scale bars against the largest displayed shell so the capped view stays
+  // legible even when a hidden periphery shell holds the global maximum.
+  const maxShellCount = useMemo(
+    () => displayedShells.reduce((max, s) => (s.count > max ? s.count : max), 0),
+    [displayedShells]
   );
 
   const intro = (
@@ -142,7 +157,7 @@ const GraphCorePanel = ({ result, loading, error, onRetry }: GraphCorePanelProps
           {t('graphCore.shellsHeading')}
         </h3>
         <ul className="space-y-1">
-          {result.shells.map(shell => (
+          {displayedShells.map(shell => (
             <li key={shell.k} className="flex items-center gap-2 text-[11px] tabular-nums">
               <span className="w-16 shrink-0 text-stone-600 dark:text-neutral-300">
                 {t('graphCore.shellLabel').replace('{k}', String(shell.k))}
@@ -161,6 +176,11 @@ const GraphCorePanel = ({ result, loading, error, onRetry }: GraphCorePanelProps
             </li>
           ))}
         </ul>
+        {hiddenShellCount > 0 && (
+          <p className="text-[10px] text-stone-400 dark:text-neutral-500">
+            {t('graphCore.shellsMore').replace('{count}', String(hiddenShellCount))}
+          </p>
+        )}
       </section>
 
       {/* Ranked deepest-core entities */}

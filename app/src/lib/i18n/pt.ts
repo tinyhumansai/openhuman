@@ -4431,6 +4431,7 @@ const messages: TranslationMap = {
   'graphCore.rankedHeading': 'Deepest-core entities',
   'graphCore.retry': 'Retry',
   'graphCore.shellLabel': '{k}-core',
+  'graphCore.shellsMore': '+{count} camadas a mais',
   'graphCore.shellsHeading': 'Shell decomposition',
   'graphCore.title': 'Graph Core',
   'memory.tab.core': 'Core',

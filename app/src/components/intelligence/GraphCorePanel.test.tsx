@@ -23,6 +23,20 @@ function rel(subject: string, object: string): GraphRelation {
 // Triangle A-B-C (2-core) plus pendant D off A -> degeneracy 2, shells {2:3,1:1}.
 const cored = computeGraphCore([rel('A', 'B'), rel('B', 'C'), rel('C', 'A'), rel('A', 'D')]);
 
+// All pairs of a `size`-node clique -> every member has coreness size-1.
+function clique(prefix: string, size: number): GraphRelation[] {
+  const out: GraphRelation[] = [];
+  for (let i = 0; i < size; i += 1) {
+    for (let j = i + 1; j < size; j += 1) out.push(rel(`${prefix}${i}`, `${prefix}${j}`));
+  }
+  return out;
+}
+// 14 disjoint cliques of sizes 2..15 -> 14 distinct coreness levels (1..14),
+// i.e. 14 shells, exceeding the MAX_SHELLS=12 histogram cap by 2.
+const manyShells = computeGraphCore(
+  Array.from({ length: 14 }, (_, idx) => clique(`c${idx}_`, idx + 2)).flat()
+);
+
 describe('<GraphCorePanel />', () => {
   it('renders the loading skeleton', () => {
     render(<GraphCorePanel result={null} loading />);
@@ -60,5 +74,16 @@ describe('<GraphCorePanel />', () => {
     render(<GraphCorePanel result={cored} />);
     // three triangle members carry the core badge; the pendant D does not.
     expect(screen.getAllByText('core')).toHaveLength(3);
+  });
+
+  it('caps the shell histogram and folds the rest into a "+N more" footer', () => {
+    expect(manyShells.shells.length).toBe(14);
+    render(<GraphCorePanel result={manyShells} />);
+    // densest shells survive the cap; the two shallowest (1-core, 2-core) fold away.
+    expect(screen.getByText('14-core')).toBeInTheDocument();
+    expect(screen.getByText('3-core')).toBeInTheDocument();
+    expect(screen.queryByText('2-core')).not.toBeInTheDocument();
+    expect(screen.queryByText('1-core')).not.toBeInTheDocument();
+    expect(screen.getByText('+2 more shells')).toBeInTheDocument();
   });
 });

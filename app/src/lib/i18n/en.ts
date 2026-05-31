@@ -507,6 +507,7 @@ const en: TranslationMap = {
   'graphCore.degeneracyCaption': 'Densest shell: {degeneracy}-core · {coreSize} entities',
   'graphCore.shellsHeading': 'Shell decomposition',
   'graphCore.shellLabel': '{k}-core',
+  'graphCore.shellsMore': '+{count} more shells',
   'graphCore.rankedHeading': 'Deepest-core entities',
   'graphCore.colRank': '#',
   'graphCore.colEntity': 'Entity',
