@@ -15,14 +15,14 @@ function run(scriptName, args) {
 
 test('coverage helper scripts print help without running checks', () => {
   for (const [scriptName, usage] of [
-    ['check-coverage-matrix.mjs', /Usage: node scripts\/check-coverage-matrix\.mjs/],
-    ['check-domain-e2e-coverage.mjs', /Usage: node scripts\/check-domain-e2e-coverage\.mjs/],
+    ['check-coverage-matrix.mjs', 'Usage: node scripts/check-coverage-matrix.mjs'],
+    ['check-domain-e2e-coverage.mjs', 'Usage: node scripts/check-domain-e2e-coverage.mjs'],
   ]) {
     for (const helpFlag of ['--help', '-h']) {
       const result = run(scriptName, [helpFlag]);
 
       assert.equal(result.status, 0, result.stderr);
-      assert.match(result.stdout, usage);
+      assert.equal(result.stdout.trim(), usage);
       assert.equal(result.stderr, '');
     }
   }
