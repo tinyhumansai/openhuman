@@ -103,6 +103,7 @@ test("handoff uses real status, local deployment boundary, and no audio/video sc
   assert.match(markdown, /本机入口/);
   assert.match(markdown, /不是 Vercel 线上部署/);
   assert.match(markdown, /100 篇资料、200 个片段，语义索引 20\/200/);
+  assert.match(markdown, /本地模型主回答/);
   assert.match(markdown, /本地学习包预览/);
   assert.match(markdown, /不包含音频或视频/);
   assert.doesNotMatch(markdown, /1779 篇资料、14597 个片段已完成/);

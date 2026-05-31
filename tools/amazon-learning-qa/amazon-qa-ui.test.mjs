@@ -391,6 +391,30 @@ test("assistant answers expose local token and cost footprint", () => {
   assert.match(html, /当前本机运行，不产生云端 token 费用/);
 });
 
+test("assistant answers disclose local answer generation mode", () => {
+  assert.match(html, /renderAnswerGeneration/);
+  assert.match(html, /answerGeneration:\s*payload\.answerGeneration/);
+  assert.match(html, /answerGeneration:\s*compactAnswerGeneration\(message\.answerGeneration\)/);
+  assert.match(html, /回答生成方式/);
+  assert.match(html, /本地模型来源回答/);
+  assert.match(serverSource, /templateFallbackGeneration/);
+  assert.match(serverSource, /session\.history\.length === 0/);
+  assert.match(serverSource, /evidenceReferenceNumbers/);
+  assert.match(serverSource, /referencedEvidence\.some\(\(number\) => number < 1 \|\| number > evidenceCount\)/);
+  assert.match(serverSource, /generateLocalGroundedAnswer/);
+  assert.match(serverSource, /api\/generate/);
+  assert.match(serverSource, /qwen2\.5:3b/);
+});
+
+test("ask requests have a visible timeout path instead of hanging indefinitely", () => {
+  assert.match(html, /ASK_REQUEST_TIMEOUT_MS = 75000/);
+  assert.match(html, /new AbortController\(\)/);
+  assert.match(html, /askController\.abort\(\)/);
+  assert.match(html, /查询超过 75 秒已停止/);
+  assert.match(serverSource, /CORE_RPC_TIMEOUT_MS = 30000/);
+  assert.match(serverSource, /AbortSignal\.timeout\(timeoutMs\)/);
+});
+
 test("assistant answers expose and preserve a knowledge gap radar", () => {
   assert.match(html, /renderKnowledgeGapRadar/);
   assert.match(html, /bindKnowledgeGapRadarEvents/);

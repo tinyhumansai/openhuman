@@ -967,6 +967,31 @@
         font-size: 15px;
       }
 
+      .answer-generation {
+        border: 1px solid rgba(23, 23, 23, 0.1);
+        background: #fff;
+        padding: 10px 12px;
+        display: grid;
+        gap: 6px;
+        overflow-wrap: anywhere;
+      }
+
+      .answer-generation[data-mode="local_ollama"] {
+        border-color: rgba(14, 107, 96, 0.2);
+        background: #fbfffd;
+      }
+
+      .answer-generation strong {
+        font-size: 13px;
+      }
+
+      .answer-generation p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.55;
+      }
+
       .learning-effectiveness-summary {
         border: 1px solid rgba(14, 107, 96, 0.16);
         background: #fbfffd;
@@ -5358,6 +5383,7 @@
         .message.assistant,
         .bubble,
         .answer-effectiveness,
+        .answer-generation,
         .usage-footprint,
         .answer-panel-group,
         .source,
@@ -5760,6 +5786,7 @@
         experiment_review: "实验/复盘",
         insufficient: "不足以确认",
       };
+      const ASK_REQUEST_TIMEOUT_MS = 75000;
       const initialSessionFromUrl = new URLSearchParams(window.location.search).get("session") || "";
       let sessionId = initialSessionFromUrl || localStorage.getItem(SESSION_KEY) || "";
       let messages = readSavedMessages();
@@ -6178,10 +6205,13 @@
         ];
         renderMessages();
 
+        const askController = new AbortController();
+        const askTimeout = window.setTimeout(() => askController.abort(), ASK_REQUEST_TIMEOUT_MS);
         try {
           const payload = await fetchJson("/api/ask", {
             method: "POST",
             headers: { "content-type": "application/json" },
+            signal: askController.signal,
             body: JSON.stringify({ question, sessionId, history: priorMessages, sourceControls, userSourceControls, productInput, intentPreference }),
           });
           if (productInput) pendingProductInput = null;
@@ -6201,6 +6231,7 @@
               validationPack: payload.validationPack,
               evidenceChain: payload.evidenceChain,
               evidenceAudit: payload.evidenceAudit,
+              answerGeneration: payload.answerGeneration,
               answerEffectiveness: payload.answerEffectiveness,
               sourceTrust: payload.sourceTrust,
               sourceTreeCalibration: payload.sourceTreeCalibration,
@@ -6235,9 +6266,13 @@
           renderMessages();
         } catch (error) {
           messages = messages.filter((item) => !item.loading);
-          messages.push({ role: "assistant", content: `查询失败：${error.message}`, error: true });
+          const message = error?.name === "AbortError"
+            ? "查询超过 75 秒已停止。你可以缩小问题范围后重试，服务端会优先用稳定模板回退，避免长时间卡住。"
+            : error.message;
+          messages.push({ role: "assistant", content: `查询失败：${message}`, error: true });
           renderMessages();
         } finally {
+          window.clearTimeout(askTimeout);
           askButton.disabled = false;
           askButton.textContent = "发送";
           questionEl.focus();
@@ -6292,6 +6327,7 @@
           <div class="bubble${errorClass}">${content}</div>
           ${isUser || message.loading || message.error ? "" : renderAnswerNoteActions(message, messageIndex)}
           ${isUser || message.loading || message.error ? "" : renderAnswerEffectiveness(message, messageIndex)}
+          ${isUser ? "" : renderAnswerGeneration(message.answerGeneration)}
           ${isUser ? "" : renderUsageFootprint(message.usageFootprint)}
           ${isUser ? "" : renderKnowledgeGapRadar(message.knowledgeGapRadar, messageIndex)}
           ${isUser ? "" : renderNextBestSource(message.nextBestSource, messageIndex)}
@@ -6345,6 +6381,17 @@
         if (value === "switch_intent") return { value, label: "已标记需要切换意图。下一问会先重新确认你要做方法学习、产品诊断、实验复盘还是补来源检索。" };
         if (value === "add_product_data") return { value, label: "已标记需要补产品数据。下一问会把你的真实产品材料和作者原文分开处理。" };
         return { value: "", label: "还未确认这次回答是否解决问题。" };
+      }
+
+      function renderAnswerGeneration(generation) {
+        if (!generation || typeof generation !== "object") return "";
+        const mode = generation.mode === "local_ollama" ? "local_ollama" : "template_fallback";
+        const model = generation.model ? ` · ${generation.model}` : "";
+        return `<section class="answer-generation" data-mode="${escapeAttribute(mode)}" aria-label="回答生成方式">
+          <strong>${escapeHtml(generation.label || (mode === "local_ollama" ? "本地模型来源回答" : "稳定模板回答"))}${escapeHtml(model)}</strong>
+          ${generation.summary ? `<p>${escapeHtml(generation.summary)}</p>` : ""}
+          <p>${escapeHtml(generation.boundary || "回答只能基于本轮检索到的来源和摘录；引用仍需回到来源卡片核对。")}</p>
+        </section>`;
       }
 
       function renderUsageFootprint(footprint) {
@@ -10193,6 +10240,7 @@
           evidenceChain: compactEvidenceChain(message.evidenceChain),
           evidenceFeedback: compactEvidenceFeedback(message.evidenceFeedback),
           evidenceAudit: compactEvidenceAudit(message.evidenceAudit),
+          answerGeneration: compactAnswerGeneration(message.answerGeneration),
           answerEffectiveness: compactAnswerEffectiveness(message.answerEffectiveness),
           sourceTrust: compactSourceTrust(message.sourceTrust),
           sourceTreeCalibration: compactSourceTreeCalibration(message.sourceTreeCalibration),
@@ -10224,6 +10272,17 @@
             answerTokens: Number(estimate.answerTokens || 0),
             totalCloudEquivalentTokens: Number(estimate.totalCloudEquivalentTokens || 0),
           },
+        };
+      }
+
+      function compactAnswerGeneration(generation) {
+        if (!generation || typeof generation !== "object") return undefined;
+        return {
+          mode: compactText(generation.mode, 40),
+          model: compactText(generation.model, 100),
+          label: compactText(generation.label, 80),
+          summary: compactText(generation.summary, 220),
+          boundary: compactText(generation.boundary, 260),
         };
       }
 

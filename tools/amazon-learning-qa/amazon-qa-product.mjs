@@ -388,6 +388,7 @@ ${PRODUCT_COMMAND} handoff
 
 - 本机入口：继续使用 ${report.url}
 - 本地语义问答：${report.service.documents} 篇资料、${report.service.chunks} 个片段，语义索引 ${report.service.embedded}/${report.service.chunks}
+- 本地模型主回答：优先使用本机 Ollama 生成来源绑定回答，模型不可用或超时时自动回退到稳定模板
 - 我的资料：可以粘贴自己的资料，勾选后只围绕这些资料问答，并在回答里引用该资料；系统会把它标为用户材料，不会当成三位作者的原文证据
 - 学习笔记：可以手写笔记，也可以把某次回答保存为笔记；笔记不会自动变成作者证据，只有手动转成“我的资料”后才参与问答
 - 连续追问：会话会保留上下文，用于第二轮、第三轮继续问

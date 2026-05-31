@@ -50,6 +50,7 @@ import { resolveAmazonQaPaths } from "./amazon-qa-paths.mjs";
 const QA_PATHS = resolveAmazonQaPaths(import.meta.dirname);
 const ROOT = QA_PATHS.root;
 const UI_PATH = QA_PATHS.uiPath;
+const CONFIG_PATH = QA_PATHS.configPath;
 const MANIFEST_PATH = QA_PATHS.manifestPath;
 const DB_PATH = QA_PATHS.memoryDbPath;
 const MEMORY_TREE_DB_PATH = QA_PATHS.memoryTreeDbPath;
@@ -68,9 +69,12 @@ const SOURCE_TREE_DRAIN_STOP_PATH = path.join(RUN_DIR, "source-tree-drain.stop")
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 7790;
 const DEFAULT_CORE_PORT = 7789;
+const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
 const DEFAULT_NAMESPACE = "amazon-learning";
 const DEFAULT_TOKEN = "openhuman-amazon-local-token";
 const MAX_SESSION_MESSAGES = 64;
+const LOCAL_ANSWER_TIMEOUT_MS = 45000;
+const CORE_RPC_TIMEOUT_MS = 30000;
 const NOTEBOOK_BOUNDARY = "学习专题会话保存的是用户问题、系统整理、来源引用和学习路径；它不是作者原文证据，不能混入 amazon-learning 作者资料库。";
 const LEARNING_NOTE_BOUNDARY = "学习笔记保存的是用户整理或系统回答摘录；它不是作者原文证据，只有用户主动转成“我的资料”后才会作为用户资料参与问答。";
 const TEST_NOTEBOOK_ID_PATTERNS = [/^amazon-qa-smoke-/i, /^feedback-check-/i];
@@ -439,7 +443,7 @@ async function routeRequest(request, response, context) {
     const clientHistory = Array.isArray(body.history)
       ? removeCurrentQuestionFromSeedHistory(normalizeSessionHistory(body.history), question)
       : [];
-    if (clientHistory.length > 0) {
+    if (clientHistory.length > 0 && session.history.length === 0) {
       session.history = clientHistory;
     }
     const hasIncomingSourceControls = body.sourceControls && typeof body.sourceControls === "object";
@@ -482,7 +486,7 @@ async function routeRequest(request, response, context) {
     const payloadRetrievalQuestion = userSourceOnly && userSourceContext.contextText
       ? `${scopedRetrievalQuery}\n所选我的资料：\n${userSourceContext.contextText.slice(0, 2200)}`
       : scopedRetrievalQuery;
-    const payload = buildQaPayload(question, answerContext, payloadRetrievalQuestion, {
+    const payloadOptions = {
       excludedSourceKeys: sourceControls.excludedSourceKeys,
       allowedAuthors: sourceControls.allowedAuthors,
       allowedSourceKeys: sourceControls.allowedSourceKeys,
@@ -491,7 +495,21 @@ async function routeRequest(request, response, context) {
       intentPreference: normalizeIntentPreference(body.intentPreference),
       learningMemoryContext,
       sourceTreeCalibration: sourceTreeContext.calibration,
-    });
+    };
+    let payload = buildQaPayload(question, answerContext, payloadRetrievalQuestion, payloadOptions);
+    const localAnswer = await generateLocalGroundedAnswer(payload, { question, retrievalQuestion: payloadRetrievalQuestion });
+    if (localAnswer?.answer) {
+      payload = buildQaPayload(question, answerContext, payloadRetrievalQuestion, {
+        ...payloadOptions,
+        answerOverride: localAnswer.answer,
+        answerGeneration: localAnswer.generation,
+      });
+    } else {
+      payload = buildQaPayload(question, answerContext, payloadRetrievalQuestion, {
+        ...payloadOptions,
+        answerGeneration: templateFallbackGeneration(),
+      });
+    }
     const userMessage = { role: "user", content: question, createdAt: new Date().toISOString() };
     const assistantMessage = {
       role: "assistant",
@@ -504,6 +522,7 @@ async function routeRequest(request, response, context) {
       validationPack: payload.validationPack,
       evidenceChain: payload.evidenceChain,
       evidenceAudit: payload.evidenceAudit,
+      answerGeneration: payload.answerGeneration,
       sourceTrust: payload.sourceTrust,
       sourceTreeCalibration: payload.sourceTreeCalibration,
       synthesisAnswer: payload.synthesisAnswer,
@@ -540,6 +559,223 @@ async function routeRequest(request, response, context) {
   }
 
   sendJson(response, 404, { error: "Not found" });
+}
+
+async function generateLocalGroundedAnswer(payload, options = {}) {
+  if (!payload || !Array.isArray(payload.sources) || payload.sources.length === 0) return null;
+  if (!Array.isArray(payload.rankedEvidence) || payload.rankedEvidence.length === 0) return null;
+  const settings = await localAnswerSettings();
+  if (!settings.enabled || !settings.model) return null;
+  const prompt = localGroundedAnswerPrompt(payload, options);
+  if (!prompt) return null;
+
+  try {
+    const response = await fetch(`${settings.endpoint}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: settings.model,
+        prompt,
+        stream: false,
+        options: {
+          temperature: 0.12,
+          top_p: 0.82,
+          num_ctx: 4096,
+          num_predict: 460,
+        },
+      }),
+      signal: AbortSignal.timeout(LOCAL_ANSWER_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    const data = await response.json();
+    const answer = normalizeLocalGroundedAnswer(data?.response, payload, options);
+    if (!answer) return null;
+    return {
+      answer,
+      generation: {
+        mode: "local_ollama",
+        model: settings.model,
+        label: "本地模型来源回答",
+        summary: `已用本机 Ollama ${settings.model} 基于本轮来源和摘录生成主回答；失败时会自动回退到稳定模板。`,
+        boundary: "本地模型只能使用本轮已检索来源和摘录回答；引用标记仍需回到下方来源卡片核对，不代表人工或业务验证完成。",
+      },
+    };
+  } catch (error) {
+    if (process.env.AMAZON_QA_DEBUG) {
+      console.warn(`Local answer generation skipped: ${friendlyError(error)}`);
+    }
+    return null;
+  }
+}
+
+function templateFallbackGeneration(reason = "") {
+  return {
+    mode: "template_fallback",
+    model: "stable-template",
+    label: "稳定模板回答",
+    summary: reason
+      ? `本地模型未生成可校验回答，已回退到稳定模板：${reason}`
+      : "本轮使用本地稳定模板整理来源、证据和下一步；没有调用云端模型。",
+    boundary: "模板回答只整理本轮检索到的来源和摘录；引用仍需回到下方来源卡片核对，不代表人工或业务验证完成。",
+  };
+}
+
+let cachedLocalAnswerSettings = null;
+
+async function localAnswerSettings() {
+  const now = Date.now();
+  if (cachedLocalAnswerSettings && now - cachedLocalAnswerSettings.checkedAt < 60000) {
+    return cachedLocalAnswerSettings;
+  }
+  let config = "";
+  try {
+    config = await readFile(CONFIG_PATH, "utf8");
+  } catch {
+    config = "";
+  }
+  const runtimeEnabled = tomlBool(config, "local_ai", "runtime_enabled", true);
+  const endpoint = String(process.env.OLLAMA_HOST || DEFAULT_OLLAMA_ENDPOINT).replace(/\/+$/, "");
+  const configured = [
+    process.env.AMAZON_QA_CHAT_MODEL,
+    tomlValue(config, "local_ai", "chat_model_id"),
+    tomlValue(config, "local_ai", "model_id"),
+    providerModel(tomlRootValue(config, "memory_provider")),
+    "qwen2.5:3b",
+  ].filter(Boolean);
+  let available = [];
+  try {
+    const tags = await fetch(`${endpoint}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((response) => response.json());
+    available = Array.isArray(tags.models) ? tags.models.map((item) => String(item.name || "")) : [];
+  } catch {
+    available = [];
+  }
+  const model = uniqueNonEmpty(configured).find((name) => available.includes(name)) || "";
+  cachedLocalAnswerSettings = {
+    checkedAt: now,
+    enabled: runtimeEnabled && Boolean(model),
+    endpoint,
+    model,
+    available,
+  };
+  return cachedLocalAnswerSettings;
+}
+
+function localGroundedAnswerPrompt(payload, options = {}) {
+  const question = compactServerText(options.question || payload.question || "", 260);
+  const retrievalQuestion = compactServerText(options.retrievalQuestion || question, 420);
+  const evidenceBlocks = localAnswerEvidenceItems(payload)
+    .map((item, index) => {
+      const source = payload.sources[item.sourceIndex] || {};
+      return [
+        `【证据${index + 1}】${source.author || "未知作者"}《${source.title || "未命名资料"}》${source.date ? `（${source.date}）` : ""}`,
+        `来源类型：${source.sourceType === "user_material" ? "用户材料" : "作者原文"}`,
+        `摘录：${compactServerText(item.quote || item.text || source.excerpt || "", 260)}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+  if (!evidenceBlocks) return "";
+  const diagnosis = payload.productInputSummary?.summary
+    ? `\n用户产品材料摘要：${compactServerText(payload.productInputSummary.summary, 360)}`
+    : "";
+  return [
+    "你是本机亚马逊学习问答助手。只能根据下方来源回答，不能使用外部知识，不能编造未给出的作者、标题、数据或平台规则。",
+    "每个关键判断必须尽量带上来源标记，例如【证据1】。如果来源不足，直接写【缺少来源】。",
+    "不要说自己是 AI，不要承诺结果已经被人工核验或业务验证完成。",
+    "请用 500 字以内的自然中文回答，并严格使用这些小标题：问题、可执行结论、执行顺序、资料里最相关的判断、建议下一步。",
+    "",
+    `用户问题：${question}`,
+    `检索问题：${retrievalQuestion}`,
+    diagnosis,
+    "",
+    "本轮来源摘录：",
+    evidenceBlocks,
+  ].join("\n");
+}
+
+function localAnswerEvidenceItems(payload) {
+  return (payload.rankedEvidence || [])
+    .filter((item) => Number.isInteger(item?.sourceIndex) && payload.sources?.[item.sourceIndex])
+    .slice(0, 5);
+}
+
+function normalizeLocalGroundedAnswer(answer, payload, options = {}) {
+  let text = String(answer || "").replace(/\r\n?/g, "\n").trim();
+  if (text.length < 80) return "";
+  text = text
+    .replace(/^(?:好的|当然|可以)[，,。\s]*/i, "")
+    .replace(/【来源(\d+)】/g, "【证据$1】")
+    .replace(/\[(\d+)\]/g, "【证据$1】")
+    .slice(0, 4200)
+    .trim();
+  const evidenceCount = localAnswerEvidenceItems(payload).length;
+  const referencedEvidence = evidenceReferenceNumbers(text);
+  if (referencedEvidence.some((number) => number < 1 || number > evidenceCount)) {
+    return "";
+  }
+  const question = compactServerText(options.question || payload.question || "", 260);
+  if (!/^问题[:：]/m.test(text)) {
+    text = `问题：${question}\n\n${text}`;
+  }
+  if (referencedEvidence.length === 0 && !/【缺少来源】/.test(text)) {
+    text = `${text}\n\n资料里最相关的判断：\n${fallbackEvidenceLines(payload).join("\n")}`;
+  }
+  if (!/建议下一步[:：]/.test(text)) {
+    text = `${text}\n\n建议下一步：先打开下方来源卡片核对原文，再把你的产品、关键词或 Listing 数据补进来继续判断。`;
+  }
+  return text;
+}
+
+function evidenceReferenceNumbers(text) {
+  const normalized = String(text || "").replace(/[０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0));
+  const refs = [];
+  for (const match of normalized.matchAll(/【\s*(?:证据|资料)\s*([^】]+)】/g)) {
+    const numbers = String(match[1] || "").match(/\d+/g) || [];
+    refs.push(...numbers.map((number) => Number(number)).filter(Number.isFinite));
+  }
+  for (const match of normalized.matchAll(/(?:证据|资料)\s*([0-9][0-9、,，和及至到\-—~～\s]*)/g)) {
+    const numbers = String(match[1] || "").match(/\d+/g) || [];
+    refs.push(...numbers.map((number) => Number(number)).filter(Number.isFinite));
+  }
+  return [...new Set(refs)];
+}
+
+function fallbackEvidenceLines(payload) {
+  const ranked = localAnswerEvidenceItems(payload);
+  return ranked.slice(0, 3).map((item, index) => {
+    const source = payload.sources?.[item.sourceIndex] || {};
+    const quote = compactServerText(item.quote || item.text || source.excerpt || "", 220);
+    const meta = [source.author, source.title ? `《${source.title}》` : ""].filter(Boolean).join("");
+    return `${index + 1}. ${quote}${meta ? `（${meta}）` : ""} 【证据${index + 1}】`;
+  }).filter(Boolean);
+}
+
+function tomlValue(text, section, key) {
+  const sectionMatch = String(text || "").match(new RegExp(`\\[${section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\]([\\s\\S]*?)(?:\\n\\[|$)`));
+  if (!sectionMatch) return "";
+  const line = sectionMatch[1].split(/\n/).find((item) => item.trim().startsWith(`${key} `) || item.trim().startsWith(`${key}=`));
+  return lineValueFromToml(line);
+}
+
+function tomlRootValue(text, key) {
+  const line = String(text || "").split(/\n/).find((item) => item.trim().startsWith(`${key} `) || item.trim().startsWith(`${key}=`));
+  return lineValueFromToml(line);
+}
+
+function lineValueFromToml(line) {
+  const match = String(line || "").match(/=\s*"?([^"#\n]+)"?/);
+  return match ? match[1].trim().replace(/"$/, "") : "";
+}
+
+function tomlBool(text, section, key, fallback = false) {
+  const value = tomlValue(text, section, key).toLowerCase();
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return fallback;
+}
+
+function providerModel(value) {
+  const match = String(value || "").match(/^ollama:(.+)$/);
+  return match ? match[1].trim() : "";
 }
 
 async function getSession(namespace, sessionId, options = {}) {
@@ -591,6 +827,7 @@ function normalizeSessionHistory(history) {
       evidenceChain: normalizeEvidenceChain(entry.evidenceChain),
       evidenceAudit: normalizeEvidenceAudit(entry.evidenceAudit),
       answerEffectiveness: normalizeAnswerEffectiveness(entry.answerEffectiveness),
+      answerGeneration: normalizeAnswerGeneration(entry.answerGeneration),
       sourceTrust: normalizeSourceTrust(entry.sourceTrust),
       sourceTreeCalibration: normalizeSourceTreeCalibrationForMessage(entry.sourceTreeCalibration),
       evidenceFeedback: normalizeEvidenceFeedback(entry.evidenceFeedback),
@@ -1747,6 +1984,18 @@ function normalizeAnswerEffectiveness(effectiveness) {
     status,
     updatedAt: typeof effectiveness.updatedAt === "string" ? effectiveness.updatedAt.slice(0, 40) : "",
     question: typeof effectiveness.question === "string" ? effectiveness.question.slice(0, 240) : "",
+  };
+}
+
+function normalizeAnswerGeneration(generation) {
+  if (!generation || typeof generation !== "object") return undefined;
+  const mode = ["local_ollama", "template_fallback"].includes(generation.mode) ? generation.mode : "template_fallback";
+  return {
+    mode,
+    model: typeof generation.model === "string" ? generation.model.slice(0, 100) : "",
+    label: typeof generation.label === "string" ? generation.label.slice(0, 80) : "",
+    summary: typeof generation.summary === "string" ? generation.summary.slice(0, 220) : "",
+    boundary: typeof generation.boundary === "string" ? generation.boundary.slice(0, 260) : "",
   };
 }
 
@@ -3713,7 +3962,8 @@ function unquoteTomlValue(value = "") {
   return text.split("#")[0].trim();
 }
 
-async function rpcCall(rpcUrl, token, method, params) {
+async function rpcCall(rpcUrl, token, method, params, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : CORE_RPC_TIMEOUT_MS;
   const response = await fetch(rpcUrl, {
     method: "POST",
     headers: {
@@ -3721,6 +3971,7 @@ async function rpcCall(rpcUrl, token, method, params) {
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const payload = await response.json();
   const envelopeError = payload.error ?? payload.result?.error;

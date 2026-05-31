@@ -1526,6 +1526,24 @@ test("buildQaPayload creates action-oriented sections for visual conversion ques
   assert.match(payload.answer, /作者视角/);
 });
 
+test("buildQaPayload discloses stable template fallback cost separately from local model answers", () => {
+  const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT, "主图视觉点击率转化率怎么优化？", {
+    answerGeneration: {
+      mode: "template_fallback",
+      model: "stable-template",
+      label: "稳定模板回答",
+      summary: "本地模型未生成可校验回答，已回退到稳定模板。",
+      boundary: "模板回答只整理本轮检索到的来源和摘录。",
+    },
+  });
+
+  assert.equal(payload.answerGeneration.mode, "template_fallback");
+  assert.equal(payload.usageFootprint.mode, "template_fallback");
+  assert.equal(payload.usageFootprint.model, "stable-template");
+  assert.match(payload.usageFootprint.summary, /本地稳定模板/);
+  assert.match(payload.answerGeneration.boundary, /模板回答/);
+});
+
 test("buildAnswerGraph creates question, concept, source, and author nodes", () => {
   const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT);
   const graph = buildAnswerGraph(payload.question, payload.answer, payload.sources, payload.question, payload.rankedEvidence, payload.evidenceChain);
@@ -2474,11 +2492,38 @@ test("buildQaPayload exposes local usage footprint and cloud cost boundary", () 
   const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT);
 
   assert.ok(payload.usageFootprint);
-  assert.equal(payload.usageFootprint.mode, "local_ollama");
+  assert.equal(payload.usageFootprint.mode, "template_fallback");
   assert.equal(payload.usageFootprint.cloudBillableTokens, 0);
   assert.match(payload.usageFootprint.summary, /云端计费 token 为 0/);
   assert.ok(payload.usageFootprint.estimate.totalCloudEquivalentTokens > 0);
   assert.match(payload.usageFootprint.boundary, /不是云模型账单/);
+});
+
+test("buildQaPayload can use a source-bound local model answer without dropping evidence markers", () => {
+  const payload = buildQaPayload("主图视觉点击率转化率怎么优化？", MAIN_IMAGE_CONTEXT, undefined, {
+    answerOverride: [
+      "问题：主图视觉点击率转化率怎么优化？",
+      "",
+      "可执行结论：",
+      "1. 先把主图当成点击入口核对，但不要脱离 Listing 承接判断。【证据1】",
+      "",
+      "执行顺序：",
+      "1. 先看主图点击率，再看详情页转化承接。【证据2】",
+      "",
+      "建议下一步：打开来源核对原文，再补 CTR 和 CVR 数据。",
+    ].join("\n"),
+    answerGeneration: {
+      mode: "local_ollama",
+      model: "qwen2.5:3b",
+      label: "本地模型来源回答",
+    },
+  });
+
+  assert.match(payload.answer, /本地模型|主图当成点击入口|证据1/);
+  assert.equal(payload.answerGeneration.mode, "local_ollama");
+  assert.equal(payload.answerGeneration.model, "qwen2.5:3b");
+  assert.equal(payload.usageFootprint.model, "qwen2.5:3b");
+  assert.ok(payload.evidenceChain.claims.some((claim) => claim.type === "source_evidence"));
 });
 
 test("buildQaPayload allows high trust when sources are fresh, broad, and not conflicting", () => {

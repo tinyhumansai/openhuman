@@ -341,7 +341,8 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     : baseProductDiagnosis;
   const learningMemoryReminder = withLearningMemoryAlignment(baseLearningMemoryReminder, sources, rankedEvidence);
   const sourceTreeCalibration = normalizeSourceTreeCalibration(options.sourceTreeCalibration);
-  const answer = buildAnswerText(
+  const answerOverride = normalizeAnswerOverride(options.answerOverride, question);
+  const answer = answerOverride || buildAnswerText(
     question,
     ranked,
     topArticles,
@@ -350,6 +351,7 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     productDiagnosis,
     learningMemoryReminder,
   );
+  const answerGeneration = normalizeAnswerGeneration(options.answerGeneration, Boolean(answerOverride));
   const diagnosisPanel = buildDiagnosisPanel(productInputSummary, productDiagnosis, retrievalQuestion);
   const evidenceChain = buildEvidenceChain(question, answer, sources, rankedEvidence, retrievalQuestion);
   const validationPack = buildValidationPack(
@@ -431,6 +433,7 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     sources,
     rankedEvidence,
     evidenceChain,
+    answerGeneration,
   });
 
   return {
@@ -444,6 +447,7 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
     validationPack,
     evidenceChain,
     evidenceAudit,
+    answerGeneration,
     sourceTrust,
     sourceTreeCalibration,
     synthesisAnswer,
@@ -464,6 +468,31 @@ export function buildQaPayload(question, contextText, retrievalQuestion = questi
   };
 }
 
+function normalizeAnswerOverride(answer, question) {
+  const text = String(answer || "").replace(/\r\n?/g, "\n").trim();
+  if (text.length < 40) return "";
+  const clipped = text.slice(0, 5000);
+  return /^问题[:：]/m.test(clipped) ? clipped : `问题：${String(question || "").trim()}\n\n${clipped}`;
+}
+
+function normalizeAnswerGeneration(generation, hasOverride) {
+  if (!generation || typeof generation !== "object") return undefined;
+  const mode = ["local_ollama", "template_fallback"].includes(generation.mode)
+    ? generation.mode
+    : hasOverride
+      ? "local_ollama"
+      : "template_fallback";
+  return {
+    mode,
+    model: String(generation.model || "").slice(0, 100),
+    label: String(generation.label || (mode === "local_ollama" ? "本地模型来源回答" : "稳定模板回答")).slice(0, 80),
+    summary: String(generation.summary || "").slice(0, 220),
+    boundary: String(
+      generation.boundary || "回答只能基于本轮检索到的来源和摘录；如果本地模型不可用，会回退到稳定模板回答。",
+    ).slice(0, 260),
+  };
+}
+
 export function buildUsageFootprint(input = {}) {
   const question = String(input.question || "");
   const retrievalQuestion = String(input.retrievalQuestion || question);
@@ -471,6 +500,7 @@ export function buildUsageFootprint(input = {}) {
   const sources = Array.isArray(input.sources) ? input.sources : [];
   const rankedEvidence = Array.isArray(input.rankedEvidence) ? input.rankedEvidence : [];
   const evidenceClaims = Array.isArray(input.evidenceChain?.claims) ? input.evidenceChain.claims : [];
+  const answerGeneration = input.answerGeneration && typeof input.answerGeneration === "object" ? input.answerGeneration : null;
   const sourceText = sources
     .slice(0, 5)
     .map((source) => [source?.author, source?.title, source?.excerpt].filter(Boolean).join("\n"))
@@ -490,11 +520,13 @@ export function buildUsageFootprint(input = {}) {
   const sourceTokens = estimateChineseMixedTokens(`${sourceText}\n${evidenceText}\n${claimText}`);
   const answerTokens = estimateChineseMixedTokens(answer);
   const totalCloudEquivalentTokens = questionTokens + retrievalTokens + sourceTokens + answerTokens;
+  const mode = answerGeneration?.mode === "local_ollama" ? "local_ollama" : "template_fallback";
+  const model = answerGeneration?.model || (mode === "local_ollama" ? "local-ollama" : "stable-template");
   return {
-    mode: "local_ollama",
-    model: "mxbai-embed-large:latest",
+    mode,
+    model,
     cloudBillableTokens: 0,
-    cloudBillableCostText: "当前本机 Ollama 模式不产生 OpenAI 云端 token 费用。",
+    cloudBillableCostText: "当前本机运行不产生 OpenAI 云端 token 费用。",
     estimate: {
       questionTokens,
       retrievalTokens,
@@ -502,7 +534,9 @@ export function buildUsageFootprint(input = {}) {
       answerTokens,
       totalCloudEquivalentTokens,
     },
-    summary: `本轮在本机运行，云端计费 token 为 0；如果改接云模型，这轮大约相当于 ${totalCloudEquivalentTokens} token。`,
+    summary: mode === "local_ollama"
+      ? `本轮在本机 Ollama 运行，云端计费 token 为 0；如果改接云模型，这轮大约相当于 ${totalCloudEquivalentTokens} token。`
+      : `本轮使用本地稳定模板整理来源，云端计费 token 为 0；如果改接云模型，这轮大约相当于 ${totalCloudEquivalentTokens} token。`,
     boundary: "这是按问题、检索上下文、来源摘录和答案文本估算的参考值，不是云模型账单；实际费用会随模型、提示词和带入来源长度变化。",
   };
 }

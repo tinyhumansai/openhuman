@@ -120,11 +120,15 @@ export function validateAmazonQaSmoke(input = {}, options = {}) {
     firstGraphNodes: input.first.graph.nodes.length,
     firstRadarStatus: input.first.knowledgeGapRadar?.status || "",
     firstRadarGaps: Array.isArray(input.first.knowledgeGapRadar?.gaps) ? input.first.knowledgeGapRadar.gaps.length : 0,
+    firstAnswerMode: input.first.answerGeneration?.mode || "template",
+    firstAnswerModel: input.first.answerGeneration?.model || "",
     secondSources: input.second.sources.length,
     secondGraphNodes: input.second.graph.nodes.length,
     secondRadarStatus: input.second.knowledgeGapRadar?.status || "",
     secondRadarGaps: Array.isArray(input.second.knowledgeGapRadar?.gaps) ? input.second.knowledgeGapRadar.gaps.length : 0,
     secondNextBestSourceKind: input.second.nextBestSource?.recommended?.kind || "",
+    secondAnswerMode: input.second.answerGeneration?.mode || "template",
+    secondAnswerModel: input.second.answerGeneration?.model || "",
     secondTopicSources: input.second.topicSourceTree.sources.length,
     hasSecondNotebookGuide: Boolean(input.second.notebookGuide),
     hasSecondSynthesis: Boolean(input.second.synthesisAnswer),
@@ -236,6 +240,14 @@ function assertAskPayload(payload, label) {
   );
   assertSmoke(payload.notebookGuide && typeof payload.notebookGuide === "object", `The ${label} has no learning brief.`);
   assertSmoke(payload.synthesisAnswer && typeof payload.synthesisAnswer === "object", `The ${label} has no synthesis answer.`);
+  if (payload.answerGeneration) {
+    assertSmoke(payload.answerGeneration.mode === "local_ollama", `The ${label} answer generation mode is not local Ollama.`);
+    assertSmoke(payload.answerGeneration.model, `The ${label} answer generation has no model.`);
+    assertSmoke(
+      String(payload.answerGeneration.boundary || "").includes("来源") && String(payload.answerGeneration.boundary || "").includes("核对"),
+      `The ${label} answer generation is missing its source boundary.`,
+    );
+  }
 }
 
 async function fetchSourceContext(baseUrl, { timeoutMs, sessionId, second }) {
