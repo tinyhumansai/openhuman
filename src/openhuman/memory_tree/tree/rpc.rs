@@ -434,13 +434,30 @@ pub async fn pipeline_status_rpc(
     let (latest_failure, extraction_coverage) = {
         let cfg = config.clone();
         tokio::task::spawn_blocking(move || {
-            let failure = latest_failed_job_failure(&cfg).unwrap_or(None);
-            let coverage =
-                crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg).ok();
+            // Log-then-drop: keep the None fallback (these reads must not fail
+            // the polled status RPC) but emit a grep-friendly diagnostic so a
+            // DB/query failure is distinguishable from "no blocking cause" /
+            // "metric unavailable by design".
+            let failure = latest_failed_job_failure(&cfg).unwrap_or_else(|e| {
+                log::warn!(
+                    "[memory-tree][rpc] pipeline_status: latest_failed_job_failure read failed: {e:#}"
+                );
+                None
+            });
+            let coverage = crate::openhuman::memory_store::chunks::store::extraction_coverage(&cfg)
+                .map_err(|e| {
+                    log::warn!(
+                        "[memory-tree][rpc] pipeline_status: extraction_coverage read failed: {e:#}"
+                    );
+                })
+                .ok();
             (failure, coverage)
         })
         .await
-        .unwrap_or((None, None))
+        .unwrap_or_else(|e| {
+            log::warn!("[memory-tree][rpc] pipeline_status: ancillary metrics join error: {e:#}");
+            (None, None)
+        })
     };
 
     // A hard failed-job reason is more urgent than a soft degradation; fall
