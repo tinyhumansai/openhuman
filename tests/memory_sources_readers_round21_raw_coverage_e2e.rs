@@ -238,17 +238,17 @@ if [[ "${1:-}" != "api" ]]; then
   exit 2
 fi
 case "${2:-}" in
-  repos/tinyhumansai/openhuman/commits?per_page=30)
+  repos/tinyhumansai/openhuman/commits\?per_page=*\&page=*)
     cat <<'JSON'
 [{"sha":"abc123","commit":{"message":"Round21 commit subject\n\nBody line","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"}}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/issues\?per_page=*\&page=*\&state=all)
     cat <<'JSON'
 [{"number":42,"title":"Round21 issue","body":"Issue body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:01:00Z","pull_request":null}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/pulls?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/pulls\?per_page=*\&page=*\&state=all)
     cat <<'JSON'
 [{"number":43,"title":"Round21 PR","body":"PR body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:02:00Z","merged_at":null,"comments":1}]
 JSON
