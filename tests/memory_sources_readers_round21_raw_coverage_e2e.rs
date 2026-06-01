@@ -180,6 +180,10 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     std::fs::create_dir_all(&bin).expect("bin dir");
     let script = bin.join("gh");
     write_fake_gh(&script);
+    // PR #3047 (memory_tree) made the reader prefer a local `git clone` over
+    // `gh api repos/.../commits`. The fake gh mocks the API path, so to keep
+    // this test exercising it we shim `git` to fail and force the API fallback.
+    write_failing_git(&bin.join("git"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set_path("PATH", Path::new(&format!("{}:{old_path}", bin.display())));
 
@@ -207,9 +211,12 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     let issue = reader
         .read_item(&entry, "issue:42", &config)
         .await
-        .expect("read issue with comments");
-    assert!(issue.body.contains("## Comments"));
-    assert!(issue.body.contains("Looks good from the fixture"));
+        .expect("read issue");
+    // PR #3047 / #3113 simplified the issue renderer — comments are no longer
+    // appended into the issue body (kept as a future enhancement). The body
+    // still carries the issue header + Description; just verify those.
+    assert!(issue.body.contains("# Issue #42"));
+    assert!(issue.body.contains("## Description"));
     assert_eq!(
         issue
             .metadata
@@ -224,6 +231,20 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
         .await
         .expect_err("bad pr number rejected");
     assert!(bad_pr.contains("invalid PR number"));
+}
+
+/// Shim that fails every `git` invocation so the GitHub reader falls back to
+/// the `gh api` code path that the fake `gh` in this test actually mocks.
+fn write_failing_git(path: &PathBuf) {
+    let script = "#!/usr/bin/env bash\necho \"fake git: refusing $* in coverage test\" >&2\nexit 1\n";
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
+    }
 }
 
 fn write_fake_gh(path: &PathBuf) {
