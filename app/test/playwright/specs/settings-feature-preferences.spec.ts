@@ -52,6 +52,25 @@ async function getMascotVoiceId(page: Page): Promise<string | null> {
   });
 }
 
+async function getPersistedMascotColor(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const userId = localStorage.getItem('OPENHUMAN_ACTIVE_USER_ID');
+    if (!userId) return null;
+
+    const raw = localStorage.getItem(`${userId}:persist:mascot`);
+    if (!raw) return null;
+
+    try {
+      const parsed = JSON.parse(raw) as { color?: unknown };
+      if (typeof parsed.color !== 'string') return null;
+      const color = JSON.parse(parsed.color) as unknown;
+      return typeof color === 'string' ? color : null;
+    } catch {
+      return null;
+    }
+  });
+}
+
 async function getAriaChecked(page: Page, label: string): Promise<string | null> {
   const value = await page.getByRole('switch', { name: label }).getAttribute('aria-checked');
   return value;
@@ -155,6 +174,7 @@ test.describe('Settings - Feature Preferences', () => {
     await expect(page.getByRole('heading', { name: 'Color', exact: true })).toBeVisible();
     await page.getByTestId('mascot-color-burgundy').click();
     await expect(page.getByTestId('mascot-color-burgundy')).toHaveAttribute('aria-checked', 'true');
+    await expect.poll(() => getPersistedMascotColor(page)).toBe('burgundy');
 
     await reloadAndWait(page);
     await expect(page.getByTestId('mascot-color-burgundy')).toHaveAttribute('aria-checked', 'true');
