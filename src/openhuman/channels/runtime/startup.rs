@@ -221,6 +221,20 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
             });
         }
     }
+    // Ensure the action sandbox directory exists (defaults to ~/OpenHuman/projects).
+    let action_dir = config.action_dir.clone();
+    if let Err(e) = tokio::fs::create_dir_all(&action_dir).await {
+        tracing::warn!(
+            dir = %action_dir.display(),
+            error = %e,
+            "[startup] could not create action sandbox dir"
+        );
+    }
+    tracing::info!(
+        workspace = %config.workspace_dir.display(),
+        action = %action_dir.display(),
+        "[startup] workspace (internal state) and action sandbox (tool cwd) directories configured"
+    );
     // Install as the process-global live policy so runtime autonomy changes
     // (config.update_autonomy_settings) are reflected by `live_policy::current()`
     // and picked up by the next session.
@@ -228,8 +242,10 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
+            &config.action_dir,
         )),
         config.workspace_dir.clone(),
+        config.action_dir.clone(),
     );
     // Seed the live tool-execution timeout from the persisted `[agent]` config so
     // a user-configured value (Settings → Agent OS access → Action timeout) is in
@@ -275,7 +291,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         Arc::clone(&mem),
         &config.browser,
         &config.http_request,
-        &workspace,
+        &action_dir,
         &config.agents,
         &config,
     ));

@@ -319,6 +319,49 @@ const AgentAccessPanel = () => {
               </div>
             </section>
 
+            {/* Directory model — action sandbox vs internal state. */}
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                {t('settings.agentAccess.directories')}
+              </h2>
+              <div className="rounded-lg border border-stone-200 dark:border-neutral-800 divide-y divide-stone-200 dark:divide-neutral-800">
+                <div className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-sage-500" />
+                    <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+                      {t('settings.agentAccess.actionSandbox')}
+                    </span>
+                    <span className="text-xs text-sage-600 dark:text-sage-400">
+                      {t('settings.agentAccess.readWriteAccess')}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono">
+                    ~/OpenHuman/projects
+                  </p>
+                  <p className="text-xs text-stone-500 dark:text-neutral-500">
+                    {t('settings.agentAccess.actionSandboxDesc')}
+                  </p>
+                </div>
+                <div className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-coral-500" />
+                    <span className="text-xs font-medium text-stone-900 dark:text-neutral-100">
+                      {t('settings.agentAccess.internalState')}
+                    </span>
+                    <span className="text-xs text-coral-600 dark:text-coral-400">
+                      {t('settings.agentAccess.agentBlocked')}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono">
+                    ~/.openhuman/workspace
+                  </p>
+                  <p className="text-xs text-stone-500 dark:text-neutral-500">
+                    {t('settings.agentAccess.internalStateDesc')}
+                  </p>
+                </div>
+              </div>
+            </section>
+
             {/* Workspace confinement — orthogonal to the tier; applies in all modes. */}
             <section className="space-y-1">
               <label className="flex items-start gap-2 cursor-pointer">

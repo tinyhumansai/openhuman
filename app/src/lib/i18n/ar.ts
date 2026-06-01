@@ -3561,6 +3561,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'مضاف',
   'settings.agentAccess.saving': 'إنقاذ...',
   'settings.agentAccess.changesApply': 'التغييرات تنطبق على رسالتك القادمة',
+  'settings.agentAccess.directories': 'الأدلّة',
+  'settings.agentAccess.actionSandbox': 'صندوق الإجراءات',
+  'settings.agentAccess.readWriteAccess': 'قراءة + كتابة',
+  'settings.agentAccess.actionSandboxDesc': 'دليل العمل الافتراضي لأدوات الطرفية والملفات وgit.',
+  'settings.agentAccess.internalState': 'الحالة الداخلية',
+  'settings.agentAccess.agentBlocked': 'محظور على الوكيل',
+  'settings.agentAccess.internalStateDesc':
+    'قواعد بيانات الذاكرة والجلسات والرموز وغيرها من البيانات الأساسية. غير متاحة لأدوات الوكيل.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

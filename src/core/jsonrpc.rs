@@ -2010,12 +2010,15 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // injects the default projects root, so this matches what `start_channels`
     // installs; idempotent — a later `start_channels` re-installs an equivalent
     // policy.
+    let action_dir = cfg.action_dir.clone();
     crate::openhuman::security::live_policy::install(
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
             &cfg.autonomy,
             &workspace_dir,
+            &action_dir,
         )),
         workspace_dir.clone(),
+        action_dir,
     );
 
     // --- Approval gate (#1339) ---
