@@ -896,6 +896,22 @@ pub(crate) async fn process_channel_message(
         silent: true,
         channel_name: msg.channel.clone(),
         multimodal: ctx.multimodal.clone(),
+        // Channel-sourced text is untrusted (Slack / Discord / Telegram
+        // / WhatsApp / etc. — anyone who can DM the bot can put bytes
+        // here). Operator-supplied defaults at `config.multimodal_files`
+        // would otherwise let a remote sender smuggle a marker like
+        // `[FILE:/etc/passwd]`, `[FILE:/home/<user>/.ssh/id_rsa]`, or
+        // `[FILE:.env]` into the agent prompt — `read_local_file`
+        // resolves the path with no workspace confinement, so absolute
+        // paths exfiltrate server-local files via a follow-up question.
+        //
+        // Hard-disable file-marker resolution on this path regardless of
+        // operator config; the desktop / web-chat path (where the user
+        // owns the local filesystem) goes through a different turn
+        // builder and keeps the operator default. Mirrors the triage-arm
+        // hardening in `agent::triage::evaluator`.
+        multimodal_files:
+            crate::openhuman::config::MultimodalFileConfig::for_untrusted_channel_input(),
         max_tool_iterations: ctx.max_tool_iterations,
         on_delta: None, // on_progress handles text deltas now
         target_agent_id: scoping.target_agent_id,

@@ -117,7 +117,8 @@ use openhuman_core::openhuman::config::schema::cloud_providers::{
 };
 use openhuman_core::openhuman::config::schema::LocalAiConfig;
 use openhuman_core::openhuman::config::{
-    Config, DelegateAgentConfig, DockerRuntimeConfig, MultimodalConfig, RuntimeConfig,
+    Config, DelegateAgentConfig, DockerRuntimeConfig, MultimodalConfig, MultimodalFileConfig,
+    RuntimeConfig,
 };
 use openhuman_core::openhuman::credentials::profiles::{AuthProfile, TokenSet};
 use openhuman_core::openhuman::credentials::{AuthService, APP_SESSION_PROVIDER};
@@ -2853,6 +2854,7 @@ async fn agent_triage_evaluator_covers_native_dispatch_decision_and_deferred_pat
             silent: true,
             channel_name: "triage".into(),
             multimodal: MultimodalConfig::default(),
+            multimodal_files: MultimodalFileConfig::default(),
             max_tool_iterations: 1,
             on_delta: None,
             target_agent_id: Some("orchestrator".into()),
@@ -3894,9 +3896,13 @@ fn agent_dispatchers_and_host_runtime_cover_public_edge_paths() {
 #[tokio::test]
 async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
     let empty = vec![ChatMessage::user("no image markers")];
-    let passthrough = prepare_messages_for_provider(&empty, &MultimodalConfig::default())
-        .await
-        .expect("no image passthrough");
+    let passthrough = prepare_messages_for_provider(
+        &empty,
+        &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
+    )
+    .await
+    .expect("no image passthrough");
     assert!(!passthrough.contains_images);
     assert_eq!(passthrough.messages[0].content, "no image markers");
 
@@ -3928,6 +3934,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
             max_image_size_mb: 1,
             allow_remote_fetch: false,
         },
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect("valid data uri");
@@ -3942,6 +3949,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
             max_images: 1,
             ..Default::default()
         },
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect_err("too many images");
@@ -3956,6 +3964,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
     let remote_disabled = prepare_messages_for_provider(
         &[ChatMessage::user("[IMAGE:https://example.test/image.png]")],
         &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect_err("remote disabled");
@@ -3967,6 +3976,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
     let unsupported = prepare_messages_for_provider(
         &[ChatMessage::user("[IMAGE:data:text/plain;base64,aGVsbG8=]")],
         &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect_err("unsupported mime");
@@ -3978,6 +3988,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
     let invalid = prepare_messages_for_provider(
         &[ChatMessage::user("[IMAGE:data:image/png,iVBORw0KGgo=]")],
         &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect_err("missing base64 marker");
@@ -3999,6 +4010,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
             image_path.display()
         ))],
         &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect("local png");
@@ -4010,6 +4022,7 @@ async fn agent_multimodal_helpers_cover_normalization_and_error_paths() {
             workspace.path().join("missing.png").display()
         ))],
         &MultimodalConfig::default(),
+        &MultimodalFileConfig::default(),
     )
     .await
     .expect_err("missing local image");

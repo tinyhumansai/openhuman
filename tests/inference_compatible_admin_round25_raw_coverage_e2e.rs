@@ -5,7 +5,7 @@
 //! downloads.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::body::Body;
 use axum::extract::State;
@@ -72,6 +72,15 @@ impl Drop for EnvVarGuard {
             }
         }
     }
+}
+
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[tokio::test]
@@ -161,6 +170,7 @@ async fn compatible_provider_cold_paths_cover_auth_url_temperature_and_stream_er
 
 #[tokio::test]
 async fn provider_admin_cold_paths_cover_model_errors_local_factory_and_connection_controller() {
+    let _lock = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);

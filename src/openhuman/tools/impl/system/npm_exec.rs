@@ -210,7 +210,7 @@ impl Tool for NpmExecTool {
             ));
         }
 
-        let cwd = match resolve_cwd(&self.security.workspace_dir, cwd_override.as_deref()) {
+        let cwd = match resolve_cwd(&self.security.action_dir, cwd_override.as_deref()) {
             Ok(p) => p,
             Err(msg) => return Ok(ToolResult::error(msg)),
         };
