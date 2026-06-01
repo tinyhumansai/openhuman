@@ -187,6 +187,56 @@
         padding-top: 8px;
       }
 
+      .delivery-checklist {
+        border: 1px solid rgba(14, 107, 96, 0.18);
+        background: #fff;
+        padding: 10px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .delivery-checklist header {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .delivery-checklist strong {
+        font-size: 13px;
+      }
+
+      .delivery-checklist header span,
+      .delivery-checklist p {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .delivery-checklist-items {
+        display: grid;
+        gap: 6px;
+      }
+
+      .delivery-checklist-item {
+        border: 1px solid rgba(23, 23, 23, 0.08);
+        background: var(--soft);
+        padding: 8px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .delivery-checklist-item[data-status="manual"],
+      .delivery-checklist-item[data-status="processing"] {
+        background: #fffaf2;
+        border-color: rgba(176, 71, 36, 0.22);
+      }
+
+      .delivery-checklist-item[data-status="blocked"] {
+        background: #fff6f6;
+        border-color: rgba(164, 48, 48, 0.2);
+      }
+
       .source-tree-drain {
         border: 1px solid rgba(23, 23, 23, 0.08);
         background: #fff;
@@ -6117,11 +6167,77 @@
           </div>
           <p class="knowledge-readiness-note source-tree-note">OpenHuman 来源树：${escapeHtml(sourceTreeNote)}</p>
           <p class="knowledge-readiness-note">${escapeHtml(graphNote)}</p>
+          ${renderDeliveryChecklist(status)}
         `;
         knowledgeReadinessEl.querySelectorAll("[data-source-tree-drain-start]").forEach((button) => {
           button.addEventListener("click", () => startSourceTreeDrain(button));
         });
         knowledgeReadinessEl.querySelector("[data-source-tree-drain-stop]")?.addEventListener("click", stopSourceTreeDrain);
+      }
+
+      function renderDeliveryChecklist(status) {
+        const health = status.health || {};
+        const readiness = status.readiness || {};
+        const sourceTree = health.sourceTree || {};
+        const chunks = Number(health.chunks || 0);
+        const embedded = Number(health.embeddedChunks || 0);
+        const coverage = Number(health.vectorCoveragePercent || 0);
+        const queued = Number(sourceTree.queuedJobs || status.sourceTreeDrain?.queuedJobs || 0);
+        const failed = Number(sourceTree.failedJobs || status.sourceTreeDrain?.failedJobs || 0);
+        const semanticReady = chunks > 0 && embedded === chunks && coverage >= 99;
+        const answerReady = readiness.searchStatus === "ready" && readiness.citationStatus === "ready" && readiness.answerStatus === "ready";
+        const sourceTreeStatus = failed > 0 ? "blocked" : queued > 0 ? "processing" : "ready";
+        const items = [
+          {
+            label: "本地语义问答",
+            status: semanticReady && answerReady ? "ready" : "blocked",
+            evidence: semanticReady && answerReady
+              ? `${formatNumber(embedded)}/${formatNumber(chunks)} 个片段已索引，问答和引用就绪。`
+              : "语义索引、搜索或引用还未达到就绪状态。",
+          },
+          {
+            label: "连续学习闭环",
+            status: "manual",
+            evidence: "用 3 个真实亚马逊问题验证：追问、来源定位、图谱、学习队列和结果确认都能继续推进。",
+          },
+          {
+            label: "来源树增强",
+            status: sourceTreeStatus,
+            evidence: failed > 0
+              ? `有 ${formatNumber(failed)} 个失败任务，需要先处理。`
+              : queued > 0
+                ? `后台仍有 ${formatNumber(queued)} 个深加工任务；不影响当前问答，但终版结构化学习仍在增强。`
+                : "来源树后台深加工已完成。",
+          },
+          {
+            label: "交付边界",
+            status: "ready",
+            evidence: "本轮只交付本地文字问答、来源核对、图谱和学习产物；不包含音视频。",
+          },
+        ];
+        const readyCount = items.filter((item) => item.status === "ready").length;
+        const blockedCount = items.filter((item) => item.status === "blocked").length;
+        const label = blockedCount > 0 ? "需处理" : readyCount === items.length ? "已达标" : "待实操确认";
+        return `<section class="delivery-checklist" aria-label="终版验收清单">
+          <header>
+            <strong>终版验收清单</strong>
+            <span>${escapeHtml(label)}</span>
+          </header>
+          <div class="delivery-checklist-items">
+            ${items.map((item) => `<article class="delivery-checklist-item" data-status="${escapeAttribute(item.status)}">
+              <strong>${escapeHtml(item.label)} · ${escapeHtml(deliveryChecklistStatusLabel(item.status))}</strong>
+              <p>${escapeHtml(item.evidence)}</p>
+            </article>`).join("")}
+          </div>
+          <p>这张清单是结束目标前的验收口径：机器检查证明基础能力，真实问题操作确认是否适合你的亚马逊学习方式。</p>
+        </section>`;
+      }
+
+      function deliveryChecklistStatusLabel(status) {
+        if (status === "ready") return "已验证";
+        if (status === "processing") return "增强中";
+        if (status === "blocked") return "需处理";
+        return "待实操";
       }
 
       function renderSourceTreeDrainControls(drain) {
