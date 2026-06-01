@@ -80,6 +80,44 @@ fn build_description(connected: &[(String, String)]) -> String {
     buf
 }
 
+async fn fetch_live_connected_toolkit_slugs_once() -> Option<Vec<String>> {
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .ok()?;
+    match crate::openhuman::composio::fetch_connected_integrations_status(&config).await {
+        crate::openhuman::composio::FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+            let mut toolkits: Vec<String> = entries
+                .into_iter()
+                .filter(|entry| entry.connected)
+                .map(|entry| sanitise_slug(&entry.toolkit))
+                .collect();
+            toolkits.sort();
+            toolkits.dedup();
+            Some(toolkits)
+        }
+        crate::openhuman::composio::FetchConnectedIntegrationsStatus::Unavailable => None,
+    }
+}
+
+fn resolve_connected_toolkits(
+    snapshot: &[(String, String)],
+    slug: &str,
+    live_connected: Option<&[String]>,
+) -> (bool, Vec<String>) {
+    if snapshot.iter().any(|(known_slug, _)| known_slug == slug) {
+        let allowed = snapshot.iter().map(|(slug, _)| slug.clone()).collect();
+        return (true, allowed);
+    }
+    if let Some(live) = live_connected {
+        let known = live.iter().any(|s| s == slug);
+        return (known, live.to_vec());
+    }
+    (
+        false,
+        snapshot.iter().map(|(slug, _)| slug.clone()).collect(),
+    )
+}
+
 #[async_trait]
 impl Tool for SkillDelegationTool {
     fn name(&self) -> &str {
@@ -153,16 +191,29 @@ impl Tool for SkillDelegationTool {
             )));
         }
         let slug = sanitise_slug(&raw_toolkit);
-        let known = self
+        let mut live_connected: Option<Vec<String>> = None;
+        let mut known = self
             .connected_toolkits
             .iter()
             .any(|(known_slug, _)| known_slug == &slug);
         if !known {
-            let allowed: Vec<&str> = self
-                .connected_toolkits
-                .iter()
-                .map(|(slug, _)| slug.as_str())
-                .collect();
+            // Safety net for same-thread OAuth races: do one live status
+            // refresh before rejecting an unknown toolkit, mirroring the
+            // spawn_subagent integrations pre-flight.
+            live_connected = fetch_live_connected_toolkit_slugs_once().await;
+        }
+        let (known_after_recheck, allowed) =
+            resolve_connected_toolkits(&self.connected_toolkits, &slug, live_connected.as_deref());
+        if known_after_recheck && !known {
+            log::info!(
+                "[skill-delegation] toolkit '{}' accepted after live re-check (session schema stale)",
+                slug
+            );
+            known = true;
+        } else {
+            known = known_after_recheck;
+        }
+        if !known {
             log::debug!(
                 "[skill-delegation] reject: toolkit '{}' (sanitised='{}') not in connected set {:?}",
                 raw_toolkit,
@@ -360,5 +411,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn resolve_connected_toolkits_prefers_live_recheck_for_unknown_slug() {
+        let snapshot = vec![("gmail".to_string(), "Email".to_string())];
+
+        let (known_snapshot, allowed_snapshot) =
+            resolve_connected_toolkits(&snapshot, "gmail", None);
+        assert!(known_snapshot);
+        assert_eq!(allowed_snapshot, vec!["gmail".to_string()]);
+
+        let live = vec!["gmail".to_string(), "notion".to_string()];
+        let (known_live, allowed_live) =
+            resolve_connected_toolkits(&snapshot, "notion", Some(live.as_slice()));
+        assert!(known_live);
+        assert_eq!(allowed_live, live);
+
+        let live_no_match = vec!["gmail".to_string(), "notion".to_string()];
+        let (known_none, allowed_none) =
+            resolve_connected_toolkits(&snapshot, "slack", Some(live_no_match.as_slice()));
+        assert!(!known_none);
+        assert_eq!(allowed_none, live_no_match);
     }
 }
