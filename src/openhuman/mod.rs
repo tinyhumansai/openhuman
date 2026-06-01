@@ -53,6 +53,7 @@ pub mod inference;
 pub mod integrations;
 pub mod javascript;
 pub mod keyring;
+pub mod keyring_consent;
 pub mod learning;
 pub mod mcp_audit;
 pub mod mcp_client;

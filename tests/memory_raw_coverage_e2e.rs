@@ -368,7 +368,7 @@ fn memory_sources_validation_and_sync_classification_edges() {
     assert_eq!(classify_unknown("GMAIL_FETCH_EMAILS"), ToolScope::Read);
     assert_eq!(
         toolkit_from_slug(" MICROSOFT_TEAMS_SEND "),
-        Some("microsoft".into())
+        Some("microsoft_teams".into())
     );
     assert_eq!(toolkit_from_slug(""), None);
     let catalog = [CuratedTool {
@@ -496,6 +496,7 @@ fn memory_sync_canonicalizers_sort_clean_and_preserve_provenance() {
             modified_at: t1,
             source_ref: None,
         },
+        None,
     )
     .expect("empty doc")
     .is_none());
@@ -508,7 +509,7 @@ fn memory_sync_canonicalizers_sort_clean_and_preserve_provenance() {
     });
     let doc_input: DocumentInput = serde_json::from_value(doc_json).expect("document input");
     assert_eq!(doc_input.provider, "unknown");
-    let doc = canonicalise_document("doc-1", "alice", &["plans".into()], doc_input)
+    let doc = canonicalise_document("doc-1", "alice", &["plans".into()], doc_input, None)
         .expect("document")
         .expect("document output");
     assert_eq!(doc.metadata.timestamp.timestamp_millis(), 1_700_000_000_000);
@@ -590,6 +591,7 @@ fn threads_turn_state_store_skips_corrupt_entries_and_marks_interrupted() {
         subagent: Some(SubagentActivity {
             task_id: "task-1".into(),
             agent_id: "researcher".into(),
+            status: Some("running".into()),
             mode: Some("read".into()),
             dedicated_thread: Some(false),
             child_iteration: Some(1),

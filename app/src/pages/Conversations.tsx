@@ -288,6 +288,8 @@ const Conversations = ({
   }, [agentProfiles, profileDraft.agentId, t]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
+  /** Max composer height ≈ 4 lines of text-sm + padding. */
+  const COMPOSER_MAX_HEIGHT = 96;
   const isComposingTextRef = useRef(false);
   const pendingSendRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1138,6 +1140,16 @@ const Conversations = ({
     });
     return () => window.cancelAnimationFrame(id);
   }, [selectedThreadId, composerInteractionBlocked, inputMode]);
+
+  // Auto-resize composer textarea: grow with content, cap at COMPOSER_MAX_HEIGHT, then scroll.
+  useEffect(() => {
+    const ta = textInputRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
+    ta.style.overflowY = ta.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
+  }, [inputValue]);
+
   const isSending = Boolean(
     selectedThreadId &&
     (pendingSendingThreadId === selectedThreadId ||
@@ -2189,7 +2201,7 @@ const Conversations = ({
                     placeholder={t('chat.typeMessage')}
                     rows={1}
                     disabled={composerInteractionBlocked || isSending}
-                    className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 max-h-32 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
                   />
                   {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
                 </div>

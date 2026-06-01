@@ -1139,6 +1139,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'हाँ, अनइंस्टॉल करें',
   'mcp.detail.uninstall': 'अनइंस्टॉल करें',
   'mcp.detail.envVars': 'पर्यावरण चर',
+  'mcp.detail.reconfigure': 'पुन: कॉन्फ़िगर करें',
+  'mcp.detail.reconfigureHint':
+    'हर वेरिएबल के लिए नए मान दर्ज करें, फिर पुन: कनेक्ट करें। यह संग्रहीत मानों को बदल देता है।',
+  'mcp.detail.saveReconnect': 'सहेजें और पुन: कनेक्ट करें',
+  'mcp.detail.reconfigureSaving': 'सहेजा जा रहा है…',
+  'mcp.detail.reconfigureSuccess': 'एनवायरनमेंट अपडेट हो गया और पुन: कनेक्ट हो गया।',
+  'mcp.detail.reconfigureReconnectFailed':
+    'सहेजा गया, लेकिन नए मानों के साथ पुन: कनेक्ट करना विफल रहा।',
   'mcp.detail.tools': 'उपकरण',
   'onboarding.skipForNow': 'अभी के लिए छोड़ें',
   'onboarding.localAI.continueWithCloud': 'बादल के साथ जारी रखें',
@@ -1983,6 +1991,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'पृष्ठ URL',
   'memorySources.cssSelector': 'CSS चयनकर्ता (वैकल्पिक)',
   'memorySources.searchQuery': 'खोज क्वेरी',
+  'memorySources.build.title': 'बनाएं',
+  'memorySources.build.building': 'बना रहा है…',
+  'memorySources.build.successTitle': 'ट्री बन गई',
+  'memorySources.build.failedTitle': 'निर्माण विफल',
+  'memorySources.build.sealsMessage': 'सील पूर्ण हुई',
   'backend.aiBackend': 'AI बैकएंड',
   'backend.cloud': 'क्लाउड',
   'backend.recommended': 'सुझावित',
@@ -2497,6 +2510,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'चल रहा है',
   'conversations.subagent.statusCompleted': 'पूर्ण',
   'conversations.subagent.statusFailed': 'विफल',
+  'conversations.subagent.statusAwaitingUser': 'उपयोगकर्ता की प्रतीक्षा',
   'daemon.serviceBlockingGate.body': 'विवरण',
   'daemon.serviceBlockingGate.downloadHint': 'डाउनलोड संकेत',
   'daemon.serviceBlockingGate.downloadLatest': 'नवीनतम संस्करण डाउनलोड करें',
@@ -3595,6 +3609,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'कार्य योजना अनुमोदन की आवश्यकता',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'एक निर्धारित एजेंट से पहले रोकें एक एजेंट-लेखित कार्य संक्षिप्त निष्पादित करता है।',
+  'settings.agentAccess.timeout.label': 'क्रिया टाइमआउट',
+  'settings.agentAccess.timeout.desc':
+    'किसी एकल टूल या क्रिया को रद्द होने से पहले कितनी देर चलने दिया जाए। यदि कोई बड़ा लोकल मॉडल अपना उत्तर पूरा करने से पहले रुक जाता है तो इसे बढ़ाएँ।',
+  'settings.agentAccess.timeout.unit': 'सेकंड',
+  'settings.agentAccess.timeout.invalid': 'अनुमत सीमा के भीतर सेकंड की एक पूर्ण संख्या दर्ज करें',
+  'settings.agentAccess.timeout.envOverride':
+    'OPENHUMAN_TOOL_TIMEOUT_SECS एनवायरनमेंट वेरिएबल इस सेटिंग को ओवरराइड कर रहा है, इसलिए जब तक इसे अनसेट नहीं किया जाता, यहाँ किए गए बदलावों का कोई असर नहीं होगा।',
   'settings.agentAccess.grantedFolders': 'स्वीकृत फ़ोल्डर',
   'settings.agentAccess.alwaysAllow': 'हमेशा की अनुमति उपकरण',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3611,6 +3632,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'जोड़ें',
   'settings.agentAccess.saving': 'बचत',
   'settings.agentAccess.changesApply': 'परिवर्तन आपके अगले संदेश पर लागू होते हैं।',
+  'settings.agentAccess.directories': 'निर्देशिकाएँ',
+  'settings.agentAccess.actionSandbox': 'एक्शन सैंडबॉक्स',
+  'settings.agentAccess.readWriteAccess': 'पढ़ना + लिखना',
+  'settings.agentAccess.actionSandboxDesc':
+    'शेल, फ़ाइल और git टूल के लिए डिफ़ॉल्ट कार्य निर्देशिका।',
+  'settings.agentAccess.internalState': 'आंतरिक स्थिति',
+  'settings.agentAccess.agentBlocked': 'एजेंट-अवरुद्ध',
+  'settings.agentAccess.internalStateDesc':
+    'मेमोरी डेटाबेस, सत्र, टोकन और अन्य मुख्य डेटा। एजेंट टूल के लिए सुलभ नहीं।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4390,6 +4420,41 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'औसत क्लस्टरिंग {avg} · सकर्मकता {transitivity}',
   'graphCohesion.title': 'ग्राफ संसक्ति',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'सुरक्षित भंडारण अनुपलब्ध',
+  'keyring.consent.description':
+    'आपके ऑपरेटिंग सिस्टम का कीचेन सुलभ नहीं है। OpenHuman को इसके बजाय स्थानीय एन्क्रिप्टेड भंडारण का उपयोग करके रहस्य संग्रहीत करने के लिए आपकी अनुमति चाहिए।',
+  'keyring.consent.reasonPrefix': 'कारण:',
+  'keyring.consent.showDetails': 'इसका क्या मतलब है?',
+  'keyring.consent.hideDetails': 'विवरण छिपाएं',
+  'keyring.consent.tradeoffTitle': 'सुरक्षा समझौता',
+  'keyring.consent.tradeoffBody':
+    'स्थानीय एन्क्रिप्टेड भंडारण में, आपके रहस्य डिस्क पर एक मास्टर कुंजी से एन्क्रिप्ट किए जाते हैं जो डेटा के साथ संग्रहीत होती है। यह OS कीचेन से कम सुरक्षित है, जो हार्डवेयर-समर्थित सुरक्षा का उपयोग करता है। बैकअप या फ़ाइल सिंकिंग में एन्क्रिप्टेड डेटा शामिल हो सकता है।',
+  'keyring.consent.consentButton': 'स्थानीय एन्क्रिप्टेड भंडारण का उपयोग करें',
+  'keyring.consent.retryButton': 'OS Keychain पुनः प्रयास करें',
+  'keyring.consent.declineButton': 'अस्वीकार करें',
+  'keyring.consent.retrying': 'पुनः प्रयास हो रहा है…',
+  'keyring.consent.error': 'प्राथमिकता सहेजने में विफल। कृपया पुनः प्रयास करें।',
+  'keyring.consent.retryFailed': 'कीचेन अभी भी अनुपलब्ध है।',
+  'keyring.settings.title': 'सुरक्षा',
+  'keyring.settings.storageMode': 'रहस्य भंडारण मोड',
+  'keyring.settings.mode.osKeychain': 'OS कीचेन',
+  'keyring.settings.mode.encryptedFile': 'स्थानीय एन्क्रिप्टेड',
+  'keyring.settings.mode.consentPending': 'कॉन्फ़िगर नहीं किया गया',
+  'keyring.settings.mode.declined': 'अस्वीकृत',
+  'keyring.settings.availability': 'कीचेन उपलब्धता',
+  'keyring.settings.available': 'OS कीचेन उपलब्ध है',
+  'keyring.settings.unavailable': 'OS कीचेन अनुपलब्ध है',
+  'keyring.settings.backend': 'बैकएंड',
+  'keyring.settings.retryButton': 'कीचेन पहचान पुनः प्रयास करें',
+  'keyring.settings.retryFailed': 'पुनः प्रयास विफल। कीचेन अभी भी अनुपलब्ध है।',
+  'keyring.settings.consentTitle': 'भंडारण सहमति',
+  'keyring.settings.consentDescription':
+    'चुनें कि OS कीचेन अनुपलब्ध होने पर रहस्य कैसे संग्रहीत किए जाएं।',
+  'keyring.settings.grantConsent': 'स्थानीय एन्क्रिप्टेड भंडारण की अनुमति दें',
+  'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
+  'pages.settings.account.security': 'सुरक्षा',
+  'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
 };
 
 export default messages;

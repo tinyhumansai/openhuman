@@ -1060,17 +1060,21 @@ fn tool_invariants_drop_orphan_but_keep_following_cycle() {
 /// the wire message.
 #[test]
 fn convert_preserves_reasoning_content_on_tool_call_turn() {
-    let input = vec![ChatMessage::assistant(
-        r#"{"content":null,"reasoning_content":"let me think about this","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
-    )];
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":null,"reasoning_content":"let me think about this","tool_calls":[{"id":"call_x","name":"shell","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_x","content":"result"}"#),
+    ];
 
     let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
 
-    assert_eq!(converted.len(), 1);
+    // First message is the assistant with tool_calls + reasoning.
     assert_eq!(
         converted[0].reasoning_content.as_deref(),
         Some("let me think about this")
     );
+    assert!(converted[0].tool_calls.is_some());
 
     // The wire payload must actually carry the field for DeepSeek to accept it.
     let wire = serde_json::to_value(&converted[0]).unwrap();
@@ -1095,6 +1099,72 @@ fn convert_omits_reasoning_content_when_absent() {
     assert!(
         wire.get("reasoning_content").is_none(),
         "reasoning_content must be omitted from the wire when absent"
+    );
+}
+
+/// Tool-call assistant messages with no narrative text must emit `"content":""`
+/// on the wire (not omit the key) so providers that validate the presence of a
+/// content field alongside reasoning_content don't reject the request.
+#[test]
+fn convert_tool_call_turn_emits_content_key_even_when_empty() {
+    let input = vec![
+        ChatMessage::assistant(
+            r#"{"content":null,"reasoning_content":"thinking","tool_calls":[{"id":"call_a","name":"web_fetch","arguments":"{}"}]}"#,
+        ),
+        ChatMessage::tool(r#"{"tool_call_id":"call_a","content":"fetched"}"#),
+    ];
+
+    let converted = OpenAiCompatibleProvider::convert_messages_for_native(&input);
+    let wire = serde_json::to_value(&converted[0]).unwrap();
+
+    assert!(
+        wire.get("content").is_some(),
+        "content key must be present on the wire even when the model emitted null/empty content"
+    );
+    assert_eq!(wire["content"], "");
+    assert_eq!(wire["reasoning_content"], "thinking");
+}
+
+/// When `enforce_tool_message_invariants` collapses an assistant tool-call
+/// message to plain text (all tool_calls pruned because no responses matched),
+/// it must also clear `reasoning_content` — leaving stale reasoning on a
+/// non-tool assistant message is a malformed shape for thinking-mode providers.
+#[test]
+fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
+    let messages = vec![
+        NativeMessage {
+            role: "assistant".to_string(),
+            content: Some("partial thought".to_string()),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall {
+                id: Some("orphan_call".to_string()),
+                kind: Some("function".to_string()),
+                function: Some(Function {
+                    name: Some("web_fetch".to_string()),
+                    arguments: Some(serde_json::Value::String("{}".to_string())),
+                }),
+            }]),
+            reasoning_content: Some("deep reasoning".to_string()),
+        },
+        // No tool result follows — the tool_calls are orphaned.
+        NativeMessage {
+            role: "user".to_string(),
+            content: Some("next question".to_string()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    ];
+
+    let sanitized = OpenAiCompatibleProvider::enforce_tool_message_invariants(messages);
+
+    // The assistant message should have been collapsed: tool_calls pruned.
+    let assistant = &sanitized[0];
+    assert!(assistant.tool_calls.is_none());
+    // reasoning_content must also be cleared on collapse.
+    assert!(
+        assistant.reasoning_content.is_none(),
+        "reasoning_content must be stripped when tool_calls are pruned to avoid malformed shape"
     );
 }
 
@@ -1602,6 +1672,71 @@ fn reasoning_content_ignored_by_normal_models() {
     let msg = &resp.choices[0].message;
     assert!(msg.reasoning_content.is_none());
     assert_eq!(msg.effective_content(), "Hello from Venice!");
+}
+
+// ----------------------------------------------------------
+// `reasoning` field-name alias (issue #3094)
+//
+// DeepSeek/Qwen3/GLM-4 emit chain-of-thought as `reasoning_content`, but
+// OpenRouter and vLLM/SGLang-backed OpenAI-compatible proxies emit it as
+// `reasoning`. If we only deserialize `reasoning_content`, a third-party
+// thinking-mode provider that uses `reasoning` is captured as `None`, so the
+// CoT is never replayed on the follow-up tool-call turn and the provider
+// rejects the request with `400 The reasoning_content in the thinking mode
+// must be passed back to the API`. The `#[serde(alias = "reasoning")]` makes
+// both field names map to the same captured value.
+// ----------------------------------------------------------
+
+#[test]
+fn reasoning_alias_captured_from_response_message() {
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning":"weighing the options"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+    let msg = &resp.choices[0].message;
+    assert_eq!(
+        msg.reasoning_content.as_deref(),
+        Some("weighing the options")
+    );
+}
+
+#[test]
+fn reasoning_content_canonical_field_still_wins_over_alias_absence() {
+    // The canonical `reasoning_content` field keeps working unchanged.
+    let json = r#"{"choices":[{"message":{"content":null,"reasoning_content":"canonical cot"}}]}"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+    let msg = &resp.choices[0].message;
+    assert_eq!(msg.reasoning_content.as_deref(), Some("canonical cot"));
+}
+
+#[test]
+fn reasoning_alias_captured_in_stream_delta() {
+    let json = r#"{"choices":[{"delta":{"reasoning":"streamed cot"},"finish_reason":null}]}"#;
+    let chunk: StreamChunkResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(
+        chunk.choices[0].delta.reasoning_content.as_deref(),
+        Some("streamed cot")
+    );
+}
+
+/// End-to-end: a tool-call turn whose reasoning arrived under the `reasoning`
+/// alias must still be surfaced by `parse_native_response` so the agent loop
+/// can replay it on the follow-up request (the issue #3094 failure path).
+#[test]
+fn parse_native_response_captures_reasoning_from_alias() {
+    let json = r#"{
+        "choices":[{"message":{
+            "content":null,
+            "reasoning":"  let me think about this  ",
+            "tool_calls":[{"id":"call_z","type":"function","function":{"name":"web_fetch","arguments":"{}"}}]
+        }}]
+    }"#;
+    let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
+    let parsed = OpenAiCompatibleProvider::parse_native_response(resp, "deepseek").unwrap();
+    assert_eq!(parsed.tool_calls.len(), 1);
+    assert_eq!(
+        parsed.reasoning_content.as_deref(),
+        Some("let me think about this"),
+        "reasoning captured via the `reasoning` alias must be available to replay"
+    );
 }
 
 // ----------------------------------------------------------

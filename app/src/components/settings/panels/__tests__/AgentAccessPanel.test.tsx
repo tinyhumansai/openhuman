@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 import {
+  type AgentSettings,
   type AutonomySettings,
   isTauri,
+  openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
+  openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
 } from '../../../../utils/tauriCommands';
 import AgentAccessPanel from '../AgentAccessPanel';
@@ -19,6 +22,15 @@ const autonomy = (overrides: Partial<AutonomySettings> = {}): AutonomySettings =
   allow_tool_install: true,
   max_actions_per_hour: 0,
   auto_approve: [],
+  ...overrides,
+});
+
+const agentSettings = (overrides: Partial<AgentSettings> = {}): AgentSettings => ({
+  agent_timeout_secs: 120,
+  effective_timeout_secs: 120,
+  env_override: false,
+  min_timeout_secs: 1,
+  max_timeout_secs: 3600,
   ...overrides,
 });
 
@@ -39,11 +51,15 @@ vi.mock('../../../../utils/tauriCommands', async () => {
     isTauri: vi.fn(() => true),
     openhumanGetAutonomySettings: vi.fn(),
     openhumanUpdateAutonomySettings: vi.fn(),
+    openhumanGetAgentSettings: vi.fn(),
+    openhumanUpdateAgentSettings: vi.fn(),
   };
 });
 
 const mockGet = vi.mocked(openhumanGetAutonomySettings);
 const mockUpdate = vi.mocked(openhumanUpdateAutonomySettings);
+const mockGetAgent = vi.mocked(openhumanGetAgentSettings);
+const mockUpdateAgent = vi.mocked(openhumanUpdateAgentSettings);
 
 describe('AgentAccessPanel', () => {
   beforeEach(() => {
@@ -51,6 +67,8 @@ describe('AgentAccessPanel', () => {
     vi.mocked(isTauri).mockReturnValue(true);
     mockGet.mockResolvedValue({ result: autonomy(), logs: [] });
     mockUpdate.mockResolvedValue({ result: {} as never, logs: [] });
+    mockGetAgent.mockResolvedValue({ result: agentSettings(), logs: [] });
+    mockUpdateAgent.mockResolvedValue({ result: {} as never, logs: [] });
   });
 
   it('loads settings on mount and renders the three access tiers', async () => {
@@ -163,5 +181,49 @@ describe('AgentAccessPanel', () => {
     renderWithProviders(<AgentAccessPanel />);
     expect(await screen.findByText('Access mode')).toBeInTheDocument();
     expect(mockGet).not.toHaveBeenCalled();
+    expect(mockGetAgent).not.toHaveBeenCalled();
+  });
+
+  it('loads the configured action timeout into the input', async () => {
+    mockGetAgent.mockResolvedValue({
+      result: agentSettings({ agent_timeout_secs: 300 }),
+      logs: [],
+    });
+    renderWithProviders(<AgentAccessPanel />);
+    const input = (await screen.findByLabelText('Action timeout')) as HTMLInputElement;
+    expect(input.value).toBe('300');
+  });
+
+  it('persists a changed action timeout on blur', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    const input = await screen.findByLabelText('Action timeout');
+    fireEvent.change(input, { target: { value: '300' } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledWith({ agent_timeout_secs: 300 }));
+  });
+
+  it('rejects an out-of-range timeout without calling the RPC', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    const input = await screen.findByLabelText('Action timeout');
+    fireEvent.change(input, { target: { value: '99999' } });
+    fireEvent.blur(input);
+    expect(await screen.findByText(/within the allowed range/i)).toBeInTheDocument();
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not re-persist when the timeout is unchanged', async () => {
+    renderWithProviders(<AgentAccessPanel />);
+    const input = await screen.findByLabelText('Action timeout');
+    fireEvent.blur(input); // value still the loaded 120
+    await waitFor(() => expect(mockGetAgent).toHaveBeenCalled());
+    expect(mockUpdateAgent).not.toHaveBeenCalled();
+  });
+
+  it('disables the timeout input and warns when an env override is active', async () => {
+    mockGetAgent.mockResolvedValue({ result: agentSettings({ env_override: true }), logs: [] });
+    renderWithProviders(<AgentAccessPanel />);
+    const input = (await screen.findByLabelText('Action timeout')) as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    expect(screen.getByText(/OPENHUMAN_TOOL_TIMEOUT_SECS/)).toBeInTheDocument();
   });
 });

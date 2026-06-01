@@ -29,6 +29,7 @@
 pub mod canonicalize;
 pub mod composio;
 pub mod mcp;
+pub mod sources;
 pub mod sync_status;
 pub mod traits;
 pub mod workspace;

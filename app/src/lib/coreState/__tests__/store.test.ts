@@ -11,7 +11,13 @@ function makeSnapshot(overrides: Partial<CoreAppSnapshot> = {}): CoreAppSnapshot
     chatOnboardingCompleted: false,
     analyticsEnabled: false,
     meetAutoOrchestratorHandoff: false,
-    localState: { encryptionKey: null, onboardingTasks: null },
+    localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
+    keyringStatus: {
+      available: true,
+      failureReason: null,
+      activeMode: 'os_keyring',
+      backendName: 'os',
+    },
     runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
     ...overrides,
   };

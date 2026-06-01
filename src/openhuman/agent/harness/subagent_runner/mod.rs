@@ -40,7 +40,10 @@ mod types;
 // Public API — the entry point and the shapes it returns.
 pub use autonomous::{autonomous_iter_cap, with_autonomous_iter_cap};
 pub use ops::run_subagent;
-pub use types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
+pub use types::{
+    SubagentCheckpointData, SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome,
+    SubagentRunStatus,
+};
 
 // Crate-internal re-exports: `agent::debug` calls the text-mode protocol
 // renderer. The other `tool_prep` helpers are used only inside this module.

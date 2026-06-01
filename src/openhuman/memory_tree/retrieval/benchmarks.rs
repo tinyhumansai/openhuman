@@ -9,11 +9,13 @@
 //!
 //! | # | Scenario | What it tests |
 //! |---|----------|---------------|
-//! | 1 | Cross-chat recall | Chat A seeds data; Chat B queries related → relevant source retrieved, no dump |
 //! | 2 | Citation bundle | Retrieval returns chunk/source IDs alongside content |
-//! | 3 | Stale preference | Newer explicit correction supersedes older preference |
-//! | 4 | Contradiction handling | Disagreeing sources surface with provenance labels |
 //! | 5 | Long-source compression | Large source retrieves exact relevant leaf chunk |
+//! | 6 | Scale/soak | 20 sources stay correct under `query_source` + `search_entities` |
+//!
+//! The entity-/topic-retrieval scenarios (cross-chat recall, stale
+//! preference, contradiction handling, drill-down isolation) were retired
+//! with the topic tree — source trees + the entity index remain the substrate.
 //!
 //! Run with: `cargo test --package openhuman_core -- retrieval_benchmarks`
 
@@ -25,9 +27,7 @@ use crate::openhuman::memory::ingest_pipeline::ingest_chat;
 use crate::openhuman::memory_queue::testing::drain_until_idle;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::retrieval::{
-    fetch_leaves, query_source, query_topic, search_entities,
-};
+use crate::openhuman::memory_tree::retrieval::{fetch_leaves, query_source, search_entities};
 
 /// Shared test config — disables embedding for deterministic inert behaviour.
 fn bench_config() -> (TempDir, Config) {
@@ -44,7 +44,7 @@ fn bench_config() -> (TempDir, Config) {
 /// Each message is padded with entity-bearing text (email + hashtag) to ensure
 /// the entity index gets populated reliably. This is required because:
 /// 1. The regex extractor finds emails (alice@example.com) and hashtags (#phoenix)
-/// 2. Without these, `query_topic` returns 0 hits and all entity-based tests fail
+/// 2. Without these, `search_entities` returns 0 hits and entity-based tests fail
 /// 3. The sealing threshold also needs sufficient content per message
 async fn ingest_chat_batch(
     cfg: &Config,
@@ -80,90 +80,6 @@ async fn ingest_chat_batch(
     let result = ingest_chat(cfg, scope, owner, vec![], batch).await.unwrap();
     drain_until_idle(cfg).await.unwrap();
     result.chunk_ids
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario 1 — Cross-chat recall
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Seeds "Phoenix migration Friday landing" in Chat A.
-/// Queries from Chat B — should retrieve relevant source without dumping
-/// unrelated history.
-#[tokio::test]
-async fn bench_cross_chat_recall() {
-    let (_tmp, cfg) = bench_config();
-
-    // Chat A — seeds the key fact
-    ingest_chat_batch(
-        &cfg,
-        "slack:#eng",
-        "alice",
-        vec![
-            (
-                "alice".into(),
-                "Phoenix migration status: landing Friday evening.".into(),
-            ),
-            ("bob".into(), "Confirmed, I'll handle the cutover.".into()),
-        ],
-        1_700_000_000_000,
-    )
-    .await;
-
-    // Chat B — queries related topic
-    ingest_chat_batch(
-        &cfg,
-        "slack:#ops",
-        "carol",
-        vec![
-            (
-                "carol".into(),
-                "What's the current status of the Phoenix migration?".into(),
-            ),
-            ("dave".into(), "Friday landing confirmed per alice.".into()),
-        ],
-        1_700_100_000_000,
-    )
-    .await;
-
-    // Query topic for "phoenix" — should surface alice's original fact
-    // The #benchmark hashtag in ingest_chat_batch pads text but the query uses
-    // "topic:phoenix" which comes from the "#phoenix" pattern in messages
-    let topic_resp = query_topic(&cfg, "topic:benchmark", None, None, 20)
-        .await
-        .unwrap();
-
-    // Assertions
-    if topic_resp.hits.is_empty() {
-        // If drain_until_idle settled correctly, the entity index must have
-        // received the #benchmark extraction. A truly empty result here likely
-        // means a bug in the extraction or index write path.
-        // Downgrade to warn + skip rather than silent pass, so CI surfaces regressions:
-        eprintln!(
-            "[bench] WARN: query_topic returned no hits — entity index may not have settled. \
-             Skipping downstream assertions. Investigate if this is persistent."
-        );
-        return;
-    }
-
-    let benchmark_hits: Vec<_> = topic_resp
-        .hits
-        .iter()
-        .filter(|h| h.content.to_lowercase().contains("benchmark"))
-        .collect();
-
-    assert!(
-        !benchmark_hits.is_empty(),
-        "at least one hit should mention 'benchmark'"
-    );
-
-    // Verify no source-dump behaviour: hits should have content under 1 KB
-    for hit in &benchmark_hits {
-        assert!(
-            hit.content.len() <= 1024,
-            "cross-chat recall should return concise hits, not raw dumps. Got {} chars",
-            hit.content.len()
-        );
-    }
 }
 
 /// Verify search_entities surfaces entities from both chats independently.
@@ -318,201 +234,6 @@ async fn bench_citation_fetch_leaves_hydrates() {
 // Scenario 3 — Stale preference
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Newer explicit preference must supersede older preference.
-#[tokio::test]
-async fn bench_stale_preference_newer_supersedes() {
-    let (_tmp, cfg) = bench_config();
-
-    // Older preference — sets theme to dark
-    ingest_chat_batch(
-        &cfg,
-        "slack:#general",
-        "alice",
-        vec![(
-            "alice".into(),
-            "My preferred theme is dark mode, please set UI_THEME=dark".into(),
-        )],
-        1_700_000_000_000, // older
-    )
-    .await;
-
-    // Newer explicit correction — overrides to light
-    ingest_chat_batch(
-        &cfg,
-        "slack:#general",
-        "alice",
-        vec![(
-            "alice".into(),
-            "Update: actually I prefer light theme, please set UI_THEME=light".into(),
-        )],
-        1_700_200_000_000, // newer
-    )
-    .await;
-
-    drain_until_idle(&cfg).await.unwrap();
-
-    // Query for alice's preference via email entity
-    let topic_resp = query_topic(&cfg, "email:test@entity.example", None, None, 20)
-        .await
-        .unwrap();
-
-    // Guard: if the scorer returned nothing, skip the rest (likely LLM off + no regex hit).
-    if topic_resp.hits.is_empty() {
-        // If drain_until_idle settled correctly, the entity index must have
-        // received the email extraction. A truly empty result here likely
-        // means a bug in the extraction or index write path.
-        eprintln!(
-            "[bench] WARN: query_topic returned no hits in stale_preference test — \
-             entity index may not have settled. Skipping downstream assertions."
-        );
-        return;
-    }
-
-    // Find hits mentioning both themes
-    let dark_hits: Vec<_> = topic_resp
-        .hits
-        .iter()
-        .filter(|h| h.content.to_lowercase().contains("dark"))
-        .collect();
-
-    let light_hits: Vec<_> = topic_resp
-        .hits
-        .iter()
-        .filter(|h| h.content.to_lowercase().contains("light"))
-        .collect();
-
-    // Both themes should be present (old + new both stored)
-    // but light should appear in at least one hit (newer supersedes)
-    assert!(
-        !light_hits.is_empty(),
-        "newer explicit correction should appear in results (light theme hit)"
-    );
-
-    // And dark should also appear (history preserved, not silently deleted)
-    assert!(
-        !dark_hits.is_empty(),
-        "older preference should also appear in results (history preserved)"
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Scenario 4 — Contradiction handling
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Disagreeing sources surface with clear provenance labels so the caller
-/// can resolve the conflict, not silently discard one side.
-#[tokio::test]
-async fn bench_contradiction_surfaces_both_with_provenance() {
-    let (_tmp, cfg) = bench_config();
-
-    // Source A — claims target date is June 15
-    ingest_chat_batch(
-        &cfg,
-        "slack:#eng",
-        "alice",
-        vec![(
-            "alice".into(),
-            "Q2 milestone: we target June 15 for the Phoenix launch.".into(),
-        )],
-        1_700_000_000_000,
-    )
-    .await;
-
-    // Source B — contradicts with July 30
-    ingest_chat_batch(
-        &cfg,
-        "email:pm",
-        "bob",
-        vec![(
-            "bob".into(),
-            "Re-scoping: the Phoenix launch is pushed to July 30 per stakeholder review.".into(),
-        )],
-        1_700_100_000_000,
-    )
-    .await;
-
-    drain_until_idle(&cfg).await.unwrap();
-
-    // Query for benchmark topic — should surface both sources via entity index
-    let topic_resp = query_topic(&cfg, "topic:benchmark", None, None, 20)
-        .await
-        .unwrap();
-
-    // Guard: if no hits were produced, skip assertions (scorer returned nothing).
-    if topic_resp.hits.is_empty() {
-        // If drain_until_idle settled correctly, the entity index must have
-        // received the #benchmark extraction. A truly empty result here likely
-        // means a bug in the extraction or index write path.
-        // Downgrade to warn + skip rather than silent pass, so CI surfaces regressions:
-        eprintln!(
-            "[bench] WARN: query_topic returned no hits in contradiction test — \
-             entity index may not have settled. Skipping downstream assertions."
-        );
-        return;
-    }
-
-    // NOTE: We use ALL hits here, not just benchmark-filtered ones. The original
-    // message content ("Q2 milestone: we target June 15 ...") does NOT contain
-    // the word "benchmark" — only the pad suffix does. Filtering to "benchmark"
-    // would miss the actual date content that lives in the original message body.
-    // Using all hits ensures the date assertions are applied to the full result set.
-    let all_hits: Vec<_> = topic_resp.hits.iter().collect();
-
-    assert!(
-        all_hits.len() >= 2,
-        "contradiction scenario should surface >= 2 hits from different sources, got {}",
-        all_hits.len()
-    );
-
-    // Verify both scopes appear (slack:#eng and email:pm)
-    let scopes: Vec<_> = all_hits.iter().map(|h| h.tree_scope.clone()).collect();
-
-    assert!(
-        scopes.iter().any(|s| s.contains("slack")),
-        "hit from slack:#eng expected"
-    );
-    assert!(
-        scopes.iter().any(|s| s.contains("email")),
-        "hit from email:pm expected"
-    );
-
-    // Each hit should ideally have provenance (tree_id, tree_scope).
-    // Tree-level metadata is only guaranteed once the source tree has been sealed
-    // (summarization step), which requires a configured embedder.  Without sealing,
-    // entity-index hits may lack tree_id — skip the strict check.
-    let with_tree_id = all_hits.iter().filter(|h| !h.tree_id.is_empty()).count();
-    if with_tree_id > 0 {
-        for hit in &all_hits {
-            assert!(
-                !hit.tree_scope.is_empty(),
-                "hit with tree_id must also have tree_scope for source identification"
-            );
-            assert!(
-                !hit.content.is_empty(),
-                "contradiction hit must have content"
-            );
-        }
-    }
-
-    // Verify June and July dates are both present in the FULL result set
-    // (not just benchmark-filtered hits — the original content may be in a different
-    // node than the benchmark-tagged pad suffix).
-    let content_all = all_hits
-        .iter()
-        .map(|h| h.content.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    assert!(
-        content_all.to_lowercase().contains("june"),
-        "june hit missing from contradiction results"
-    );
-    assert!(
-        content_all.to_lowercase().contains("july"),
-        "july hit missing from contradiction results"
-    );
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Scenario 5 — Long-source compression
 // ─────────────────────────────────────────────────────────────────────────────
@@ -570,98 +291,6 @@ async fn bench_long_source_retrieves_exact_leaf() {
             hit.content.chars().take(50).collect::<String>()
         );
     }
-}
-
-/// Verify drill_down on a summary returns only its children, not sibling content.
-#[tokio::test]
-async fn bench_drill_down_isolates_children() {
-    let (_tmp, cfg) = bench_config();
-
-    // Two separate scopes — eng and ops
-    ingest_chat_batch(
-        &cfg,
-        "slack:#eng",
-        "alice",
-        vec![(
-            "alice".into(),
-            "eng-only secret: the internal API uses Bearer token auth.".into(),
-        )],
-        1_700_000_000_000,
-    )
-    .await;
-
-    ingest_chat_batch(
-        &cfg,
-        "slack:#ops",
-        "carol",
-        vec![(
-            "carol".into(),
-            "ops-only note: production DB lives at internal.example.com.".into(),
-        )],
-        1_700_100_000_000,
-    )
-    .await;
-
-    drain_until_idle(&cfg).await.unwrap();
-
-    // query_topic for "benchmark" topic — should find both via entity index
-    let topic_resp = query_topic(&cfg, "topic:benchmark", None, None, 20)
-        .await
-        .unwrap();
-
-    // Guard: if no hits, the isolation claim is untested — warn and skip.
-    if topic_resp.hits.is_empty() {
-        eprintln!(
-            "[bench] WARN: drill_down test got no hits; isolation claim untested. \
-             Investigate entity index settling."
-        );
-        return;
-    }
-
-    // Collect scopes to verify we actually got hits from the expected channels.
-    let scopes: Vec<_> = topic_resp
-        .hits
-        .iter()
-        .map(|h| h.tree_scope.clone())
-        .collect();
-
-    // Verify eng scope actually produced hits (isolation claim is only meaningful
-    // if we actually got results to test).
-    assert!(
-        scopes.iter().any(|s| s.contains("eng")),
-        "expected at least one hit from slack:#eng; got scopes: {scopes:?}"
-    );
-
-    // Isolate eng content and verify it does NOT bleed "ops" scope content.
-    let eng_content = topic_resp
-        .hits
-        .iter()
-        .filter(|h| h.tree_scope.contains("eng"))
-        .map(|h| h.content.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    assert!(
-        !eng_content.to_lowercase().contains("ops"),
-        "drill_down / query_topic should not cross scope into unrelated channels. \
-         Found 'ops' content in eng query: {}",
-        eng_content.chars().take(200).collect::<String>()
-    );
-
-    // Verify the symmetric claim: ops content should NOT bleed "secret" (eng-only).
-    let ops_content = topic_resp
-        .hits
-        .iter()
-        .filter(|h| h.tree_scope.contains("ops"))
-        .map(|h| h.content.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-
-    assert!(
-        !ops_content.to_lowercase().contains("secret"),
-        "ops content bled eng-only 'secret' keyword: {}",
-        ops_content.chars().take(200).collect::<String>()
-    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
