@@ -4459,7 +4459,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'পুনরায় চেষ্টা',
   'knowledgeGaps.title': 'জ্ঞান ফাঁক',
   'knowledgeGaps.truncated': '{total} বিরল সত্তার মধ্যে {shown} দেখাচ্ছি।',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'ফাঁক',
 };
 
 export default messages;

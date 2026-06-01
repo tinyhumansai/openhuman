@@ -4478,7 +4478,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'Coba lagi',
   'knowledgeGaps.title': 'Celah Pengetahuan',
   'knowledgeGaps.truncated': 'Menampilkan {shown} dari {total} entitas jarang.',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'Kesenjangan',
 };
 
 export default messages;

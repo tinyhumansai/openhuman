@@ -4382,7 +4382,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'إعادة المحاولة',
   'knowledgeGaps.title': 'فجوات المعرفة',
   'knowledgeGaps.truncated': 'عرض {shown} من أصل {total} كيان شحيح.',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'الفجوات',
 };
 
 export default messages;

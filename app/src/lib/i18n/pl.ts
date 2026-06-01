@@ -4534,7 +4534,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'Spróbuj ponownie',
   'knowledgeGaps.title': 'Luki w wiedzy',
   'knowledgeGaps.truncated': 'Pokazuję {shown} z {total} rzadkich encji.',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'Luki',
 };
 
 export default messages;

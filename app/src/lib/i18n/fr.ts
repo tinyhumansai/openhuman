@@ -4558,7 +4558,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'Réessayer',
   'knowledgeGaps.title': 'Lacunes de connaissance',
   'knowledgeGaps.truncated': 'Affichage de {shown} sur {total} entités clairsemées.',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'Lacunes',
 };
 
 export default messages;

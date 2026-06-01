@@ -4246,7 +4246,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': '重试',
   'knowledgeGaps.title': '知识缺口',
   'knowledgeGaps.truncated': '显示 {total} 个稀疏实体中的 {shown} 个。',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': '知识缺口',
 };
 
 export default messages;

@@ -4426,7 +4426,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': '다시 시도',
   'knowledgeGaps.title': '지식 간격',
   'knowledgeGaps.truncated': '{total}개 희소 엔티티 중 {shown}개 표시 중.',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': '지식 공백',
 };
 
 export default messages;

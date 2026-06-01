@@ -4466,7 +4466,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'पुनः प्रयास',
   'knowledgeGaps.title': 'ज्ञान कमियाँ',
   'knowledgeGaps.truncated': '{total} विरल इकाइयों में से {shown} दिखा रहे हैं।',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'अंतराल',
 };
 
 export default messages;

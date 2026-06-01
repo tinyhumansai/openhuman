@@ -4503,7 +4503,7 @@ const messages: TranslationMap = {
   'knowledgeGaps.retry': 'Повторить',
   'knowledgeGaps.title': 'Пробелы в знаниях',
   'knowledgeGaps.truncated': 'Показано {shown} из {total} разрежённых сущностей.',
-  'memory.tab.gaps': 'Gaps',
+  'memory.tab.gaps': 'Пробелы',
 };
 
 export default messages;
