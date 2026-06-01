@@ -1,15 +1,14 @@
 import type { CustomStepKey } from './OnboardingContext';
 
 /** Ordered list of custom-wizard steps. Index drives the step counter UI and
- *  the back/continue navigation. `search` and `memory` are commented out for
- *  now — their pages still exist and route in case we want to re-enable. */
+ *  the back/continue navigation. */
 export const CUSTOM_WIZARD_STEPS: CustomStepKey[] = [
   'inference',
   'voice',
   'oauth',
   'search',
   'embeddings',
-  // 'memory',
+  'vault',
 ];
 
 export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
@@ -19,6 +18,7 @@ export const CUSTOM_WIZARD_ROUTES: Record<CustomStepKey, string> = {
   search: '/onboarding/custom/search',
   embeddings: '/onboarding/custom/embeddings',
   memory: '/onboarding/custom/memory',
+  vault: '/onboarding/custom/vault',
 };
 
 /** Deep-link target inside Settings for users who pick "Configure" and want
@@ -30,4 +30,5 @@ export const CUSTOM_WIZARD_SETTINGS_ROUTES: Record<CustomStepKey, string> = {
   search: '/settings/tools',
   embeddings: '/settings/embeddings',
   memory: '/settings/memory-data',
+  vault: '/settings/memory-data',
 };

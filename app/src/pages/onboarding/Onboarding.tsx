@@ -3,13 +3,11 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import OnboardingLayout from './OnboardingLayout';
 import CustomEmbeddingsPage from './pages/CustomEmbeddingsPage';
 import CustomInferencePage from './pages/CustomInferencePage';
-// Memory step is hidden from the flow for now (file kept on disk;
-// uncomment alongside customWizardSteps.ts to re-enable):
-// import CustomMemoryPage from './pages/CustomMemoryPage';
 import CustomOAuthPage from './pages/CustomOAuthPage';
 import CustomSearchPage from './pages/CustomSearchPage';
 import CustomVoicePage from './pages/CustomVoicePage';
 import RuntimeChoicePage from './pages/RuntimeChoicePage';
+import VaultSetupStep from './pages/VaultSetupStep';
 import WelcomePage from './pages/WelcomePage';
 
 /**
@@ -17,7 +15,7 @@ import WelcomePage from './pages/WelcomePage';
  *
  *   welcome → runtime-choice
  *     ├── cloud  → /home
- *     └── custom → /custom/inference → voice → oauth → search → embeddings → memory → /home
+ *     └── custom → /custom/inference → voice → oauth → search → embeddings → vault → /home
  *
  * Each custom step asks Default (let OpenHuman manage it) vs Configure
  * (let me pick). Default is a one-click pick; Configure renders inline
@@ -39,7 +37,7 @@ const Onboarding = () => {
         <Route path="custom/oauth" element={<CustomOAuthPage />} />
         <Route path="custom/search" element={<CustomSearchPage />} />
         <Route path="custom/embeddings" element={<CustomEmbeddingsPage />} />
-        {/* <Route path="custom/memory" element={<CustomMemoryPage />} /> */}
+        <Route path="custom/vault" element={<VaultSetupStep />} />
         <Route path="*" element={<Navigate to="welcome" replace />} />
       </Route>
     </Routes>

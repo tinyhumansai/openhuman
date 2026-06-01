@@ -114,7 +114,7 @@ const CustomWizardStep = ({
     t('onboarding.custom.stepperOAuth'),
     t('onboarding.custom.stepperSearch'),
     t('onboarding.custom.stepperEmbeddings'),
-    t('onboarding.custom.stepperMemory'),
+    t('onboarding.custom.stepperVault', t('onboarding.custom.stepperMemory', 'Vault')),
   ].slice(0, stepCount);
 
   return (
