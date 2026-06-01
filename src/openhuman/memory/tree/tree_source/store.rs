@@ -482,12 +482,14 @@ pub(crate) fn clear_buffer_tx(tx: &Transaction<'_>, tree_id: &str, level: u32) -
 pub fn list_stale_buffers(config: &Config, older_than: DateTime<Utc>) -> Result<Vec<Buffer>> {
     with_connection(config, |conn| {
         let mut stmt = conn.prepare(
-            "SELECT tree_id, level, item_ids_json, token_sum, oldest_at_ms
-               FROM mem_tree_buffers
-              WHERE oldest_at_ms IS NOT NULL
-                AND oldest_at_ms <= ?1
-                AND level = 0
-              ORDER BY oldest_at_ms ASC",
+            "SELECT b.tree_id, b.level, b.item_ids_json, b.token_sum, b.oldest_at_ms
+               FROM mem_tree_buffers b
+               LEFT JOIN mem_tree_trees t ON t.id = b.tree_id
+              WHERE b.oldest_at_ms IS NOT NULL
+                AND b.oldest_at_ms <= ?1
+                AND b.level = 0
+                AND COALESCE(t.kind, '') != 'global'
+              ORDER BY b.oldest_at_ms ASC",
         )?;
         let rows = stmt
             .query_map(params![older_than.timestamp_millis()], row_to_buffer)?

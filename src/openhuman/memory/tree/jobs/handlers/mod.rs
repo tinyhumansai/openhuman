@@ -368,6 +368,15 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<JobOutcome> {
         );
         return Ok(JobOutcome::Done);
     };
+    if matches!(tree.kind, TreeKind::Global) {
+        log::debug!(
+            "[memory_tree::jobs] generic seal skipped for global tree_id={} level={} — \
+             global digests use the dedicated count-based cascade",
+            tree.id,
+            payload.level
+        );
+        return Ok(JobOutcome::Done);
+    }
 
     // Seal exactly one level. Parents only get sealed via a follow-up job
     // so each level is its own crash-recovery checkpoint and each LLM
@@ -767,6 +776,50 @@ mod tests {
         );
         // The seal itself should still have produced a summary node.
         assert_eq!(src_store::count_summaries(&cfg, &topic_tree.id).unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn global_tree_generic_seal_handler_is_noop() {
+        let (_tmp, cfg) = test_config();
+        let global_tree =
+            crate::openhuman::memory::tree::tree_global::registry::get_or_create_global_tree(&cfg)
+                .unwrap();
+        let old_ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+        with_connection(&cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            src_store::upsert_buffer_tx(
+                &tx,
+                &crate::openhuman::memory::tree::tree_source::types::Buffer {
+                    tree_id: global_tree.id.clone(),
+                    level: 0,
+                    item_ids: vec!["summary:1700000000000:L0-deadbeef".into()],
+                    token_sum: 100,
+                    oldest_at: Some(old_ts),
+                },
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        let payload = SealPayload {
+            tree_id: global_tree.id.clone(),
+            level: 0,
+            force_now_ms: Some(old_ts.timestamp_millis()),
+        };
+        let job = mk_running_job(JobKind::Seal, serde_json::to_string(&payload).unwrap());
+
+        super::handle_seal(&cfg, &job).await.unwrap();
+
+        assert_eq!(
+            src_store::count_summaries(&cfg, &global_tree.id).unwrap(),
+            0
+        );
+        let l0 = src_store::get_buffer(&cfg, &global_tree.id, 0).unwrap();
+        assert_eq!(
+            l0.item_ids,
+            vec!["summary:1700000000000:L0-deadbeef".to_string()]
+        );
     }
 
     #[tokio::test]

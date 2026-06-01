@@ -167,15 +167,20 @@ fn update_tree_after_seal_persists() {
 #[test]
 fn list_stale_buffers_orders_by_age() {
     // Two L0 buffers across two trees, plus an L1 stale buffer that must
-    // be excluded — `list_stale_buffers` returns only L0 rows so flush
-    // cannot force-seal an under-fanout upper buffer (which would create
-    // a degenerate 1-child summary and collapse the tree into a chain).
+    // be excluded — `list_stale_buffers` returns only L0 rows from non-global
+    // trees so flush cannot force-seal an under-fanout upper buffer (which
+    // would create a degenerate 1-child summary and collapse the tree into a
+    // chain) or a global digest buffer (which has its own count-based cascade).
     let (_tmp, cfg) = test_config();
     insert_tree(&cfg, &sample_tree("tree-1", "slack:#eng")).unwrap();
     insert_tree(&cfg, &sample_tree("tree-2", "slack:#ops")).unwrap();
+    let mut global = sample_tree("global-tree", "global");
+    global.kind = TreeKind::Global;
+    insert_tree(&cfg, &global).unwrap();
     let t0 = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
     let t1 = Utc.timestamp_millis_opt(1_700_000_010_000).unwrap();
     let t_l1 = Utc.timestamp_millis_opt(1_700_000_005_000).unwrap();
+    let t_global = Utc.timestamp_millis_opt(1_700_000_006_000).unwrap();
     let t2 = Utc.timestamp_millis_opt(1_700_000_020_000).unwrap();
     with_connection(&cfg, |conn| {
         let tx = conn.unchecked_transaction()?;
@@ -207,6 +212,16 @@ fn list_stale_buffers_orders_by_age() {
                 item_ids: vec!["b".into()],
                 token_sum: 20,
                 oldest_at: Some(t1),
+            },
+        )?;
+        upsert_buffer_tx(
+            &tx,
+            &Buffer {
+                tree_id: "global-tree".into(),
+                level: 0,
+                item_ids: vec!["daily".into()],
+                token_sum: 20,
+                oldest_at: Some(t_global),
             },
         )?;
         tx.commit()?;
