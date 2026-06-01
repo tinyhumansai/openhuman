@@ -2038,6 +2038,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL de la page',
   'memorySources.cssSelector': 'Sélecteur CSS (optionnel)',
   'memorySources.searchQuery': 'Requête de recherche',
+  'memorySources.build.title': 'Construire',
+  'memorySources.build.building': 'Construction…',
+  'memorySources.build.successTitle': 'Arbre construit',
+  'memorySources.build.failedTitle': 'Échec de construction',
+  'memorySources.build.sealsMessage': 'scellement(s) terminé(s)',
   'backend.aiBackend': 'Backend IA',
   'backend.cloud': 'Cloud',
   'backend.recommended': 'Recommandé',
@@ -3676,6 +3681,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': "Exiger l'approbation du plan de tâche",
   'settings.agentAccess.requireTaskPlanApproval.desc':
     "Pause avant qu'un agent assigné n'exécute un briefing de tâche rédigé par un agent.",
+  'settings.agentAccess.timeout.label': "Délai d'expiration de l'action",
+  'settings.agentAccess.timeout.desc':
+    "Durée pendant laquelle un seul outil ou une seule action peut s'exécuter avant d'être annulé. Augmentez cette valeur si un grand modèle local est interrompu avant d'avoir terminé sa réponse.",
+  'settings.agentAccess.timeout.unit': 'secondes',
+  'settings.agentAccess.timeout.invalid':
+    'Saisissez un nombre entier de secondes dans la plage autorisée',
+  'settings.agentAccess.timeout.envOverride':
+    "La variable d'environnement OPENHUMAN_TOOL_TIMEOUT_SECS remplace ce paramètre ; les modifications effectuées ici n'auront donc aucun effet tant qu'elle n'est pas supprimée.",
   'settings.agentAccess.grantedFolders': 'Dossiers accordés',
   'settings.agentAccess.alwaysAllow': 'Outils toujours autorisés',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3692,6 +3705,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Ajouter',
   'settings.agentAccess.saving': 'Enregistrement…',
   'settings.agentAccess.changesApply': "Les modifications s'appliquent à votre prochain message.",
+  'settings.agentAccess.directories': 'Répertoires',
+  'settings.agentAccess.actionSandbox': "Bac à sable d'actions",
+  'settings.agentAccess.readWriteAccess': 'lecture + écriture',
+  'settings.agentAccess.actionSandboxDesc':
+    'Répertoire de travail par défaut pour les outils shell, fichiers et git.',
+  'settings.agentAccess.internalState': 'État interne',
+  'settings.agentAccess.agentBlocked': "bloqué pour l'agent",
+  'settings.agentAccess.internalStateDesc':
+    "Bases de données mémoire, sessions, jetons et autres données essentielles. Non accessible aux outils de l'agent.",
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

@@ -2040,6 +2040,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'Seite URL',
   'memorySources.cssSelector': 'CSS Wahlschalter (optional)',
   'memorySources.searchQuery': 'Suchanfrage',
+  'memorySources.build.title': 'Erstellen',
+  'memorySources.build.building': 'Wird erstellt…',
+  'memorySources.build.successTitle': 'Baum erstellt',
+  'memorySources.build.failedTitle': 'Erstellung fehlgeschlagen',
+  'memorySources.build.sealsMessage': 'Versiegelung(en) abgeschlossen',
   'backend.aiBackend': 'KI-Backend',
   'backend.cloud': 'Wolke',
   'backend.recommended': 'Empfohlen',
@@ -3691,6 +3696,14 @@ const messages: TranslationMap = {
     'Erfordern Sie die Genehmigung des Aufgabenplans',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pausieren Sie, bevor ein zugewiesener Agent ein vom Agenten verfasstes Aufgaben-Briefing ausführt.',
+  'settings.agentAccess.timeout.label': 'Aktions-Timeout',
+  'settings.agentAccess.timeout.desc':
+    'Wie lange ein einzelnes Werkzeug oder eine Aktion laufen darf, bevor sie abgebrochen wird. Erhöhen Sie diesen Wert, wenn ein großes lokales Modell unterbrochen wird, bevor es seine Antwort beendet.',
+  'settings.agentAccess.timeout.unit': 'Sekunden',
+  'settings.agentAccess.timeout.invalid':
+    'Geben Sie eine ganze Zahl von Sekunden innerhalb des zulässigen Bereichs ein',
+  'settings.agentAccess.timeout.envOverride':
+    'Die Umgebungsvariable OPENHUMAN_TOOL_TIMEOUT_SECS überschreibt diese Einstellung, daher haben Änderungen hier keine Wirkung, bis sie entfernt wird.',
   'settings.agentAccess.grantedFolders': 'Erteilte Ordner',
   'settings.agentAccess.alwaysAllow': 'Immer erlaubte Werkzeuge',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3707,6 +3720,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Hinzufügen',
   'settings.agentAccess.saving': 'Sichern…',
   'settings.agentAccess.changesApply': 'Änderungen gelten für deine nächste Nachricht.',
+  'settings.agentAccess.directories': 'Verzeichnisse',
+  'settings.agentAccess.actionSandbox': 'Aktions-Sandbox',
+  'settings.agentAccess.readWriteAccess': 'Lesen + Schreiben',
+  'settings.agentAccess.actionSandboxDesc':
+    'Standard-Arbeitsverzeichnis für Shell-, Datei- und Git-Tools.',
+  'settings.agentAccess.internalState': 'Interner Zustand',
+  'settings.agentAccess.agentBlocked': 'Agent-gesperrt',
+  'settings.agentAccess.internalStateDesc':
+    'Speicherdatenbanken, Sitzungen, Token und andere Kerndaten. Für Agent-Tools nicht zugänglich.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

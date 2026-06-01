@@ -2003,6 +2003,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'Страница URL',
   'memorySources.cssSelector': 'Селектор CSS (опционально)',
   'memorySources.searchQuery': 'Поисковый запрос',
+  'memorySources.build.title': 'Построить',
+  'memorySources.build.building': 'Построение…',
+  'memorySources.build.successTitle': 'Дерево построено',
+  'memorySources.build.failedTitle': 'Ошибка построения',
+  'memorySources.build.sealsMessage': 'запечатывание завершено',
   'backend.aiBackend': 'AI-бэкенд',
   'backend.cloud': 'Облако',
   'backend.recommended': 'Рекомендуется',
@@ -3626,6 +3631,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Требовать утверждения плана задач',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Сделайте паузу перед тем, как назначенный агент выполнит задание, созданное агентом.',
+  'settings.agentAccess.timeout.label': 'Тайм-аут действия',
+  'settings.agentAccess.timeout.desc':
+    'Сколько времени может выполняться отдельный инструмент или действие до отмены. Увеличьте это значение, если крупная локальная модель прерывается до завершения ответа.',
+  'settings.agentAccess.timeout.unit': 'секунды',
+  'settings.agentAccess.timeout.invalid':
+    'Введите целое число секунд в пределах допустимого диапазона',
+  'settings.agentAccess.timeout.envOverride':
+    'Переменная окружения OPENHUMAN_TOOL_TIMEOUT_SECS переопределяет эту настройку, поэтому изменения здесь не вступят в силу, пока она не будет сброшена.',
   'settings.agentAccess.grantedFolders': 'Предоставленные папки',
   'settings.agentAccess.alwaysAllow': 'Всегда разрешенные инструменты',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3642,6 +3655,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Добавлять',
   'settings.agentAccess.saving': 'Сохранение…',
   'settings.agentAccess.changesApply': 'Изменения вступят в силу в следующем сообщении.',
+  'settings.agentAccess.directories': 'Каталоги',
+  'settings.agentAccess.actionSandbox': 'Песочница действий',
+  'settings.agentAccess.readWriteAccess': 'чтение + запись',
+  'settings.agentAccess.actionSandboxDesc':
+    'Рабочий каталог по умолчанию для инструментов оболочки, файлов и git.',
+  'settings.agentAccess.internalState': 'Внутреннее состояние',
+  'settings.agentAccess.agentBlocked': 'заблокировано для агента',
+  'settings.agentAccess.internalStateDesc':
+    'Базы данных памяти, сеансы, токены и другие основные данные. Недоступно для инструментов агента.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

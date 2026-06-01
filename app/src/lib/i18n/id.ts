@@ -1994,6 +1994,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL halaman',
   'memorySources.cssSelector': 'pemilih CSS (opsional)',
   'memorySources.searchQuery': 'Kueri pencarian',
+  'memorySources.build.title': 'Bangun',
+  'memorySources.build.building': 'Membangun…',
+  'memorySources.build.successTitle': 'Pohon dibangun',
+  'memorySources.build.failedTitle': 'Pembangunan gagal',
+  'memorySources.build.sealsMessage': 'penyegelan selesai',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Awan',
   'backend.recommended': 'Direkomendasikan',
@@ -3612,6 +3617,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Perlu persetujuan rencana tugas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Jeda sebelum agen yang ditugaskan mengeksekusi suatu tugas singkat.',
+  'settings.agentAccess.timeout.label': 'Batas waktu tindakan',
+  'settings.agentAccess.timeout.desc':
+    'Berapa lama satu alat atau tindakan boleh berjalan sebelum dibatalkan. Tingkatkan nilai ini jika model lokal besar terhenti sebelum selesai merespons.',
+  'settings.agentAccess.timeout.unit': 'detik',
+  'settings.agentAccess.timeout.invalid':
+    'Masukkan bilangan bulat detik dalam rentang yang diizinkan',
+  'settings.agentAccess.timeout.envOverride':
+    'Variabel lingkungan OPENHUMAN_TOOL_TIMEOUT_SECS menggantikan pengaturan ini, sehingga perubahan di sini tidak berpengaruh hingga variabel tersebut dihapus.',
   'settings.agentAccess.grantedFolders': 'Folder yang diberikan',
   'settings.agentAccess.alwaysAllow': 'Selalu-diperbolehkan alat',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3628,6 +3641,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Tambah',
   'settings.agentAccess.saving': 'Menyimpan...',
   'settings.agentAccess.changesApply': 'Perubahan pada pesan berikutnya.',
+  'settings.agentAccess.directories': 'Direktori',
+  'settings.agentAccess.actionSandbox': 'Sandbox aksi',
+  'settings.agentAccess.readWriteAccess': 'baca + tulis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Direktori kerja default untuk alat shell, file, dan git.',
+  'settings.agentAccess.internalState': 'Status internal',
+  'settings.agentAccess.agentBlocked': 'diblokir untuk agen',
+  'settings.agentAccess.internalStateDesc':
+    'Database memori, sesi, token, dan data inti lainnya. Tidak dapat diakses oleh alat agen.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

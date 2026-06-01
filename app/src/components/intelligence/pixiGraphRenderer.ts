@@ -38,6 +38,7 @@ export interface PixiGraphOptions {
 export interface PixiGraphHandle {
   resetView(): void;
   setTheme(dark: boolean): void;
+  updateGraph(simNodes: SimNode[], links: SimLink[]): void;
   destroy(): void;
 }
 
@@ -257,7 +258,6 @@ export async function mountPixiGraph(
 
   return {
     resetView() {
-      // Re-enable auto-fit and reheat so the graph re-frames itself.
       userInteracted = false;
       sim.alpha(0.3);
       dirty = true;
@@ -266,10 +266,55 @@ export async function mountPixiGraph(
       dark = next;
       dirty = true;
     },
+    updateGraph(nextNodes: SimNode[], nextLinks: SimLink[]) {
+      const oldById = new Map(opts.simNodes.map(n => [n.id, n]));
+
+      for (const n of nextNodes) {
+        const old = oldById.get(n.id);
+        if (old) {
+          n.x = old.x;
+          n.y = old.y;
+          n.vx = old.vx ?? 0;
+          n.vy = old.vy ?? 0;
+          n.fx = old.fx ?? undefined;
+          n.fy = old.fy ?? undefined;
+        } else {
+          // New node — seed near its parent or at a small random offset
+          // from the centroid so it animates into place.
+          const parentLink = nextLinks.find(
+            l => (typeof l.source === 'string' ? l.source : (l.source as SimNode).id) === n.id
+          );
+          const parentId =
+            parentLink &&
+            (typeof parentLink.target === 'string'
+              ? parentLink.target
+              : (parentLink.target as SimNode).id);
+          const parent = parentId ? oldById.get(parentId) : undefined;
+          if (parent) {
+            n.x = parent.x + (Math.random() - 0.5) * 40;
+            n.y = parent.y + (Math.random() - 0.5) * 40;
+          } else {
+            n.x = (Math.random() - 0.5) * 100;
+            n.y = (Math.random() - 0.5) * 100;
+          }
+        }
+      }
+
+      // Hot-swap the simulation's node and link arrays.
+      opts.simNodes = nextNodes;
+      opts.links = nextLinks;
+      sim.nodes(nextNodes);
+      const linkForce = sim.force('link') as ReturnType<typeof import('d3-force').forceLink>;
+      if (linkForce && typeof linkForce.links === 'function') {
+        linkForce.links(nextLinks);
+      }
+      // Gentle reheat so new nodes settle without disrupting existing ones.
+      sim.alpha(0.3);
+      dirty = true;
+    },
     destroy() {
       sim.stop();
       app.canvas.removeEventListener('wheel', onWheel);
-      // destroy(true) tears down the canvas + GPU resources.
       app.destroy(true, { children: true });
     },
   };

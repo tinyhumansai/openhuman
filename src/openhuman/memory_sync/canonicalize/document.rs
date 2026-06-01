@@ -106,6 +106,7 @@ pub fn canonicalise(
     owner: &str,
     tags: &[String],
     doc: DocumentInput,
+    path_scope: Option<String>,
 ) -> Result<Option<CanonicalisedSource>, String> {
     if doc.body.trim().is_empty() && doc.title.trim().is_empty() {
         return Ok(None);
@@ -127,6 +128,7 @@ pub fn canonicalise(
             time_range: (doc.modified_at, doc.modified_at),
             tags: tags.to_vec(),
             source_ref: normalize_source_ref(doc.source_ref),
+            path_scope,
         },
     }))
 }
@@ -155,7 +157,7 @@ mod tests {
             modified_at: Utc::now(),
             source_ref: None,
         };
-        assert!(canonicalise("d1", "alice", &[], d).unwrap().is_none());
+        assert!(canonicalise("d1", "alice", &[], d, None).unwrap().is_none());
     }
 
     #[test]
@@ -165,6 +167,7 @@ mod tests {
             "alice",
             &[],
             doc("Launch plan", "step one\n\nstep two"),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -179,7 +182,7 @@ mod tests {
 
     #[test]
     fn metadata_single_point_time_range() {
-        let out = canonicalise("d1", "alice", &[], doc("x", "y"))
+        let out = canonicalise("d1", "alice", &[], doc("x", "y"), None)
             .unwrap()
             .unwrap();
         assert_eq!(out.metadata.time_range.0, out.metadata.time_range.1);
@@ -188,7 +191,7 @@ mod tests {
 
     #[test]
     fn source_ref_carried_through() {
-        let out = canonicalise("d1", "alice", &["proj".into()], doc("x", "y"))
+        let out = canonicalise("d1", "alice", &["proj".into()], doc("x", "y"), None)
             .unwrap()
             .unwrap();
         assert_eq!(
@@ -202,7 +205,9 @@ mod tests {
     fn blank_source_ref_is_dropped() {
         let mut input = doc("x", "y");
         input.source_ref = Some(" \n ".into());
-        let out = canonicalise("d1", "alice", &[], input).unwrap().unwrap();
+        let out = canonicalise("d1", "alice", &[], input, None)
+            .unwrap()
+            .unwrap();
         assert!(out.metadata.source_ref.is_none());
     }
 

@@ -1969,6 +1969,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': '페이지 URL',
   'memorySources.cssSelector': 'CSS 선택자(선택 사항)',
   'memorySources.searchQuery': '검색 쿼리',
+  'memorySources.build.title': '빌드',
+  'memorySources.build.building': '빌드 중…',
+  'memorySources.build.successTitle': '트리 빌드 완료',
+  'memorySources.build.failedTitle': '빌드 실패',
+  'memorySources.build.sealsMessage': '실링 완료',
   'backend.aiBackend': 'AI 백엔드',
   'backend.cloud': '클라우드',
   'backend.recommended': '추천',
@@ -3566,6 +3571,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': '작업 계획 승인 필요',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     '할당된 에이전트가 에이전트가 작성한 작업 브리프를 실행하기 전에 일시 중지합니다.',
+  'settings.agentAccess.timeout.label': '작업 제한 시간',
+  'settings.agentAccess.timeout.desc':
+    '단일 도구나 작업이 취소되기 전까지 실행될 수 있는 시간입니다. 대형 로컬 모델이 응답을 끝내기 전에 중단되는 경우 이 값을 늘리세요.',
+  'settings.agentAccess.timeout.unit': '초',
+  'settings.agentAccess.timeout.invalid': '허용된 범위 내에서 정수 초를 입력하세요',
+  'settings.agentAccess.timeout.envOverride':
+    'OPENHUMAN_TOOL_TIMEOUT_SECS 환경 변수가 이 설정을 재정의하고 있으므로, 해당 변수를 해제하기 전까지 여기서의 변경 사항은 적용되지 않습니다.',
   'settings.agentAccess.grantedFolders': '허용된 폴더',
   'settings.agentAccess.alwaysAllow': '항상 허용된 도구',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3582,6 +3594,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': '추가',
   'settings.agentAccess.saving': '저장 중…',
   'settings.agentAccess.changesApply': '변경 사항은 다음 메시지부터 적용됩니다.',
+  'settings.agentAccess.directories': '디렉터리',
+  'settings.agentAccess.actionSandbox': '액션 샌드박스',
+  'settings.agentAccess.readWriteAccess': '읽기 + 쓰기',
+  'settings.agentAccess.actionSandboxDesc': '셸, 파일 및 git 도구의 기본 작업 디렉터리.',
+  'settings.agentAccess.internalState': '내부 상태',
+  'settings.agentAccess.agentBlocked': '에이전트 차단됨',
+  'settings.agentAccess.internalStateDesc':
+    '메모리 데이터베이스, 세션, 토큰 및 기타 핵심 데이터. 에이전트 도구에서 접근할 수 없습니다.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

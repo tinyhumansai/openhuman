@@ -306,19 +306,17 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     // `OPENHUMAN_ACTIVE_USER_ID` localStorage seed read by `userScopedStorage`
     // at module init — that's whose namespace redux-persist hydrated, and
     // it's also what the Rust `prepare_process_cache_path` reads from
-    // `active_user.toml` on each cold launch to pick a CEF cache dir. If the
-    // userId that just authenticated is different (or different from null on
-    // a fresh device), we MUST restart so:
+    // `active_user.toml` on each cold launch to pick a CEF cache dir. When
+    // the seed points at a DIFFERENT prior user, we must restart so:
     //   1. redux-persist re-hydrates from the new user's namespace, and
     //   2. CEF re-initializes with the new user's `users/<id>/cef` profile,
     //      so embedded webviews (Slack, WhatsApp, …) don't see the prior
     //      user's third-party cookies.
-    // This single rule covers every login path uniformly:
-    //   - cold bootstrap on a fresh install (seed is null, nextId is real)
-    //   - direct `storeSessionToken` (Tauri OAuth)
-    //   - deep-link `core-state:session-token-updated`
-    //   - poll-detected flip (core-side user swap)
-    //   - re-login as a different user after sign-out
+    // Fresh-device first login (seed=null) skips the restart — there is no
+    // prior user data or CEF profile to isolate from (#3107).
+    // Restart-requiring paths:
+    //   - auth-to-auth flip (A→B without logout)
+    //   - re-login as a different user after sign-out (A→logout→B)
     const seedUserId = getActiveUserId();
     const isLocalSession = isLocalSessionToken(nextSnapshot.sessionToken);
     const isFlip = Boolean(nextIdentity) && seedUserId !== nextIdentity && !isLocalSession;
@@ -381,9 +379,23 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     }
 
     if (isFlip && nextIdentity) {
-      await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(err => {
-        log('handleIdentityFlip failed: %O', sanitizeError(err));
-      });
+      if (!seedUserId) {
+        // First login on a fresh device: no prior user data, no CEF profile
+        // to isolate, no redux-persist namespace to rehydrate from. Just
+        // point writes at the new user's namespace — skip the disruptive
+        // restart that causes the "flash success then snap back" loop (#3107).
+        log(
+          'first-login: setting activeUserId=%s without restart',
+          `****${nextIdentity.slice(-4)}`
+        );
+        setActiveUserId(nextIdentity);
+      } else {
+        await handleIdentityFlip({ reason: 'identity-flip', nextUserId: nextIdentity }).catch(
+          err => {
+            log('handleIdentityFlip failed: %O', sanitizeError(err));
+          }
+        );
+      }
     } else if (isLogout) {
       // Sign-out: keep `OPENHUMAN_ACTIVE_USER_ID` pointing at the last user
       // so the next login can detect via seed comparison whether it's a
@@ -729,6 +741,10 @@ export default function CoreStateProvider({ children }: { children: ReactNode })
     const runReauth = async (method: string, source: string, reason: AuthExpiredReason) => {
       if (isLocalSessionToken(getCoreStateSnapshot().snapshot.sessionToken)) {
         log('auth-expired ignored for local session (method=%s source=%s)', method, source);
+        return;
+      }
+      if (getCoreStateSnapshot().isBootstrapping) {
+        log('auth-expired suppressed during bootstrap (method=%s source=%s)', method, source);
         return;
       }
       const now = Date.now();

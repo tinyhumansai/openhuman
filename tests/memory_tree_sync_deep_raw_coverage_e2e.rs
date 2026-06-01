@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex, OnceLock,
 };
 
 use anyhow::Result;
@@ -71,6 +71,15 @@ impl Drop for EnvVarGuard {
             }
         }
     }
+}
+
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn test_config(tmp: &TempDir) -> Config {
@@ -137,6 +146,7 @@ fn sample_chunk(cfg: &Config, source_id: &str, seq: u32, text: &str, timestamp_m
             time_range: (ts, ts),
             tags: vec!["round18".into()],
             source_ref: Some(SourceRef::new(format!("slack://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: 32,
         seq_in_source: seq,
@@ -435,6 +445,7 @@ async fn llm_extractor_recovers_spans_topics_strict_filters_and_retry_paths() {
 
 #[tokio::test]
 async fn memory_tree_rpc_status_set_enabled_backfill_and_ingest_errors() {
+    let _lock = env_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
     let _triage = EnvVarGuard::set_str("OPENHUMAN_TRIGGER_TRIAGE_DISABLED", "1");

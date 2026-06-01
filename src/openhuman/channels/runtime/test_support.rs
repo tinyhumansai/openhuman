@@ -11,7 +11,7 @@ use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::channels::context::{ChannelRuntimeContext, CHANNEL_MESSAGE_TIMEOUT_SECS};
 use crate::openhuman::channels::traits::{ChannelMessage, SendMessage};
 use crate::openhuman::channels::Channel;
-use crate::openhuman::config::{MultimodalConfig, ReliabilityConfig};
+use crate::openhuman::config::{MultimodalConfig, MultimodalFileConfig, ReliabilityConfig};
 use crate::openhuman::inference::provider::{ChatMessage, Provider, ProviderRuntimeOptions};
 use crate::openhuman::memory::{Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts};
 use crate::openhuman::tools::{Tool, ToolResult};
@@ -434,6 +434,7 @@ pub async fn run_dispatch_harness(options: DispatchHarnessOptions) -> DispatchHa
         workspace_dir: Arc::new(PathBuf::from(std::env::temp_dir())),
         message_timeout_secs: options.timeout_secs,
         multimodal: MultimodalConfig::default(),
+        multimodal_files: MultimodalFileConfig::default(),
     });
 
     process_channel_message(

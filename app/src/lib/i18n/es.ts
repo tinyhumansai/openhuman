@@ -2032,6 +2032,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'Página URL',
   'memorySources.cssSelector': 'Selector CSS (opcional)',
   'memorySources.searchQuery': 'Consulta de búsqueda',
+  'memorySources.build.title': 'Construir',
+  'memorySources.build.building': 'Construyendo…',
+  'memorySources.build.successTitle': 'Árbol construido',
+  'memorySources.build.failedTitle': 'Construcción fallida',
+  'memorySources.build.sealsMessage': 'sellado(s) completado(s)',
   'backend.aiBackend': 'Backend de IA',
   'backend.cloud': 'Nube',
   'backend.recommended': 'Recomendado',
@@ -3663,6 +3668,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Requerir la aprobación del plan de tareas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pausa antes de que un agente asignado ejecute un breve tarea elaborada por el agente.',
+  'settings.agentAccess.timeout.label': 'Tiempo de espera de la acción',
+  'settings.agentAccess.timeout.desc':
+    'Cuánto tiempo puede ejecutarse una sola herramienta o acción antes de cancelarse. Aumenta este valor si un modelo local grande se interrumpe antes de terminar su respuesta.',
+  'settings.agentAccess.timeout.unit': 'segundos',
+  'settings.agentAccess.timeout.invalid':
+    'Introduce un número entero de segundos dentro del rango permitido',
+  'settings.agentAccess.timeout.envOverride':
+    'La variable de entorno OPENHUMAN_TOOL_TIMEOUT_SECS está anulando este ajuste, por lo que los cambios aquí no tendrán efecto hasta que se elimine.',
   'settings.agentAccess.grantedFolders': 'Carpetas concedidas',
   'settings.agentAccess.alwaysAllow': 'Herramientas siempre permitidas',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3679,6 +3692,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Añadir',
   'settings.agentAccess.saving': 'Guardando…',
   'settings.agentAccess.changesApply': 'Los cambios se aplican en tu próximo mensaje.',
+  'settings.agentAccess.directories': 'Directorios',
+  'settings.agentAccess.actionSandbox': 'Sandbox de acciones',
+  'settings.agentAccess.readWriteAccess': 'lectura + escritura',
+  'settings.agentAccess.actionSandboxDesc':
+    'Directorio de trabajo predeterminado para herramientas de shell, archivos y git.',
+  'settings.agentAccess.internalState': 'Estado interno',
+  'settings.agentAccess.agentBlocked': 'bloqueado para el agente',
+  'settings.agentAccess.internalStateDesc':
+    'Bases de datos de memoria, sesiones, tokens y otros datos esenciales. No accesible para herramientas del agente.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

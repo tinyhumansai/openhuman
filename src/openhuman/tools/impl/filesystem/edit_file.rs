@@ -106,7 +106,7 @@ impl Tool for EditFileTool {
             ));
         }
 
-        let full = self.security.workspace_dir.join(path);
+        let full = self.security.action_dir.join(path);
 
         // Symlink check must happen on the *unresolved* path —
         // `canonicalize` resolves symlinks, so checking after that point
@@ -176,7 +176,8 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }
@@ -184,7 +185,8 @@ mod tests {
     fn test_security_readonly(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::ReadOnly,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }

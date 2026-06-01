@@ -1437,6 +1437,19 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "agent.action_timeout",
+        name: "Action Timeout",
+        domain: "agent",
+        category: CapabilityCategory::Settings,
+        description: "Set how long a single tool or action may run before it is cancelled \
+                      (1–3600 seconds, default 120). Increase it when a large local model is \
+                      interrupted before finishing its response. Applies to the next tool call \
+                      without a restart; the OPENHUMAN_TOOL_TIMEOUT_SECS env var still overrides it.",
+        how_to: "Settings → Agent OS access → Action timeout",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
         id: "security.always_allow_tool",
         name: "Always Allow a Tool",
         domain: "security",
@@ -1481,6 +1494,19 @@ pub(super) const CAPABILITIES: &[Capability] = &[
                       High impact: only available when Full access / tool installation is enabled.",
         how_to: "Enable in Settings → Agent OS access (Full access mode).",
         status: CapabilityStatus::Beta,
+        privacy: None,
+    },
+    Capability {
+        id: "security.action_sandbox",
+        name: "Action Sandbox",
+        domain: "security",
+        category: CapabilityCategory::Settings,
+        description: "Dedicated action directory for agent tools (shell, file, git), separate \
+                      from internal application state. Agent tools default their working directory \
+                      and path resolution to the action sandbox, preventing accidental modification \
+                      of memory databases, session transcripts, tokens, and other internal state.",
+        how_to: "Settings → Agent OS access",
+        status: CapabilityStatus::Stable,
         privacy: None,
     },
     Capability {

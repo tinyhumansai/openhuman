@@ -45,6 +45,7 @@ fn build_client_returns_none_when_no_auth_token() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = crate::openhuman::config::Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..crate::openhuman::config::Config::default()
     };

@@ -473,6 +473,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -481,6 +482,7 @@ mod tests {
             .unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
         (tmp, config, security)
@@ -587,6 +589,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             autonomy: crate::openhuman::config::AutonomyConfig {
                 level: AutonomyLevel::ReadOnly,
@@ -599,6 +602,7 @@ mod tests {
             .unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
 
@@ -636,12 +640,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
         let tool = ScheduleTool::new(security, config);
@@ -661,12 +667,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
         let tool = ScheduleTool::new(security, config);
@@ -687,12 +695,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
         let tool = ScheduleTool::new(security, config);
@@ -704,12 +714,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
         let tool = ScheduleTool::new(security, config);
@@ -747,12 +759,14 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
         std::fs::create_dir_all(&config.workspace_dir).unwrap();
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
+            &config.workspace_dir,
             &config.workspace_dir,
         ));
         let tool = ScheduleTool::new(security, config);
