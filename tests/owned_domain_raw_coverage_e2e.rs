@@ -431,8 +431,22 @@ async fn openai_compatible_provider_covers_auth_temperature_tool_fallback_and_re
         .await
         .expect("responses fallback");
     assert_eq!(fallback_text, "responses fallback answer");
+    let response_requests = state
+        .response_requests
+        .lock()
+        .expect("response requests")
+        .clone();
+    let fallback_request = &response_requests[0];
     assert_eq!(
-        state.response_requests.lock().expect("response requests")[0].pointer("/input/0/content"),
+        fallback_request.pointer("/input/0/role"),
+        Some(&json!("user"))
+    );
+    assert_eq!(
+        fallback_request.pointer("/input/0/content/0/type"),
+        Some(&json!("input_text"))
+    );
+    assert_eq!(
+        fallback_request.pointer("/input/0/content/0/text"),
         Some(&json!("fallback please"))
     );
 }
