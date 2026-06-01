@@ -51,6 +51,12 @@ pub struct ModelRegistryEntry {
 pub struct Config {
     #[serde(skip)]
     pub workspace_dir: PathBuf,
+    /// Agent action sandbox root — the default cwd for shell/file/git tools.
+    /// Kept separate from `workspace_dir` (which holds internal state like
+    /// memory DBs, sessions, tokens). Defaults to `~/OpenHuman/projects`
+    /// (`default_action_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+    #[serde(skip)]
+    pub action_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
     /// Workspace data-schema version. Bumped each time a one-shot data
@@ -628,6 +634,7 @@ impl Default for Config {
 
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
+            action_dir: crate::openhuman::config::default_action_dir(),
             config_path: openhuman_dir.join("config.toml"),
             schema_version: 0,
             api_url: None,

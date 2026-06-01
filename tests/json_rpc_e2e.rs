@@ -6947,6 +6947,7 @@ async fn rpc_update_apply_can_be_disabled_by_config_policy() {
 
     let mut config = openhuman_core::openhuman::config::Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..openhuman_core::openhuman::config::Config::default()
     };
