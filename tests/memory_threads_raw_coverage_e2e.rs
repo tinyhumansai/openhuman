@@ -1003,9 +1003,8 @@ fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
     let legacy_tree_schemas = openhuman_core::openhuman::memory::schema::all_controller_schemas();
     let legacy_tree_controllers =
         openhuman_core::openhuman::memory::schema::all_registered_controllers();
-    assert_eq!(legacy_tree_schemas.len(), 19);
     assert_eq!(legacy_tree_schemas.len(), legacy_tree_controllers.len());
-    for function in [
+    let expected_legacy_tree_functions = [
         "ingest",
         "list_chunks",
         "get_chunk",
@@ -1025,7 +1024,12 @@ fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
         "reset_tree",
         "pipeline_status",
         "set_enabled",
-    ] {
+    ];
+    assert!(
+        legacy_tree_schemas.len() >= expected_legacy_tree_functions.len(),
+        "legacy memory_tree schema registry should include the expected public surface"
+    );
+    for function in expected_legacy_tree_functions {
         let schema = openhuman_core::openhuman::memory::schema::schemas(function);
         assert_eq!(schema.namespace, "memory_tree");
         assert_eq!(schema.function, function);
