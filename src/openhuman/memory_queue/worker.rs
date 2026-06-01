@@ -550,7 +550,11 @@ mod tests {
 
     #[tokio::test]
     async fn run_once_reschedules_reembed_backfill_jobs_that_defer() {
-        let (_tmp, cfg) = test_config();
+        let (_tmp, mut cfg) = test_config();
+        // Deliberate "none" opt-out → InertEmbedder (zero vectors, no network)
+        // so the backfill has work and Defers; this test pins the worker's
+        // defer-reschedule path, not embed quality.
+        cfg.embeddings_provider = Some("none".to_string());
         let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
         let chunk = Chunk {
             id: chunk_id(SourceKind::Chat, "slack:#eng", 0, "reembed-worker-seed"),

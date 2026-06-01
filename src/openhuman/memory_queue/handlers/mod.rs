@@ -23,9 +23,7 @@ use crate::openhuman::memory_store::content::{
     self as content_store, read as content_read, tags as content_tags,
 };
 use crate::openhuman::memory_tree::score;
-use crate::openhuman::memory_tree::score::embed::{
-    build_embedder_from_config, build_write_embedder, pack_checked,
-};
+use crate::openhuman::memory_tree::score::embed::{build_write_embedder, pack_checked};
 use crate::openhuman::memory_tree::score::store as score_store;
 use crate::openhuman::memory_tree::tree::store as summary_store;
 use crate::openhuman::memory_tree::tree::{LeafRef, TreeFactory};
@@ -709,8 +707,29 @@ async fn handle_reembed_backfill(config: &Config, job: &Job) -> Result<JobOutcom
     // generating ~128k warns across ~8k defers, observed in the wild).
     // Tombstone writes are best-effort: failures are logged so the row can
     // be retried on a later batch instead of spinning forever.
+    // #002 (FR-002): use the WRITE-path factory. Re-embed is a write path, so a
+    // missing/unusable provider must SKIP rather than fall back to an
+    // `InertEmbedder` whose all-zero vectors would pass `pack_checked` and get
+    // persisted — silently poisoning semantic recall, exactly the hazard the
+    // extract and seal paths already guard against. With no usable provider
+    // there is nothing to back-fill: stop the chain (the rows stay
+    // re-embeddable) and let the next signature change — e.g. once the user
+    // configures embeddings — re-trigger it. `build_write_embedder` has already
+    // set the process-global semantic-recall degraded flag with a typed cause
+    // so the status / doctor surface names the fix. (`embeddings_provider="none"`
+    // returns `Some(Inert)` — a deliberate opt-out, not a skip.)
     let embedder =
-        build_embedder_from_config(config).context("build embedder in reembed_backfill")?;
+        match build_write_embedder(config).context("build embedder in reembed_backfill")? {
+            Some(e) => e,
+            None => {
+                crate::openhuman::memory_queue::set_backfill_in_progress(false);
+                log::warn!(
+                    "[memory::jobs] reembed_backfill: sig={active_sig} — no usable embeddings \
+                 provider, skipping backfill (rows stay re-embeddable; semantic recall degraded)"
+                );
+                return Ok(JobOutcome::Done);
+            }
+        };
     let mut chunk_vecs: Vec<(String, Vec<f32>)> = Vec::new();
     for id in &chunk_ids {
         match content_read::read_chunk_body(config, id) {
