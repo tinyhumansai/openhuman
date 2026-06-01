@@ -83,7 +83,7 @@ pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
     McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
-    PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
+    MultimodalFileConfig, PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
     SearchEngineCredentials, SearxngConfig, SecretsConfig, SeltzConfig, WebSearchConfig,
     COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,
     SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
