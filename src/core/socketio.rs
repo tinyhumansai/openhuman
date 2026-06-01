@@ -551,6 +551,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_auth = io.clone();
     let io_companion = io.clone();
     let io_mcp_setup = io.clone();
+    let io_memory_sync = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -818,6 +819,107 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] companion state bridge stopped");
+    });
+
+    // 8. Memory sync stage + tree-build progress → broadcast to all clients
+    //    so the UI can show real-time progress bars and refresh the graph.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — memory_sync bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (memory_sync bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match event {
+                crate::core::event_bus::DomainEvent::MemorySyncStageChanged {
+                    trigger,
+                    stage,
+                    provider,
+                    connection_id,
+                    detail,
+                } => {
+                    let payload = serde_json::json!({
+                        "trigger": trigger,
+                        "stage": stage,
+                        "provider": provider,
+                        "connection_id": connection_id,
+                        "detail": detail,
+                    });
+                    let _ = io_memory_sync.emit("memory:sync_stage", &payload);
+                }
+                crate::core::event_bus::DomainEvent::TreeSummarizerPropagated {
+                    namespace,
+                    node_id,
+                    level,
+                    token_count,
+                } => {
+                    let payload = serde_json::json!({
+                        "namespace": namespace,
+                        "node_id": node_id,
+                        "level": level,
+                        "token_count": token_count,
+                    });
+                    let _ = io_memory_sync.emit("memory:tree_progress", &payload);
+                }
+                crate::core::event_bus::DomainEvent::TreeSummarizerRebuildCompleted {
+                    namespace,
+                    total_nodes,
+                } => {
+                    let payload = serde_json::json!({
+                        "namespace": namespace,
+                        "total_nodes": total_nodes,
+                    });
+                    let _ = io_memory_sync.emit("memory:tree_completed", &payload);
+                }
+                crate::core::event_bus::DomainEvent::MemoryTreeBuildProgress {
+                    phase,
+                    step,
+                    tree_scope,
+                    level,
+                    item_count,
+                    detail,
+                } => {
+                    let payload = serde_json::json!({
+                        "phase": phase,
+                        "step": step,
+                        "tree_scope": tree_scope,
+                        "level": level,
+                        "item_count": item_count,
+                        "detail": detail,
+                    });
+                    let _ = io_memory_sync.emit("memory:build_progress", &payload);
+                }
+                _ => {}
+            }
+        }
+        log::debug!("[socketio] memory_sync bridge stopped");
     });
 }
 

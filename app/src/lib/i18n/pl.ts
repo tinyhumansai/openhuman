@@ -1159,6 +1159,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Tak, odinstaluj',
   'mcp.detail.uninstall': 'Odinstaluj',
   'mcp.detail.envVars': 'Zmienne środowiskowe',
+  'mcp.detail.reconfigure': 'Skonfiguruj ponownie',
+  'mcp.detail.reconfigureHint':
+    'Wprowadź nowe wartości dla każdej zmiennej, a następnie połącz ponownie. Spowoduje to zastąpienie zapisanych wartości.',
+  'mcp.detail.saveReconnect': 'Zapisz i połącz ponownie',
+  'mcp.detail.reconfigureSaving': 'Zapisywanie…',
+  'mcp.detail.reconfigureSuccess': 'Środowisko zaktualizowane i połączone ponownie.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Zapisano, ale ponowne połączenie z nowymi wartościami nie powiodło się.',
   'mcp.detail.tools': 'Narzędzia',
   'onboarding.skipForNow': 'Pomiń na razie',
   'onboarding.localAI.continueWithCloud': 'Kontynuuj z chmurą',
@@ -2004,6 +2012,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL strony',
   'memorySources.cssSelector': 'Selektor CSS (opcjonalnie)',
   'memorySources.searchQuery': 'Zapytanie wyszukiwania',
+  'memorySources.build.title': 'Zbuduj',
+  'memorySources.build.building': 'Budowanie…',
+  'memorySources.build.successTitle': 'Drzewo zbudowane',
+  'memorySources.build.failedTitle': 'Budowanie nie powiodło się',
+  'memorySources.build.sealsMessage': 'pieczętowanie zakończone',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Chmura',
   'backend.recommended': 'Zalecane',
@@ -2526,6 +2539,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'w toku',
   'conversations.subagent.statusCompleted': 'zakończono',
   'conversations.subagent.statusFailed': 'niepowodzenie',
+  'conversations.subagent.statusAwaitingUser': 'oczekiwanie na użytkownika',
   'daemon.serviceBlockingGate.body':
     'Rdzeń OpenHuman nie odpowiada. Spróbuj ponownie lub pobierz najnowszą wersję aplikacji.',
   'daemon.serviceBlockingGate.downloadHint':
@@ -3651,6 +3665,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Wymagaj zatwierdzenia planu zadania',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Wstrzymaj, zanim przypisany agent wykona opis zadania utworzony przez agenta.',
+  'settings.agentAccess.timeout.label': 'Limit czasu akcji',
+  'settings.agentAccess.timeout.desc':
+    'Jak długo pojedyncze narzędzie lub akcja może działać przed anulowaniem. Zwiększ tę wartość, jeśli duży lokalny model jest przerywany, zanim zakończy odpowiedź.',
+  'settings.agentAccess.timeout.unit': 'sekundy',
+  'settings.agentAccess.timeout.invalid': 'Wprowadź całkowitą liczbę sekund w dozwolonym zakresie',
+  'settings.agentAccess.timeout.envOverride':
+    'Zmienna środowiskowa OPENHUMAN_TOOL_TIMEOUT_SECS zastępuje to ustawienie, więc zmiany tutaj nie odniosą skutku, dopóki nie zostanie ona usunięta.',
   'settings.agentAccess.grantedFolders': 'Przyznane foldery',
   'settings.agentAccess.alwaysAllow': 'Zawsze dozwolone narzędzia',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3667,6 +3688,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Dodaj',
   'settings.agentAccess.saving': 'Zapisywanie…',
   'settings.agentAccess.changesApply': 'Zmiany zostaną zastosowane w następnej wiadomości.',
+  'settings.agentAccess.directories': 'Katalogi',
+  'settings.agentAccess.actionSandbox': 'Piaskownica akcji',
+  'settings.agentAccess.readWriteAccess': 'odczyt + zapis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Domyślny katalog roboczy dla narzędzi shell, plików i git.',
+  'settings.agentAccess.internalState': 'Stan wewnętrzny',
+  'settings.agentAccess.agentBlocked': 'zablokowane dla agenta',
+  'settings.agentAccess.internalStateDesc':
+    'Bazy danych pamięci, sesje, tokeny i inne podstawowe dane. Niedostępne dla narzędzi agenta.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4456,6 +4486,42 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Średnia klasteryzacja {avg} · tranzytywność {transitivity}',
   'graphCohesion.title': 'Spójność grafu',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
+  'keyring.consent.description':
+    'Pęk kluczy systemu operacyjnego jest niedostępny. OpenHuman potrzebuje Twojej zgody na przechowywanie sekretów w lokalnym zaszyfrowanym magazynie.',
+  'keyring.consent.reasonPrefix': 'Powód:',
+  'keyring.consent.showDetails': 'Co to oznacza?',
+  'keyring.consent.hideDetails': 'Ukryj szczegóły',
+  'keyring.consent.tradeoffTitle': 'Kompromis bezpieczeństwa',
+  'keyring.consent.tradeoffBody':
+    'W przypadku lokalnego zaszyfrowanego magazynu sekrety są szyfrowane na dysku przy użyciu klucza głównego przechowywanego obok danych. Jest to mniej bezpieczne niż pęk kluczy systemu, który wykorzystuje ochronę sprzętową. Kopie zapasowe lub synchronizacja plików mogą zawierać zaszyfrowane dane.',
+  'keyring.consent.consentButton': 'Użyj lokalnego zaszyfrowanego magazynu',
+  'keyring.consent.retryButton': 'Ponów próbę OS Keychain',
+  'keyring.consent.declineButton': 'Odrzuć',
+  'keyring.consent.retrying': 'Ponawiam próbę…',
+  'keyring.consent.error': 'Nie udało się zapisać preferencji. Spróbuj ponownie.',
+  'keyring.consent.retryFailed': 'Pęk kluczy jest nadal niedostępny.',
+  'keyring.settings.title': 'Bezpieczeństwo',
+  'keyring.settings.storageMode': 'Tryb przechowywania sekretów',
+  'keyring.settings.mode.osKeychain': 'Pęk kluczy systemu',
+  'keyring.settings.mode.encryptedFile': 'Lokalnie zaszyfrowany',
+  'keyring.settings.mode.consentPending': 'Nie skonfigurowano',
+  'keyring.settings.mode.declined': 'Odrzucono',
+  'keyring.settings.availability': 'Dostępność pęku kluczy',
+  'keyring.settings.available': 'Pęk kluczy systemu jest dostępny',
+  'keyring.settings.unavailable': 'Pęk kluczy systemu jest niedostępny',
+  'keyring.settings.backend': 'Silnik',
+  'keyring.settings.retryButton': 'Ponów wykrywanie pęku kluczy',
+  'keyring.settings.retryFailed':
+    'Ponowna próba nie powiodła się. Pęk kluczy jest nadal niedostępny.',
+  'keyring.settings.consentTitle': 'Zgoda na przechowywanie',
+  'keyring.settings.consentDescription':
+    'Wybierz sposób przechowywania sekretów, gdy pęk kluczy systemu jest niedostępny.',
+  'keyring.settings.grantConsent': 'Zezwól na lokalne zaszyfrowane przechowywanie',
+  'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
+  'pages.settings.account.security': 'Bezpieczeństwo',
+  'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
 };
 
 export default messages;

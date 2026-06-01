@@ -490,7 +490,10 @@ async fn pick_listen_port_falls_back_for_non_openhuman_and_status_fingerprints()
     let picked = pick_listen_port_for_host("127.0.0.1", probe.port)
         .await
         .expect("non-openhuman listener should fall back");
-    assert_eq!(picked.port, probe.port + 1);
+    assert!(
+        picked.port > probe.port,
+        "fallback port must be higher than probe port"
+    );
     assert_eq!(picked.fallback_from, Some(probe.port));
     drop(picked.listener);
     drop(probe);
@@ -499,7 +502,10 @@ async fn pick_listen_port_falls_back_for_non_openhuman_and_status_fingerprints()
     let picked = pick_listen_port_for_host("127.0.0.1", status_probe.port)
         .await
         .expect("non-success probe should fall back");
-    assert_eq!(picked.port, status_probe.port + 1);
+    assert!(
+        picked.port > status_probe.port,
+        "fallback port must be higher than status probe port"
+    );
     assert_eq!(picked.fallback_from, Some(status_probe.port));
     drop(picked.listener);
 

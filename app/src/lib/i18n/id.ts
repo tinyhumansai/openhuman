@@ -1146,6 +1146,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Ya, hapus instalan',
   'mcp.detail.uninstall': 'Hapus instalan',
   'mcp.detail.envVars': 'Variabel lingkungan',
+  'mcp.detail.reconfigure': 'Konfigurasi ulang',
+  'mcp.detail.reconfigureHint':
+    'Masukkan nilai baru untuk setiap variabel, lalu hubungkan kembali. Ini menggantikan nilai yang tersimpan.',
+  'mcp.detail.saveReconnect': 'Simpan dan hubungkan kembali',
+  'mcp.detail.reconfigureSaving': 'Menyimpan…',
+  'mcp.detail.reconfigureSuccess': 'Lingkungan diperbarui dan terhubung kembali.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Tersimpan, tetapi gagal menghubungkan kembali dengan nilai baru.',
   'mcp.detail.tools': 'Alat',
   'onboarding.skipForNow': 'Lewati Sekarang',
   'onboarding.localAI.continueWithCloud': 'Lanjutkan dengan Cloud',
@@ -1986,6 +1994,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL halaman',
   'memorySources.cssSelector': 'pemilih CSS (opsional)',
   'memorySources.searchQuery': 'Kueri pencarian',
+  'memorySources.build.title': 'Bangun',
+  'memorySources.build.building': 'Membangun…',
+  'memorySources.build.successTitle': 'Pohon dibangun',
+  'memorySources.build.failedTitle': 'Pembangunan gagal',
+  'memorySources.build.sealsMessage': 'penyegelan selesai',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Awan',
   'backend.recommended': 'Direkomendasikan',
@@ -2499,6 +2512,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'berjalan',
   'conversations.subagent.statusCompleted': 'selesai',
   'conversations.subagent.statusFailed': 'gagal',
+  'conversations.subagent.statusAwaitingUser': 'menunggu pengguna',
   'daemon.serviceBlockingGate.body': 'Isi',
   'daemon.serviceBlockingGate.downloadHint': 'Petunjuk unduhan',
   'daemon.serviceBlockingGate.downloadLatest': 'Unduh Versi Terbaru',
@@ -3603,6 +3617,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Perlu persetujuan rencana tugas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Jeda sebelum agen yang ditugaskan mengeksekusi suatu tugas singkat.',
+  'settings.agentAccess.timeout.label': 'Batas waktu tindakan',
+  'settings.agentAccess.timeout.desc':
+    'Berapa lama satu alat atau tindakan boleh berjalan sebelum dibatalkan. Tingkatkan nilai ini jika model lokal besar terhenti sebelum selesai merespons.',
+  'settings.agentAccess.timeout.unit': 'detik',
+  'settings.agentAccess.timeout.invalid':
+    'Masukkan bilangan bulat detik dalam rentang yang diizinkan',
+  'settings.agentAccess.timeout.envOverride':
+    'Variabel lingkungan OPENHUMAN_TOOL_TIMEOUT_SECS menggantikan pengaturan ini, sehingga perubahan di sini tidak berpengaruh hingga variabel tersebut dihapus.',
   'settings.agentAccess.grantedFolders': 'Folder yang diberikan',
   'settings.agentAccess.alwaysAllow': 'Selalu-diperbolehkan alat',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3619,6 +3641,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Tambah',
   'settings.agentAccess.saving': 'Menyimpan...',
   'settings.agentAccess.changesApply': 'Perubahan pada pesan berikutnya.',
+  'settings.agentAccess.directories': 'Direktori',
+  'settings.agentAccess.actionSandbox': 'Sandbox aksi',
+  'settings.agentAccess.readWriteAccess': 'baca + tulis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Direktori kerja default untuk alat shell, file, dan git.',
+  'settings.agentAccess.internalState': 'Status internal',
+  'settings.agentAccess.agentBlocked': 'diblokir untuk agen',
+  'settings.agentAccess.internalStateDesc':
+    'Database memori, sesi, token, dan data inti lainnya. Tidak dapat diakses oleh alat agen.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4399,6 +4430,41 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Pengelompokan rata-rata {avg} · transitivitas {transitivity}',
   'graphCohesion.title': 'Kohesi Graf',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'Penyimpanan aman tidak tersedia',
+  'keyring.consent.description':
+    'Keychain sistem operasi Anda tidak dapat diakses. OpenHuman memerlukan izin Anda untuk menyimpan rahasia menggunakan penyimpanan lokal terenkripsi.',
+  'keyring.consent.reasonPrefix': 'Alasan:',
+  'keyring.consent.showDetails': 'Apa artinya ini?',
+  'keyring.consent.hideDetails': 'Sembunyikan detail',
+  'keyring.consent.tradeoffTitle': 'Kompromi keamanan',
+  'keyring.consent.tradeoffBody':
+    'Dengan penyimpanan lokal terenkripsi, rahasia Anda dienkripsi di disk menggunakan kunci master yang disimpan bersama data. Ini kurang aman dibandingkan keychain OS yang menggunakan perlindungan berbasis perangkat keras. Pencadangan atau sinkronisasi file mungkin menyertakan data terenkripsi.',
+  'keyring.consent.consentButton': 'Gunakan penyimpanan lokal terenkripsi',
+  'keyring.consent.retryButton': 'Coba ulang OS Keychain',
+  'keyring.consent.declineButton': 'Tolak',
+  'keyring.consent.retrying': 'Mencoba ulang…',
+  'keyring.consent.error': 'Gagal menyimpan preferensi. Silakan coba lagi.',
+  'keyring.consent.retryFailed': 'Keychain masih tidak tersedia.',
+  'keyring.settings.title': 'Keamanan',
+  'keyring.settings.storageMode': 'Mode penyimpanan rahasia',
+  'keyring.settings.mode.osKeychain': 'Keychain OS',
+  'keyring.settings.mode.encryptedFile': 'Lokal terenkripsi',
+  'keyring.settings.mode.consentPending': 'Belum dikonfigurasi',
+  'keyring.settings.mode.declined': 'Ditolak',
+  'keyring.settings.availability': 'Ketersediaan keychain',
+  'keyring.settings.available': 'OS keychain tersedia',
+  'keyring.settings.unavailable': 'OS keychain tidak tersedia',
+  'keyring.settings.backend': 'Backend',
+  'keyring.settings.retryButton': 'Coba ulang deteksi keychain',
+  'keyring.settings.retryFailed': 'Percobaan ulang gagal. Keychain masih tidak tersedia.',
+  'keyring.settings.consentTitle': 'Persetujuan penyimpanan',
+  'keyring.settings.consentDescription':
+    'Pilih bagaimana rahasia disimpan saat keychain OS tidak tersedia.',
+  'keyring.settings.grantConsent': 'Izinkan penyimpanan lokal terenkripsi',
+  'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
+  'pages.settings.account.security': 'Keamanan',
+  'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
 };
 
 export default messages;

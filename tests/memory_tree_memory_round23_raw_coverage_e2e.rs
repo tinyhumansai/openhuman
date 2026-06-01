@@ -5,7 +5,7 @@
 
 use std::ffi::OsString;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -49,6 +49,15 @@ impl Drop for EnvVarGuard {
             }
         }
     }
+}
+
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn config_in(tmp: &TempDir) -> Config {
@@ -258,6 +267,7 @@ async fn tree_runtime_engine_summarizes_preserves_buffer_and_rebuilds() {
 
 #[tokio::test]
 async fn tree_runtime_rpc_and_registered_handlers_cover_status_and_errors() {
+    let _lock = env_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());

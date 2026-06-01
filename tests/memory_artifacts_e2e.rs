@@ -87,7 +87,6 @@ async fn sync_raw_artifacts_and_mocked_summary_match_obsidian_contract() {
             body: "Phoenix migration launch window confirmed for Friday 22:00 UTC.",
         },
         "slack-conn-slack-1",
-        None,
     )
     .expect("stage mocked summary");
 

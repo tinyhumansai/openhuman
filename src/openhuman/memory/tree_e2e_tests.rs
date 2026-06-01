@@ -19,15 +19,9 @@ use tempfile::TempDir;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory::chat::{test_override, ChatProvider, StaticChatProvider};
 use crate::openhuman::memory::ingest_pipeline::ingest_chat;
-use crate::openhuman::memory::tree_global::digest::{end_of_day_digest, DigestOutcome};
-use crate::openhuman::memory::tree_topic::curator::{force_recompute, SpawnOutcome};
 use crate::openhuman::memory_queue::drain_until_idle;
-use crate::openhuman::memory_store::trees::hotness;
-use crate::openhuman::memory_store::trees::types::HotnessCounters;
 use crate::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
-use crate::openhuman::memory_tree::retrieval::{
-    query_global, query_source, query_topic, search_entities,
-};
+use crate::openhuman::memory_tree::retrieval::{query_source, search_entities};
 use crate::openhuman::memory_tree::score::embed::build_embedder_from_config;
 
 fn test_config() -> (TempDir, Config) {
@@ -75,31 +69,16 @@ fn heavy_batch(platform: &str, channel: &str, seq_offset: u32) -> ChatBatch {
     }
 }
 
-/// Seed hotness counters so `force_recompute` crosses the creation threshold
-/// even if the extract jobs haven't yet produced enough cross-source index
-/// rows on their own.
-fn seed_hotness(cfg: &Config, entity_id: &str, distinct_sources: u32) {
-    let mut counters = HotnessCounters::fresh(entity_id, 0);
-    counters.mention_count_30d = 500;
-    counters.distinct_sources = distinct_sources;
-    counters.last_seen_ms = Some(Utc::now().timestamp_millis());
-    counters.query_hits_30d = 5;
-    hotness::upsert(cfg, &counters).unwrap();
-}
-
-/// Full pipeline: ingest → seal → global digest → topic spawn → retrieval.
+/// Full pipeline: ingest → seal → source retrieval → entity search.
 ///
 /// Steps:
 /// 1. Ingest heavy batches from two distinct sources so the source trees'
 ///    L0 buffers cross the token-budget seal threshold.
 /// 2. Drain the async job queue so extract / admit / buffer / seal jobs run.
 /// 3. Verify source-tree retrieval returns sealed summaries.
-/// 4. Run the end-of-day digest and assert it emits a global node.
-/// 5. Verify global retrieval returns at least one hit.
-/// 6. Pre-seed hotness counters and call `force_recompute` to spawn the
-///    topic tree for `email:alice@example.com`.
-/// 7. Verify topic-tree retrieval returns results.
-/// 8. Verify `search_entities("alice")` resolves to alice's canonical id.
+/// 4. Verify `search_entities("alice")` resolves to alice's canonical id.
+///
+/// (The global-digest and topic-spawn steps were removed with those trees.)
 #[tokio::test]
 async fn full_pipeline_ingest_to_retrieval() {
     let (_tmp, cfg) = test_config();
@@ -187,147 +166,7 @@ async fn full_pipeline_ingest_to_retrieval() {
             "query_source total must be >= hits.len()"
         );
 
-        // ── Step 4: global digest ─────────────────────────────────────────
-        // The digest picks up source summaries from sealed trees and folds
-        // them into one cross-source daily node.
-        let today = Utc::now().date_naive();
-        let digest_outcome = end_of_day_digest(&cfg, today)
-            .await
-            .expect("end_of_day_digest must succeed");
-
-        log::debug!(
-            "[tree_e2e_test] digest outcome: {:?}",
-            digest_outcome
-        );
-
-        // Two possible happy outcomes: a fresh emission, or a skip if a
-        // prior test in the same workspace already ran today's digest.
-        // EmptyDay is acceptable when the seal budget wasn't crossed (e.g.
-        // small CI runners where chunker produces fewer tokens).
-        match &digest_outcome {
-            DigestOutcome::Emitted {
-                source_count,
-                daily_id,
-                sealed_ids,
-            } => {
-                log::debug!(
-                    "[tree_e2e_test] digest emitted: daily_id={daily_id} source_count={source_count} cascade_seals={}",
-                    sealed_ids.len()
-                );
-                assert!(*source_count >= 1, "emitted digest must reference at least one source");
-            }
-            DigestOutcome::Skipped { existing_id } => {
-                log::debug!("[tree_e2e_test] digest skipped (already exists): {existing_id}");
-            }
-            DigestOutcome::EmptyDay => {
-                log::debug!(
-                    "[tree_e2e_test] digest returned EmptyDay — \
-                     source trees may not have sealed yet (insufficient tokens). \
-                     Continuing; global retrieval will return empty."
-                );
-            }
-        }
-
-        // ── Step 5: verify global retrieval ──────────────────────────────
-        let global_resp = query_global(&cfg, 7)
-            .await
-            .expect("query_global must succeed");
-
-        log::debug!(
-            "[tree_e2e_test] query_global: total={} hits={}",
-            global_resp.total,
-            global_resp.hits.len()
-        );
-
-        // When a digest was emitted the global tree has at least one node.
-        // When the day was empty (no seals) we accept an empty response.
-        if matches!(digest_outcome, DigestOutcome::Emitted { .. }) {
-            assert!(
-                global_resp.total >= 1,
-                "global tree should have at least one node after a successful digest"
-            );
-        }
-        // Structural invariant always holds.
-        assert!(
-            global_resp.total >= global_resp.hits.len(),
-            "query_global total must be >= hits.len()"
-        );
-
-        // ── Step 6: spawn topic tree ──────────────────────────────────────
-        // Pre-seed hotness counters above the creation threshold so
-        // `force_recompute` materialises the topic tree immediately
-        // rather than waiting for organic ingest cycles.
-        seed_hotness(&cfg, "email:alice@example.com", 2);
-
-        let spawn_outcome = force_recompute(&cfg, "email:alice@example.com")
-            .await
-            .expect("force_recompute must succeed");
-
-        log::debug!(
-            "[tree_e2e_test] topic spawn outcome: {:?}",
-            spawn_outcome
-        );
-
-        // Topic must have spawned or already existed from a re-run.
-        match &spawn_outcome {
-            SpawnOutcome::Spawned {
-                hotness,
-                tree_id,
-                backfilled,
-            } => {
-                log::debug!(
-                    "[tree_e2e_test] topic spawned: tree_id={tree_id} hotness={hotness:.3} backfilled={backfilled}"
-                );
-                assert!(tree_id.starts_with("topic:"), "topic tree id must carry the 'topic:' prefix");
-            }
-            SpawnOutcome::TreeExists { hotness, tree_id } => {
-                log::debug!(
-                    "[tree_e2e_test] topic tree already exists: tree_id={tree_id} hotness={hotness:.3}"
-                );
-            }
-            SpawnOutcome::BelowThreshold { hotness } => {
-                // With seeded counters (mention_count_30d=500, 2 distinct
-                // sources, query_hits=5) the hotness formula must fire.
-                // A BelowThreshold here is a test bug — panic with details.
-                panic!(
-                    "[tree_e2e_test] expected Spawned/TreeExists after hotness seeding, \
-                     got BelowThreshold (hotness={hotness:.3}). Check seed_hotness values \
-                     against TreePolicy::topic_creation_threshold()."
-                );
-            }
-            SpawnOutcome::CountersBumped => {
-                panic!(
-                    "[tree_e2e_test] force_recompute should never return CountersBumped — \
-                     it bypasses the cadence gate."
-                );
-            }
-        }
-
-        // ── Step 7: verify topic retrieval ───────────────────────────────
-        let topic_resp = query_topic(&cfg, "email:alice@example.com", None, None, 20)
-            .await
-            .expect("query_topic must succeed");
-
-        log::debug!(
-            "[tree_e2e_test] query_topic: total={} hits={}",
-            topic_resp.total,
-            topic_resp.hits.len()
-        );
-
-        // After ingesting messages that mention alice@example.com and
-        // running extract jobs, the entity index must have at least one
-        // association.
-        assert!(
-            topic_resp.total >= 1,
-            "query_topic for alice@example.com must return at least one hit \
-             after ingest + queue drain"
-        );
-        assert!(
-            topic_resp.total >= topic_resp.hits.len(),
-            "query_topic total must be >= hits.len()"
-        );
-
-        // ── Step 8: search_entities cross-check ──────────────────────────
+        // ── Step 4: search_entities cross-check ──────────────────────────
         let entity_matches = search_entities(&cfg, "alice", None, 10)
             .await
             .expect("search_entities must succeed");
@@ -356,10 +195,8 @@ async fn full_pipeline_ingest_to_retrieval() {
 
         log::info!(
             "[tree_e2e_test] full_pipeline_ingest_to_retrieval PASSED \
-             source_hits={} global_hits={} topic_hits={} entity_matches={}",
+             source_hits={} entity_matches={}",
             source_resp.hits.len(),
-            global_resp.hits.len(),
-            topic_resp.hits.len(),
             entity_matches.len()
         );
     })
@@ -464,17 +301,6 @@ async fn pipeline_works_with_embeddings_disabled() {
         assert!(
             semantic_resp.total >= semantic_resp.hits.len(),
             "query_source total must be >= hits.len()"
-        );
-
-        // ── Global digest should also succeed ───────────────────────────
-        let today = Utc::now().date_naive();
-        let digest_outcome = end_of_day_digest(&cfg, today)
-            .await
-            .expect("end_of_day_digest must succeed with embeddings disabled");
-
-        log::debug!(
-            "[tree_e2e_test::embeddings_disabled] digest outcome: {:?}",
-            digest_outcome
         );
 
         // ── Entity search (keyword-based, no embeddings needed) ─────────

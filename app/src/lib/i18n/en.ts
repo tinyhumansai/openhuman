@@ -941,7 +941,7 @@ const en: TranslationMap = {
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    'Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman’s backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.',
+    "Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman's backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.",
   'settings.search.engineAria': 'Search engine',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1267,6 +1267,13 @@ const en: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Yes, uninstall',
   'mcp.detail.uninstall': 'Uninstall',
   'mcp.detail.envVars': 'Environment variables',
+  'mcp.detail.reconfigure': 'Reconfigure',
+  'mcp.detail.reconfigureHint':
+    'Enter new values for every variable, then reconnect. This replaces the stored values.',
+  'mcp.detail.saveReconnect': 'Save & reconnect',
+  'mcp.detail.reconfigureSaving': 'Saving…',
+  'mcp.detail.reconfigureSuccess': 'Environment updated and reconnected.',
+  'mcp.detail.reconfigureReconnectFailed': 'Saved, but reconnecting with the new values failed.',
   'mcp.detail.tools': 'Tools',
   'onboarding.skipForNow': 'Skip for Now',
   'onboarding.localAI.continueWithCloud': 'Continue with Cloud',
@@ -2189,6 +2196,11 @@ const en: TranslationMap = {
   'memorySources.pageUrl': 'Page URL',
   'memorySources.cssSelector': 'CSS selector (optional)',
   'memorySources.searchQuery': 'Search query',
+  'memorySources.build.title': 'Build',
+  'memorySources.build.building': 'Building…',
+  'memorySources.build.successTitle': 'Tree built',
+  'memorySources.build.failedTitle': 'Build failed',
+  'memorySources.build.sealsMessage': 'seal(s) completed',
 
   // Backend
   'backend.aiBackend': 'AI Backend',
@@ -2384,7 +2396,7 @@ const en: TranslationMap = {
   'composio.envVarOverrides': 'is set, it overrides this setting.',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
+    "Agent integration coming soon — you can connect, but the agent can't use this toolkit yet.",
 
   // Memory: day-of-week labels for heatmap
   'memory.day.sun': 'Sun',
@@ -2493,7 +2505,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
+    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',
@@ -2752,6 +2764,7 @@ const en: TranslationMap = {
   'conversations.subagent.statusRunning': 'running',
   'conversations.subagent.statusCompleted': 'completed',
   'conversations.subagent.statusFailed': 'failed',
+  'conversations.subagent.statusAwaitingUser': 'awaiting user',
   'daemon.serviceBlockingGate.body':
     'Retrying in the background. This usually resolves in a few seconds.',
   'daemon.serviceBlockingGate.downloadHint':
@@ -3702,7 +3715,7 @@ const en: TranslationMap = {
   'settings.skillsRunner.repoPicker.empty':
     'No repositories returned. Connect GitHub via Composio to populate this list.',
   'settings.skillsRunner.repoPicker.notConnected':
-    'GitHub isn’t connected via Composio. Connect it under Skills → Composio first.',
+    "GitHub isn't connected via Composio. Connect it under Skills → Composio first.",
   'settings.skillsRunner.repoPicker.privateTag': '(private)',
   'settings.skillsRunner.branchPicker.needRepo': 'Pick a repo first…',
   'settings.skillsRunner.branchPicker.loading': 'Loading branches…',
@@ -3851,6 +3864,14 @@ const en: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Require task plan approval',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pause before an assigned agent executes an agent-authored task brief.',
+  'settings.agentAccess.timeout.label': 'Action timeout',
+  'settings.agentAccess.timeout.desc':
+    'How long a single tool or action may run before it is cancelled. Increase this if a large local model is interrupted before it finishes responding.',
+  'settings.agentAccess.timeout.unit': 'seconds',
+  'settings.agentAccess.timeout.invalid':
+    'Enter a whole number of seconds within the allowed range',
+  'settings.agentAccess.timeout.envOverride':
+    'The OPENHUMAN_TOOL_TIMEOUT_SECS environment variable is overriding this setting, so changes here have no effect until it is unset.',
   'settings.agentAccess.grantedFolders': 'Granted folders',
   'settings.agentAccess.alwaysAllow': 'Always-allowed tools',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3867,6 +3888,15 @@ const en: TranslationMap = {
   'settings.agentAccess.add': 'Add',
   'settings.agentAccess.saving': 'Saving…',
   'settings.agentAccess.changesApply': 'Changes apply on your next message.',
+  'settings.agentAccess.directories': 'Directories',
+  'settings.agentAccess.actionSandbox': 'Action sandbox',
+  'settings.agentAccess.readWriteAccess': 'read + write',
+  'settings.agentAccess.actionSandboxDesc':
+    'Default working directory for shell, file, and git tools.',
+  'settings.agentAccess.internalState': 'Internal state',
+  'settings.agentAccess.agentBlocked': 'agent-blocked',
+  'settings.agentAccess.internalStateDesc':
+    'Memory databases, sessions, tokens, and other core persistence. Not accessible to agent tools.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4399,7 +4429,7 @@ const en: TranslationMap = {
   'walletBalances.errorGeneric':
     'Unable to load wallet balances. Set up your wallet in Recovery Phrase and try again.',
   'walletBalances.setupHint':
-    'Your recovery phrase isn’t set up yet. Set it up to enable your wallet and see live balances.',
+    "Your recovery phrase isn't set up yet. Set it up to enable your wallet and see live balances.",
   'walletBalances.setupCta': 'Set up recovery phrase',
   'walletBalances.notSetUp': 'Not set up',
   'walletBalances.send': 'Send',
@@ -4606,11 +4636,47 @@ const en: TranslationMap = {
   'settings.agents.editor.toolsAllowAll': 'Allow all tools (*)',
   'settings.agents.editor.toolsAllowAllHint': 'This agent can use every available tool.',
   'settings.agents.editor.toolsLoading': 'Loading tools…',
-  'settings.agents.editor.toolsLoadError': 'Couldn’t load tools',
+  'settings.agents.editor.toolsLoadError': "Couldn't load tools",
   'settings.agents.editor.toolsEmpty': 'No tools match your search.',
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
-    'Built-in agents can’t be edited. You can enable, disable, or reset them from the agents list.',
+    "Built-in agents can't be edited. You can enable, disable, or reset them from the agents list.",
+
+  // Keyring consent & security
+  'keyring.consent.title': 'Secure Storage Unavailable',
+  'keyring.consent.description':
+    'Your operating system keychain is not accessible. OpenHuman needs your permission to store secrets using local encrypted storage instead.',
+  'keyring.consent.reasonPrefix': 'Reason:',
+  'keyring.consent.showDetails': 'What does this mean?',
+  'keyring.consent.hideDetails': 'Hide details',
+  'keyring.consent.tradeoffTitle': 'Security tradeoff',
+  'keyring.consent.tradeoffBody':
+    'With local encrypted storage, your secrets are encrypted on disk using a master key stored alongside the data. This is less secure than the OS keychain, which uses hardware-backed protection. Backups or file syncing may include the encrypted data.',
+  'keyring.consent.consentButton': 'Use Local Encrypted Storage',
+  'keyring.consent.retryButton': 'Retry OS Keychain',
+  'keyring.consent.declineButton': 'Skip',
+  'keyring.consent.retrying': 'Retrying…',
+  'keyring.consent.error': 'Failed to save preference. Please try again.',
+  'keyring.consent.retryFailed': 'Keychain is still unavailable.',
+  'keyring.settings.title': 'Security',
+  'keyring.settings.storageMode': 'Secret storage mode',
+  'keyring.settings.mode.osKeychain': 'OS Keychain',
+  'keyring.settings.mode.encryptedFile': 'Local Encrypted',
+  'keyring.settings.mode.consentPending': 'Not configured',
+  'keyring.settings.mode.declined': 'Declined',
+  'keyring.settings.availability': 'Keychain availability',
+  'keyring.settings.available': 'OS keychain is available',
+  'keyring.settings.unavailable': 'OS keychain is unavailable',
+  'keyring.settings.backend': 'Backend',
+  'keyring.settings.retryButton': 'Retry keychain detection',
+  'keyring.settings.retryFailed': 'Retry failed. Keychain is still unavailable.',
+  'keyring.settings.consentTitle': 'Storage consent',
+  'keyring.settings.consentDescription':
+    'Choose how secrets are stored when the OS keychain is not available.',
+  'keyring.settings.grantConsent': 'Allow local encrypted storage',
+  'keyring.settings.revokeConsent': 'Decline local storage',
+  'pages.settings.account.security': 'Security',
+  'pages.settings.account.securityDesc': 'Secret storage mode and keychain status',
 };
 
 export default en;

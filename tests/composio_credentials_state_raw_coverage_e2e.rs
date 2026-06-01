@@ -440,6 +440,7 @@ async fn round15_app_state_corruption_clear_and_snapshot_local_session_paths() {
         .expect("state dir");
     std::fs::write(harness.app_state_file(), "{bad-json").expect("write corrupt app state");
     let recovered = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  round15-secret  ".to_string())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: true,
@@ -466,6 +467,7 @@ async fn round15_app_state_corruption_clear_and_snapshot_local_session_paths() {
     assert!(quarantined, "corrupt app state should be quarantined");
 
     let cleared = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(None),
         onboarding_tasks: Some(None),
     })

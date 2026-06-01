@@ -126,6 +126,7 @@ mod tests {
     async fn test_config(tmp: &TempDir) -> Arc<Config> {
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -138,6 +139,7 @@ mod tests {
     fn test_security(cfg: &Config) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy::from_config(
             &cfg.autonomy,
+            &cfg.workspace_dir,
             &cfg.workspace_dir,
         ))
     }
@@ -166,6 +168,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let mut config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -195,6 +198,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -212,6 +216,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
