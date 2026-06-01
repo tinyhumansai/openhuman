@@ -4570,7 +4570,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': 'Définir la vérité',
   'beliefLedger.setTruthAria': 'Définir la vérité pour {claim}',
   'beliefLedger.title': 'Registre des croyances',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': 'Croyances',
 };
 
 export default messages;

@@ -4589,7 +4589,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': 'Wahrheit festlegen',
   'beliefLedger.setTruthAria': 'Wahrheit für {claim} festlegen',
   'beliefLedger.title': 'Überzeugungsregister',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': 'Überzeugungen',
 };
 
 export default messages;

@@ -4479,7 +4479,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': 'सच्चाई सेट करें',
   'beliefLedger.setTruthAria': '{claim} के लिए सच्चाई सेट करें',
   'beliefLedger.title': 'विश्वास बही',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': 'विश्वास',
 };
 
 export default messages;

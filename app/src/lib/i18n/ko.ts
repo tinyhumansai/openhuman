@@ -4438,7 +4438,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': '진실 설정',
   'beliefLedger.setTruthAria': '{claim}에 대한 진실 설정',
   'beliefLedger.title': '믿음 원장',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': '신념',
 };
 
 export default messages;

@@ -4258,7 +4258,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': '设置事实',
   'beliefLedger.setTruthAria': '为 {claim} 设置事实',
   'beliefLedger.title': '信念账本',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': '信念',
 };
 
 export default messages;

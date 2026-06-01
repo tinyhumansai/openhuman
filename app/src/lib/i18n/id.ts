@@ -4489,7 +4489,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': 'Setel kebenaran',
   'beliefLedger.setTruthAria': 'Setel kebenaran untuk {claim}',
   'beliefLedger.title': 'Buku Besar Keyakinan',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': 'Keyakinan',
 };
 
 export default messages;

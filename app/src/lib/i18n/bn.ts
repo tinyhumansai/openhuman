@@ -4472,7 +4472,7 @@ const messages: TranslationMap = {
   'beliefLedger.setTruth': 'সত্য সেট করুন',
   'beliefLedger.setTruthAria': '{claim} এর জন্য সত্য সেট করুন',
   'beliefLedger.title': 'বিশ্বাস খতিয়ান',
-  'memory.tab.beliefs': 'Beliefs',
+  'memory.tab.beliefs': 'বিশ্বাসসমূহ',
 };
 
 export default messages;
