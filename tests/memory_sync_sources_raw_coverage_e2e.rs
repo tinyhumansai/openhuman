@@ -318,6 +318,9 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let reader = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
     let mut entry = source(SourceKind::GithubRepo, "github-round15");
     entry.url = Some("https://github.com/tinyhumansai/openhuman.git".to_string());
+    entry.max_commits = Some(30);
+    entry.max_issues = Some(30);
+    entry.max_prs = Some(30);
 
     let items = reader
         .list_items(&entry, &config)
