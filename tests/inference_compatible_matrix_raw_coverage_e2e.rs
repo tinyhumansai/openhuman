@@ -4,7 +4,7 @@
 //! call host Ollama, MLX, Python, Piper, Whisper, or model binaries.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::body::Body;
 use axum::extract::State;
@@ -67,6 +67,15 @@ impl Drop for EnvVarGuard {
             }
         }
     }
+}
+
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[tokio::test]
@@ -427,6 +436,7 @@ async fn ollama_compatible_matrix_covers_authless_chat_and_streaming_errors() {
 
 #[tokio::test]
 async fn ollama_admin_matrix_covers_list_show_pull_failure_branches() {
+    let _lock = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);

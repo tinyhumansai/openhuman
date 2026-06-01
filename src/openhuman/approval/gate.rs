@@ -626,6 +626,7 @@ mod tests {
         crate::openhuman::security::live_policy::install(
             Arc::new(policy),
             dir.path().to_path_buf(),
+            dir.path().to_path_buf(),
         );
 
         // An allow-listed tool short-circuits the gate to `Allow` immediately —

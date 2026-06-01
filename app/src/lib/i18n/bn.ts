@@ -3625,6 +3625,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'যোগ করুন',
   'settings.agentAccess.saving': 'ইনস্টল করা হয়েছে...',
   'settings.agentAccess.changesApply': 'পরবর্তী বার্তায় পরিবর্তন প্রয়োগ করা হবে।',
+  'settings.agentAccess.directories': 'ডিরেক্টরি',
+  'settings.agentAccess.actionSandbox': 'অ্যাকশন স্যান্ডবক্স',
+  'settings.agentAccess.readWriteAccess': 'পড়া + লেখা',
+  'settings.agentAccess.actionSandboxDesc':
+    'শেল, ফাইল এবং git টুলের জন্য ডিফল্ট কার্যকরী ডিরেক্টরি।',
+  'settings.agentAccess.internalState': 'অভ্যন্তরীণ অবস্থা',
+  'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
+  'settings.agentAccess.internalStateDesc':
+    'মেমরি ডেটাবেস, সেশন, টোকেন এবং অন্যান্য মূল ডেটা। এজেন্ট টুলের কাছে অ্যাক্সেসযোগ্য নয়।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

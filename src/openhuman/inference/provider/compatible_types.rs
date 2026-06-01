@@ -173,9 +173,14 @@ pub(crate) struct OpenHumanBilling {
 pub(crate) struct ResponseMessage {
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Reasoning/thinking models (e.g. Qwen3, GLM-4) may return their output
-    /// in `reasoning_content` instead of `content`. Used as automatic fallback.
-    #[serde(default)]
+    /// Reasoning/thinking models may return their chain-of-thought in a
+    /// dedicated field instead of (or alongside) `content`. DeepSeek, Qwen3 and
+    /// GLM-4 name it `reasoning_content`; OpenRouter and vLLM/SGLang-backed
+    /// OpenAI-compatible proxies emit it as `reasoning`. Accept both so the CoT
+    /// is captured regardless of the (third-party) provider's field name — it
+    /// must be echoed back verbatim on tool-call turns or thinking models reject
+    /// the follow-up request with HTTP 400.
+    #[serde(default, alias = "reasoning")]
     pub(crate) reasoning_content: Option<String>,
     #[serde(default)]
     pub(crate) tool_calls: Option<Vec<ToolCall>>,
@@ -278,8 +283,10 @@ pub(crate) struct StreamChoice {
 pub(crate) struct StreamDelta {
     #[serde(default)]
     pub(crate) content: Option<String>,
-    /// Reasoning/thinking models may stream output via `reasoning_content`.
-    #[serde(default)]
+    /// Reasoning/thinking models may stream their chain-of-thought via
+    /// `reasoning_content` (DeepSeek/Qwen3/GLM-4) or `reasoning`
+    /// (OpenRouter, vLLM/SGLang proxies). Accept both delta field names.
+    #[serde(default, alias = "reasoning")]
     pub(crate) reasoning_content: Option<String>,
     /// Native tool-call chunks. Each entry is keyed by `index`; the first
     /// chunk for a given index carries `id`/`type`/`function.name`, later
