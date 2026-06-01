@@ -2747,7 +2747,7 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'مجموعة عبء عمل المحادثة',
   'settings.ai.disconnectProvider': 'قطع الاتصال {label}',
   'settings.ai.connectProviderLabel': 'الاتصال {label}',
-  'settings.ai.editProviderEndpoint': 'تعديل endpoint {label}',
+  'settings.ai.editProviderEndpoint': 'تعديل نقطة النهاية {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
   'settings.ai.endpointUrlLabel': 'نقطة النهاية URL',
   'settings.ai.localRuntimeHelper':

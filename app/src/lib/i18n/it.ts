@@ -2841,7 +2841,7 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Gruppo carico di lavoro chat',
   'settings.ai.disconnectProvider': 'Disconnetti {label}',
   'settings.ai.connectProviderLabel': 'Connetti {label}',
-  'settings.ai.editProviderEndpoint': 'Modifica endpoint di {label}',
+  'settings.ai.editProviderEndpoint': 'Modifica punto finale di {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
   'settings.ai.endpointUrlLabel': "URL dell'endpoint",
   'settings.ai.localRuntimeHelper':
