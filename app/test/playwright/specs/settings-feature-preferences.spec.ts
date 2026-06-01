@@ -76,6 +76,16 @@ async function getAriaChecked(page: Page, label: string): Promise<string | null>
   return value;
 }
 
+interface ToolsSnapshot {
+  result?: { localState?: { onboardingTasks?: { enabledTools?: string[] | null } | null } | null };
+  localState?: { onboardingTasks?: { enabledTools?: string[] | null } | null } | null;
+}
+
+function readEnabledTools(snapshot: ToolsSnapshot): string[] {
+  const body = snapshot.result ?? snapshot;
+  return body.localState?.onboardingTasks?.enabledTools ?? [];
+}
+
 test.describe('Settings - Feature Preferences', () => {
   test('renders the features settings section route', async ({ page }) => {
     await openAuthenticatedRoute(page, 'pw-settings-features-route', '/settings/features');
@@ -106,16 +116,12 @@ test.describe('Settings - Feature Preferences', () => {
   });
 
   test('persists tools preferences to the core app-state snapshot', async ({ page }) => {
-    const before = await callCoreRpc<{
-      result?: {
-        localState?: { onboardingTasks?: { enabledTools?: string[] | null } | null } | null;
-      };
-    }>('openhuman.app_state_snapshot', {});
-    const enabledBefore = before.result?.localState?.onboardingTasks?.enabledTools ?? [];
-
     await openAuthenticatedRoute(page, 'pw-settings-tools', '/settings/tools');
 
     await expect(page.getByText('Tools', { exact: true })).toBeVisible();
+    const before = await callCoreRpc<ToolsSnapshot>('openhuman.app_state_snapshot', {});
+    const enabledBefore = readEnabledTools(before);
+
     await page
       .locator('button')
       .filter({ has: page.getByText('Shell Commands', { exact: true }) })
@@ -125,12 +131,8 @@ test.describe('Settings - Feature Preferences', () => {
 
     await expect
       .poll(async () => {
-        const after = await callCoreRpc<{
-          result?: {
-            localState?: { onboardingTasks?: { enabledTools?: string[] | null } | null } | null;
-          };
-        }>('openhuman.app_state_snapshot', {});
-        const enabledAfter = after.result?.localState?.onboardingTasks?.enabledTools ?? [];
+        const after = await callCoreRpc<ToolsSnapshot>('openhuman.app_state_snapshot', {});
+        const enabledAfter = readEnabledTools(after);
         return JSON.stringify(enabledAfter) !== JSON.stringify(enabledBefore);
       })
       .toBe(true);
