@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildCompletionAudit, buildProductDoctorReport, completionAuditMarkdown, handoffMarkdown } from "./amazon-qa-product.mjs";
+import {
+  buildCompletionAudit,
+  buildProductDoctorReport,
+  buildRealQuestionAuditPlan,
+  completionAuditMarkdown,
+  handoffMarkdown,
+  summarizeRealQuestionAudit,
+} from "./amazon-qa-product.mjs";
 
 const READY_STATUS = {
   health: {
@@ -218,6 +225,58 @@ test("completion audit accepts saved real-question evidence for interactive Q&A"
   assert.match(audit.summary, /来源树完成、云端完整部署条件/);
   assert.ok(audit.blocking.includes("source_tree_learning_layer"));
   assert.ok(audit.boundaryOnly.includes("vercel_delivery"));
+});
+
+test("real-question audit plan uses recent user notebooks and skips generated runs", () => {
+  const plan = buildRealQuestionAuditPlan([
+    {
+      id: "amazon-qa-acceptance-178000-visual-conversion",
+      title: "generated",
+      updatedAt: "2026-06-01T05:00:00.000Z",
+      messages: [{ role: "user", content: "主图视觉点击率转化率怎么优化？" }],
+    },
+    {
+      id: "real-user-session",
+      title: "真实问题",
+      updatedAt: "2026-06-01T04:00:00.000Z",
+      messages: [
+        { role: "user", content: "主图视觉点击率转化率怎么优化？" },
+        { role: "assistant", content: "answer" },
+        { role: "user", content: "人群画像应该怎么构建？有哪些实操指导建议" },
+      ],
+    },
+    {
+      id: "older-user-session",
+      title: "旧问题",
+      updatedAt: "2026-05-31T04:00:00.000Z",
+      messages: [
+        { role: "user", content: "主图视觉点击率转化率怎么优化？" },
+        { role: "user", content: "列出所有选品实操的可落地执行方法？" },
+      ],
+    },
+  ], { limit: 3 });
+
+  assert.equal(plan.sourceNotebookCount, 2);
+  assert.deepEqual(plan.questions.map((item) => item.question), [
+    "主图视觉点击率转化率怎么优化？",
+    "人群画像应该怎么构建？有哪些实操指导建议",
+    "列出所有选品实操的可落地执行方法？",
+  ]);
+});
+
+test("real-question audit summary points to the next failing user question", () => {
+  const summary = summarizeRealQuestionAudit({
+    results: [
+      { question: "主图视觉点击率转化率怎么优化？", sources: 5, graphNodes: 20, ok: true, issues: [] },
+      { question: "人群画像应该怎么构建？", sources: 0, graphNodes: 8, ok: false, issues: ["no_sources"] },
+    ],
+  });
+
+  assert.equal(summary.ok, false);
+  assert.equal(summary.questionCount, 2);
+  assert.equal(summary.sourceBackedCount, 1);
+  assert.equal(summary.issueCounts.no_sources, 1);
+  assert.match(summary.nextBestAction, /人群画像/);
 });
 
 function acceptanceEvidenceResult() {

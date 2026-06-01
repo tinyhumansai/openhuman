@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,6 +26,8 @@ const UI_PATH = QA_PATHS.uiPath;
 const SERVER_PATH = QA_PATHS.serverPath;
 const HANDOFF_PATH = QA_PATHS.handoffPath;
 const ACCEPTANCE_EVIDENCE_PATH = path.join(QA_PATHS.outputRoot, "amazon-learning-qa-acceptance-evidence.json");
+const REAL_QUESTION_AUDIT_PATH = path.join(QA_PATHS.outputRoot, "amazon-learning-qa-real-question-audit.json");
+const NOTEBOOK_DIR = path.join(WORKSPACE, "learning-notebooks", "amazon-learning");
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 7790;
 const DEFAULT_CORE_PORT = 7789;
@@ -33,6 +35,17 @@ const DEFAULT_BASE_URL = `http://${DEFAULT_HOST}:${DEFAULT_PORT}`;
 const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
 const EXPECTED_DOCUMENTS = 1779;
 const EXPECTED_CHUNKS = 14597;
+const REAL_QUESTION_AUDIT_EXCLUDED_ID_PATTERNS = [
+  /^amazon-qa-(smoke|acceptance|topic-switch)-/i,
+  /^real-question-audit-/i,
+  /^real-user-live-check-/i,
+  /^persona-/i,
+  /^retrieval-/i,
+  /^local-model-check-/i,
+  /^feedback-check-/i,
+  /^topic-switch-/i,
+  /^token-estimate/i,
+];
 const PRODUCT_SCRIPT = path.relative(process.cwd(), path.join(import.meta.dirname, "amazon-qa-product.mjs")) || path.join(import.meta.dirname, "amazon-qa-product.mjs");
 const PRODUCT_COMMAND = `node ${PRODUCT_SCRIPT}`;
 const execFileAsync = promisify(execFile);
@@ -45,6 +58,7 @@ function usage() {
   ${PRODUCT_COMMAND} smoke [--base-url ${DEFAULT_BASE_URL}]
   ${PRODUCT_COMMAND} acceptance [--base-url ${DEFAULT_BASE_URL}]
   ${PRODUCT_COMMAND} acceptance-evidence [--base-url ${DEFAULT_BASE_URL}]
+  ${PRODUCT_COMMAND} real-question-audit [--base-url ${DEFAULT_BASE_URL}] [--limit 6] [--json]
   ${PRODUCT_COMMAND} completion-audit [--json]
   ${PRODUCT_COMMAND} handoff
 
@@ -73,6 +87,7 @@ async function main() {
   if (command === "smoke") return runSmoke(args);
   if (command === "acceptance") return runAcceptance(args);
   if (command === "acceptance-evidence") return writeAcceptanceEvidence(args);
+  if (command === "real-question-audit") return writeRealQuestionAudit(args);
   if (command === "completion-audit" || command === "audit") return printCompletionAudit(args);
   if (command === "handoff") return writeHandoff();
   throw new Error(`Unknown command: ${command}`);
@@ -374,6 +389,30 @@ async function writeAcceptanceEvidence(args) {
   console.log(ACCEPTANCE_EVIDENCE_PATH);
 }
 
+async function writeRealQuestionAudit(args) {
+  const baseUrl = argValue(args, "--base-url", DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const limit = clampInteger(argValue(args, "--limit", "6"), 6, 1, 12);
+  const records = await readRealNotebookRecords();
+  const plan = buildRealQuestionAuditPlan(records, { limit });
+  const result = await replayRealQuestionAudit(baseUrl, plan);
+  const audit = {
+    generatedAt: new Date().toISOString(),
+    command: `${PRODUCT_COMMAND} real-question-audit --base-url ${baseUrl} --limit ${limit}`,
+    baseUrl,
+    notebookCount: records.length,
+    plan,
+    result,
+    summary: summarizeRealQuestionAudit(result),
+  };
+  await mkdir(path.dirname(REAL_QUESTION_AUDIT_PATH), { recursive: true });
+  await writeFile(REAL_QUESTION_AUDIT_PATH, `${JSON.stringify(audit, null, 2)}\n`, "utf8");
+  if (args.includes("--json")) console.log(JSON.stringify(audit, null, 2));
+  else {
+    console.log(REAL_QUESTION_AUDIT_PATH);
+    console.log(`真实问题回放：${audit.summary.ok ? "通过" : "需要处理"}，${audit.summary.questionCount} 个问题，${audit.summary.sourceBackedCount} 个有来源，${audit.summary.graphBackedCount} 个有图谱。`);
+  }
+}
+
 async function printCompletionAudit(args) {
   const report = await buildProductDoctorReport();
   const audit = buildCompletionAudit(report);
@@ -486,6 +525,172 @@ export function buildCompletionAudit(report) {
       ...boundaryOnly.map(() => "如要云端完整问答，需要迁移 SQLite、模型服务和 openhuman-core 到可长驻云端服务。"),
     ],
   };
+}
+
+export function buildRealQuestionAuditPlan(records = [], options = {}) {
+  const limit = clampInteger(options.limit, 6, 1, 12);
+  const notebooks = Array.isArray(records)
+    ? records
+        .map(normalizeRealNotebookRecord)
+        .filter((record) => record.id && record.questions.length > 0 && !isRealQuestionAuditExcludedId(record.id))
+        .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""))
+    : [];
+  const selected = [];
+  const seen = new Set();
+  for (const notebook of notebooks) {
+    for (const question of notebook.questions) {
+      const key = normalizeQuestionKey(question);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      selected.push({
+        question,
+        notebookId: notebook.id,
+        notebookTitle: notebook.title,
+        notebookUpdatedAt: notebook.updatedAt,
+      });
+      if (selected.length >= limit) break;
+    }
+    if (selected.length >= limit) break;
+  }
+  return {
+    limit,
+    sourceNotebookCount: notebooks.length,
+    questions: selected,
+  };
+}
+
+function normalizeRealNotebookRecord(record = {}) {
+  const messages = Array.isArray(record.messages) ? record.messages : [];
+  const questions = messages
+    .filter((message) => message?.role === "user" && String(message.content || "").trim())
+    .map((message) => compactQuestion(String(message.content || "")))
+    .filter(Boolean);
+  return {
+    id: String(record.id || "").trim(),
+    title: String(record.title || "").trim(),
+    createdAt: String(record.createdAt || "").trim(),
+    updatedAt: String(record.updatedAt || record.createdAt || "").trim(),
+    questions,
+  };
+}
+
+async function replayRealQuestionAudit(baseUrl, plan) {
+  const sessionId = `real-question-audit-${Date.now()}`;
+  let history = [];
+  const results = [];
+  for (const [index, item] of (plan.questions || []).entries()) {
+    const payload = await postAsk(baseUrl, {
+      question: item.question,
+      sessionId,
+      history,
+    });
+    history = Array.isArray(payload.messages) ? payload.messages : history;
+    results.push(realQuestionReplayResult(item, payload, index));
+  }
+  return {
+    sessionId,
+    results,
+  };
+}
+
+async function postAsk(baseUrl, body) {
+  const response = await fetch(`${baseUrl}/api/ask`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error || `${response.status} ${response.statusText}`);
+  return payload;
+}
+
+function realQuestionReplayResult(item, payload, index) {
+  const answer = String(payload.answer || payload.content || "");
+  const sources = Array.isArray(payload.sources) ? payload.sources : [];
+  const graphNodes = Array.isArray(payload.graph?.nodes) ? payload.graph.nodes : [];
+  const earlyAnswer = answer.slice(0, 460);
+  const pollution = detectTopicPollution(item.question, earlyAnswer);
+  return {
+    index,
+    question: item.question,
+    notebookId: item.notebookId,
+    sources: sources.length,
+    graphNodes: graphNodes.length,
+    learningQueueItems: Array.isArray(payload.learningQueue?.items) ? payload.learningQueue.items.length : 0,
+    answerMode: payload.answerGeneration?.mode || "unknown",
+    sourceTitles: sources.map((source) => source?.title || "").filter(Boolean).slice(0, 5),
+    ok: sources.length > 0 && graphNodes.length > 0 && !pollution,
+    issues: [
+      sources.length > 0 ? "" : "no_sources",
+      graphNodes.length > 0 ? "" : "no_graph",
+      pollution ? "topic_pollution" : "",
+    ].filter(Boolean),
+  };
+}
+
+export function summarizeRealQuestionAudit(input = {}) {
+  const results = Array.isArray(input.results) ? input.results : [];
+  const questionCount = results.length;
+  const sourceBackedCount = results.filter((item) => Number(item.sources || 0) > 0).length;
+  const graphBackedCount = results.filter((item) => Number(item.graphNodes || 0) > 0).length;
+  const issueCounts = {};
+  for (const result of results) {
+    for (const issue of Array.isArray(result.issues) ? result.issues : []) {
+      issueCounts[issue] = (issueCounts[issue] || 0) + 1;
+    }
+  }
+  const failed = results.filter((item) => item.ok !== true);
+  return {
+    ok: questionCount > 0 && failed.length === 0,
+    questionCount,
+    sourceBackedCount,
+    graphBackedCount,
+    failedCount: failed.length,
+    issueCounts,
+    nextBestAction: failed.length > 0
+      ? `优先修复真实问题「${failed[0].question}」：${(failed[0].issues || []).join("、") || "未通过"}。`
+      : "真实问题回放已通过；下一步优先推进来源树有限批次深加工。",
+  };
+}
+
+function detectTopicPollution(question, earlyAnswer) {
+  const questionText = String(question || "");
+  const answerText = String(earlyAnswer || "");
+  if (/主图|视觉|点击率|转化率|图片/.test(questionText)) return false;
+  return /(先把主图|主图点击率|主图差异化|视觉转化)/.test(answerText);
+}
+
+async function readRealNotebookRecords() {
+  let names = [];
+  try {
+    names = await readdir(NOTEBOOK_DIR);
+  } catch {
+    return [];
+  }
+  const records = [];
+  for (const name of names.filter((item) => item.endsWith(".json"))) {
+    try {
+      const record = JSON.parse(await readFile(path.join(NOTEBOOK_DIR, name), "utf8"));
+      records.push(record);
+    } catch {
+      // Ignore corrupt local history entries; this audit should not block on old scratch files.
+    }
+  }
+  return records;
+}
+
+function isRealQuestionAuditExcludedId(id) {
+  const value = String(id || "").trim();
+  return REAL_QUESTION_AUDIT_EXCLUDED_ID_PATTERNS.some((pattern) => pattern.test(value));
+}
+
+function normalizeQuestionKey(question) {
+  return String(question || "").replace(/\s+/g, "").trim().toLowerCase();
+}
+
+function compactQuestion(question) {
+  return String(question || "").replace(/\s+/g, " ").trim().slice(0, 240);
 }
 
 function completionMissingParts({ blocking, needsAcceptance, boundaryOnly }) {
@@ -700,6 +905,12 @@ function formatMinutes(value) {
   const hours = minutes / 60;
   if (hours < 48) return `${Math.ceil(hours)} 小时`;
   return `${Math.ceil(hours / 24)} 天`;
+}
+
+function clampInteger(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(number)));
 }
 
 function unique(items) {
