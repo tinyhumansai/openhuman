@@ -887,6 +887,29 @@ test("buildRetrievalQuery carries recent conversation into follow-up questions",
   assert.doesNotMatch(query, /文案视觉和流量来源/);
 });
 
+test("buildRetrievalQuery does not carry old visual context into a standalone new topic", () => {
+  const query = buildRetrievalQuery("人群画像应该怎么构建？有哪些实操指导建议", [
+    { role: "user", content: "主图视觉点击率转化率怎么优化？" },
+    {
+      role: "assistant",
+      content: "先检查主图差异化、图片体系、文案视觉和流量来源。",
+      evidenceChain: {
+        claims: [
+          {
+            type: "source_evidence",
+            quote: "产品首图极大程度上决定了点击率，但是如果没有点击率，转化率就成了一个没有必要的数据指标。",
+            title: "你是如何解决转化率的？",
+          },
+        ],
+      },
+    },
+  ]);
+
+  assert.equal(query, "人群画像应该怎么构建？有哪些实操指导建议");
+  assert.doesNotMatch(query, /主图视觉点击率转化率怎么优化/);
+  assert.doesNotMatch(query, /产品首图极大程度上决定了点击率/);
+});
+
 test("buildRetrievalQuery excludes assistant inference and action advice from follow-up retrieval", () => {
   const query = buildRetrievalQuery("那应该先改哪一块？", [
     { role: "user", content: "主图视觉点击率转化率怎么优化？" },

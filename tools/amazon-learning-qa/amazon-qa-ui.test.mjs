@@ -555,11 +555,16 @@ test("composer can inspect the best source scope before asking", () => {
   assert.match(html, /先选资料/);
   assert.match(html, /用这些资料提问/);
   assert.match(html, /候选理由是系统整理，不是新的作者原文证据/);
-  assert.match(html, /sourceControls = normalizeSourceControls\(selection\.sourceControls\)/);
-  assert.match(html, /userSourceControls = normalizeUserSourceControls\(selection\.userSourceControls/);
+  assert.match(html, /oneShotSourceControls = normalizeSourceControls\(selection\.sourceControls\)/);
+  assert.match(html, /oneShotUserSourceControls = normalizeUserSourceControls\(selection\.userSourceControls/);
+  assert.match(html, /persistentSourceControlsAfterAsk/);
+  assert.match(html, /答完会自动恢复当前常规范围/);
+  assert.doesNotMatch(html, /sourceControls = normalizeSourceControls\(selection\.sourceControls\)/);
   assert.match(html, /saveUserSourceControls\(\)/);
   assert.match(html, /我的资料/);
   assert.match(html, /不是作者原文证据/);
+  assert.match(serverSource, /durableSessionSourceControls/);
+  assert.match(serverSource, /session\.sourceControls = durableSessionSourceControls\(sourceControls\)/);
   assert.match(serverSource, /queryUserSources\(context\.namespace,\s*scopedRetrievalQuery,\s*userSourceControls\)/);
   assert.match(serverSource, /selectedSourceFromUserSource/);
   assert.match(serverSource, /userSourceOnly/);

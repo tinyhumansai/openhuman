@@ -5966,6 +5966,8 @@
       let selectedStudyPack = null;
       const topicReadingSelections = new Map();
       let sourceControls = readSourceControls();
+      let oneShotSourceControls = null;
+      let oneShotUserSourceControls = null;
       let currentSourceSelection = null;
       let userSources = [];
       let userSourceControls = readUserSourceControls();
@@ -6017,6 +6019,8 @@
         selectedExperimentResultSaving = false;
         pendingProductInput = null;
         currentSourceSelection = null;
+        oneShotSourceControls = null;
+        oneShotUserSourceControls = null;
         selectedTopicRoomId = "";
         selectedStudyPack = null;
         topicReadingSelections.clear();
@@ -6436,9 +6440,13 @@
 
       async function ask(question) {
         const intentPreference = currentSourceSelection?.selectedIntent || currentSourceSelection?.intent || null;
+        const askSourceControls = normalizeSourceControls(oneShotSourceControls || currentSourceSelection?.sourceControls || sourceControls);
+        const askUserSourceControls = normalizeUserSourceControls(oneShotUserSourceControls || currentSourceSelection?.userSourceControls || userSourceControls);
         askButton.disabled = true;
         askButton.textContent = "查询中";
         questionEl.value = "";
+        oneShotSourceControls = null;
+        oneShotUserSourceControls = null;
         currentSourceSelection = null;
         renderQuestionSourceSelection();
         safeLocalRemove(RETRY_QUESTION_KEY);
@@ -6458,7 +6466,7 @@
             method: "POST",
             headers: { "content-type": "application/json" },
             signal: askController.signal,
-            body: JSON.stringify({ question, sessionId, history: priorMessages, sourceControls, userSourceControls, productInput, intentPreference }),
+            body: JSON.stringify({ question, sessionId, history: priorMessages, sourceControls: askSourceControls, userSourceControls: askUserSourceControls, productInput, intentPreference }),
           });
           if (productInput) pendingProductInput = null;
           sessionId = payload.sessionId || sessionId;
@@ -6499,8 +6507,11 @@
               userSourceControls: payload.userSourceControls || userSourceControls,
             },
           ];
-          userSourceControls = normalizeUserSourceControls(payload.userSourceControls || userSourceControls);
+          sourceControls = persistentSourceControlsAfterAsk(payload.sourceControls || askSourceControls);
+          userSourceControls = normalizeUserSourceControls(userSourceControls);
+          saveSourceControls();
           saveUserSourceControls();
+          renderSourceScopeControls();
           renderUserSources();
           saveMessages();
           selectedStudyPack = null;
@@ -10044,7 +10055,7 @@
       function readSourceControls() {
         try {
           const parsed = JSON.parse(localStorage.getItem(SOURCE_CONTROLS_KEY) || "{}");
-          return normalizeSourceControls(parsed);
+          return persistentSourceControlsAfterAsk(parsed);
         } catch {
           return { excludedSourceKeys: [], allowedAuthors: [], allowedSourceKeys: [], selectedSources: [] };
         }
@@ -10094,6 +10105,16 @@
               .slice(0, 12)
           : [];
         return { excludedSourceKeys, allowedAuthors, allowedSourceKeys, selectedSources };
+      }
+
+      function persistentSourceControlsAfterAsk(value = {}) {
+        const controls = normalizeSourceControls(value);
+        return {
+          excludedSourceKeys: controls.excludedSourceKeys,
+          allowedAuthors: controls.allowedAuthors,
+          allowedSourceKeys: [],
+          selectedSources: [],
+        };
       }
 
       function normalizeSelectedSourceForControl(source) {
@@ -10322,15 +10343,13 @@
         const selection = currentSourceSelection;
         if (!selection?.sourceControls) return;
         const question = questionEl.value.trim();
-        sourceControls = normalizeSourceControls(selection.sourceControls);
-        userSourceControls = normalizeUserSourceControls(selection.userSourceControls || userSourceControls);
-        saveSourceControls();
-        saveUserSourceControls();
+        oneShotSourceControls = normalizeSourceControls(selection.sourceControls);
+        oneShotUserSourceControls = normalizeUserSourceControls(selection.userSourceControls || userSourceControls);
         renderSourceScopeControls();
         renderUserSources();
         currentSourceSelection = {
           ...selection,
-          summary: "已把这些来源设为下一轮回答范围。这个范围可随时在左侧清空或重选。",
+          summary: "已把这些来源设为下一轮回答范围。答完会自动恢复当前常规范围，避免带偏后续换题。",
         };
         renderQuestionSourceSelection();
         if (askAfterApply && question) ask(question);
@@ -12838,13 +12857,12 @@
         if (!selectedKeys.length) return;
         const sources = topicSourcesForGroup(group).filter((item) => sourceKeysForTopicSource(item).some((key) => selectedKeys.includes(key)));
         const packageControls = group.sourcePackage.sourceControls || {};
-        sourceControls = normalizeSourceControls({
+        oneShotSourceControls = normalizeSourceControls({
           excludedSourceKeys: [...(sourceControls.excludedSourceKeys || []), ...(packageControls.excludedSourceKeys || [])],
           allowedAuthors: packageControls.allowedAuthors || [],
           allowedSourceKeys: selectedKeys,
           selectedSources: sources,
         });
-        saveSourceControls();
         renderSourceScopeControls();
         fillDossierPrompt(buildTopicReadingPrompt(group, sources));
       }
@@ -14095,7 +14113,9 @@
         if (!Array.isArray(notebook.messages)) return;
         sessionId = notebook.id || id;
         messages = notebook.messages;
-        sourceControls = normalizeSourceControls(notebook.sourceControls || {});
+        sourceControls = persistentSourceControlsAfterAsk(notebook.sourceControls || {});
+        oneShotSourceControls = null;
+        oneShotUserSourceControls = null;
         userSourceControls = normalizeUserSourceControls(notebook.userSourceControls || {});
         safeLocalSet(SESSION_KEY, sessionId);
         updateSessionUrl(sessionId);

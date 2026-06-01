@@ -447,14 +447,14 @@ async function routeRequest(request, response, context) {
       session.history = clientHistory;
     }
     const hasIncomingSourceControls = body.sourceControls && typeof body.sourceControls === "object";
-    const sessionSourceControls = normalizeSourceControls(session.sourceControls);
+    const sessionSourceControls = durableSessionSourceControls(session.sourceControls);
     const historySourceControls = sourceControlsFromHistory(session.history);
     const sourceControls = hasIncomingSourceControls
       ? normalizeSourceControls(body.sourceControls)
       : sourceControlsHasAnyValue(sessionSourceControls)
         ? sessionSourceControls
         : historySourceControls;
-    session.sourceControls = sourceControls;
+    session.sourceControls = durableSessionSourceControls(sourceControls);
     const userSourceControls = normalizeUserSourceControls(body.userSourceControls || session.userSourceControls);
     session.userSourceControls = userSourceControls;
     const retrievalQuery = buildRetrievalQuery(question, session.history, {
@@ -3113,6 +3113,16 @@ function sourceControlsHasAnyValue(controls) {
   return (controls?.excludedSourceKeys || []).length > 0 || (controls?.allowedAuthors || []).length > 0 || (controls?.allowedSourceKeys || []).length > 0 || (controls?.selectedSources || []).length > 0;
 }
 
+function durableSessionSourceControls(controls) {
+  const normalized = normalizeSourceControls(controls);
+  return {
+    excludedSourceKeys: normalized.excludedSourceKeys,
+    allowedAuthors: normalized.allowedAuthors,
+    allowedSourceKeys: [],
+    selectedSources: [],
+  };
+}
+
 function normalizeUserSourceControls(controls) {
   if (!controls || typeof controls !== "object") return { enabledIds: [], mode: "blend" };
   const enabledIds = Array.isArray(controls.enabledIds)
@@ -3182,7 +3192,7 @@ function sourceControlsFromHistory(history) {
   for (let index = safeHistory.length - 1; index >= 0; index -= 1) {
     const entry = safeHistory[index];
     if (entry?.role !== "assistant") continue;
-    const controls = normalizeSourceControls(entry.sourceControls);
+    const controls = durableSessionSourceControls(entry.sourceControls);
     if (sourceControlsHasAnyValue(controls)) return controls;
     const scope = normalizeSourceScope(entry.sourceScope);
     if (scope?.active && scope.allowedAuthors.length > 0) {

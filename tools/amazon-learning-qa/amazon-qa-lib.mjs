@@ -3992,6 +3992,7 @@ export function buildRetrievalQuery(question, history = [], options = {}) {
   const safeHistory = Array.isArray(history) ? history : [];
   const recent = safeHistory.slice(-6);
   if (safeHistory.length === 0) return current;
+  if (!shouldUseConversationContextForRetrieval(question)) return current;
   const excludedSourceKeys = normalizeSourceKeySet(options.excludedSourceKeys);
 
   const memoryAnchors = safeHistory.slice(0, Math.max(0, safeHistory.length - recent.length))
@@ -4008,6 +4009,20 @@ export function buildRetrievalQuery(question, history = [], options = {}) {
   }
 
   return compactHistoryText(lines.join("\n"), 1700);
+}
+
+function shouldUseConversationContextForRetrieval(question) {
+  const raw = String(question || "").trim();
+  if (!raw) return false;
+  const length = [...raw].length;
+  const explicitContext = /(上文|上面|刚才|前面|上一轮|上轮|这轮|本轮|这个|这些|该结论|该回答|基于.*(回答|结论|档案|资料)|原问题)/i.test(raw);
+  if (explicitContext) return true;
+  const followUpStart = /^(那|继续|接着|还有|再|然后|下一步|第二步|重新|补完|帮我继续)/i.test(raw);
+  const followUpNeed = /(哪一块|下一步|第二步|继续|补来源|换意图|重新判断|怎么判断|先改什么|要检查)/i.test(raw);
+  const standaloneTopic = /(人群画像|选品|listing|关键词|标题|广告|新品|主图|点击率|转化率|文案|收录|竞品|利润|市场|产品|页面|资料|方法|实操|构建|收集)/i.test(raw);
+  if (standaloneTopic && length > 18 && !followUpStart) return false;
+  if (followUpStart || followUpNeed) return true;
+  return length <= 10 && !standaloneTopic;
 }
 
 function retrievalMemoryAnchorLine(entry, excludedSourceKeys = new Set()) {
