@@ -1749,6 +1749,49 @@ pub(crate) fn report_error_message(
     );
 }
 
+/// Bind the signed-in user's id to the process-global Sentry scope so every
+/// subsequently-reported event carries `user.id`.
+///
+/// Why this exists: the `before_send` hooks in `src/main.rs` and the Tauri
+/// shell already pluck `user.id` from `app_state::peek_cached_current_user_identity()`,
+/// but that cache is only warmed by the frontend-driven `app_state_snapshot`
+/// RPC. Errors raised from background loops — e.g. the periodic Composio sync
+/// tick that emits the `[composio-direct]` shapes — fire with an empty cache,
+/// so the event lands with no user attribution (userCount=0). Setting the
+/// scope user eagerly at the session boundary (login / account switch) makes
+/// the id available regardless of whether the snapshot cache was ever warmed,
+/// mirroring how the backend tags every event at the session boundary.
+///
+/// Only the `id` is carried — never email, name, or IP — to stay consistent
+/// with `send_default_pii: false` in the Sentry client options. The `id` is
+/// the backend's mongo ObjectId for the user; it is recorded only on the
+/// Sentry scope and never logged here.
+///
+/// No-op when the Sentry client is a no-op guard (missing DSN) — the scope
+/// mutation is simply never flushed.
+pub fn set_sentry_user_id(user_id: &str) {
+    let trimmed = user_id.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    let owned = trimmed.to_string();
+    sentry::configure_scope(|scope| {
+        scope.set_user(Some(sentry::User {
+            id: Some(owned.clone()),
+            ..Default::default()
+        }));
+    });
+}
+
+/// Clear the signed-in user from the process-global Sentry scope.
+///
+/// Called on logout so events reported after sign-out (or for a different
+/// account before the next `set_sentry_user_id`) are not misattributed to the
+/// previous user. Mirrors `set_sentry_user_id` — no-op under a no-op guard.
+pub fn clear_sentry_user() {
+    sentry::configure_scope(|scope| scope.set_user(None));
+}
+
 /// Returns true when a Sentry event is a per-attempt provider HTTP failure
 /// that the reliable-provider layer already handles via retry + fallback.
 ///

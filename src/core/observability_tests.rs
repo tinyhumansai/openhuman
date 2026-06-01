@@ -3547,3 +3547,63 @@ fn report_error_or_expected_routes_channel_supervisor_restart_through_expected_p
         &[("channel", "discord")],
     );
 }
+
+#[test]
+fn set_sentry_user_id_attaches_id_to_reported_events() {
+    use std::sync::Arc;
+
+    use sentry::test::TestTransport;
+
+    // Stand up an isolated hub with a TestTransport so we can observe the
+    // user the captured event carries. Bound to the current thread only via
+    // `HubSwitchGuard`, so it never bleeds into other tests.
+    let transport = TestTransport::new();
+    let options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _guard = sentry::HubSwitchGuard::new(hub);
+
+    // Mimics the mongo ObjectId the backend hands us at the session boundary.
+    set_sentry_user_id("507f1f77bcf86cd799439011");
+    report_error(
+        "simulated direct-mode failure",
+        "composio",
+        "list_connections",
+        &[],
+    );
+
+    let events = transport.fetch_and_clear_events();
+    assert_eq!(events.len(), 1, "expected exactly one captured event");
+    let user = events[0]
+        .user
+        .as_ref()
+        .expect("captured event should carry scope user");
+    assert_eq!(user.id.as_deref(), Some("507f1f77bcf86cd799439011"));
+    // PII-minimal: only the id is ever set on the scope user.
+    assert!(user.email.is_none());
+    assert!(user.username.is_none());
+
+    // Logout clears the scope; subsequent events must not be misattributed.
+    clear_sentry_user();
+    report_error("post-logout failure", "composio", "list_connections", &[]);
+    let events = transport.fetch_and_clear_events();
+    assert_eq!(events.len(), 1);
+    assert!(
+        events[0].user.is_none(),
+        "scope user must be cleared after clear_sentry_user()"
+    );
+}
+
+#[test]
+fn set_sentry_user_id_ignores_blank_input() {
+    // Blank / whitespace-only ids are dropped rather than attaching an empty
+    // `user.id` that would still count as a distinct user in Sentry.
+    set_sentry_user_id("");
+    set_sentry_user_id("   ");
+}
