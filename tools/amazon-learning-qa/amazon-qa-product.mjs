@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import path from "node:path";
@@ -25,6 +25,7 @@ const CORE_BIN = QA_PATHS.coreBin;
 const UI_PATH = QA_PATHS.uiPath;
 const SERVER_PATH = QA_PATHS.serverPath;
 const HANDOFF_PATH = QA_PATHS.handoffPath;
+const ACCEPTANCE_EVIDENCE_PATH = path.join(QA_PATHS.outputRoot, "amazon-learning-qa-acceptance-evidence.json");
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 7790;
 const DEFAULT_CORE_PORT = 7789;
@@ -43,6 +44,7 @@ function usage() {
   ${PRODUCT_COMMAND} status [--json]
   ${PRODUCT_COMMAND} smoke [--base-url ${DEFAULT_BASE_URL}]
   ${PRODUCT_COMMAND} acceptance [--base-url ${DEFAULT_BASE_URL}]
+  ${PRODUCT_COMMAND} acceptance-evidence [--base-url ${DEFAULT_BASE_URL}]
   ${PRODUCT_COMMAND} completion-audit [--json]
   ${PRODUCT_COMMAND} handoff
 
@@ -70,6 +72,7 @@ async function main() {
   if (command === "status") return printStatus(args);
   if (command === "smoke") return runSmoke(args);
   if (command === "acceptance") return runAcceptance(args);
+  if (command === "acceptance-evidence") return writeAcceptanceEvidence(args);
   if (command === "completion-audit" || command === "audit") return printCompletionAudit(args);
   if (command === "handoff") return writeHandoff();
   throw new Error(`Unknown command: ${command}`);
@@ -357,6 +360,20 @@ async function runAcceptance(args) {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function writeAcceptanceEvidence(args) {
+  const baseUrl = argValue(args, "--base-url", DEFAULT_BASE_URL);
+  const result = await runAmazonQaFinalAcceptance({ baseUrl });
+  const evidence = {
+    generatedAt: new Date().toISOString(),
+    command: `${PRODUCT_COMMAND} acceptance-evidence --base-url ${baseUrl}`,
+    baseUrl,
+    result,
+  };
+  await mkdir(path.dirname(ACCEPTANCE_EVIDENCE_PATH), { recursive: true });
+  await writeFile(ACCEPTANCE_EVIDENCE_PATH, `${JSON.stringify(evidence, null, 2)}\n`, "utf8");
+  console.log(ACCEPTANCE_EVIDENCE_PATH);
+}
+
 async function printCompletionAudit(args) {
   const report = await buildProductDoctorReport();
   const audit = buildCompletionAudit(report);
@@ -375,6 +392,10 @@ async function writeHandoff() {
 }
 
 export function buildCompletionAudit(report) {
+  const acceptanceEvidence = Object.hasOwn(report, "acceptanceEvidence")
+    ? report.acceptanceEvidence
+    : readAcceptanceEvidence();
+  const acceptanceCheck = validateAcceptanceEvidence(acceptanceEvidence);
   const semanticReady = report.ok
     && report.service?.answerStatus === "ready"
     && Number(report.service?.documents || 0) === EXPECTED_DOCUMENTS
@@ -396,10 +417,14 @@ export function buildCompletionAudit(report) {
     {
       id: "interactive_memory_qa",
       label: "连续问答、来源引用和图谱入口",
-      status: report.service?.answerStatus === "ready" ? "needs_acceptance_evidence" : "not_complete",
-      evidence: report.service?.answerStatus === "ready"
-        ? `问答服务当前为 ready；需要运行 ${PRODUCT_COMMAND} acceptance 作为真实问题验收证据。`
-        : "问答服务当前未就绪。",
+      status: report.service?.answerStatus === "ready"
+        ? (acceptanceCheck.ok ? "proved" : "needs_acceptance_evidence")
+        : "not_complete",
+      evidence: report.service?.answerStatus !== "ready"
+        ? "问答服务当前未就绪。"
+        : acceptanceCheck.ok
+          ? `真实问题验收证据已保存：${acceptanceCheck.generatedAt}，覆盖 ${acceptanceCheck.scenarioCount} 个场景、换题不串题和结果反馈再追问。`
+          : `问答服务当前为 ready；需要运行 ${PRODUCT_COMMAND} acceptance-evidence 作为真实问题验收证据。${acceptanceCheck.reason ? `当前证据问题：${acceptanceCheck.reason}` : ""}`,
     },
     {
       id: "source_tree_learning_layer",
@@ -440,24 +465,78 @@ export function buildCompletionAudit(report) {
     : semanticReady
       ? "local_qa_ready_not_full_final"
       : "needs_action";
+  const missingSummary = completionStatus === "complete"
+    ? "所有终版要求已有当前证据证明。"
+    : `本地语义问答已达到可用状态，但完整终版仍缺少${completionMissingParts({ blocking, needsAcceptance, boundaryOnly }).join("、")}。`;
   return {
     generatedAt: report.generatedAt || new Date().toISOString(),
     completionStatus,
     canMarkGoalComplete: completionStatus === "complete",
-    summary: completionStatus === "complete"
-      ? "所有终版要求已有当前证据证明。"
-      : "本地语义问答已达到可用状态，但完整终版仍缺少来源树完成、真实问题验收证据或云端完整部署条件。",
+    summary: missingSummary,
     requirements,
     blocking: blocking.map((item) => item.id),
     needsAcceptance: needsAcceptance.map((item) => item.id),
     boundaryOnly: boundaryOnly.map((item) => item.id),
+    acceptanceEvidence: acceptanceCheck,
     nextActions: [
-      ...needsAcceptance.map(() => `运行 ${PRODUCT_COMMAND} acceptance，并保存输出作为真实问题验收证据。`),
+      ...needsAcceptance.map(() => `运行 ${PRODUCT_COMMAND} acceptance-evidence，并保存输出作为真实问题验收证据。`),
       ...blocking.map((item) => item.id === "source_tree_learning_layer"
         ? "按页面有限批次继续来源树深加工；问答可先正常使用。"
         : item.evidence),
       ...boundaryOnly.map(() => "如要云端完整问答，需要迁移 SQLite、模型服务和 openhuman-core 到可长驻云端服务。"),
     ],
+  };
+}
+
+function completionMissingParts({ blocking, needsAcceptance, boundaryOnly }) {
+  const parts = [];
+  if (blocking.some((item) => item.id === "source_tree_learning_layer")) parts.push("来源树完成");
+  const otherBlocking = blocking.filter((item) => item.id !== "source_tree_learning_layer").map((item) => item.label);
+  parts.push(...otherBlocking);
+  if (needsAcceptance.length > 0) parts.push("真实问题验收证据");
+  if (boundaryOnly.length > 0) parts.push("云端完整部署条件");
+  return parts.length ? parts : ["未归类的终版证据"];
+}
+
+function readAcceptanceEvidence() {
+  if (!existsSync(ACCEPTANCE_EVIDENCE_PATH)) return null;
+  try {
+    return JSON.parse(readFileSync(ACCEPTANCE_EVIDENCE_PATH, "utf8"));
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+function validateAcceptanceEvidence(evidence) {
+  if (!evidence || typeof evidence !== "object") return { ok: false, reason: "没有验收证据文件。" };
+  if (evidence.error) return { ok: false, reason: evidence.error };
+  const result = evidence.result || evidence;
+  const scenarios = Array.isArray(result.scenarios) ? result.scenarios : [];
+  const topicRows = Array.isArray(result.topicSwitch?.standaloneResults) ? result.topicSwitch.standaloneResults : [];
+  const confirmation = result.confirmationLoop || {};
+  const ok = result.ok === true
+    && Number(result.documents || 0) === EXPECTED_DOCUMENTS
+    && Number(result.chunks || 0) === EXPECTED_CHUNKS
+    && Number(result.embeddedChunks || 0) === EXPECTED_CHUNKS
+    && Number(result.vectorCoveragePercent || 0) >= 99
+    && scenarios.length >= 3
+    && scenarios.every((item) => Number(item.sources || 0) > 0 && Number(item.graphNodes || 0) > 0)
+    && topicRows.length >= 4
+    && topicRows.some((item) => item.id === "product-title" && Number(item.sources || 0) > 0)
+    && topicRows.some((item) => item.id === "listing-prep" && Number(item.sources || 0) > 0)
+    && topicRows.some((item) => item.id === "selection-methods" && Number(item.sources || 0) > 0)
+    && topicRows.some((item) => item.id === "persona" && Number(item.graphNodes || 0) > 0)
+    && confirmation.status === "needs_source"
+    && Number(confirmation.followUpSources || 0) > 0
+    && Number(result.studyPackSources || 0) > 0
+    && Number(result.studioFlashcards || 0) > 0
+    && Number(result.studioMindMapNodes || 0) > 0;
+  return {
+    ok,
+    generatedAt: evidence.generatedAt || "",
+    scenarioCount: scenarios.length,
+    topicSwitchCount: topicRows.length,
+    reason: ok ? "" : "验收输出缺少真实问题、来源、图谱、换题或结果反馈闭环证据。",
   };
 }
 

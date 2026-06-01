@@ -169,6 +169,7 @@ test("completion audit refuses to mark the goal complete while source tree and c
     deployment: {
       vercelReady: false,
     },
+    acceptanceEvidence: null,
   };
   const audit = buildCompletionAudit(report);
   const markdown = completionAuditMarkdown(audit);
@@ -184,6 +185,72 @@ test("completion audit refuses to mark the goal complete while source tree and c
   assert.match(markdown, /来源树仍有 9622 个后台任务/);
   assert.match(markdown, /不能原样部署到 Vercel Serverless/);
 });
+
+test("completion audit accepts saved real-question evidence for interactive Q&A", () => {
+  const report = {
+    ok: true,
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    service: {
+      answerStatus: "ready",
+      learningStatus: "processing",
+      documents: 1779,
+      chunks: 14597,
+      embedded: 14597,
+      coverage: 100,
+      sourceTreeQueuedJobs: 9622,
+      sourceTreeDoneJobs: 2918,
+      sourceTreeFailedJobs: 0,
+      sourceTreeEstimatedRemainingText: "5 天",
+    },
+    deployment: { vercelReady: false },
+    acceptanceEvidence: {
+      generatedAt: "2026-06-01T00:10:00.000Z",
+      result: acceptanceEvidenceResult(),
+    },
+  };
+  const audit = buildCompletionAudit(report);
+  const interactive = audit.requirements.find((item) => item.id === "interactive_memory_qa");
+
+  assert.equal(interactive.status, "proved");
+  assert.equal(audit.acceptanceEvidence.ok, true);
+  assert.deepEqual(audit.needsAcceptance, []);
+  assert.doesNotMatch(audit.summary, /真实问题验收证据/);
+  assert.match(audit.summary, /来源树完成、云端完整部署条件/);
+  assert.ok(audit.blocking.includes("source_tree_learning_layer"));
+  assert.ok(audit.boundaryOnly.includes("vercel_delivery"));
+});
+
+function acceptanceEvidenceResult() {
+  const scenario = (id) => ({
+    id,
+    sources: 5,
+    graphNodes: 20,
+    learningQueueItems: 6,
+  });
+  return {
+    ok: true,
+    documents: 1779,
+    chunks: 14597,
+    embeddedChunks: 14597,
+    vectorCoveragePercent: 100,
+    scenarios: [scenario("visual-conversion"), scenario("product-selection"), scenario("listing-keywords")],
+    topicSwitch: {
+      standaloneResults: [
+        { id: "product-title", sources: 5, graphNodes: 20 },
+        { id: "listing-prep", sources: 5, graphNodes: 21 },
+        { id: "persona", sources: 0, graphNodes: 8 },
+        { id: "selection-methods", sources: 5, graphNodes: 21 },
+      ],
+    },
+    confirmationLoop: {
+      status: "needs_source",
+      followUpSources: 5,
+    },
+    studyPackSources: 7,
+    studioFlashcards: 10,
+    studioMindMapNodes: 22,
+  };
+}
 
 function mockFetch({ status, models }) {
   const original = globalThis.fetch;
