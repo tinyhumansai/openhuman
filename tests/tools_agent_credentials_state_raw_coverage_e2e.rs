@@ -648,14 +648,20 @@ async fn round16_spawn_subagent_tool_and_runner_error_success_paths() {
 
     let disabled_thread = tool
         .execute(json!({
-            "agent_id": "researcher",
-            "prompt": "do work",
-            "dedicated_thread": true
+                "agent_id": "researcher",
+                "prompt": "do work",
+                "dedicated_thread": true
         }))
         .await
         .expect("dedicated thread returns tool result");
     assert!(disabled_thread.is_error);
-    assert!(disabled_thread.output().contains("temporarily disabled"));
+    let dedicated_thread_output = disabled_thread.output();
+    assert!(!dedicated_thread_output.contains("temporarily disabled"));
+    assert!(
+        dedicated_thread_output.contains("AgentDefinitionRegistry")
+            || dedicated_thread_output.contains("outside of an agent turn"),
+        "unexpected dedicated_thread error: {dedicated_thread_output}"
+    );
 
     let provider = Arc::new(ScriptedProvider::new(vec![response(
         Some("subagent final answer that will be clipped"),
