@@ -54,7 +54,11 @@ export function nodeColor(node: GraphNode): string {
 }
 
 export function nodeRadius(node: GraphNode): number {
-  if (node.kind === 'summary') return Math.max(4, 10 - (node.level ?? 0) * 0.8);
+  if (node.kind === 'summary') {
+    const level = typeof node.level === 'number' && Number.isFinite(node.level) ? node.level : 0;
+    const radius = 10 - level * 0.8;
+    return radius < 4 ? 4 : radius;
+  }
   if (node.kind === 'contact') return 9;
   return 4; // chunk
 }

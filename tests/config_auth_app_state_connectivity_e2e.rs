@@ -5442,15 +5442,11 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    let missing_secret_err = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+    let missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
         .load()
-        .expect_err("oauth profile missing access token should fail");
-    assert!(
-        missing_secret_err
-            .to_string()
-            .contains("OAuth profile missing access_token"),
-        "unexpected missing oauth secret error: {missing_secret_err:#}"
-    );
+        .expect("oauth profile missing access token should be dropped");
+    assert!(missing_secret.profiles.is_empty());
+    assert!(missing_secret.active_profiles.is_empty());
 
     let public_api_dir = tmp.path().join("public-api-errors");
     let public_store = AuthProfilesStore::new(&public_api_dir, false);

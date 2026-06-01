@@ -682,9 +682,14 @@ impl AuthProfilesStore {
             };
             let token_set = match kind {
                 AuthProfileKind::OAuth => {
-                    let access = access_token.ok_or_else(|| {
-                        anyhow::anyhow!("OAuth profile missing access_token: {id}")
-                    })?;
+                    let Some(access) = access_token else {
+                        log::warn!(
+                            "[auth] dropping OAuth profile missing access_token provider={}",
+                            p.provider
+                        );
+                        dropped_ids.push(id.clone());
+                        continue;
+                    };
                     Some(TokenSet {
                         access_token: access,
                         refresh_token,
