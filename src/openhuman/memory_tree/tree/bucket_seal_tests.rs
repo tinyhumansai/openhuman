@@ -104,6 +104,7 @@ async fn crossing_budget_triggers_seal() {
             time_range: (ts, ts),
             tags: vec![],
             source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
         },
         token_count: tokens,
         seq_in_source: seq,
@@ -216,6 +217,7 @@ async fn fanout_at_l1_triggers_l2_seal() {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
+                path_scope: None,
             },
             // Each leaf alone busts INPUT_TOKEN_BUDGET so the L0→L1 seal
             // fires on every append. After SUMMARY_FANOUT seals, the
@@ -313,6 +315,7 @@ async fn upper_level_does_not_seal_below_fanout() {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
+                path_scope: None,
             },
             token_count: INPUT_TOKEN_BUDGET + 1,
             seq_in_source: seq,
@@ -395,6 +398,7 @@ fn seed_leaf(
             time_range: (ts, ts),
             tags: topics.clone(),
             source_ref: Some(SourceRef::new(format!("slack://x{seq}"))),
+            path_scope: None,
         },
         // Bust INPUT_TOKEN_BUDGET in one leaf so the seal fires immediately.
         token_count: INPUT_TOKEN_BUDGET + 1,

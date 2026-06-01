@@ -9081,6 +9081,132 @@ async fn json_rpc_config_autonomy_settings_roundtrip() {
     rpc_join.abort();
 }
 
+/// Issue #3100 — the agent/action timeout must be readable and writable over
+/// RPC (the surface the Settings → Agent OS access "Action timeout" control
+/// uses), with the same bounds the UI shows and a validation error on garbage.
+#[tokio::test]
+async fn json_rpc_config_agent_timeout_settings_roundtrip() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+    // No operator override so the config value drives the effective timeout.
+    let _timeout_env_guard = EnvVarGuard::unset("OPENHUMAN_TOOL_TIMEOUT_SECS");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config_with_local_ai_disabled(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // GET → defaults: 120s, bounds 1..=3600, no env override.
+    let initial = post_json_rpc(
+        &rpc_base,
+        7101,
+        "openhuman.config_get_agent_settings",
+        json!({}),
+    )
+    .await;
+    let initial_outer = assert_no_jsonrpc_error(&initial, "get_agent_settings initial");
+    let initial_result = initial_outer
+        .get("result")
+        .unwrap_or_else(|| panic!("missing result: {initial_outer}"));
+    assert_eq!(
+        initial_result
+            .get("agent_timeout_secs")
+            .and_then(Value::as_u64),
+        Some(120),
+        "default timeout should be 120, got: {initial_outer}"
+    );
+    assert_eq!(
+        initial_result
+            .get("min_timeout_secs")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        initial_result
+            .get("max_timeout_secs")
+            .and_then(Value::as_u64),
+        Some(3600)
+    );
+    assert_eq!(
+        initial_result.get("env_override").and_then(Value::as_bool),
+        Some(false)
+    );
+
+    // UPDATE → 300s.
+    let update = post_json_rpc(
+        &rpc_base,
+        7102,
+        "openhuman.config_update_agent_settings",
+        json!({ "agent_timeout_secs": 300 }),
+    )
+    .await;
+    assert_no_jsonrpc_error(&update, "update_agent_settings");
+
+    // GET again → 300, and the runtime-effective value tracks it.
+    let after = post_json_rpc(
+        &rpc_base,
+        7103,
+        "openhuman.config_get_agent_settings",
+        json!({}),
+    )
+    .await;
+    let after_outer = assert_no_jsonrpc_error(&after, "get_agent_settings after");
+    let after_result = after_outer
+        .get("result")
+        .unwrap_or_else(|| panic!("missing result: {after_outer}"));
+    assert_eq!(
+        after_result
+            .get("agent_timeout_secs")
+            .and_then(Value::as_u64),
+        Some(300),
+        "expected 300 after update, got: {after_outer}"
+    );
+    assert_eq!(
+        after_result
+            .get("effective_timeout_secs")
+            .and_then(Value::as_u64),
+        Some(300),
+        "effective timeout should track the saved value, got: {after_outer}"
+    );
+
+    // Invalid value (0 disables the timeout) → JSON-RPC error envelope.
+    let bad = post_json_rpc(
+        &rpc_base,
+        7104,
+        "openhuman.config_update_agent_settings",
+        json!({ "agent_timeout_secs": 0 }),
+    )
+    .await;
+    let bad_err = assert_jsonrpc_error(&bad, "update_agent_settings bad value");
+    let err_message = bad_err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("error object missing message: {bad_err}"));
+    assert!(
+        err_message.contains("between"),
+        "expected range validation error in: {err_message}"
+    );
+
+    // Restore the process-global timeout so later tests in this binary don't
+    // inherit the 300s value set above (the AtomicU64 is per-process, not per-test).
+    openhuman_core::openhuman::tool_timeout::set_tool_timeout_secs(
+        openhuman_core::openhuman::tool_timeout::DEFAULT_TIMEOUT_SECS,
+    );
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
 // ---------------------------------------------------------------------------
 // Port-conflict recovery E2E
 // ---------------------------------------------------------------------------

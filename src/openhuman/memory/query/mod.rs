@@ -12,6 +12,7 @@ mod fetch_leaves;
 mod ingest_document;
 mod query_source;
 mod search_entities;
+pub mod smart_walk;
 pub mod walk;
 
 // Re-export individual tool types for callers that need them directly
@@ -21,6 +22,10 @@ pub use fetch_leaves::MemoryTreeFetchLeavesTool;
 pub use ingest_document::MemoryTreeIngestDocumentTool;
 pub use query_source::MemoryTreeQuerySourceTool;
 pub use search_entities::MemoryTreeSearchEntitiesTool;
+pub use smart_walk::{
+    run_smart_walk, SmartMemoryWalkTool, SmartWalkOptions, SmartWalkOutcome, SmartWalkStep,
+    SmartWalkStopReason,
+};
 pub use walk::MemoryTreeWalkTool as MemoryQueryWalkTool;
 pub use walk::{run_walk, MemoryTreeWalkTool, WalkOptions, WalkOutcome, WalkStep, WalkStopReason};
 pub use MemoryTreeTool as MemoryQueryTool;
@@ -47,7 +52,9 @@ impl Tool for MemoryTreeTool {
          `query_source` (filter by source type + time window), \
          `drill_down` (expand a coarse summary one level), \
          `fetch_leaves` (pull raw chunks for citation), `ingest_document` (write a document into the tree for future retrieval), \
-         `walk` (agentic multi-turn walk — LLM navigates summaries and returns a synthesized answer for a natural-language query)."
+         `walk` (agentic multi-turn walk — LLM navigates summaries and returns a synthesized answer for a natural-language query), \
+         `smart_walk` (multi-strategy retrieval — combines vector search, keyword search, entity lookup, \
+         and tree browsing across raw files, wiki summaries, documents, and episodic memories)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -57,7 +64,8 @@ impl Tool for MemoryTreeTool {
                 "mode": {
                     "type": "string",
                     "enum": ["search_entities", "query_source",
-                             "drill_down", "fetch_leaves", "ingest_document", "walk"],
+                             "drill_down", "fetch_leaves", "ingest_document", "walk",
+                             "smart_walk"],
                     "description": "Which operation to run (retrieval or write)."
                 },
                 // search_entities params
@@ -138,10 +146,11 @@ impl Tool for MemoryTreeTool {
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
             "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
             "walk" => MemoryTreeWalkTool.execute(args).await,
+            "smart_walk" => SmartMemoryWalkTool.execute(args).await,
             other => {
                 log::debug!("[tool][memory_tree] unknown_mode mode={other}");
                 Err(anyhow::anyhow!(
-                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_source, drill_down, fetch_leaves, ingest_document, walk"
+                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_source, drill_down, fetch_leaves, ingest_document, walk, smart_walk"
                 ))
             }
         }
@@ -187,6 +196,7 @@ mod memory_tree_dispatcher_tests {
         assert!(modes.contains(&"fetch_leaves"));
         assert!(modes.contains(&"ingest_document"));
         assert!(modes.contains(&"walk"));
+        assert!(modes.contains(&"smart_walk"));
         // Removed with the global/topic trees.
         assert!(!modes.contains(&"query_topic"));
         assert!(!modes.contains(&"query_global"));

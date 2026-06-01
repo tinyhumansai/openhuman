@@ -1936,6 +1936,15 @@ impl Config {
             };
         }
 
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_SMART_WALK_MODEL") {
+            let trimmed = raw.trim();
+            self.memory_tree.smart_walk_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+
         // Auto-update overrides
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
