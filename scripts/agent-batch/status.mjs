@@ -190,7 +190,7 @@ function postOrUpdateTrackingComment(spec, body) {
 
 function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2));
-  if (flags.help || flags.h) {
+  if (flags.help || flags.h || flags["?"]) {
     process.stdout.write(`${usage()}\n`);
     process.exit(0);
   }
