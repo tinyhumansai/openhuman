@@ -101,6 +101,14 @@ export function summarizeSourceTreeDrain({ sourceTree = {}, run = {}, now = Date
   const progressNow = running || starting || stopping || stale || !Number.isFinite(endedAtMs) ? now : endedAtMs;
   const progress = sourceTreeDrainProgress({ processedJobs, queuedJobs, startedAt: normalized.startedAt, now: progressNow });
   const lastBatch = normalizeSourceTreeLastBatch(normalized.lastBatch);
+  const recommendation = sourceTreeDrainRecommendation({
+    queuedJobs,
+    failedJobs,
+    running: running || starting || stopping,
+    complete,
+    jobsPerMinute: progress.jobsPerMinute,
+    lastBatch,
+  });
 
   let level = "idle";
   let message = queuedJobs > 0
@@ -154,6 +162,7 @@ export function summarizeSourceTreeDrain({ sourceTree = {}, run = {}, now = Date
     error: normalized.error,
     stopReason: normalized.stopReason,
     lastBatch,
+    recommendation,
     activeBatch: normalized.activeBatch,
     message,
   };
@@ -175,6 +184,77 @@ function normalizeSourceTreeLastBatch(batch) {
     netQueueReduction,
     queueExpanded: queuedDelta < 0,
     queueHeldBySpawnedJobs: doneDelta > 0 && queuedDelta <= 0,
+  };
+}
+
+function sourceTreeDrainRecommendation({ queuedJobs = 0, failedJobs = 0, running = false, complete = false, jobsPerMinute = 0, lastBatch } = {}) {
+  if (complete || queuedJobs <= 0) {
+    return {
+      level: "complete",
+      jobs: 0,
+      batchSize: 0,
+      sleepMs: 0,
+      label: "无需继续",
+      reason: "来源树深加工当前没有等待任务。",
+    };
+  }
+  if (failedJobs > 0) {
+    return {
+      level: "needs_attention",
+      jobs: 0,
+      batchSize: 0,
+      sleepMs: 0,
+      label: "先查失败",
+      reason: `已有 ${formatDrainNumber(failedJobs)} 个失败任务，先查看日志和失败原因，再继续跑批次。`,
+    };
+  }
+  if (running) {
+    return {
+      level: "running",
+      jobs: 0,
+      batchSize: 0,
+      sleepMs: 0,
+      label: "等待当前批次",
+      reason: "当前已有有限批次在运行，先等它结束或暂停。",
+    };
+  }
+  if (lastBatch?.queueHeldBySpawnedJobs || lastBatch?.queueExpanded) {
+    return {
+      level: "small_batch",
+      jobs: 10,
+      batchSize: 2,
+      sleepMs: 250,
+      label: "建议先跑 10 个",
+      reason: "上一批产生了后续摘要任务，等待数没有明显下降；先用小批次观察速度和失败数。",
+    };
+  }
+  if (jobsPerMinute > 0 && jobsPerMinute < 3) {
+    return {
+      level: "slow",
+      jobs: 10,
+      batchSize: 2,
+      sleepMs: 250,
+      label: "建议先跑 10 个",
+      reason: `当前速度约 ${formatDrainNumber(jobsPerMinute)} 个/分钟，先小批次推进，避免长时间占用本机。`,
+    };
+  }
+  if (jobsPerMinute >= 10 && queuedJobs >= 250) {
+    return {
+      level: "fast",
+      jobs: 250,
+      batchSize: 25,
+      sleepMs: 500,
+      label: "可跑 250 个",
+      reason: "当前速度较快且未发现失败任务，可以用较大有限批次继续推进。",
+    };
+  }
+  return {
+    level: "normal",
+    jobs: Math.min(50, queuedJobs),
+    batchSize: 5,
+    sleepMs: 250,
+    label: "建议跑 50 个",
+    reason: "当前未发现失败任务，可用中等有限批次继续推进；每批结束后再观察等待数和失败数。",
   };
 }
 

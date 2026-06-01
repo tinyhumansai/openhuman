@@ -58,6 +58,9 @@ test("sidebar exposes knowledge readiness instead of only raw document count", (
   assert.match(html, /sourceTreeDrainStartPayload/);
   assert.match(html, /clampSourceTreeDrainNumber/);
   assert.match(html, /maxJobs,\s*batchSize,\s*sleepMs/);
+  assert.match(html, /下一批建议/);
+  assert.match(html, /data-source-tree-drain-recommended/);
+  assert.match(html, /renderSourceTreeDrainRecommendation/);
   assert.doesNotMatch(html, /runToComplete/);
   assert.doesNotMatch(html, /batchSize: runToComplete/);
   assert.match(html, /clampSourceTreeDrainNumber\(button\?\.dataset\?\.sourceTreeDrainJobs,\s*10,\s*1,\s*250\)/);

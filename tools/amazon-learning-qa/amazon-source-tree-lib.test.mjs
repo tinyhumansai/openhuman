@@ -416,6 +416,9 @@ test("summarizeSourceTreeDrain explains spawned follow-up jobs when queue does n
   assert.equal(summary.lastBatch.spawnedJobs, 5);
   assert.equal(summary.lastBatch.netQueueReduction, 0);
   assert.equal(summary.lastBatch.queueHeldBySpawnedJobs, true);
+  assert.equal(summary.recommendation.jobs, 10);
+  assert.equal(summary.recommendation.batchSize, 2);
+  assert.match(summary.recommendation.reason, /后续摘要任务/);
 });
 
 test("summarizeSourceTreeDrain prefers live source-tree counts over stale run snapshots", () => {
@@ -436,6 +439,66 @@ test("summarizeSourceTreeDrain prefers live source-tree counts over stale run sn
   assert.equal(summary.readyJobs, 95);
   assert.equal(summary.runningJobs, 1);
   assert.equal(summary.doneJobs, 4);
+});
+
+test("summarizeSourceTreeDrain recommends larger finite batches only when pace is healthy", () => {
+  const summary = summarizeSourceTreeDrain({
+    now: Date.parse("2026-05-26T00:10:00.000Z"),
+    sourceTree: { queuedJobs: 500, readyJobs: 500, runningJobs: 0, doneJobs: 3000, failedJobs: 0, ingestedDocuments: 1779 },
+    run: {
+      state: "paused",
+      processedJobs: 120,
+      startedAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:10:00.000Z",
+      finishedAt: "2026-05-26T00:10:00.000Z",
+      lastBatch: {
+        processed: 50,
+        queuedDelta: 50,
+        doneDelta: 50,
+      },
+    },
+  });
+
+  assert.equal(summary.jobsPerMinute, 12);
+  assert.equal(summary.recommendation.jobs, 250);
+  assert.equal(summary.recommendation.batchSize, 25);
+  assert.match(summary.recommendation.reason, /速度较快/);
+});
+
+test("summarizeSourceTreeDrain recommends small batches when pace is slow", () => {
+  const summary = summarizeSourceTreeDrain({
+    now: Date.parse("2026-05-26T00:10:00.000Z"),
+    sourceTree: { queuedJobs: 9000, readyJobs: 9000, runningJobs: 0, doneJobs: 3000, failedJobs: 0, ingestedDocuments: 1779 },
+    run: {
+      state: "paused",
+      processedJobs: 15,
+      startedAt: "2026-05-26T00:00:00.000Z",
+      updatedAt: "2026-05-26T00:10:00.000Z",
+      finishedAt: "2026-05-26T00:10:00.000Z",
+      lastBatch: {
+        processed: 5,
+        queuedDelta: 5,
+        doneDelta: 5,
+      },
+    },
+  });
+
+  assert.equal(summary.jobsPerMinute, 1.5);
+  assert.equal(summary.recommendation.level, "slow");
+  assert.equal(summary.recommendation.jobs, 10);
+  assert.match(summary.recommendation.reason, /速度约 1.5 个\/分钟/);
+});
+
+test("summarizeSourceTreeDrain recommends checking failures before continuing", () => {
+  const summary = summarizeSourceTreeDrain({
+    sourceTree: { queuedJobs: 9000, readyJobs: 9000, runningJobs: 0, doneJobs: 3000, failedJobs: 2, ingestedDocuments: 1779 },
+    run: { state: "paused", processedJobs: 10 },
+  });
+
+  assert.equal(summary.level, "needs_attention");
+  assert.equal(summary.recommendation.level, "needs_attention");
+  assert.equal(summary.recommendation.jobs, 0);
+  assert.match(summary.recommendation.reason, /失败任务/);
 });
 
 test("summarizeSourceTreeDrain freezes paused run timing at finish time", () => {

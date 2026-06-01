@@ -240,6 +240,12 @@
         flex-basis: 100%;
       }
 
+      .source-tree-drain-recommendation {
+        border-left: 3px solid var(--accent);
+        padding-left: 8px;
+        color: var(--ink) !important;
+      }
+
       .counts {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6137,6 +6143,7 @@
         const elapsed = Number(drain.elapsedSeconds || 0) > 0 ? formatDurationSeconds(drain.elapsedSeconds) : "";
         const logPath = compactText(drain.logPath || "", 72);
         const disabled = !drain.canStart || drain.running;
+        const recommendation = drain.recommendation && typeof drain.recommendation === "object" ? drain.recommendation : null;
         const batchOptions = [
           { jobs: 10, batchSize: 2, sleepMs: 250, label: "跑 10 个" },
           { jobs: 50, batchSize: 5, sleepMs: 250, label: "跑 50 个" },
@@ -6144,7 +6151,11 @@
         ];
         const batchButtons = level === "complete"
           ? `<button class="small-action" type="button" data-source-tree-drain-start disabled>已完成</button>`
-          : batchOptions.map((option) => `<button class="small-action" type="button" data-source-tree-drain-start data-source-tree-drain-jobs="${option.jobs}" data-source-tree-drain-batch-size="${option.batchSize}" data-source-tree-drain-sleep-ms="${option.sleepMs}" ${disabled ? "disabled" : ""}>${escapeHtml(drain.running ? "正在处理" : option.label)}</button>`).join("");
+          : batchOptions.map((option) => {
+              const recommended = Number(recommendation?.jobs || 0) === option.jobs && !disabled;
+              const label = recommended ? `${option.label}（建议）` : option.label;
+              return `<button class="small-action" type="button" data-source-tree-drain-start data-source-tree-drain-jobs="${option.jobs}" data-source-tree-drain-batch-size="${option.batchSize}" data-source-tree-drain-sleep-ms="${option.sleepMs}" ${recommended ? "data-source-tree-drain-recommended" : ""} ${disabled ? "disabled" : ""}>${escapeHtml(drain.running ? "正在处理" : label)}</button>`;
+            }).join("");
         const stopButton = drain.canStop
           ? `<button class="small-action" type="button" data-source-tree-drain-stop>${escapeHtml(drain.stopRequested ? "暂停中" : "暂停批次")}</button>`
           : "";
@@ -6160,6 +6171,7 @@
           <p>本轮已处理 ${processed} 个 · 等待 ${queued} 个 · 失败 ${failed} 个</p>
           <p>队列：可处理 ${ready} 个 · 正在处理 ${runningJobs} 个 · 已完成 ${done} 个</p>
           ${batchNote ? `<p>${escapeHtml(batchNote)}</p>` : ""}
+          ${renderSourceTreeDrainRecommendation(recommendation)}
           ${speed || eta || elapsed ? `<p>${escapeHtml([elapsed ? `已运行 ${elapsed}` : "", speed ? `速度 ${speed}` : "", eta ? `预计剩余 ${eta}` : ""].filter(Boolean).join(" · "))}</p>` : ""}
           ${logPath ? `<p>日志：${escapeHtml(logPath)}</p>` : ""}
           <div class="source-tree-drain-actions">
@@ -6168,6 +6180,11 @@
             <span class="source-tree-drain-action-note">${escapeHtml(actionNote)}</span>
           </div>
         </div>`;
+      }
+
+      function renderSourceTreeDrainRecommendation(recommendation) {
+        if (!recommendation || !recommendation.reason) return "";
+        return `<p class="source-tree-drain-recommendation">下一批建议：${escapeHtml(recommendation.label || "按有限批次继续")}。${escapeHtml(recommendation.reason)}</p>`;
       }
 
       function sourceTreeDrainStateLabel(drain) {
