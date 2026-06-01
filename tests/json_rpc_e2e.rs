@@ -5583,6 +5583,66 @@ async fn json_rpc_local_ai_lm_studio_config_diagnostics_and_prompt() {
 }
 
 #[tokio::test]
+async fn json_rpc_local_ai_ollama_endpoint_normalizes_bind_address_and_clears() {
+    let _env_lock = json_rpc_e2e_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let home = tmp.path();
+    let openhuman_home = home.join(".openhuman");
+
+    let _home_guard = EnvVarGuard::set_to_path("HOME", home);
+    let _workspace_guard = EnvVarGuard::unset("OPENHUMAN_WORKSPACE");
+    let _backend_url_guard = EnvVarGuard::unset("BACKEND_URL");
+    let _vite_backend_guard = EnvVarGuard::unset("VITE_BACKEND_URL");
+
+    let (mock_addr, mock_join) = serve_on_ephemeral(mock_upstream_router()).await;
+    let mock_origin = format!("http://{}", mock_addr);
+    write_min_config(&openhuman_home, &mock_origin);
+
+    let (rpc_addr, rpc_join) = serve_on_ephemeral(build_core_http_router(false)).await;
+    let rpc_base = format!("http://{}", rpc_addr);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let update = post_json_rpc(
+        &rpc_base,
+        390,
+        "openhuman.inference_update_local_settings",
+        json!({
+            "provider": "ollama",
+            "base_url": "http://0.0.0.0:11434/api/tags"
+        }),
+    )
+    .await;
+    let update_result = assert_no_jsonrpc_error(&update, "normalize ollama base_url");
+    assert_eq!(
+        update_result
+            .get("result")
+            .and_then(|value| value.get("config"))
+            .and_then(|config| config.get("local_ai"))
+            .and_then(|local_ai| local_ai.get("base_url"))
+            .and_then(Value::as_str),
+        Some("http://localhost:11434")
+    );
+
+    let clear = post_json_rpc(
+        &rpc_base,
+        391,
+        "openhuman.inference_update_local_settings",
+        json!({ "base_url": null }),
+    )
+    .await;
+    let clear_result = assert_no_jsonrpc_error(&clear, "clear ollama base_url");
+    assert!(clear_result
+        .get("result")
+        .and_then(|value| value.get("config"))
+        .and_then(|config| config.get("local_ai"))
+        .and_then(|local_ai| local_ai.get("base_url"))
+        .is_none_or(Value::is_null));
+
+    mock_join.abort();
+    rpc_join.abort();
+}
+
+#[tokio::test]
 async fn json_rpc_inference_namespace_lm_studio_prompt_and_status() {
     let _env_lock = json_rpc_e2e_env_lock();
     let tmp = tempdir().expect("tempdir");

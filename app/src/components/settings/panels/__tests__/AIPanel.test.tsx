@@ -848,6 +848,48 @@ describe('AIPanel', () => {
     });
   });
 
+  it('normalizes Ollama 0.0.0.0 endpoint input to localhost before saving', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+    renderWithProviders(<AIPanel />);
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Connect Ollama/i })).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole('switch', { name: /Connect Ollama/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect Ollama/i });
+
+    fireEvent.change(within(dialog).getByLabelText(/Endpoint URL/i), {
+      target: { value: 'http://0.0.0.0:11434' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() => expect(openhumanUpdateLocalAiSettingsMock).toHaveBeenCalled());
+    const [arg] = vi.mocked(openhumanUpdateLocalAiSettingsMock).mock.calls[0];
+    expect(arg).toMatchObject({ base_url: 'http://localhost:11434' });
+  });
+
+  it('lets users edit an existing Ollama endpoint from the provider chip', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({
+      ...baseSettings,
+      cloudProviders: [
+        {
+          id: 'p_ollama_1',
+          slug: 'ollama',
+          label: 'Ollama',
+          endpoint: 'http://127.0.0.1:11434/v1',
+          auth_style: 'none',
+          has_api_key: true,
+        },
+      ],
+    });
+    renderWithProviders(<AIPanel />);
+    const editButton = await screen.findByRole('button', { name: /Edit Ollama endpoint/i });
+    fireEvent.click(editButton);
+
+    const dialog = await screen.findByRole('dialog', { name: /Connect Ollama/i });
+    const urlInput = within(dialog).getByLabelText(/Endpoint URL/i) as HTMLInputElement;
+    expect(urlInput.value).toBe('http://127.0.0.1:11434/v1');
+  });
+
   it('LM Studio save persists the local_ai provider and endpoint', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
     renderWithProviders(<AIPanel />);

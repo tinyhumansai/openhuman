@@ -142,7 +142,7 @@ struct LocalAiSettingsUpdate {
     /// having to also apply a tier preset.
     opt_in_confirmed: Option<bool>,
     provider: Option<String>,
-    base_url: Option<String>,
+    base_url: Option<Value>,
     model_id: Option<String>,
     chat_model_id: Option<String>,
     usage_embeddings: Option<bool>,
@@ -1265,11 +1265,17 @@ fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFutur
 fn handle_update_local_ai_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<LocalAiSettingsUpdate>(params)?;
+        let base_url = match update.base_url {
+            None => None,
+            Some(Value::Null) => Some(None),
+            Some(Value::String(value)) => Some(Some(value)),
+            Some(_) => return Err("invalid params: base_url must be a string or null".to_string()),
+        };
         let patch = config_rpc::LocalAiSettingsPatch {
             runtime_enabled: update.runtime_enabled,
             opt_in_confirmed: update.opt_in_confirmed,
             provider: update.provider,
-            base_url: update.base_url,
+            base_url,
             model_id: update.model_id,
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,

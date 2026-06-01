@@ -668,7 +668,7 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         domain: "local_ai",
         category: CapabilityCategory::LocalAI,
         description: "Select Ollama or LM Studio as the local model provider and configure the local server endpoint.",
-        how_to: "Settings > Local AI Model",
+        how_to: "Settings > AI > providers, or Settings > Local AI Model > Ollama server URL",
         status: CapabilityStatus::Beta,
         privacy: None,
     },

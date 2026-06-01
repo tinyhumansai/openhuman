@@ -802,7 +802,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
         runtime_enabled: Some(true),
         opt_in_confirmed: Some(true),
         provider: Some("lm-studio".into()),
-        base_url: Some(" http://localhost:1234/v1/ ".into()),
+        base_url: Some(Some(" http://localhost:1234/v1/ ".into())),
         model_id: Some(" local-default ".into()),
         chat_model_id: Some(" local-chat ".into()),
         usage_embeddings: Some(true),
@@ -820,7 +820,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert_eq!(cfg.local_ai.provider, "lm_studio");
     assert_eq!(
         cfg.local_ai.base_url.as_deref(),
-        Some("http://localhost:1234/v1/")
+        Some("http://localhost:1234/v1")
     );
     assert_eq!(cfg.local_ai.model_id, "local-default");
     assert_eq!(cfg.local_ai.chat_model_id, "local-chat");
@@ -832,7 +832,7 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
 
     let clear_and_fallback = LocalAiSettingsPatch {
         provider: Some("unknown-provider".into()),
-        base_url: Some("   ".into()),
+        base_url: Some(Some("   ".into())),
         model_id: Some("   ".into()),
         chat_model_id: Some("".into()),
         ..LocalAiSettingsPatch::default()
@@ -845,6 +845,40 @@ async fn apply_local_ai_settings_updates_lm_studio_provider_fields() {
     assert!(cfg.local_ai.base_url.is_none());
     assert_eq!(cfg.local_ai.model_id, "");
     assert_eq!(cfg.local_ai.chat_model_id, "");
+}
+
+#[tokio::test]
+async fn apply_local_ai_settings_normalizes_ollama_unspecified_host_and_allows_null_clear() {
+    let tmp = tempdir().unwrap();
+    let mut cfg = tmp_config(&tmp);
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            provider: Some("ollama".into()),
+            base_url: Some(Some("http://0.0.0.0:11434/api/tags".into())),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("apply ollama base url");
+
+    assert_eq!(
+        cfg.local_ai.base_url.as_deref(),
+        Some("http://localhost:11434")
+    );
+
+    apply_local_ai_settings(
+        &mut cfg,
+        LocalAiSettingsPatch {
+            base_url: Some(None),
+            ..LocalAiSettingsPatch::default()
+        },
+    )
+    .await
+    .expect("clear ollama base url");
+
+    assert!(cfg.local_ai.base_url.is_none());
 }
 
 #[tokio::test]

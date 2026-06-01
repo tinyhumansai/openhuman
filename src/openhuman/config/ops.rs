@@ -447,7 +447,7 @@ pub struct LocalAiSettingsPatch {
     /// behaviour without needing to apply a preset first.
     pub opt_in_confirmed: Option<bool>,
     pub provider: Option<String>,
-    pub base_url: Option<String>,
+    pub base_url: Option<Option<String>>,
     pub model_id: Option<String>,
     pub chat_model_id: Option<String>,
     pub usage_embeddings: Option<bool>,
@@ -1229,10 +1229,18 @@ pub async fn apply_local_ai_settings(
             crate::openhuman::inference::local::provider::normalize_provider(&provider);
     }
     if let Some(base_url) = update.base_url {
-        config.local_ai.base_url = if base_url.trim().is_empty() {
-            None
-        } else {
-            Some(base_url.trim().to_string())
+        config.local_ai.base_url = match base_url {
+            None => None,
+            Some(base_url) if base_url.trim().is_empty() => None,
+            Some(base_url)
+                if crate::openhuman::inference::local::provider::provider_from_config(config)
+                    == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
+            {
+                Some(crate::openhuman::inference::local::validate_ollama_url(
+                    &base_url,
+                )?)
+            }
+            Some(base_url) => Some(base_url.trim().trim_end_matches('/').to_string()),
         };
     }
     if let Some(model_id) = update.model_id {

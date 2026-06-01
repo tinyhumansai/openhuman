@@ -204,11 +204,23 @@ fn deserialize_params_parses_local_ai_settings_update() {
     assert_eq!(out.runtime_enabled, Some(true));
     assert_eq!(out.opt_in_confirmed, Some(true));
     assert_eq!(out.provider.as_deref(), Some("lm_studio"));
-    assert_eq!(out.base_url.as_deref(), Some("http://localhost:1234/v1"));
+    assert_eq!(
+        out.base_url.as_ref().and_then(Value::as_str),
+        Some("http://localhost:1234/v1")
+    );
     assert_eq!(out.model_id.as_deref(), Some("local-default"));
     assert_eq!(out.chat_model_id.as_deref(), Some("local-chat"));
     assert_eq!(out.usage_embeddings, Some(true));
     assert_eq!(out.usage_subconscious, Some(false));
+}
+
+#[test]
+fn deserialize_params_preserves_local_ai_base_url_null() {
+    let mut m = Map::new();
+    m.insert("base_url".into(), Value::Null);
+
+    let out: LocalAiSettingsUpdate = deserialize_params(m).unwrap();
+    assert!(out.base_url.as_ref().is_some_and(Value::is_null));
 }
 
 #[test]

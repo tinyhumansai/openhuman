@@ -42,7 +42,13 @@ export function validateOllamaUrl(raw: string): OllamaUrlValidationResult {
     return { valid: false, error: 'URL must not contain a fragment' };
   }
   // Normalize to scheme://host[:port]
+  const hostname =
+    parsed.hostname === '0.0.0.0'
+      ? 'localhost'
+      : parsed.hostname === '[::]'
+        ? '[::1]'
+        : parsed.hostname;
   const port = parsed.port ? `:${parsed.port}` : '';
-  const normalized = `${parsed.protocol}//${parsed.hostname}${port}`;
+  const normalized = `${parsed.protocol}//${hostname}${port}`;
   return { valid: true, normalized };
 }
