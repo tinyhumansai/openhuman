@@ -178,8 +178,8 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     let config = config(&tmp);
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh(&script);
+    write_fake_git(&bin.join("git"));
+    write_fake_gh(&bin.join("gh"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set_path("PATH", Path::new(&format!("{}:{old_path}", bin.display())));
 
@@ -224,6 +224,22 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
         .await
         .expect_err("bad pr number rejected");
     assert!(bad_pr.contains("invalid PR number"));
+}
+
+fn write_fake_git(path: &PathBuf) {
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "git fixture forces GitHub reader API fallback" >&2
+exit 3
+"#;
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
+    }
 }
 
 fn write_fake_gh(path: &PathBuf) {
