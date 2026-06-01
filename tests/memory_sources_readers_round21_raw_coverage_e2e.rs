@@ -236,7 +236,8 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
 /// Shim that fails every `git` invocation so the GitHub reader falls back to
 /// the `gh api` code path that the fake `gh` in this test actually mocks.
 fn write_failing_git(path: &PathBuf) {
-    let script = "#!/usr/bin/env bash\necho \"fake git: refusing $* in coverage test\" >&2\nexit 1\n";
+    let script =
+        "#!/usr/bin/env bash\necho \"fake git: refusing $* in coverage test\" >&2\nexit 1\n";
     std::fs::write(path, script).expect("write fake git");
     #[cfg(unix)]
     {
