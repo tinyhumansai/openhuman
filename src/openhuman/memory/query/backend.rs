@@ -10,37 +10,26 @@ use anyhow::Result;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::types::SourceKind;
 use crate::openhuman::memory_tree::retrieval::{self, QueryResponse, RetrievalHit};
-use crate::openhuman::memory_tree::tree::TreeProfile;
 
-pub async fn query_profile(
+/// Query the per-source summary trees. The global (time-axis) and topic
+/// (subject-axis) trees were removed; source trees plus the entity index are
+/// the substrate, so this is the only remaining tree-query backend.
+pub async fn query_source_scope(
     config: &Config,
-    profile: TreeProfile,
     scope: Option<&str>,
     time_window_days: Option<u32>,
     query: Option<&str>,
     limit: usize,
 ) -> Result<QueryResponse> {
-    match profile {
-        TreeProfile::Source => {
-            retrieval::source::query_source(
-                config,
-                scope,
-                None::<SourceKind>,
-                time_window_days,
-                query,
-                limit,
-            )
-            .await
-        }
-        TreeProfile::Topic => {
-            let entity_id =
-                scope.ok_or_else(|| anyhow::anyhow!("topic query requires scope/entity_id"))?;
-            retrieval::topic::query_topic(config, entity_id, time_window_days, query, limit).await
-        }
-        TreeProfile::Global => {
-            retrieval::global::query_global(config, time_window_days.unwrap_or(7)).await
-        }
-    }
+    retrieval::source::query_source(
+        config,
+        scope,
+        None::<SourceKind>,
+        time_window_days,
+        query,
+        limit,
+    )
+    .await
 }
 
 pub async fn query_source_kind(

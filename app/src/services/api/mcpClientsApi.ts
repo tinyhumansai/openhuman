@@ -70,6 +70,21 @@ interface ConfigAssistResult {
   suggested_env?: Record<string, string>;
 }
 
+interface UpdateEnvResult {
+  server_id: string;
+  status: 'connected' | 'disconnected';
+  env_keys: string[];
+  tools?: McpTool[];
+  error?: string;
+}
+
+/** Non-secret registry-credentials snapshot. Secret *values* are never returned. */
+export interface RegistrySettings {
+  smithery_api_key_set: boolean;
+  mcp_official_token_set: boolean;
+  mcp_official_base?: string | null;
+}
+
 // ---------------------------------------------------------------------------
 // API
 // ---------------------------------------------------------------------------
@@ -133,6 +148,57 @@ export const mcpClientsApi = {
     });
     log('install returned server_id=%s', result.server?.server_id);
     return result.server;
+  },
+
+  /**
+   * Replace the stored env values for an installed server and reconnect so the
+   * new credentials take effect (reconfigure / rotate keys without
+   * uninstall+reinstall). `status` is `connected` when the reconnect succeeded.
+   */
+  updateEnv: async (params: {
+    server_id: string;
+    env: Record<string, string>;
+  }): Promise<UpdateEnvResult> => {
+    log('update_env server_id=%s env_keys=%o', params.server_id, Object.keys(params.env));
+    const result = await callCoreRpc<UpdateEnvResult>({
+      method: 'openhuman.mcp_clients_update_env',
+      params,
+    });
+    log('update_env status=%s', result.status);
+    return result;
+  },
+
+  /** Read which registry credentials are configured (booleans only, no values). */
+  registrySettingsGet: async (): Promise<RegistrySettings> => {
+    log('registry_settings_get');
+    const result = await callCoreRpc<RegistrySettings>({
+      method: 'openhuman.mcp_clients_registry_settings_get',
+      params: {},
+    });
+    log(
+      'registry_settings_get smithery=%s official=%s',
+      result.smithery_api_key_set,
+      result.mcp_official_token_set
+    );
+    return result;
+  },
+
+  /**
+   * Persist registry credentials. Omit a field to leave it unchanged, pass an
+   * empty string to clear it. Secrets are write-only — the response is the same
+   * non-secret snapshot as registrySettingsGet.
+   */
+  registrySettingsSet: async (params: {
+    smithery_api_key?: string;
+    mcp_official_base?: string;
+    mcp_official_token?: string;
+  }): Promise<RegistrySettings> => {
+    log('registry_settings_set fields=%o', Object.keys(params));
+    const result = await callCoreRpc<RegistrySettings>({
+      method: 'openhuman.mcp_clients_registry_settings_set',
+      params,
+    });
+    return result;
   },
 
   /** Uninstall a server by ID. */

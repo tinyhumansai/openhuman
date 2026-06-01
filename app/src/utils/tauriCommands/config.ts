@@ -357,6 +357,48 @@ export async function openhumanUpdateAutonomySettings(
   });
 }
 
+// ── Agent execution settings (action/tool timeout) ──────────────────────────
+
+/** Agent execution settings as returned by config_get_agent_settings. */
+export interface AgentSettings {
+  /** Configured wall-clock timeout for a single tool/action, in seconds. */
+  agent_timeout_secs: number;
+  /** Runtime-effective timeout (may differ from configured when env-overridden). */
+  effective_timeout_secs: number;
+  /** True when OPENHUMAN_TOOL_TIMEOUT_SECS overrides the configured value. */
+  env_override: boolean;
+  /** Lowest accepted timeout (seconds). */
+  min_timeout_secs: number;
+  /** Highest accepted timeout (seconds). */
+  max_timeout_secs: number;
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface AgentSettingsUpdate {
+  agent_timeout_secs?: number;
+}
+
+export async function openhumanGetAgentSettings(): Promise<CommandResponse<AgentSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AgentSettings>>({
+    method: CORE_RPC_METHODS.configGetAgentSettings,
+  });
+}
+
+export async function openhumanUpdateAgentSettings(
+  update: AgentSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAgentSettings,
+    params: update,
+  });
+}
+
 export async function openhumanUpdateLocalAiSettings(
   update: LocalAiSettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {

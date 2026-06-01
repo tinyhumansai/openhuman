@@ -20,7 +20,14 @@ import { isTauri } from './tauriCommands/common';
  */
 
 const DEFAULT_PORT = 53824;
-const DEFAULT_TIMEOUT_SECS = 60;
+// The listener lifetime starts at the button click — before the system browser
+// even opens — and the Rust shell hard-kills the loopback server when it
+// elapses (`loopback_oauth.rs` `timeout(lifetime, run)`). A real GitHub/Google
+// sign-in (account chooser, password manager, 2FA/OTP, first-time consent)
+// routinely exceeds 60s; if the server dies first, the post-auth redirect lands
+// on a dead port and the browser shows "127.0.0.1:<port> not reached" even
+// though OAuth succeeded. 5 minutes comfortably covers an interactive sign-in.
+const DEFAULT_TIMEOUT_SECS = 300;
 const CALLBACK_EVENT = 'loopback-oauth-callback';
 
 export interface LoopbackHandle {

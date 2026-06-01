@@ -17,6 +17,7 @@
 //! subagent and `Agent` impls land in later phases.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
@@ -24,6 +25,7 @@ use super::super::payload_summarizer::PayloadSummarizer;
 use super::progress::ProgressReporter;
 use super::{run_one_tool, ToolRunResult};
 use crate::openhuman::agent::harness::parse::ParsedToolCall;
+use crate::openhuman::agent_tool_policy::ToolPolicySession;
 use crate::openhuman::tools::policy::ToolPolicy;
 use crate::openhuman::tools::{Tool, ToolSpec};
 
@@ -45,6 +47,22 @@ pub(crate) trait ToolSource: Send {
         progress: &dyn ProgressReporter,
         progress_call_id: &str,
     ) -> ToolRunResult;
+
+    /// Replace the caller-specific runtime snapshot after a dynamic refresh.
+    /// Default no-op for non-agent callers.
+    #[allow(clippy::too_many_arguments)]
+    fn sync_agent_surface(
+        &mut self,
+        _tools: Arc<Vec<Box<dyn Tool>>>,
+        _visible_tool_names: HashSet<String>,
+        _tool_policy_session: ToolPolicySession,
+        _payload_summarizer: Option<Arc<dyn PayloadSummarizer>>,
+        _prefer_markdown: bool,
+        _budget_bytes: usize,
+        _should_send_specs: bool,
+        _advertised_specs: Vec<ToolSpec>,
+    ) {
+    }
 }
 
 /// The channel/CLI/triage tool source: a persistent `registry`, optional

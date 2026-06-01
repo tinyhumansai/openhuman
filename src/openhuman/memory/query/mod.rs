@@ -10,10 +10,9 @@ mod backend;
 mod drill_down;
 mod fetch_leaves;
 mod ingest_document;
-mod query_global;
 mod query_source;
-mod query_topic;
 mod search_entities;
+pub mod smart_walk;
 pub mod walk;
 
 // Re-export individual tool types for callers that need them directly
@@ -21,10 +20,12 @@ pub mod walk;
 pub use drill_down::MemoryTreeDrillDownTool;
 pub use fetch_leaves::MemoryTreeFetchLeavesTool;
 pub use ingest_document::MemoryTreeIngestDocumentTool;
-pub use query_global::MemoryTreeQueryGlobalTool;
 pub use query_source::MemoryTreeQuerySourceTool;
-pub use query_topic::MemoryTreeQueryTopicTool;
 pub use search_entities::MemoryTreeSearchEntitiesTool;
+pub use smart_walk::{
+    run_smart_walk, SmartMemoryWalkTool, SmartWalkOptions, SmartWalkOutcome, SmartWalkStep,
+    SmartWalkStopReason,
+};
 pub use walk::MemoryTreeWalkTool as MemoryQueryWalkTool;
 pub use walk::{run_walk, MemoryTreeWalkTool, WalkOptions, WalkOutcome, WalkStep, WalkStopReason};
 pub use MemoryTreeTool as MemoryQueryTool;
@@ -48,12 +49,12 @@ impl Tool for MemoryTreeTool {
         "Query the user's ingested email/chat/document memory tree. \
          Set `mode` to one of: `search_entities` (resolve a name to a \
          canonical id — call first when the user mentions someone by name), \
-         `query_topic` (all cross-source mentions of an entity), \
          `query_source` (filter by source type + time window), \
-         `query_global` (cross-source daily digest), \
          `drill_down` (expand a coarse summary one level), \
          `fetch_leaves` (pull raw chunks for citation), `ingest_document` (write a document into the tree for future retrieval), \
-         `walk` (agentic multi-turn walk — LLM navigates summaries and returns a synthesized answer for a natural-language query)."
+         `walk` (agentic multi-turn walk — LLM navigates summaries and returns a synthesized answer for a natural-language query), \
+         `smart_walk` (multi-strategy retrieval — combines vector search, keyword search, entity lookup, \
+         and tree browsing across raw files, wiki summaries, documents, and episodic memories)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -62,24 +63,20 @@ impl Tool for MemoryTreeTool {
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": ["search_entities", "query_topic", "query_source",
-                             "query_global", "drill_down", "fetch_leaves", "ingest_document", "walk"],
+                    "enum": ["search_entities", "query_source",
+                             "drill_down", "fetch_leaves", "ingest_document", "walk",
+                             "smart_walk"],
                     "description": "Which operation to run (retrieval or write)."
                 },
                 // search_entities params
                 "query": {
                     "type": "string",
-                    "description": "search_entities: substring to match. query_topic/query_source: semantic rerank query (optional). walk: natural-language question to answer by walking the memory tree."
+                    "description": "search_entities: substring to match. query_source: semantic rerank query (optional). walk: natural-language question to answer by walking the memory tree."
                 },
                 "kinds": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "search_entities: optional entity kind filter (email, url, handle, person, ...)."
-                },
-                // query_topic params
-                "entity_id": {
-                    "type": "string",
-                    "description": "query_topic: canonical entity id returned by search_entities."
                 },
                 // query_source params
                 "source_kind": {
@@ -88,11 +85,7 @@ impl Tool for MemoryTreeTool {
                 },
                 "time_window_days": {
                     "type": "integer",
-                    "description": "query_source/query_topic: look-back window in days. query_global also accepts this as a compatibility alias."
-                },
-                "window_days": {
-                    "type": "integer",
-                    "description": "query_global: look-back window in days."
+                    "description": "query_source: look-back window in days."
                 },
                 // drill_down params
                 "node_id": {
@@ -148,48 +141,20 @@ impl Tool for MemoryTreeTool {
         log::debug!("[tool][memory_tree] mode={mode}");
         match mode {
             "search_entities" => MemoryTreeSearchEntitiesTool.execute(args).await,
-            "query_topic" => MemoryTreeQueryTopicTool.execute(args).await,
             "query_source" => MemoryTreeQuerySourceTool.execute(args).await,
-            "query_global" => {
-                MemoryTreeQueryGlobalTool
-                    .execute(translate_query_global_args(args))
-                    .await
-            }
             "drill_down" => MemoryTreeDrillDownTool.execute(args).await,
             "fetch_leaves" => MemoryTreeFetchLeavesTool.execute(args).await,
             "ingest_document" => MemoryTreeIngestDocumentTool.execute(args).await,
             "walk" => MemoryTreeWalkTool.execute(args).await,
+            "smart_walk" => SmartMemoryWalkTool.execute(args).await,
             other => {
                 log::debug!("[tool][memory_tree] unknown_mode mode={other}");
                 Err(anyhow::anyhow!(
-                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_topic, query_source, query_global, drill_down, fetch_leaves, ingest_document, walk"
+                    "memory_tree: unknown mode `{other}`. Valid: search_entities, query_source, drill_down, fetch_leaves, ingest_document, walk, smart_walk"
                 ))
             }
         }
     }
-}
-
-/// Rename the consolidated tool's `time_window_days` field to `window_days`
-/// before dispatching to [`MemoryTreeQueryGlobalTool`].
-///
-/// The consolidated `parameters_schema()` exposes one shared
-/// `time_window_days` field for both `query_source` and `query_global` (the
-/// `query_source` backend uses that exact name). `QueryGlobalRequest` in
-/// `memory_tree/retrieval/rpc.rs` uses `time_window_days` as its primary
-/// field name and accepts `window_days` via `#[serde(alias = "window_days")]`.
-/// The translation here keeps the LLM-facing consolidated schema stable
-/// (callers always send `time_window_days`) while routing through the alias
-/// path, which is equivalent. An explicit `window_days` in the payload
-/// always wins — the translator is a no-op for callers that already use it.
-fn translate_query_global_args(mut args: serde_json::Value) -> serde_json::Value {
-    if let Some(obj) = args.as_object_mut() {
-        if !obj.contains_key("window_days") {
-            if let Some(value) = obj.remove("time_window_days") {
-                obj.insert("window_days".to_string(), value);
-            }
-        }
-    }
-    args
 }
 
 #[cfg(test)]
@@ -226,23 +191,24 @@ mod memory_tree_dispatcher_tests {
             .filter_map(|v| v.as_str())
             .collect();
         assert!(modes.contains(&"search_entities"));
-        assert!(modes.contains(&"query_topic"));
         assert!(modes.contains(&"query_source"));
-        assert!(modes.contains(&"query_global"));
         assert!(modes.contains(&"drill_down"));
         assert!(modes.contains(&"fetch_leaves"));
         assert!(modes.contains(&"ingest_document"));
         assert!(modes.contains(&"walk"));
+        assert!(modes.contains(&"smart_walk"));
+        // Removed with the global/topic trees.
+        assert!(!modes.contains(&"query_topic"));
+        assert!(!modes.contains(&"query_global"));
     }
 
     #[test]
-    fn memory_tree_schema_exposes_global_window_days() {
+    fn memory_tree_schema_exposes_source_window_days() {
         let schema = MemoryTreeTool.parameters_schema();
         let properties = schema
             .get("properties")
             .and_then(|p| p.as_object())
             .unwrap();
-        assert!(properties.contains_key("window_days"));
         assert!(properties.contains_key("time_window_days"));
     }
 
@@ -266,30 +232,6 @@ mod memory_tree_dispatcher_tests {
     }
 
     #[tokio::test]
-    async fn memory_tree_query_global_mode_dispatches_successfully() {
-        // Hold TEST_ENV_LOCK for the duration of the test so that concurrent
-        // tests using WorkspaceEnvGuard (which sets OPENHUMAN_WORKSPACE to a
-        // temp path and then deletes it) cannot race with the Config::load_or_init
-        // call inside MemoryTreeTool.execute — the race caused "Failed to read
-        // config file" when the temp dir was deleted between exists() and read().
-        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let result = MemoryTreeTool
-            .execute(json!({
-                "mode": "query_global",
-                "time_window_days": 7
-            }))
-            .await
-            .expect("query_global mode should dispatch successfully");
-        assert!(!result.is_error);
-        let parsed: serde_json::Value =
-            serde_json::from_str(&result.text()).expect("result should be valid json");
-        assert!(parsed.get("hits").is_some());
-        assert!(parsed.get("total").is_some());
-    }
-
-    #[tokio::test]
     async fn memory_tree_fetch_leaves_mode_dispatches_successfully() {
         let result = MemoryTreeTool
             .execute(json!({
@@ -302,66 +244,5 @@ mod memory_tree_dispatcher_tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&result.text()).expect("result should be valid json");
         assert!(parsed.is_array());
-    }
-
-    #[test]
-    fn translate_query_global_args_renames_time_window_days_to_window_days() {
-        // Per-issue #2252: the consolidated schema advertises `time_window_days`
-        // but `QueryGlobalRequest` deserializes from `window_days`. The
-        // translation closes that gap inside the dispatch.
-        let translated = translate_query_global_args(json!({
-            "mode": "query_global",
-            "time_window_days": 7,
-        }));
-        assert_eq!(
-            translated,
-            json!({
-                "mode": "query_global",
-                "window_days": 7,
-            }),
-        );
-    }
-
-    #[test]
-    fn translate_query_global_args_passes_through_window_days_when_already_set() {
-        // The standalone `MemoryTreeQueryGlobalTool` schema advertises
-        // `window_days` natively — callers using that path should reach the
-        // backend unchanged.
-        let translated = translate_query_global_args(json!({
-            "mode": "query_global",
-            "window_days": 30,
-        }));
-        assert_eq!(translated["window_days"], 30);
-        assert!(translated.get("time_window_days").is_none());
-    }
-
-    #[test]
-    fn translate_query_global_args_prefers_explicit_window_days_over_time_window_days() {
-        // If a caller somehow supplies both, the underlying contract wins
-        // (`window_days` is what the deserializer reads). Without this,
-        // a future caller migrating to `window_days` while leaving a stale
-        // `time_window_days` in the payload would silently lose their
-        // explicit choice to the legacy alias.
-        let translated = translate_query_global_args(json!({
-            "mode": "query_global",
-            "window_days": 30,
-            "time_window_days": 7,
-        }));
-        assert_eq!(translated["window_days"], 30);
-    }
-
-    #[test]
-    fn translate_query_global_args_leaves_payload_untouched_when_neither_field_present() {
-        // The underlying tool surfaces its own missing-field error in this
-        // case; the translator should not invent a value.
-        let translated = translate_query_global_args(json!({
-            "mode": "query_global",
-        }));
-        assert_eq!(
-            translated,
-            json!({
-                "mode": "query_global",
-            }),
-        );
     }
 }

@@ -8,14 +8,14 @@ use std::sync::Arc;
 /// Provides safe, parsed git operations with JSON output.
 pub struct GitOperationsTool {
     security: Arc<SecurityPolicy>,
-    workspace_dir: std::path::PathBuf,
+    action_dir: std::path::PathBuf,
 }
 
 impl GitOperationsTool {
-    pub fn new(security: Arc<SecurityPolicy>, workspace_dir: std::path::PathBuf) -> Self {
+    pub fn new(security: Arc<SecurityPolicy>, action_dir: std::path::PathBuf) -> Self {
         Self {
             security,
-            workspace_dir,
+            action_dir,
         }
     }
 
@@ -68,7 +68,7 @@ impl GitOperationsTool {
     async fn run_git_command(&self, args: &[&str]) -> anyhow::Result<String> {
         let output = tokio::process::Command::new("git")
             .args(args)
-            .current_dir(&self.workspace_dir)
+            .current_dir(&self.action_dir)
             .output()
             .await?;
 
@@ -480,9 +480,9 @@ impl Tool for GitOperationsTool {
         };
 
         // Check if we're in a git repository
-        if !self.workspace_dir.join(".git").exists() {
+        if !self.action_dir.join(".git").exists() {
             // Try to find .git in parent directories
-            let mut current_dir = self.workspace_dir.as_path();
+            let mut current_dir = self.action_dir.as_path();
             let mut found_git = false;
             while current_dir.parent().is_some() {
                 if current_dir.join(".git").exists() {

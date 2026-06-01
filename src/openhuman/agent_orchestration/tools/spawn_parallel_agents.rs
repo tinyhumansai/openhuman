@@ -435,6 +435,8 @@ async fn run_one_parallel_task(
         model_override: None,
         task_id: Some(task_id.clone()),
         worker_thread_id: None,
+        initial_history: None,
+        checkpoint_dir: None,
     };
     match run_subagent(&definition, &prompt, options).await {
         Ok(outcome) => {

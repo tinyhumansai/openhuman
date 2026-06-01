@@ -60,7 +60,7 @@ pub fn all_tools(
     memory: Arc<dyn Memory>,
     browser_config: &crate::openhuman::config::BrowserConfig,
     http_config: &crate::openhuman::config::HttpRequestConfig,
-    workspace_dir: &std::path::Path,
+    action_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
@@ -72,7 +72,7 @@ pub fn all_tools(
         memory,
         browser_config,
         http_config,
-        workspace_dir,
+        action_dir,
         agents,
         root_config,
     )
@@ -88,7 +88,7 @@ pub fn all_tools_with_runtime(
     memory: Arc<dyn Memory>,
     browser_config: &crate::openhuman::config::BrowserConfig,
     http_config: &crate::openhuman::config::HttpRequestConfig,
-    workspace_dir: &std::path::Path,
+    action_dir: &std::path::Path,
     agents: &HashMap<String, DelegateAgentConfig>,
     root_config: &crate::openhuman::config::Config,
 ) -> Vec<Box<dyn Tool>> {
@@ -104,7 +104,7 @@ pub fn all_tools_with_runtime(
         );
         Some(Arc::new(NodeBootstrap::new(
             root_config.node.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
             reqwest::Client::new(),
         )))
     } else {
@@ -149,6 +149,7 @@ pub fn all_tools_with_runtime(
         // returns a single text result. See
         // `agent::harness::subagent_runner` for the dispatch path.
         Box::new(SpawnSubagentTool::new()),
+        Box::new(ContinueSubagentTool::new()),
         Box::new(SpawnParallelAgentsTool::new()),
         Box::new(DelegateToPersonalityTool::new()),
         // Coding-harness control flow (issue #1205): a process-global
@@ -169,11 +170,11 @@ pub fn all_tools_with_runtime(
         Box::new(CurrentTimeTool::new()),
         Box::new(CodegraphIndexTool::new(
             config.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
         )),
         Box::new(CodegraphSearchTool::new(
             config.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
         )),
         Box::new(DetectToolsTool::new()),
         Box::new(InstallToolTool::new(security.clone())),
@@ -196,6 +197,7 @@ pub fn all_tools_with_runtime(
         Box::new(MemoryForgetTool::new(memory.clone(), security.clone())),
         Box::new(MemoryQueryTool),
         Box::new(MemoryQueryWalkTool),
+        Box::new(SmartMemoryWalkTool),
         // Explicit user-preference pinning — always registered so the model
         // can save user-stated preferences regardless of whether the full
         // inference-based learning subsystem is enabled.  The preference
@@ -222,11 +224,11 @@ pub fn all_tools_with_runtime(
         Box::new(UpdateApplyTool::new(security.clone())),
         Box::new(GitOperationsTool::new(
             security.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
         )),
         Box::new(PushoverTool::new(
             security.clone(),
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
         )),
         Box::new(AudioGeneratePodcastTool::new(
             config.clone(),
@@ -244,7 +246,7 @@ pub fn all_tools_with_runtime(
         // harness routes it through the ApprovalGate identically to `shell`.
         Box::new(WorkflowLoadTool),
         Box::new(WorkflowPhaseTool::new(
-            workspace_dir.to_path_buf(),
+            action_dir.to_path_buf(),
             security.clone(),
             Arc::clone(&runtime),
             Arc::clone(&audit),
@@ -505,7 +507,7 @@ pub fn all_tools_with_runtime(
     tools.push(Box::new(CurlTool::new(
         security.clone(),
         http_config.allowed_domains.clone(),
-        workspace_dir.to_path_buf(),
+        action_dir.to_path_buf(),
         root_config.curl.dest_subdir.clone(),
         root_config.curl.max_download_bytes,
         root_config.curl.timeout_secs,
