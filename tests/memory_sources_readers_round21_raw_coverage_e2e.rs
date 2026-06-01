@@ -178,14 +178,17 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     let config = config(&tmp);
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh(&script);
+    write_fake_gh(&bin.join("gh"));
+    write_fake_git(&bin.join("git"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set_path("PATH", Path::new(&format!("{}:{old_path}", bin.display())));
 
     let reader = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
     let entry = MemorySourceEntry {
         url: Some("https://github.com/tinyhumansai/openhuman".to_string()),
+        max_commits: Some(30),
+        max_issues: Some(30),
+        max_prs: Some(30),
         ..source_entry("github-round21", SourceKind::GithubRepo)
     };
 
@@ -281,5 +284,20 @@ esac
         let mut perms = std::fs::metadata(path).expect("metadata").permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).expect("chmod fake gh");
+    }
+}
+
+fn write_fake_git(path: &PathBuf) {
+    std::fs::write(
+        path,
+        "#!/usr/bin/env sh\necho 'git disabled for fixture' >&2\nexit 42\n",
+    )
+    .expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
     }
 }
