@@ -4476,7 +4476,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'Entitas Duplikat',
   'entityDuplicates.truncated': 'Menampilkan {shown} dari {total} set duplikat.',
   'entityDuplicates.variantTitle': '{degree} koneksi',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'Duplikat',
 };
 
 export default messages;

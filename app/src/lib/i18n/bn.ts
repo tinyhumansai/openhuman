@@ -4459,7 +4459,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'ডুপ্লিকেট সত্তা',
   'entityDuplicates.truncated': '{total} ডুপ্লিকেট সেটের মধ্যে {shown} দেখাচ্ছি।',
   'entityDuplicates.variantTitle': '{degree} টি সংযোগ',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'সদৃশ',
 };
 
 export default messages;

@@ -4502,7 +4502,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'Дубликаты сущностей',
   'entityDuplicates.truncated': 'Показано {shown} из {total} групп дубликатов.',
   'entityDuplicates.variantTitle': '{degree} связей',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'Дубликаты',
 };
 
 export default messages;

@@ -4532,7 +4532,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'Zduplikowane encje',
   'entityDuplicates.truncated': 'Pokazuję {shown} z {total} zestawów duplikatów.',
   'entityDuplicates.variantTitle': '{degree} połączeń',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'Duplikaty',
 };
 
 export default messages;

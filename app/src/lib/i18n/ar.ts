@@ -4380,7 +4380,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'الكيانات المكررة',
   'entityDuplicates.truncated': 'عرض {shown} من أصل {total} مجموعة تكرار.',
   'entityDuplicates.variantTitle': '{degree} اتصالات',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'التكرارات',
 };
 
 export default messages;

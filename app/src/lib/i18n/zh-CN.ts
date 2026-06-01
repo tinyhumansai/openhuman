@@ -4244,7 +4244,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': '重复实体',
   'entityDuplicates.truncated': '显示 {total} 个重复集合中的 {shown} 个。',
   'entityDuplicates.variantTitle': '{degree} 个连接',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': '重复项',
 };
 
 export default messages;

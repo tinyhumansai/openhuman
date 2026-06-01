@@ -4531,7 +4531,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'Entidades duplicadas',
   'entityDuplicates.truncated': 'Mostrando {shown} de {total} conjuntos de duplicados.',
   'entityDuplicates.variantTitle': '{degree} conexões',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'Duplicados',
 };
 
 export default messages;

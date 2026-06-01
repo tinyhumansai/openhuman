@@ -4465,7 +4465,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'डुप्लिकेट इकाइयाँ',
   'entityDuplicates.truncated': '{total} डुप्लिकेट सेट में से {shown} दिखा रहे हैं।',
   'entityDuplicates.variantTitle': '{degree} कनेक्शन',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'डुप्लिकेट',
 };
 
 export default messages;

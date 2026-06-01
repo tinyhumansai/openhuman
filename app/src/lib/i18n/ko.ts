@@ -4424,7 +4424,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': '중복 엔티티',
   'entityDuplicates.truncated': '{total}개 중복 집합 중 {shown}개 표시 중.',
   'entityDuplicates.variantTitle': '{degree}개 연결',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': '중복',
 };
 
 export default messages;

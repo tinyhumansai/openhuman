@@ -4533,7 +4533,7 @@ const messages: TranslationMap = {
   'entityDuplicates.title': 'Entità duplicate',
   'entityDuplicates.truncated': 'Mostrando {shown} di {total} insiemi di duplicati.',
   'entityDuplicates.variantTitle': '{degree} connessioni',
-  'memory.tab.duplicates': 'Duplicates',
+  'memory.tab.duplicates': 'Duplicati',
 };
 
 export default messages;
