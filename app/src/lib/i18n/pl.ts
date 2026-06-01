@@ -4478,6 +4478,42 @@ const messages: TranslationMap = {
   'graphCohesion.title': 'Spójność grafu',
   'memory.tab.cohesion': 'Cohesion',
 
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Generowanie: {kind}…',
+  'chat.artifact.ready': 'Gotowe',
+  'chat.artifact.failed': 'Generowanie nie powiodło się',
+  'chat.artifact.download': 'Pobierz',
+  'chat.artifact.downloading': 'Pobieranie…',
+  'chat.artifact.downloaded': 'Zapisano w {path}',
+  'chat.artifact.download_failed': 'Pobieranie nie powiodło się: {reason}',
+  'chat.artifact.retry': 'Spróbuj ponownie',
+  'chat.artifact.reveal': 'Pokaż w folderze',
+  'chat.artifact.show_more': 'Pokaż więcej',
+  'chat.artifact.show_less': 'Pokaż mniej',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} plik w tej rozmowie',
+  'chat.files.chip.aria.other': '{count} plików w tej rozmowie',
+  'chat.files.panel.aria': 'Pliki w tej rozmowie',
+  'chat.files.panel.title': 'Pliki ({count})',
+  'chat.files.panel.empty': 'Brak plików. Poproś agenta o wygenerowanie pliku.',
+  'chat.files.panel.close': 'Zamknij panel plików',
+  'chat.files.delete.aria': 'Usuń: {title}',
+  'chat.files.delete.confirm': 'Usunąć ten plik?',
+  'chat.files.delete.cancel': 'Anuluj',
+  'chat.files.delete.action': 'Usuń',
+  'chat.files.delete.failed': 'Nie udało się usunąć pliku. Spróbuj ponownie.',
+  // Etykiety błędów dla pobrania/usunięcia (#3024). Powiązane z
+  // `ArtifactErrorCode` zwracanym przez artifactDownloadService.
+  'chat.files.error.not_desktop': 'Pobieranie jest dostępne tylko w aplikacji desktopowej.',
+  'chat.files.error.missing_artifact_id': 'Brak identyfikatora artefaktu.',
+  'chat.files.error.missing_artifact_path': 'W odpowiedzi rdzenia brakuje ścieżki artefaktu.',
+  'chat.files.error.resolve_failed':
+    'Nie udało się odnaleźć artefaktu. Prosimy spróbować ponownie.',
+  'chat.files.error.download_failed': 'Pobieranie nie powiodło się. Prosimy spróbować ponownie.',
+  'chat.files.error.delete_failed': 'Nie udało się usunąć pliku. Prosimy spróbować ponownie.',
+
   'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
   'keyring.consent.description':
     'Pęk kluczy systemu operacyjnego jest niedostępny. OpenHuman potrzebuje Twojej zgody na przechowywanie sekretów w lokalnym zaszyfrowanym magazynie.',
