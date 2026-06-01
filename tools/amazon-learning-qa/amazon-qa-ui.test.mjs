@@ -765,15 +765,20 @@ test("topic source reading room keeps candidate sources explicit and user-select
 
 test("conversation layout keeps the composer fixed and compresses prior user questions", () => {
   assert.match(html, /\.app\s*{[\s\S]{0,220}height:\s*100vh/);
-  assert.match(html, /--sidebar-width:\s*clamp\(320px,\s*30vw,\s*620px\)/);
+  assert.match(html, /--sidebar-width:\s*clamp\(560px,\s*38vw,\s*760px\)/);
   assert.match(html, /grid-template-columns:[\s\S]{0,180}var\(--sidebar-width\)[\s\S]{0,180}var\(--sidebar-resizer-width\)[\s\S]{0,180}minmax\(0,\s*1fr\)/);
   assert.match(html, /id="sidebarResizer"/);
   assert.match(html, /role="separator"/);
   assert.match(html, /bindSidebarResizer/);
   assert.match(html, /SIDEBAR_WIDTH_KEY/);
+  assert.match(html, /SIDEBAR_MIN_WIDTH\s*=\s*520/);
+  assert.match(html, /responsiveMin/);
   assert.match(html, /applySidebarWidth/);
   assert.match(html, /addEventListener\("mousedown"/);
   assert.match(html, /addEventListener\("mousemove"/);
+  assert.match(html, /\.side\s*{[\s\S]{0,260}container-type:\s*inline-size/);
+  assert.match(html, /@container \(max-width:\s*700px\)/);
+  assert.match(html, /\.knowledge-readiness-grid,[\s\S]{0,120}\.counts,[\s\S]{0,120}\.learning-effectiveness-metrics[\s\S]{0,80}grid-template-columns:\s*1fr/);
   assert.match(html, /\.message\s*{[\s\S]{0,120}max-width:\s*none/);
   assert.match(html, /\.message\.assistant\s*{[\s\S]{0,80}width:\s*100%/);
   assert.match(html, /\.message\.user\s*{[\s\S]{0,120}width:\s*100%/);

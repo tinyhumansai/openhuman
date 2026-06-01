@@ -16,7 +16,7 @@
         --accent-2: #b04724;
         --soft: #eef5f2;
         --warn: #fff2db;
-        --sidebar-width: clamp(320px, 30vw, 620px);
+        --sidebar-width: clamp(560px, 38vw, 760px);
         --sidebar-resizer-width: 10px;
       }
 
@@ -46,7 +46,7 @@
         height: 100vh;
         display: grid;
         grid-template-columns:
-          minmax(300px, var(--sidebar-width))
+          minmax(360px, var(--sidebar-width))
           var(--sidebar-resizer-width)
           minmax(0, 1fr);
         overflow: hidden;
@@ -61,6 +61,14 @@
         height: 100vh;
         overflow-y: auto;
         min-width: 0;
+        container-type: inline-size;
+        overflow-wrap: anywhere;
+      }
+
+      .side > *,
+      .side * {
+        min-width: 0;
+        max-width: 100%;
       }
 
       .sidebar-resizer {
@@ -143,6 +151,7 @@
         justify-content: space-between;
         gap: 10px;
         font-size: 13px;
+        min-width: 0;
       }
 
       .knowledge-readiness-title strong {
@@ -153,6 +162,8 @@
         color: var(--muted);
         font-size: 12px;
         text-align: right;
+        overflow-wrap: anywhere;
+        white-space: normal;
       }
 
       .knowledge-readiness-grid {
@@ -186,6 +197,8 @@
         color: var(--muted);
         font-size: 12px;
         line-height: 1.5;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
 
       .readiness-stages {
@@ -241,6 +254,7 @@
         align-items: baseline;
         justify-content: space-between;
         gap: 8px;
+        min-width: 0;
       }
 
       .delivery-checklist strong {
@@ -303,6 +317,7 @@
         align-items: baseline;
         justify-content: space-between;
         gap: 10px;
+        min-width: 0;
       }
 
       .source-tree-drain-head strong {
@@ -318,6 +333,8 @@
 
       .source-tree-drain p {
         margin: 0;
+        overflow-wrap: anywhere;
+        word-break: break-word;
       }
 
       .source-tree-drain-actions {
@@ -3817,6 +3834,7 @@
         justify-content: space-between;
         gap: 10px;
         align-items: center;
+        min-width: 0;
       }
 
       .workbench-head strong,
@@ -4521,6 +4539,55 @@
         color: var(--muted);
         font-size: 12px;
         line-height: 1.4;
+      }
+
+      @container (max-width: 700px) {
+        .knowledge-readiness-title,
+        .delivery-checklist header,
+        .source-tree-drain-head,
+        .learning-effectiveness-head,
+        .workbench-head,
+        .notes-head {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr);
+          gap: 6px;
+          align-items: start;
+        }
+
+        .knowledge-readiness-title span,
+        .delivery-checklist header span,
+        .source-tree-drain-head span,
+        .learning-effectiveness-status {
+          text-align: left;
+          white-space: normal;
+        }
+
+        .knowledge-readiness-grid,
+        .counts,
+        .learning-effectiveness-metrics {
+          grid-template-columns: 1fr;
+        }
+
+        .source-tree-drain-actions,
+        .learning-effectiveness-actions {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .source-tree-drain-actions .small-action,
+        .learning-effectiveness-actions .small-action,
+        .workbench-head .small-action,
+        .notes-head .small-action {
+          width: 100%;
+        }
+
+        .scope-author-button {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .scope-author-button span {
+          white-space: normal;
+        }
       }
 
       .user-source-item {
@@ -5726,6 +5793,34 @@
         font-size: 13px;
       }
 
+      .side .knowledge-readiness-title strong,
+      .side .readiness-stage strong,
+      .side .delivery-checklist strong,
+      .side .source-tree-drain-head strong,
+      .side .workbench-head strong,
+      .side .notes-head strong,
+      .side .source-scope strong {
+        font-size: 19px;
+      }
+
+      .side .knowledge-readiness-note,
+      .side .readiness-stage span,
+      .side .delivery-checklist header span,
+      .side .delivery-checklist p,
+      .side .source-tree-drain-head span,
+      .side .source-tree-drain p,
+      .side .scope-meta,
+      .side .note-item p,
+      .side .user-source-item p {
+        font-size: 17px;
+      }
+
+      .side .small-action,
+      .side .workbench-button {
+        font-size: 17px;
+        min-height: 46px;
+      }
+
       @media (max-width: 860px) {
         .app {
           grid-template-columns: 1fr;
@@ -6315,7 +6410,7 @@
         insufficient: "不足以确认",
       };
       const ASK_REQUEST_TIMEOUT_MS = 75000;
-      const SIDEBAR_MIN_WIDTH = 300;
+      const SIDEBAR_MIN_WIDTH = 520;
       const SIDEBAR_MAX_WIDTH = 820;
       const MAIN_MIN_WIDTH = 560;
       const initialSessionFromUrl = new URLSearchParams(window.location.search).get("session") || "";
@@ -6460,10 +6555,13 @@
 
       function sidebarWidthBounds() {
         const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
-        const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, viewportWidth - MAIN_MIN_WIDTH - 32);
+        const responsiveMin = viewportWidth >= 1200
+          ? SIDEBAR_MIN_WIDTH
+          : Math.max(360, Math.round(viewportWidth * 0.42));
+        const maxByViewport = Math.max(responsiveMin, viewportWidth - MAIN_MIN_WIDTH - 32);
         return {
-          min: SIDEBAR_MIN_WIDTH,
-          max: Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxByViewport)),
+          min: responsiveMin,
+          max: Math.max(responsiveMin, Math.min(SIDEBAR_MAX_WIDTH, maxByViewport)),
         };
       }
 
