@@ -1,8 +1,8 @@
 //! Focused raw integration coverage for memory sync + memory sources.
 //!
-//! Everything here is local: temp workspaces, loopback HTTP, and a fake `gh`
-//! binary. Run with `--test-threads=1` because config and PATH are process
-//! globals.
+//! Everything here is local: temp workspaces, loopback HTTP, and fake `git` /
+//! `gh` binaries. Run with `--test-threads=1` because config and PATH are
+//! process globals.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -309,8 +309,8 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let config = config_in(&tmp);
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh(&script);
+    write_fake_git(&bin.join("git"));
+    write_fake_gh(&bin.join("gh"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
@@ -597,6 +597,24 @@ fn execute_response_for(body: &Value) -> Value {
         "error": null,
         "costUsd": 0.0
     })
+}
+
+fn write_fake_git(path: &PathBuf) {
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "git fixture forces GitHub reader API fallback" >&2
+exit 3
+"#;
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("fake git metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
+    }
 }
 
 fn write_fake_gh(path: &PathBuf) {
