@@ -1,9 +1,9 @@
-# fly.toml app configuration file generated for openhuman-xpgcrg on 2026-06-01T01:10:35Z
+# fly.toml app configuration file generated for aqilai on 2026-06-01T12:31:45Z
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = 'openhuman-xpgcrg'
+app = 'aqilai'
 primary_region = 'sin'
 
 [build]
