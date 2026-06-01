@@ -214,6 +214,43 @@ function topicSwitchPayload() {
   };
 }
 
+function confirmationLoopPayload() {
+  const assistant = (question, overrides = {}) => ({
+    role: "assistant",
+    content: `问题：${question}\n\n本轮回答。`,
+    ...askPayload(question, overrides),
+  });
+  const messages = [
+    { role: "user", content: FINAL_ACCEPTANCE_SCENARIOS[0].question },
+    assistant(FINAL_ACCEPTANCE_SCENARIOS[0].question),
+    { role: "user", content: FINAL_ACCEPTANCE_SCENARIOS[0].followUp },
+    assistant(FINAL_ACCEPTANCE_SCENARIOS[0].followUp, {
+      answerEffectiveness: {
+        status: "needs_source",
+        question: FINAL_ACCEPTANCE_SCENARIOS[0].followUp,
+      },
+    }),
+  ];
+  return {
+    sessionId: "confirmation-loop-session",
+    messageIndex: 3,
+    updatePayload: { message: messages[3] },
+    confirmedNotebook: {
+      id: "confirmation-loop-session",
+      boundary: "学习专题会话不是作者原文证据。",
+      messages,
+    },
+    nextQuestion: "继续帮我找更多作者原文来源",
+    next: askPayload("继续帮我找更多作者原文来源", {
+      messages: [
+        ...messages,
+        { role: "user", content: "继续帮我找更多作者原文来源" },
+        assistant("继续帮我找更多作者原文来源"),
+      ],
+    }),
+  };
+}
+
 test("validateAmazonQaSmoke accepts a source-backed two-turn answer path", () => {
   const report = validateAmazonQaSmoke({
     status: statusPayload(),
@@ -260,6 +297,7 @@ test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning qu
     },
     studyPack: studyPackPayload(),
     topicSwitch: topicSwitchPayload(),
+    confirmationLoop: confirmationLoopPayload(),
   });
 
   assert.equal(report.ok, true);
@@ -271,6 +309,8 @@ test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning qu
   assert.deepEqual(report.topicSwitch.standaloneResults.map((item) => item.id), ["persona", "selection-methods"]);
   assert.equal(report.topicSwitch.standaloneResults[0].sources, 0);
   assert.equal(report.topicSwitch.standaloneResults[1].sources, 1);
+  assert.equal(report.confirmationLoop.status, "needs_source");
+  assert.equal(report.confirmationLoop.followUpSources, 1);
 });
 
 test("validateAmazonQaSmoke rejects incomplete semantic index status", () => {

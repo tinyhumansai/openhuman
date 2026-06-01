@@ -299,11 +299,13 @@ export function validateAmazonQaFinalAcceptance(input = {}, options = {}) {
     };
   });
   const topicSwitch = assertTopicSwitchAcceptance(input.topicSwitch);
+  const confirmationLoop = assertConfirmationLoopAcceptance(input.confirmationLoop);
 
   return {
     ok: true,
     scenarios: summaries,
     topicSwitch,
+    confirmationLoop,
     documents: Number(status.health?.documents || 0),
     chunks: Number(status.health?.chunks || 0),
     embeddedChunks: Number(status.health?.embeddedChunks || 0),
@@ -384,9 +386,14 @@ export async function runAmazonQaFinalAcceptance(options = {}) {
     ? await fetchNotebookStudyPack(baseUrl, { timeoutMs, sessionId: firstSessionId })
     : undefined;
   const topicSwitch = await runTopicSwitchAcceptance(baseUrl, { timeoutMs });
+  const confirmationLoop = await runConfirmationLoopAcceptance(baseUrl, {
+    timeoutMs,
+    sessionId: anchor?.second?.sessionId || anchor?.first?.sessionId || firstSessionId,
+    messages: anchor?.second?.messages || anchor?.first?.messages || [],
+  });
 
   return validateAmazonQaFinalAcceptance(
-    { status, sourceSelections, scenarios: scenarioResults, sourceContext, notebook, studyPack, topicSwitch },
+    { status, sourceSelections, scenarios: scenarioResults, sourceContext, notebook, studyPack, topicSwitch, confirmationLoop },
     {
       expectedDocuments: options.expectedDocuments,
       expectedChunks: options.expectedChunks,
@@ -394,6 +401,88 @@ export async function runAmazonQaFinalAcceptance(options = {}) {
       scenarios,
     },
   );
+}
+
+async function runConfirmationLoopAcceptance(baseUrl, { timeoutMs, sessionId, messages }) {
+  assertSmoke(sessionId, "Cannot check result confirmation because the session id is missing.");
+  const history = Array.isArray(messages) ? messages : [];
+  const messageIndex = findLastAssistantIndex(history);
+  assertSmoke(messageIndex >= 0, "Cannot check result confirmation because no assistant answer was found.");
+  const answerEffectiveness = {
+    status: "needs_source",
+    question: previousUserQuestionFromMessages(history, messageIndex),
+    updatedAt: new Date().toISOString(),
+  };
+  const updatePayload = await fetchJson(`${baseUrl}/api/notebooks/${encodeURIComponent(sessionId)}/answer-effectiveness`, {
+    method: "POST",
+    timeoutMs,
+    body: {
+      messageIndex,
+      answerEffectiveness,
+    },
+  });
+  const confirmedNotebook = await fetchNotebook(baseUrl, { timeoutMs, sessionId });
+  const nextQuestion = "继续帮我找更多作者原文来源";
+  const next = await fetchJson(`${baseUrl}/api/ask`, {
+    method: "POST",
+    timeoutMs,
+    body: {
+      question: nextQuestion,
+      sessionId,
+      history: Array.isArray(confirmedNotebook.messages) ? confirmedNotebook.messages : [],
+    },
+  });
+  return { sessionId, messageIndex, updatePayload, confirmedNotebook, nextQuestion, next };
+}
+
+function assertConfirmationLoopAcceptance(loop = {}) {
+  assertSmoke(loop && typeof loop === "object", "Result confirmation acceptance result is missing.");
+  assertSmoke(loop.sessionId, "Result confirmation session id is missing.");
+  assertSmoke(Number.isInteger(loop.messageIndex) && loop.messageIndex >= 0, "Result confirmation message index is missing.");
+  const updatedMessage = loop.updatePayload?.message || loop.confirmedNotebook?.messages?.[loop.messageIndex] || {};
+  assertSmoke(
+    updatedMessage.answerEffectiveness?.status === "needs_source",
+    "Result confirmation did not persist the needs_source status.",
+  );
+  const notebookMessage = loop.confirmedNotebook?.messages?.[loop.messageIndex] || {};
+  assertSmoke(
+    notebookMessage.answerEffectiveness?.status === "needs_source",
+    "Notebook did not preserve the needs_source result confirmation.",
+  );
+  assertAskPayload(loop.next, "result confirmation follow-up");
+  const nextMessages = Array.isArray(loop.next?.messages) ? loop.next.messages : [];
+  assertSmoke(
+    nextMessages.some((message) => message?.role === "assistant" && message.answerEffectiveness?.status === "needs_source"),
+    "Follow-up history did not carry the user's result confirmation.",
+  );
+  assertSmoke(
+    nextMessages.some((message) => message?.role === "user" && String(message.content || "").includes(loop.nextQuestion)),
+    "Result confirmation follow-up question was not preserved in history.",
+  );
+  return {
+    sessionId: loop.sessionId,
+    messageIndex: loop.messageIndex,
+    status: updatedMessage.answerEffectiveness?.status || "",
+    followUpQuestion: loop.nextQuestion || "",
+    followUpSources: Array.isArray(loop.next?.sources) ? loop.next.sources.length : 0,
+    followUpGraphNodes: Array.isArray(loop.next?.graph?.nodes) ? loop.next.graph.nodes.length : 0,
+    followUpLearningQueueItems: Array.isArray(loop.next?.learningQueue?.items) ? loop.next.learningQueue.items.length : 0,
+    followUpAnswerMode: loop.next?.answerGeneration?.mode || "template",
+  };
+}
+
+function findLastAssistantIndex(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "assistant") return index;
+  }
+  return -1;
+}
+
+function previousUserQuestionFromMessages(messages = [], messageIndex = messages.length) {
+  for (let index = Math.min(messageIndex - 1, messages.length - 1); index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") return String(messages[index].content || "").slice(0, 240);
+  }
+  return "";
 }
 
 async function runTopicSwitchAcceptance(baseUrl, { timeoutMs }) {
