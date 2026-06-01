@@ -311,6 +311,10 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     std::fs::create_dir_all(&bin).expect("bin dir");
     let script = bin.join("gh");
     write_fake_gh(&script);
+    // PR #3047 (memory_tree) made the reader prefer a local `git clone` over
+    // `gh api repos/.../commits`. The fake gh mocks the API path, so we shim
+    // `git` to fail and force the API fallback.
+    write_failing_git(&bin.join("git"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
@@ -341,7 +345,11 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
         .read_item(&entry, "issue:7", &config)
         .await
         .expect("read issue");
-    assert!(issue.body.contains("## Comments"));
+    // PR #3047 / #3113 simplified the issue renderer — comments are no longer
+    // appended into the issue body. Verify the issue header + Description
+    // (which still contains the body text) instead.
+    assert!(issue.body.contains("# Issue #7"));
+    assert!(issue.body.contains("## Description"));
     assert!(issue.body.contains("Needs fixture coverage"));
     assert_eq!(
         issue.metadata.get("state").and_then(Value::as_str),
@@ -597,6 +605,23 @@ fn execute_response_for(body: &Value) -> Value {
         "error": null,
         "costUsd": 0.0
     })
+}
+
+/// Shim that fails every `git` invocation so the GitHub reader falls back to
+/// the `gh api` code path that the fake `gh` in this test actually mocks.
+fn write_failing_git(path: &PathBuf) {
+    let script =
+        "#!/usr/bin/env bash\necho \"fake git: refusing $* in coverage test\" >&2\nexit 1\n";
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("fake git metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
+    }
 }
 
 fn write_fake_gh(path: &PathBuf) {
