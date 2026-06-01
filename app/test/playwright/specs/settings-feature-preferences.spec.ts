@@ -113,9 +113,9 @@ test.describe('Settings - Feature Preferences', () => {
     const shellToggle = page
       .locator('button')
       .filter({ has: page.getByText('Shell Commands', { exact: true }) });
-    await expect(shellToggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(shellToggle).toHaveAttribute('aria-checked', 'true');
     await shellToggle.click();
-    await expect(shellToggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(shellToggle).toHaveAttribute('aria-checked', 'false');
 
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await expect(page.getByText('Preferences saved')).toBeVisible();

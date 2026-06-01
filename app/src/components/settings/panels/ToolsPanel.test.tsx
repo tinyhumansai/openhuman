@@ -57,12 +57,12 @@ describe('<ToolsPanel />', () => {
   it('exposes tool toggle state and saves the updated enabled tools list', async () => {
     render(<ToolsPanel />);
 
-    const shellToggle = screen.getByRole('button', { name: /Shell Commands/ });
-    await waitFor(() => expect(shellToggle).toHaveAttribute('aria-pressed', 'true'));
+    const shellToggle = screen.getByRole('switch', { name: /Shell Commands/ });
+    await waitFor(() => expect(shellToggle).toHaveAttribute('aria-checked', 'true'));
 
     fireEvent.click(shellToggle);
 
-    expect(shellToggle).toHaveAttribute('aria-pressed', 'false');
+    expect(shellToggle).toHaveAttribute('aria-checked', 'false');
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 
     await waitFor(() =>

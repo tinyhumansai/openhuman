@@ -124,15 +124,13 @@ fn prefix_class(class: ComposioErrorClass, body: &str) -> String {
 /// Derive the lowercase toolkit slug from a Composio tool/trigger identifier.
 ///
 /// Identifiers are upper-snake-case (e.g. `GMAIL_NEW_GMAIL_MESSAGE`); the leading
-/// segment names the toolkit, so this returns e.g. `gmail`. Pure extraction with
-/// **no behavior change** — it replicates the previous inline logic verbatim,
-/// including the `"integration"` fallback. (Note: `str::split('_').next()` always
-/// yields `Some(_)` even for an empty string, so the fallback is unreachable for
-/// `&str` input; it is kept for parity with the original call sites.)
+/// segment names the toolkit, so this returns e.g. `gmail`. `str::split('_').next()`
+/// always yields `Some(_)` for `&str` input (empty input yields `Some("")`), so
+/// `unwrap_or_default()` is a safe, equivalent terminator.
 fn derive_toolkit_slug(tool: &str) -> String {
     tool.split('_')
         .next()
-        .unwrap_or("integration")
+        .unwrap_or_default()
         .to_ascii_lowercase()
 }
 
