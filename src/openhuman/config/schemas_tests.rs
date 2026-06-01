@@ -105,6 +105,16 @@ fn optional_string_builds_option_string_field() {
 }
 
 #[test]
+fn optional_json_builds_option_json_field() {
+    let f = optional_json("payload", "json payload");
+    assert!(!f.required);
+    match &f.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
+        other => panic!("expected Option<Json>, got {other:?}"),
+    }
+}
+
+#[test]
 fn optional_bool_builds_option_bool_field() {
     let f = optional_bool("enabled", "Whether enabled");
     assert!(!f.required);
@@ -221,6 +231,20 @@ fn deserialize_params_preserves_local_ai_base_url_null() {
 
     let out: LocalAiSettingsUpdate = deserialize_params(m).unwrap();
     assert!(out.base_url.as_ref().is_some_and(Value::is_null));
+}
+
+#[test]
+fn update_local_ai_settings_schema_allows_json_base_url() {
+    let schema = schemas("update_local_ai_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "base_url")
+        .expect("base_url field");
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
+        other => panic!("expected Option<Json>, got {other:?}"),
+    }
 }
 
 #[test]

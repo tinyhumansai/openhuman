@@ -2781,6 +2781,7 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': '채팅 작업 그룹',
   'settings.ai.disconnectProvider': '{label} 연결 끊기',
   'settings.ai.connectProviderLabel': '{label} 연결',
+  'settings.ai.editProviderEndpoint': '{label} 엔드포인트 편집',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
   'settings.ai.endpointUrlLabel': '끝점 URL',
   'settings.ai.localRuntimeHelper':

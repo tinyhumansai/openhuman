@@ -2669,6 +2669,7 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': '对话工作负载',
   'settings.ai.disconnectProvider': '断开 {label}',
   'settings.ai.connectProviderLabel': '连接 {label}',
+  'settings.ai.editProviderEndpoint': '编辑 {label} 端点',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
   'settings.ai.endpointUrlLabel': '端点 URL',
   'settings.ai.localRuntimeHelper':

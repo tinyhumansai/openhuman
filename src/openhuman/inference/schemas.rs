@@ -276,7 +276,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_bool("runtime_enabled", "Enable or disable local inference runtime routing."),
                 optional_bool("opt_in_confirmed", "Persist the local inference opt-in flag."),
                 optional_string("provider", "Optional local provider slug, e.g. ollama or lm_studio."),
-                optional_string("base_url", "Optional local provider base URL."),
+                optional_json(
+                    "base_url",
+                    "Optional local provider base URL string, or null to clear.",
+                ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
                 optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),

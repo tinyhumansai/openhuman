@@ -2865,6 +2865,9 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 const tone = LOCAL_CHIP_TONE[localKind];
                 const existing = draft.cloudProviders.find(cp => cp.slug === localKind);
                 const enabled = !!existing;
+                const editEndpointLabel = formatI18n(t('settings.ai.editProviderEndpoint'), {
+                  label,
+                });
                 // Use a styled chip directly for local runtimes — they have
                 // non-standard tones not in BUILTIN_PROVIDER_META.
                 return (
@@ -2911,8 +2914,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     {enabled && existing ? (
                       <button
                         type="button"
-                        aria-label={`Edit ${label} endpoint`}
-                        title={`Edit ${label} endpoint`}
+                        aria-label={editEndpointLabel}
+                        title={editEndpointLabel}
                         onClick={() => {
                           setKeyDialogInitialValue(existing.endpoint);
                           setKeyDialogFor(localKind);

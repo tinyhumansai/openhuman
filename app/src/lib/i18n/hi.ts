@@ -2803,6 +2803,7 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'चैट वर्कलोड ग्रुप',
   'settings.ai.disconnectProvider': 'डिस्कनेक्ट करें {label}',
   'settings.ai.connectProviderLabel': 'कनेक्ट करें {label}',
+  'settings.ai.editProviderEndpoint': '{label} endpoint संपादित करें',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
   'settings.ai.endpointUrlLabel': 'समापन बिंदु URL',
   'settings.ai.localRuntimeHelper':

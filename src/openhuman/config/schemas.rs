@@ -647,9 +647,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "provider",
                     "Local provider identifier. Supported values: ollama, lm_studio.",
                 ),
-                optional_string(
+                optional_json(
                     "base_url",
-                    "Provider base URL. For LM Studio this defaults to http://localhost:1234/v1.",
+                    "Provider base URL string, or null to clear. For LM Studio this defaults to http://localhost:1234/v1.",
                 ),
                 optional_string("model_id", "Default local chat model identifier."),
                 optional_string("chat_model_id", "Local chat model identifier."),
@@ -1584,6 +1584,15 @@ fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
         required: false,
     }
