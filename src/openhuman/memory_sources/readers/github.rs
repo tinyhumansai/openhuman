@@ -869,6 +869,25 @@ async fn read_issue(
     let labels: Vec<&str> = issue.labels.iter().map(|l| l.name.as_str()).collect();
     let issue_body = issue.body.as_deref().unwrap_or("");
 
+    let comments = fetch_issue_comments(owner, repo, number, use_gh).await;
+    let comments_md = if comments.is_empty() {
+        String::new()
+    } else {
+        let rendered = comments
+            .iter()
+            .map(|comment| {
+                format!(
+                    "- @{user} at {created}:\n\n  {body}",
+                    user = comment.user,
+                    created = comment.created_at,
+                    body = comment.body.replace('\n', "\n  "),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        format!("\n\n## Comments\n\n{rendered}")
+    };
+
     let body = format!(
         "# Issue #{number}: {title}\n\n\
          **State:** {state}\n\
@@ -877,7 +896,7 @@ async fn read_issue(
          **Created:** {created}\n\
          **Updated:** {updated}\n\n\
          ## Description\n\n\
-         {issue_body}",
+         {issue_body}{comments_md}",
         title = issue.title,
         state = issue.state,
         label_str = if labels.is_empty() {
@@ -887,6 +906,7 @@ async fn read_issue(
         },
         created = issue.created_at.as_deref().unwrap_or("unknown"),
         updated = issue.updated_at.as_deref().unwrap_or("unknown"),
+        comments_md = comments_md,
     );
 
     Ok(SourceContent {
