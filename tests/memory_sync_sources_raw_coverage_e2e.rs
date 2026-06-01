@@ -414,6 +414,7 @@ async fn composio_providers_fetch_profiles_tasks_and_cover_error_branches() {
         config: Arc::new(config.clone()),
         toolkit: "github".to_string(),
         connection_id: Some("conn-github".to_string()),
+        usage: Default::default(),
     };
     let github = GitHubProvider::new();
     let github_profile = github

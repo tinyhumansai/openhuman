@@ -27,6 +27,17 @@ pub struct SyncAuditEntry {
     pub output_tokens: u64,
     /// Estimated cost in USD (input + output at model pricing).
     pub estimated_cost_usd: f64,
+    /// Number of Composio billable API actions executed during this sync
+    /// (e.g. `GMAIL_FETCH_EMAILS`, `SLACK_LIST_CONVERSATIONS`). `0` for
+    /// non-Composio source kinds. `#[serde(default)]` keeps audit lines
+    /// written before #3111 parseable.
+    #[serde(default)]
+    pub composio_actions_called: u32,
+    /// Actual USD charged for those Composio actions, summed from each
+    /// response's backend-reported `cost_usd`. `0.0` for non-Composio kinds
+    /// or when the backend reports no charge (e.g. direct mode).
+    #[serde(default)]
+    pub composio_cost_usd: f64,
     /// Duration of the sync in milliseconds.
     pub duration_ms: u64,
     /// Whether the sync completed successfully.
@@ -34,6 +45,16 @@ pub struct SyncAuditEntry {
     /// Error message if the sync failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+impl SyncAuditEntry {
+    /// Total cost of the run: LLM summarisation cost plus the actual
+    /// Composio API-action cost. This is the "combined cost" the Sync
+    /// History UI surfaces so users see the full expense of a sync in one
+    /// number rather than just the summarisation slice (#3111).
+    pub fn combined_cost_usd(&self) -> f64 {
+        self.estimated_cost_usd + self.composio_cost_usd
+    }
 }
 
 const AUDIT_FILENAME: &str = "sync_audit.jsonl";
@@ -126,6 +147,8 @@ mod tests {
             input_tokens: 50_000,
             output_tokens: 5_000,
             estimated_cost_usd: 0.225,
+            composio_actions_called: 0,
+            composio_cost_usd: 0.0,
             duration_ms: 12_000,
             success: true,
             error: None,
@@ -138,5 +161,42 @@ mod tests {
         let lines: Vec<&str> = content.lines().collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("src_123"));
+    }
+
+    /// `combined_cost_usd` sums the LLM summarisation cost and the Composio
+    /// API-action cost so the Sync History UI can show one total (#3111).
+    #[test]
+    fn combined_cost_sums_llm_and_composio() {
+        let entry = SyncAuditEntry {
+            timestamp: Utc::now(),
+            source_id: "src_gmail".to_string(),
+            source_kind: "composio".to_string(),
+            scope: "gmail".to_string(),
+            items_fetched: 40,
+            batches: 1,
+            input_tokens: 20_000,
+            output_tokens: 2_000,
+            estimated_cost_usd: 0.001_96,
+            composio_actions_called: 8,
+            composio_cost_usd: 0.04,
+            duration_ms: 5_000,
+            success: true,
+            error: None,
+        };
+        // 0.00196 (LLM) + 0.04 (Composio) = 0.04196
+        assert!((entry.combined_cost_usd() - 0.041_96).abs() < 1e-9);
+    }
+
+    /// Audit lines written before #3111 (no composio_* fields) must still
+    /// deserialize — the new fields are `#[serde(default)]`. Pins the
+    /// back-compat contract for the append-only JSONL log.
+    #[test]
+    fn legacy_audit_line_without_composio_fields_deserializes() {
+        let legacy = r#"{"timestamp":"2026-05-01T00:00:00Z","source_id":"src_old","source_kind":"github_repo","scope":"github:org/repo","items_fetched":10,"batches":1,"input_tokens":1000,"output_tokens":100,"estimated_cost_usd":0.0001,"duration_ms":2000,"success":true}"#;
+        let entry: SyncAuditEntry =
+            serde_json::from_str(legacy).expect("legacy audit line must still parse");
+        assert_eq!(entry.composio_actions_called, 0);
+        assert_eq!(entry.composio_cost_usd, 0.0);
+        assert_eq!(entry.source_id, "src_old");
     }
 }

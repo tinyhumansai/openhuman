@@ -293,6 +293,10 @@ pub async fn run_github_sync(
             input_tokens: total_input_tokens,
             output_tokens: total_output_tokens,
             estimated_cost_usd: cost,
+            // GitHub repo sync reads via the `gh` CLI / public REST API, not
+            // Composio, so there's no billable Composio-action cost here.
+            composio_actions_called: 0,
+            composio_cost_usd: 0.0,
             duration_ms,
             success: true,
             error: None,

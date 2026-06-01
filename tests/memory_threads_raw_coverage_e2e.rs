@@ -3026,6 +3026,7 @@ async fn memory_sync_provider_trait_defaults_and_connection_hook_are_determinist
         config: Arc::new(config_in(&tmp)),
         toolkit: "raw_coverage".into(),
         connection_id: Some("conn-1".into()),
+        usage: Default::default(),
     };
     let provider = RawCoverageProvider { fail_profile: true };
     assert_eq!(provider.sync_interval_secs(), Some(15 * 60));

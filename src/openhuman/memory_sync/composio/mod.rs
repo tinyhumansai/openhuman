@@ -31,7 +31,7 @@ pub use periodic::{record_sync_success, start_periodic_sync};
 pub use providers::{
     all_providers as all_composio_sync_providers, get_provider as get_composio_sync_provider,
     init_default_providers as init_default_composio_sync_providers, ComposioProvider,
-    ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
+    ComposioUsage, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason,
 };
 
 /// One provider-backed connection that the memory sync layer can execute.
@@ -118,11 +118,17 @@ pub async fn scan_active_sync_targets(config: &Config) -> Result<Vec<SyncTarget>
 }
 
 /// Run one provider-backed sync end-to-end in-process.
+///
+/// Returns the provider's [`SyncOutcome`] together with the
+/// [`ComposioUsage`] tally (billable action count + actual USD cost)
+/// accumulated at the `execute` chokepoint during this run, so the
+/// sync-audit caller can record Composio API-call cost alongside the LLM
+/// summarisation cost (#3111).
 pub async fn run_connection_sync(
     config: Config,
     connection_id: &str,
     reason: SyncReason,
-) -> Result<SyncOutcome, String> {
+) -> Result<(SyncOutcome, ComposioUsage), String> {
     init_default_composio_sync_providers();
 
     let target = list_sync_targets(&config)
@@ -144,9 +150,17 @@ pub async fn run_connection_sync(
         config: std::sync::Arc::new(config),
         toolkit: target.toolkit,
         connection_id: Some(target.connection_id),
+        usage: Default::default(),
     };
 
-    provider.sync(&ctx, reason).await
+    let outcome = provider.sync(&ctx, reason).await?;
+
+    // Read back the Composio billable-action tally accumulated at the
+    // `execute` chokepoint during this sync (#3111). A poisoned lock is
+    // treated as "no usage recorded" rather than failing the whole sync —
+    // the audit cost line is best-effort telemetry, not load-bearing.
+    let usage = ctx.usage.lock().map(|u| u.clone()).unwrap_or_default();
+    Ok((outcome, usage))
 }
 
 fn connection_to_sync_target(connection: ComposioConnection) -> Option<SyncTarget> {

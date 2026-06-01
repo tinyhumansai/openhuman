@@ -24,7 +24,7 @@ use crate::openhuman::memory::sync::{emit_sync_stage, MemorySyncStage, MemorySyn
 use crate::openhuman::memory_sources::readers;
 use crate::openhuman::memory_sources::types::{MemorySourceEntry, SourceKind};
 use crate::openhuman::memory_sync::canonicalize::document::DocumentInput;
-use crate::openhuman::memory_sync::composio::{self, SyncReason};
+use crate::openhuman::memory_sync::composio::{self, ComposioUsage, SyncReason};
 
 const SYNC_CONCURRENCY: usize = 10;
 
@@ -89,8 +89,13 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
                 "[memory_sources:sync] dispatching by kind"
             );
             let sync_start = std::time::Instant::now();
+            // Composio billable-action usage for this run, populated by
+            // `sync_composio` (#3111). Stays zero for non-Composio kinds.
+            let mut composio_usage = ComposioUsage::default();
             let outcome = match source.kind {
-                SourceKind::Composio => sync_composio(&source, config.clone()).await,
+                SourceKind::Composio => {
+                    sync_composio(&source, config.clone(), &mut composio_usage).await
+                }
                 SourceKind::GithubRepo => {
                     // GitHub path writes its own detailed audit entry
                     // with token breakdowns; skip the dispatcher-level
@@ -150,6 +155,8 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
                                 input_tokens: 0,
                                 output_tokens: 0,
                                 estimated_cost_usd: 0.0,
+                                composio_actions_called: composio_usage.actions_called,
+                                composio_cost_usd: composio_usage.cost_usd,
                                 duration_ms,
                                 success: true,
                                 error: None,
@@ -182,6 +189,12 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
                             input_tokens: 0,
                             output_tokens: 0,
                             estimated_cost_usd: 0.0,
+                            // A sync that failed partway may still have fired
+                            // (billable) Composio actions before erroring;
+                            // record what we accumulated so cost isn't
+                            // under-reported on failures.
+                            composio_actions_called: composio_usage.actions_called,
+                            composio_cost_usd: composio_usage.cost_usd,
                             duration_ms,
                             success: false,
                             error: Some(error.clone()),
@@ -224,7 +237,11 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
     Ok(())
 }
 
-async fn sync_composio(source: &MemorySourceEntry, config: Config) -> Result<usize, String> {
+async fn sync_composio(
+    source: &MemorySourceEntry,
+    config: Config,
+    usage_out: &mut ComposioUsage,
+) -> Result<usize, String> {
     let connection_id = source
         .connection_id
         .as_deref()
@@ -238,9 +255,14 @@ async fn sync_composio(source: &MemorySourceEntry, config: Config) -> Result<usi
         Some(format!("delegating to composio sync for {connection_id}")),
     );
 
-    let outcome = composio::run_connection_sync(config, connection_id, SyncReason::Manual)
+    let (outcome, usage) = composio::run_connection_sync(config, connection_id, SyncReason::Manual)
         .await
         .map_err(|e| format!("composio sync failed: {e}"))?;
+
+    // Surface the billable-action tally to the dispatcher so it lands in the
+    // sync audit entry (#3111). Only written on the success path; a failed
+    // `run_connection_sync` leaves `usage_out` at its caller-provided default.
+    *usage_out = usage;
 
     Ok(outcome.items_ingested)
 }

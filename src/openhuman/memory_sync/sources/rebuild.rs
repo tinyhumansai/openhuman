@@ -262,6 +262,10 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
             input_tokens: total_input_tokens,
             output_tokens: total_output_tokens,
             estimated_cost_usd: cost,
+            // Rebuild re-summarises already-archived raw files; it makes no
+            // Composio API calls, so the Composio cost columns are zero.
+            composio_actions_called: 0,
+            composio_cost_usd: 0.0,
             duration_ms,
             success: true,
             error: None,
