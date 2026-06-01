@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>亚马逊学习问答 · 本地交付入口</title>
+    <meta
+      name="description"
+      content="OpenHuman 亚马逊学习问答的远程交付说明页。本页可部署到 Vercel，但完整问答能力运行在本机 OpenHuman、Ollama 和本地知识库。"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #18201d;
+        --muted: #5f6b66;
+        --line: #d9ded9;
+        --paper: #f8faf7;
+        --panel: #ffffff;
+        --accent: #0d7a65;
+        --accent-soft: #e3f2ee;
+        --warn: #8a5d12;
+        --warn-soft: #fff6df;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Noto Sans SC", sans-serif;
+        line-height: 1.55;
+      }
+
+      main {
+        width: min(1120px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 40px 0 56px;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+        gap: 28px;
+        align-items: end;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 28px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 5vw, 4.4rem);
+        line-height: 1.02;
+        letter-spacing: 0;
+      }
+
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      .eyebrow {
+        margin-bottom: 12px;
+        color: var(--accent);
+        font-weight: 700;
+      }
+
+      .lead {
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 1.08rem;
+        max-width: 760px;
+      }
+
+      .status-panel,
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .status-panel {
+        padding: 18px;
+      }
+
+      .status-panel strong {
+        display: block;
+        font-size: 1.1rem;
+      }
+
+      .status-panel span {
+        display: block;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 12px;
+        margin: 28px 0;
+      }
+
+      .metric {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 16px;
+        min-height: 106px;
+      }
+
+      .metric strong {
+        display: block;
+        font-size: 1.7rem;
+        line-height: 1.1;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--muted);
+        margin-top: 8px;
+      }
+
+      .section-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 20px;
+      }
+
+      .card {
+        padding: 22px;
+      }
+
+      .card h2,
+      .card h3 {
+        margin-bottom: 10px;
+      }
+
+      ul,
+      ol {
+        padding-left: 1.25rem;
+        margin-bottom: 0;
+      }
+
+      li + li {
+        margin-top: 8px;
+      }
+
+      code {
+        background: #eef1ed;
+        border: 1px solid #d7ddd6;
+        border-radius: 6px;
+        padding: 2px 6px;
+        font-size: 0.95em;
+      }
+
+      .boundary {
+        background: var(--warn-soft);
+        border-color: #eed18e;
+      }
+
+      .boundary strong {
+        color: var(--warn);
+      }
+
+      .actions {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 18px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        border-radius: 8px;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        padding: 0 16px;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .button.secondary {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      footer {
+        margin-top: 28px;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      @media (max-width: 760px) {
+        main {
+          width: min(100vw - 24px, 680px);
+          padding-top: 24px;
+        }
+
+        header,
+        .section-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 480px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">OpenHuman · Amazon Learning Q&A</p>
+          <h1>亚马逊学习问答本地产品入口</h1>
+          <p class="lead">
+            这是可发布到 Vercel 的远程交付说明页。完整问答能力运行在你的本机：
+            OpenHuman 核心服务、本地 SQLite 知识库和 Ollama 模型共同提供检索、引用、连续追问、图谱和学习闭环。
+          </p>
+          <div class="actions">
+            <a class="button" href="#run-local">本机启动方式</a>
+            <a class="button secondary" href="#acceptance">查看验收标准</a>
+          </div>
+        </div>
+        <aside class="status-panel">
+          <strong>当前交付状态：本机问答可用，学习层增强中</strong>
+          <span>最近验证：2026-06-01 11:39 Asia/Shanghai</span>
+          <span>本机入口：<code>http://127.0.0.1:7790</code></span>
+        </aside>
+      </header>
+
+      <section class="grid" aria-label="当前知识库指标">
+        <article class="metric"><strong>1779</strong><span>作者资料</span></article>
+        <article class="metric"><strong>14597</strong><span>资料片段</span></article>
+        <article class="metric"><strong>100%</strong><span>本地语义索引覆盖率</span></article>
+        <article class="metric"><strong>9622</strong><span>来源树后台待处理</span></article>
+      </section>
+
+      <section class="section-grid">
+        <article class="card">
+          <h2>已验证能力</h2>
+          <ul>
+            <li>本地语义问答、来源引用、连续追问和换题不串题。</li>
+            <li>每次回答带本轮图谱、知识缺口雷达、下一步资料选择和来源决策表。</li>
+            <li>每次回答可确认“有效、需要补来源、切换意图、补产品数据”，并影响下一轮检索。</li>
+            <li>专题会话可生成文字学习包、复习卡、思维导图预览、掌握度自测和行动实验计划。</li>
+          </ul>
+        </article>
+
+        <article class="card boundary">
+          <h2>Vercel 边界</h2>
+          <p>
+            本页可以部署到 Vercel，但它不是云端完整问答服务。完整问答依赖本机文件、Ollama、本地数据库和
+            <code>openhuman-core</code> 长驻进程，因此不能原样在 Vercel Serverless 环境中运行。
+          </p>
+          <p>如果要做真正云端版，需要先把数据库、模型服务和核心进程迁到可长驻的云端服务。</p>
+        </article>
+      </section>
+
+      <section id="run-local" class="section-grid">
+        <article class="card">
+          <h2>本机启动方式</h2>
+          <ol>
+            <li>确认 Ollama 正在运行，并已安装本地向量模型。</li>
+            <li>在仓库内运行：<code>node tools/amazon-learning-qa/amazon-qa-product.mjs start</code></li>
+            <li>打开：<code>http://127.0.0.1:7790</code></li>
+            <li>运行：<code>node tools/amazon-learning-qa/amazon-qa-product.mjs doctor</code> 检查状态。</li>
+          </ol>
+        </article>
+
+        <article id="acceptance" class="card">
+          <h2>验收方式</h2>
+          <ul>
+            <li>运行 <code>node tools/amazon-learning-qa/amazon-qa-product.mjs acceptance</code>。</li>
+            <li>检查三类真实问题、主图追问、换题不串题和结果反馈再追问。</li>
+            <li>确认来源引用、图谱、学习队列、学习包、复习卡和行动实验计划都返回结果。</li>
+            <li>来源树仍在后台深加工，按最近速度约 5 天；这不影响当前问答和引用。</li>
+          </ul>
+        </article>
+      </section>
+
+      <footer>
+        本页不包含音频或视频功能。它只说明当前本地产品交付状态、验收方式和远程发布边界。
+      </footer>
+    </main>
+  </body>
+</html>

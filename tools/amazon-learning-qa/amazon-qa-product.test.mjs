@@ -132,6 +132,24 @@ test("handoff uses real status, local deployment boundary, and no audio/video sc
   assert.doesNotMatch(markdown, /## 已交付能力/);
 });
 
+test("Vercel entry page is a static delivery boundary, not a cloud Q&A shell", async () => {
+  const html = await readFile(new URL("./vercel-entry/index.html", import.meta.url), "utf8");
+  const vercelConfig = await readFile(new URL("./vercel-entry/vercel.json", import.meta.url), "utf8");
+
+  assert.match(html, /亚马逊学习问答本地产品入口/);
+  assert.match(html, /http:\/\/127\.0\.0\.1:7790/);
+  assert.match(html, /1779/);
+  assert.match(html, /14597/);
+  assert.match(html, /100%/);
+  assert.match(html, /9622/);
+  assert.match(html, /不是云端完整问答服务/);
+  assert.match(html, /不能原样在 Vercel Serverless 环境中运行/);
+  assert.match(html, /不包含音频或视频功能/);
+  assert.doesNotMatch(html, /\/api\/ask/);
+  assert.doesNotMatch(html, /textarea/);
+  assert.doesNotThrow(() => JSON.parse(vercelConfig));
+});
+
 function mockFetch({ status, models }) {
   const original = globalThis.fetch;
   globalThis.fetch = async (url) => {
