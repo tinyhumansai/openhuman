@@ -201,11 +201,18 @@ pub struct Agent {
     /// extended whenever a mid-session connect is announced — so each new
     /// toolkit is announced exactly once, never re-announced per turn.
     pub(super) announced_integrations: std::collections::HashSet<String>,
-    /// One-shot note ("X connected this session, use it now") parked by
-    /// `refresh_delegation_tools_from_cached_integrations` and consumed when
-    /// the next user message is built — rides on the user turn (NOT the
-    /// system prompt) so the KV-cache prefix stays byte-identical.
-    pub(super) pending_integration_announcement: Option<String>,
+    /// Toolkit slugs that connected mid-session and still need announcing on
+    /// the next user message ("X connected this session, use it now"). Parked
+    /// by `refresh_delegation_tools_from_cached_integrations` and rendered +
+    /// cleared when the next user message is built — the note rides on the
+    /// user turn (NOT the system prompt) so the KV-cache prefix stays
+    /// byte-identical.
+    ///
+    /// Accumulated as a list (not a single rendered string) so two connects
+    /// between consecutive user turns both surface: a second connect appends
+    /// its slug instead of overwriting the first's note. Order-preserving +
+    /// de-duped on insert.
+    pub(super) pending_integration_announcement: Vec<String>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the

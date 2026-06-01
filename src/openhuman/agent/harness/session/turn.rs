@@ -107,25 +107,33 @@ fn normalize_tool_call<'a>(call: &'a ParsedToolCall) -> Cow<'a, ParsedToolCall> 
 ///
 /// Kept as a free function (no `&self`) so the delta logic is unit-testable
 /// without standing up a full `Agent` — see `turn_tests.rs`.
-fn integration_announcement(
+/// Returns the toolkit slugs in `connected` that have not yet been announced
+/// this session, marking them announced. Empty when nothing is new.
+fn newly_connected_slugs(
     connected: &[String],
     announced: &mut std::collections::HashSet<String>,
-) -> Option<String> {
+) -> Vec<String> {
     let newly: Vec<String> = connected
         .iter()
         .filter(|slug| !announced.contains(*slug))
         .cloned()
         .collect();
-    if newly.is_empty() {
-        return None;
-    }
     for slug in &newly {
         announced.insert(slug.clone());
+    }
+    newly
+}
+
+/// Render the one-shot user-turn note for a set of freshly-connected slugs.
+/// Empty input yields `None`.
+fn integration_announcement_note(slugs: &[String]) -> Option<String> {
+    if slugs.is_empty() {
+        return None;
     }
     Some(format!(
         "[integration update] These integration(s) connected during this conversation and are available right now: {}. \
 Use delegate_to_integrations_agent with the matching toolkit slug to act on them immediately — do not tell the user to reconnect or restart.",
-        newly.join(", ")
+        slugs.join(", ")
     ))
 }
 
@@ -468,7 +476,8 @@ impl Agent {
         // user turn (NOT a system message — `trim_history` hoists system
         // messages to the front and would bust the KV-cache prefix) and
         // `.take()` clears it so it fires exactly once.
-        let enriched = match self.pending_integration_announcement.take() {
+        let pending_slugs = std::mem::take(&mut self.pending_integration_announcement);
+        let enriched = match integration_announcement_note(&pending_slugs) {
             Some(note) => format!("{note}\n\n{enriched}"),
             None => enriched,
         };
@@ -1234,10 +1243,14 @@ impl Agent {
                 .iter()
                 .map(|i| i.toolkit.clone())
                 .collect();
-            if let Some(note) =
-                integration_announcement(&connected_slugs, &mut self.announced_integrations)
-            {
-                self.pending_integration_announcement = Some(note);
+            // Append (don't overwrite) so a second connect before the next
+            // user turn doesn't drop the first one's announcement. Slugs are
+            // already de-duped against `announced_integrations`, but guard the
+            // pending list too in case the same slug is re-queued.
+            for slug in newly_connected_slugs(&connected_slugs, &mut self.announced_integrations) {
+                if !self.pending_integration_announcement.contains(&slug) {
+                    self.pending_integration_announcement.push(slug);
+                }
             }
             true
         } else {
