@@ -592,7 +592,10 @@ async fn round20_spawn_subagent_covers_validation_schema_and_disabled_worker_bra
         .await
         .expect("dedicated thread disabled returns tool result");
     assert!(dedicated_thread.is_error);
-    assert!(dedicated_thread.output().contains("temporarily disabled"));
+    // #3049 superseded #1624: dedicated_thread is no longer "temporarily
+    // disabled". Verify the tool errors (no provider) without requiring
+    // the exact legacy message.
+    assert!(!dedicated_thread.output().is_empty());
 }
 
 async fn start_loopback(app: Router) -> String {
