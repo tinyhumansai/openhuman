@@ -139,6 +139,10 @@ fn normalize_ollama_client_url(raw: &str) -> String {
         normalized.push(':');
         normalized.push_str(&port.to_string());
     }
+    let path = parsed.path().trim_end_matches('/');
+    if !path.is_empty() && path != "/" {
+        normalized.push_str(path);
+    }
     normalized
 }
 
@@ -732,6 +736,17 @@ mod tests {
         assert_eq!(
             ollama_base_url_from_config(&config),
             "http://localhost:11434"
+        );
+    }
+
+    #[test]
+    fn ollama_base_url_from_config_preserves_path_prefix() {
+        let _lock = test_lock();
+        let _g = OllamaEnvGuard::clear();
+        let config = make_config_with_base_url(Some("http://127.0.0.1:11434/ollama/"));
+        assert_eq!(
+            ollama_base_url_from_config(&config),
+            "http://127.0.0.1:11434/ollama"
         );
     }
 
