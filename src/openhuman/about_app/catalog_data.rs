@@ -1437,6 +1437,19 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         privacy: None,
     },
     Capability {
+        id: "agent.action_timeout",
+        name: "Action Timeout",
+        domain: "agent",
+        category: CapabilityCategory::Settings,
+        description: "Set how long a single tool or action may run before it is cancelled \
+                      (1–3600 seconds, default 120). Increase it when a large local model is \
+                      interrupted before finishing its response. Applies to the next tool call \
+                      without a restart; the OPENHUMAN_TOOL_TIMEOUT_SECS env var still overrides it.",
+        how_to: "Settings → Agent OS access → Action timeout",
+        status: CapabilityStatus::Stable,
+        privacy: None,
+    },
+    Capability {
         id: "security.always_allow_tool",
         name: "Always Allow a Tool",
         domain: "security",

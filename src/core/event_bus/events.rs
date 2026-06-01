@@ -497,6 +497,23 @@ pub enum DomainEvent {
     /// A full tree rebuild completed.
     TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
 
+    /// Fine-grained progress during the memory tree build pipeline.
+    /// Emitted at each sub-phase so the frontend can show detailed status.
+    MemoryTreeBuildProgress {
+        /// Which phase: "extract", "append", "seal", "flush", "embed"
+        phase: String,
+        /// Sub-step within the phase (e.g. "loading", "summarising", "persisting")
+        step: String,
+        /// Tree scope when available (e.g. "github:org/repo")
+        tree_scope: Option<String>,
+        /// Tree level being processed (0 = leaves, 1+ = summaries)
+        level: Option<u32>,
+        /// Number of items being processed in this step
+        item_count: Option<u32>,
+        /// Human-readable detail
+        detail: Option<String>,
+    },
+
     // ── Notification ────────────────────────────────────────────────────
     /// An integration notification was ingested from an embedded webview.
     NotificationIngested {
@@ -787,7 +804,8 @@ impl DomainEvent {
 
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }
-            | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
+            | Self::TreeSummarizerRebuildCompleted { .. }
+            | Self::MemoryTreeBuildProgress { .. } => "tree_summarizer",
 
             Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
 
@@ -885,6 +903,7 @@ impl DomainEvent {
             Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
             Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
             Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
+            Self::MemoryTreeBuildProgress { .. } => "MemoryTreeBuildProgress",
             Self::NotificationIngested { .. } => "NotificationIngested",
             Self::NotificationTriaged { .. } => "NotificationTriaged",
             Self::DevicePaired { .. } => "DevicePaired",

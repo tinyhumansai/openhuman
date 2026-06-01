@@ -37,6 +37,7 @@ fn sample_chat_chunk(source_id: &str, seq: u32) -> Chunk {
             time_range: (ts, ts),
             tags: vec!["channel".to_string()],
             source_ref: Some(SourceRef::new(format!("discord://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: 12,
         seq_in_source: seq,
