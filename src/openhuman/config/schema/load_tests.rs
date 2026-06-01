@@ -1213,6 +1213,7 @@ async fn test_save_preserves_backup_file() {
     let mut config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Default::default()
     };
 
@@ -1239,6 +1240,7 @@ async fn test_save_then_corrupt_then_recover() {
     let mut config = Config {
         config_path: config_path.clone(),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         default_temperature: 1.3,
         ..Default::default()
     };

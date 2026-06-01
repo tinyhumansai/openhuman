@@ -49,6 +49,7 @@ pub async fn run_cli_screenshot(args: CliScreenshotArgs) -> Result<serde_json::V
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.action_dir,
     ));
     let tool = ScreenshotTool::new(security);
 

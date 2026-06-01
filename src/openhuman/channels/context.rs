@@ -66,6 +66,7 @@ pub(crate) struct ChannelRuntimeContext {
     pub(crate) workspace_dir: Arc<PathBuf>,
     pub(crate) message_timeout_secs: u64,
     pub(crate) multimodal: crate::openhuman::config::MultimodalConfig,
+    pub(crate) multimodal_files: crate::openhuman::config::MultimodalFileConfig,
 }
 
 pub(crate) fn conversation_memory_key(msg: &super::traits::ChannelMessage) -> String {
@@ -350,6 +351,7 @@ mod tests {
             workspace_dir: Arc::new(PathBuf::from("/tmp")),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             multimodal: crate::openhuman::config::MultimodalConfig::default(),
+            multimodal_files: crate::openhuman::config::MultimodalFileConfig::default(),
         }
     }
 
