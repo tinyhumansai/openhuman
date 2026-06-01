@@ -66,7 +66,11 @@ test("sidebar exposes knowledge readiness instead of only raw document count", (
   assert.match(html, /当前等待数以实时数据库为准/);
   assert.match(html, /queuedDelta/);
   assert.match(html, /doneDelta/);
+  assert.match(html, /spawnedJobs/);
+  assert.match(html, /netQueueReduction/);
   assert.match(html, /formatBatchQueueDelta/);
+  assert.match(html, /formatSourceTreeSpawnedJobs/);
+  assert.match(html, /系统派生约/);
   assert.match(html, /预计剩余/);
   assert.match(html, /速度/);
   assert.match(html, /formatDurationMinutes/);

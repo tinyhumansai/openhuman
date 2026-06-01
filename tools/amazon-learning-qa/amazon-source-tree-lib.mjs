@@ -100,6 +100,7 @@ export function summarizeSourceTreeDrain({ sourceTree = {}, run = {}, now = Date
   const endedAtMs = Date.parse(normalized.finishedAt || normalized.updatedAt || "");
   const progressNow = running || starting || stopping || stale || !Number.isFinite(endedAtMs) ? now : endedAtMs;
   const progress = sourceTreeDrainProgress({ processedJobs, queuedJobs, startedAt: normalized.startedAt, now: progressNow });
+  const lastBatch = normalizeSourceTreeLastBatch(normalized.lastBatch);
 
   let level = "idle";
   let message = queuedJobs > 0
@@ -152,9 +153,28 @@ export function summarizeSourceTreeDrain({ sourceTree = {}, run = {}, now = Date
     logPath: normalized.logPath,
     error: normalized.error,
     stopReason: normalized.stopReason,
-    lastBatch: normalized.lastBatch,
+    lastBatch,
     activeBatch: normalized.activeBatch,
     message,
+  };
+}
+
+function normalizeSourceTreeLastBatch(batch) {
+  if (!batch || typeof batch !== "object") return undefined;
+  const processed = Math.max(0, Number(batch.processed || 0));
+  const queuedDelta = Number(batch.queuedDelta || 0);
+  const doneDelta = Math.max(0, Number(batch.doneDelta || 0));
+  const spawnedJobs = Math.max(0, doneDelta - queuedDelta);
+  const netQueueReduction = Math.max(0, queuedDelta);
+  return {
+    ...batch,
+    processed,
+    queuedDelta,
+    doneDelta,
+    spawnedJobs,
+    netQueueReduction,
+    queueExpanded: queuedDelta < 0,
+    queueHeldBySpawnedJobs: doneDelta > 0 && queuedDelta <= 0,
   };
 }
 

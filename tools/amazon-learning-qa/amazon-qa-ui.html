@@ -6130,7 +6130,7 @@
         const done = formatNumber(drain.doneJobs || 0);
         const lastBatch = drain.lastBatch && typeof drain.lastBatch === "object" ? drain.lastBatch : null;
         const batchNote = lastBatch
-          ? `上一批实际处理 ${formatNumber(lastBatch.processed || 0)} 个，${formatBatchQueueDelta(Number(lastBatch.queuedDelta || 0))}，完成增加 ${formatNumber(Math.max(0, Number(lastBatch.doneDelta || 0)))} 个；当前等待数以实时数据库为准。`
+          ? `上一批实际处理 ${formatNumber(lastBatch.processed || 0)} 个，${formatBatchQueueDelta(Number(lastBatch.queuedDelta || 0))}，完成增加 ${formatNumber(Math.max(0, Number(lastBatch.doneDelta || 0)))} 个；${formatSourceTreeSpawnedJobs(lastBatch)}当前等待数以实时数据库为准。`
           : "";
         const speed = Number(drain.jobsPerMinute || 0) > 0 ? `${formatNumber(drain.jobsPerMinute)} 个/分钟` : "";
         const eta = Number(drain.estimatedMinutesRemaining || 0) > 0 ? formatDurationMinutes(drain.estimatedMinutesRemaining) : "";
@@ -6192,6 +6192,16 @@
         if (!Number.isFinite(number) || number === 0) return "等待未减少";
         if (number > 0) return `等待减少 ${formatNumber(number)} 个`;
         return `等待增加 ${formatNumber(Math.abs(number))} 个`;
+      }
+
+      function formatSourceTreeSpawnedJobs(batch) {
+        const spawned = Math.max(0, Number(batch?.spawnedJobs || 0));
+        if (spawned <= 0) return "";
+        const netReduction = Math.max(0, Number(batch?.netQueueReduction || 0));
+        const prefix = netReduction > 0
+          ? `净减少 ${formatNumber(netReduction)} 个，`
+          : "等待数被后续任务抵消，";
+        return `${prefix}系统派生约 ${formatNumber(spawned)} 个后续摘要任务；`;
       }
 
       function formatDurationMinutes(minutes) {

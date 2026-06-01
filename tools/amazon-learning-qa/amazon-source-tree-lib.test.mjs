@@ -379,6 +379,43 @@ test("summarizeSourceTreeDrain exposes queue diagnostics from the latest batch",
   assert.equal(summary.lastBatch.processed, 25);
   assert.equal(summary.lastBatch.queuedDelta, 26);
   assert.equal(summary.lastBatch.doneDelta, 26);
+  assert.equal(summary.lastBatch.spawnedJobs, 0);
+  assert.equal(summary.lastBatch.netQueueReduction, 26);
+  assert.equal(summary.lastBatch.queueHeldBySpawnedJobs, false);
+});
+
+test("summarizeSourceTreeDrain explains spawned follow-up jobs when queue does not shrink", () => {
+  const now = Date.parse("2026-05-26T00:00:00.000Z");
+  const summary = summarizeSourceTreeDrain({
+    now,
+    sourceTree: { queuedJobs: 9622, readyJobs: 9622, runningJobs: 0, doneJobs: 2918, failedJobs: 0, ingestedDocuments: 1779 },
+    run: {
+      state: "paused",
+      processedJobs: 10,
+      startedAt: "2026-05-25T23:50:00.000Z",
+      updatedAt: "2026-05-25T23:59:59.000Z",
+      finishedAt: "2026-05-25T23:59:59.000Z",
+      lastBatch: {
+        processed: 5,
+        limit: 5,
+        configuredBatchSize: 5,
+        beforeQueuedJobs: 9620,
+        afterQueuedJobs: 9620,
+        queuedDelta: 0,
+        beforeDoneJobs: 2913,
+        afterDoneJobs: 2918,
+        doneDelta: 5,
+      },
+    },
+  });
+
+  assert.equal(summary.level, "paused");
+  assert.equal(summary.lastBatch.processed, 5);
+  assert.equal(summary.lastBatch.doneDelta, 5);
+  assert.equal(summary.lastBatch.queuedDelta, 0);
+  assert.equal(summary.lastBatch.spawnedJobs, 5);
+  assert.equal(summary.lastBatch.netQueueReduction, 0);
+  assert.equal(summary.lastBatch.queueHeldBySpawnedJobs, true);
 });
 
 test("summarizeSourceTreeDrain prefers live source-tree counts over stale run snapshots", () => {
