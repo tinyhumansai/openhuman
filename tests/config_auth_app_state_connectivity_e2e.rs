@@ -5444,14 +5444,25 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    let missing_secret_err = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+    // Per #3125 — OAuth profiles with a missing `access_token` are dropped
+    // and persisted-purged instead of poisoning the whole load (which used to
+    // lock users out). Assert the recovery path: load succeeds, the bad
+    // profile is absent from the in-memory set, and the active-profile entry
+    // is cleared because its target was dropped.
+    let recovered = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
         .load()
-        .expect_err("oauth profile missing access token should fail");
+        .expect("missing-access-token oauth profile should be dropped, not error");
     assert!(
-        missing_secret_err
-            .to_string()
-            .contains("OAuth profile missing access_token"),
-        "unexpected missing oauth secret error: {missing_secret_err:#}"
+        !recovered
+            .profiles
+            .contains_key("github:missing-access"),
+        "expected missing-access-token profile to be dropped, got: {:?}",
+        recovered.profiles.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !recovered.active_profiles.contains_key("github"),
+        "expected active-profile entry to be cleared after its target was dropped, got: {:?}",
+        recovered.active_profiles
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");
