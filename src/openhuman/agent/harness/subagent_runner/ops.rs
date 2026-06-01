@@ -1433,6 +1433,7 @@ async fn run_inner_loop(
         temperature,
         true, // silent — sub-agents never echo to stdout
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         max_iterations,
         None, // sub-agents don't stream a draft
         &["ask_user_clarification"],

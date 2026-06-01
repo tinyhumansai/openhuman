@@ -368,7 +368,7 @@ fn memory_sources_validation_and_sync_classification_edges() {
     assert_eq!(classify_unknown("GMAIL_FETCH_EMAILS"), ToolScope::Read);
     assert_eq!(
         toolkit_from_slug(" MICROSOFT_TEAMS_SEND "),
-        Some("microsoft".into())
+        Some("microsoft_teams".into())
     );
     assert_eq!(toolkit_from_slug(""), None);
     let catalog = [CuratedTool {
