@@ -57,13 +57,9 @@ export function nodeColor(node: GraphNode): string {
 
 export function nodeRadius(node: GraphNode): number {
   if (node.kind === 'source') return 16;
-  if (node.kind === 'summary') {
-    const level = typeof node.level === 'number' && Number.isFinite(node.level) ? node.level : 0;
-    const radius = 10 - level * 0.8;
-    return radius < 4 ? 4 : radius;
-  }
+  if (node.kind === 'summary') return 5 + (node.level ?? 0) * 2.5;
   if (node.kind === 'contact') return 9;
-  return 4; // chunk / document leaf
+  return 3; // chunk / document leaf
 }
 
 /** Source / summary / contact nodes glow; leaves stay flat so the structure pops. */
