@@ -48,6 +48,9 @@ struct MockState {
     requests: Arc<Mutex<Vec<SeenRequest>>>,
 }
 
+static ENV_LOCK: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 #[derive(Debug, Clone)]
 struct SeenRequest {
     path: String,
@@ -64,14 +67,14 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: this integration test is validated with --test-threads=1.
+        // SAFETY: tests that use EnvVarGuard hold ENV_LOCK while the guard lives.
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: this integration test is validated with --test-threads=1.
+        // SAFETY: tests that use EnvVarGuard hold ENV_LOCK while the guard lives.
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
     }
@@ -81,11 +84,11 @@ impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         match &self.previous {
             Some(value) => {
-                // SAFETY: this integration test is validated with --test-threads=1.
+                // SAFETY: tests that use EnvVarGuard hold ENV_LOCK while the guard lives.
                 unsafe { std::env::set_var(self.key, value) }
             }
             None => {
-                // SAFETY: this integration test is validated with --test-threads=1.
+                // SAFETY: tests that use EnvVarGuard hold ENV_LOCK while the guard lives.
                 unsafe { std::env::remove_var(self.key) }
             }
         }
@@ -209,6 +212,7 @@ async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edg
 
 #[tokio::test]
 async fn provider_admin_model_listing_covers_openrouter_validation_and_local_synthesis() {
+    let _env_lock = ENV_LOCK.lock().await;
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -291,6 +295,7 @@ async fn provider_admin_model_listing_covers_openrouter_validation_and_local_syn
 
 #[tokio::test]
 async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
+    let _env_lock = ENV_LOCK.lock().await;
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -491,6 +496,7 @@ async fn reliable_provider_covers_chat_tools_streaming_and_context_bail_edges() 
 
 #[tokio::test]
 async fn local_admin_covers_diagnostics_errors_assets_status_and_shutdown_with_fake_bins() {
+    let _env_lock = ENV_LOCK.lock().await;
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
