@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildProductDoctorReport, handoffMarkdown } from "./amazon-qa-product.mjs";
+import { buildCompletionAudit, buildProductDoctorReport, completionAuditMarkdown, handoffMarkdown } from "./amazon-qa-product.mjs";
 
 const READY_STATUS = {
   health: {
@@ -148,6 +148,41 @@ test("Vercel entry page is a static delivery boundary, not a cloud Q&A shell", a
   assert.doesNotMatch(html, /\/api\/ask/);
   assert.doesNotMatch(html, /textarea/);
   assert.doesNotThrow(() => JSON.parse(vercelConfig));
+});
+
+test("completion audit refuses to mark the goal complete while source tree and cloud Q&A are incomplete", () => {
+  const report = {
+    ok: true,
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    service: {
+      answerStatus: "ready",
+      learningStatus: "processing",
+      documents: 1779,
+      chunks: 14597,
+      embedded: 14597,
+      coverage: 100,
+      sourceTreeQueuedJobs: 9622,
+      sourceTreeDoneJobs: 2918,
+      sourceTreeFailedJobs: 0,
+      sourceTreeEstimatedRemainingText: "5 天",
+    },
+    deployment: {
+      vercelReady: false,
+    },
+  };
+  const audit = buildCompletionAudit(report);
+  const markdown = completionAuditMarkdown(audit);
+
+  assert.equal(audit.canMarkGoalComplete, false);
+  assert.equal(audit.completionStatus, "local_qa_ready_not_full_final");
+  assert.ok(audit.requirements.some((item) => item.id === "local_semantic_knowledge_base" && item.status === "proved"));
+  assert.ok(audit.requirements.some((item) => item.id === "interactive_memory_qa" && item.status === "needs_acceptance_evidence"));
+  assert.ok(audit.requirements.some((item) => item.id === "source_tree_learning_layer" && item.status === "not_complete"));
+  assert.ok(audit.requirements.some((item) => item.id === "vercel_delivery" && item.status === "boundary_only"));
+  assert.ok(audit.requirements.some((item) => item.id === "no_audio_video" && item.status === "proved"));
+  assert.match(markdown, /尚未达到完整终版/);
+  assert.match(markdown, /来源树仍有 9622 个后台任务/);
+  assert.match(markdown, /不能原样部署到 Vercel Serverless/);
 });
 
 function mockFetch({ status, models }) {

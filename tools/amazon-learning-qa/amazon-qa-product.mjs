@@ -43,6 +43,7 @@ function usage() {
   ${PRODUCT_COMMAND} status [--json]
   ${PRODUCT_COMMAND} smoke [--base-url ${DEFAULT_BASE_URL}]
   ${PRODUCT_COMMAND} acceptance [--base-url ${DEFAULT_BASE_URL}]
+  ${PRODUCT_COMMAND} completion-audit [--json]
   ${PRODUCT_COMMAND} handoff
 
 Purpose:
@@ -69,6 +70,7 @@ async function main() {
   if (command === "status") return printStatus(args);
   if (command === "smoke") return runSmoke(args);
   if (command === "acceptance") return runAcceptance(args);
+  if (command === "completion-audit" || command === "audit") return printCompletionAudit(args);
   if (command === "handoff") return writeHandoff();
   throw new Error(`Unknown command: ${command}`);
 }
@@ -355,11 +357,137 @@ async function runAcceptance(args) {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function printCompletionAudit(args) {
+  const report = await buildProductDoctorReport();
+  const audit = buildCompletionAudit(report);
+  if (args.includes("--json")) {
+    console.log(JSON.stringify(audit, null, 2));
+    return;
+  }
+  console.log(completionAuditMarkdown(audit));
+}
+
 async function writeHandoff() {
   const report = await buildProductDoctorReport();
   await mkdir(path.dirname(HANDOFF_PATH), { recursive: true });
   await writeFile(HANDOFF_PATH, handoffMarkdown(report), "utf8");
   console.log(HANDOFF_PATH);
+}
+
+export function buildCompletionAudit(report) {
+  const semanticReady = report.ok
+    && report.service?.answerStatus === "ready"
+    && Number(report.service?.documents || 0) === EXPECTED_DOCUMENTS
+    && Number(report.service?.chunks || 0) === EXPECTED_CHUNKS
+    && Number(report.service?.embedded || 0) === Number(report.service?.chunks || 0)
+    && Number(report.service?.coverage || 0) >= 99;
+  const sourceTreeReady = report.service?.learningStatus === "ready" && Number(report.service?.sourceTreeQueuedJobs || 0) === 0;
+  const localPackageExists = existsSync(SERVER_PATH) && existsSync(UI_PATH);
+  const vercelEntryExists = existsSync(path.join(import.meta.dirname, "vercel-entry", "index.html"));
+  const requirements = [
+    {
+      id: "local_semantic_knowledge_base",
+      label: "本地语义知识库",
+      status: semanticReady ? "proved" : "not_complete",
+      evidence: semanticReady
+        ? `${report.service.documents} 篇资料、${report.service.chunks} 个片段，语义索引 ${report.service.embedded}/${report.service.chunks}，覆盖率 ${report.service.coverage}%。`
+        : "资料数、片段数或语义索引没有达到交付门槛。",
+    },
+    {
+      id: "interactive_memory_qa",
+      label: "连续问答、来源引用和图谱入口",
+      status: report.service?.answerStatus === "ready" ? "needs_acceptance_evidence" : "not_complete",
+      evidence: report.service?.answerStatus === "ready"
+        ? `问答服务当前为 ready；需要运行 ${PRODUCT_COMMAND} acceptance 作为真实问题验收证据。`
+        : "问答服务当前未就绪。",
+    },
+    {
+      id: "source_tree_learning_layer",
+      label: "完整来源树学习层",
+      status: sourceTreeReady ? "proved" : "not_complete",
+      evidence: sourceTreeReady
+        ? "来源树后台深加工已完成。"
+        : `来源树仍有 ${Number(report.service?.sourceTreeQueuedJobs || 0)} 个后台任务，已完成 ${Number(report.service?.sourceTreeDoneJobs || 0)} 个，失败 ${Number(report.service?.sourceTreeFailedJobs || 0)} 个；预计剩余 ${report.service?.sourceTreeEstimatedRemainingText || "暂无可靠估计"}。`,
+    },
+    {
+      id: "openhuman_boundary",
+      label: "保持 OpenHuman 本地优先边界",
+      status: localPackageExists ? "proved" : "not_complete",
+      evidence: localPackageExists
+        ? "产品包位于仓库 tools/amazon-learning-qa，继续依赖本地 OpenHuman、SQLite 和 Ollama。"
+        : "本地产品入口文件缺失。",
+    },
+    {
+      id: "vercel_delivery",
+      label: "Vercel 远程交付形态",
+      status: vercelEntryExists && report.deployment?.vercelReady === false ? "boundary_only" : "not_complete",
+      evidence: vercelEntryExists
+        ? "已提供 Vercel 静态交付页，但完整问答不能原样部署到 Vercel Serverless。"
+        : "缺少 Vercel 静态交付入口。",
+    },
+    {
+      id: "no_audio_video",
+      label: "不做音视频开发",
+      status: "proved",
+      evidence: "交付说明和远程入口均明确不包含音频或视频功能。",
+    },
+  ];
+  const blocking = requirements.filter((item) => item.status === "not_complete");
+  const needsAcceptance = requirements.filter((item) => item.status === "needs_acceptance_evidence");
+  const boundaryOnly = requirements.filter((item) => item.status === "boundary_only");
+  const completionStatus = blocking.length === 0 && needsAcceptance.length === 0 && boundaryOnly.length === 0
+    ? "complete"
+    : semanticReady
+      ? "local_qa_ready_not_full_final"
+      : "needs_action";
+  return {
+    generatedAt: report.generatedAt || new Date().toISOString(),
+    completionStatus,
+    canMarkGoalComplete: completionStatus === "complete",
+    summary: completionStatus === "complete"
+      ? "所有终版要求已有当前证据证明。"
+      : "本地语义问答已达到可用状态，但完整终版仍缺少来源树完成、真实问题验收证据或云端完整部署条件。",
+    requirements,
+    blocking: blocking.map((item) => item.id),
+    needsAcceptance: needsAcceptance.map((item) => item.id),
+    boundaryOnly: boundaryOnly.map((item) => item.id),
+    nextActions: [
+      ...needsAcceptance.map(() => `运行 ${PRODUCT_COMMAND} acceptance，并保存输出作为真实问题验收证据。`),
+      ...blocking.map((item) => item.id === "source_tree_learning_layer"
+        ? "按页面有限批次继续来源树深加工；问答可先正常使用。"
+        : item.evidence),
+      ...boundaryOnly.map(() => "如要云端完整问答，需要迁移 SQLite、模型服务和 openhuman-core 到可长驻云端服务。"),
+    ],
+  };
+}
+
+export function completionAuditMarkdown(audit) {
+  const lines = [
+    "# 亚马逊学习问答终版完成审计",
+    "",
+    `生成时间：${audit.generatedAt}`,
+    `总体状态：${audit.canMarkGoalComplete ? "可以标记完成" : "尚未达到完整终版"}`,
+    "",
+    audit.summary,
+    "",
+    "## 逐项审计",
+    "",
+  ];
+  for (const item of audit.requirements || []) {
+    lines.push(`- ${completionStatusLabel(item.status)} ${item.label}：${item.evidence}`);
+  }
+  if (audit.nextActions?.length) {
+    lines.push("", "## 下一步", "");
+    audit.nextActions.forEach((item) => lines.push(`- ${item}`));
+  }
+  return lines.join("\n");
+}
+
+function completionStatusLabel(status) {
+  if (status === "proved") return "已证明";
+  if (status === "needs_acceptance_evidence") return "需验收";
+  if (status === "boundary_only") return "仅边界交付";
+  return "未完成";
 }
 
 export function handoffMarkdown(report) {
