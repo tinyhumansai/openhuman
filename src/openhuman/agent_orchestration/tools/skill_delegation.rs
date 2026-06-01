@@ -80,7 +80,36 @@ fn build_description(connected: &[(String, String)]) -> String {
     buf
 }
 
+/// Test-only override for the live status fetch. When set, the live re-check
+/// returns this value instead of touching `Config::load_or_init` /
+/// `fetch_connected_integrations_status` — which would otherwise read the host
+/// machine's login/config state and could hit the Composio backend over HTTP,
+/// making the reject-path unit tests environment-dependent. `Some(None)`
+/// forces the "Unavailable" outcome (no live data); `Some(Some(vec))` injects
+/// a deterministic connected set.
+#[cfg(test)]
+thread_local! {
+    static LIVE_FETCH_OVERRIDE: std::cell::RefCell<Option<Option<Vec<String>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_live_fetch_override(value: Option<Vec<String>>) {
+    LIVE_FETCH_OVERRIDE.with(|o| *o.borrow_mut() = Some(value));
+}
+
+#[cfg(test)]
+fn clear_live_fetch_override() {
+    LIVE_FETCH_OVERRIDE.with(|o| *o.borrow_mut() = None);
+}
+
 async fn fetch_live_connected_toolkit_slugs_once() -> Option<Vec<String>> {
+    #[cfg(test)]
+    {
+        if let Some(injected) = LIVE_FETCH_OVERRIDE.with(|o| o.borrow().clone()) {
+            return injected;
+        }
+    }
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .ok()?;
@@ -209,10 +238,8 @@ impl Tool for SkillDelegationTool {
                 "[skill-delegation] toolkit '{}' accepted after live re-check (session schema stale)",
                 slug
             );
-            known = true;
-        } else {
-            known = known_after_recheck;
         }
+        known = known_after_recheck;
         if !known {
             log::debug!(
                 "[skill-delegation] reject: toolkit '{}' (sanitised='{}') not in connected set {:?}",
@@ -333,6 +360,10 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_unknown_toolkit_with_allowed_list() {
+        // Force the live re-check to return "Unavailable" so the test never
+        // reads host config or reaches the Composio backend — the reject must
+        // come purely from the in-memory snapshot (gmail/notion, no slack).
+        set_live_fetch_override(None);
         let tool = SkillDelegationTool::for_connected(vec![
             ("gmail".to_string(), "Email.".to_string()),
             ("notion".to_string(), "Docs.".to_string()),
@@ -342,6 +373,7 @@ mod tests {
             .execute(json!({"toolkit": "slack", "prompt": "hi"}))
             .await
             .unwrap();
+        clear_live_fetch_override();
         assert!(result.is_error);
         let body = result.output();
         assert!(body.contains("slack"));
@@ -366,6 +398,10 @@ mod tests {
     async fn execute_normalises_toolkit_input_before_matching() {
         // Mixed-case + odd-character user input must collapse onto the
         // canonical slug before the connectedness check fires.
+        // Pin the live re-check to the same snapshot so the test is hermetic
+        // (no host config / backend read): `gmail` stays unknown, while the
+        // normalised `google_calendar` is accepted.
+        set_live_fetch_override(Some(vec!["google_calendar".to_string()]));
         let tool = SkillDelegationTool::for_connected(vec![(
             "google_calendar".to_string(),
             "Calendar.".to_string(),
@@ -411,6 +447,7 @@ mod tests {
                 );
             }
         }
+        clear_live_fetch_override();
     }
 
     #[test]
