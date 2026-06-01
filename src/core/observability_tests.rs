@@ -3602,8 +3602,33 @@ fn set_sentry_user_id_attaches_id_to_reported_events() {
 
 #[test]
 fn set_sentry_user_id_ignores_blank_input() {
+    use sentry::test::TestTransport;
+    use std::sync::Arc;
+
     // Blank / whitespace-only ids are dropped rather than attaching an empty
-    // `user.id` that would still count as a distinct user in Sentry.
+    // `user.id` that would still count as a distinct user in Sentry. Assert the
+    // emitted event carries no user — without this the test would pass even if
+    // a blank id were bound to the scope.
+    let transport = TestTransport::new();
+    let options = sentry::ClientOptions {
+        dsn: Some("https://public@sentry.invalid/1".parse().unwrap()),
+        transport: Some(Arc::new(transport.clone())),
+        ..Default::default()
+    };
+    let hub = Arc::new(sentry::Hub::new(
+        Some(Arc::new(options.into())),
+        Arc::new(Default::default()),
+    ));
+    let _guard = sentry::HubSwitchGuard::new(hub);
+
     set_sentry_user_id("");
     set_sentry_user_id("   ");
+    report_error("blank-id failure", "composio", "list_connections", &[]);
+
+    let events = transport.fetch_and_clear_events();
+    assert_eq!(events.len(), 1, "expected exactly one captured event");
+    assert!(
+        events[0].user.is_none(),
+        "blank id must not attach a scope user"
+    );
 }

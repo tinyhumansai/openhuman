@@ -171,15 +171,6 @@ pub async fn store_session(
     // Determine user_id so we can scope the openhuman directory to this user.
     let resolved_user_id = metadata.get("user_id").cloned();
 
-    // Bind the signed-in user's id to the Sentry scope as early as possible
-    // (on fresh login and on account switch, both of which route through here)
-    // so events reported by background loops carry `user.id` even before the
-    // frontend `app_state_snapshot` RPC has warmed the identity cache. Only
-    // the id is sent — never email/name/IP. See `set_sentry_user_id`.
-    if let Some(ref uid) = resolved_user_id {
-        crate::core::observability::set_sentry_user_id(uid);
-    }
-
     // If we know the user_id, activate the user-scoped directory BEFORE storing
     // the auth profile so that credentials land in the correct place.
     let mut logs = if local_session {
@@ -287,6 +278,17 @@ pub async fn store_session(
         .map_err(|e| e.to_string())?;
 
     logs.push("session stored".to_string());
+
+    // Bind the signed-in user's id to the Sentry scope only AFTER the session
+    // is persisted above — a failed `store_provider_token` must not leave the
+    // global scope pointing at a user whose login never completed. Covers
+    // fresh login and account switch (both route through here) so background
+    // -loop errors carry `user.id` even before the frontend `app_state_snapshot`
+    // RPC warms the identity cache. Only the id is sent — never email/name/IP.
+    // See `set_sentry_user_id`.
+    if let Some(ref uid) = resolved_user_id {
+        crate::core::observability::set_sentry_user_id(uid);
+    }
 
     match crate::openhuman::memory::global::init(effective_config.workspace_dir.clone()) {
         Ok(_) => logs.push(format!(

@@ -1772,6 +1772,10 @@ pub(crate) fn report_error_message(
 pub fn set_sentry_user_id(user_id: &str) {
     let trimmed = user_id.trim();
     if trimmed.is_empty() {
+        tracing::debug!(
+            target: REPORT_ERROR_TRACING_TARGET,
+            "[observability] set_sentry_user_id skipped: blank id"
+        );
         return;
     }
     let owned = trimmed.to_string();
@@ -1781,6 +1785,12 @@ pub fn set_sentry_user_id(user_id: &str) {
             ..Default::default()
         }));
     });
+    // PII-safe: log only the id length, never the id itself.
+    tracing::debug!(
+        target: REPORT_ERROR_TRACING_TARGET,
+        id_len = owned.len(),
+        "[observability] Sentry scope user bound"
+    );
 }
 
 /// Clear the signed-in user from the process-global Sentry scope.
@@ -1790,6 +1800,10 @@ pub fn set_sentry_user_id(user_id: &str) {
 /// previous user. Mirrors `set_sentry_user_id` — no-op under a no-op guard.
 pub fn clear_sentry_user() {
     sentry::configure_scope(|scope| scope.set_user(None));
+    tracing::debug!(
+        target: REPORT_ERROR_TRACING_TARGET,
+        "[observability] Sentry scope user cleared"
+    );
 }
 
 /// Returns true when a Sentry event is a per-attempt provider HTTP failure
