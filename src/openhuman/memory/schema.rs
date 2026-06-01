@@ -900,8 +900,8 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 `ready` (#002 FR-011) so jobs that failed under a now-fixed config \
                 (e.g. after adding an embeddings key) re-run without re-ingesting \
                 source data. Resets the attempt budget and clears the typed failure \
-                reason. Backs the 'Retry failed' button; the same requeue also runs \
-                automatically at the start of each sync.",
+                reason. Manual, on-demand retry — there is no automatic \
+                requeue-on-sync yet.",
             inputs: vec![],
             outputs: vec![FieldSchema {
                 name: "requeued",

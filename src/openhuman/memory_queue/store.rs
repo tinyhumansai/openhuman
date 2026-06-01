@@ -374,13 +374,17 @@ pub fn recover_stale_locks(config: &Config) -> Result<usize> {
 
 /// Requeue every terminally-`failed` job back to `ready` (#002 FR-011).
 ///
-/// Used by the "auto-retry on next sync" hook and the manual
-/// `memory_tree_retry_failed` RPC: once the user fixes the underlying cause
-/// (e.g. adds an embeddings key, switches to a faster extraction model), the
-/// jobs that failed under the old config should re-run without re-ingesting
-/// source data. Resets `attempts` to 0 (a fresh retry budget), clears the
-/// typed `failure_reason` / `failure_class` and `last_error`, and makes the
-/// row immediately available. Returns the number of jobs requeued.
+/// Backs the manual `memory_tree_retry_failed` RPC: once the user fixes the
+/// underlying cause (e.g. adds an embeddings key, switches to a faster
+/// extraction model), the jobs that failed under the old config re-run without
+/// re-ingesting source data. Resets `attempts` to 0 (a fresh retry budget),
+/// clears the typed `failure_reason` / `failure_class` and `last_error`, and
+/// makes the row immediately available. Returns the number of jobs requeued.
+///
+/// NOTE: there is currently **no automatic caller**. An automatic
+/// requeue-on-sync was planned, but its hook lived on the upstream-removed
+/// vault sync path and has not been re-homed, so requeue is **manual-only**
+/// (the `memory_tree_retry_failed` RPC) for now.
 pub fn requeue_failed(config: &Config) -> Result<u64> {
     with_connection(config, |conn| {
         let now_ms = Utc::now().timestamp_millis();
