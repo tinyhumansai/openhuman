@@ -16,6 +16,8 @@
         --accent-2: #b04724;
         --soft: #eef5f2;
         --warn: #fff2db;
+        --sidebar-width: clamp(320px, 30vw, 620px);
+        --sidebar-resizer-width: 10px;
       }
 
       * {
@@ -43,19 +45,53 @@
       .app {
         height: 100vh;
         display: grid;
-        grid-template-columns: minmax(420px, 500px) minmax(0, 1fr);
+        grid-template-columns:
+          minmax(300px, var(--sidebar-width))
+          var(--sidebar-resizer-width)
+          minmax(0, 1fr);
         overflow: hidden;
       }
 
       .side {
-        border-right: 1px solid var(--line);
         background: var(--panel);
-        padding: 28px;
+        padding: clamp(18px, 2vw, 30px);
         display: flex;
         flex-direction: column;
         gap: 22px;
         height: 100vh;
         overflow-y: auto;
+        min-width: 0;
+      }
+
+      .sidebar-resizer {
+        position: relative;
+        width: 100%;
+        height: 100vh;
+        border-inline: 1px solid var(--line);
+        background: color-mix(in srgb, var(--paper) 78%, var(--line));
+        cursor: col-resize;
+        touch-action: none;
+      }
+
+      .sidebar-resizer::before {
+        content: "";
+        position: absolute;
+        inset: 0 3px;
+        border-left: 1px solid rgba(14, 107, 96, 0.16);
+        border-right: 1px solid rgba(14, 107, 96, 0.16);
+        opacity: 0.55;
+      }
+
+      .sidebar-resizer:hover,
+      .sidebar-resizer:focus-visible,
+      body.is-resizing-sidebar .sidebar-resizer {
+        background: var(--soft);
+        outline: none;
+      }
+
+      body.is-resizing-sidebar {
+        cursor: col-resize;
+        user-select: none;
       }
 
       .brand {
@@ -433,7 +469,7 @@
       .conversation {
         grid-row: 5;
         overflow-y: auto;
-        padding: 0 8px 24px 0;
+        padding: 0 0 24px;
         display: grid;
         align-content: start;
         gap: 22px;
@@ -441,18 +477,19 @@
       }
 
       .message {
-        max-width: 980px;
+        width: 100%;
+        max-width: none;
         display: grid;
         gap: 8px;
       }
 
       .message.user {
-        margin-left: auto;
-        width: min(820px, 92%);
+        margin-left: 0;
+        width: 100%;
       }
 
       .message.assistant {
-        width: min(980px, 100%);
+        width: 100%;
       }
 
       .answer-panel-group {
@@ -509,12 +546,12 @@
       }
 
       .message.user.question-marker {
-        width: min(760px, 86%);
+        width: 100%;
         gap: 6px;
       }
 
       .message.user.question-marker.is-compact {
-        width: min(680px, 78%);
+        width: 100%;
         opacity: 0.78;
       }
 
@@ -780,7 +817,8 @@
       }
 
       .empty {
-        max-width: 680px;
+        width: 100%;
+        max-width: none;
         color: var(--muted);
         border-left: 4px solid var(--accent);
         padding-left: 16px;
@@ -5583,6 +5621,10 @@
           overflow: visible;
         }
 
+        .sidebar-resizer {
+          display: none;
+        }
+
         .side {
           order: 2;
           border-right: 0;
@@ -6039,6 +6081,16 @@
         </section>
       </section>
 
+      <div
+        class="sidebar-resizer"
+        id="sidebarResizer"
+        role="separator"
+        aria-label="调整左侧栏宽度"
+        aria-orientation="vertical"
+        tabindex="0"
+        title="拖动调整左侧栏宽度"
+      ></div>
+
       <section class="main">
         <div class="toolbar">
           <h2>连续对话</h2>
@@ -6064,6 +6116,9 @@
       const healthEl = document.querySelector("#health");
       const knowledgeReadinessEl = document.querySelector("#knowledgeReadiness");
       const learningEffectivenessSummaryEl = document.querySelector("#learningEffectivenessSummary");
+      const appEl = document.querySelector(".app");
+      const sideEl = document.querySelector(".side");
+      const sidebarResizerEl = document.querySelector("#sidebarResizer");
       const countsEl = document.querySelector("#counts");
       const namespaceEl = document.querySelector("#namespace");
       const chipsEl = document.querySelector("#chips");
@@ -6104,6 +6159,7 @@
       const SOURCE_CONTROLS_KEY = "amazonQaSourceControls";
       const USER_SOURCE_CONTROLS_KEY = "amazonQaUserSourceControls";
       const RETRY_QUESTION_KEY = "amazonQaRetryQuestion";
+      const SIDEBAR_WIDTH_KEY = "amazonQaSidebarWidth";
       const STUDY_PACK_MASTERY_KEY = "amazonQaStudyPackMastery:v1";
       const DEFAULT_PRODUCT_MATERIAL_TEMPLATE = [
         "产品/ASIN：",
@@ -6144,6 +6200,9 @@
         insufficient: "不足以确认",
       };
       const ASK_REQUEST_TIMEOUT_MS = 75000;
+      const SIDEBAR_MIN_WIDTH = 300;
+      const SIDEBAR_MAX_WIDTH = 820;
+      const MAIN_MIN_WIDTH = 560;
       const initialSessionFromUrl = new URLSearchParams(window.location.search).get("session") || "";
       let sessionId = initialSessionFromUrl || localStorage.getItem(SESSION_KEY) || "";
       let messages = readSavedMessages();
@@ -6175,6 +6234,7 @@
       const savedRetryQuestion = localStorage.getItem(RETRY_QUESTION_KEY) || "";
       if (savedRetryQuestion) questionEl.value = savedRetryQuestion;
 
+      bindSidebarResizer();
       loadStatus();
       setInterval(() => {
         if (!document.hidden) loadStatus();
@@ -6190,6 +6250,110 @@
       loadLearningNotes();
       if (initialSessionFromUrl || (sessionId && messages.length === 0)) {
         restoreNotebookSession(sessionId, { silent: true }).catch(() => {});
+      }
+
+      function bindSidebarResizer() {
+        if (!appEl || !sideEl || !sidebarResizerEl) return;
+        restoreSidebarWidth();
+        let dragState = null;
+        const startDrag = (event) => {
+          if (isMobileLayout()) return false;
+          dragState = {
+            startX: event.clientX,
+            startWidth: sideEl.getBoundingClientRect().width,
+          };
+          document.body.classList.add("is-resizing-sidebar");
+          event.preventDefault();
+          return true;
+        };
+        const moveDrag = (event) => {
+          if (!dragState) return;
+          const width = dragState.startWidth + event.clientX - dragState.startX;
+          applySidebarWidth(width, true);
+        };
+        const stopDrag = (event) => {
+          if (!dragState) return;
+          if (event?.pointerId !== undefined && sidebarResizerEl.releasePointerCapture) {
+            try {
+              sidebarResizerEl.releasePointerCapture(event.pointerId);
+            } catch {
+              // Pointer capture may already be released by the browser.
+            }
+          }
+          document.body.classList.remove("is-resizing-sidebar");
+          dragState = null;
+        };
+        sidebarResizerEl.addEventListener("pointerdown", (event) => {
+          if (!startDrag(event)) return;
+          if (sidebarResizerEl.setPointerCapture) {
+            try {
+              sidebarResizerEl.setPointerCapture(event.pointerId);
+            } catch {
+              // Synthetic pointer checks do not always create a capturable pointer.
+            }
+          }
+        });
+        sidebarResizerEl.addEventListener("pointermove", moveDrag);
+        sidebarResizerEl.addEventListener("mousedown", (event) => {
+          if (dragState) return;
+          startDrag(event);
+        });
+        sidebarResizerEl.addEventListener("pointerup", stopDrag);
+        sidebarResizerEl.addEventListener("pointercancel", stopDrag);
+        window.addEventListener("mousemove", moveDrag);
+        window.addEventListener("mouseup", stopDrag);
+        sidebarResizerEl.addEventListener("keydown", (event) => {
+          if (isMobileLayout()) return;
+          const currentWidth = sideEl.getBoundingClientRect().width;
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            const direction = event.key === "ArrowRight" ? 1 : -1;
+            applySidebarWidth(currentWidth + direction * 32, true);
+            event.preventDefault();
+          } else if (event.key === "Home") {
+            applySidebarWidth(SIDEBAR_MIN_WIDTH, true);
+            event.preventDefault();
+          } else if (event.key === "End") {
+            applySidebarWidth(sidebarWidthBounds().max, true);
+            event.preventDefault();
+          }
+        });
+        window.addEventListener("resize", () => {
+          if (isMobileLayout()) return;
+          const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+          if (Number.isFinite(savedWidth) && savedWidth > 0) {
+            applySidebarWidth(savedWidth, false);
+          }
+        });
+      }
+
+      function restoreSidebarWidth() {
+        const savedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+        if (Number.isFinite(savedWidth) && savedWidth > 0) {
+          applySidebarWidth(savedWidth, false);
+        }
+      }
+
+      function applySidebarWidth(width, persist) {
+        const numericWidth = Number(width);
+        if (!appEl || !Number.isFinite(numericWidth)) return undefined;
+        const bounds = sidebarWidthBounds();
+        const clampedWidth = Math.round(Math.min(bounds.max, Math.max(bounds.min, numericWidth)));
+        appEl.style.setProperty("--sidebar-width", `${clampedWidth}px`);
+        if (persist) safeLocalSet(SIDEBAR_WIDTH_KEY, String(clampedWidth));
+        return clampedWidth;
+      }
+
+      function sidebarWidthBounds() {
+        const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+        const maxByViewport = Math.max(SIDEBAR_MIN_WIDTH, viewportWidth - MAIN_MIN_WIDTH - 32);
+        return {
+          min: SIDEBAR_MIN_WIDTH,
+          max: Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, maxByViewport)),
+        };
+      }
+
+      function isMobileLayout() {
+        return window.matchMedia("(max-width: 860px)").matches;
       }
 
       formEl.addEventListener("submit", async (event) => {

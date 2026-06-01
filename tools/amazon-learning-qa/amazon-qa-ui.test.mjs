@@ -756,6 +756,18 @@ test("topic source reading room keeps candidate sources explicit and user-select
 
 test("conversation layout keeps the composer fixed and compresses prior user questions", () => {
   assert.match(html, /\.app\s*{[\s\S]{0,220}height:\s*100vh/);
+  assert.match(html, /--sidebar-width:\s*clamp\(320px,\s*30vw,\s*620px\)/);
+  assert.match(html, /grid-template-columns:[\s\S]{0,180}var\(--sidebar-width\)[\s\S]{0,180}var\(--sidebar-resizer-width\)[\s\S]{0,180}minmax\(0,\s*1fr\)/);
+  assert.match(html, /id="sidebarResizer"/);
+  assert.match(html, /role="separator"/);
+  assert.match(html, /bindSidebarResizer/);
+  assert.match(html, /SIDEBAR_WIDTH_KEY/);
+  assert.match(html, /applySidebarWidth/);
+  assert.match(html, /addEventListener\("mousedown"/);
+  assert.match(html, /addEventListener\("mousemove"/);
+  assert.match(html, /\.message\s*{[\s\S]{0,120}max-width:\s*none/);
+  assert.match(html, /\.message\.assistant\s*{[\s\S]{0,80}width:\s*100%/);
+  assert.match(html, /\.message\.user\s*{[\s\S]{0,120}width:\s*100%/);
   assert.match(html, /\.main\s*{[\s\S]{0,260}overflow:\s*hidden/);
   assert.match(html, /\.conversation\s*{[\s\S]{0,120}grid-row:\s*5/);
   assert.match(html, /\.conversation\s*{[\s\S]{0,260}overflow-y:\s*auto/);
