@@ -149,6 +149,7 @@ mod tests {
     fn test_config(tmp: &TempDir) -> Config {
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };

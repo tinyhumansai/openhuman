@@ -320,6 +320,7 @@ fn tool_registries_schemas_and_local_helpers_cover_safe_branches() {
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.workspace_dir,
     ));
     let audit = AuditLogger::disabled();
     let memory: Arc<dyn Memory> = Arc::new(StubMemory);
