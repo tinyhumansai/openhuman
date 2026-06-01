@@ -72,11 +72,7 @@ export function VaultHealthChecklist({
         await openUrl(`obsidian://open?path=${encodeURIComponent(health.content_root_abs)}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        onToast?.({
-          type: 'error',
-          title: 'Could not open Obsidian',
-          message,
-        });
+        onToast?.({ type: 'error', title: 'Could not open Obsidian', message });
       }
     })();
   }, [health, onToast]);
@@ -88,11 +84,7 @@ export function VaultHealthChecklist({
         await revealPath(revealTarget);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        onToast?.({
-          type: 'error',
-          title: 'Could not reveal vault folder',
-          message,
-        });
+        onToast?.({ type: 'error', title: 'Could not reveal vault folder', message });
       }
     })();
   }, [onToast, revealTarget]);
@@ -103,11 +95,7 @@ export function VaultHealthChecklist({
         await openUrl(OBSIDIAN_DOWNLOAD_URL);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        onToast?.({
-          type: 'error',
-          title: 'Could not open Obsidian download page',
-          message,
-        });
+        onToast?.({ type: 'error', title: 'Could not open Obsidian download page', message });
       }
     })();
   }, [onToast]);

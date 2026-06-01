@@ -5,9 +5,7 @@ import { renderWithProviders } from '../../test/test-utils';
 import type { VaultHealthCheck } from '../../utils/tauriCommands';
 import { VaultHealthChecklist } from './VaultHealthChecklist';
 
-vi.mock('../../utils/tauriCommands', () => ({
-  memoryTreeVaultHealthCheck: vi.fn(),
-}));
+vi.mock('../../utils/tauriCommands', () => ({ memoryTreeVaultHealthCheck: vi.fn() }));
 
 vi.mock('../../utils/openUrl', () => ({
   openUrl: vi.fn().mockResolvedValue(undefined),

@@ -82,8 +82,8 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
                 Internal memory-tree files
               </dt>
               <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
-                Indexes, queue state, and summaries are managed by OpenHuman to keep recall and
-                sync healthy.
+                Indexes, queue state, and summaries are managed by OpenHuman to keep recall and sync
+                healthy.
               </dd>
             </div>
           </dl>
