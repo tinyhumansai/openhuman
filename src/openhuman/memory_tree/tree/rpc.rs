@@ -652,7 +652,12 @@ fn derive_pipeline_status(
     // the pipeline is making progress, but recall/structure is reduced and the
     // user should be told why. Beats syncing/running so a half-working sync
     // isn't reported as plain "running"/"syncing".
-    if degraded.is_degraded() {
+    //
+    // Only fires when there are chunks: degraded recall/structure is only
+    // meaningful when there's actual content affected. An empty workspace with
+    // a misconfigured embedder should show "idle" (nothing to recall) rather
+    // than "degraded" (recall is broken for existing content).
+    if degraded.is_degraded() && total_chunks > 0 {
         let mut parts = Vec::new();
         if degraded.semantic_recall {
             parts.push("semantic recall disabled");
