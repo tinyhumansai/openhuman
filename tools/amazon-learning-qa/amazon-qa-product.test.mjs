@@ -105,6 +105,10 @@ test("handoff uses real status, local deployment boundary, and no audio/video sc
   assert.match(markdown, /不是 Vercel 线上部署/);
   assert.match(markdown, /100 篇资料、200 个片段，语义索引 20\/200/);
   assert.match(markdown, /本地模型主回答/);
+  assert.match(markdown, /换题不串题/);
+  assert.match(markdown, /人群画像、选品实操/);
+  assert.match(markdown, /acceptance/);
+  assert.match(await readFile(new URL("./amazon-qa-product.mjs", import.meta.url), "utf8"), /终版真实问答、追问和换题不串题验收/);
   assert.match(markdown, /来源决策表[\s\S]*导出 Markdown 或 CSV/);
   assert.match(markdown, /本地学习包预览/);
   assert.match(markdown, /不包含音频或视频/);

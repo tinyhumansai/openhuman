@@ -35,6 +35,7 @@ test("sidebar exposes knowledge readiness instead of only raw document count", (
   assert.match(html, /连续学习闭环/);
   assert.match(html, /待实操确认/);
   assert.match(html, /3 个真实亚马逊问题/);
+  assert.match(html, /同会话换到人群画像和选品实操都不能串题/);
   assert.match(html, /可搜索/);
   assert.match(html, /可引用/);
   assert.match(html, /可学习/);
