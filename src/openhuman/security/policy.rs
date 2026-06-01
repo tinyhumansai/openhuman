@@ -168,11 +168,49 @@ impl Clone for ActionTracker {
     }
 }
 
+/// Subdirectories under `workspace_dir` that hold internal application state
+/// (memory DBs, sessions, tokens, etc.) and must not be writable by agent tools.
+const WORKSPACE_INTERNAL_DIRS: &[&str] = &[
+    "memory",
+    "memory_tree",
+    "state",
+    "approval",
+    "sessions",
+    "session_raw",
+    "cron",
+    "devices",
+    "mcp_clients",
+    "subconscious",
+    "vault",
+    "task_sources",
+    "whatsapp_data",
+    "redirect_links",
+    "codegraph",
+    ".openhuman",
+];
+
+/// Files directly under `workspace_dir` that hold secrets or persona config
+/// and must not be writable by agent tools.
+const WORKSPACE_INTERNAL_FILES: &[&str] = &[
+    "core.token",
+    "dev-keychain.json",
+    ".env",
+    "SOUL.md",
+    "IDENTITY.md",
+    "HEARTBEAT.md",
+    "PROFILE.md",
+];
+
 /// Security policy enforced on all tool executions
 #[derive(Debug, Clone)]
 pub struct SecurityPolicy {
     pub autonomy: AutonomyLevel,
     pub workspace_dir: PathBuf,
+    /// Agent action sandbox root — tools resolve relative paths and default
+    /// their cwd here instead of `workspace_dir`. Kept separate so internal
+    /// state (memory DBs, sessions, tokens) under `workspace_dir` is not
+    /// reachable from agent tool calls.
+    pub action_dir: PathBuf,
     pub workspace_only: bool,
     pub allowed_commands: Vec<String>,
     pub forbidden_paths: Vec<String>,
@@ -224,6 +262,7 @@ impl Default for SecurityPolicy {
         Self {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: PathBuf::from("."),
+            action_dir: PathBuf::from("."),
             workspace_only: true,
             // When adding a new entry to this allowlist, re-audit
             // `DANGEROUS_ENV_PREFIXES` (see below). Every newly-allowed binary
@@ -797,6 +836,24 @@ impl SecurityPolicy {
         // operation-specific validators (validate_path / validate_parent_path).
         let in_trusted_root = self.is_within_trusted_root(expanded_path, false);
 
+        // Block agent access to internal state paths under workspace_dir
+        // (unless the path falls under an explicitly granted trusted root).
+        if !in_trusted_root {
+            let check = if expanded_path.is_absolute() {
+                expanded_path.to_path_buf()
+            } else {
+                self.workspace_dir.join(expanded_path)
+            };
+            if self.is_workspace_internal_path(&check) {
+                log::trace!(
+                    "[security:policy] path blocked: agent access to workspace-internal state (requested={}, resolved={})",
+                    path,
+                    check.display()
+                );
+                return false;
+            }
+        }
+
         // Block absolute paths when workspace_only is set (unless trusted-rooted).
         if self.workspace_only && expanded_path.is_absolute() && !in_trusted_root {
             return false;
@@ -942,7 +999,7 @@ impl SecurityPolicy {
         let full_path = if Path::new(&expanded).is_absolute() {
             PathBuf::from(&expanded)
         } else {
-            self.workspace_dir.join(&expanded)
+            self.action_dir.join(&expanded)
         };
         let resolved = tokio::fs::canonicalize(&full_path)
             .await
@@ -979,7 +1036,7 @@ impl SecurityPolicy {
         let full_path = if Path::new(&expanded).is_absolute() {
             PathBuf::from(&expanded)
         } else {
-            self.workspace_dir.join(&expanded)
+            self.action_dir.join(&expanded)
         };
         let parent = full_path
             .parent()
@@ -1030,6 +1087,48 @@ impl SecurityPolicy {
             resolved_parent.display()
         );
         Ok(result)
+    }
+
+    /// Returns `true` if `path` falls under one of the internal-state
+    /// subdirectories or files within `workspace_dir`. Agent tools must not
+    /// write to these locations — they contain memory DBs, session transcripts,
+    /// tokens, and other core persistence that is not part of the agent's
+    /// action surface.
+    pub fn is_workspace_internal_path(&self, path: &Path) -> bool {
+        // Try canonical forms first (handles symlinks), fall back to raw paths
+        // when they don't exist on disk yet.
+        let ws_canonical = self.workspace_dir.canonicalize();
+        let path_canonical = path.canonicalize();
+        let (ws, check_path) = match (&ws_canonical, &path_canonical) {
+            (Ok(w), Ok(p)) => (w.as_path(), p.as_path()),
+            _ => (self.workspace_dir.as_path(), path),
+        };
+        if !check_path.starts_with(ws) {
+            return false;
+        }
+        let relative = match check_path.strip_prefix(ws) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let first_component = match relative.components().next() {
+            Some(std::path::Component::Normal(s)) => s.to_string_lossy(),
+            _ => return false,
+        };
+        if WORKSPACE_INTERNAL_DIRS
+            .iter()
+            .any(|d| *d == first_component.as_ref())
+        {
+            return true;
+        }
+        // Check single-file entries (only if the relative path is exactly one component)
+        if relative.components().count() == 1
+            && WORKSPACE_INTERNAL_FILES
+                .iter()
+                .any(|f| *f == first_component.as_ref())
+        {
+            return true;
+        }
+        false
     }
 
     /// Paths that remain blocked even when a `trusted_root` grant would
@@ -1233,6 +1332,7 @@ impl SecurityPolicy {
     pub fn from_config(
         autonomy_config: &crate::openhuman::config::AutonomyConfig,
         workspace_dir: &Path,
+        action_dir: &Path,
     ) -> Self {
         log::info!(
             "[openhuman:policy] SecurityPolicy created: autonomy={:?}, workspace_only={}, allowed_cmds={}, max_actions/hr={}",
@@ -1270,6 +1370,7 @@ impl SecurityPolicy {
         Self {
             autonomy: autonomy_config.level,
             workspace_dir: workspace_dir.to_path_buf(),
+            action_dir: action_dir.to_path_buf(),
             workspace_only: autonomy_config.workspace_only,
             allowed_commands: autonomy_config.allowed_commands.clone(),
             forbidden_paths: autonomy_config.forbidden_paths.clone(),

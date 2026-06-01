@@ -535,6 +535,7 @@ fn build_tool_instructions_includes_all_tools() {
     let security = Arc::new(SecurityPolicy::from_config(
         &crate::openhuman::config::AutonomyConfig::default(),
         std::path::Path::new("/tmp"),
+        std::path::Path::new("/tmp"),
     ));
     let tools = tools::default_tools(security);
     let instructions = build_tool_instructions(&tools);
@@ -551,6 +552,7 @@ fn tools_to_openai_format_produces_valid_schema() {
     use crate::openhuman::security::SecurityPolicy;
     let security = Arc::new(SecurityPolicy::from_config(
         &crate::openhuman::config::AutonomyConfig::default(),
+        std::path::Path::new("/tmp"),
         std::path::Path::new("/tmp"),
     ));
     let tools = tools::default_tools(security);
