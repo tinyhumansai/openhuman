@@ -96,7 +96,7 @@ pub(super) async fn generate(
             })
         }
         Ok(Err(join_err)) => {
-            let err = map_join_error(join_err, deadline_secs);
+            let err = map_join_error(join_err);
             tracing::warn!(
                 target: "presentation",
                 elapsed_ms,
@@ -199,24 +199,32 @@ fn map_engine_failure(failure: EngineFailure) -> PresentationError {
     }
 }
 
-fn map_join_error(err: JoinError, deadline_secs: u64) -> PresentationError {
-    // Cancellation is treated as a timeout-equivalent — the only way
-    // the spawn_blocking task gets cancelled in this code path is via
-    // the outer `tokio::time::timeout` racing with completion, which we
-    // already surface above. A bare panic indicates a `ppt-rs` bug or
-    // an OOM on the blocking pool; surface as GenerationFailed so the
-    // user sees a structured error and the agent can retry with a
-    // smaller deck. We thread `deadline_secs` from the call site so a
-    // cancellation-flavoured JoinError carries the real budget the
-    // caller configured, not a confusing 0.
+fn map_join_error(err: JoinError) -> PresentationError {
+    // A bare panic indicates a `ppt-rs` bug or an OOM on the blocking
+    // pool; surface as `GenerationFailed` so the user sees a structured
+    // error and the agent can retry with a smaller deck.
+    //
+    // Cancellation (non-panic `JoinError`) is a distinct shape: the
+    // outer `tokio::time::timeout` already routes the timeout case
+    // before us, so a cancellation that reaches `map_join_error` is
+    // something else — runtime shutdown, an explicit abort, or the
+    // runtime cancelling the blocking task for unrelated reasons.
+    // Reporting it as `GenerationTimeout { timeout_secs: 0 }` produced
+    // a misleading "exceeded 0s timeout" message and discarded the
+    // underlying `JoinError` detail that's valuable for triage. We
+    // surface it as `GenerationFailed` and preserve the cancellation
+    // context in `stderr_truncated`.
     if err.is_panic() {
         PresentationError::GenerationFailed {
             exit_code: -1,
             stderr_truncated: PresentationError::truncate_stderr("presentation engine panicked"),
         }
     } else {
-        PresentationError::GenerationTimeout {
-            timeout_secs: deadline_secs,
+        PresentationError::GenerationFailed {
+            exit_code: -1,
+            stderr_truncated: PresentationError::truncate_stderr(&format!(
+                "presentation engine task cancelled: {err}"
+            )),
         }
     }
 }
@@ -341,6 +349,39 @@ mod tests {
             slide1_body.contains("Quarterly review"),
             "deck title missing from rendered slide1.xml"
         );
+    }
+
+    #[tokio::test]
+    async fn map_join_error_cancellation_becomes_generation_failed() {
+        // A non-panic JoinError (cancellation via abort) MUST NOT surface
+        // as GenerationTimeout { timeout_secs: 0 } — that produces a
+        // misleading "exceeded 0s timeout" message and loses the
+        // JoinError detail useful for triage. Cancellation belongs in
+        // GenerationFailed with the cancellation context preserved.
+        let handle = tokio::spawn(async {
+            // Park forever; we abort before this returns.
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        });
+        handle.abort();
+        let join_err = handle.await.expect_err("aborted task yields JoinError");
+        assert!(
+            !join_err.is_panic(),
+            "abort() should produce a cancellation JoinError, not a panic"
+        );
+
+        match map_join_error(join_err) {
+            PresentationError::GenerationFailed {
+                exit_code,
+                stderr_truncated,
+            } => {
+                assert_eq!(exit_code, -1, "cancellation maps to exit_code -1");
+                assert!(
+                    stderr_truncated.contains("presentation engine task cancelled"),
+                    "cancellation context missing from stderr_truncated: {stderr_truncated:?}"
+                );
+            }
+            other => panic!("expected GenerationFailed for cancellation, got {other:?}"),
+        }
     }
 
     #[tokio::test]
