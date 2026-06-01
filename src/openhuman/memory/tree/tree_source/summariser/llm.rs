@@ -328,8 +328,9 @@ fn system_prompt(_budget: u32, structured_facets: bool) -> String {
     format!(
         "{base}\n\
          \n\
-         After the summary, output a compact JSON object as the second part of your response, \
-         fenced in a ```json block:\n\
+         The prose summary is mandatory. It must come before any JSON, and it must be useful \
+         on its own if the JSON block is removed. After the summary, optionally output a \
+         compact JSON object as the second part of your response, fenced in a ```json block:\n\
          \n\
          ```json\n\
          {{\n\
@@ -347,6 +348,8 @@ fn system_prompt(_budget: u32, structured_facets: bool) -> String {
          ```\n\
          \n\
          Rules:\n\
+         - Never return JSON only.\n\
+         - If you are short on space, omit the JSON block entirely and return only prose.\n\
          - Only include facets that are clearly evidenced in the content above.\n\
          - Do not repeat the prose summary inside JSON; the JSON block is only for facets.\n\
          - Keep each value under 80 characters; use a short label, not a sentence.\n\
@@ -493,8 +496,76 @@ fn parse_structured_summary_inner(json_str: &str) -> anyhow::Result<StructuredSu
                 serde_json::Value::String(String::new()),
             );
         }
+        normalize_structured_facets(object);
     }
     serde_json::from_value::<StructuredSummary>(value).map_err(Into::into)
+}
+
+fn normalize_structured_facets(object: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(facets) = object.get_mut("facets") else {
+        return;
+    };
+
+    if facets.is_object() {
+        let single = facets.take();
+        *facets = serde_json::Value::Array(vec![single]);
+    }
+
+    let Some(items) = facets.as_array_mut() else {
+        *facets = serde_json::Value::Array(Vec::new());
+        return;
+    };
+
+    for item in items {
+        let Some(facet) = item.as_object_mut() else {
+            continue;
+        };
+        normalize_string_field(facet, "class");
+        normalize_string_field(facet, "key");
+        normalize_string_field(facet, "value");
+        normalize_string_field(facet, "cue_family");
+        normalize_evidence_chunks(facet);
+    }
+}
+
+fn normalize_string_field(facet: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    let Some(value) = facet.get_mut(key) else {
+        return;
+    };
+    if value.is_string() {
+        return;
+    }
+    *value = serde_json::Value::String(compact_json_value(value));
+}
+
+fn normalize_evidence_chunks(facet: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(value) = facet.get_mut("evidence_chunks") else {
+        return;
+    };
+    if let Some(items) = value.as_array_mut() {
+        for item in items {
+            if item.is_string() {
+                continue;
+            }
+            *item = serde_json::Value::String(compact_json_value(item));
+        }
+        return;
+    }
+    if value.is_null() {
+        *value = serde_json::Value::Array(Vec::new());
+        return;
+    }
+    *value = serde_json::Value::Array(vec![serde_json::Value::String(compact_json_value(value))]);
+}
+
+fn compact_json_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Number(number) => number.to_string(),
+        serde_json::Value::Bool(flag) => flag.to_string(),
+        serde_json::Value::Null => String::new(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
 }
 
 fn strip_json_trailing_commas(json_str: &str) -> String {
@@ -651,6 +722,18 @@ mod tests {
             p.contains("```json"),
             "should contain JSON fence instruction"
         );
+        assert!(
+            p.contains("prose summary is mandatory"),
+            "should make prose summary mandatory"
+        );
+        assert!(
+            p.contains("Never return JSON only"),
+            "should prevent JSON-only responses"
+        );
+        assert!(
+            p.contains("omit the JSON block entirely"),
+            "should prefer prose when space is tight"
+        );
         assert!(p.contains("\"facets\""), "should mention the facets array");
         assert!(
             !p.contains("\"summary\""),
@@ -802,6 +885,40 @@ mod tests {
         assert!(parsed.summary.is_empty());
         assert_eq!(parsed.facets.len(), 1);
         assert_eq!(parsed.facets[0].key, "package_manager");
+    }
+
+    #[test]
+    fn accepts_single_facet_object_and_non_string_value_fields() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"facets\":{\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":{\"tool\":\"pnpm\"},\"evidence_chunks\":\"c1\",\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\"}}\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("single object facet should be normalised");
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
+        assert!(parsed.facets[0].value.contains("pnpm"));
+        assert_eq!(parsed.facets[0].evidence_chunks, vec!["c1"]);
+    }
+
+    #[test]
+    fn normalises_non_string_evidence_chunk_items() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"facets\":[{\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":\"pnpm\",\"evidence_chunks\":[{\"id\":\"c1\"}],\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\"}]}\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("object evidence chunk should be normalised");
+        assert_eq!(parsed.facets.len(), 1);
+        assert!(parsed.facets[0].evidence_chunks[0].contains("c1"));
     }
 
     #[test]
