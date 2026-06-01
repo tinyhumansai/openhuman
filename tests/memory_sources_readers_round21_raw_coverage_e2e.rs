@@ -236,34 +236,22 @@ if [[ "${1:-}" != "api" ]]; then
 fi
 case "${2:-}" in
   repos/tinyhumansai/openhuman/commits?*)
-    cat <<'JSON'
-[{"sha":"abc123","commit":{"message":"Round21 commit subject\n\nBody line","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"}}}]
-JSON
+    printf '%s\n' '[{"sha":"abc123","commit":{"message":"Round21 commit subject\n\nBody line","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"}}}]'
     ;;
   repos/tinyhumansai/openhuman/issues?*state=all*)
-    cat <<'JSON'
-[{"number":42,"title":"Round21 issue","body":"Issue body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:01:00Z","pull_request":null}]
-JSON
+    printf '%s\n' '[{"number":42,"title":"Round21 issue","body":"Issue body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:01:00Z","pull_request":null}]'
     ;;
   repos/tinyhumansai/openhuman/pulls?*state=all*)
-    cat <<'JSON'
-[{"number":43,"title":"Round21 PR","body":"PR body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:02:00Z","merged_at":null,"comments":1}]
-JSON
+    printf '%s\n' '[{"number":43,"title":"Round21 PR","body":"PR body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:02:00Z","merged_at":null,"comments":1}]'
     ;;
   repos/tinyhumansai/openhuman/commits/abc123)
-    cat <<'JSON'
-{"sha":"abc123","commit":{"message":"Round21 commit subject\n\nBody line","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"},"committer":{"name":"Grace","email":"grace@example.test","date":"2026-05-30T00:03:00Z"}}}
-JSON
+    printf '%s\n' '{"sha":"abc123","commit":{"message":"Round21 commit subject\n\nBody line","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-30T00:00:00Z"},"committer":{"name":"Grace","email":"grace@example.test","date":"2026-05-30T00:03:00Z"}}}'
     ;;
   repos/tinyhumansai/openhuman/issues/42)
-    cat <<'JSON'
-{"number":42,"title":"Round21 issue","body":"Issue body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:01:00Z","pull_request":null}
-JSON
+    printf '%s\n' '{"number":42,"title":"Round21 issue","body":"Issue body","state":"open","user":{"login":"octo"},"labels":[],"created_at":"2026-05-30T00:00:00Z","updated_at":"2026-05-30T00:01:00Z","pull_request":null}'
     ;;
   repos/tinyhumansai/openhuman/issues/42/comments?per_page=50)
-    cat <<'JSON'
-[{"user":{"login":"reviewer"},"body":"Looks good from the fixture","created_at":"2026-05-30T00:04:00Z"}]
-JSON
+    printf '%s\n' '[{"user":{"login":"reviewer"},"body":"Looks good from the fixture","created_at":"2026-05-30T00:04:00Z"}]'
     ;;
   *)
     echo "unexpected gh api path: ${2:-}" >&2
