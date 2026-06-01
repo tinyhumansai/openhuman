@@ -79,6 +79,16 @@ wait_for_rpc_auth() {
   return 1
 }
 
+check_process_alive() {
+  local pid="$1"
+  local name="$2"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    echo "ERROR: ${name} (PID ${pid}) has crashed or exited unexpectedly" >&2
+    return 1
+  fi
+  return 0
+}
+
 mkdir -p "$OPENHUMAN_WORKSPACE"
 cat > "$OPENHUMAN_WORKSPACE/config.toml" <<EOF
 api_url = "http://127.0.0.1:${E2E_MOCK_PORT}"
@@ -114,8 +124,26 @@ export OPENHUMAN_TELEGRAM_BOT_API_BASE="http://127.0.0.1:${E2E_MOCK_PORT}"
 "$OPENHUMAN_CORE_BIN" run --host 127.0.0.1 --port "$OPENHUMAN_CORE_PORT" \
   >"$OPENHUMAN_WORKSPACE/core.log" 2>&1 &
 CORE_PID=$!
-wait_for_http "http://127.0.0.1:${OPENHUMAN_CORE_PORT}/health" "standalone core"
-wait_for_rpc_auth "$PW_CORE_RPC_URL" "$PW_CORE_RPC_TOKEN"
+
+# Give the core process time to start and fail if it's going to
+sleep 2
+if ! check_process_alive "$CORE_PID" "OpenHuman core"; then
+  echo "Core startup failed. Last 50 lines of core.log:" >&2
+  tail -50 "$OPENHUMAN_WORKSPACE/core.log" >&2
+  exit 1
+fi
+
+if ! wait_for_http "http://127.0.0.1:${OPENHUMAN_CORE_PORT}/health" "standalone core"; then
+  echo "Core health check failed. Last 50 lines of core.log:" >&2
+  tail -50 "$OPENHUMAN_WORKSPACE/core.log" >&2
+  exit 1
+fi
+
+if ! wait_for_rpc_auth "$PW_CORE_RPC_URL" "$PW_CORE_RPC_TOKEN"; then
+  echo "Core RPC authentication failed. Last 50 lines of core.log:" >&2
+  tail -50 "$OPENHUMAN_WORKSPACE/core.log" >&2
+  exit 1
+fi
 
 python3 -m http.server "$E2E_WEB_PORT" --bind 127.0.0.1 --directory "$APP_DIR/dist-web" \
   >"$OPENHUMAN_WORKSPACE/web.log" 2>&1 &
