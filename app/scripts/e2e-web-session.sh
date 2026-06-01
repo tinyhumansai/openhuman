@@ -89,6 +89,9 @@ reasoning_provider = "e2e:e2e-mock-model"
 agentic_provider = "e2e:e2e-mock-model"
 coding_provider = "e2e:e2e-mock-model"
 
+[update]
+enabled = false
+
 [[cloud_providers]]
 id = "p_e2e_mock"
 slug = "e2e"
