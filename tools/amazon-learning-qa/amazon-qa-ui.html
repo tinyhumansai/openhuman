@@ -31,6 +31,8 @@
           Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC",
           "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
         letter-spacing: 0;
+        font-size: 24px;
+        line-height: 1.55;
       }
 
       button,
@@ -39,9 +41,10 @@
       }
 
       .app {
-        min-height: 100vh;
+        height: 100vh;
         display: grid;
-        grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+        grid-template-columns: minmax(420px, 500px) minmax(0, 1fr);
+        overflow: hidden;
       }
 
       .side {
@@ -51,6 +54,8 @@
         display: flex;
         flex-direction: column;
         gap: 22px;
+        height: 100vh;
+        overflow-y: auto;
       }
 
       .brand {
@@ -62,14 +67,14 @@
 
       h1 {
         margin: 0;
-        font-size: 24px;
+        font-size: 36px;
         line-height: 1.15;
         font-weight: 760;
       }
 
       .status {
         color: var(--muted);
-        font-size: 13px;
+        font-size: 19px;
         line-height: 1.6;
       }
 
@@ -78,7 +83,7 @@
         background: var(--soft);
         padding: 10px 12px;
         color: var(--ink);
-        font-size: 13px;
+        font-size: 19px;
         line-height: 1.65;
       }
 
@@ -397,14 +402,16 @@
 
       .main {
         height: 100vh;
-        padding: 34px clamp(24px, 4vw, 56px);
+        padding: 34px clamp(24px, 4vw, 56px) 0;
         display: grid;
-        grid-template-rows: auto auto auto minmax(260px, 1fr) auto;
+        grid-template-rows: auto auto auto auto minmax(0, 1fr) auto auto;
         gap: 24px;
-        overflow-y: auto;
+        overflow: hidden;
+        min-width: 0;
       }
 
       .toolbar {
+        grid-row: 1;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -415,20 +422,22 @@
 
       .toolbar h2 {
         margin: 0;
-        font-size: 20px;
+        font-size: 30px;
       }
 
       .namespace {
         color: var(--muted);
-        font-size: 13px;
+        font-size: 19px;
       }
 
       .conversation {
+        grid-row: 5;
         overflow-y: auto;
-        padding-right: 8px;
+        padding: 0 8px 24px 0;
         display: grid;
         align-content: start;
-        gap: 18px;
+        gap: 22px;
+        min-height: 0;
       }
 
       .message {
@@ -439,7 +448,7 @@
 
       .message.user {
         margin-left: auto;
-        width: min(760px, 92%);
+        width: min(820px, 92%);
       }
 
       .message.assistant {
@@ -480,23 +489,82 @@
 
       .role {
         color: var(--muted);
-        font-size: 13px;
+        font-size: 18px;
         font-weight: 700;
       }
 
       .bubble {
         border: 1px solid var(--line);
         background: #fff;
-        padding: 16px 18px;
+        padding: 22px 24px;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
-        line-height: 1.85;
-        font-size: 16px;
+        line-height: 1.75;
+        font-size: 24px;
       }
 
       .message.user .bubble {
+        background: transparent;
+        border-color: rgba(14, 107, 96, 0.18);
+      }
+
+      .message.user.question-marker {
+        width: min(760px, 86%);
+        gap: 6px;
+      }
+
+      .message.user.question-marker.is-compact {
+        width: min(680px, 78%);
+        opacity: 0.78;
+      }
+
+      .message.user.question-marker .role {
+        text-align: right;
+        font-size: 17px;
+      }
+
+      .question-bubble {
+        border: 1px solid rgba(14, 107, 96, 0.18);
         background: var(--soft);
-        border-color: rgba(14, 107, 96, 0.22);
+        padding: 10px 14px;
+        display: grid;
+        gap: 4px;
+        text-align: left;
+        line-height: 1.45;
+      }
+
+      .question-bubble span {
+        color: var(--accent);
+        font-size: 16px;
+        font-weight: 780;
+      }
+
+      .question-bubble strong {
+        color: var(--ink);
+        font-size: 21px;
+        font-weight: 720;
+      }
+
+      .message.user.question-marker.is-compact .question-bubble {
+        background: #fff;
+        border-style: dashed;
+        padding: 7px 11px;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: baseline;
+      }
+
+      .message.user.question-marker.is-compact .question-bubble span {
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .message.user.question-marker.is-compact .question-bubble strong {
+        display: block;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 18px;
       }
 
       .answer-studio {
@@ -4679,6 +4747,7 @@
       }
 
       .dossier-detail {
+        grid-row: 2;
         border: 1px solid rgba(14, 107, 96, 0.2);
         background: #fff;
         padding: 16px 18px;
@@ -5144,6 +5213,7 @@
       }
 
       .topic-reading-room {
+        grid-row: 3;
         border: 1px solid rgba(14, 107, 96, 0.22);
         background: #fff;
         padding: 16px 18px;
@@ -5271,6 +5341,7 @@
       }
 
       .question-source-selection {
+        grid-row: 6;
         border: 1px solid rgba(14, 107, 96, 0.18);
         background: #f8fcfa;
         padding: 12px;
@@ -5374,25 +5445,142 @@
       }
 
       .composer {
+        grid-row: 7;
         border-top: 1px solid var(--line);
-        padding-top: 16px;
+        background: linear-gradient(180deg, rgba(251, 250, 247, 0.82) 0%, var(--paper) 28%);
+        padding: 18px 0 24px;
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto auto;
-        gap: 10px;
+        gap: 12px;
         align-items: end;
+        position: sticky;
+        bottom: 0;
+        z-index: 20;
       }
 
       .composer textarea {
-        min-height: 72px;
-        max-height: 180px;
+        min-height: 108px;
+        max-height: 220px;
+        font-size: 24px;
+        line-height: 1.55;
+      }
+
+      .primary,
+      .secondary,
+      .small-action,
+      .chip,
+      .follow-up,
+      .evidence-button,
+      .claim-source-button,
+      .source-control-button,
+      .source-context-button,
+      .workbench-button,
+      .topic-source-tree-action,
+      .source-study-prompt,
+      .graph-mobile-item {
+        font-size: 19px;
+      }
+
+      .primary,
+      .secondary,
+      .small-action {
+        min-height: 52px;
+        padding-inline: 18px;
+      }
+
+      .answer-panel-group summary,
+      .answer-studio-title strong,
+      .answer-brief-head strong,
+      .source h3,
+      .graph-head strong {
+        font-size: 21px;
+      }
+
+      .answer-panel-group summary span,
+      .answer-studio-title span,
+      .answer-studio-boundary,
+      .answer-studio-card p,
+      .answer-brief p,
+      .graph-head span,
+      .graph-legend,
+      .source p,
+      .source-context p,
+      .knowledge-readiness-note,
+      .readiness-stage span,
+      .delivery-checklist header span,
+      .delivery-checklist p,
+      .source-tree-drain-head span,
+      .source-tree-drain p,
+      .metric span {
+        font-size: 18px;
+      }
+
+      .knowledge-readiness-title,
+      .readiness-stage strong,
+      .delivery-checklist strong,
+      .source-tree-drain-head strong {
+        font-size: 20px;
+      }
+
+      .knowledge-readiness-item strong,
+      .metric strong {
+        font-size: 30px;
+      }
+
+      .app
+        :is(
+          [class*="readiness"],
+          [class*="source"],
+          [class*="evidence"],
+          [class*="claim"],
+          [class*="graph"],
+          [class*="learning"],
+          [class*="workbench"],
+          [class*="dossier"],
+          [class*="topic"],
+          [class*="intent"],
+          [class*="generation"],
+          [class*="usage"],
+          [class*="delivery"],
+          [class*="studio"],
+          [class*="brief"],
+          [class*="radar"],
+          [class*="validation"],
+          [class*="notebook"]
+        )
+        :is(p, span, li, label, button, summary) {
+        font-size: max(18px, 0.75rem);
+      }
+
+      .knowledge-readiness-title strong,
+      .readiness-stage strong,
+      .delivery-checklist strong,
+      .source-tree-drain-head strong,
+      .source h3,
+      .answer-studio-card strong,
+      .answer-brief-block strong,
+      .source-trust header strong,
+      .source-trust-item strong,
+      .source-trust-route strong {
+        font-size: 20px;
+      }
+
+      .graph-node text {
+        font-size: 16px;
+      }
+
+      .graph-node .sub-label {
+        font-size: 14px;
       }
 
       @media (max-width: 860px) {
         .app {
           grid-template-columns: 1fr;
+          height: auto;
+          min-height: 100vh;
           width: 100%;
           max-width: 100vw;
-          overflow-x: clip;
+          overflow: visible;
         }
 
         .side {
@@ -5400,6 +5588,8 @@
           border-right: 0;
           border-bottom: 1px solid var(--line);
           padding: 22px;
+          height: auto;
+          overflow: visible;
           min-width: 0;
           max-width: 100%;
         }
@@ -5437,17 +5627,18 @@
 
         .main {
           order: 1;
-          padding: 24px 22px 34px;
-          height: auto;
-          min-height: 70vh;
-          grid-template-rows: auto;
-          overflow-y: visible;
+          padding: 24px 22px 0;
+          height: 100svh;
+          min-height: 100svh;
+          grid-template-rows: auto minmax(0, 1fr) auto;
+          overflow: hidden;
           overflow-x: clip;
           min-width: 0;
           max-width: 100%;
         }
 
         .toolbar {
+          grid-row: auto;
           order: 1;
           min-width: 0;
         }
@@ -5459,29 +5650,36 @@
         }
 
         .composer {
-          order: 2;
+          grid-row: auto;
+          order: 4;
           min-width: 0;
           max-width: 100%;
         }
 
         .question-source-selection {
+          grid-row: auto;
           order: 3;
           min-width: 0;
           max-width: 100%;
         }
 
         .conversation {
-          order: 4;
+          grid-row: auto;
+          order: 2;
           min-width: 0;
           max-width: 100%;
+          min-height: 0;
+          overflow-y: auto;
           padding-right: 0;
         }
 
         .dossier-detail {
+          grid-row: auto;
           order: 5;
         }
 
         .topic-reading-room {
+          grid-row: auto;
           order: 5;
           min-height: 0;
           max-height: none;
@@ -6578,9 +6776,22 @@
 
       function renderMessage(message, messageIndex) {
         const isUser = message.role === "user";
-        const roleText = isUser ? "你" : "知识库";
+        const turnNumber = conversationTurnNumber(messageIndex);
+        const roleText = isUser ? `问题 ${turnNumber}` : `回答 · 对应问题 ${turnNumber}`;
         const errorClass = message.error ? " error" : "";
-        const content = isUser ? escapeHtml(message.content || "") : renderAnswerContent(message.content || "", messageIndex);
+        const latestUserIndex = latestUserMessageIndex();
+        const isCompactUser = isUser && messageIndex !== latestUserIndex;
+        const rawQuestionText = isCompactUser
+          ? compactQuestionMarkerText(message.content || "")
+          : message.content || "";
+        const content = isUser ? escapeHtml(rawQuestionText) : renderAnswerContent(message.content || "", messageIndex);
+        if (isUser) {
+          const questionKind = turnNumber === 1 ? "本轮主题" : "追问";
+          return `<article class="message user question-marker${isCompactUser ? " is-compact" : ""}" data-message-index="${messageIndex}">
+            <div class="role">${roleText}</div>
+            <div class="question-bubble"><span>${escapeHtml(questionKind)}</span><strong>${content}</strong></div>
+          </article>`;
+        }
         return `<article class="message ${isUser ? "user" : "assistant"}" data-message-index="${messageIndex}">
           <div class="role">${roleText}</div>
           <div class="bubble${errorClass}">${content}</div>
@@ -6596,6 +6807,28 @@
           ${isUser ? "" : renderPrimaryLearningPack(message, messageIndex)}
           ${isUser ? "" : renderAdvancedLearningTools(message, messageIndex)}
         </article>`;
+      }
+
+      function latestUserMessageIndex() {
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          if (messages[index]?.role === "user") return index;
+        }
+        return -1;
+      }
+
+      function compactQuestionMarkerText(value) {
+        const text = String(value || "").replace(/\s+/g, " ").trim();
+        if (text.length <= 54) return text;
+        return `${text.slice(0, 54)}...`;
+      }
+
+      function conversationTurnNumber(messageIndex) {
+        const safeIndex = Math.max(0, Number(messageIndex) || 0);
+        let count = 0;
+        for (let index = 0; index <= safeIndex; index += 1) {
+          if (messages[index]?.role === "user") count += 1;
+        }
+        return Math.max(1, count);
       }
 
       function renderAnswerNoteActions(message, messageIndex) {

@@ -741,7 +741,7 @@ test("topic source reading room keeps candidate sources explicit and user-select
   assert.match(html, /topicReadingRoom/);
   assert.match(html, /renderTopicReadingRoom/);
   assert.match(html, /来源阅读室/);
-  assert.match(html, /grid-template-rows:\s*auto auto auto minmax\(260px,\s*1fr\) auto/);
+  assert.match(html, /grid-template-rows:\s*auto auto auto auto minmax\(0,\s*1fr\) auto auto/);
   assert.match(html, /min-height:\s*min\(420px,\s*55vh\)/);
   assert.match(html, /候选\/待确认来源/);
   assert.match(html, /data-topic-source-toggle/);
@@ -752,6 +752,23 @@ test("topic source reading room keeps candidate sources explicit and user-select
   assert.match(html, /候选来源默认不会被采纳/);
   assert.match(html, /候选来源未确认前不是证据/);
   assert.doesNotMatch(html, /candidate[\s\S]{0,400}checked/);
+});
+
+test("conversation layout keeps the composer fixed and compresses prior user questions", () => {
+  assert.match(html, /\.app\s*{[\s\S]{0,220}height:\s*100vh/);
+  assert.match(html, /\.main\s*{[\s\S]{0,260}overflow:\s*hidden/);
+  assert.match(html, /\.conversation\s*{[\s\S]{0,120}grid-row:\s*5/);
+  assert.match(html, /\.conversation\s*{[\s\S]{0,260}overflow-y:\s*auto/);
+  assert.match(html, /\.composer\s*{[\s\S]{0,120}grid-row:\s*7/);
+  assert.match(html, /\.composer\s*{[\s\S]*?position:\s*sticky/);
+  assert.match(html, /\.composer\s*{[\s\S]*?bottom:\s*0/);
+  assert.match(html, /question-marker/);
+  assert.match(html, /question-bubble/);
+  assert.match(html, /is-compact/);
+  assert.match(html, /回答 · 对应问题/);
+  assert.match(html, /compactQuestionMarkerText/);
+  assert.match(html, /latestUserMessageIndex/);
+  assert.match(html, /conversationTurnNumber/);
 });
 
 test("topic source reading room uses selected source controls without auto-saving evidence", () => {
