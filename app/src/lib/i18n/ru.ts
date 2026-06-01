@@ -4483,28 +4483,28 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': 'Ухудшено',
+  'memoryTree.status.degradedRecall': 'Семантический поиск отключён',
+  'memoryTree.status.degradedStructure': 'Структура вики неполная',
+  'memoryTree.status.extractionCoverage': 'Охват извлечения: {pct}% фрагментов имеют структуру',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    'Эмбеддинги памяти исчерпали управляемый бюджет. Настройте локальные эмбеддинги Ollama (Настройки → ИИ → Embeddings) или добавьте свой ключ API для эмбеддингов, чтобы продолжить построение памяти.',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    'Учётные данные для эмбеддингов не найдены. Войдите в OpenHuman или настройте локальные эмбеддинги Ollama в разделе Настройки → ИИ → Embeddings.',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    'Ваши учётные данные для эмбеддингов отклонены. Пройдите аутентификацию заново или переключитесь на локальные эмбеддинги Ollama в разделе Настройки → ИИ → Embeddings.',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    'Поставщик эмбеддингов не настроен, поэтому семантический поиск отключён. Настройте локальные эмбеддинги Ollama (рекомендуется) или добавьте ключ эмбеддингов в разделе Настройки → ИИ → Embeddings.',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    'Модель эмбеддингов возвращает неверный размер вектора (память ожидает 1024 измерения). Выберите модель с 1024 измерениями или запросите 1024 измерения у своего поставщика.',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    'Требуемая локальная модель недоступна. Установите/запустите Ollama и загрузите модель либо переключите эту задачу на облачного поставщика в разделе Настройки → ИИ.',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    'Модель извлечения памяти превышает время ожидания, поэтому в вики мало структуры. Выберите более быструю модель извлечения памяти в разделе Настройки → ИИ.',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
+    'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или настройте облачную модель для памяти в разделе Настройки → ИИ.',
   'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
 };
 
 export default messages;

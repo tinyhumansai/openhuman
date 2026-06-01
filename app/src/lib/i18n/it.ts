@@ -4515,28 +4515,29 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': 'Degradato',
+  'memoryTree.status.degradedRecall': 'Richiamo semantico disattivato',
+  'memoryTree.status.degradedStructure': 'Struttura del wiki incompleta',
+  'memoryTree.status.extractionCoverage':
+    'Copertura di estrazione: {pct}% dei frammenti ha una struttura',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    'Gli embedding della memoria hanno raggiunto il budget gestito. Configura embedding Ollama locali (Impostazioni → IA → Embeddings) o aggiungi la tua chiave API per gli embedding per continuare a costruire la memoria.',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    'Nessuna credenziale per gli embedding trovata. Accedi a OpenHuman o configura embedding Ollama locali in Impostazioni → IA → Embeddings.',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    'Le tue credenziali per gli embedding sono state rifiutate. Autenticati di nuovo o passa agli embedding Ollama locali in Impostazioni → IA → Embeddings.',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    'Nessun provider di embedding è configurato, quindi il richiamo semantico è disattivato. Configura embedding Ollama locali (consigliato) o aggiungi una chiave per gli embedding in Impostazioni → IA → Embeddings.',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    'Il modello di embedding restituisce una dimensione del vettore errata (la memoria prevede 1024 dimensioni). Scegli un modello a 1024 dimensioni o richiedi 1024 dimensioni al tuo provider.',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    'Un modello locale richiesto non è disponibile. Installa/avvia Ollama e scarica il modello, oppure passa questo carico di lavoro a un provider cloud in Impostazioni → IA.',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    'Il modello di estrazione della memoria sta andando in timeout, quindi il wiki ha poca struttura. Passa a un modello di estrazione della memoria più veloce in Impostazioni → IA.',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
+    "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o configura un modello cloud per la memoria in Impostazioni → IA.",
   'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
 };
 
 export default messages;

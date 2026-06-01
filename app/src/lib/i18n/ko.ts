@@ -4406,28 +4406,28 @@ const messages: TranslationMap = {
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': '저하됨',
+  'memoryTree.status.degradedRecall': '의미 기반 검색 비활성화됨',
+  'memoryTree.status.degradedStructure': '위키 구조 불완전',
+  'memoryTree.status.extractionCoverage': '추출 범위: 청크의 {pct}%에 구조가 있음',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    '메모리 임베딩이 관리형 예산에 도달했습니다. 로컬 Ollama 임베딩을 설정하거나(설정 → AI → Embeddings) 메모리를 계속 구축하려면 자체 임베딩 API 키를 추가하세요.',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    '임베딩 자격 증명을 찾을 수 없습니다. OpenHuman에 로그인하거나 설정 → AI → Embeddings에서 로컬 Ollama 임베딩을 설정하세요.',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    '임베딩 자격 증명이 거부되었습니다. 다시 인증하거나 설정 → AI → Embeddings에서 로컬 Ollama 임베딩으로 전환하세요.',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    '구성된 임베딩 제공자가 없어 의미 기반 검색이 꺼져 있습니다. 로컬 Ollama 임베딩을 설정하거나(권장) 설정 → AI → Embeddings에서 임베딩 키를 추가하세요.',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    '임베딩 모델이 잘못된 벡터 크기를 반환합니다(메모리는 1024차원을 예상함). 1024차원 모델을 선택하거나 제공자에게 1024차원을 요청하세요.',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    '필요한 로컬 모델을 사용할 수 없습니다. Ollama를 설치/실행하고 모델을 다운로드하거나, 설정 → AI에서 이 작업을 클라우드 제공자로 전환하세요.',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    '메모리 추출 모델이 시간 초과되어 위키 구조가 거의 없습니다. 설정 → AI에서 메모리 추출 모델을 더 빠른 것으로 변경하세요.',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
+    '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나 설정 → AI에서 메모리용 클라우드 모델을 구성하세요.',
   'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
 };
 
 export default messages;

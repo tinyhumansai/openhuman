@@ -4447,28 +4447,28 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': 'अवक्रमित',
+  'memoryTree.status.degradedRecall': 'सिमेंटिक रिकॉल अक्षम',
+  'memoryTree.status.degradedStructure': 'विकी संरचना अधूरी',
+  'memoryTree.status.extractionCoverage': 'एक्सट्रैक्शन कवरेज: {pct}% खंडों में संरचना है',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    'मेमोरी एम्बेडिंग प्रबंधित बजट तक पहुँच गई। स्थानीय Ollama एम्बेडिंग सेट करें (सेटिंग्स → AI → Embeddings) या मेमोरी बनाना जारी रखने के लिए अपनी स्वयं की एम्बेडिंग API कुंजी जोड़ें।',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    'कोई एम्बेडिंग क्रेडेंशियल नहीं मिला। OpenHuman में लॉग इन करें, या सेटिंग्स → AI → Embeddings में स्थानीय Ollama एम्बेडिंग सेट करें।',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    'आपके एम्बेडिंग क्रेडेंशियल अस्वीकार कर दिए गए। फिर से प्रमाणित करें, या सेटिंग्स → AI → Embeddings में स्थानीय Ollama एम्बेडिंग पर स्विच करें।',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    'कोई एम्बेडिंग प्रदाता कॉन्फ़िगर नहीं किया गया है, इसलिए सिमेंटिक रिकॉल बंद है। स्थानीय Ollama एम्बेडिंग सेट करें (अनुशंसित) या सेटिंग्स → AI → Embeddings में एम्बेडिंग कुंजी जोड़ें।',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    'एम्बेडिंग मॉडल गलत वेक्टर आकार लौटाता है (मेमोरी को 1024 आयाम अपेक्षित हैं)। 1024-आयाम वाला मॉडल चुनें, या अपने प्रदाता से 1024 आयाम का अनुरोध करें।',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    'एक आवश्यक स्थानीय मॉडल उपलब्ध नहीं है। Ollama इंस्टॉल/चलाएँ और मॉडल डाउनलोड करें, या सेटिंग्स → AI में इस वर्कलोड को क्लाउड प्रदाता पर स्विच करें।',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    'मेमोरी एक्सट्रैक्शन मॉडल टाइम आउट हो रहा है, इसलिए विकी में बहुत कम संरचना है। सेटिंग्स → AI में मेमोरी एक्सट्रैक्शन मॉडल को तेज़ मॉडल में बदलें।',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
+    'सारांश ट्री बनाएँ के लिए कोई सारांश प्रदाता उपलब्ध नहीं है। स्थानीय AI (Ollama) सक्षम करें या सेटिंग्स → AI में मेमोरी के लिए क्लाउड मॉडल कॉन्फ़िगर करें।',
   'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    'एक अस्थायी त्रुटि ने मेमोरी प्रोसेसिंग को बाधित किया। स्वचालित रूप से पुनः प्रयास किया जाएगा।',
 };
 
 export default messages;

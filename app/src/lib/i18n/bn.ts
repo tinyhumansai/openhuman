@@ -4440,28 +4440,28 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': 'অবনমিত',
+  'memoryTree.status.degradedRecall': 'সিম্যান্টিক রিকল নিষ্ক্রিয়',
+  'memoryTree.status.degradedStructure': 'উইকি কাঠামো অসম্পূর্ণ',
+  'memoryTree.status.extractionCoverage': 'এক্সট্র্যাকশন কভারেজ: {pct}% অংশের কাঠামো আছে',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    'মেমরি এমবেডিং পরিচালিত বাজেটে পৌঁছেছে। স্থানীয় Ollama এমবেডিং সেট আপ করুন (সেটিংস → AI → Embeddings) অথবা মেমরি তৈরি চালিয়ে যেতে আপনার নিজস্ব এমবেডিং API কী যোগ করুন।',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    'কোনও এমবেডিং শংসাপত্র পাওয়া যায়নি। OpenHuman-এ লগ ইন করুন, অথবা সেটিংস → AI → Embeddings-এ স্থানীয় Ollama এমবেডিং সেট আপ করুন।',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    'আপনার এমবেডিং শংসাপত্র প্রত্যাখ্যাত হয়েছে। পুনরায় প্রমাণীকরণ করুন, অথবা সেটিংস → AI → Embeddings-এ স্থানীয় Ollama এমবেডিং-এ স্যুইচ করুন।',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    'কোনও এমবেডিং প্রদানকারী কনফিগার করা নেই, তাই সিম্যান্টিক রিকল বন্ধ। স্থানীয় Ollama এমবেডিং সেট আপ করুন (প্রস্তাবিত) অথবা সেটিংস → AI → Embeddings-এ একটি এমবেডিং কী যোগ করুন।',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    'এমবেডিং মডেল ভুল ভেক্টর আকার ফেরত দেয় (মেমরি 1024 মাত্রা প্রত্যাশা করে)। 1024-মাত্রার একটি মডেল বেছে নিন, অথবা আপনার প্রদানকারীর কাছে 1024 মাত্রা অনুরোধ করুন।',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    'একটি প্রয়োজনীয় স্থানীয় মডেল উপলব্ধ নেই। Ollama ইনস্টল/চালু করুন এবং মডেলটি ডাউনলোড করুন, অথবা সেটিংস → AI-তে এই কাজের চাপ একটি ক্লাউড প্রদানকারীতে স্যুইচ করুন।',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    'মেমরি এক্সট্র্যাকশন মডেল টাইম আউট হচ্ছে, তাই উইকিতে সামান্য কাঠামো আছে। সেটিংস → AI-তে মেমরি এক্সট্র্যাকশন মডেল একটি দ্রুততর মডেলে পরিবর্তন করুন।',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
+    'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন অথবা সেটিংস → AI-তে মেমরির জন্য একটি ক্লাউড মডেল কনফিগার করুন।',
   'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    'একটি অস্থায়ী ত্রুটি মেমরি প্রক্রিয়াকরণে বাধা দিয়েছে। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
 };
 
 export default messages;

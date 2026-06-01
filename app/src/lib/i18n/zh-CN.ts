@@ -4227,28 +4227,27 @@ const messages: TranslationMap = {
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': '已降级',
+  'memoryTree.status.degradedRecall': '语义召回已禁用',
+  'memoryTree.status.degradedStructure': 'Wiki 结构不完整',
+  'memoryTree.status.extractionCoverage': '提取覆盖率：{pct}% 的片段具有结构',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    '记忆嵌入已达到托管预算上限。请设置本地 Ollama 嵌入（设置 → AI → Embeddings），或添加你自己的嵌入 API 密钥以继续构建记忆。',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    '未找到嵌入凭据。请登录 OpenHuman，或在设置 → AI → Embeddings 中设置本地 Ollama 嵌入。',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    '你的嵌入凭据被拒绝。请重新进行身份验证，或在设置 → AI → Embeddings 中切换到本地 Ollama 嵌入。',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    '未配置嵌入提供方，因此语义召回已关闭。请设置本地 Ollama 嵌入（推荐），或在设置 → AI → Embeddings 中添加嵌入密钥。',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    '嵌入模型返回的向量大小不正确（记忆需要 1024 维）。请选择 1024 维的模型，或向你的提供方请求 1024 维。',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    '所需的本地模型不可用。请安装/运行 Ollama 并拉取模型，或在设置 → AI 中将此工作负载切换到云提供方。',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    '记忆提取模型超时，因此 Wiki 结构很少。请在设置 → AI 中将记忆提取模型更换为更快的模型。',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
-  'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI 中为记忆配置云模型。',
+  'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
 };
 
 export default messages;

@@ -4457,28 +4457,28 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
   // #002 memory-pipeline-hardening: degraded badges + typed remediation.
-  'memoryTree.status.statusDegraded': 'Degraded',
-  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
-  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
-  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memoryTree.status.statusDegraded': 'Terdegradasi',
+  'memoryTree.status.degradedRecall': 'Recall semantik dinonaktifkan',
+  'memoryTree.status.degradedStructure': 'Struktur wiki tidak lengkap',
+  'memoryTree.status.extractionCoverage': 'Cakupan ekstraksi: {pct}% bagian memiliki struktur',
   'memory.health.remediation.budget_exhausted':
-    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+    'Embedding memori mencapai batas anggaran terkelola. Siapkan embedding Ollama lokal (Pengaturan → AI → Embeddings) atau tambahkan kunci API embedding Anda sendiri untuk terus membangun memori.',
   'memory.health.remediation.auth_missing':
-    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+    'Kredensial embedding tidak ditemukan. Masuk ke OpenHuman, atau siapkan embedding Ollama lokal di Pengaturan → AI → Embeddings.',
   'memory.health.remediation.auth_invalid':
-    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+    'Kredensial embedding Anda ditolak. Autentikasi ulang, atau beralih ke embedding Ollama lokal di Pengaturan → AI → Embeddings.',
   'memory.health.remediation.embeddings_unconfigured':
-    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+    'Tidak ada penyedia embedding yang dikonfigurasi, sehingga recall semantik nonaktif. Siapkan embedding Ollama lokal (disarankan) atau tambahkan kunci embedding di Pengaturan → AI → Embeddings.',
   'memory.health.remediation.embedding_dim_mismatch':
-    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+    'Model embedding mengembalikan ukuran vektor yang salah (memori mengharapkan 1024 dimensi). Pilih model 1024 dimensi, atau minta 1024 dimensi dari penyedia Anda.',
   'memory.health.remediation.local_model_unavailable':
-    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+    'Model lokal yang diperlukan tidak tersedia. Instal/jalankan Ollama dan unduh model, atau alihkan beban kerja ini ke penyedia cloud di Pengaturan → AI.',
   'memory.health.remediation.extraction_timeout':
-    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+    'Model ekstraksi memori kehabisan waktu, sehingga wiki memiliki sedikit struktur. Ganti model ekstraksi memori ke yang lebih cepat di Pengaturan → AI.',
   'memory.health.remediation.summarizer_unavailable':
-    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama) or configure a cloud model for memory in Settings → AI.',
+    'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama) atau konfigurasikan model cloud untuk memori di Pengaturan → AI.',
   'memory.health.remediation.transient':
-    'A temporary error interrupted memory processing. It will retry automatically.',
+    'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
 };
 
 export default messages;
