@@ -114,6 +114,34 @@ impl MultimodalFileConfig {
             .iter()
             .any(|allowed| allowed.eq_ignore_ascii_case(&needle))
     }
+
+    /// Hardened config for turns whose user text originates from an
+    /// untrusted third-party channel (Slack / Discord / Telegram /
+    /// WhatsApp / etc.). Disables `[FILE:…]` marker resolution outright
+    /// so a remote sender cannot smuggle `[FILE:/etc/passwd]`,
+    /// `[FILE:.env]`, or any other local-path marker into an inbound
+    /// message and have the agent exfiltrate the file's contents into
+    /// an LLM call. Also forbids remote fetch.
+    ///
+    /// `max_files: 0` is a sentinel: `prepare_messages_for_provider`
+    /// short-circuits at the first `[FILE:…]` marker with
+    /// `TooManyFiles` before any disk or network read happens. This
+    /// holds regardless of the per-operator
+    /// `[tools.multimodal_files]` block in `config.toml`.
+    ///
+    /// Mirrors the triage-arm hardening in
+    /// `openhuman::agent::triage::evaluator`. Apply at the per-turn
+    /// application site (the channel-runtime dispatcher) — the
+    /// operator-supplied `config.multimodal_files` stays the source of
+    /// truth for the desktop / web-chat path where the user owns the
+    /// local filesystem.
+    pub fn for_untrusted_channel_input() -> Self {
+        Self {
+            max_files: 0,
+            allow_remote_fetch: false,
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for MultimodalFileConfig {

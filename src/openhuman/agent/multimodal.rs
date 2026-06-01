@@ -279,6 +279,20 @@ pub async fn prepare_messages_for_provider(
     }
 
     let found_files = count_file_markers(messages);
+    // Hard-zero gate: `MultimodalFileConfig::for_untrusted_channel_input()`
+    // (and the triage arm) sets `max_files: 0` as a sentinel meaning
+    // "reject every `[FILE:…]` marker before any disk read." The clamp
+    // inside `effective_limits` lifts 0 → 1, so without this pre-check a
+    // single attacker-supplied `[FILE:/etc/passwd]` would slip through
+    // (`1 > 1` is false). Honour the raw value here so the channel /
+    // triage hardening is actually enforced.
+    if file_config.max_files == 0 && found_files > 0 {
+        return Err(MultimodalError::TooManyFiles {
+            max_files: 0,
+            found: found_files,
+        }
+        .into());
+    }
     if found_files > max_files {
         return Err(MultimodalError::TooManyFiles {
             max_files,
