@@ -20,7 +20,7 @@ impl Tool for MemoryTreeIngestDocumentTool {
          This is the write path into the knowledge index — use it after \
          fetching web content, extracting facts, or collecting data from \
          external sources. The ingested document will be chunked, embedded, \
-         and available via query_global, query_source, and search_entities."
+         and available via query_source and search_entities."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

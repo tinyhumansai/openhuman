@@ -437,6 +437,8 @@ impl AgentOrchestrationSession {
             model_override: request.model,
             task_id: Some(orchestration_id.clone()),
             worker_thread_id: None,
+            initial_history: None,
+            checkpoint_dir: None,
         };
 
         let task_session = self.clone();

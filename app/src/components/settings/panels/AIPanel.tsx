@@ -53,6 +53,13 @@ import {
 import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import {
+  authStyleForBuiltinCloudProvider,
+  BUILTIN_CLOUD_PROVIDER_META,
+  BUILTIN_CLOUD_PROVIDER_SLUGS,
+  builtinCloudProvider,
+  defaultEndpointForBuiltinCloudProvider,
+} from './builtinCloudProviders';
 import { presentProviderSetupError, ProviderSetupErrorNotice } from './ProviderSetupErrorNotice';
 import { useReembedBackfillModal } from './useReembedBackfillModal';
 
@@ -105,6 +112,15 @@ const ROUTING_WORKLOAD_IDS: WorkloadId[] = [
   'learning',
   'subconscious',
 ];
+const BUILTIN_RESERVED_SLUGS = [
+  'cloud',
+  'openhuman',
+  'pid',
+  'custom',
+  'ollama',
+  'lmstudio',
+  ...BUILTIN_CLOUD_PROVIDER_SLUGS,
+];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Static catalog
@@ -117,34 +133,7 @@ const BUILTIN_PROVIDER_META: Record<string, { tone: string; label: string }> = {
     label: 'Managed',
     tone: 'bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 text-emerald-900 dark:text-emerald-100',
   },
-  openai: {
-    label: 'OpenAI',
-    tone: 'bg-emerald-50 dark:bg-emerald-500/10 ring-emerald-200 text-emerald-900 dark:text-emerald-100',
-  },
-  anthropic: {
-    label: 'Anthropic',
-    tone: 'bg-orange-50 dark:bg-orange-500/10 ring-orange-200 text-orange-900 dark:text-orange-100',
-  },
-  openrouter: {
-    label: 'OpenRouter',
-    tone: 'bg-slate-100 dark:bg-slate-500/15 ring-slate-300 text-slate-900 dark:text-slate-100',
-  },
-  orcarouter: {
-    label: 'OrcaRouter',
-    tone: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
-  },
-  gmi: {
-    label: 'GMI',
-    tone: 'bg-fuchsia-50 dark:bg-fuchsia-500/10 ring-fuchsia-200 text-fuchsia-900 dark:text-fuchsia-100',
-  },
-  fireworks: {
-    label: 'Fireworks',
-    tone: 'bg-rose-50 dark:bg-rose-500/10 ring-rose-200 text-rose-900 dark:text-rose-100',
-  },
-  moonshot: {
-    label: 'Kimi (Moonshot)',
-    tone: 'bg-indigo-50 dark:bg-indigo-500/10 ring-indigo-200 text-indigo-900 dark:text-indigo-100',
-  },
+  ...BUILTIN_CLOUD_PROVIDER_META,
   custom: {
     label: 'Advanced',
     tone: 'bg-sky-50 dark:bg-sky-500/10 ring-sky-200 text-sky-900 dark:text-sky-100',
@@ -259,9 +248,8 @@ function slugifyCustomProviderName(name: string): string {
  */
 function authStyleForSlug(slug: string): AuthStyle {
   if (slug === 'openhuman') return 'openhuman_jwt';
-  if (slug === 'anthropic') return 'anthropic';
   if (slug === 'lmstudio' || slug === 'ollama') return 'none';
-  return 'bearer';
+  return authStyleForBuiltinCloudProvider(slug) ?? 'bearer';
 }
 
 function toPanelProvider(p: CloudProviderView): CloudProvider {
@@ -615,21 +603,7 @@ const ProviderKeyDialog = ({
 
   const placeholder = isLocalRuntime
     ? defaultEndpointFor(slug) || t('settings.ai.defaultLocalEndpoint')
-    : slug === 'openai'
-      ? 'sk-...'
-      : slug === 'anthropic'
-        ? 'sk-ant-...'
-        : slug === 'openrouter'
-          ? 'sk-or-...'
-          : slug === 'orcarouter'
-            ? 'sk-orca-...'
-            : slug === 'gmi'
-              ? 'gmi-...'
-              : slug === 'fireworks'
-                ? 'fw-...'
-                : slug === 'moonshot'
-                  ? 'sk-...'
-                  : 'your-api-key';
+    : (builtinCloudProvider(slug)?.keyPlaceholder ?? 'your-api-key');
 
   const fieldLabel = isLocalRuntime
     ? t('settings.ai.endpointUrlLabel')
@@ -2808,18 +2782,8 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                 onToggle={() => {}}
               />
 
-              {/* Built-in cloud providers — openai/anthropic/openrouter/orcarouter/custom */}
-              {(
-                [
-                  'openai',
-                  'anthropic',
-                  'openrouter',
-                  'orcarouter',
-                  'gmi',
-                  'fireworks',
-                  'moonshot',
-                ] as const
-              ).map(slug => {
+              {/* Built-in cloud providers */}
+              {BUILTIN_CLOUD_PROVIDER_SLUGS.map(slug => {
                 const meta = BUILTIN_PROVIDER_META[slug];
                 const label = meta?.label ?? slug;
                 const existing = draft.cloudProviders.find(cp => cp.slug === slug);
@@ -2860,21 +2824,7 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
               })}
 
               {draft.cloudProviders
-                .filter(
-                  cp =>
-                    ![
-                      'openhuman',
-                      'openai',
-                      'anthropic',
-                      'openrouter',
-                      'orcarouter',
-                      'gmi',
-                      'fireworks',
-                      'moonshot',
-                      'lmstudio',
-                      'ollama',
-                    ].includes(cp.slug)
-                )
+                .filter(cp => !BUILTIN_RESERVED_SLUGS.includes(cp.slug))
                 .map(existing => (
                   <ProviderToggleChip
                     key={existing.id}
@@ -3342,23 +3292,7 @@ const CloudProviderEditor = ({
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const slug = initial?.slug ?? slugifyCustomProviderName(label);
-  const hasReservedSlugCollision =
-    !initial &&
-    [
-      'cloud',
-      'openhuman',
-      'pid',
-      'openai',
-      'anthropic',
-      'openrouter',
-      'orcarouter',
-      'gmi',
-      'fireworks',
-      'moonshot',
-      'custom',
-      'ollama',
-      'lmstudio',
-    ].includes(slug);
+  const hasReservedSlugCollision = !initial && BUILTIN_RESERVED_SLUGS.includes(slug);
   const slugError = !slug
     ? t('settings.ai.slugMissingError')
     : existingSlugs.includes(slug)
@@ -3504,23 +3438,12 @@ const CloudProviderEditor = ({
 };
 
 function defaultEndpointFor(slug: string): string {
+  const builtinEndpoint = defaultEndpointForBuiltinCloudProvider(slug);
+  if (builtinEndpoint) return builtinEndpoint;
+
   switch (slug) {
     case 'openhuman':
       return 'https://api.openhuman.ai/v1';
-    case 'openai':
-      return 'https://api.openai.com/v1';
-    case 'anthropic':
-      return 'https://api.anthropic.com/v1';
-    case 'openrouter':
-      return 'https://openrouter.ai/api/v1';
-    case 'orcarouter':
-      return 'https://api.orcarouter.ai/v1';
-    case 'gmi':
-      return 'https://api.gmi-serving.com/v1';
-    case 'fireworks':
-      return 'https://api.fireworks.ai/inference/v1';
-    case 'moonshot':
-      return 'https://api.moonshot.ai/v1';
     case 'ollama':
       // Ollama exposes an OpenAI-compatible endpoint at /v1; the bare host is
       // also accepted by the Rust factory (it appends /v1 internally for chat).

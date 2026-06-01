@@ -168,7 +168,7 @@ pub async fn upsert_composio_source(
         id: format!("src_{}", uuid::Uuid::new_v4().as_simple()),
         kind: SourceKind::Composio,
         label: label.to_string(),
-        enabled: true,
+        enabled: false,
         toolkit: Some(toolkit.to_string()),
         connection_id: Some(connection_id.to_string()),
         path: None,

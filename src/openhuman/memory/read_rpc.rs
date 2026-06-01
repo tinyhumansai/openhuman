@@ -1086,12 +1086,16 @@ pub async fn obsidian_vault_status_rpc(
 /// `parent_summary_id` and render as orphan nodes — matching Obsidian's
 /// `showOrphans` view.
 fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> {
-    /// Hard cap on total nodes returned in Tree mode. The custom
-    /// force-simulation in the UI does all-pairs repulsion (O(n²)), so
-    /// this bounds both the wire payload and the layout cost.
-    const MAX_TREE_NODES: usize = 1000;
+    const MAX_TREE_NODES: usize = 10_000;
 
-    let mut nodes = with_connection(cfg, |conn| {
+    // 1. Collect summary nodes + their child_ids for document expansion.
+    struct SummaryRow {
+        node: GraphNode,
+        tree_scope: String,
+        child_ids: Vec<String>,
+    }
+
+    let summary_rows = with_connection(cfg, |conn| {
         let mut stmt = conn.prepare(
             "SELECT s.id, s.tree_id, s.tree_kind, t.scope, s.level, s.parent_id,
                     s.child_ids_json, s.time_range_start_ms, s.time_range_end_ms
@@ -1111,25 +1115,29 @@ fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> 
                 let child_ids_json: String = row.get(6)?;
                 let time_range_start_ms: i64 = row.get(7)?;
                 let time_range_end_ms: i64 = row.get(8)?;
-                let child_count: u32 = serde_json::from_str::<Vec<String>>(&child_ids_json)
-                    .map(|v| v.len() as u32)
-                    .unwrap_or(0);
+                let child_ids: Vec<String> =
+                    serde_json::from_str(&child_ids_json).unwrap_or_default();
+                let child_count = child_ids.len() as u32;
                 let file_basename = sanitize_basename(&id);
                 let label = format!("L{} · {}", level.max(0), tree_scope);
-                Ok(GraphNode {
-                    kind: "summary".into(),
-                    id,
-                    label,
-                    tree_kind: Some(tree_kind),
-                    tree_scope: Some(tree_scope),
-                    tree_id: Some(tree_id),
-                    level: Some(level.max(0) as u32),
-                    parent_id,
-                    child_count: Some(child_count),
-                    time_range_start_ms: Some(time_range_start_ms),
-                    time_range_end_ms: Some(time_range_end_ms),
-                    file_basename: Some(file_basename),
-                    entity_kind: None,
+                Ok(SummaryRow {
+                    node: GraphNode {
+                        kind: "summary".into(),
+                        id,
+                        label,
+                        tree_kind: Some(tree_kind),
+                        tree_scope: Some(tree_scope.clone()),
+                        tree_id: Some(tree_id),
+                        level: Some(level.max(0) as u32),
+                        parent_id,
+                        child_count: Some(child_count),
+                        time_range_start_ms: Some(time_range_start_ms),
+                        time_range_end_ms: Some(time_range_end_ms),
+                        file_basename: Some(file_basename),
+                        entity_kind: None,
+                    },
+                    tree_scope,
+                    child_ids,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()
@@ -1137,62 +1145,200 @@ fn collect_tree_graph(cfg: &Config) -> Result<(Vec<GraphNode>, Vec<GraphEdge>)> 
         Ok(rows)
     })?;
 
-    // Fill the remaining budget with leaf chunks, most-recent first.
-    // Summaries are kept whole; only the chunk tail is truncated when a
-    // very large workspace would blow past MAX_TREE_NODES.
-    let chunk_budget = MAX_TREE_NODES.saturating_sub(nodes.len());
-    if chunk_budget == 0 {
-        return Ok((nodes, Vec::new()));
+    // 2. Build synthetic source-root nodes (one per tree scope).
+    let mut scopes: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for sr in &summary_rows {
+        scopes.insert(sr.tree_scope.clone());
     }
 
-    let chunk_nodes = with_connection(cfg, |conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, parent_summary_id, content, time_range_start_ms, time_range_end_ms
-               FROM mem_tree_chunks
-              ORDER BY timestamp_ms DESC
-              LIMIT ?1",
-        )?;
-        let rows = stmt
-            .query_map(params![chunk_budget as i64], |row| {
-                let id: String = row.get(0)?;
-                let parent_id: Option<String> = row.get(1)?;
-                let content: String = row.get(2)?;
-                let time_range_start_ms: i64 = row.get(3)?;
-                let time_range_end_ms: i64 = row.get(4)?;
-                // First line, trimmed for graph hover legibility — same
-                // treatment as Contacts mode chunk labels.
-                let label = content
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .chars()
-                    .take(72)
-                    .collect::<String>();
-                Ok(GraphNode {
-                    kind: "chunk".into(),
-                    id,
-                    label,
-                    tree_kind: None,
-                    tree_scope: None,
-                    tree_id: None,
-                    level: None,
-                    // parent_summary_id matches a summary node's `id`,
-                    // so the UI draws the chunk→summary edge directly.
-                    // Null for unsealed chunks → orphan node.
-                    parent_id: parent_id.filter(|s| !s.is_empty()),
-                    child_count: None,
-                    time_range_start_ms: Some(time_range_start_ms),
-                    time_range_end_ms: Some(time_range_end_ms),
-                    file_basename: None,
-                    entity_kind: None,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .context("collect tree-mode leaf chunk rows")?;
-        Ok(rows)
-    })?;
-    nodes.extend(chunk_nodes);
+    let mut nodes: Vec<GraphNode> = Vec::new();
+    let mut source_root_ids: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for scope in &scopes {
+        let root_id = format!("source:{scope}");
+        let label = scope_display_label(scope);
+        source_root_ids.insert(scope.clone(), root_id.clone());
+        nodes.push(GraphNode {
+            kind: "source".into(),
+            id: root_id,
+            label,
+            tree_kind: None,
+            tree_scope: Some(scope.clone()),
+            tree_id: None,
+            level: None,
+            parent_id: None,
+            child_count: None,
+            time_range_start_ms: None,
+            time_range_end_ms: None,
+            file_basename: None,
+            entity_kind: None,
+        });
+    }
+
+    // 3. Add summary nodes — orphans (no parent_id) link to their source root.
+    let mut summary_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for sr in &summary_rows {
+        summary_ids.insert(sr.node.id.clone());
+    }
+
+    for sr in &summary_rows {
+        let mut node = sr.node.clone();
+        let has_valid_parent = node
+            .parent_id
+            .as_ref()
+            .map(|pid| summary_ids.contains(pid))
+            .unwrap_or(false);
+        if !has_valid_parent {
+            node.parent_id = source_root_ids.get(&sr.tree_scope).cloned();
+        }
+        nodes.push(node);
+    }
+
+    // 4. For L1 summaries, emit document nodes from child_ids (commits/issues/PRs).
+    //    These are the raw items that were summarised. Only for summaries whose
+    //    children are NOT other summaries (i.e. L1 nodes whose children are
+    //    raw item IDs, not summary IDs).
+    let doc_budget = MAX_TREE_NODES.saturating_sub(nodes.len());
+    let mut doc_count = 0usize;
+    for sr in &summary_rows {
+        if doc_count >= doc_budget {
+            break;
+        }
+        if sr.node.level != Some(1) {
+            continue;
+        }
+        // Skip if children look like summary IDs (L2+ children).
+        if sr
+            .child_ids
+            .first()
+            .map(|c| c.starts_with("summary:"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        for child_id in &sr.child_ids {
+            if doc_count >= doc_budget {
+                break;
+            }
+            let label = document_label(child_id);
+            nodes.push(GraphNode {
+                kind: "chunk".into(),
+                id: format!("doc:{}:{}", sr.tree_scope, child_id),
+                label,
+                tree_kind: None,
+                tree_scope: Some(sr.tree_scope.clone()),
+                tree_id: None,
+                level: None,
+                parent_id: Some(sr.node.id.clone()),
+                child_count: None,
+                time_range_start_ms: sr.node.time_range_start_ms,
+                time_range_end_ms: sr.node.time_range_end_ms,
+                file_basename: None,
+                entity_kind: None,
+            });
+            doc_count += 1;
+        }
+    }
+
+    // 5. Fill remaining budget with DB-backed leaf chunks (gmail etc).
+    let chunk_budget = MAX_TREE_NODES.saturating_sub(nodes.len());
+    if chunk_budget > 0 {
+        let chunk_nodes = with_connection(cfg, |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT c.id, c.parent_summary_id, c.content,
+                        c.time_range_start_ms, c.time_range_end_ms, c.source_id
+                   FROM mem_tree_chunks c
+                  ORDER BY c.timestamp_ms DESC
+                  LIMIT ?1",
+            )?;
+            let rows = stmt
+                .query_map(params![chunk_budget as i64], |row| {
+                    let id: String = row.get(0)?;
+                    let parent_id: Option<String> = row.get(1)?;
+                    let content: String = row.get(2)?;
+                    let time_range_start_ms: i64 = row.get(3)?;
+                    let time_range_end_ms: i64 = row.get(4)?;
+                    let source_id: String = row.get(5)?;
+                    let label = content
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .chars()
+                        .take(72)
+                        .collect::<String>();
+                    Ok((
+                        GraphNode {
+                            kind: "chunk".into(),
+                            id,
+                            label,
+                            tree_kind: None,
+                            tree_scope: None,
+                            tree_id: None,
+                            level: None,
+                            parent_id: parent_id.filter(|s| !s.is_empty()),
+                            child_count: None,
+                            time_range_start_ms: Some(time_range_start_ms),
+                            time_range_end_ms: Some(time_range_end_ms),
+                            file_basename: None,
+                            entity_kind: None,
+                        },
+                        source_id,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("collect tree-mode leaf chunk rows")?;
+            Ok(rows)
+        })?;
+
+        for (chunk, _source_id) in chunk_nodes {
+            nodes.push(chunk);
+        }
+    }
+
     Ok((nodes, Vec::new()))
+}
+
+fn scope_display_label(scope: &str) -> String {
+    if scope.starts_with("github:") {
+        let repo = scope.strip_prefix("github:").unwrap_or(scope);
+        format!("GitHub · {repo}")
+    } else if scope.starts_with("gmail:") {
+        let account = scope
+            .strip_prefix("gmail:")
+            .unwrap_or(scope)
+            .replace("-at-", "@")
+            .replace("-dot-", ".");
+        format!("Gmail · {account}")
+    } else if scope.starts_with("slack:") {
+        let channel = scope.strip_prefix("slack:").unwrap_or(scope);
+        format!("Slack · {channel}")
+    } else {
+        scope.to_string()
+    }
+}
+
+fn document_label(child_id: &str) -> String {
+    if let Some(sha) = child_id.strip_prefix("commit:") {
+        format!("commit {}", &sha[..sha.len().min(8)])
+    } else if let Some(n) = child_id.strip_prefix("issue:") {
+        format!("issue #{n}")
+    } else if let Some(n) = child_id.strip_prefix("pr:") {
+        format!("PR #{n}")
+    } else {
+        child_id.chars().take(40).collect()
+    }
+}
+
+fn source_id_to_scope(source_id: &str) -> String {
+    // Chunk source_ids like "gmail:stevent95-at-gmail-dot-com:thread:abc"
+    // → scope "gmail:stevent95-at-gmail-dot-com"
+    let parts: Vec<&str> = source_id.splitn(3, ':').collect();
+    if parts.len() >= 2 {
+        format!("{}:{}", parts[0], parts[1])
+    } else {
+        source_id.to_string()
+    }
 }
 
 /// Contacts mode: every chunk that mentions a person entity, plus the
@@ -1683,6 +1829,89 @@ pub async fn reset_tree_rpc(config: &Config) -> Result<RpcOutcome<ResetTreeRespo
     let log = format!(
         "memory_tree::read: reset_tree tree_rows={} chunks={} jobs={}",
         resp.tree_rows_deleted, resp.chunks_requeued, resp.jobs_enqueued
+    );
+    Ok(RpcOutcome::single_log(resp, log))
+}
+
+// ── flush_source_tree (per-source immediate seal) ───────────────────────
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FlushSourceTreeResponse {
+    pub tree_scope: String,
+    pub seals_fired: u32,
+}
+
+/// `memory_tree_flush_source` — seal one source tree's L0 buffer immediately,
+/// bypassing the job queue. Mutex per tree_scope so concurrent clicks are
+/// serialised.
+pub async fn flush_source_tree_rpc(
+    config: &Config,
+    source_scope: &str,
+) -> Result<RpcOutcome<FlushSourceTreeResponse>, String> {
+    use crate::openhuman::memory::tree_source::get_or_create_source_tree;
+    use crate::openhuman::memory_tree::tree::bucket_seal::LabelStrategy;
+    use crate::openhuman::memory_tree::tree::flush::force_flush_tree;
+    use crate::openhuman::memory_tree::tree::TreeFactory;
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+
+    static ACTIVE: std::sync::LazyLock<Mutex<HashSet<String>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashSet::new()));
+
+    let scope = source_scope.to_string();
+
+    {
+        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+        if !active.insert(scope.clone()) {
+            return Ok(RpcOutcome::single_log(
+                FlushSourceTreeResponse {
+                    tree_scope: scope,
+                    seals_fired: 0,
+                },
+                "memory_tree::read: flush_source_tree already running for this scope".to_string(),
+            ));
+        }
+    }
+
+    let cfg = config.clone();
+    let scope_for_task = scope.clone();
+    let result = tokio::task::spawn_blocking(move || -> Result<FlushSourceTreeResponse> {
+        let tree = get_or_create_source_tree(&cfg, &scope_for_task)
+            .context("get_or_create_source_tree")?;
+        let strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg);
+        Ok(FlushSourceTreeResponse {
+            tree_scope: scope_for_task,
+            seals_fired: 0,
+        })
+    })
+    .await
+    .map_err(|e| format!("flush_source_tree join error: {e}"))?;
+
+    let tree_info = result.map_err(|e| format!("flush_source_tree: {e:#}"))?;
+
+    let cfg2 = config.clone();
+    let scope2 = scope.clone();
+    let resp = tokio::spawn(async move {
+        let tree = get_or_create_source_tree(&cfg2, &scope2)?;
+        let strategy = TreeFactory::from_tree(&tree).label_strategy(&cfg2);
+        let sealed = force_flush_tree(&cfg2, &tree.id, Some(chrono::Utc::now()), &strategy).await?;
+        Ok::<_, anyhow::Error>(FlushSourceTreeResponse {
+            tree_scope: scope2,
+            seals_fired: sealed.len() as u32,
+        })
+    })
+    .await
+    .map_err(|e| format!("flush_source_tree join error: {e}"))?
+    .map_err(|e| format!("flush_source_tree: {e:#}"))?;
+
+    {
+        let mut active = ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
+        active.remove(&scope);
+    }
+
+    let log = format!(
+        "memory_tree::read: flush_source_tree scope={} seals={}",
+        resp.tree_scope, resp.seals_fired
     );
     Ok(RpcOutcome::single_log(resp, log))
 }

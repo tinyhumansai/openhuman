@@ -283,6 +283,7 @@ async fn raw_round13_app_state_update_trims_clears_and_preserves_optional_local_
     let harness = round13_setup();
 
     let updated = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  raw-key  ".to_string())),
         onboarding_tasks: Some(Some(Default::default())),
     })
@@ -293,6 +294,7 @@ async fn raw_round13_app_state_update_trims_clears_and_preserves_optional_local_
     assert!(updated.onboarding_tasks.is_some());
 
     let cleared_key = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("   ".to_string())),
         onboarding_tasks: None,
     })
@@ -303,6 +305,7 @@ async fn raw_round13_app_state_update_trims_clears_and_preserves_optional_local_
     assert!(cleared_key.onboarding_tasks.is_some());
 
     let cleared_tasks = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: None,
         onboarding_tasks: Some(None),
     })
@@ -313,6 +316,7 @@ async fn raw_round13_app_state_update_trims_clears_and_preserves_optional_local_
     assert!(cleared_tasks.onboarding_tasks.is_none());
 
     let unchanged = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: None,
         onboarding_tasks: None,
     })
