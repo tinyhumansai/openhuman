@@ -548,15 +548,9 @@ async fn pick_listen_port_identifies_ipv6_openhuman_listener_when_supported() {
 #[tokio::test]
 async fn pick_listen_port_reports_no_available_fallbacks() {
     let _lock = env_lock();
-    let preferred_probe = spawn_probe_listener("200 OK", r#"{"name":"not-openhuman"}"#).await;
+    let (preferred_probe, occupied) =
+        reserve_preferred_probe_with_fallback_block("200 OK", r#"{"name":"not-openhuman"}"#).await;
     let preferred = preferred_probe.port;
-    let mut occupied = Vec::new();
-    for port in (preferred + 1)..=(preferred + 10) {
-        occupied.push(
-            StdTcpListener::bind(("127.0.0.1", port))
-                .unwrap_or_else(|err| panic!("bind fallback port {port}: {err}")),
-        );
-    }
 
     let err = pick_listen_port_for_host("127.0.0.1", preferred)
         .await
@@ -585,4 +579,32 @@ async fn pick_listen_port_reports_no_available_fallbacks() {
     }
 
     drop(occupied);
+}
+
+async fn reserve_preferred_probe_with_fallback_block(
+    status: &str,
+    body: &'static str,
+) -> (ProbeListener, Vec<StdTcpListener>) {
+    for _ in 0..50 {
+        let preferred_probe = spawn_probe_listener(status, body).await;
+        let preferred = preferred_probe.port;
+        let Some(end) = preferred.checked_add(10) else {
+            continue;
+        };
+        let mut occupied = Vec::new();
+        let mut reserved_all = true;
+        for port in (preferred + 1)..=end {
+            match StdTcpListener::bind(("127.0.0.1", port)) {
+                Ok(listener) => occupied.push(listener),
+                Err(_) => {
+                    reserved_all = false;
+                    break;
+                }
+            }
+        }
+        if reserved_all {
+            return (preferred_probe, occupied);
+        }
+    }
+    panic!("could not reserve a preferred probe with ten contiguous fallback ports");
 }
