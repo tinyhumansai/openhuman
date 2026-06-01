@@ -119,6 +119,10 @@ pub(crate) fn validate_ollama_url(raw: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+/// Normalizes trusted env/config client URLs for outbound calls.
+///
+/// This is not input validation; user-supplied endpoint values must go through
+/// `validate_ollama_url` before being persisted.
 fn normalize_ollama_client_url(raw: &str) -> String {
     let trimmed = raw.trim().trim_end_matches('/');
     let Ok(parsed) = reqwest::Url::parse(trimmed) else {
