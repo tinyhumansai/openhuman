@@ -28,7 +28,7 @@ describe('startLoopbackOauthListener', () => {
     expect(handle).toBeNull();
     expect(mockInvoke).toHaveBeenCalledWith('start_loopback_oauth_listener', {
       port: 53824,
-      timeoutSecs: 60,
+      timeoutSecs: 300,
     });
   });
 

@@ -16,7 +16,7 @@ use crate::openhuman::memory_store::content::raw::{self as raw_store, RawItem};
 use crate::openhuman::memory_store::trees::types::TreeKind;
 use crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET;
 use crate::openhuman::memory_sync::sources::audit::{
-    append_audit_entry, estimate_cost_usd, SyncAuditEntry,
+    append_audit_entry, RealCostAccumulator, SyncAuditEntry,
 };
 use crate::openhuman::memory_sync::traits::{SyncOutcome, SyncPipeline, SyncPipelineKind};
 use crate::openhuman::memory_tree::ingest::{ingest_summary, SummaryIngestInput};
@@ -212,14 +212,15 @@ pub async fn run_github_sync(
         )),
     );
 
-    let mut total_input_tokens: u64 = 0;
-    let mut total_output_tokens: u64 = 0;
+    // Token/charge accounting across the run. The estimate (`body.len() / 4`
+    // heuristic) is always summed; provider-reported figures only replace it
+    // when every batch reported them (issue #3110). See `RealCostAccumulator`.
+    let mut cost = RealCostAccumulator::new();
 
     for (batch_idx, (batch_inputs, batch_labels, batch_basenames)) in
         batches.into_iter().enumerate()
     {
         let batch_input_tokens: u64 = batch_inputs.iter().map(|i| i.token_count as u64).sum();
-        total_input_tokens += batch_input_tokens;
 
         let ctx = SummaryContext {
             tree_id: &tree.id,
@@ -240,7 +241,13 @@ pub async fn run_github_sync(
             }
         };
 
-        total_output_tokens += output.token_count as u64;
+        cost.add_batch(
+            batch_input_tokens,
+            output.token_count as u64,
+            output.input_tokens,
+            output.output_tokens,
+            output.charged_amount_usd,
+        );
 
         let time_start = batch_inputs
             .iter()
@@ -279,7 +286,29 @@ pub async fn run_github_sync(
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    let cost = estimate_cost_usd(total_input_tokens, total_output_tokens);
+
+    // Provider token counts are recorded only when *every* batch reported
+    // usage; a mixed run keeps the `len/4` estimate (which covers all
+    // batches) rather than a partial real total that would undercount.
+    // `estimated_cost_usd` is always populated as the fallback. Issue #3110.
+    let any_real_usage = cost.usage_is_real();
+    let audit_input_tokens = cost.audit_input_tokens();
+    let audit_output_tokens = cost.audit_output_tokens();
+    let estimated_cost = cost.estimated_cost();
+    let actual_charged_usd = cost.actual_charged_usd();
+    // Cost surfaced to the user/logs: real charge when present, else estimate.
+    let display_cost = actual_charged_usd.unwrap_or(estimated_cost);
+
+    tracing::info!(
+        source_id = %source_id,
+        usage_is_real = any_real_usage,
+        actual_charge = actual_charged_usd.is_some(),
+        input_tokens = audit_input_tokens,
+        output_tokens = audit_output_tokens,
+        estimated_cost_usd = %format!("{estimated_cost:.4}"),
+        actual_charged_usd = ?actual_charged_usd,
+        "[memory_sync:github] sync cost accounting"
+    );
 
     append_audit_entry(
         config,
@@ -290,9 +319,10 @@ pub async fn run_github_sync(
             scope: repo_scope.clone(),
             items_fetched: input_count as u32,
             batches: batch_count as u32,
-            input_tokens: total_input_tokens,
-            output_tokens: total_output_tokens,
-            estimated_cost_usd: cost,
+            input_tokens: audit_input_tokens,
+            output_tokens: audit_output_tokens,
+            estimated_cost_usd: estimated_cost,
+            actual_charged_usd,
             duration_ms,
             success: true,
             error: None,
@@ -305,7 +335,7 @@ pub async fn run_github_sync(
         Some(kind_str),
         Some(source_id),
         Some(format!(
-            "{input_count} items → {batch_count} summary(ies) ({total_input_tokens} in / {total_output_tokens} out tokens, ${cost:.4})"
+            "{input_count} items → {batch_count} summary(ies) ({audit_input_tokens} in / {audit_output_tokens} out tokens, ${display_cost:.4})"
         )),
     );
 
@@ -313,7 +343,7 @@ pub async fn run_github_sync(
         records_ingested: input_count as u32,
         more_pending: false,
         note: Some(format!(
-            "{input_count} items → {batch_count} summary(ies) (${cost:.4})"
+            "{input_count} items → {batch_count} summary(ies) (${display_cost:.4})"
         )),
     })
 }

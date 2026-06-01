@@ -189,7 +189,7 @@ pub(crate) async fn run_turn_engine(
         }
 
         // Caller-specific pre-dispatch work (e.g. Agent's ContextManager).
-        observer.before_dispatch(history, iteration).await?;
+        observer.before_dispatch(history, tools, iteration).await?;
 
         tracing::debug!(iteration, "[agent_loop] sending LLM request");
         let image_marker_count = multimodal::count_image_markers(history);

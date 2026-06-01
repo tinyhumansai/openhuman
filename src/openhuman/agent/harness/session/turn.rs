@@ -98,6 +98,45 @@ fn normalize_tool_call<'a>(call: &'a ParsedToolCall) -> Cow<'a, ParsedToolCall> 
     })
 }
 
+/// Compute the one-shot mid-session connect announcement.
+///
+/// Given the toolkit slugs currently connected and the set of slugs already
+/// announced to the model this session, returns a natural-language note for
+/// any genuinely-new slugs (and records them in `announced` so they are never
+/// re-announced). Returns `None` when nothing new connected.
+///
+/// Kept as a free function (no `&self`) so the delta logic is unit-testable
+/// without standing up a full `Agent` — see `turn_tests.rs`.
+/// Returns the toolkit slugs in `connected` that have not yet been announced
+/// this session, marking them announced. Empty when nothing is new.
+fn newly_connected_slugs(
+    connected: &[String],
+    announced: &mut std::collections::HashSet<String>,
+) -> Vec<String> {
+    let newly: Vec<String> = connected
+        .iter()
+        .filter(|slug| !announced.contains(*slug))
+        .cloned()
+        .collect();
+    for slug in &newly {
+        announced.insert(slug.clone());
+    }
+    newly
+}
+
+/// Render the one-shot user-turn note for a set of freshly-connected slugs.
+/// Empty input yields `None`.
+fn integration_announcement_note(slugs: &[String]) -> Option<String> {
+    if slugs.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "[integration update] These integration(s) connected during this conversation and are available right now: {}. \
+Use delegate_to_integrations_agent with the matching toolkit slug to act on them immediately — do not tell the user to reconnect or restart.",
+        slugs.join(", ")
+    ))
+}
+
 impl Agent {
     /// Executes a single interaction "turn" with the agent.
     ///
@@ -129,6 +168,7 @@ impl Agent {
             self.history.len(),
             self.config.max_tool_iterations
         );
+        self.ensure_composio_integrations_listener();
         // ── Session transcript resume ─────────────────────────────────
         // On a fresh session (empty history), look for a previous
         // transcript to pre-populate the exact provider messages for
@@ -188,6 +228,13 @@ impl Agent {
             // Subsequent turns short-circuit unless this hash changes.
             self.last_seen_integrations_hash =
                 crate::openhuman::composio::connected_set_hash(&self.connected_integrations);
+            // Seed the announced set with the startup connected toolkits so
+            // only genuinely-new mid-session connects get announced later.
+            self.announced_integrations = self
+                .connected_integrations
+                .iter()
+                .map(|i| i.toolkit.clone())
+                .collect();
         } else {
             // Deliberately do NOT rebuild the system prompt on subsequent
             // turns. The rendered prompt is the KV-cache prefix the inference
@@ -226,41 +273,7 @@ impl Agent {
             // runtime `Config` snapshot directly, so this read avoids the
             // old `Config::load_or_init()` round-trip on every turn.
             //
-            if let Some(cfg) = self.integration_runtime_config.as_ref() {
-                if let Some(cache_view) =
-                    crate::openhuman::composio::cached_active_integrations(cfg)
-                {
-                    let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
-                    if new_hash != self.last_seen_integrations_hash {
-                        log::info!(
-                            "[agent_loop] connection set changed mid-session (hash {:x} -> {:x}); refreshing tool schema (system prompt left intact for KV cache)",
-                            self.last_seen_integrations_hash,
-                            new_hash
-                        );
-                        // Snapshot the previous integration list so we
-                        // can roll back if `refresh_delegation_tools`
-                        // bails on a shared `Arc` — otherwise the
-                        // agent's `connected_integrations` and its
-                        // schema would disagree until the next
-                        // event-driven refresh, and the
-                        // `last_seen_integrations_hash` advance below
-                        // would suppress retries.
-                        let prev_integrations =
-                            std::mem::replace(&mut self.connected_integrations, cache_view);
-                        if self.refresh_delegation_tools() {
-                            self.last_seen_integrations_hash = new_hash;
-                            self.connected_integrations_initialized = true;
-                        } else {
-                            // Reconcile aborted (shared Arc) — restore
-                            // the previous integration list so the
-                            // next turn re-detects the same change and
-                            // retries cleanly. We deliberately do NOT
-                            // advance `last_seen_integrations_hash`.
-                            self.connected_integrations = prev_integrations;
-                        }
-                    }
-                }
-            }
+            let _ = self.refresh_delegation_tools_from_cached_integrations("turn-boundary");
             // Cache empty/expired or config unavailable => no signal.
             // We leave the current tool surface alone and pick up any
             // real change on the next turn after the UI's 5 s poll has
@@ -456,6 +469,17 @@ impl Agent {
                     format!("{}\n{}", injection.rendered, enriched)
                 }
             }
+        };
+
+        // Consume any one-shot mid-session connect announcement parked by
+        // `refresh_delegation_tools_from_cached_integrations`. It rides on the
+        // user turn (NOT a system message — `trim_history` hoists system
+        // messages to the front and would bust the KV-cache prefix) and
+        // `.take()` clears it so it fires exactly once.
+        let pending_slugs = std::mem::take(&mut self.pending_integration_announcement);
+        let enriched = match integration_announcement_note(&pending_slugs) {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
         };
 
         self.history
@@ -1122,6 +1146,119 @@ impl Agent {
         self.connected_integrations_initialized = true;
     }
 
+    /// Lazily attach this session to the global event bus so it can
+    /// observe `ComposioIntegrationsChanged` notifications.
+    pub(super) fn ensure_composio_integrations_listener(&mut self) {
+        if self.composio_integrations_rx.is_some() {
+            return;
+        }
+        if let Some(bus) = crate::core::event_bus::global() {
+            self.composio_integrations_rx = Some(bus.raw_receiver());
+            log::debug!(
+                "[agent_loop] armed composio integrations listener for session='{}'",
+                self.event_session_id
+            );
+        }
+    }
+
+    /// Drain pending `ComposioIntegrationsChanged` events.
+    ///
+    /// Returns `true` when we observed at least one relevant event (or lag) and
+    /// should re-check cached integrations before the next provider call.
+    pub(super) fn drain_composio_integrations_changed_events(&mut self) -> bool {
+        self.ensure_composio_integrations_listener();
+        let Some(rx) = self.composio_integrations_rx.as_mut() else {
+            return false;
+        };
+        use tokio::sync::broadcast::error::TryRecvError;
+
+        let mut saw_signal = false;
+        let mut closed = false;
+        loop {
+            match rx.try_recv() {
+                Ok(crate::core::event_bus::DomainEvent::ComposioIntegrationsChanged {
+                    toolkits,
+                }) => {
+                    saw_signal = true;
+                    log::info!(
+                        "[agent_loop] received composio integrations changed event (active_toolkits={:?})",
+                        toolkits
+                    );
+                }
+                Ok(_) => {}
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    saw_signal = true;
+                    log::warn!(
+                        "[agent_loop] composio integrations listener lagged by {} event(s); forcing cache re-check",
+                        skipped
+                    );
+                }
+                Err(TryRecvError::Closed) => {
+                    closed = true;
+                    break;
+                }
+            }
+        }
+        if closed {
+            self.composio_integrations_rx = None;
+        }
+        saw_signal
+    }
+
+    /// Reconcile the session's delegation schema against the latest cached
+    /// integrations snapshot. Returns `true` only when a refresh applied.
+    pub(super) fn refresh_delegation_tools_from_cached_integrations(
+        &mut self,
+        trigger: &str,
+    ) -> bool {
+        let Some(cfg) = self.integration_runtime_config.as_ref() else {
+            return false;
+        };
+        let Some(cache_view) = crate::openhuman::composio::cached_active_integrations(cfg) else {
+            return false;
+        };
+
+        let new_hash = crate::openhuman::composio::connected_set_hash(&cache_view);
+        if new_hash == self.last_seen_integrations_hash {
+            return false;
+        }
+
+        log::info!(
+            "[agent_loop] composio set changed ({trigger}) hash {:x} -> {:x}; refreshing delegation schema (system prompt unchanged for KV cache)",
+            self.last_seen_integrations_hash,
+            new_hash
+        );
+
+        let prev_integrations = std::mem::replace(&mut self.connected_integrations, cache_view);
+        if self.refresh_delegation_tools() {
+            self.last_seen_integrations_hash = new_hash;
+            self.connected_integrations_initialized = true;
+            // Surface newly-connected toolkits onto the next user message so
+            // the model acts on them on the FIRST post-connect ask instead of
+            // refusing from stale chat context. Schema-only refresh already
+            // updated the enum; this closes the prose/decision gap.
+            let connected_slugs: Vec<String> = self
+                .connected_integrations
+                .iter()
+                .map(|i| i.toolkit.clone())
+                .collect();
+            // Append (don't overwrite) so a second connect before the next
+            // user turn doesn't drop the first one's announcement. Slugs are
+            // already de-duped against `announced_integrations`, but guard the
+            // pending list too in case the same slug is re-queued.
+            for slug in newly_connected_slugs(&connected_slugs, &mut self.announced_integrations) {
+                if !self.pending_integration_announcement.contains(&slug) {
+                    self.pending_integration_announcement.push(slug);
+                }
+            }
+            true
+        } else {
+            self.connected_integrations = prev_integrations;
+            false
+        }
+    }
+
     /// Re-synthesise `delegate_*` tools for the orchestrator's `subagents`
     /// declaration using the live `connected_integrations` slice, and
     /// reconcile the resulting set into `self.tools` / `self.tool_specs` /
@@ -1156,23 +1293,17 @@ impl Agent {
     /// [`Self::last_seen_integrations_hash`] vs.
     /// [`crate::openhuman::composio::cached_active_integrations`]).
     ///
-    /// **Atomicity**: when `Arc::get_mut` fails (a sub-agent or other
-    /// caller has already captured a clone of the tool list), we restore
-    /// the previous `synthesized_tool_names` and bail. The next refresh
-    /// attempt will re-apply the full transition cleanly rather than
-    /// resuming from a partial state. This should never happen on a turn
-    /// boundary in production — sub-agents always drop their snapshots
-    /// before the parent's next turn — but it's defended against anyway.
+    /// **Shared-Arc behavior**: when `self.tools` is currently shared
+    /// (e.g. an in-flight turn cloned the Arc into its tool source), we
+    /// still refresh `self.tool_specs` / `self.visible_tool_specs` so the
+    /// provider-facing schema updates immediately. The executable tool
+    /// registry is refreshed only when `self.tools` has unique ownership.
+    /// This keeps same-turn routing unblocked while preserving ownership
+    /// safety for non-cloneable `Box<dyn Tool>` values.
     ///
-    /// **Return value** — `true` when the agent's tool surface is now
-    /// consistent with `self.connected_integrations` (either because a
-    /// successful reconcile applied, or because no reconcile was needed).
-    /// `false` only when the Arc was shared and the reconcile was
-    /// aborted; callers should treat this as "retry next turn" and
-    /// **not** advance any signal they use to gate future refreshes
-    /// (e.g. `last_seen_integrations_hash`) — otherwise a one-shot
-    /// shared-Arc collision could suppress further reconciliation until
-    /// another integration event happened to bump the hash again.
+    /// **Return value** — `true` when schema reconciliation succeeded (or
+    /// no reconcile was needed). Returns `false` only when a non-shared
+    /// reconcile path failed unexpectedly.
     pub fn refresh_delegation_tools(&mut self) -> bool {
         use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
         use crate::openhuman::tools::orchestrator_tools::collect_orchestrator_tools;
@@ -1201,39 +1332,57 @@ impl Agent {
         let synthed_specs: Vec<crate::openhuman::tools::ToolSpec> =
             synthed.iter().map(|t| t.spec()).collect();
 
-        // Skip the Arc mutation entirely when neither the previous nor
-        // the next synthesis produced any names — saves an
-        // `Arc::get_mut` probe on agents that don't declare `subagents`.
+        // Skip mutation when neither the previous nor the next synthesis
+        // produced any names — saves work on agents without dynamic
+        // delegation.
         if self.synthesized_tool_names.is_empty() && synthed_names.is_empty() {
             return true;
         }
 
-        // Mask used to drop the previous synthesis. We `take` it now so
-        // the restore-on-failure path below can put it back if the Arc
-        // turns out to be shared.
+        // Mask of the previous synthesis — the names whose `tool_specs` are
+        // currently live (this set is kept in lock-step with `tool_specs`).
         let old_synth = std::mem::take(&mut self.synthesized_tool_names);
 
-        match (
-            Arc::get_mut(&mut self.tools),
-            Arc::get_mut(&mut self.tool_specs),
-        ) {
-            (Some(tools_vec), Some(specs_vec)) => {
-                tools_vec.retain(|t| !old_synth.contains(t.name()));
-                specs_vec.retain(|s| !old_synth.contains(&s.name));
-                tools_vec.extend(synthed);
-                specs_vec.extend(synthed_specs);
-            }
-            _ => {
-                log::warn!(
-                    "[agent] refresh_delegation_tools: tools/tool_specs Arc is shared — \
-                     cannot reconcile delegation surface (would have produced {} synthesised tool(s)). \
-                     Restoring previous synthesized_tool_names so the next refresh retries cleanly.",
-                    synthed_names.len()
-                );
-                self.synthesized_tool_names = old_synth;
-                return false;
-            }
+        // `tool_specs` are plain data and therefore cloneable; we can always
+        // reconcile schema even when the Arc is shared. Drop exactly the
+        // previous synthesised spec set, then append the fresh one.
+        {
+            let specs_vec = Arc::make_mut(&mut self.tool_specs);
+            specs_vec.retain(|s| !old_synth.contains(&s.name));
+            specs_vec.extend(synthed_specs);
         }
+
+        // `tools` contains non-cloneable trait objects. Reconcile it only when
+        // uniquely owned. The set of stale synthesised *instances* to drop is
+        // the previous synthesis (`old_synth`) plus any instances a prior
+        // shared-Arc refresh couldn't remove (`pending_synthesized_tools_mask`).
+        let tools_remove_mask: std::collections::HashSet<String> = old_synth
+            .iter()
+            .chain(self.pending_synthesized_tools_mask.iter())
+            .cloned()
+            .collect();
+        let tools_reconciled = if let Some(tools_vec) = Arc::get_mut(&mut self.tools) {
+            tools_vec.retain(|t| !tools_remove_mask.contains(t.name()));
+            tools_vec.extend(synthed);
+            // `tools` now matches `tool_specs` exactly — nothing pending.
+            self.pending_synthesized_tools_mask.clear();
+            true
+        } else {
+            // Schema (`tool_specs`) was updated to the new set, but the stale
+            // tool *instances* still sit in `self.tools`. Record their names
+            // so the next unique-owner refresh removes them. Crucially we do
+            // NOT roll `synthesized_tool_names` back to `old_synth` here — that
+            // would desync it from `tool_specs` and cause duplicate specs on
+            // the following refresh (#3044).
+            self.pending_synthesized_tools_mask = tools_remove_mask;
+            log::warn!(
+                "[agent] refresh_delegation_tools: tools Arc is shared — refreshed schema only \
+                 ({} synthesised tool name(s)); {} stale tool instance(s) pending removal on the next unique-owner refresh",
+                synthed_names.len(),
+                self.pending_synthesized_tools_mask.len()
+            );
+            false
+        };
 
         // `visible_tool_names` carries an explicit allowlist for
         // [`ToolScope::Named`] agents. Drop the previously-synthesised
@@ -1273,15 +1422,20 @@ impl Agent {
             .cloned()
             .collect();
 
-        self.synthesized_tool_names = synthed_names;
+        // `tool_specs` always reconciled to the new set, so the name mask must
+        // track that set unconditionally — whether or not `tools` (the
+        // executable instances) could be reconciled this pass.
+        self.synthesized_tool_names = synthed_names.clone();
 
         log::info!(
-            "[agent] refresh_delegation_tools: reconciled delegation surface for agent '{}' (display='{}'); now {} synthesised tool(s); added={:?} removed={:?}",
+            "[agent] refresh_delegation_tools: reconciled delegation schema for agent '{}' (display='{}'); now {} synthesised tool name(s); added={:?} removed={:?} tools_reconciled={} pending_tool_instances={}",
             self.agent_definition_id,
             self.agent_definition_name,
-            self.synthesized_tool_names.len(),
+            synthed_names.len(),
             added,
-            removed
+            removed,
+            tools_reconciled,
+            self.pending_synthesized_tools_mask.len()
         );
         true
     }
