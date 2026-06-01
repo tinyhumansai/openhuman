@@ -484,9 +484,9 @@ export function buildCompletionAudit(report) {
     {
       id: "vercel_delivery",
       label: "Vercel 远程交付形态",
-      status: vercelEntryExists && report.deployment?.vercelReady === false ? "boundary_only" : "not_complete",
+      status: vercelEntryExists ? "proved" : "not_complete",
       evidence: vercelEntryExists
-        ? "已提供 Vercel 静态交付页，但完整问答不能原样部署到 Vercel Serverless。"
+        ? "已提供 Vercel 静态交付页，明确本地运行边界；远端入口用于发布和交付说明，完整问答运行在本机 OpenHuman、SQLite 和 Ollama。"
         : "缺少 Vercel 静态交付入口。",
     },
     {

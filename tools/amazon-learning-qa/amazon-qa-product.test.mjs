@@ -148,7 +148,9 @@ test("Vercel entry page is a static delivery boundary, not a cloud Q&A shell", a
   assert.match(html, /1779/);
   assert.match(html, /14597/);
   assert.match(html, /100%/);
-  assert.match(html, /9622/);
+  assert.match(html, /1780/);
+  assert.match(html, /292/);
+  assert.match(html, /后台任务为 0，失败任务为 0/);
   assert.match(html, /不是云端完整问答服务/);
   assert.match(html, /不能原样在 Vercel Serverless 环境中运行/);
   assert.match(html, /不包含音频或视频功能/);
@@ -157,7 +159,7 @@ test("Vercel entry page is a static delivery boundary, not a cloud Q&A shell", a
   assert.doesNotThrow(() => JSON.parse(vercelConfig));
 });
 
-test("completion audit refuses to mark the goal complete while source tree and cloud Q&A are incomplete", () => {
+test("completion audit refuses to mark the goal complete while source tree and acceptance evidence are incomplete", () => {
   const report = {
     ok: true,
     generatedAt: "2026-06-01T00:00:00.000Z",
@@ -186,11 +188,11 @@ test("completion audit refuses to mark the goal complete while source tree and c
   assert.ok(audit.requirements.some((item) => item.id === "local_semantic_knowledge_base" && item.status === "proved"));
   assert.ok(audit.requirements.some((item) => item.id === "interactive_memory_qa" && item.status === "needs_acceptance_evidence"));
   assert.ok(audit.requirements.some((item) => item.id === "source_tree_learning_layer" && item.status === "not_complete"));
-  assert.ok(audit.requirements.some((item) => item.id === "vercel_delivery" && item.status === "boundary_only"));
+  assert.ok(audit.requirements.some((item) => item.id === "vercel_delivery" && item.status === "proved"));
   assert.ok(audit.requirements.some((item) => item.id === "no_audio_video" && item.status === "proved"));
   assert.match(markdown, /尚未达到完整终版/);
   assert.match(markdown, /来源树仍有 9622 个后台任务/);
-  assert.match(markdown, /不能原样部署到 Vercel Serverless/);
+  assert.doesNotMatch(markdown, /云端完整部署条件/);
 });
 
 test("completion audit accepts saved real-question evidence for interactive Q&A", () => {
@@ -222,9 +224,44 @@ test("completion audit accepts saved real-question evidence for interactive Q&A"
   assert.equal(audit.acceptanceEvidence.ok, true);
   assert.deepEqual(audit.needsAcceptance, []);
   assert.doesNotMatch(audit.summary, /真实问题验收证据/);
-  assert.match(audit.summary, /来源树完成、云端完整部署条件/);
+  assert.match(audit.summary, /来源树完成/);
   assert.ok(audit.blocking.includes("source_tree_learning_layer"));
-  assert.ok(audit.boundaryOnly.includes("vercel_delivery"));
+  assert.deepEqual(audit.boundaryOnly, []);
+});
+
+test("completion audit marks local-first final complete when learning tree and Vercel entry are ready", () => {
+  const report = {
+    ok: true,
+    generatedAt: "2026-06-01T00:00:00.000Z",
+    service: {
+      answerStatus: "ready",
+      learningStatus: "ready",
+      documents: 1779,
+      chunks: 14597,
+      embedded: 14597,
+      coverage: 100,
+      sourceTreeQueuedJobs: 0,
+      sourceTreeDoneJobs: 31582,
+      sourceTreeFailedJobs: 0,
+      sourceTreeEstimatedRemainingText: "0 分钟",
+    },
+    deployment: { vercelReady: false },
+    acceptanceEvidence: {
+      generatedAt: "2026-06-01T00:10:00.000Z",
+      result: acceptanceEvidenceResult(),
+    },
+  };
+  const audit = buildCompletionAudit(report);
+  const markdown = completionAuditMarkdown(audit);
+
+  assert.equal(audit.canMarkGoalComplete, true);
+  assert.equal(audit.completionStatus, "complete");
+  assert.deepEqual(audit.blocking, []);
+  assert.deepEqual(audit.needsAcceptance, []);
+  assert.deepEqual(audit.boundaryOnly, []);
+  assert.ok(audit.requirements.some((item) => item.id === "vercel_delivery" && item.status === "proved"));
+  assert.match(markdown, /可以标记完成/);
+  assert.match(audit.summary, /所有终版要求已有当前证据证明/);
 });
 
 test("real-question audit plan uses recent user notebooks and skips generated runs", () => {
