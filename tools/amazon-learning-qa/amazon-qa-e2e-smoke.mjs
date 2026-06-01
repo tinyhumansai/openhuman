@@ -21,6 +21,24 @@ export const FINAL_ACCEPTANCE_SCENARIOS = [
     question: "Listing 文案关键词布局收录应该怎么做？",
   },
 ];
+export const TOPIC_SWITCH_ACCEPTANCE_SCENARIO = {
+  id: "topic-switch",
+  firstQuestion: "主图视觉点击率转化率怎么优化？",
+  standaloneQuestions: [
+    {
+      id: "persona",
+      question: "人群画像应该怎么构建？有哪些实操指导建议",
+      allowNoSources: true,
+      relevancePattern: /人群|画像|用户|受众|买家|缺少来源|没有.*资料/,
+    },
+    {
+      id: "selection-methods",
+      question: "列出所有选品实操的可落地执行方法？",
+      requireSources: true,
+      relevancePattern: /选品|市场|需求|竞争|利润|产品/,
+    },
+  ],
+};
 
 export function validateAmazonQaSmoke(input = {}, options = {}) {
   const expectedDocuments = Number(options.expectedDocuments || DEFAULT_EXPECTED_DOCUMENTS);
@@ -280,10 +298,12 @@ export function validateAmazonQaFinalAcceptance(input = {}, options = {}) {
       answerMode: entry.first.answerGeneration?.mode || "template",
     };
   });
+  const topicSwitch = assertTopicSwitchAcceptance(input.topicSwitch);
 
   return {
     ok: true,
     scenarios: summaries,
+    topicSwitch,
     documents: Number(status.health?.documents || 0),
     chunks: Number(status.health?.chunks || 0),
     embeddedChunks: Number(status.health?.embeddedChunks || 0),
@@ -363,9 +383,10 @@ export async function runAmazonQaFinalAcceptance(options = {}) {
   const studyPack = firstSessionId
     ? await fetchNotebookStudyPack(baseUrl, { timeoutMs, sessionId: firstSessionId })
     : undefined;
+  const topicSwitch = await runTopicSwitchAcceptance(baseUrl, { timeoutMs });
 
   return validateAmazonQaFinalAcceptance(
-    { status, sourceSelections, scenarios: scenarioResults, sourceContext, notebook, studyPack },
+    { status, sourceSelections, scenarios: scenarioResults, sourceContext, notebook, studyPack, topicSwitch },
     {
       expectedDocuments: options.expectedDocuments,
       expectedChunks: options.expectedChunks,
@@ -373,6 +394,111 @@ export async function runAmazonQaFinalAcceptance(options = {}) {
       scenarios,
     },
   );
+}
+
+async function runTopicSwitchAcceptance(baseUrl, { timeoutMs }) {
+  const scenario = TOPIC_SWITCH_ACCEPTANCE_SCENARIO;
+  const sessionId = `amazon-qa-topic-switch-${Date.now()}`;
+  const firstSourceSelectionPayload = await fetchJson(`${baseUrl}/api/source-selection`, {
+    method: "POST",
+    timeoutMs,
+    body: {
+      question: scenario.firstQuestion,
+      sessionId,
+      history: [],
+    },
+  });
+  const firstSourceSelection = firstSourceSelectionPayload.sourceSelection || firstSourceSelectionPayload;
+  const first = await fetchJson(`${baseUrl}/api/ask`, {
+    method: "POST",
+    timeoutMs,
+    body: {
+      question: scenario.firstQuestion,
+      sessionId,
+      history: [],
+      sourceControls: firstSourceSelection.sourceControls,
+      intentPreference: firstSourceSelection.intent?.type || undefined,
+    },
+  });
+  const emptySourceControls = { excludedSourceKeys: [], allowedAuthors: [], allowedSourceKeys: [], selectedSources: [] };
+  let prior = Array.isArray(first.messages) ? first.messages : [];
+  const standaloneResults = [];
+  for (const item of scenario.standaloneQuestions) {
+    const response = await fetchJson(`${baseUrl}/api/ask`, {
+      method: "POST",
+      timeoutMs,
+      body: {
+        question: item.question,
+        sessionId: first.sessionId || sessionId,
+        history: prior,
+        sourceControls: emptySourceControls,
+      },
+    });
+    standaloneResults.push({ ...item, response });
+    prior = Array.isArray(response.messages) ? response.messages : prior;
+  }
+  return { sessionId: first.sessionId || sessionId, firstSourceSelection, first, standaloneResults };
+}
+
+function assertTopicSwitchAcceptance(topicSwitch = {}) {
+  assertSmoke(topicSwitch && typeof topicSwitch === "object", "Topic switch acceptance result is missing.");
+  assertSourceSelection(topicSwitch.firstSourceSelection);
+  assertAskPayload(topicSwitch.first, "topic switch first question");
+  const rows = Array.isArray(topicSwitch.standaloneResults) ? topicSwitch.standaloneResults : [];
+  assertSmoke(
+    rows.length >= TOPIC_SWITCH_ACCEPTANCE_SCENARIO.standaloneQuestions.length,
+    "Topic switch acceptance did not run all standalone questions.",
+  );
+  const results = rows.slice(0, TOPIC_SWITCH_ACCEPTANCE_SCENARIO.standaloneQuestions.length).map((entry) => {
+    const expected = TOPIC_SWITCH_ACCEPTANCE_SCENARIO.standaloneQuestions.find((item) => item.id === entry.id) || entry;
+    const response = entry.response || {};
+    const answer = String(response.answer || "");
+    const sources = Array.isArray(response.sources) ? response.sources : [];
+    const graphNodes = Array.isArray(response.graph?.nodes) ? response.graph.nodes : [];
+    const learningItems = Array.isArray(response.learningQueue?.items) ? response.learningQueue.items : [];
+    const combined = `${answer}\n${sources.map((source) => source?.title || "").join("\n")}`;
+    const earlyAnswer = answer.slice(0, 360);
+    assertSmoke(String(response.question || "") === expected.question, `${expected.id} did not preserve its standalone question.`);
+    assertSmoke(graphNodes.length > 0, `${expected.id} did not return an answer graph.`);
+    assertSmoke(learningItems.length > 0, `${expected.id} did not return a learning queue.`);
+    assertSmoke(
+      !/(先把主图|主图点击率|主图差异化|视觉转化)/.test(earlyAnswer),
+      `${expected.id} still appears polluted by the previous visual-conversion topic.`,
+    );
+    assertSmoke(
+      expected.relevancePattern.test(combined),
+      `${expected.id} answer is not relevant to its standalone question.`,
+    );
+    if (expected.requireSources) {
+      assertSmoke(sources.length > 0, `${expected.id} should have returned source citations.`);
+    }
+    if (sources.length === 0) {
+      assertSmoke(
+        expected.allowNoSources && /缺少来源|没有.*资料|没有.*来源/.test(answer),
+        `${expected.id} has no sources but did not disclose the source gap.`,
+      );
+    }
+    if (response.sourceScope?.summary) {
+      assertSmoke(
+        String(response.sourceScope.summary).includes("全部作者"),
+        `${expected.id} did not return to the normal all-author source scope.`,
+      );
+    }
+    return {
+      id: expected.id,
+      question: expected.question,
+      sources: sources.length,
+      graphNodes: graphNodes.length,
+      learningQueueItems: learningItems.length,
+      sourceScope: response.sourceScope?.summary || "",
+      answerMode: response.answerGeneration?.mode || "template",
+    };
+  });
+  return {
+    sessionId: topicSwitch.sessionId || topicSwitch.first?.sessionId || "",
+    firstSources: Array.isArray(topicSwitch.first?.sources) ? topicSwitch.first.sources.length : 0,
+    standaloneResults: results,
+  };
 }
 
 function assertSourceSelection(selection) {

@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FINAL_ACCEPTANCE_SCENARIOS, validateAmazonQaFinalAcceptance, validateAmazonQaSmoke } from "./amazon-qa-e2e-smoke.mjs";
+import {
+  FINAL_ACCEPTANCE_SCENARIOS,
+  TOPIC_SWITCH_ACCEPTANCE_SCENARIO,
+  validateAmazonQaFinalAcceptance,
+  validateAmazonQaSmoke,
+} from "./amazon-qa-e2e-smoke.mjs";
 
 function statusPayload(overrides = {}) {
   return {
@@ -184,6 +189,31 @@ function studyPackPayload() {
   };
 }
 
+function topicSwitchPayload() {
+  return {
+    sessionId: "topic-switch-session",
+    firstSourceSelection: sourceSelectionPayload(),
+    first: askPayload(TOPIC_SWITCH_ACCEPTANCE_SCENARIO.firstQuestion),
+    standaloneResults: [
+      {
+        id: "persona",
+        response: askPayload("人群画像应该怎么构建？有哪些实操指导建议", {
+          answer: "问题：人群画像应该怎么构建？有哪些实操指导建议\n\n这次没有从本地知识库里找到足够相关的资料。 【缺少来源】",
+          sources: [],
+          sourceScope: { summary: "本轮使用全部作者资料。" },
+        }),
+      },
+      {
+        id: "selection-methods",
+        response: askPayload("列出所有选品实操的可落地执行方法？", {
+          answer: "问题：列出所有选品实操的可落地执行方法？\n\n可执行结论：先做市场需求、竞争、利润和产品差异化判断。",
+          sourceScope: { summary: "本轮使用全部作者资料。" },
+        }),
+      },
+    ],
+  };
+}
+
 test("validateAmazonQaSmoke accepts a source-backed two-turn answer path", () => {
   const report = validateAmazonQaSmoke({
     status: statusPayload(),
@@ -229,6 +259,7 @@ test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning qu
       ],
     },
     studyPack: studyPackPayload(),
+    topicSwitch: topicSwitchPayload(),
   });
 
   assert.equal(report.ok, true);
@@ -236,6 +267,10 @@ test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning qu
   assert.deepEqual(report.scenarios.map((item) => item.id), ["visual-conversion", "product-selection", "listing-keywords"]);
   assert.equal(report.scenarios[0].followUp, "那我应该先改哪一块？");
   assert.ok(report.scenarios.every((item) => item.sources >= 1 && item.graphNodes >= 1 && item.learningQueueItems >= 1));
+  assert.equal(report.topicSwitch.standaloneResults.length, 2);
+  assert.deepEqual(report.topicSwitch.standaloneResults.map((item) => item.id), ["persona", "selection-methods"]);
+  assert.equal(report.topicSwitch.standaloneResults[0].sources, 0);
+  assert.equal(report.topicSwitch.standaloneResults[1].sources, 1);
 });
 
 test("validateAmazonQaSmoke rejects incomplete semantic index status", () => {
