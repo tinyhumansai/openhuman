@@ -3237,6 +3237,7 @@
         padding: 14px 16px 12px;
         display: grid;
         gap: 10px;
+        container-type: inline-size;
       }
 
       .graph-head {
@@ -3302,6 +3303,56 @@
         transform-origin: center;
       }
 
+      .graph-node-shape {
+        fill: #f7f3ea;
+        stroke: var(--line);
+        stroke-width: 1.3;
+        transition: fill 0.16s ease, stroke 0.16s ease, transform 0.16s ease;
+        transform-box: fill-box;
+        transform-origin: center;
+      }
+
+      .graph-node-card {
+        width: 100%;
+        height: 100%;
+        padding: 6px 8px;
+        display: grid;
+        place-items: center;
+        align-content: center;
+        gap: 3px;
+        text-align: center;
+        color: var(--ink);
+        overflow: hidden;
+        line-height: 1.16;
+        font-size: 12px;
+      }
+
+      .graph-node-card-kind {
+        color: var(--muted);
+        font-size: 9px;
+        font-weight: 760;
+        line-height: 1;
+      }
+
+      .graph-node-card-label {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        max-width: 100%;
+        overflow: hidden;
+        color: inherit;
+        font-size: 12px;
+        font-weight: 780;
+        line-height: 1.17;
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
+
+      .graph-node.type-question .graph-node-card-label {
+        -webkit-line-clamp: 3;
+        font-size: 13px;
+      }
+
       .graph-node text {
         fill: var(--ink);
         font-size: 12px;
@@ -3321,6 +3372,19 @@
         stroke: var(--accent);
       }
 
+      .graph-node.type-question .graph-node-shape {
+        fill: var(--accent);
+        stroke: var(--accent);
+      }
+
+      .graph-node.type-question .graph-node-card {
+        color: #fff;
+      }
+
+      .graph-node.type-question .graph-node-card-kind {
+        color: rgba(255, 255, 255, 0.8);
+      }
+
       .graph-node.type-question text {
         fill: #fff;
       }
@@ -3330,12 +3394,27 @@
         stroke: rgba(14, 107, 96, 0.34);
       }
 
+      .graph-node.type-concept .graph-node-shape {
+        fill: var(--soft);
+        stroke: rgba(14, 107, 96, 0.34);
+      }
+
       .graph-node.type-source circle {
         fill: #fff6e8;
         stroke: rgba(176, 71, 36, 0.35);
       }
 
+      .graph-node.type-source .graph-node-shape {
+        fill: #fff6e8;
+        stroke: rgba(176, 71, 36, 0.35);
+      }
+
       .graph-node.type-evidence circle {
+        fill: #eef8f5;
+        stroke: rgba(14, 107, 96, 0.45);
+      }
+
+      .graph-node.type-evidence .graph-node-shape {
         fill: #eef8f5;
         stroke: rgba(14, 107, 96, 0.45);
       }
@@ -3346,8 +3425,20 @@
         stroke: rgba(60, 92, 130, 0.28);
       }
 
+      .graph-node.type-point .graph-node-shape,
+      .graph-node.type-step .graph-node-shape {
+        fill: #f8fbff;
+        stroke: rgba(60, 92, 130, 0.28);
+      }
+
       .graph-node.type-author circle {
         fill: #f2f2f2;
+      }
+
+      .graph-node.type-author .graph-node-shape,
+      .graph-node.type-empty .graph-node-shape {
+        fill: #f8f7f2;
+        stroke: rgba(23, 23, 23, 0.18);
       }
 
       .answer-graph.has-focus .graph-node.is-muted,
@@ -3355,7 +3446,8 @@
         opacity: 0.18;
       }
 
-      .graph-node.is-active circle {
+      .graph-node.is-active circle,
+      .graph-node.is-active .graph-node-shape {
         stroke: var(--accent);
         stroke-width: 2;
         transform: scale(1.08);
@@ -3404,6 +3496,17 @@
       .graph-mobile-item span {
         color: var(--muted);
         font-size: 11px;
+      }
+
+      @container (max-width: 760px) {
+        .graph-svg {
+          display: none;
+        }
+
+        .graph-mobile-list {
+          display: grid;
+          gap: 8px;
+        }
       }
 
       .source {
@@ -5609,6 +5712,18 @@
 
       .graph-node .sub-label {
         font-size: 14px;
+      }
+
+      .app .graph-node-card span {
+        font-size: 9px;
+      }
+
+      .app .graph-node-card .graph-node-card-label {
+        font-size: 12px;
+      }
+
+      .app .graph-node.type-question .graph-node-card-label {
+        font-size: 13px;
       }
 
       @media (max-width: 860px) {
@@ -9537,7 +9652,7 @@
           </div>
           <div class="graph-legend"><span>原文证据支撑</span><span>关键词相关</span></div>
           ${renderGraphMobileList(layout.nodes, messageIndex)}
-          <svg class="graph-svg" viewBox="0 0 900 440" role="img" aria-label="本轮问题、答案要点、概念和来源的关系图">
+          <svg class="graph-svg" viewBox="0 0 ${layout.width} ${layout.height}" role="img" aria-label="本轮问题、答案要点、概念和来源的关系图">
             <g>${edgeMarkup}</g>
             <g>${nodeMarkup}</g>
           </svg>
@@ -9602,7 +9717,6 @@
 
       function renderGraphNode(node, position, messageIndex) {
         if (!position) return "";
-        const radius = graphNodeRadius(node.type);
         const sourceTarget = (node.type === "source" || node.type === "evidence") && Number.isInteger(node.sourceIndex)
           ? `${messageIndex}-${node.sourceIndex}`
           : "";
@@ -9615,12 +9729,20 @@
             : graphPrompt
               ? ` data-graph-prompt="${escapeAttribute(graphPrompt)}" role="button" tabindex="0"`
               : "";
-        const labels = splitGraphLabel(node.label);
+        const label = compactGraphCardLabel(node.label, node.type);
+        const typeLabel = graphNodeTypeLabel(node.type);
+        const width = position.width || 130;
+        const height = position.height || 60;
+        const radius = Math.min(16, Math.round(height / 4));
         return `<g class="graph-node type-${escapeAttribute(node.type || "item")}" data-node-id="${escapeAttribute(node.id)}"${actionAttrs} transform="translate(${position.x} ${position.y})">
           <title>${escapeHtml(node.detail || node.label || "")}</title>
-          <circle r="${radius}"></circle>
-          <text y="${labels.length > 1 ? -2 : 4}">${escapeHtml(labels[0] || "")}</text>
-          ${labels[1] ? `<text class="sub-label" y="13">${escapeHtml(labels[1])}</text>` : ""}
+          <rect class="graph-node-shape" x="${-Math.round(width / 2)}" y="${-Math.round(height / 2)}" width="${width}" height="${height}" rx="${radius}" ry="${radius}"></rect>
+          <foreignObject x="${-Math.round(width / 2)}" y="${-Math.round(height / 2)}" width="${width}" height="${height}">
+            <div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-card">
+              <span class="graph-node-card-kind">${escapeHtml(typeLabel)}</span>
+              <strong class="graph-node-card-label">${escapeHtml(label)}</strong>
+            </div>
+          </foreignObject>
         </g>`;
       }
 
@@ -9641,26 +9763,54 @@
         const nodes = graph.nodes.slice(0, 32);
         const nodeIds = new Set(nodes.map((node) => node.id));
         const edges = (graph.edges || []).filter((edge) => nodeIds.has(edge.from) && nodeIds.has(edge.to)).slice(0, 64);
-        const rows = [
-          { types: ["question"], y: 50 },
-          { types: ["point", "step"], y: 126 },
-          { types: ["evidence"], y: 212 },
-          { types: ["concept"], y: 288 },
-          { types: ["source", "empty"], y: 360 },
-          { types: ["author"], y: 416 },
+        const width = 1100;
+        const marginX = 58;
+        const top = 50;
+        const bottom = 54;
+        const rowGap = 38;
+        const wrapGap = 24;
+        const bands = [
+          { types: ["question"], nodeWidth: 190, nodeHeight: 74 },
+          { types: ["point", "step"], nodeWidth: 178, nodeHeight: 68 },
+          { types: ["evidence", "source"], nodeWidth: 184, nodeHeight: 68 },
+          { types: ["concept"], nodeWidth: 126, nodeHeight: 56 },
+          { types: ["author", "empty"], nodeWidth: 158, nodeHeight: 56 },
         ];
         const positions = new Map();
+        let y = top;
 
-        for (const row of rows) {
-          const rowNodes = nodes.filter((node) => row.types.includes(node.type));
-          const count = rowNodes.length;
-          rowNodes.forEach((node, index) => {
-            const x = count === 1 ? 450 : 90 + (720 * index) / Math.max(1, count - 1);
-            positions.set(node.id, { x: Math.round(x), y: row.y });
+        for (const band of bands) {
+          const rowNodes = nodes.filter((node) => band.types.includes(node.type));
+          if (rowNodes.length === 0) continue;
+          const maxPerLine = Math.max(1, Math.floor((width - marginX * 2 + wrapGap) / (band.nodeWidth + wrapGap)));
+          const chunks = chunkArray(rowNodes, maxPerLine);
+          chunks.forEach((chunk, chunkIndex) => {
+            const count = chunk.length;
+            const totalWidth = count * band.nodeWidth + Math.max(0, count - 1) * wrapGap;
+            const startX = Math.max(marginX, (width - totalWidth) / 2) + band.nodeWidth / 2;
+            chunk.forEach((node, index) => {
+              const x = startX + index * (band.nodeWidth + wrapGap);
+              positions.set(node.id, {
+                x: Math.round(x),
+                y: Math.round(y),
+                width: band.nodeWidth,
+                height: band.nodeHeight,
+              });
+            });
+            y += chunkIndex === chunks.length - 1 ? band.nodeHeight + rowGap : band.nodeHeight + wrapGap;
           });
         }
 
-        return { nodes, edges, positions };
+        const height = Math.max(360, Math.round(y - rowGap + bottom));
+        return { nodes, edges, positions, width, height };
+      }
+
+      function chunkArray(items, size) {
+        const chunks = [];
+        for (let index = 0; index < items.length; index += size) {
+          chunks.push(items.slice(index, index + size));
+        }
+        return chunks;
       }
 
       function graphNodeRadius(type) {
@@ -9676,6 +9826,24 @@
         const text = String(label || "").replace(/\s+/g, " ").trim();
         if (text.length <= 10) return [text];
         return [text.slice(0, 10), text.length > 18 ? `${text.slice(10, 17)}…` : text.slice(10)];
+      }
+
+      function compactGraphCardLabel(label, type) {
+        const text = String(label || "").replace(/\s+/g, " ").trim();
+        const maxLength = type === "concept" ? 16 : type === "question" ? 30 : 24;
+        return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+      }
+
+      function graphNodeTypeLabel(type) {
+        if (type === "question") return "问题";
+        if (type === "point") return "要点";
+        if (type === "step") return "步骤";
+        if (type === "evidence") return "证据";
+        if (type === "source") return "来源";
+        if (type === "concept") return "概念";
+        if (type === "author") return "作者";
+        if (type === "empty") return "待补";
+        return "节点";
       }
 
       function bindGraphEvents() {

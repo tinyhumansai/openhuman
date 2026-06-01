@@ -277,6 +277,15 @@ test("answer graph supports node-driven follow-up questions like a learning map"
   assert.match(html, /graphPromptForNode/);
   assert.match(html, /data-graph-prompt/);
   assert.match(html, /graph-prompt-button/);
+  assert.match(html, /graph-node-card/);
+  assert.match(html, /graph-node-card-label/);
+  assert.match(html, /compactGraphCardLabel/);
+  assert.match(html, /graphNodeTypeLabel/);
+  assert.match(html, /chunkArray/);
+  assert.match(html, /viewBox="0 0 \$\{layout\.width\} \$\{layout\.height\}"/);
+  assert.match(html, /foreignObject/);
+  assert.match(html, /container-type:\s*inline-size/);
+  assert.match(html, /@container \(max-width:\s*760px\)/);
   assert.match(html, /fillQuestionFromWorkflowPrompt\(button\.dataset\.graphPrompt/);
   assert.match(html, /fillQuestionFromWorkflowPrompt\(graphPrompt\)/);
   assert.match(html, /node\.type === "source" \|\| node\.type === "evidence"/);
