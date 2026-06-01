@@ -14,7 +14,7 @@ use serde_json::json;
 use serde_json::{Map, Value};
 use std::ffi::OsString;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
 use openhuman_core::openhuman::agent::progress::AgentProgress;
@@ -194,6 +194,16 @@ impl Drop for EnvVarGuard {
     }
 }
 
+static MEMORY_THREADS_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn memory_threads_test_lock() -> MutexGuard<'static, ()> {
+    let mutex = MEMORY_THREADS_TEST_LOCK.get_or_init(|| Mutex::new(()));
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
 fn config_in(tmp: &TempDir) -> Config {
     let mut config = Config::default();
     config.workspace_dir = tmp.path().to_path_buf();
@@ -293,6 +303,7 @@ async fn rss_feed(headers: HeaderMap) -> Response {
 
 #[tokio::test]
 async fn canonicalizers_clean_sort_and_preserve_metadata() {
+    let _lock = memory_threads_test_lock();
     let doc_json = json!({
         "title": "Doc",
         "body": "  Document body  ",
@@ -410,6 +421,7 @@ async fn canonicalizers_clean_sort_and_preserve_metadata() {
 
 #[tokio::test]
 async fn memory_ingestion_pipeline_extracts_graph_preferences_and_recall_hits() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let memory = UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).expect("memory");
     let content = r#"
@@ -535,6 +547,7 @@ Kitchen is north of Garden.
 
 #[tokio::test]
 async fn memory_source_readers_validate_and_use_local_inputs_only() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
 
@@ -708,6 +721,7 @@ async fn memory_source_readers_validate_and_use_local_inputs_only() {
 
 #[tokio::test]
 async fn memory_source_status_counts_reader_and_composio_prefixes() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     let now = Utc::now().timestamp_millis();
@@ -749,6 +763,7 @@ async fn memory_source_status_counts_reader_and_composio_prefixes() {
 
 #[tokio::test]
 async fn memory_thread_tree_and_sync_controller_schemas_execute_public_handlers() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let config = Config::load_or_init().await.expect("init isolated config");
@@ -932,6 +947,7 @@ async fn memory_thread_tree_and_sync_controller_schemas_execute_public_handlers(
 
 #[test]
 fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
+    let _lock = memory_threads_test_lock();
     let memory_schemas = all_memory_controller_schemas();
     let memory_controllers = all_memory_registered_controllers();
     assert_eq!(memory_schemas.len(), 34);
@@ -1052,6 +1068,7 @@ fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
 
 #[test]
 fn memory_tree_policy_and_source_registry_write_metadata_mirror() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     let policy = TreePolicy::topic();
@@ -1092,6 +1109,7 @@ fn memory_tree_policy_and_source_registry_write_metadata_mirror() {
 
 #[test]
 fn thread_title_error_and_turn_state_helpers_cover_wire_shapes() {
+    let _lock = memory_threads_test_lock();
     assert!(is_auto_generated_thread_title("Chat Jan 1 1:23 AM"));
     assert!(!is_auto_generated_thread_title("Chat Jan 1 1:2 AM"));
     assert!(!is_auto_generated_thread_title("Planning the launch"));
@@ -1148,6 +1166,7 @@ fn thread_title_error_and_turn_state_helpers_cover_wire_shapes() {
 
 #[test]
 fn memory_sync_composio_catalog_scope_and_state_helpers_cover_edge_cases() {
+    let _lock = memory_threads_test_lock();
     assert_eq!(SyncReason::ConnectionCreated.as_str(), "connection_created");
     assert_eq!(SyncReason::Periodic.as_str(), "periodic");
     assert_eq!(SyncReason::Manual.as_str(), "manual");
@@ -1206,7 +1225,7 @@ fn memory_sync_composio_catalog_scope_and_state_helpers_cover_edge_cases() {
     assert_eq!(classify_unknown("GMAIL_FETCH_EMAILS"), ToolScope::Read);
     assert_eq!(
         toolkit_from_slug(" MICROSOFT_TEAMS_SEND_MESSAGE "),
-        Some("microsoft".into())
+        Some("microsoft_teams".into())
     );
     assert_eq!(toolkit_from_slug(""), None);
     let catalog = &[CuratedTool {
@@ -1293,6 +1312,7 @@ fn memory_sync_composio_catalog_scope_and_state_helpers_cover_edge_cases() {
 
 #[test]
 fn slack_memory_schemas_and_post_processors_normalize_composio_shapes() {
+    let _lock = memory_threads_test_lock();
     let schemas = slack_memory_schemas::all_slack_memory_controller_schemas();
     assert_eq!(schemas.len(), 2);
     assert_eq!(schemas[0].namespace, "slack_memory");
@@ -1365,6 +1385,7 @@ fn slack_memory_schemas_and_post_processors_normalize_composio_shapes() {
 
 #[test]
 fn memory_tree_scoring_signal_helpers_cover_boundaries_and_serialization() {
+    let _lock = memory_threads_test_lock();
     assert_eq!(EntityKind::parse("email").unwrap(), EntityKind::Email);
     assert!(EntityKind::Email.is_mechanical());
     assert!(!EntityKind::Person.is_mechanical());
@@ -1512,6 +1533,7 @@ fn memory_tree_scoring_signal_helpers_cover_boundaries_and_serialization() {
 
 #[test]
 fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     let namespace = "slack:#eng";
@@ -1705,6 +1727,7 @@ fn memory_tree_runtime_store_buffers_and_retrieval_wire_helpers() {
 
 #[tokio::test]
 async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let mut config = config_in(&tmp);
     config.config_path = tmp.path().join("config.toml");
@@ -1908,6 +1931,7 @@ async fn memory_read_rpc_score_index_and_summary_helpers_cover_dashboard_paths()
 
 #[test]
 fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
+    let _lock = memory_threads_test_lock();
     assert_eq!(retrieval::types::NodeKind::Leaf.as_str(), "leaf");
     assert_eq!(retrieval::types::NodeKind::Summary.as_str(), "summary");
     assert!(retrieval::types::QueryResponse::empty().hits.is_empty());
@@ -2058,6 +2082,7 @@ fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
 
 #[tokio::test]
 async fn memory_preferences_remember_redaction_and_pipeline_traits_cover_public_edges() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let memory: Arc<dyn Memory> =
         Arc::new(UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).expect("memory"));
@@ -2173,6 +2198,7 @@ async fn memory_preferences_remember_redaction_and_pipeline_traits_cover_public_
 
 #[tokio::test]
 async fn memory_tools_and_user_scope_prefs_cover_public_execution_paths() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let memory: Arc<dyn Memory> =
         Arc::new(UnifiedMemory::new(tmp.path(), Arc::new(NoopEmbedding), None).expect("memory"));
@@ -2308,6 +2334,7 @@ async fn memory_tools_and_user_scope_prefs_cover_public_execution_paths() {
 
 #[tokio::test]
 async fn memory_queue_and_tool_memory_public_stores_cover_persistence_edges() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
 
@@ -2597,6 +2624,7 @@ async fn memory_queue_and_tool_memory_public_stores_cover_persistence_edges() {
 
 #[tokio::test]
 async fn memory_source_sync_entrypoint_rejects_disabled_and_ingests_folder_items() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     std::fs::write(
@@ -2651,6 +2679,7 @@ async fn memory_source_sync_entrypoint_rejects_disabled_and_ingests_folder_items
 
 #[test]
 fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
+    let _lock = memory_threads_test_lock();
     let now = Utc.with_ymd_and_hms(2026, 5, 29, 16, 0, 0).unwrap();
     let payload = openhuman_core::openhuman::memory_tree::io::TreeLeafPayload {
         chunk_id: "chunk-contract-1".into(),
@@ -2757,6 +2786,7 @@ fn memory_tree_io_contract_types_round_trip_leaf_read_and_write_shapes() {
 
 #[test]
 fn memory_sync_profile_identity_helpers_cover_public_no_client_paths_and_rendering() {
+    let _lock = memory_threads_test_lock();
     assert_eq!(IdentityKind::parse("email"), Some(IdentityKind::Email));
     assert_eq!(IdentityKind::parse("missing"), None);
     assert!(IdentityKind::Email.is_matchable());
@@ -2838,6 +2868,7 @@ fn memory_sync_profile_identity_helpers_cover_public_no_client_paths_and_renderi
 
 #[test]
 fn gmail_post_processor_and_provider_registry_cover_public_edges() {
+    let _lock = memory_threads_test_lock();
     let gmail_provider =
         openhuman_core::openhuman::memory_sync::composio::providers::gmail::GmailProvider::new();
     let mut raw_html_passthrough = json!({
@@ -3019,6 +3050,7 @@ impl ComposioProvider for EmptySlugProvider {
 
 #[tokio::test]
 async fn memory_sync_provider_trait_defaults_and_connection_hook_are_deterministic() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let ctx = ProviderContext {
         config: Arc::new(config_in(&tmp)),
@@ -3083,6 +3115,7 @@ async fn memory_sync_provider_trait_defaults_and_connection_hook_are_determinist
 
 #[test]
 fn turn_state_mirror_persists_progress_edges_from_public_events() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let store = TurnStateStore::new(tmp.path().to_path_buf());
     let mut mirror = TurnStateMirror::new(store.clone(), "thread/mirror", "request-mirror");
@@ -3239,6 +3272,7 @@ fn turn_state_mirror_persists_progress_edges_from_public_events() {
 
 #[test]
 fn memory_sync_profile_markdown_and_status_helpers_are_idempotent() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let mut profile = ProviderUserProfile {
         toolkit: "gmail".into(),
@@ -3319,6 +3353,7 @@ fn memory_sync_profile_markdown_and_status_helpers_are_idempotent() {
 
 #[test]
 fn memory_source_types_and_freshness_cover_validation_matrix() {
+    let _lock = memory_threads_test_lock();
     let kinds = [
         SourceKind::Composio,
         SourceKind::Folder,
@@ -3389,6 +3424,7 @@ fn memory_source_types_and_freshness_cover_validation_matrix() {
 
 #[test]
 fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let workspace = tmp.path().to_path_buf();
     let mut first = TurnState::started("thread/a", "request-1", 4, "2026-05-29T12:00:00Z");
@@ -3476,6 +3512,7 @@ fn turn_state_store_persists_lists_marks_and_clears_snapshots() {
 
 #[tokio::test]
 async fn threads_rpc_ops_cover_crud_title_fallback_and_turn_state_cleanup() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let config = Config::load_or_init().await.expect("init isolated config");
@@ -3682,6 +3719,7 @@ async fn threads_rpc_ops_cover_crud_title_fallback_and_turn_state_cleanup() {
 
 #[tokio::test]
 async fn threads_title_generation_branches_cover_noop_and_not_found_paths() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     Config::load_or_init().await.expect("init isolated config");
@@ -3752,6 +3790,7 @@ async fn threads_title_generation_branches_cover_noop_and_not_found_paths() {
 
 #[tokio::test]
 async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     Config::load_or_init().await.expect("init isolated config");
@@ -3958,6 +3997,7 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
 
 #[tokio::test]
 async fn memory_ops_public_handlers_cover_document_file_kv_graph_and_envelopes() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
 
@@ -4331,6 +4371,7 @@ async fn memory_ops_public_handlers_cover_document_file_kv_graph_and_envelopes()
 
 #[tokio::test]
 async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_paths() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let config = config_in(&tmp);
@@ -4448,6 +4489,7 @@ async fn memory_tree_retrieval_rpc_and_schema_wrappers_cover_empty_and_invalid_p
 
 #[tokio::test]
 async fn memory_query_backend_and_tree_flush_wrappers_cover_public_edges() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let mut config = Config::load_or_init().await.expect("init isolated config");
@@ -4516,6 +4558,7 @@ async fn memory_query_backend_and_tree_flush_wrappers_cover_public_edges() {
 
 #[tokio::test]
 async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let mut config = config_in(&tmp);
     config.local_ai.runtime_enabled = false;
@@ -4587,6 +4630,7 @@ async fn tree_summarizer_ops_cover_validation_query_and_local_provider_guards() 
 
 #[tokio::test]
 async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_edges() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_to_path("OPENHUMAN_WORKSPACE", tmp.path());
     let _config = Config::load_or_init().await.expect("init isolated config");
@@ -4705,6 +4749,7 @@ async fn memory_sources_types_registry_and_sync_state_cover_public_persistence_e
 
 #[test]
 fn email_clean_helpers_cover_reply_footer_truncation_and_date_edges() {
+    let _lock = memory_threads_test_lock();
     assert_eq!(
         email_clean::drop_reply_chain("Fresh note\n\nOn Tue, 21 Apr 2026, Bob wrote:\n> old")
             .trim(),
@@ -4766,6 +4811,7 @@ fn email_clean_helpers_cover_reply_footer_truncation_and_date_edges() {
 
 #[test]
 fn welcome_migration_public_entrypoint_covers_empty_marker_and_transcript_paths() {
+    let _lock = memory_threads_test_lock();
     let tmp = TempDir::new().expect("tempdir");
     let workspace = tmp.path();
 
