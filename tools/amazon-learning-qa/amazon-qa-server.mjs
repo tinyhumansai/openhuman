@@ -73,7 +73,7 @@ const DEFAULT_OLLAMA_ENDPOINT = "http://127.0.0.1:11434";
 const DEFAULT_NAMESPACE = "amazon-learning";
 const DEFAULT_TOKEN = "openhuman-amazon-local-token";
 const MAX_SESSION_MESSAGES = 64;
-const LOCAL_ANSWER_TIMEOUT_MS = 45000;
+const LOCAL_ANSWER_TIMEOUT_MS = Math.max(1000, Number(process.env.AMAZON_QA_LOCAL_ANSWER_TIMEOUT_MS || 18000));
 const CORE_RPC_TIMEOUT_MS = 30000;
 const NOTEBOOK_BOUNDARY = "学习专题会话保存的是用户问题、系统整理、来源引用和学习路径；它不是作者原文证据，不能混入 amazon-learning 作者资料库。";
 const LEARNING_NOTE_BOUNDARY = "学习笔记保存的是用户整理或系统回答摘录；它不是作者原文证据，只有用户主动转成“我的资料”后才会作为用户资料参与问答。";
@@ -713,17 +713,33 @@ function normalizeLocalGroundedAnswer(answer, payload, options = {}) {
   if (referencedEvidence.some((number) => number < 1 || number > evidenceCount)) {
     return "";
   }
+  if (referencedEvidence.length === 0) {
+    return "";
+  }
+  if (localAnswerHasUnsupportedCertainty(text)) {
+    return "";
+  }
   const question = compactServerText(options.question || payload.question || "", 260);
   if (!/^问题[:：]/m.test(text)) {
     text = `问题：${question}\n\n${text}`;
-  }
-  if (referencedEvidence.length === 0 && !/【缺少来源】/.test(text)) {
-    text = `${text}\n\n资料里最相关的判断：\n${fallbackEvidenceLines(payload).join("\n")}`;
   }
   if (!/建议下一步[:：]/.test(text)) {
     text = `${text}\n\n建议下一步：先打开下方来源卡片核对原文，再把你的产品、关键词或 Listing 数据补进来继续判断。`;
   }
   return text;
+}
+
+function localAnswerHasUnsupportedCertainty(text) {
+  const normalized = String(text || "");
+  const admitsGap = /【缺少来源】|来源不足|证据不足|资料不足|无法确认|不能确认|未能证明|没有足够/.test(normalized);
+  if (!admitsGap) return false;
+  const decisionLines = normalized
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => /^(?:可执行结论|结论|执行顺序|建议下一步)[:：]/.test(line))
+    .join("\n");
+  const scope = decisionLines || normalized;
+  return /必须|一定|最佳|毫无疑问|肯定|直接判定|可以判定|结论就是|只要.{0,24}就能|优先改(?:主图|价格|广告|Listing|关键词)|应该先改(?:主图|价格|广告|Listing|关键词)/i.test(scope);
 }
 
 function evidenceReferenceNumbers(text) {
@@ -738,16 +754,6 @@ function evidenceReferenceNumbers(text) {
     refs.push(...numbers.map((number) => Number(number)).filter(Number.isFinite));
   }
   return [...new Set(refs)];
-}
-
-function fallbackEvidenceLines(payload) {
-  const ranked = localAnswerEvidenceItems(payload);
-  return ranked.slice(0, 3).map((item, index) => {
-    const source = payload.sources?.[item.sourceIndex] || {};
-    const quote = compactServerText(item.quote || item.text || source.excerpt || "", 220);
-    const meta = [source.author, source.title ? `《${source.title}》` : ""].filter(Boolean).join("");
-    return `${index + 1}. ${quote}${meta ? `（${meta}）` : ""} 【证据${index + 1}】`;
-  }).filter(Boolean);
 }
 
 function tomlValue(text, section, key) {
@@ -4220,17 +4226,24 @@ async function buildQuestionSourceSelection(context, body = {}) {
   const scopedRetrievalQuery = sourceControls.allowedAuthors.length > 0
     ? `${retrievalQuery}\n资料范围：${sourceControls.allowedAuthors.join("、")}`
     : retrievalQuery;
-  const [sourceTreeContext, retrieval] = await Promise.all([
-    querySourceTreeContext(context, scopedRetrievalQuery, sourceControls),
-    queryKnowledge(context, scopedRetrievalQuery),
+  const userSourceControls = normalizeUserSourceControls(body.userSourceControls);
+  const userSourceOnly = userSourceControls.mode === "only" && userSourceControls.enabledIds.length > 0;
+  const [sourceTreeContext, retrieval, userSourceContext] = await Promise.all([
+    userSourceOnly ? Promise.resolve({ contextText: "", calibration: { status: "skipped", summary: "当前选择为只问我的资料，暂不使用作者来源树。" } }) : querySourceTreeContext(context, scopedRetrievalQuery, sourceControls),
+    userSourceOnly ? Promise.resolve("") : queryKnowledge(context, scopedRetrievalQuery),
+    queryUserSources(context.namespace, scopedRetrievalQuery, userSourceControls),
   ]);
-  const articles = dedupeSelectionSources(
-    parseOpenHumanContext(mergeKnowledgeContexts([sourceTreeContext.contextText, retrieval]))
+  const authorSources = userSourceOnly
+    ? []
+    : parseOpenHumanContext(mergeKnowledgeContexts([sourceTreeContext.contextText, retrieval]))
       .map((article) => selectedSourceFromArticle(article))
-      .filter(Boolean),
-  ).slice(0, 6);
+      .filter(Boolean);
+  const userSources = (userSourceContext.sources || []).map((source) => selectedSourceFromUserSource(source)).filter(Boolean);
+  const articles = dedupeSelectionSources(userSourceOnly ? userSources : [...userSources, ...authorSources]).slice(0, 6);
   const recommended = articles.slice(0, 3);
-  const authors = [...new Set(recommended.map((source) => source.author).filter(Boolean))].slice(0, 4);
+  const authorRecommended = recommended.filter((source) => source.kind !== "user_material");
+  const userRecommended = recommended.filter((source) => source.kind === "user_material" && source.userSourceId);
+  const authors = [...new Set(authorRecommended.map((source) => source.author).filter(Boolean))].slice(0, 4);
   const allowedSourceKeys = uniqueSourceKeysForSelection(recommended);
   const status = recommended.length > 0 ? "ready" : "needs_source";
   const intent = buildWorkflowIntent({
@@ -4251,7 +4264,9 @@ async function buildQuestionSourceSelection(context, body = {}) {
         id: "semantic-hit",
         label: "语义命中",
         status: recommended.length > 0 ? "ready" : "missing",
-        detail: recommended.length > 0 ? "已找到可回到原文核对的候选来源。" : "没有足够明确的候选来源。",
+        detail: recommended.length > 0
+          ? `已找到 ${userRecommended.length ? `${userRecommended.length} 条我的资料` : ""}${userRecommended.length && authorRecommended.length ? "和" : ""}${authorRecommended.length ? `${authorRecommended.length} 条作者原文` : ""}候选。`
+          : "没有足够明确的候选来源。",
       },
       {
         id: "source-tree",
@@ -4274,7 +4289,11 @@ async function buildQuestionSourceSelection(context, body = {}) {
       excludedSourceKeys: sourceControls.excludedSourceKeys,
       allowedAuthors: authors,
       allowedSourceKeys,
-      selectedSources: recommended,
+      selectedSources: authorRecommended,
+    },
+    userSourceControls: {
+      enabledIds: userRecommended.map((source) => source.userSourceId).filter(Boolean),
+      mode: userSourceOnly || userRecommended.length > 0 && authorRecommended.length === 0 ? "only" : "blend",
     },
     sourceTreeCalibration: sourceTreeContext.calibration,
     boundary: "问前资料选择只决定下一轮先读哪些来源；候选理由是系统整理，不是新的作者原文证据，也不会写入知识库。",
@@ -4319,6 +4338,28 @@ function selectedSourceFromArticle(article) {
   source.sourceCanUseAsEvidence = true;
   source.canUseAsEvidence = false;
   return source;
+}
+
+function selectedSourceFromUserSource(source) {
+  if (!source || typeof source !== "object") return null;
+  const id = String(source.id || "").trim();
+  const selected = normalizeSelectedSource({
+    kind: "user_material",
+    author: USER_SOURCE_AUTHOR,
+    date: String(source.updatedAt || source.createdAt || "").slice(0, 10),
+    title: source.title || "我的资料",
+    excerpt: source.excerpt,
+    sourceUrl: id ? `user-source://${id}` : "",
+    sourcePath: id ? `user-sources/${id}.json` : "",
+    sourceKey: id ? `user-source://${id}` : "",
+  });
+  if (!selected || !id) return null;
+  selected.userSourceId = id;
+  selected.sourceKey = `user-source://${id}`;
+  selected.reason = "这条来自你主动加入的资料；可用于产品判断，但不是作者原文证据。";
+  selected.sourceCanUseAsEvidence = false;
+  selected.canUseAsEvidence = false;
+  return selected;
 }
 
 function dedupeSelectionSources(sources = []) {

@@ -137,6 +137,9 @@ test("assistant answers expose a per-answer learning queue with persistent progr
   assert.match(html, /标记看过/);
   assert.match(html, /取消标记/);
   assert.match(html, /本轮队列已全部标记/);
+  assert.match(html, /await syncMessageFeedback\(messageIndex\)/);
+  assert.match(html, /学习队列进度同步失败/);
+  assert.match(html, /学习队列档案进度同步失败/);
   assert.match(html, /compactLearningQueue/);
   assert.match(html, /learningQueue:\s*payload\.learningQueue/);
   assert.match(html, /learningQueue:\s*compactLearningQueue\(message\.learningQueue\)/);
@@ -441,12 +444,17 @@ test("assistant answers disclose local answer generation mode", () => {
   assert.match(html, /回答生成方式/);
   assert.match(html, /本地模型来源回答/);
   assert.match(serverSource, /templateFallbackGeneration/);
+  assert.match(serverSource, /AMAZON_QA_LOCAL_ANSWER_TIMEOUT_MS/);
   assert.match(serverSource, /session\.history\.length === 0/);
   assert.match(serverSource, /evidenceReferenceNumbers/);
   assert.match(serverSource, /referencedEvidence\.some\(\(number\) => number < 1 \|\| number > evidenceCount\)/);
+  assert.match(serverSource, /referencedEvidence\.length === 0/);
+  assert.match(serverSource, /localAnswerHasUnsupportedCertainty/);
+  assert.match(serverSource, /证据不足/);
   assert.match(serverSource, /generateLocalGroundedAnswer/);
   assert.match(serverSource, /api\/generate/);
   assert.match(serverSource, /qwen2\.5:3b/);
+  assert.doesNotMatch(serverSource, /fallbackEvidenceLines/);
 });
 
 test("ask requests have a visible timeout path instead of hanging indefinitely", () => {
@@ -542,6 +550,14 @@ test("composer can inspect the best source scope before asking", () => {
   assert.match(html, /用这些资料提问/);
   assert.match(html, /候选理由是系统整理，不是新的作者原文证据/);
   assert.match(html, /sourceControls = normalizeSourceControls\(selection\.sourceControls\)/);
+  assert.match(html, /userSourceControls = normalizeUserSourceControls\(selection\.userSourceControls/);
+  assert.match(html, /saveUserSourceControls\(\)/);
+  assert.match(html, /我的资料/);
+  assert.match(html, /不是作者原文证据/);
+  assert.match(serverSource, /queryUserSources\(context\.namespace,\s*scopedRetrievalQuery,\s*userSourceControls\)/);
+  assert.match(serverSource, /selectedSourceFromUserSource/);
+  assert.match(serverSource, /userSourceOnly/);
+  assert.match(serverSource, /userSourceControls:/);
   assert.doesNotMatch(html, /question-source-selection[\s\S]{0,1200}saveLearningNote/);
   assert.doesNotMatch(html, /question-source-selection[\s\S]{0,1200}data-dossier-source-decision/);
 });

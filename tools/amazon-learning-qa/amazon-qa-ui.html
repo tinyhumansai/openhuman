@@ -9523,7 +9523,9 @@
         });
         document.querySelectorAll("[data-learning-queue-toggle]").forEach((button) => {
           button.addEventListener("click", () => {
-            updateLearningQueueItemState(Number(button.dataset.messageIndex), button.dataset.learningQueueToggle);
+            updateLearningQueueItemState(Number(button.dataset.messageIndex), button.dataset.learningQueueToggle).catch((error) => {
+              console.warn(`学习队列进度保存失败：${error.message}`);
+            });
           });
         });
       }
@@ -9567,7 +9569,7 @@
         }
       }
 
-      function updateLearningQueueItemState(messageIndex, itemId) {
+      async function updateLearningQueueItemState(messageIndex, itemId) {
         const message = messages[messageIndex];
         if (!message || message.role !== "assistant" || !message.learningQueue || !itemId) return;
         const items = Array.isArray(message.learningQueue.items) ? message.learningQueue.items : [];
@@ -9577,6 +9579,9 @@
         message.learningQueue = rebuildLearningQueueProgress(message.learningQueue, nextItems);
         saveMessages();
         renderMessages({ scrollToBottom: false });
+        await syncMessageFeedback(messageIndex).catch((error) => {
+          console.warn(`学习队列进度同步失败：${error.message}`);
+        });
       }
 
       function setLearningQueueItemDone(messageIndex, itemId, done = true) {
@@ -10152,8 +10157,10 @@
         const title = source.title || source.label || `来源 ${index + 1}`;
         const meta = [source.author, source.date].filter(Boolean).join(" · ");
         const excerpt = source.excerpt || source.quote || "";
+        const kindLabel = source.kind === "user_material" ? "我的资料" : "作者原文";
         return `<article class="question-source-selection-card" data-primary="${primary ? "true" : "false"}">
           <strong>${escapeHtml(primary ? `${index + 1}. ${title}` : `备选：${title}`)}</strong>
+          <p>${escapeHtml(kindLabel)}${source.kind === "user_material" ? " · 不是作者原文证据" : ""}</p>
           ${meta ? `<p>${escapeHtml(meta)}</p>` : ""}
           ${excerpt ? `<p>${escapeHtml(compactText(excerpt, 150))}</p>` : ""}
           <p>${escapeHtml(source.reason || "候选来源只用于限定下一轮检索，回答仍必须回到原文引用。")}</p>
@@ -10200,8 +10207,11 @@
         if (!selection?.sourceControls) return;
         const question = questionEl.value.trim();
         sourceControls = normalizeSourceControls(selection.sourceControls);
+        userSourceControls = normalizeUserSourceControls(selection.userSourceControls || userSourceControls);
         saveSourceControls();
+        saveUserSourceControls();
         renderSourceScopeControls();
+        renderUserSources();
         currentSourceSelection = {
           ...selection,
           summary: "已把这些来源设为下一轮回答范围。这个范围可随时在左侧清空或重选。",
@@ -11689,6 +11699,9 @@
           message.dossierPersistence = payload.persistence || null;
           setLearningQueueItemDone(messageIndex, "queue:dossier", true);
           saveMessages();
+          await syncMessageFeedback(messageIndex).catch((error) => {
+            console.warn(`学习队列档案进度同步失败：${error.message}`);
+          });
           renderMessages({ scrollToBottom: false });
           await loadDossiers();
         } catch (error) {

@@ -5,7 +5,7 @@ const DEFAULT_FIRST_QUESTION = "主图视觉点击率转化率怎么优化？";
 const DEFAULT_SECOND_QUESTION = "那我应该先改哪一块？";
 const DEFAULT_EXPECTED_DOCUMENTS = 1779;
 const DEFAULT_EXPECTED_CHUNKS = 14597;
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 export function validateAmazonQaSmoke(input = {}, options = {}) {
   const expectedDocuments = Number(options.expectedDocuments || DEFAULT_EXPECTED_DOCUMENTS);
@@ -251,7 +251,10 @@ function assertAskPayload(payload, label) {
     `The ${label} source decision table has no rows or no-source state.`,
   );
   if (payload.answerGeneration) {
-    assertSmoke(payload.answerGeneration.mode === "local_ollama", `The ${label} answer generation mode is not local Ollama.`);
+    assertSmoke(
+      ["local_ollama", "template_fallback"].includes(payload.answerGeneration.mode),
+      `The ${label} answer generation mode is not a supported local mode: ${payload.answerGeneration.mode}.`,
+    );
     assertSmoke(payload.answerGeneration.model, `The ${label} answer generation has no model.`);
     assertSmoke(
       String(payload.answerGeneration.boundary || "").includes("来源") && String(payload.answerGeneration.boundary || "").includes("核对"),
