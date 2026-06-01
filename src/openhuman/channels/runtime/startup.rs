@@ -691,6 +691,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         workspace_dir: Arc::new(config.workspace_dir.clone()),
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
+        multimodal_files: config.multimodal_files.clone(),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;

@@ -84,6 +84,7 @@ pub(crate) async fn run_turn_engine(
     temperature: f64,
     silent: bool,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     early_exit_tool_names: &[&str],
@@ -189,7 +190,7 @@ pub(crate) async fn run_turn_engine(
         }
 
         // Caller-specific pre-dispatch work (e.g. Agent's ContextManager).
-        observer.before_dispatch(history, iteration).await?;
+        observer.before_dispatch(history, tools, iteration).await?;
 
         tracing::debug!(iteration, "[agent_loop] sending LLM request");
         let image_marker_count = multimodal::count_image_markers(history);
@@ -214,8 +215,35 @@ pub(crate) async fn run_turn_engine(
             return Err(cap_err.into());
         }
 
-        let prepared_messages =
-            multimodal::prepare_messages_for_provider(history, multimodal_config).await?;
+        let prepared_messages = multimodal::prepare_messages_for_provider(
+            history,
+            multimodal_config,
+            multimodal_file_config,
+        )
+        .await?;
+
+        // Re-run the context-window trim now that multimodal expansion may
+        // have inlined up to `max_extracted_text_chars` per file (default 50k
+        // chars ≈ 12k tokens) into the user message body. Without this
+        // second pass the provider can receive payloads past the model's
+        // context window — the pre-dispatch trim above was sized for the
+        // *original* marker text, not the rendered
+        // [FILE-EXTRACTED]/[FILE-ATTACHED]/[IMAGE:data:…] blocks.
+        let mut prepared_messages_vec = prepared_messages.messages;
+        if let Some(context_window) = context_window_for_model(model) {
+            let budget_outcome =
+                trim_chat_messages_to_budget(&mut prepared_messages_vec, context_window);
+            if budget_outcome.trimmed {
+                log::warn!(
+                    "[agent_loop] post-multimodal provider messages trimmed model={} context_window={} original_tokens={} final_tokens={} messages_removed={}",
+                    model,
+                    context_window,
+                    budget_outcome.original_tokens,
+                    budget_outcome.final_tokens,
+                    budget_outcome.messages_removed
+                );
+            }
+        }
 
         // Recomputed each iteration: a `ToolSource` may register tools lazily
         // mid-turn, so native-tool enablement can flip from off to on.
@@ -234,7 +262,7 @@ pub(crate) async fn run_turn_engine(
         let chat_result = provider
             .chat(
                 ChatRequest {
-                    messages: &prepared_messages.messages,
+                    messages: &prepared_messages_vec,
                     tools: request_tools,
                     stream: delta_tx_opt.as_ref(),
                 },
