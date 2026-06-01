@@ -4425,7 +4425,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.extraction_timeout':
     '메모리 추출 모델이 시간 초과되어 위키 구조가 거의 없습니다. 설정 → AI에서 메모리 추출 모델을 더 빠른 것으로 변경하세요.',
   'memory.health.remediation.summarizer_unavailable':
-    '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나 설정 → AI에서 메모리용 클라우드 모델을 구성하세요.',
+    '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, 설정 → AI → 메모리에서 클라우드 요약을 활성화하세요.',
   'memory.health.remediation.transient':
     '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
 };

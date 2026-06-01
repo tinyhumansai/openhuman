@@ -152,8 +152,16 @@ pub async fn tree_summarizer_rebuild(
 /// provider** for the summarization role when local AI is off, returning that
 /// provider's model id alongside it so the engine targets the right model
 /// (the engine no longer assumes the local model id). The UI shows a
-/// persistent indicator that summaries are cloud-processed when this path is
-/// active (privacy note) — no separate consent gate.
+/// Resolve the summarization provider.
+///
+/// Priority:
+/// 1. Local Ollama when `local_ai.runtime_enabled = true`.
+/// 2. Cloud via `create_chat_provider` when
+///    `memory_tree.cloud_summarization_opt_in = true` — the user has
+///    explicitly acknowledged that memory summaries will be sent to an
+///    external provider.
+/// 3. Error otherwise — "Build Summary Trees" is local-only by default;
+///    the user must opt in to cloud summarization in Settings → AI → Memory.
 fn create_provider(
     config: &Config,
 ) -> Result<
@@ -169,11 +177,14 @@ fn create_provider(
         return Ok((provider, config.local_ai.chat_model_id.clone()));
     }
 
-    // Cloud fallback: build the configured provider for the summarization
-    // role (maps to `memory_provider`; the summarizer sub-agent already
-    // declares hint = "summarization"). `create_chat_provider` returns
-    // (provider, model) so the engine targets the model that actually backs
-    // this provider.
+    if !config.memory_tree.cloud_summarization_opt_in {
+        return Err("no summarization provider — enable local AI, or enable \
+             cloud summarization in Settings → AI → Memory"
+            .to_string());
+    }
+
+    // Cloud path — user has explicitly opted in. Build the configured
+    // provider for the summarization role (`memory_provider` hint).
     crate::openhuman::inference::provider::factory::create_chat_provider("summarization", config)
         .map_err(|e| format!("tree summarizer: failed to build cloud provider: {e:#}"))
 }
@@ -182,13 +193,16 @@ fn create_provider(
 /// under the current config — the single source of truth the memory doctor
 /// reuses so its `summary_tree` stage matches the runtime path (#002 FR-007).
 ///
-/// Routes through [`create_provider`] (the SAME resolver the runtime uses) so
-/// the doctor can never drift from what "Build Summary Trees" actually does:
-/// local AI enabled ⇒ available; otherwise available iff the configured
-/// summarization-role provider resolves (the cloud fallback). The provider it
-/// builds is dropped — construction is cheap (no network) and confirming by
-/// build beats guessing. Returns `(available, note)` so the doctor can explain
-/// which path will run.
+/// Routes through [`create_provider`] (the SAME resolver the runtime uses):
+/// - local AI enabled ⇒ available (local Ollama path).
+/// - local AI off + `memory_tree.cloud_summarization_opt_in = true` ⇒
+///   available iff the configured summarization-role provider resolves.
+/// - local AI off + opt-in `false` (default) ⇒ unavailable — explicit
+///   consent required before routing workspace memory summaries to a cloud
+///   provider. Enable in Settings → AI → Memory.
+///
+/// The provider built for the `Ok` check is dropped — construction is cheap
+/// (no network) and confirming by build beats guessing.
 pub fn summarizer_available(config: &Config) -> (bool, &'static str) {
     let local = config.local_ai.runtime_enabled;
     match create_provider(config) {
@@ -292,15 +306,31 @@ mod tests {
     }
 
     #[test]
-    fn create_provider_falls_back_to_cloud_when_local_ai_off() {
-        // #002 FR-007: previously this hard-errored ("requires local_ai to be
-        // enabled"), which left Build Summary Trees dead for cloud-only setups.
-        // It now builds the configured cloud provider for the summarization
-        // role and returns a non-empty model — no error.
+    fn create_provider_errors_without_cloud_opt_in() {
+        // By default, cloud summarization is off — memory summaries are
+        // sensitive, so an explicit opt-in is required before routing them to
+        // an external provider.
         let mut cfg = Config::default();
         cfg.local_ai.runtime_enabled = false;
+        // cloud_summarization_opt_in defaults to false
+        match create_provider(&cfg) {
+            Err(e) => assert!(
+                e.contains("no summarization provider"),
+                "unexpected error: {e}"
+            ),
+            Ok(_) => panic!("expected error without cloud opt-in"),
+        }
+    }
+
+    #[test]
+    fn create_provider_uses_cloud_when_opted_in_and_local_ai_off() {
+        // #002 FR-007: with explicit opt-in Build Summary Trees uses the
+        // configured cloud provider when local AI is disabled.
+        let mut cfg = Config::default();
+        cfg.local_ai.runtime_enabled = false;
+        cfg.memory_tree.cloud_summarization_opt_in = true;
         let (_provider, model) =
-            create_provider(&cfg).expect("cloud fallback should build, not error");
+            create_provider(&cfg).expect("cloud fallback should build when opted in");
         assert!(
             !model.trim().is_empty(),
             "cloud fallback must resolve a model"
@@ -471,16 +501,16 @@ mod tests {
 
     #[tokio::test]
     async fn tree_summarizer_run_skips_cleanly_with_cloud_fallback_and_empty_buffer() {
-        // #002 FR-007: with local AI off, run/rebuild no longer hard-error on
-        // the provider precondition — they build the cloud provider and proceed.
-        // With an empty buffer, `run` reports the normal "no buffered data" skip
-        // (NOT a "requires local_ai" error), proving the precondition is gone.
+        // #002 FR-007 (Gray review updated): with local AI off AND explicit cloud
+        // opt-in, run/rebuild do not hard-error on the provider precondition.
+        // With an empty buffer, `run` reports the normal "no buffered data" skip.
         let (_tmp, mut cfg) = config_in_tempdir();
         cfg.local_ai.runtime_enabled = false;
+        cfg.memory_tree.cloud_summarization_opt_in = true;
 
         let outcome = tree_summarizer_run(&cfg, "team")
             .await
-            .expect("run should not error on the provider precondition");
+            .expect("run should not error on the provider precondition when opted in");
         assert_eq!(
             outcome.value,
             json!({ "skipped": true, "reason": "no buffered data" })
@@ -489,7 +519,7 @@ mod tests {
         // Rebuild on an empty tree returns the (zero-node) status, not an error.
         let rebuilt = tree_summarizer_rebuild(&cfg, "team")
             .await
-            .expect("rebuild should not error on the provider precondition");
+            .expect("rebuild should not error on the provider precondition when opted in");
         assert_eq!(rebuilt.value["total_nodes"], 0);
     }
 }

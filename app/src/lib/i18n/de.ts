@@ -4577,7 +4577,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.extraction_timeout':
     'Das Modell zur Speicherextraktion überschreitet die Zeit, daher hat das Wiki wenig Struktur. Wechsle das Modell für die Speicherextraktion unter Einstellungen → KI zu einem schnelleren.',
   'memory.health.remediation.summarizer_unavailable':
-    'Für „Zusammenfassungsbäume erstellen“ ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder konfiguriere unter Einstellungen → KI ein Cloud-Modell für den Speicher.',
+    'Für „Zusammenfassungsbäume erstellen“ ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
   'memory.health.remediation.transient':
     'Ein vorübergehender Fehler hat die Speicherverarbeitung unterbrochen. Es wird automatisch erneut versucht.',
 };

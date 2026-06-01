@@ -58,95 +58,128 @@ fn cloud_session_available(config: &Config) -> bool {
 /// per call — cheap because `OllamaEmbedder` owns a cloned `reqwest::Client`
 /// internally and `InertEmbedder` is a ZST.
 pub fn build_embedder_from_config(config: &Config) -> Result<Box<dyn Embedder>> {
+    // Read path: walk the shared ladder, then terminate at InertEmbedder (zero
+    // vectors) so retrieval / semantic rerank can still run with no provider.
+    Ok(match resolve_embedder_choice(config)? {
+        EmbedderChoice::Ollama {
+            endpoint,
+            model,
+            timeout_ms,
+        } => {
+            log::debug!(
+                "[memory_tree::embed::factory] read → Ollama endpoint={endpoint} model={model} timeout_ms={timeout_ms}"
+            );
+            Box::new(OllamaEmbedder::new(endpoint, model, timeout_ms))
+        }
+        EmbedderChoice::OptOut => {
+            log::info!(
+                "[memory_tree::embed::factory] embeddings_provider=none — \
+                 using InertEmbedder (vector search disabled)"
+            );
+            Box::new(InertEmbedder::new())
+        }
+        EmbedderChoice::OpenAiCompat(openai) => {
+            log::debug!(
+                "[memory_tree::embed::factory] read → user OpenAI-compatible embeddings ({})",
+                openai.name()
+            );
+            Box::new(openai)
+        }
+        EmbedderChoice::Cloud => {
+            log::debug!(
+                "[memory_tree::embed::factory] read → cloud (Voyage) — flip \
+                 'Memory embeddings' in Local AI Settings to switch to local"
+            );
+            Box::new(CloudEmbedder::new(config))
+        }
+        EmbedderChoice::NoProvider => {
+            log::warn!(
+                "[memory_tree::embed::factory] no backend session found — \
+                 using InertEmbedder (zero vectors). Log in to OpenHuman, or \
+                 enable 'Memory embeddings' in Local AI Settings, to fix."
+            );
+            Box::new(InertEmbedder::new())
+        }
+    })
+}
+
+/// The embedder the resolution ladder selects, independent of whether the
+/// caller is a read path (retrieval) or a write path (ingest/seal). Both
+/// public factories walk [`resolve_embedder_choice`] and differ ONLY at the
+/// terminal + degraded-flag side-effects — so "identical resolution for every
+/// real provider" is a structural guarantee, not two hand-maintained copies
+/// that could drift (reviewer sanil-23, #3076: a read/write provider mismatch
+/// would silently corrupt recall).
+enum EmbedderChoice {
+    /// Explicit Ollama override, or the unified `ollama:<model>` workload setting.
+    Ollama {
+        endpoint: String,
+        model: String,
+        timeout_ms: u64,
+    },
+    /// `embeddings_provider = "none"` — vector search off by deliberate user
+    /// choice (NOT a degradation). Both paths use `InertEmbedder`.
+    OptOut,
+    /// User-configured OpenAI / custom OpenAI-compatible endpoint (#002 FR-015).
+    OpenAiCompat(super::openai_compat::OpenAiCompatEmbedder),
+    /// Logged-in managed cloud (Voyage).
+    Cloud,
+    /// No usable provider. Read path → `InertEmbedder` (zero vectors); write
+    /// path → `None` (skip) + mark `semantic_recall` degraded.
+    NoProvider,
+}
+
+/// Walk the provider-resolution ladder once. The order is the single source of
+/// truth for both factories; the only read/write differences are encoded by the
+/// callers at the terminal, never here.
+fn resolve_embedder_choice(config: &Config) -> Result<EmbedderChoice> {
     let tree_cfg = &config.memory_tree;
-    match (
+
+    // 1. Explicit Ollama override (power-user / E2E rig).
+    if let (Some(endpoint), Some(model)) = (
         tree_cfg.embedding_endpoint.as_deref(),
         tree_cfg.embedding_model.as_deref(),
     ) {
-        (Some(endpoint), Some(model))
-            if !endpoint.trim().is_empty() && !model.trim().is_empty() =>
-        {
-            let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
-            log::debug!(
-                "[memory_tree::embed::factory] using Ollama endpoint={} model={} timeout_ms={}",
-                endpoint,
-                model,
-                timeout_ms
-            );
-            Ok(Box::new(OllamaEmbedder::new(
-                endpoint.to_string(),
-                model.to_string(),
-                timeout_ms,
-            )))
-        }
-        _ => {
-            // If the user explicitly disabled embeddings, return InertEmbedder
-            // so semantic rerank degrades to recency-only ordering.
-            if config
-                .embeddings_provider
-                .as_deref()
-                .map(|s| s.trim())
-                .is_some_and(|s| s == "none")
-            {
-                log::info!(
-                    "[memory_tree::embed::factory] embeddings_provider=none — \
-                     using InertEmbedder (vector search disabled)"
-                );
-                return Ok(Box::new(InertEmbedder::new()));
-            }
-
-            // Honour the unified AI settings: `embeddings_provider` is the
-            // single source of truth. When it parses as `ollama:<model>` we
-            // route locally; otherwise we fall back to the cloud session.
-            if let Some(model) = config.workload_local_model("embeddings") {
-                let endpoint = ollama_base_url();
-                let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
-                log::debug!(
-                    "[memory_tree::embed::factory] embeddings_provider=ollama:{} — using local Ollama endpoint={} timeout_ms={}",
-                    model, endpoint, timeout_ms
-                );
-                Ok(Box::new(OllamaEmbedder::new(endpoint, model, timeout_ms)))
-            } else if let Some(openai) =
-                super::openai_compat::OpenAiCompatEmbedder::try_from_config(config)?
-            {
-                // #002 FR-015: the user configured OpenAI / a custom
-                // OpenAI-compatible endpoint in Settings → AI → Embeddings.
-                // Honour it (it used to be ignored, silently falling through
-                // to the managed-budget backend below).
-                log::debug!(
-                    "[memory_tree::embed::factory] using user OpenAI-compatible embeddings ({})",
-                    openai.name()
-                );
-                Ok(Box::new(openai))
-            } else if cloud_session_available(config) {
-                // Default for logged-in users: cloud (OpenHuman backend /
-                // Voyage `voyage-3.5`, 1024 dims). Matches the main
-                // embeddings path so a fresh install needs zero local
-                // Ollama setup. JWT failures (expired, invalid, etc.)
-                // surface as embed-call errors so ingest's existing
-                // retry-with-backoff logic handles them.
-                log::debug!(
-                    "[memory_tree::embed::factory] using cloud (Voyage) — \
-                     flip 'Memory embeddings' in Local AI Settings to switch to local"
-                );
-                Ok(Box::new(CloudEmbedder::new(config)))
-            } else {
-                // Pre-login, test harness, or unauthenticated runtime
-                // path — no auth-profiles.json on disk means the cloud
-                // path has no chance of resolving a bearer. Drop to
-                // InertEmbedder (zero vectors) so ingest/seal/retrieval
-                // can run without panic; semantic rerank degrades to
-                // recency only until the user logs in (or until they
-                // flip "Memory embeddings" to local with Ollama running).
-                log::warn!(
-                    "[memory_tree::embed::factory] no backend session found — \
-                     using InertEmbedder (zero vectors). Log in to OpenHuman, or \
-                     enable 'Memory embeddings' in Local AI Settings, to fix."
-                );
-                Ok(Box::new(InertEmbedder::new()))
-            }
+        if !endpoint.trim().is_empty() && !model.trim().is_empty() {
+            return Ok(EmbedderChoice::Ollama {
+                endpoint: endpoint.to_string(),
+                model: model.to_string(),
+                timeout_ms: tree_cfg.embedding_timeout_ms.unwrap_or(0),
+            });
         }
     }
+
+    // 2. Deliberate opt-out — vector search off by user choice.
+    if config
+        .embeddings_provider
+        .as_deref()
+        .map(|s| s.trim())
+        .is_some_and(|s| s == "none")
+    {
+        return Ok(EmbedderChoice::OptOut);
+    }
+
+    // 3. Local Ollama via the unified workload setting.
+    if let Some(model) = config.workload_local_model("embeddings") {
+        return Ok(EmbedderChoice::Ollama {
+            endpoint: ollama_base_url(),
+            model,
+            timeout_ms: tree_cfg.embedding_timeout_ms.unwrap_or(0),
+        });
+    }
+
+    // 4. #002 FR-015: user-configured OpenAI / custom OpenAI-compatible.
+    if let Some(openai) = super::openai_compat::OpenAiCompatEmbedder::try_from_config(config)? {
+        return Ok(EmbedderChoice::OpenAiCompat(openai));
+    }
+
+    // 5. Logged-in managed cloud (Voyage).
+    if cloud_session_available(config) {
+        return Ok(EmbedderChoice::Cloud);
+    }
+
+    // 6. Nothing usable.
+    Ok(EmbedderChoice::NoProvider)
 }
 
 /// Build the embedder used by **write** paths (ingest extract + seal), with an
@@ -171,75 +204,44 @@ pub fn build_write_embedder(config: &Config) -> Result<Option<Box<dyn Embedder>>
         clear_semantic_recall_degraded, mark_semantic_recall_degraded, FailureCode,
     };
 
-    let tree_cfg = &config.memory_tree;
-
-    // Explicit Ollama override (power-user / E2E rig).
-    if let (Some(endpoint), Some(model)) = (
-        tree_cfg.embedding_endpoint.as_deref(),
-        tree_cfg.embedding_model.as_deref(),
-    ) {
-        if !endpoint.trim().is_empty() && !model.trim().is_empty() {
-            let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
+    // Write path: same ladder as the read factory, terminating at `None` (skip,
+    // don't persist zero vectors) + a typed degraded flag when no provider is
+    // usable. Every real-provider branch clears the flag; the deliberate
+    // "none" opt-out leaves it untouched (off by choice, not degradation).
+    Ok(match resolve_embedder_choice(config)? {
+        EmbedderChoice::Ollama {
+            endpoint,
+            model,
+            timeout_ms,
+        } => {
             clear_semantic_recall_degraded();
-            return Ok(Some(Box::new(OllamaEmbedder::new(
-                endpoint.to_string(),
-                model.to_string(),
-                timeout_ms,
-            ))));
+            Some(Box::new(OllamaEmbedder::new(endpoint, model, timeout_ms)))
         }
-    }
-
-    // Deliberate opt-out — vector search off by user choice, NOT a degradation.
-    if config
-        .embeddings_provider
-        .as_deref()
-        .map(|s| s.trim())
-        .is_some_and(|s| s == "none")
-    {
-        log::info!(
-            "[memory_tree::embed::factory] embeddings_provider=none — write path \
-             uses InertEmbedder (vector search disabled by choice)"
-        );
-        return Ok(Some(Box::new(InertEmbedder::new())));
-    }
-
-    // Local Ollama via the unified workload setting.
-    if let Some(model) = config.workload_local_model("embeddings") {
-        let endpoint = ollama_base_url();
-        let timeout_ms = tree_cfg.embedding_timeout_ms.unwrap_or(0);
-        clear_semantic_recall_degraded();
-        return Ok(Some(Box::new(OllamaEmbedder::new(
-            endpoint, model, timeout_ms,
-        ))));
-    }
-
-    // #002 FR-015: user-configured OpenAI / custom OpenAI-compatible
-    // embeddings. This MUST win over the managed-cloud fallback below — the
-    // whole bug was that `embeddings_provider = "openai"` matched no branch
-    // and silently fell through to the managed-budget backend, ignoring the
-    // user's own key. 1024-dim is requested (the OpenAI path now sends the
-    // `dimensions` param) so 3-large complies with the tree's EMBEDDING_DIM.
-    if let Some(openai) = super::openai_compat::OpenAiCompatEmbedder::try_from_config(config)? {
-        clear_semantic_recall_degraded();
-        return Ok(Some(Box::new(openai)));
-    }
-
-    // Cloud session present → managed Voyage. Auth/budget failures surface at
-    // the first embed() call and are classified by the worker (T012).
-    if cloud_session_available(config) {
-        clear_semantic_recall_degraded();
-        return Ok(Some(Box::new(CloudEmbedder::new(config))));
-    }
-
-    // No usable provider. SKIP embedding (don't write zero vectors) and mark
-    // semantic recall degraded so the user gets a typed, actionable cause.
-    log::warn!(
-        "[memory_tree::embed::factory] no usable embeddings provider — skipping \
-         embedding (chunk persists embedding-less, re-embeddable later). Set up \
-         local Ollama embeddings or log in to OpenHuman to enable semantic recall."
-    );
-    mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
-    Ok(None)
+        EmbedderChoice::OptOut => {
+            log::info!(
+                "[memory_tree::embed::factory] embeddings_provider=none — write path \
+                 uses InertEmbedder (vector search disabled by choice)"
+            );
+            Some(Box::new(InertEmbedder::new()))
+        }
+        EmbedderChoice::OpenAiCompat(openai) => {
+            clear_semantic_recall_degraded();
+            Some(Box::new(openai))
+        }
+        EmbedderChoice::Cloud => {
+            clear_semantic_recall_degraded();
+            Some(Box::new(CloudEmbedder::new(config)))
+        }
+        EmbedderChoice::NoProvider => {
+            log::warn!(
+                "[memory_tree::embed::factory] no usable embeddings provider — skipping \
+                 embedding (chunk persists embedding-less, re-embeddable later). Set up \
+                 local Ollama embeddings or log in to OpenHuman to enable semantic recall."
+            );
+            mark_semantic_recall_degraded(FailureCode::EmbeddingsUnconfigured);
+            None
+        }
+    })
 }
 
 #[cfg(test)]

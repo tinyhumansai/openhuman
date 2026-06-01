@@ -4535,7 +4535,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.extraction_timeout':
     'Il modello di estrazione della memoria sta andando in timeout, quindi il wiki ha poca struttura. Passa a un modello di estrazione della memoria più veloce in Impostazioni → IA.',
   'memory.health.remediation.summarizer_unavailable':
-    "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o configura un modello cloud per la memoria in Impostazioni → IA.",
+    "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o abilita il riepilogo cloud in Impostazioni → IA → Memoria.",
   'memory.health.remediation.transient':
     "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
 };

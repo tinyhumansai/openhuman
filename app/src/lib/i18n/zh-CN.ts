@@ -4246,7 +4246,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.extraction_timeout':
     '记忆提取模型超时，因此 Wiki 结构很少。请在设置 → AI 中将记忆提取模型更换为更快的模型。',
   'memory.health.remediation.summarizer_unavailable':
-    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI 中为记忆配置云模型。',
+    '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
   'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
 };
 

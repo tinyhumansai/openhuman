@@ -58,7 +58,7 @@ impl StageHealth {
 
 /// Current pipeline counters, mirrored from the status surface so the doctor
 /// is a one-call snapshot.
-// No `Eq`: `extraction_coverage` is an f32 (PartialEq is sufficient for tests).
+// No `Eq`: `extraction_coverage` is `Option<f32>` — `f32` never implements `Eq`.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct DoctorCounters {
     pub total_chunks: u64,
@@ -67,15 +67,17 @@ pub struct DoctorCounters {
     pub jobs_failed: u64,
     /// #002 (FR-010 / US5): fraction of chunks with ≥1 indexed entity, in
     /// `[0.0, 1.0]`. Near 0 with `total_chunks > 0` means extraction is
-    /// producing no structure.
+    /// producing no structure. `None` when the metric could not be measured
+    /// (DB read error) — deliberately distinct from a genuine `0.0` so a
+    /// broken measurement is never misreported as a structure failure.
     #[serde(default)]
-    pub extraction_coverage: f32,
+    pub extraction_coverage: Option<f32>,
 }
 
 /// The full diagnostic. `first_blocking_cause` is the failure of the first
 /// non-ok stage in pipeline order (`stages` is already ordered), so a caller
 /// can act on one thing; `healthy` is the convenience roll-up.
-// No `Eq`: transitively contains `DoctorCounters` (f32).
+// No `Eq`: transitively contains `DoctorCounters` (Option<f32> — f32: !Eq).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DoctorReport {
     pub healthy: bool,
@@ -102,7 +104,7 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         jobs_ready: queue::count_by_status(config, JobStatus::Ready).unwrap_or(0),
         jobs_running: queue::count_by_status(config, JobStatus::Running).unwrap_or(0),
         jobs_failed: queue::count_by_status(config, JobStatus::Failed).unwrap_or(0),
-        extraction_coverage: chunks::extraction_coverage(config).unwrap_or(0.0),
+        extraction_coverage: chunks::extraction_coverage(config).ok(),
     };
 
     let mut stages = Vec::new();
@@ -317,16 +319,17 @@ mod tests {
         assert!(gate.note.contains("paused"));
     }
 
-    /// #002 FR-007 (CodeRabbit): local AI being off must NOT flag summary_tree
-    /// as broken — the summarizer falls back to the configured cloud provider.
-    /// The doctor reuses `tree_runtime::ops::summarizer_available`, so the
-    /// stage's health tracks real provider resolution, not a hard local-AI gate.
+    /// #002 FR-007 / Gray review: the doctor's `summary_tree` stage must mirror
+    /// `summarizer_available` exactly. With local AI off and no cloud opt-in
+    /// (the default), the stage reports unavailable — which is correct, since
+    /// cloud summarization requires explicit consent. The stage must NOT fire
+    /// a generic "local AI required" hard-failure; it names the opt-in gap.
     #[test]
-    fn local_ai_off_does_not_auto_fail_summary_tree() {
+    fn local_ai_off_reports_no_provider_without_cloud_opt_in() {
         let _g = super::super::test_guard();
         let (_tmp, mut cfg) = test_config();
         cfg.embeddings_provider = Some("ollama:bge-m3".into()); // embeddings ok
-        cfg.local_ai.runtime_enabled = false; // cloud-fallback path
+        cfg.local_ai.runtime_enabled = false; // cloud opt-in not set (default false)
 
         let report = run_doctor(&cfg);
         let tree = report
@@ -334,22 +337,18 @@ mod tests {
             .iter()
             .find(|s| s.stage == "summary_tree")
             .unwrap();
-        // Whatever summarizer_available resolves, the stage must mirror it —
-        // and it must NOT be the old "local AI required" hard failure. If it's
-        // bad, it's because NO provider resolved, never just because local is off.
+        // summary_tree must mirror summarizer_available precisely.
         assert_eq!(
             tree.ok,
             crate::openhuman::memory_tree::tree_runtime::ops::summarizer_available(&cfg).0,
             "summary_tree health must mirror the runtime capability check"
         );
-        if !tree.ok {
-            // A bad stage names the no-provider case, not LocalModelUnavailable-by-default.
-            assert!(
-                tree.note.contains("no summarization provider"),
-                "unexpected summary_tree failure note: {}",
-                tree.note
-            );
-        }
+        // Without opt-in, the note names the "no summarization provider" case.
+        assert!(
+            tree.note.contains("no summarization provider"),
+            "unexpected summary_tree note: {}",
+            tree.note
+        );
     }
 
     #[test]

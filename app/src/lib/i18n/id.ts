@@ -4476,7 +4476,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.extraction_timeout':
     'Model ekstraksi memori kehabisan waktu, sehingga wiki memiliki sedikit struktur. Ganti model ekstraksi memori ke yang lebih cepat di Pengaturan → AI.',
   'memory.health.remediation.summarizer_unavailable':
-    'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama) atau konfigurasikan model cloud untuk memori di Pengaturan → AI.',
+    'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama), atau aktifkan ringkasan cloud di Pengaturan → AI → Memori.',
   'memory.health.remediation.transient':
     'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
 };

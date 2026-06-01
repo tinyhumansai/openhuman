@@ -888,7 +888,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 FieldSchema {
                     name: "counters",
                     ty: TypeSchema::Json,
-                    comment: "{ total_chunks, jobs_ready, jobs_running, jobs_failed }.",
+                    comment: "{ total_chunks, jobs_ready, jobs_running, jobs_failed, \
+                              extraction_coverage: number|null }. extraction_coverage \
+                              is the fraction [0,1] of chunks with ≥1 indexed entity; \
+                              null when the metric could not be measured (DB error).",
                     required: true,
                 },
             ],
