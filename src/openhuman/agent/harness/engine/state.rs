@@ -18,6 +18,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+use super::tool_source::ToolSource;
 use crate::openhuman::agent::harness::parse::ParsedToolCall;
 use crate::openhuman::inference::provider::{ChatMessage, ToolCall, UsageInfo};
 
@@ -29,6 +30,7 @@ pub(crate) trait TurnObserver: Send {
     async fn before_dispatch(
         &mut self,
         _history: &mut Vec<ChatMessage>,
+        _tools: &mut dyn ToolSource,
         _iteration: usize,
     ) -> Result<()> {
         Ok(())

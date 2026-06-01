@@ -135,8 +135,10 @@ mod tests {
     use tempfile::TempDir;
 
     async fn test_config(tmp: &TempDir) -> Arc<Config> {
+        let ws = tmp.path().join("workspace");
         let config = Config {
-            workspace_dir: tmp.path().join("workspace"),
+            workspace_dir: ws.clone(),
+            action_dir: ws.clone(),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -205,6 +207,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };
@@ -222,6 +225,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let config = Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..Config::default()
         };

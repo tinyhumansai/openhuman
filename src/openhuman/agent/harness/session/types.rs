@@ -190,6 +190,29 @@ pub struct Agent {
     /// dormant on session startup and only fires when integrations
     /// actually change mid-conversation.
     pub(super) last_seen_integrations_hash: u64,
+    /// Per-session raw receiver for `DomainEvent::ComposioIntegrationsChanged`.
+    /// Armed lazily on first turn when the global event bus is available.
+    /// Drained before each provider dispatch so a connection that flips to
+    /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
+    pub(super) composio_integrations_rx:
+        Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
+    /// Toolkit slugs already surfaced to the model as freshly-connected
+    /// this session. Seeded at turn 1 with the startup connected set, then
+    /// extended whenever a mid-session connect is announced — so each new
+    /// toolkit is announced exactly once, never re-announced per turn.
+    pub(super) announced_integrations: std::collections::HashSet<String>,
+    /// Toolkit slugs that connected mid-session and still need announcing on
+    /// the next user message ("X connected this session, use it now"). Parked
+    /// by `refresh_delegation_tools_from_cached_integrations` and rendered +
+    /// cleared when the next user message is built — the note rides on the
+    /// user turn (NOT the system prompt) so the KV-cache prefix stays
+    /// byte-identical.
+    ///
+    /// Accumulated as a list (not a single rendered string) so two connects
+    /// between consecutive user turns both surface: a second connect appends
+    /// its slug instead of overwriting the first's note. Order-preserving +
+    /// de-duped on insert.
+    pub(super) pending_integration_announcement: Vec<String>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the
@@ -209,7 +232,28 @@ pub struct Agent {
     ///
     /// Populated by `refresh_delegation_tools` itself; empty at
     /// construction time.
+    ///
+    /// Invariant: this tracks the names whose **`tool_specs`** are currently
+    /// live. `tool_specs` reconcile on every refresh (they're cloneable
+    /// data), so this set always equals the most recent synthesised set —
+    /// even when the executable `tools` Vec could not be reconciled because
+    /// its `Arc` was shared. Removing stale `tools` entries is tracked
+    /// separately by [`Self::pending_synthesized_tools_mask`].
     pub(super) synthesized_tool_names: std::collections::HashSet<String>,
+    /// Names of synthesised tool *instances* still present in [`Agent::tools`]
+    /// that a future unique-owner refresh must drop.
+    ///
+    /// When `refresh_delegation_tools` updates `tool_specs` but cannot
+    /// reconcile `tools` (the `Arc` is shared — the normal case while
+    /// `AgentToolSource` holds a clone during `before_dispatch`), the
+    /// previously-synthesised tool objects remain in `tools`. Their names are
+    /// accumulated here so the next refresh that *does* own `tools` uniquely
+    /// removes them — instead of overloading `synthesized_tool_names` (which
+    /// must stay in sync with `tool_specs`) and corrupting the spec
+    /// reconciliation on the following refresh (duplicate `ToolSpec`s, #3044).
+    ///
+    /// Empty at construction time and whenever `tools` is fully reconciled.
+    pub(super) pending_synthesized_tools_mask: std::collections::HashSet<String>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.

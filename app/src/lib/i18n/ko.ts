@@ -3594,6 +3594,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': '추가',
   'settings.agentAccess.saving': '저장 중…',
   'settings.agentAccess.changesApply': '변경 사항은 다음 메시지부터 적용됩니다.',
+  'settings.agentAccess.directories': '디렉터리',
+  'settings.agentAccess.actionSandbox': '액션 샌드박스',
+  'settings.agentAccess.readWriteAccess': '읽기 + 쓰기',
+  'settings.agentAccess.actionSandboxDesc': '셸, 파일 및 git 도구의 기본 작업 디렉터리.',
+  'settings.agentAccess.internalState': '내부 상태',
+  'settings.agentAccess.agentBlocked': '에이전트 차단됨',
+  'settings.agentAccess.internalStateDesc':
+    '메모리 데이터베이스, 세션, 토큰 및 기타 핵심 데이터. 에이전트 도구에서 접근할 수 없습니다.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

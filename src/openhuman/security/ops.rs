@@ -18,7 +18,8 @@ fn policy_info_payload(policy: SecurityPolicy) -> serde_json::Value {
 }
 
 pub fn security_policy_info_for_config(config: &Config) -> RpcOutcome<serde_json::Value> {
-    let policy = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let policy =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     let payload = policy_info_payload(policy);
     RpcOutcome::single_log(payload, "security_policy_info computed from active config")
 }
@@ -61,7 +62,11 @@ mod tests {
     fn security_policy_info_matches_default_config_policy_values() {
         let outcome = security_policy_info_for_config(&Config::default());
         let config = Config::default();
-        let default = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+        let default = SecurityPolicy::from_config(
+            &config.autonomy,
+            &config.workspace_dir,
+            &config.action_dir,
+        );
         assert_eq!(outcome.value["autonomy"], json!(default.autonomy));
         assert_eq!(
             outcome.value["allowed_commands"],

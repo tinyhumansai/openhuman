@@ -3641,6 +3641,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Tambah',
   'settings.agentAccess.saving': 'Menyimpan...',
   'settings.agentAccess.changesApply': 'Perubahan pada pesan berikutnya.',
+  'settings.agentAccess.directories': 'Direktori',
+  'settings.agentAccess.actionSandbox': 'Sandbox aksi',
+  'settings.agentAccess.readWriteAccess': 'baca + tulis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Direktori kerja default untuk alat shell, file, dan git.',
+  'settings.agentAccess.internalState': 'Status internal',
+  'settings.agentAccess.agentBlocked': 'diblokir untuk agen',
+  'settings.agentAccess.internalStateDesc':
+    'Database memori, sesi, token, dan data inti lainnya. Tidak dapat diakses oleh alat agen.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
