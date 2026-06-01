@@ -104,7 +104,9 @@ jobs:
         run: |
           python3 -m pip install --user --quiet python-pptx==1.0.2
       - name: Run cargo llvm-cov for openhuman core
-        run: cargo llvm-cov -p openhuman --lcov --output-path lcov-core.info
+        run: cargo llvm-cov --no-fail-fast -p openhuman --lcov --output-path lcov-core.info
+        env:
+          CARGO_BUILD_JOBS: "2"
       - name: Upload core lcov
         uses: actions/upload-artifact@v5
         with:

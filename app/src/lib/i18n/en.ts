@@ -3888,6 +3888,15 @@ const en: TranslationMap = {
   'settings.agentAccess.add': 'Add',
   'settings.agentAccess.saving': 'Saving…',
   'settings.agentAccess.changesApply': 'Changes apply on your next message.',
+  'settings.agentAccess.directories': 'Directories',
+  'settings.agentAccess.actionSandbox': 'Action sandbox',
+  'settings.agentAccess.readWriteAccess': 'read + write',
+  'settings.agentAccess.actionSandboxDesc':
+    'Default working directory for shell, file, and git tools.',
+  'settings.agentAccess.internalState': 'Internal state',
+  'settings.agentAccess.agentBlocked': 'agent-blocked',
+  'settings.agentAccess.internalStateDesc':
+    'Memory databases, sessions, tokens, and other core persistence. Not accessible to agent tools.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

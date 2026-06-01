@@ -1273,7 +1273,11 @@ async fn auto_approved_external_effect_tool_runs_through_loop_without_parking() 
         auto_approve: vec![tool_name.into()],
         ..crate::openhuman::security::SecurityPolicy::default()
     };
-    crate::openhuman::security::live_policy::install(Arc::new(policy), std::env::temp_dir());
+    crate::openhuman::security::live_policy::install(
+        Arc::new(policy),
+        std::env::temp_dir(),
+        std::env::temp_dir(),
+    );
 
     // Install the process-global gate so the loop's external-effect branch has a
     // gate to route through (idempotent; the loop calls `ApprovalGate::try_global`).

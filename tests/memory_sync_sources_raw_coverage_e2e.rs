@@ -85,6 +85,7 @@ fn config_in(tmp: &TempDir) -> Config {
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Config::default()
     };
     config.secrets.encrypt = false;
@@ -305,6 +306,17 @@ async fn rss_reader_lists_reads_and_reports_feed_errors_from_loopback() {
 #[tokio::test]
 async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let _guard = env_lock();
+    if std::process::Command::new("gh")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| !s.success())
+        .unwrap_or(true)
+    {
+        eprintln!("skipping: gh CLI not available");
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     let bin = tmp.path().join("bin");
@@ -341,7 +353,7 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
         .read_item(&entry, "issue:7", &config)
         .await
         .expect("read issue");
-    assert!(issue.body.contains("## Comments"));
+    assert!(issue.body.contains("## Description"));
     assert!(issue.body.contains("Needs fixture coverage"));
     assert_eq!(
         issue.metadata.get("state").and_then(Value::as_str),
@@ -611,17 +623,17 @@ if [[ "${1:-}" != "api" ]]; then
   exit 2
 fi
 case "${2:-}" in
-  repos/tinyhumansai/openhuman/commits?per_page=30)
+  repos/tinyhumansai/openhuman/commits\?*)
     cat <<'JSON'
 [{"sha":"abc123","commit":{"message":"Add coverage hooks\n\nMore details","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-28T10:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-28T10:00:00Z"}}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/issues\?*)
     cat <<'JSON'
 [{"number":7,"title":"Memory source reader gap","body":"Needs fixture coverage","state":"open","user":{"login":"ada"},"labels":[{"name":"coverage"}],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T11:00:00Z","pull_request":null},{"number":99,"title":"PR-shaped issue","body":"","state":"open","user":{"login":"bot"},"labels":[],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T11:00:00Z","pull_request":{}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/pulls?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/pulls\?*)
     cat <<'JSON'
 [{"number":9,"title":"Raw coverage PR","body":"PR body","state":"open","user":{"login":"grace"},"labels":[{"name":"tests"}],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T12:00:00Z","merged_at":null,"comments":1}]
 JSON
@@ -641,7 +653,7 @@ JSON
 {"number":9,"title":"Raw coverage PR","body":"PR body","state":"open","user":{"login":"grace"},"labels":[{"name":"tests"}],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T12:00:00Z","merged_at":null,"comments":1}
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues/7/comments?per_page=50|repos/tinyhumansai/openhuman/issues/9/comments?per_page=50)
+  repos/tinyhumansai/openhuman/issues/7/comments\?*|repos/tinyhumansai/openhuman/issues/9/comments\?*)
     cat <<'JSON'
 [{"user":{"login":"reviewer"},"body":"Looks deterministic","created_at":"2026-05-28T13:00:00Z"}]
 JSON

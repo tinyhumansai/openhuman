@@ -3632,6 +3632,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'जोड़ें',
   'settings.agentAccess.saving': 'बचत',
   'settings.agentAccess.changesApply': 'परिवर्तन आपके अगले संदेश पर लागू होते हैं।',
+  'settings.agentAccess.directories': 'निर्देशिकाएँ',
+  'settings.agentAccess.actionSandbox': 'एक्शन सैंडबॉक्स',
+  'settings.agentAccess.readWriteAccess': 'पढ़ना + लिखना',
+  'settings.agentAccess.actionSandboxDesc':
+    'शेल, फ़ाइल और git टूल के लिए डिफ़ॉल्ट कार्य निर्देशिका।',
+  'settings.agentAccess.internalState': 'आंतरिक स्थिति',
+  'settings.agentAccess.agentBlocked': 'एजेंट-अवरुद्ध',
+  'settings.agentAccess.internalStateDesc':
+    'मेमोरी डेटाबेस, सत्र, टोकन और अन्य मुख्य डेटा। एजेंट टूल के लिए सुलभ नहीं।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
