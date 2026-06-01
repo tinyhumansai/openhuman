@@ -62,6 +62,7 @@ fn config_in(tmp: &TempDir) -> Config {
     Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Default::default()
     }
 }

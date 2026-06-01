@@ -5444,14 +5444,32 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    let missing_secret_err = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+    // An OAuth profile missing its access_token must not poison the whole
+    // store: it is dropped just like a bad-kind entry (see #3125), so the load
+    // succeeds with that single profile purged rather than returning an error.
+    let recovered_missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
         .load()
-        .expect_err("oauth profile missing access token should fail");
+        .expect("oauth profile missing access_token should be dropped, not fail the whole load");
     assert!(
-        missing_secret_err
-            .to_string()
-            .contains("OAuth profile missing access_token"),
-        "unexpected missing oauth secret error: {missing_secret_err:#}"
+        !recovered_missing_secret
+            .profiles
+            .contains_key("github:missing-access"),
+        "oauth profile missing access_token should be dropped on load: {recovered_missing_secret:#?}"
+    );
+    assert!(
+        !recovered_missing_secret.active_profiles.contains_key("github"),
+        "active profile pointing at a dropped profile should be purged: {recovered_missing_secret:#?}"
+    );
+    let rewritten_missing_secret: Value = serde_json::from_str(
+        &std::fs::read_to_string(missing_oauth_secret_dir.join("auth-profiles.json"))
+            .expect("read rewritten missing-oauth-secret store"),
+    )
+    .expect("rewritten missing-oauth-secret store should be json");
+    assert!(
+        rewritten_missing_secret
+            .pointer("/profiles/github:missing-access")
+            .is_none(),
+        "dropped oauth profile should be purged from persisted store: {rewritten_missing_secret}"
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");

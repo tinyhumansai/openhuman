@@ -3720,6 +3720,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Hinzufügen',
   'settings.agentAccess.saving': 'Sichern…',
   'settings.agentAccess.changesApply': 'Änderungen gelten für deine nächste Nachricht.',
+  'settings.agentAccess.directories': 'Verzeichnisse',
+  'settings.agentAccess.actionSandbox': 'Aktions-Sandbox',
+  'settings.agentAccess.readWriteAccess': 'Lesen + Schreiben',
+  'settings.agentAccess.actionSandboxDesc':
+    'Standard-Arbeitsverzeichnis für Shell-, Datei- und Git-Tools.',
+  'settings.agentAccess.internalState': 'Interner Zustand',
+  'settings.agentAccess.agentBlocked': 'Agent-gesperrt',
+  'settings.agentAccess.internalStateDesc':
+    'Speicherdatenbanken, Sitzungen, Token und andere Kerndaten. Für Agent-Tools nicht zugänglich.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
