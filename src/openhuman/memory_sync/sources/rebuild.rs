@@ -28,13 +28,17 @@ use crate::openhuman::memory_tree::summarise::{
 };
 
 /// Outcome of a rebuild operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RebuildOutcome {
     pub files_read: usize,
     pub batches: usize,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub estimated_cost_usd: f64,
+    /// Real amount billed by the backend in USD when the provider reported
+    /// usage for the run; `None` when it fell back to the estimate. Issue
+    /// #3110. Prefer this over `estimated_cost_usd` when `Some`.
+    pub actual_charged_usd: Option<f64>,
 }
 
 /// Check whether a source needs tree rebuilding: raw files exist on disk
@@ -91,13 +95,7 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
     files.sort(); // chronological order (filename starts with timestamp)
 
     if files.is_empty() {
-        return Ok(RebuildOutcome {
-            files_read: 0,
-            batches: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            estimated_cost_usd: 0.0,
-        });
+        return Ok(RebuildOutcome::default());
     }
 
     tracing::info!(
@@ -163,10 +161,7 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
     if inputs.is_empty() {
         return Ok(RebuildOutcome {
             files_read: files.len(),
-            batches: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            estimated_cost_usd: 0.0,
+            ..RebuildOutcome::default()
         });
     }
 
@@ -184,14 +179,21 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
         "[memory_sync:rebuild] summarising"
     );
 
-    let mut total_input_tokens: u64 = 0;
-    let mut total_output_tokens: u64 = 0;
+    // Estimated token accounting (`body.len() / 4`) — fallback when the
+    // backend doesn't report usage.
+    let mut est_input_tokens: u64 = 0;
+    let mut est_output_tokens: u64 = 0;
+    // Provider-reported (real) accounting from `SummaryOutput`. Issue #3110.
+    let mut real_input_tokens: u64 = 0;
+    let mut real_output_tokens: u64 = 0;
+    let mut real_charged_usd: f64 = 0.0;
+    let mut saw_real_charge = false;
 
     for (batch_idx, (batch_inputs, batch_labels, batch_basenames)) in
         batches.into_iter().enumerate()
     {
         let batch_in_tokens: u64 = batch_inputs.iter().map(|i| i.token_count as u64).sum();
-        total_input_tokens += batch_in_tokens;
+        est_input_tokens += batch_in_tokens;
 
         let ctx = SummaryContext {
             tree_id: &tree.id,
@@ -212,7 +214,17 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
             }
         };
 
-        total_output_tokens += output.token_count as u64;
+        est_output_tokens += output.token_count as u64;
+
+        // Fold in provider-reported usage when present (0 = no usage).
+        if output.input_tokens > 0 || output.output_tokens > 0 {
+            real_input_tokens += output.input_tokens;
+            real_output_tokens += output.output_tokens;
+        }
+        if let Some(charge) = output.charged_amount_usd {
+            real_charged_usd += charge;
+            saw_real_charge = true;
+        }
 
         let time_start = batch_inputs
             .iter()
@@ -248,7 +260,28 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    let cost = estimate_cost_usd(total_input_tokens, total_output_tokens);
+
+    // Prefer real provider token counts when any batch reported usage;
+    // else use the `len/4` estimate. The estimate always backs
+    // `estimated_cost_usd` so a cost is recorded even without usage.
+    let any_real_usage = real_input_tokens > 0 || real_output_tokens > 0;
+    let audit_input_tokens = if any_real_usage {
+        real_input_tokens
+    } else {
+        est_input_tokens
+    };
+    let audit_output_tokens = if any_real_usage {
+        real_output_tokens
+    } else {
+        est_output_tokens
+    };
+    let estimated_cost = estimate_cost_usd(est_input_tokens, est_output_tokens);
+    let actual_charged_usd = if saw_real_charge {
+        Some(real_charged_usd)
+    } else {
+        None
+    };
+    let display_cost = actual_charged_usd.unwrap_or(estimated_cost);
 
     append_audit_entry(
         config,
@@ -259,9 +292,10 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
             scope: scope.to_string(),
             items_fetched: files_read as u32,
             batches: batch_count as u32,
-            input_tokens: total_input_tokens,
-            output_tokens: total_output_tokens,
-            estimated_cost_usd: cost,
+            input_tokens: audit_input_tokens,
+            output_tokens: audit_output_tokens,
+            estimated_cost_usd: estimated_cost,
+            actual_charged_usd,
             duration_ms,
             success: true,
             error: None,
@@ -272,9 +306,13 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
         scope = %scope,
         files = files_read,
         batches = batch_count,
-        input_tokens = total_input_tokens,
-        output_tokens = total_output_tokens,
-        cost_usd = %format!("{cost:.4}"),
+        any_real_usage = any_real_usage,
+        saw_real_charge = saw_real_charge,
+        input_tokens = audit_input_tokens,
+        output_tokens = audit_output_tokens,
+        estimated_cost_usd = %format!("{estimated_cost:.4}"),
+        actual_charged_usd = ?actual_charged_usd,
+        display_cost_usd = %format!("{display_cost:.4}"),
         duration_ms = duration_ms,
         "[memory_sync:rebuild] complete"
     );
@@ -282,9 +320,10 @@ pub async fn rebuild_tree_from_raw(config: &Config, scope: &str) -> Result<Rebui
     Ok(RebuildOutcome {
         files_read,
         batches: batch_count,
-        input_tokens: total_input_tokens,
-        output_tokens: total_output_tokens,
-        estimated_cost_usd: cost,
+        input_tokens: audit_input_tokens,
+        output_tokens: audit_output_tokens,
+        estimated_cost_usd: estimated_cost,
+        actual_charged_usd,
     })
 }
 

@@ -212,14 +212,23 @@ pub async fn run_github_sync(
         )),
     );
 
-    let mut total_input_tokens: u64 = 0;
-    let mut total_output_tokens: u64 = 0;
+    // Estimated token accounting (the `body.len() / 4` heuristic) — kept
+    // as the fallback when the backend doesn't report usage.
+    let mut est_input_tokens: u64 = 0;
+    let mut est_output_tokens: u64 = 0;
+    // Provider-reported (real) accounting from `SummaryOutput`. Issue #3110.
+    let mut real_input_tokens: u64 = 0;
+    let mut real_output_tokens: u64 = 0;
+    let mut real_charged_usd: f64 = 0.0;
+    // True once at least one batch carried a real backend charge — then
+    // the audit entry records the real charge instead of the estimate.
+    let mut saw_real_charge = false;
 
     for (batch_idx, (batch_inputs, batch_labels, batch_basenames)) in
         batches.into_iter().enumerate()
     {
         let batch_input_tokens: u64 = batch_inputs.iter().map(|i| i.token_count as u64).sum();
-        total_input_tokens += batch_input_tokens;
+        est_input_tokens += batch_input_tokens;
 
         let ctx = SummaryContext {
             tree_id: &tree.id,
@@ -240,7 +249,20 @@ pub async fn run_github_sync(
             }
         };
 
-        total_output_tokens += output.token_count as u64;
+        est_output_tokens += output.token_count as u64;
+
+        // Fold in provider-reported usage when the backend surfaced it.
+        // `input_tokens == 0` is the sentinel for "no usage" (set by the
+        // fallback path and by providers that don't report usage), so we
+        // only count real tokens when they're non-zero.
+        if output.input_tokens > 0 || output.output_tokens > 0 {
+            real_input_tokens += output.input_tokens;
+            real_output_tokens += output.output_tokens;
+        }
+        if let Some(charge) = output.charged_amount_usd {
+            real_charged_usd += charge;
+            saw_real_charge = true;
+        }
 
         let time_start = batch_inputs
             .iter()
@@ -279,7 +301,41 @@ pub async fn run_github_sync(
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    let cost = estimate_cost_usd(total_input_tokens, total_output_tokens);
+
+    // Prefer real provider token counts when any batch reported usage;
+    // otherwise record the `len/4` estimate. The estimate always
+    // populates `estimated_cost_usd` so the audit entry has a cost even
+    // when the backend stays silent.
+    let any_real_usage = real_input_tokens > 0 || real_output_tokens > 0;
+    let audit_input_tokens = if any_real_usage {
+        real_input_tokens
+    } else {
+        est_input_tokens
+    };
+    let audit_output_tokens = if any_real_usage {
+        real_output_tokens
+    } else {
+        est_output_tokens
+    };
+    let estimated_cost = estimate_cost_usd(est_input_tokens, est_output_tokens);
+    let actual_charged_usd = if saw_real_charge {
+        Some(real_charged_usd)
+    } else {
+        None
+    };
+    // Cost surfaced to the user/logs: real charge when present, else estimate.
+    let display_cost = actual_charged_usd.unwrap_or(estimated_cost);
+
+    tracing::info!(
+        source_id = %source_id,
+        any_real_usage = any_real_usage,
+        saw_real_charge = saw_real_charge,
+        input_tokens = audit_input_tokens,
+        output_tokens = audit_output_tokens,
+        estimated_cost_usd = %format!("{estimated_cost:.4}"),
+        actual_charged_usd = ?actual_charged_usd,
+        "[memory_sync:github] sync cost accounting"
+    );
 
     append_audit_entry(
         config,
@@ -290,9 +346,10 @@ pub async fn run_github_sync(
             scope: repo_scope.clone(),
             items_fetched: input_count as u32,
             batches: batch_count as u32,
-            input_tokens: total_input_tokens,
-            output_tokens: total_output_tokens,
-            estimated_cost_usd: cost,
+            input_tokens: audit_input_tokens,
+            output_tokens: audit_output_tokens,
+            estimated_cost_usd: estimated_cost,
+            actual_charged_usd,
             duration_ms,
             success: true,
             error: None,
@@ -305,7 +362,7 @@ pub async fn run_github_sync(
         Some(kind_str),
         Some(source_id),
         Some(format!(
-            "{input_count} items → {batch_count} summary(ies) ({total_input_tokens} in / {total_output_tokens} out tokens, ${cost:.4})"
+            "{input_count} items → {batch_count} summary(ies) ({audit_input_tokens} in / {audit_output_tokens} out tokens, ${display_cost:.4})"
         )),
     );
 
@@ -313,7 +370,7 @@ pub async fn run_github_sync(
         records_ingested: input_count as u32,
         more_pending: false,
         note: Some(format!(
-            "{input_count} items → {batch_count} summary(ies) (${cost:.4})"
+            "{input_count} items → {batch_count} summary(ies) (${display_cost:.4})"
         )),
     })
 }
