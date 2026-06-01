@@ -125,13 +125,23 @@ impl ToolMemoryRule {
 
     /// Generate a fresh, opaque rule id.
     pub fn generate_id() -> String {
-        uuid::Uuid::new_v4().to_string()
+        let uuid = uuid::Uuid::new_v4();
+        let mut id = String::with_capacity(32);
+        for byte in uuid.as_bytes() {
+            id.push(nibble_to_safe_letter(byte >> 4));
+            id.push(nibble_to_safe_letter(byte & 0x0f));
+        }
+        id
     }
 
     /// Storage key used inside the tool namespace.
     pub fn storage_key(id: &str) -> String {
         format!("rule/{id}")
     }
+}
+
+fn nibble_to_safe_letter(nibble: u8) -> char {
+    (b'a' + (nibble & 0x0f)) as char
 }
 
 /// Namespace string for a given tool. Trimmed and lower-cased so callers
@@ -205,6 +215,12 @@ mod tests {
         let a = ToolMemoryRule::generate_id();
         let b = ToolMemoryRule::generate_id();
         assert_ne!(a, b);
+        assert!(a.chars().all(|c| matches!(c, 'a'..='p')));
+        assert!(
+            !crate::openhuman::memory_store::safety::pii::has_likely_pii(
+                &ToolMemoryRule::storage_key(&a)
+            )
+        );
     }
 
     #[test]
