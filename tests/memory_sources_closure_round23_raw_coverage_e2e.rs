@@ -200,6 +200,15 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
     )
     .await
     .expect("insert composio");
+    let composio = memory_sources::update_source(
+        &composio.id,
+        MemorySourcePatch {
+            enabled: Some(true),
+            ..MemorySourcePatch::default()
+        },
+    )
+    .await
+    .expect("enable composio");
     let status = memory_sources::status::source_status(&config, &composio)
         .await
         .expect("composio status");
