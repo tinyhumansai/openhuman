@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Chunk } from '../../../utils/tauriCommands';
 import { MemoryChunkLetterhead } from '../MemoryChunkLetterhead';
@@ -19,6 +19,10 @@ const BASE_CHUNK: Chunk = {
 };
 
 describe('MemoryChunkLetterhead', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('renders the from/to/date frontmatter from a personalized email source', () => {
     const chunk: Chunk = { ...BASE_CHUNK, tags: ['person/Steven-Enamakel'] };
     render(<MemoryChunkLetterhead chunk={chunk} />);
@@ -30,8 +34,37 @@ describe('MemoryChunkLetterhead', () => {
     // The raw address is rendered as secondary text.
     expect(screen.getByText('steve@example.com')).toBeInTheDocument();
     expect(screen.getByText('sanil@vezures.xyz')).toBeInTheDocument();
-    // Date formatted as YYYY·MM·DD · HH:MM utc (UTC components).
-    expect(screen.getByText('2026·05·04 · 09:14 utc')).toBeInTheDocument();
+    // Date formatted as YYYY·MM·DD · HH:MM in the viewer's local timezone.
+    expect(screen.getByText(/2026·05·04 · \d{2}:\d{2}/)).toBeInTheDocument();
+  });
+
+  it('formats the date using local time instead of UTC components', () => {
+    class LocalTimeDate extends Date {
+      getFullYear() {
+        return 2026;
+      }
+
+      getMonth() {
+        return 4;
+      }
+
+      getDate() {
+        return 4;
+      }
+
+      getHours() {
+        return 14;
+      }
+
+      getMinutes() {
+        return 44;
+      }
+    }
+
+    vi.stubGlobal('Date', LocalTimeDate);
+    render(<MemoryChunkLetterhead chunk={BASE_CHUNK} />);
+
+    expect(screen.getByText('2026·05·04 · 14:44')).toBeInTheDocument();
   });
 
   it('falls back to the raw email when no person/* tag is present', () => {

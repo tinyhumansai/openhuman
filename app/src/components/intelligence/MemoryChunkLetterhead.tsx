@@ -38,12 +38,12 @@ function parseSourceParts(chunk: Chunk): LetterheadParts {
 
 function formatLetterDate(ms: number): string {
   const d = new Date(ms);
-  const yyyy = d.getUTCFullYear();
-  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(d.getUTCDate()).padStart(2, '0');
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mi = String(d.getUTCMinutes()).padStart(2, '0');
-  return `${yyyy}·${mm}·${dd} · ${hh}:${mi} utc`;
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${yyyy}·${mm}·${dd} · ${hh}:${mi}`;
 }
 
 export function MemoryChunkLetterhead({ chunk }: { chunk: Chunk }) {
