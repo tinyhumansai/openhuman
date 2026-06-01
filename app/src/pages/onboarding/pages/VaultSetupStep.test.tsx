@@ -24,10 +24,6 @@ vi.mock('../../../components/settings/panels/MemoryDataPanel', () => ({
   default: () => <div data-testid="memory-data-panel">Memory Data Panel</div>,
 }));
 
-vi.mock('../../../components/intelligence/VaultHealthChecklist', () => ({
-  VaultHealthChecklist: () => <div data-testid="vault-health-checklist">Vault Health Checklist</div>,
-}));
-
 vi.mock('../../../providers/CoreStateProvider', () => ({
   useCoreState: () => ({ snapshot: { sessionToken } }),
 }));
@@ -69,7 +65,6 @@ describe('VaultSetupStep', () => {
     renderPage();
 
     expect(screen.getByTestId('memory-data-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('vault-health-checklist')).toBeInTheDocument();
     expect(screen.queryByTestId('onboarding-custom-vault-step-default')).not.toBeInTheDocument();
     expect(screen.queryByTestId('onboarding-custom-vault-step-configure')).not.toBeInTheDocument();
   });

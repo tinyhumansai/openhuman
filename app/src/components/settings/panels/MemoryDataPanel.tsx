@@ -54,22 +54,41 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
         />
       )}
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
-        <section className="rounded-xl border border-stone-200 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-900/60 p-4 space-y-2">
-          <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
-            Memory Read/Write Model
-          </h2>
-          <p className="text-xs leading-relaxed text-stone-700 dark:text-neutral-300">
-            OpenHuman writes generated notes to the workspace vault at
-            <code className="mx-1 font-mono">memory_tree/content</code>. Connected sources you add
-            (Gmail, Slack, folders, repos) are read and imported into memory; OpenHuman does not
-            rewrite those original sources.
-          </p>
-          <p className="text-xs leading-relaxed text-stone-700 dark:text-neutral-300">
-            Internal memory-tree files (indexes, queue state, summaries) are managed by OpenHuman
-            for retrieval and sync health.
-          </p>
+        <section className="rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            How memory storage works
+          </h3>
+          <dl className="space-y-2.5">
+            <div>
+              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+                Workspace vault · write
+              </dt>
+              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                OpenHuman writes generated memory notes to
+                <code className="mx-1 font-mono">memory_tree/content</code>.
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+                Connected sources · read
+              </dt>
+              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                Folders, mailboxes, chats, and repos are imported for memory indexing — their
+                original files are never rewritten.
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+                Internal memory-tree files
+              </dt>
+              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                Indexes, queue state, and summaries are managed by OpenHuman to keep recall and
+                sync healthy.
+              </dd>
+            </div>
+          </dl>
         </section>
-        <VaultHealthChecklist onToast={addToast} title="Vault Setup Health" />
+        <VaultHealthChecklist onToast={addToast} title="Vault setup health" />
         <MemoryWindowControl onError={handleWindowError} onSaved={handleWindowSaved} />
         <MemoryWorkspace onToast={addToast} />
       </div>
