@@ -2023,6 +2023,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'Pagina URL',
   'memorySources.cssSelector': 'Selettore CSS (opzionale)',
   'memorySources.searchQuery': 'Query di ricerca',
+  'memorySources.build.title': 'Costruisci',
+  'memorySources.build.building': 'Costruzione…',
+  'memorySources.build.successTitle': 'Albero costruito',
+  'memorySources.build.failedTitle': 'Costruzione fallita',
+  'memorySources.build.sealsMessage': 'sigillatura completata',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Cloud',
   'backend.recommended': 'Consigliato',
@@ -3656,6 +3661,14 @@ const messages: TranslationMap = {
     "Richiedere l'approvazione del piano di lavoro",
   'settings.agentAccess.requireTaskPlanApproval.desc':
     "Pausa prima che un agente assegnato esegua un brief del compito scritto dall'agente.",
+  'settings.agentAccess.timeout.label': "Timeout dell'azione",
+  'settings.agentAccess.timeout.desc':
+    'Per quanto tempo un singolo strumento o azione può essere eseguito prima di essere annullato. Aumenta questo valore se un modello locale di grandi dimensioni viene interrotto prima di completare la risposta.',
+  'settings.agentAccess.timeout.unit': 'secondi',
+  'settings.agentAccess.timeout.invalid':
+    "Inserisci un numero intero di secondi entro l'intervallo consentito",
+  'settings.agentAccess.timeout.envOverride':
+    "La variabile d'ambiente OPENHUMAN_TOOL_TIMEOUT_SECS sta sovrascrivendo questa impostazione, quindi le modifiche qui non avranno effetto finché non viene rimossa.",
   'settings.agentAccess.grantedFolders': 'Cartelle concesse',
   'settings.agentAccess.alwaysAllow': 'Strumenti sempre consentiti',
   'settings.agentAccess.alwaysAllowDesc':

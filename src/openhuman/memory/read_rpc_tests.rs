@@ -787,19 +787,24 @@ async fn tree_graph_includes_leaf_chunks_linked_to_their_summary() {
 
     let resp = graph_export_rpc(&cfg, GraphMode::Tree).await.unwrap().value;
 
-    // Before this fix tree mode returned only the summary node; the
-    // leaves were invisible in the UI while Obsidian showed them all.
-    assert_eq!(resp.nodes.len(), 3, "summary + both leaf chunks");
+    // 1 source root + 1 summary + 2 leaf chunks = 4 nodes.
+    assert_eq!(
+        resp.nodes.len(),
+        4,
+        "source root + summary + both leaf chunks"
+    );
+
+    let source_root = resp.nodes.iter().find(|n| n.kind == "source").unwrap();
+    assert!(source_root.id.starts_with("source:"));
 
     let summary = resp.nodes.iter().find(|n| n.kind == "summary").unwrap();
     assert_eq!(summary.id, "summary:1:L1-aaa");
+    // Orphan summary links to source root.
+    assert_eq!(summary.parent_id.as_deref(), Some(source_root.id.as_str()));
 
     let sealed = resp.nodes.iter().find(|n| n.id == "chunk-sealed").unwrap();
     assert_eq!(sealed.kind, "chunk");
-    // A chunk's parent_id == its parent summary's node id, so the UI's
-    // parent_id edge logic draws the chunk→summary link directly.
     assert_eq!(sealed.parent_id.as_deref(), Some("summary:1:L1-aaa"));
-    // Label is the trimmed first line of the chunk content.
     assert_eq!(sealed.label, "first line of sealed chunk");
 
     let orphan = resp.nodes.iter().find(|n| n.id == "chunk-orphan").unwrap();
@@ -808,8 +813,6 @@ async fn tree_graph_includes_leaf_chunks_linked_to_their_summary() {
         "unsealed chunk has no parent → renders as an orphan node"
     );
 
-    // Tree mode encodes edges via parent_id; the explicit edges array
-    // stays empty.
     assert!(resp.edges.is_empty());
 }
 
@@ -826,9 +829,10 @@ async fn tree_graph_keeps_summaries_first_then_chunks() {
     );
 
     let resp = graph_export_rpc(&cfg, GraphMode::Tree).await.unwrap().value;
-    // Summaries are emitted ahead of chunks so a budget truncation drops
-    // chunk tails, never the tree skeleton.
-    assert_eq!(resp.nodes[0].kind, "summary");
+    // Source roots are emitted first, then summaries, then chunks — so a
+    // budget truncation drops chunk tails, never the tree skeleton.
+    assert_eq!(resp.nodes[0].kind, "source");
+    assert!(resp.nodes.iter().any(|n| n.kind == "summary"));
     assert!(resp.nodes.iter().any(|n| n.kind == "chunk"));
 }
 
