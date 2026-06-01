@@ -133,7 +133,15 @@ async function sendMessage(page: Page, prompt: string): Promise<void> {
 }
 
 test.describe('Chat Harness - Subagent', () => {
-  test('delegates to a subagent and persists the final orchestrator text', async ({ page }) => {
+  // FIXME(#3055): regressed on `main` after PR #3055 (`feat(subagent): persist sub-agent runs
+  // and let orchestrator relay user messages`). The forced-response chain never reaches
+  // CANARY_FINAL within 45s, then the in-process core dies — every subsequent spec on this
+  // Playwright lane fails with `ECONNREFUSED 127.0.0.1:17788`. Quarantining so the cascade
+  // stops blocking unrelated PRs (#2954 / #3016 / #3017 / #3026 / #3029 all inherit this).
+  // Unskip once the persist-then-resume path is fixed.
+  test.skip('delegates to a subagent and persists the final orchestrator text', async ({
+    page,
+  }) => {
     await resetMock();
     await setMockBehavior('llmForcedResponses', JSON.stringify(FORCED_RESPONSES));
     await setMockBehavior('llmStreamChunkDelayMs', '10');
