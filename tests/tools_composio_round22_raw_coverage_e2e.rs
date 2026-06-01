@@ -15,7 +15,6 @@ use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use axum::{Json, Router};
-use chrono::{Duration, SecondsFormat, Utc};
 use serde_json::{json, Value};
 use tempfile::{Builder, TempDir};
 
@@ -354,6 +353,7 @@ async fn round22_cron_add_tool_covers_validation_and_markdown_edges() {
     let security = Arc::new(SecurityPolicy::from_config(
         &harness.config.autonomy,
         &harness.config.workspace_dir,
+        &harness.config.workspace_dir,
     ));
 
     harness.config.cron.enabled = false;
@@ -412,13 +412,11 @@ async fn round22_cron_add_tool_covers_validation_and_markdown_edges() {
         .output()
         .contains("delivery.to is required"));
 
-    let future_at = (Utc::now() + Duration::days(7)).to_rfc3339_opts(SecondsFormat::Secs, true);
-
     let created = tool
         .execute_with_options(
             json!({
                 "name": "round22_agent_once",
-                "schedule": { "kind": "at", "at": future_at },
+                "schedule": { "kind": "at", "at": "2099-12-31T00:00:00Z" },
                 "job_type": "agent",
                 "prompt": "collect validation notes",
                 "session_target": "main",
@@ -462,6 +460,7 @@ async fn round22_tool_registry_covers_config_gated_registration() {
 
     let security = Arc::new(SecurityPolicy::from_config(
         &harness.config.autonomy,
+        &harness.workspace,
         &harness.workspace,
     ));
     let memory: Arc<dyn Memory> = Arc::new(StubMemory);

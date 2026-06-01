@@ -667,7 +667,6 @@ async fn tool_registry_entries_include_connected_mcp_client_tools() {
 
 #[tokio::test]
 async fn tool_registry_schema_handlers_validate_and_return_payloads() {
-    let _lock = env_lock();
     let schemas = all_tool_registry_controller_schemas();
     assert_eq!(
         schemas
@@ -1163,7 +1162,8 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     let config = Config::load_or_init()
         .await
         .expect("load config for approval gate");
-    let gate = ApprovalGate::init_global(config.clone(), "session-approval-raw-e2e");
+    let test_session_id = format!("session-{}", uuid::Uuid::new_v4());
+    let gate = ApprovalGate::init_global(config.clone(), test_session_id.clone());
     let gate_for_task = gate.clone();
 
     let approval_task = tokio::spawn(async move {
@@ -1349,6 +1349,7 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             ..SecurityPolicy::default()
         }),
         config.workspace_dir.clone(),
+        config.workspace_dir.clone(),
     );
     let live_policy_auto_approved = APPROVAL_CHAT_CONTEXT
         .scope(
@@ -1440,10 +1441,10 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     }
     assert_eq!(deny_approved_id, None);
     assert!(gate.pending_for_thread("approval-deny-thread").is_none());
-    assert_eq!(gate.session_id(), "session-approval-raw-e2e");
+    assert!(gate.session_id().starts_with("session-"));
 
     let second_init = ApprovalGate::init_global(Config::default(), "session-ignored-second");
-    assert_eq!(second_init.session_id(), "session-approval-raw-e2e");
+    assert_eq!(second_init.session_id(), gate.session_id());
 
     let approval_dir = config.workspace_dir.join("approval");
     if approval_dir.exists() {

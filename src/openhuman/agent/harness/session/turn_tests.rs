@@ -1622,3 +1622,85 @@ fn bound_cached_transcript_messages_strips_multiple_trailing_envelopes() {
         "all trailing tool_calls envelopes must be stripped"
     );
 }
+
+#[test]
+fn integration_announcement_fires_once_for_new_toolkit() {
+    // Seed the announced set with the startup-connected toolkit, mirroring the
+    // turn-1 seed in `run_turn`.
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("gmail".to_string());
+
+    // A mid-session connect adds `slack`: it should be announced, and recorded
+    // so it never re-announces.
+    let connected = vec!["gmail".to_string(), "slack".to_string()];
+    let newly = newly_connected_slugs(&connected, &mut announced);
+    assert_eq!(newly, vec!["slack".to_string()]);
+    let note = integration_announcement_note(&newly)
+        .expect("a newly-connected toolkit must produce an announcement");
+    assert!(
+        note.contains("slack"),
+        "announcement must name the new toolkit slug, got: {note}"
+    );
+    assert!(
+        !note.contains("gmail"),
+        "already-announced toolkit must not be re-announced, got: {note}"
+    );
+    assert!(
+        announced.contains("slack"),
+        "the new slug must be recorded as announced"
+    );
+
+    // A second refresh with the identical connected set parks nothing — every
+    // slug is now in `announced`.
+    let second = newly_connected_slugs(&connected, &mut announced);
+    assert!(
+        second.is_empty(),
+        "an unchanged connected set must not re-surface a slug, got: {second:?}"
+    );
+    assert!(integration_announcement_note(&second).is_none());
+}
+
+#[test]
+fn integration_announcement_accumulates_two_connects_in_one_note() {
+    // Two mid-session connects between consecutive user turns must BOTH be
+    // announced — the second must not overwrite the first (#3044 regression:
+    // the old `Option<String>` field dropped the earlier note).
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("gmail".to_string());
+    let mut pending: Vec<String> = Vec::new();
+
+    // First connect: notion.
+    for slug in newly_connected_slugs(&["gmail".to_string(), "notion".to_string()], &mut announced)
+    {
+        if !pending.contains(&slug) {
+            pending.push(slug);
+        }
+    }
+    // Second connect before the user turn: slack.
+    for slug in newly_connected_slugs(
+        &[
+            "gmail".to_string(),
+            "notion".to_string(),
+            "slack".to_string(),
+        ],
+        &mut announced,
+    ) {
+        if !pending.contains(&slug) {
+            pending.push(slug);
+        }
+    }
+
+    let note = integration_announcement_note(&pending).expect("two connects must produce a note");
+    assert!(
+        note.contains("notion"),
+        "first connect must survive: {note}"
+    );
+    assert!(
+        note.contains("slack"),
+        "second connect must be present: {note}"
+    );
+    assert!(
+        !note.contains("gmail"),
+        "startup slug must not re-announce: {note}"
+    );
+}

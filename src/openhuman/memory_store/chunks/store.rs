@@ -967,6 +967,36 @@ fn delete_chunks_by_source_filter(
             )?;
         }
 
+        // A fully-orphaned source has zero chunks left, so its summary tree
+        // now summarises deleted content — and its unsealed buffer holds
+        // dangling chunk ids. Cascade-delete the tree (summaries + sidecars
+        // + entity-index + buffer + tree row) so a `clear_memory` delete is
+        // complete and stale summaries can't resurface in retrieval. Source
+        // trees use the chunk `source_id` verbatim as their scope, so we
+        // match on that. Same tx as the chunk delete → atomic.
+        for source_id in &orphaned_deleted_sources {
+            if let Some(tree) =
+                crate::openhuman::memory_store::trees::store::get_tree_by_scope_conn(
+                    &tx,
+                    crate::openhuman::memory_store::trees::types::TreeKind::Source,
+                    source_id,
+                )?
+            {
+                let cascade = crate::openhuman::memory_store::trees::store::delete_tree_cascade_tx(
+                    &tx, &tree.id,
+                )?;
+                // Defer the summary content-file removal to the same
+                // post-commit sweep as the chunk files.
+                content_paths.extend(cascade.content_paths);
+                log::debug!(
+                    "[memory::chunk_store] {op}: orphaned source_id_hash={} → deleted source tree tree_id={} summaries={}",
+                    redact_value(source_id),
+                    tree.id,
+                    cascade.removed_summaries,
+                );
+            }
+        }
+
         let deleted = chunks.len();
         tx.commit()?;
         Ok(deleted)

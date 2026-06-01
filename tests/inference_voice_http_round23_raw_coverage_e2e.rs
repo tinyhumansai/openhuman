@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
@@ -46,14 +46,14 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: tests that mutate environment variables hold env_lock().
+        // SAFETY: validation runs this integration test with --test-threads=1.
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: tests that mutate environment variables hold env_lock().
+        // SAFETY: validation runs this integration test with --test-threads=1.
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
     }
@@ -63,35 +63,33 @@ impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         match &self.previous {
             Some(value) => {
-                // SAFETY: tests that mutate environment variables hold env_lock().
+                // SAFETY: validation runs this integration test with --test-threads=1.
                 unsafe { std::env::set_var(self.key, value) }
             }
             None => {
-                // SAFETY: tests that mutate environment variables hold env_lock().
+                // SAFETY: validation runs this integration test with --test-threads=1.
                 unsafe { std::env::remove_var(self.key) }
             }
         }
     }
 }
 
-/// Process-wide lock serializing tests that mutate global environment
-/// variables through [`EnvVarGuard`]. `cargo llvm-cov` runs integration tests
-/// multi-threaded (it does not pass `--test-threads=1`), so without this guard
-/// concurrent tests can point shared inference/local-AI state at different temp
-/// workspaces, mock Ollama endpoints, or fake binaries. Each env-mutating test
-/// holds this guard for its whole body; declaring it before any `EnvVarGuard`
-/// makes it drop last, after the env is restored.
-fn env_lock() -> MutexGuard<'static, ()> {
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    ENV_LOCK
-        .get_or_init(|| Mutex::new(()))
+/// Serializes tests that mutate process-global env vars.
+///
+/// `EnvVarGuard` restores individual vars on drop, but concurrent test threads
+/// can still see each other's in-flight mutations. Holding this lock for the
+/// duration of each test prevents races on `OPENHUMAN_WORKSPACE`,
+/// `OPENHUMAN_OLLAMA_BASE_URL`, `PATH`, etc.
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .expect("env lock poisoned")
 }
 
 #[tokio::test]
 async fn http_models_and_chat_use_mocked_ollama_without_real_runtime() {
-    let _env_guard = env_lock();
+    let _lock = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -203,6 +201,7 @@ async fn http_models_and_chat_use_mocked_ollama_without_real_runtime() {
 
 #[tokio::test]
 async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
+    let _lock = env_lock();
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
     config.dictation.streaming = false;
@@ -241,7 +240,7 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
 
 #[tokio::test]
 async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries() {
-    let _env_guard = env_lock();
+    let _lock = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let scripts = tempdir().expect("scripts");

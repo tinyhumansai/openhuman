@@ -1385,6 +1385,7 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.workspace_dir,
     ));
     let memory: Arc<dyn Memory> = Arc::new(StubMemory);
     let tools = all_tools(
@@ -1605,6 +1606,14 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
 
 #[tokio::test]
 async fn orchestrator_tool_synthesis_covers_agent_and_integration_delegation_edges() {
+    // This test reads the process-global connection/toolkit registry (the
+    // integrations tool's available-toolkit list). Sibling tests mutate
+    // OPENHUMAN_WORKSPACE under env_lock; without holding it here, a concurrent
+    // workspace swap trampled our view and dropped gmail_pro/slack_bot from the
+    // unknown-toolkit suggestion (flaky only under llvm-cov's slower parallel
+    // run). Hold the same lock so this test is hermetic without serializing the
+    // whole suite.
+    let _lock = env_lock();
     let mut registry = AgentDefinitionRegistry::default();
     registry.insert(coverage_agent_definition(
         "researcher",
@@ -1720,6 +1729,7 @@ async fn browser_tool_with_agent_browser_shim_covers_action_parser_and_command_p
 
     let security = Arc::new(SecurityPolicy::from_config(
         &Config::default().autonomy,
+        dir.path(),
         dir.path(),
     ));
     let tool = BrowserTool::new_with_backend(
@@ -3152,6 +3162,7 @@ async fn proxy_config_tool_covers_temp_config_runtime_env_and_validation_paths()
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.workspace_dir,
     ));
     let tool = ProxyConfigTool::new(Arc::new(config.clone()), security);
     assert_eq!(tool.name(), "proxy_config");
@@ -3277,6 +3288,7 @@ async fn filesystem_search_and_system_probe_tools_cover_success_and_error_paths(
 
     let security = Arc::new(SecurityPolicy::from_config(
         &Config::default().autonomy,
+        dir.path(),
         dir.path(),
     ));
 
@@ -3468,6 +3480,7 @@ async fn filesystem_search_and_system_probe_tools_cover_success_and_error_paths(
     let update_apply = UpdateApplyTool::new(Arc::new(SecurityPolicy::from_config(
         &Config::default().autonomy,
         dir.path(),
+        dir.path(),
     )));
     assert_eq!(update_apply.name(), "update_apply");
     assert_eq!(update_apply.permission_level(), PermissionLevel::Dangerous);
@@ -3517,12 +3530,14 @@ async fn node_and_npm_exec_tools_cover_validation_policy_and_disabled_runtime_pa
     let full_security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.workspace_dir,
     ));
     let readonly_security = Arc::new(SecurityPolicy::from_config(
         &openhuman_core::openhuman::config::AutonomyConfig {
             level: AutonomyLevel::ReadOnly,
             ..config.autonomy.clone()
         },
+        &config.workspace_dir,
         &config.workspace_dir,
     ));
     let runtime = Arc::new(NativeRuntime::new());
@@ -3692,6 +3707,7 @@ async fn web_fetch_and_gitbooks_tools_use_local_http_backends() {
     let base = format!("http://{addr}");
     let security = Arc::new(SecurityPolicy::from_config(
         &Config::default().autonomy,
+        dir.path(),
         dir.path(),
     ));
 

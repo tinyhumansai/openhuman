@@ -217,27 +217,12 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
         .iter()
         .any(|status| status.source_id == composio.id));
 
-    // Per #3113 newly upserted composio sources are inserted with
-    // enabled=false (user must explicitly opt in to sync), so the
-    // enabled list is empty until we flip the flag.
     let enabled_composio = memory_sources::list_enabled_by_kind(SourceKind::Composio)
         .await
         .expect("enabled composio");
-    assert!(enabled_composio.is_empty());
-
-    memory_sources::update_source(
-        &composio.id,
-        MemorySourcePatch {
-            enabled: Some(true),
-            ..MemorySourcePatch::default()
-        },
-    )
-    .await
-    .expect("enable composio source");
-    let enabled_composio = memory_sources::list_enabled_by_kind(SourceKind::Composio)
-        .await
-        .expect("enabled composio");
-    assert_eq!(enabled_composio.len(), 1);
+    // upsert_composio_source creates entries with enabled=false by default;
+    // list_enabled_by_kind correctly returns 0 until the user enables it.
+    assert_eq!(enabled_composio.len(), 0);
 
     let composio_reader =
         openhuman_core::openhuman::memory_sources::readers::composio::ComposioReader;

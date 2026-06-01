@@ -215,6 +215,36 @@ export async function dismissWalkthroughIfPresent(page: Page): Promise<void> {
   }
 
   await markCompleted();
+  // Last-resort: a lingering #react-joyride-portal node will keep
+  // intercepting clicks on the page even after we've persisted the
+  // completion flag, AND React may re-mount one later (e.g. after a
+  // hash-route navigation that runs the walkthrough effect again).
+  // Strip every portal node now AND install a MutationObserver that
+  // keeps stripping any future mount for the rest of the page
+  // lifetime. The observer install is idempotent — re-runs of this
+  // helper on the same page no-op.
+  await page.evaluate(() => {
+    document.querySelectorAll('#react-joyride-portal').forEach(node => node.remove());
+    const win = window as unknown as { __openhumanJoyrideScrubInstalled?: boolean };
+    if (win.__openhumanJoyrideScrubInstalled) return;
+    win.__openhumanJoyrideScrubInstalled = true;
+    const scrub = (root: ParentNode) => {
+      root.querySelectorAll('#react-joyride-portal').forEach(node => node.remove());
+    };
+    const obs = new MutationObserver(mutations => {
+      for (const m of mutations) {
+        m.addedNodes.forEach(node => {
+          if (!(node instanceof Element)) return;
+          if (node.id === 'react-joyride-portal') {
+            node.remove();
+          } else {
+            scrub(node);
+          }
+        });
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+  });
 }
 
 async function waitForAuthenticatedSnapshot(page: Page): Promise<void> {
