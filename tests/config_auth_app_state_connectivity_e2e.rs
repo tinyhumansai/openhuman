@@ -5453,9 +5453,7 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
         .load()
         .expect("missing-access-token oauth profile should be dropped, not error");
     assert!(
-        !recovered
-            .profiles
-            .contains_key("github:missing-access"),
+        !recovered.profiles.contains_key("github:missing-access"),
         "expected missing-access-token profile to be dropped, got: {:?}",
         recovered.profiles.keys().collect::<Vec<_>>()
     );
