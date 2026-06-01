@@ -204,6 +204,9 @@ pub struct Config {
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
+    pub multimodal_files: MultimodalFileConfig,
+
+    #[serde(default)]
     pub seltz: SeltzConfig,
 
     #[serde(default)]
@@ -665,6 +668,7 @@ impl Default for Config {
             mcp_client: McpClientConfig::default(),
             capability_providers: Vec::new(),
             multimodal: MultimodalConfig::default(),
+            multimodal_files: MultimodalFileConfig::default(),
             seltz: SeltzConfig::default(),
             searxng: SearxngConfig::default(),
             web_search: WebSearchConfig::default(),

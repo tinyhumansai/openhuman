@@ -183,6 +183,7 @@ pub(crate) async fn agent_turn(
     temperature: f64,
     silent: bool,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_tool_iterations: usize,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
@@ -197,6 +198,7 @@ pub(crate) async fn agent_turn(
         silent,
         "channel",
         multimodal_config,
+        multimodal_file_config,
         max_tool_iterations,
         None,
         None,
@@ -251,6 +253,7 @@ pub(crate) async fn run_tool_call_loop(
     // approval now flows through the process-global `ApprovalGate`.
     _channel_name: &str,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     visible_tool_names: Option<&HashSet<String>>,
@@ -303,6 +306,7 @@ pub(crate) async fn run_tool_call_loop(
         temperature,
         silent,
         multimodal_config,
+        multimodal_file_config,
         max_iterations,
         on_delta,
         &[],
