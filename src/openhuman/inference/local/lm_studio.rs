@@ -187,7 +187,9 @@ pub(crate) struct LmStudioChatChoice {
 pub(crate) struct LmStudioChatResponseMessage {
     #[serde(default)]
     pub content: Option<String>,
-    #[serde(default)]
+    /// Local reasoning models expose chain-of-thought as `reasoning_content`
+    /// or `reasoning` depending on the runtime — accept both field names.
+    #[serde(default, alias = "reasoning")]
     pub reasoning_content: Option<String>,
 }
 
@@ -290,5 +292,14 @@ mod tests {
             reasoning_content: None,
         };
         assert_eq!(msg.effective_content(), "Visible reply");
+    }
+
+    #[test]
+    fn reasoning_content_accepts_reasoning_alias() {
+        // Local runtimes that name the field `reasoning` must still be captured
+        // (issue #3094) so reasoning round-trips like the canonical field.
+        let msg: LmStudioChatResponseMessage =
+            serde_json::from_str(r#"{"content":null,"reasoning":"local cot"}"#).unwrap();
+        assert_eq!(msg.reasoning_content.as_deref(), Some("local cot"));
     }
 }

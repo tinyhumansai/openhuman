@@ -4,7 +4,7 @@ use openhuman_core::openhuman::agent::bus::{
     register_agent_handlers, AgentTurnRequest, AgentTurnResponse, AGENT_RUN_TURN_METHOD,
 };
 use openhuman_core::openhuman::agent::progress::AgentProgress;
-use openhuman_core::openhuman::config::MultimodalConfig;
+use openhuman_core::openhuman::config::{MultimodalConfig, MultimodalFileConfig};
 use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
 use openhuman_core::openhuman::inference::provider::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderDelta, UsageInfo,
@@ -218,6 +218,7 @@ async fn run_turn(
             silent: true,
             channel_name: "round22".to_string(),
             multimodal: MultimodalConfig::default(),
+            multimodal_files: MultimodalFileConfig::default(),
             max_tool_iterations,
             on_delta,
             target_agent_id: Some("orchestrator".to_string()),

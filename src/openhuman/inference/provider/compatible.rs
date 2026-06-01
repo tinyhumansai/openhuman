@@ -417,10 +417,18 @@ impl OpenAiCompatibleProvider {
                                         })
                                         .collect::<Vec<_>>();
 
-                                    let content = value
-                                        .get("content")
-                                        .and_then(serde_json::Value::as_str)
-                                        .map(ToString::to_string);
+                                    // Default to empty string (not None) for
+                                    // tool-call assistant messages so the wire
+                                    // emits `"content":""` rather than omitting
+                                    // the key — some providers reject a missing
+                                    // content alongside reasoning_content.
+                                    let content = Some(
+                                        value
+                                            .get("content")
+                                            .and_then(serde_json::Value::as_str)
+                                            .unwrap_or("")
+                                            .to_string(),
+                                    );
 
                                     // Replay the assistant's reasoning so
                                     // DeepSeek thinking mode accepts the
@@ -556,6 +564,14 @@ impl OpenAiCompatibleProvider {
                 pruned_calls += before - kept.len();
                 let kept_ids: HashSet<String> = kept.iter().filter_map(|c| c.id.clone()).collect();
                 msg.tool_calls = if kept.is_empty() { None } else { Some(kept) };
+                // Strip reasoning_content when the message collapses to plain
+                // text (no surviving tool_calls). Thinking-mode providers
+                // (DeepSeek) require reasoning only on tool-call assistant
+                // messages; a stale reasoning_content on a non-tool-call
+                // message is at best ignored and at worst a malformed shape.
+                if msg.tool_calls.is_none() {
+                    msg.reasoning_content = None;
+                }
                 out.push(msg);
 
                 // Emit the run's responses that map to a surviving call; drop the
@@ -1636,6 +1652,13 @@ impl Provider for OpenAiCompatibleProvider {
                 })
             })
             .collect::<Vec<_>>();
+
+        tracing::debug!(
+            has_reasoning_content = reasoning_content.is_some(),
+            reasoning_content_chars = reasoning_content.as_ref().map_or(0, |r| r.chars().count()),
+            tool_calls = tool_calls.len(),
+            "[provider:chat] reasoning_content capture (non-streaming)"
+        );
 
         Ok(ProviderChatResponse {
             text,
