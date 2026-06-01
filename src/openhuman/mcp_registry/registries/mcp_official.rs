@@ -157,7 +157,7 @@ impl Registry for McpOfficialRegistry {
             }
         };
 
-        let body = fetch_page(q, limit, cursor_for_request.as_deref()).await?;
+        let body = fetch_page(config, q, limit, cursor_for_request.as_deref()).await?;
         let parsed: OfficialListResponse = serde_json::from_str(&body)
             .with_context(|| format!("Failed to parse MCP official response: {body}"))?;
         let next_cursor = parsed.next_cursor().map(str::to_string);
@@ -187,11 +187,14 @@ impl Registry for McpOfficialRegistry {
         let client = http_client()?;
         let url = format!(
             "{}/v0/servers/{}",
-            base_url(),
+            base_url(config),
             urlencoding_encode(qualified_name)
         );
         tracing::debug!("[mcp-official] get fetching {url}");
-        let req = apply_auth(client.get(&url).header("Accept", "application/json"));
+        let req = apply_auth(
+            config,
+            client.get(&url).header("Accept", "application/json"),
+        );
 
         let resp = req.send().await.context("MCP official get failed")?;
         let status = resp.status();
@@ -214,7 +217,7 @@ impl Registry for McpOfficialRegistry {
 /// Fetch one page from the registry, optionally with a cursor. Returns the
 /// raw response body so callers can both parse it and write it to the SQLite
 /// response cache.
-async fn fetch_page(q: &str, limit: u32, cursor: Option<&str>) -> Result<String> {
+async fn fetch_page(config: &Config, q: &str, limit: u32, cursor: Option<&str>) -> Result<String> {
     // `q` is user-typed search input — log presence + length only so the
     // diagnostic doesn't leak query text into log aggregators.
     tracing::debug!(
@@ -225,7 +228,7 @@ async fn fetch_page(q: &str, limit: u32, cursor: Option<&str>) -> Result<String>
     );
 
     let client = http_client()?;
-    let url = format!("{}/v0/servers", base_url());
+    let url = format!("{}/v0/servers", base_url(config));
     let mut req = client.get(&url).header("Accept", "application/json");
     if !q.is_empty() {
         req = req.query(&[("search", q)]);
@@ -234,7 +237,7 @@ async fn fetch_page(q: &str, limit: u32, cursor: Option<&str>) -> Result<String>
     if let Some(c) = cursor {
         req = req.query(&[("cursor", c)]);
     }
-    req = apply_auth(req);
+    req = apply_auth(config, req);
 
     let resp = req.send().await.context("MCP official search failed")?;
     let status = resp.status();
@@ -302,7 +305,7 @@ async fn walk_cursor_for_page(
                 body
             }
             _ => {
-                let body = fetch_page(q, limit, cursor.as_deref()).await?;
+                let body = fetch_page(config, q, limit, cursor.as_deref()).await?;
                 let _ = store::set_cached(config, &cache_key, &body);
                 net_fetches += 1;
                 body
@@ -359,21 +362,43 @@ fn http_client() -> Result<Client> {
         .context("Failed to build MCP official HTTP client")
 }
 
-fn base_url() -> String {
-    std::env::var("MCP_OFFICIAL_REGISTRY_BASE")
-        .ok()
-        .filter(|s| !s.is_empty())
+/// Effective official-registry base URL: config-first
+/// (`mcp_client.registry_auth.mcp_official_base`), then the
+/// `MCP_OFFICIAL_REGISTRY_BASE` env var, then the hard-coded default
+/// (issue #3039 gap A6).
+fn base_url(config: &Config) -> String {
+    config
+        .mcp_client
+        .registry_auth
+        .mcp_official_base
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("MCP_OFFICIAL_REGISTRY_BASE")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
         .unwrap_or_else(|| DEFAULT_BASE.to_string())
 }
 
-fn auth_token() -> Option<String> {
-    std::env::var("MCP_OFFICIAL_REGISTRY_TOKEN")
-        .ok()
-        .filter(|s| !s.is_empty())
+/// Effective official-registry bearer token: config-first, then the
+/// `MCP_OFFICIAL_REGISTRY_TOKEN` env var (issue #3039 gap A6).
+pub(crate) fn auth_token(config: &Config) -> Option<String> {
+    config
+        .mcp_client
+        .registry_auth
+        .mcp_official_token
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("MCP_OFFICIAL_REGISTRY_TOKEN")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
 }
 
-fn apply_auth(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-    if let Some(token) = auth_token() {
+fn apply_auth(config: &Config, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    if let Some(token) = auth_token(config) {
         builder.bearer_auth(token)
     } else {
         builder
@@ -715,5 +740,28 @@ mod tests {
             serde_json::from_value::<OfficialListResponse>(renamed).is_err(),
             "renamed `server` field must surface as parse error"
         );
+    }
+
+    /// A config-set base URL overrides both the env var and the default
+    /// (issue #3039 gap A6: config-first, env-fallback).
+    #[test]
+    fn base_url_prefers_config_override() {
+        let mut config = crate::openhuman::config::Config::default();
+        config.mcp_client.registry_auth.mcp_official_base =
+            Some("https://registry.example.test".to_string());
+        assert_eq!(base_url(&config), "https://registry.example.test");
+
+        // A blank config value is ignored (falls back to env / default) —
+        // asserted env-independently so an ambient env override can't flake it.
+        config.mcp_client.registry_auth.mcp_official_base = Some("   ".to_string());
+        assert_ne!(base_url(&config), "   ");
+    }
+
+    /// A config-set token is returned without touching the env var.
+    #[test]
+    fn auth_token_prefers_config_override() {
+        let mut config = crate::openhuman::config::Config::default();
+        config.mcp_client.registry_auth.mcp_official_token = Some("tok-config".to_string());
+        assert_eq!(auth_token(&config).as_deref(), Some("tok-config"));
     }
 }

@@ -26,7 +26,7 @@ use openhuman_core::openhuman::memory::jobs::drain_until_idle;
 use openhuman_core::openhuman::memory_sync::canonicalize::chat::{ChatBatch, ChatMessage};
 use openhuman_core::openhuman::memory_sync::canonicalize::email::{EmailMessage, EmailThread};
 use openhuman_core::openhuman::tools::{
-    MemoryTreeFetchLeavesTool, MemoryTreeQueryTopicTool, MemoryTreeSearchEntitiesTool, Tool,
+    MemoryTreeFetchLeavesTool, MemoryTreeSearchEntitiesTool, Tool,
 };
 use serde_json::{json, Value};
 use tempfile::TempDir;
@@ -186,161 +186,6 @@ fn orchestrator_lists_memory_tree_tools() {
             "orchestrator agent.toml must NOT list '{old_name}' — removed in #1141 (use 'memory_tree' with mode= dispatch)"
         );
     }
-}
-
-#[tokio::test]
-async fn orchestrator_query_topic_tool_returns_alice_phoenix_hits() {
-    let (tmp, cfg) = test_config();
-
-    // ── Ingest the email thread + drain async extract jobs so the entity
-    //    index is fully populated before retrieval.
-    ingest_email(
-        &cfg,
-        "gmail:thread-phoenix-1",
-        "alice",
-        vec![],
-        alice_phoenix_thread(),
-    )
-    .await
-    .expect("ingest_email should succeed");
-    drain_until_idle(&cfg)
-        .await
-        .expect("job queue should drain cleanly");
-
-    // Set workspace dir so config_rpc::load_config_with_timeout() inside the
-    // tool resolves to the same workspace we just ingested into. The tool
-    // wrappers always go through that loader (mirrors the production RPC
-    // handlers in retrieval/schemas.rs).
-    //
-    // Pointing OPENHUMAN_WORKSPACE at `tmp` (not `tmp/workspace`) makes
-    // `resolve_config_dir_for_workspace` derive `tmp/workspace` as the
-    // resolved workspace_dir — matching what we already passed into
-    // `ingest_email` via `cfg.workspace_dir`.
-    let _ws_guard = set_workspace_env(&tmp);
-
-    // ── 1. search_entities resolves "alice" → email:alice@example.com.
-    //    Mirrors the orchestrator prompt's "ALWAYS call this first when
-    //    the user mentions someone by name" flow.
-    let search = MemoryTreeSearchEntitiesTool;
-    let search_args = json!({"query": "alice"});
-    let search_res = search
-        .execute(search_args)
-        .await
-        .expect("search_entities should not error");
-    assert!(
-        !search_res.is_error,
-        "search_entities returned an error result: {}",
-        search_res.output()
-    );
-    let search_json: Value =
-        serde_json::from_str(&search_res.output()).expect("search output must be valid JSON");
-    let matches = search_json
-        .as_array()
-        .expect("search_entities returns an array of EntityMatch");
-    let alice = matches
-        .iter()
-        .find(|m| m.get("canonical_id").and_then(|v| v.as_str()) == Some("email:alice@example.com"))
-        .unwrap_or_else(|| panic!("search_entities did not return alice; got: {search_json:?}"));
-    assert!(
-        alice
-            .get("mention_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
-            >= 1,
-        "alice should have at least one mention"
-    );
-
-    // ── 2. query_topic on alice's canonical id returns at least one hit
-    //    referencing both her email and the phoenix migration content.
-    let topic_tool = MemoryTreeQueryTopicTool;
-    let topic_args = json!({"entity_id": "email:alice@example.com"});
-    let topic_res = topic_tool
-        .execute(topic_args)
-        .await
-        .expect("query_topic should not error");
-    assert!(
-        !topic_res.is_error,
-        "query_topic returned an error result: {}",
-        topic_res.output()
-    );
-    let topic_json: Value =
-        serde_json::from_str(&topic_res.output()).expect("topic output must be valid JSON");
-    let hits = topic_json
-        .get("hits")
-        .and_then(|v| v.as_array())
-        .expect("query_topic must include `hits` array");
-    assert!(
-        !hits.is_empty(),
-        "query_topic returned zero hits — expected at least one for alice"
-    );
-    // Returning ANY hit at all from `query_topic("email:alice@example.com")`
-    // proves the entity index resolved the canonical id and hydrated nodes
-    // back. The leaf-level `entities` field on a chunk hit isn't populated
-    // synchronously by ingest — entity extraction lives in a separate async
-    // job stage that may not have populated leaf rows. Instead we assert on
-    // the hydrated content + source_ref so we still catch a regression where
-    // the chunk lookup returns garbage.
-    let any_phoenix = hits.iter().any(|h| {
-        h.get("content")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_lowercase()
-            .contains("phoenix")
-    });
-    assert!(
-        any_phoenix,
-        "expected at least one query_topic hit with phoenix content; got: {topic_json:#}"
-    );
-    let any_source_ref = hits
-        .iter()
-        .any(|h| h.get("source_ref").and_then(|v| v.as_str()).is_some());
-    assert!(
-        any_source_ref,
-        "expected at least one hit to carry a `source_ref` for citation; got: {topic_json:#}"
-    );
-
-    // ── 3. fetch_leaves hydrates a leaf chunk — proves the citation path
-    //    (LLM picks an id from a query_* hit, calls fetch_leaves to get
-    //    the verbatim content + source_ref).
-    let leaf_id = hits
-        .iter()
-        .find_map(|h| {
-            if h.get("node_kind").and_then(|v| v.as_str()) == Some("leaf") {
-                h.get("node_id")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-            } else {
-                None
-            }
-        })
-        .expect("alice's topic hits should include at least one leaf");
-    let fetch_tool = MemoryTreeFetchLeavesTool;
-    let fetch_args = json!({"chunk_ids": [leaf_id.clone()]});
-    let fetch_res = fetch_tool
-        .execute(fetch_args)
-        .await
-        .expect("fetch_leaves should not error");
-    assert!(
-        !fetch_res.is_error,
-        "fetch_leaves returned an error result: {}",
-        fetch_res.output()
-    );
-    let fetched: Value =
-        serde_json::from_str(&fetch_res.output()).expect("fetch output must be valid JSON");
-    let fetched_arr = fetched.as_array().expect("fetch_leaves returns array");
-    assert_eq!(
-        fetched_arr.len(),
-        1,
-        "fetch_leaves should hydrate exactly the requested chunk"
-    );
-    let content = fetched_arr[0]
-        .get("content")
-        .and_then(|v| v.as_str())
-        .expect("fetched leaf must carry content");
-    assert!(
-        !content.is_empty(),
-        "fetched leaf content must not be empty"
-    );
 }
 
 // ── Cross-chat retrieval: chat A seeds facts; retrieve from chat B ──────────
@@ -509,41 +354,25 @@ async fn fetch_leaves_hydrates_source_ref_for_cited_chunks() {
 
     let _ws_guard = set_workspace_env(&tmp);
 
-    // query_topic for alice's entity to get chunk hits with their ids.
-    let topic_tool = MemoryTreeQueryTopicTool;
-    let topic_res = topic_tool
-        .execute(json!({"entity_id": "email:alice@example.com"}))
-        .await
-        .expect("query_topic must not error");
-    assert!(
-        !topic_res.is_error,
-        "query_topic error: {}",
-        topic_res.output()
-    );
+    // List the ingested chunks directly to get leaf chunk ids with their refs.
+    let chunks = openhuman_core::openhuman::memory_store::chunks::store::list_chunks(
+        &cfg,
+        &openhuman_core::openhuman::memory_store::chunks::store::ListChunksQuery::default(),
+    )
+    .expect("list_chunks must not error");
 
-    let topic_json: Value = serde_json::from_str(&topic_res.output()).unwrap();
-    let hits = topic_json
-        .get("hits")
-        .and_then(|v| v.as_array())
-        .expect("query_topic response must have hits array");
+    assert!(!chunks.is_empty(), "ingest must produce at least one chunk");
 
-    assert!(!hits.is_empty(), "query_topic must return at least one hit");
-
-    // Collect the first leaf chunk id.
-    let leaf_ids: Vec<String> = hits
+    // Collect the first couple of leaf chunk ids.
+    let leaf_ids: Vec<String> = chunks
         .iter()
-        .filter(|h| h.get("node_kind").and_then(|v| v.as_str()) == Some("leaf"))
-        .filter_map(|h| {
-            h.get("node_id")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
+        .map(|chunk| chunk.id.clone())
         .take(2)
         .collect();
 
     assert!(
         !leaf_ids.is_empty(),
-        "at least one leaf hit required for fetch_leaves provenance test"
+        "at least one leaf chunk required for fetch_leaves provenance test"
     );
 
     // fetch_leaves by chunk_ids and assert source_ref is populated.

@@ -67,8 +67,9 @@ fn schemas_unknown_function_returns_placeholder() {
 #[test]
 fn all_controller_schemas_covers_expected_methods() {
     let schemas = all_controller_schemas();
-    // 10 mcp_clients + 6 mcp_setup
-    assert_eq!(schemas.len(), 16);
+    // 13 mcp_clients (incl. update_env + registry_settings_get/set, #3039)
+    // + 6 mcp_setup.
+    assert_eq!(schemas.len(), 19);
     let mcp_clients_count = schemas
         .iter()
         .filter(|s| s.namespace == "mcp_clients")
@@ -77,14 +78,19 @@ fn all_controller_schemas_covers_expected_methods() {
         .iter()
         .filter(|s| s.namespace == "mcp_setup")
         .count();
-    assert_eq!(mcp_clients_count, 10);
+    assert_eq!(mcp_clients_count, 13);
     assert_eq!(mcp_setup_count, 6);
+    // The #3039 additions are present.
+    let functions: Vec<_> = schemas.iter().map(|s| s.function).collect();
+    assert!(functions.contains(&"update_env"));
+    assert!(functions.contains(&"registry_settings_get"));
+    assert!(functions.contains(&"registry_settings_set"));
 }
 
 #[test]
 fn all_registered_controllers_has_handler_per_schema() {
     let controllers = all_registered_controllers();
-    assert_eq!(controllers.len(), 16);
+    assert_eq!(controllers.len(), 19);
 }
 
 #[test]

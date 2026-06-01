@@ -10,8 +10,10 @@ use std::sync::Arc;
 use tempfile::TempDir;
 
 async fn test_config(tmp: &TempDir) -> Config {
+    let ws = tmp.path().join("workspace");
     let config = Config {
-        workspace_dir: tmp.path().join("workspace"),
+        workspace_dir: ws.clone(),
+        action_dir: ws.clone(),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };
@@ -114,7 +116,11 @@ async fn run_job_command_success() {
     let tmp = TempDir::new().unwrap();
     let config = test_config(&tmp).await;
     let job = test_job("echo scheduler-ok");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) = run_job_command(&config, &security, &job).await;
     assert!(success);
@@ -134,7 +140,11 @@ async fn run_job_command_failure() {
     // Linux, so this keeps CI behaviour identical while making
     // local dev runs deterministic.
     let job = test_job("/bin/ls definitely_missing_file_for_scheduler_test");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) = run_job_command(&config, &security, &job).await;
     assert!(!success);
@@ -150,7 +160,11 @@ async fn run_job_command_times_out() {
     config.autonomy.allowed_commands = vec!["sleep".into()];
     // Pin `/bin/sleep` — see note on `run_job_command_failure` for why.
     let job = test_job("/bin/sleep 1");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) =
         run_job_command_with_timeout(&config, &security, &job, Duration::from_millis(50)).await;
@@ -164,7 +178,11 @@ async fn run_job_command_blocks_disallowed_command() {
     let mut config = test_config(&tmp).await;
     config.autonomy.allowed_commands = vec!["echo".into()];
     let job = test_job("curl https://evil.example");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) = run_job_command(&config, &security, &job).await;
     assert!(!success);
@@ -178,7 +196,11 @@ async fn run_job_command_blocks_forbidden_path_argument() {
     let mut config = test_config(&tmp).await;
     config.autonomy.allowed_commands = vec!["cat".into()];
     let job = test_job("cat /etc/passwd");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) = run_job_command(&config, &security, &job).await;
     assert!(!success);
@@ -193,7 +215,11 @@ async fn run_job_command_blocks_readonly_mode() {
     let mut config = test_config(&tmp).await;
     config.autonomy.level = crate::openhuman::security::AutonomyLevel::ReadOnly;
     let job = test_job("echo should-not-run");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) = run_job_command(&config, &security, &job).await;
     assert!(!success);
@@ -207,7 +233,11 @@ async fn run_job_command_blocks_rate_limited() {
     let mut config = test_config(&tmp).await;
     config.autonomy.max_actions_per_hour = 0;
     let job = test_job("echo should-not-run");
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     let (success, output) = run_job_command(&config, &security, &job).await;
     assert!(!success);
@@ -223,7 +253,11 @@ async fn execute_job_with_retry_recovers_after_first_failure() {
     config.reliability.scheduler_retries = 1;
     config.reliability.provider_backoff_ms = 1;
     config.autonomy.allowed_commands = vec!["retry-once.sh".into()];
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     // Pin absolute paths inside the script too — some dev
     // environments have a homebrew `touch` on PATH that macOS
@@ -254,7 +288,11 @@ async fn execute_job_with_retry_exhausts_attempts() {
     let mut config = test_config(&tmp).await;
     config.reliability.scheduler_retries = 1;
     config.reliability.provider_backoff_ms = 1;
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security = SecurityPolicy::from_config(
+        &config.autonomy,
+        &config.workspace_dir,
+        &config.workspace_dir,
+    );
 
     // Pin `/bin/ls` — see note on `run_job_command_failure`.
     let job = test_job("/bin/ls always_missing_for_retry_test");
@@ -331,6 +369,7 @@ async fn scheduler_flow_runs_active_hours_job_and_reschedules_inside_window() {
 
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
+        &config.workspace_dir,
         &config.workspace_dir,
     ));
     process_due_jobs(&config, &security, vec![job.clone()]).await;

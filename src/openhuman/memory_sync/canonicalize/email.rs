@@ -105,6 +105,7 @@ pub fn canonicalise(
             time_range: (first_ts, last_ts),
             tags: tags.to_vec(),
             source_ref,
+            path_scope: None,
         },
     }))
 }

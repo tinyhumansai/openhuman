@@ -45,7 +45,7 @@ import {
   levelColor,
   nodeColor,
   nodeRadius,
-  supportsWebGL,
+  SOURCE_COLOR,
   VIEWPORT_H,
   VIEWPORT_W,
   ZOOM_MAX,
@@ -54,8 +54,18 @@ import {
 import { summaryWorkspacePath } from './memoryWorkspacePaths';
 import { PixiGraph } from './PixiGraph';
 
-/** Detected once — WebGL availability decides Pixi vs the SVG fallback. */
-const HAS_WEBGL = supportsWebGL();
+/** Use WebGL (Pixi) in production; fall back to SVG in test (jsdom). */
+const HAS_WEBGL =
+  typeof document !== 'undefined' &&
+  typeof document.createElement === 'function' &&
+  (() => {
+    try {
+      const c = document.createElement('canvas');
+      return !!(c.getContext('webgl2') || c.getContext('webgl'));
+    } catch {
+      return false;
+    }
+  })();
 
 interface SimNode extends GraphNode {
   x: number;
@@ -357,6 +367,9 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
   const legend =
     mode === 'tree'
       ? [
+          ...(nodes.some(n => n.kind === 'source')
+            ? [{ label: t('graph.source', 'Source'), color: SOURCE_COLOR }]
+            : []),
           ...Array.from(new Set(nodes.filter(n => n.kind === 'summary').map(n => n.level ?? 0)))
             .sort((a, b) => a - b)
             .map(lvl => ({ label: `L${lvl}`, color: levelColor(lvl) })),
@@ -486,7 +499,11 @@ export function MemoryGraph({ nodes, edges, mode, emptyHint }: MemoryGraphProps)
         <div
           className="border-t border-stone-100 dark:border-neutral-800 bg-stone-50/70 dark:bg-neutral-900/70 px-4 py-2 text-xs text-stone-700 dark:text-neutral-200"
           data-testid="memory-graph-tooltip">
-          {hovered.kind === 'summary' ? (
+          {hovered.kind === 'source' ? (
+            <span className="font-medium text-orange-600 dark:text-orange-400">
+              {hovered.label}
+            </span>
+          ) : hovered.kind === 'summary' ? (
             <>
               <span className="font-mono">L{hovered.level ?? '?'}</span>
               <span className="text-stone-400 dark:text-neutral-500"> · </span>
