@@ -225,7 +225,28 @@ pub struct Agent {
     ///
     /// Populated by `refresh_delegation_tools` itself; empty at
     /// construction time.
+    ///
+    /// Invariant: this tracks the names whose **`tool_specs`** are currently
+    /// live. `tool_specs` reconcile on every refresh (they're cloneable
+    /// data), so this set always equals the most recent synthesised set —
+    /// even when the executable `tools` Vec could not be reconciled because
+    /// its `Arc` was shared. Removing stale `tools` entries is tracked
+    /// separately by [`Self::pending_synthesized_tools_mask`].
     pub(super) synthesized_tool_names: std::collections::HashSet<String>,
+    /// Names of synthesised tool *instances* still present in [`Agent::tools`]
+    /// that a future unique-owner refresh must drop.
+    ///
+    /// When `refresh_delegation_tools` updates `tool_specs` but cannot
+    /// reconcile `tools` (the `Arc` is shared — the normal case while
+    /// `AgentToolSource` holds a clone during `before_dispatch`), the
+    /// previously-synthesised tool objects remain in `tools`. Their names are
+    /// accumulated here so the next refresh that *does* own `tools` uniquely
+    /// removes them — instead of overloading `synthesized_tool_names` (which
+    /// must stay in sync with `tool_specs`) and corrupting the spec
+    /// reconciliation on the following refresh (duplicate `ToolSpec`s, #3044).
+    ///
+    /// Empty at construction time and whenever `tools` is fully reconciled.
+    pub(super) pending_synthesized_tools_mask: std::collections::HashSet<String>,
 }
 
 /// A builder for creating `Agent` instances with custom configuration.

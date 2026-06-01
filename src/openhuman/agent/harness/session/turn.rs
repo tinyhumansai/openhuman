@@ -1326,11 +1326,13 @@ impl Agent {
             return true;
         }
 
-        // Mask used to drop the previous synthesis.
+        // Mask of the previous synthesis — the names whose `tool_specs` are
+        // currently live (this set is kept in lock-step with `tool_specs`).
         let old_synth = std::mem::take(&mut self.synthesized_tool_names);
 
         // `tool_specs` are plain data and therefore cloneable; we can always
-        // reconcile schema even when the Arc is shared.
+        // reconcile schema even when the Arc is shared. Drop exactly the
+        // previous synthesised spec set, then append the fresh one.
         {
             let specs_vec = Arc::make_mut(&mut self.tool_specs);
             specs_vec.retain(|s| !old_synth.contains(&s.name));
@@ -1338,25 +1340,36 @@ impl Agent {
         }
 
         // `tools` contains non-cloneable trait objects. Reconcile it only when
-        // uniquely owned.
+        // uniquely owned. The set of stale synthesised *instances* to drop is
+        // the previous synthesis (`old_synth`) plus any instances a prior
+        // shared-Arc refresh couldn't remove (`pending_synthesized_tools_mask`).
+        let tools_remove_mask: std::collections::HashSet<String> = old_synth
+            .iter()
+            .chain(self.pending_synthesized_tools_mask.iter())
+            .cloned()
+            .collect();
         let tools_reconciled = if let Some(tools_vec) = Arc::get_mut(&mut self.tools) {
-            tools_vec.retain(|t| !old_synth.contains(t.name()));
+            tools_vec.retain(|t| !tools_remove_mask.contains(t.name()));
             tools_vec.extend(synthed);
+            // `tools` now matches `tool_specs` exactly — nothing pending.
+            self.pending_synthesized_tools_mask.clear();
             true
         } else {
+            // Schema (`tool_specs`) was updated to the new set, but the stale
+            // tool *instances* still sit in `self.tools`. Record their names
+            // so the next unique-owner refresh removes them. Crucially we do
+            // NOT roll `synthesized_tool_names` back to `old_synth` here — that
+            // would desync it from `tool_specs` and cause duplicate specs on
+            // the following refresh (#3044).
+            self.pending_synthesized_tools_mask = tools_remove_mask;
             log::warn!(
                 "[agent] refresh_delegation_tools: tools Arc is shared — refreshed schema only \
-                 ({} synthesised tool name(s)); executable tool instances will reconcile on the next unique-owner refresh",
-                synthed_names.len()
+                 ({} synthesised tool name(s)); {} stale tool instance(s) pending removal on the next unique-owner refresh",
+                synthed_names.len(),
+                self.pending_synthesized_tools_mask.len()
             );
             false
         };
-
-        if !tools_reconciled {
-            // Keep the old tool-name mask so a later unique-owner refresh can
-            // still remove the stale synthesized tool objects from `self.tools`.
-            self.synthesized_tool_names = old_synth.clone();
-        }
 
         // `visible_tool_names` carries an explicit allowlist for
         // [`ToolScope::Named`] agents. Drop the previously-synthesised
@@ -1396,18 +1409,20 @@ impl Agent {
             .cloned()
             .collect();
 
-        if tools_reconciled {
-            self.synthesized_tool_names = synthed_names.clone();
-        }
+        // `tool_specs` always reconciled to the new set, so the name mask must
+        // track that set unconditionally — whether or not `tools` (the
+        // executable instances) could be reconciled this pass.
+        self.synthesized_tool_names = synthed_names.clone();
 
         log::info!(
-            "[agent] refresh_delegation_tools: reconciled delegation schema for agent '{}' (display='{}'); now {} synthesised tool name(s); added={:?} removed={:?} tools_reconciled={}",
+            "[agent] refresh_delegation_tools: reconciled delegation schema for agent '{}' (display='{}'); now {} synthesised tool name(s); added={:?} removed={:?} tools_reconciled={} pending_tool_instances={}",
             self.agent_definition_id,
             self.agent_definition_name,
             synthed_names.len(),
             added,
             removed,
-            tools_reconciled
+            tools_reconciled,
+            self.pending_synthesized_tools_mask.len()
         );
         true
     }

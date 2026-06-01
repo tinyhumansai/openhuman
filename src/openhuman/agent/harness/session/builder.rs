@@ -618,6 +618,7 @@ impl AgentBuilder {
             pending_integration_announcement: None,
             archivist_hook: self.archivist_hook,
             synthesized_tool_names: std::collections::HashSet::new(),
+            pending_synthesized_tools_mask: std::collections::HashSet::new(),
         })
     }
 }
