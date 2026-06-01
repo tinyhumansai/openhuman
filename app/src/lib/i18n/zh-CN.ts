@@ -218,7 +218,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': '命令',
   'nav.routines': 'Routines',
   'chat.newThread': '新对话',
-  'chat.typeMessage': '输入消息...',
+  'chat.typeMessage': '今天我能帮您做什么？',
   'chat.send': '发送',
   'chat.thinking': '思考中...',
   'chat.noMessages': '暂无消息',
@@ -4226,6 +4226,12 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
+
+  // Chat composer toolbar
+  'composer.attachFile': '附加文件',
+  'composer.modelSelector': '模型',
+  'composer.voiceMode': '语音模式',
+  'composer.qualityHigh': '高',
 };
 
 export default messages;

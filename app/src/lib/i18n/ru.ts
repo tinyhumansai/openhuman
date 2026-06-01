@@ -230,7 +230,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Команда',
   'nav.routines': 'Routines',
   'chat.newThread': 'Новый чат',
-  'chat.typeMessage': 'Введи сообщение...',
+  'chat.typeMessage': 'Чем я могу помочь тебе сегодня?',
   'chat.send': 'Отправить сообщение',
   'chat.thinking': 'Думаю...',
   'chat.noMessages': 'Сообщений пока нет',
@@ -4482,6 +4482,12 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+
+  // Chat composer toolbar
+  'composer.attachFile': 'Прикрепить файл',
+  'composer.modelSelector': 'Модель',
+  'composer.voiceMode': 'Голосовой режим',
+  'composer.qualityHigh': 'Высокое',
 };
 
 export default messages;

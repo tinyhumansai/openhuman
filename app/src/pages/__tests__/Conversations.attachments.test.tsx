@@ -194,7 +194,7 @@ async function renderWithSelectedThread() {
     </Provider>
   );
 
-  const textarea = await screen.findByPlaceholderText('Type a message...');
+  const textarea = await screen.findByPlaceholderText('How can I help you today?');
   return { store, textarea, thread };
 }
 
@@ -220,9 +220,9 @@ describe('Conversations — attachment feature', () => {
     });
   });
 
-  it('renders the paperclip button in the composer', async () => {
+  it('renders the attachment button in the composer', async () => {
     await renderWithSelectedThread();
-    expect(screen.getByTitle('Attach image')).toBeInTheDocument();
+    expect(screen.getByTitle('Attach file')).toBeInTheDocument();
   });
 
   it('shows attachment chip after selecting a valid image file', async () => {

@@ -228,7 +228,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'कमान',
   'nav.routines': 'Routines',
   'chat.newThread': 'नई थ्रेड',
-  'chat.typeMessage': 'मैसेज टाइप करें...',
+  'chat.typeMessage': 'आज मैं आपकी कैसे मदद कर सकता हूँ?',
   'chat.send': 'मैसेज भेजें',
   'chat.thinking': 'सोच रहा है...',
   'chat.noMessages': 'अभी कोई मैसेज नहीं',
@@ -4446,6 +4446,12 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+
+  // Chat composer toolbar
+  'composer.attachFile': 'फ़ाइल संलग्न करें',
+  'composer.modelSelector': 'मॉडल',
+  'composer.voiceMode': 'वॉइस मोड',
+  'composer.qualityHigh': 'उच्च',
 };
 
 export default messages;

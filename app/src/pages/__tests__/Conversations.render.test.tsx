@@ -267,7 +267,7 @@ async function renderSelectedConversation(
     });
   });
 
-  const textarea = await screen.findByPlaceholderText('Type a message...');
+  const textarea = await screen.findByPlaceholderText('How can I help you today?');
   return { store: renderedStore, textarea, thread };
 }
 
@@ -631,7 +631,7 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     await act(async () => {
       await renderConversations({ thread: emptyThreadState, socket: socketState('connected') });
     });
-    const textarea = await screen.findByPlaceholderText('Type a message...');
+    const textarea = await screen.findByPlaceholderText('How can I help you today?');
     vi.mocked(threadApi.createNewThread).mockClear();
     vi.mocked(chatSend).mockClear();
 

@@ -237,7 +237,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Kommandant',
   'nav.routines': 'Routines',
   'chat.newThread': 'Neuer Thread',
-  'chat.typeMessage': 'Gib eine Nachricht ein...',
+  'chat.typeMessage': 'Wie kann ich dir heute helfen?',
   'chat.send': 'Nachricht senden',
   'chat.thinking': 'Denken...',
   'chat.noMessages': 'Noch keine Nachrichten',
@@ -4556,6 +4556,12 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+
+  // Chat composer toolbar
+  'composer.attachFile': 'Datei anhängen',
+  'composer.modelSelector': 'Modell',
+  'composer.voiceMode': 'Sprachmodus',
+  'composer.qualityHigh': 'Hoch',
 };
 
 export default messages;

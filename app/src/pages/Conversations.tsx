@@ -6,7 +6,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
-import AttachmentPreview from '../components/chat/AttachmentPreview';
+import ChatComposer from '../components/chat/ChatComposer';
 import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
@@ -288,8 +288,6 @@ const Conversations = ({
   }, [agentProfiles, profileDraft.agentId, t]);
 
   const textInputRef = useRef<HTMLTextAreaElement>(null);
-  /** Max composer height ≈ 4 lines of text-sm + padding. */
-  const COMPOSER_MAX_HEIGHT = 96;
   const isComposingTextRef = useRef(false);
   const pendingSendRef = useRef<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1140,15 +1138,6 @@ const Conversations = ({
     });
     return () => window.cancelAnimationFrame(id);
   }, [selectedThreadId, composerInteractionBlocked, inputMode]);
-
-  // Auto-resize composer textarea: grow with content, cap at COMPOSER_MAX_HEIGHT, then scroll.
-  useEffect(() => {
-    const ta = textInputRef.current;
-    if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = `${Math.min(ta.scrollHeight, COMPOSER_MAX_HEIGHT)}px`;
-    ta.style.overflowY = ta.scrollHeight > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
-  }, [inputValue]);
 
   const isSending = Boolean(
     selectedThreadId &&
@@ -2159,136 +2148,25 @@ const Conversations = ({
               />
             </div>
           ) : inputMode === 'text' ? (
-            <div className="flex items-end gap-3">
-              {/* Hidden file input for image attachment */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={ALLOWED_IMAGE_MIME_TYPES.join(',')}
-                multiple
-                className="hidden"
-                onChange={e => {
-                  void handleAttachFiles(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-              <div className="relative flex flex-1 flex-col rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
-                <AttachmentPreview
-                  attachments={attachments}
-                  onRemove={id => setAttachments(prev => prev.filter(a => a.id !== id))}
-                  disabled={composerInteractionBlocked || isSending}
-                />
-                <div className="relative flex items-center justify-center">
-                  <div
-                    aria-hidden
-                    className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 py-2.5 text-sm leading-normal font-sans">
-                    <span className="invisible">{inputValue}</span>
-                    <span className="text-stone-500 dark:text-neutral-400/50">
-                      {inlineCompletionSuffix}
-                    </span>
-                  </div>
-                  <textarea
-                    ref={textInputRef}
-                    value={inputValue}
-                    onChange={e => setInputValue(e.target.value)}
-                    onCompositionStart={() => {
-                      isComposingTextRef.current = true;
-                    }}
-                    onCompositionEnd={() => {
-                      isComposingTextRef.current = false;
-                    }}
-                    onKeyDown={handleInputKeyDown}
-                    placeholder={t('chat.typeMessage')}
-                    rows={1}
-                    disabled={composerInteractionBlocked || isSending}
-                    className="relative z-10 w-full resize-none border-0 bg-transparent pl-4 pr-10 py-2.5 text-sm leading-normal whitespace-pre-wrap break-words font-sans text-stone-900 dark:text-neutral-100 placeholder:text-stone-400 dark:placeholder:text-neutral-500 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  {/* Voice input mic hidden per #717 (inputMode='voice' path retained). */}
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-label={t('chat.attachment.attach')}
-                title={t('chat.attachment.attach')}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={
-                  composerInteractionBlocked ||
-                  isSending ||
-                  attachments.length >= ATTACHMENT_MAX_IMAGES
-                }
-                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"
-                  />
-                </svg>
-              </button>
-              <button
-                type="button"
-                aria-label={t('mic.startRecording')}
-                title={t('mic.startRecording')}
-                onClick={() => setComposerOverride('mic-cloud')}
-                disabled={composerInteractionBlocked || isSending}
-                className="w-10 h-10 flex items-center justify-center rounded-full border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-500 dark:text-neutral-400 hover:text-primary-500 dark:hover:text-primary-400 hover:border-primary-300 dark:hover:border-primary-700 transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
-                  />
-                </svg>
-              </button>
-              <button
-                data-testid="send-message-button"
-                aria-label={t('chat.send')}
-                title={t('chat.send')}
-                onClick={() => {
-                  void handleSendMessage();
-                }}
-                disabled={
-                  (!inputValue.trim() && attachments.length === 0) ||
-                  composerInteractionBlocked ||
-                  isSending
-                }
-                className="w-10 h-10 flex items-center justify-center rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex-shrink-0">
-                {isSending ? (
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    />
-                  </svg>
-                ) : (
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2.5}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                )}
-              </button>
-            </div>
+            <ChatComposer
+              inputValue={inputValue}
+              setInputValue={setInputValue}
+              onSend={handleSendMessage}
+              textInputRef={textInputRef}
+              fileInputRef={fileInputRef}
+              composerInteractionBlocked={composerInteractionBlocked}
+              isSending={isSending}
+              attachments={attachments}
+              onAttachFiles={handleAttachFiles}
+              onRemoveAttachment={id => setAttachments(prev => prev.filter(a => a.id !== id))}
+              attachError={attachError}
+              onSwitchToMicCloud={() => setComposerOverride('mic-cloud')}
+              handleInputKeyDown={handleInputKeyDown}
+              inlineCompletionSuffix={inlineCompletionSuffix}
+              isComposingTextRef={isComposingTextRef}
+              maxAttachments={ATTACHMENT_MAX_IMAGES}
+              allowedMimeTypes={ALLOWED_IMAGE_MIME_TYPES}
+            />
           ) : (
             <div className="flex items-center gap-2">
               <button
