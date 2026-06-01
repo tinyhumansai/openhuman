@@ -3455,6 +3455,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': '添加',
   'settings.agentAccess.saving': '保存中…',
   'settings.agentAccess.changesApply': '更改将在你的下一条消息后生效。',
+  'settings.agentAccess.directories': '目录',
+  'settings.agentAccess.actionSandbox': '操作沙箱',
+  'settings.agentAccess.readWriteAccess': '读取 + 写入',
+  'settings.agentAccess.actionSandboxDesc': 'Shell、文件和 git 工具的默认工作目录。',
+  'settings.agentAccess.internalState': '内部状态',
+  'settings.agentAccess.agentBlocked': '代理已阻止',
+  'settings.agentAccess.internalStateDesc':
+    '内存数据库、会话、令牌和其他核心数据。代理工具无法访问。',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

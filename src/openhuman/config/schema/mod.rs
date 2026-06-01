@@ -22,8 +22,9 @@ mod identity_cost;
 mod learning;
 mod load;
 pub use load::{
-    clear_active_user, default_projects_dir, default_root_openhuman_dir, pre_login_user_dir,
-    read_active_user_id, user_openhuman_dir, write_active_user_id, PRE_LOGIN_USER_ID,
+    clear_active_user, default_action_dir, default_projects_dir, default_root_openhuman_dir,
+    pre_login_user_dir, read_active_user_id, user_openhuman_dir, write_active_user_id,
+    PRE_LOGIN_USER_ID,
 };
 pub mod claude_agent_sdk;
 pub use claude_agent_sdk::ClaudeAgentSdkConfig;
@@ -83,7 +84,7 @@ pub use tools::{
     BrowserComputerUseConfig, BrowserConfig, ComposioConfig, ComputerControlConfig, CurlConfig,
     GitbooksConfig, HttpRequestConfig, IntegrationToggle, IntegrationsConfig, McpAuthConfig,
     McpClientConfig, McpClientIdentityConfig, McpServerConfig, MultimodalConfig,
-    PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
+    MultimodalFileConfig, PolymarketClobCredentials, PolymarketConfig, SearchConfig, SearchEngine,
     SearchEngineCredentials, SearxngConfig, SecretsConfig, SeltzConfig, WebSearchConfig,
     COMPOSIO_MODE_BACKEND, COMPOSIO_MODE_DIRECT, SEARCH_ENGINE_BRAVE, SEARCH_ENGINE_DISABLED,
     SEARCH_ENGINE_MANAGED, SEARCH_ENGINE_PARALLEL, SEARCH_ENGINE_QUERIT,
