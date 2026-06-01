@@ -254,6 +254,7 @@ fn definition(prompt: PromptSource) -> AgentDefinition {
         skill_filter: None,
         extra_tools: Vec::new(),
         max_iterations: 3,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,

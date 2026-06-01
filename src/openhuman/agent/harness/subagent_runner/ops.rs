@@ -23,7 +23,9 @@ use super::tool_prep::{
     load_prompt_source, top_k_for_toolkit,
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
-use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::openhuman::agent::harness::definition::{
+    AgentDefinition, IterationPolicy, PromptSource,
+};
 use crate::openhuman::agent::harness::{
     current_spawn_depth, with_current_sandbox_mode, with_spawn_depth, MAX_SPAWN_DEPTH,
 };
@@ -976,7 +978,8 @@ async fn run_typed_mode(
         agent_id = %definition.id,
         model = %model,
         tool_count = allowed_names.len(),
-        max_iterations = definition.max_iterations,
+        max_iterations = definition.effective_max_iterations(),
+        iteration_policy = ?definition.iteration_policy,
         "[subagent_runner:typed] resolved configuration"
     );
 
@@ -1147,22 +1150,31 @@ async fn run_typed_mode(
     if let Some(ref ctx) = options.context {
         context_parts.push(ctx);
     }
-    let user_message = if context_parts.is_empty() {
-        task_prompt.to_string()
+    let mut history: Vec<ChatMessage> = if let Some(ref initial) = options.initial_history {
+        tracing::info!(
+            agent_id = %definition.id,
+            task_id = %task_id,
+            history_len = initial.len(),
+            "[subagent_runner] resuming with initial_history (checkpoint replay)"
+        );
+        initial.clone()
     } else {
-        format!("[Context]\n{}\n\n{task_prompt}", context_parts.join("\n\n"))
+        let user_message = if context_parts.is_empty() {
+            task_prompt.to_string()
+        } else {
+            format!("[Context]\n{}\n\n{task_prompt}", context_parts.join("\n\n"))
+        };
+        vec![
+            ChatMessage::system(system_prompt),
+            ChatMessage::user(user_message),
+        ]
     };
-
-    let mut history: Vec<ChatMessage> = vec![
-        ChatMessage::system(system_prompt),
-        ChatMessage::user(user_message),
-    ];
 
     // ── Run the inner tool-call loop ───────────────────────────────────
     // Transcript persistence lives INSIDE the loop (one write per
     // provider response), mirroring the main-agent turn loop in
     // `session/turn.rs`. No post-loop write needed here.
-    let (output, iterations, _agg_usage) = run_inner_loop(
+    let (output, iterations, _agg_usage, early_exit_tool) = run_inner_loop(
         subagent_provider.as_ref(),
         &mut history,
         &parent.all_tools,
@@ -1172,14 +1184,83 @@ async fn run_typed_mode(
         lazy_resolver,
         &model,
         temperature,
-        definition.max_iterations,
+        definition.effective_max_iterations(),
         task_id,
         &definition.id,
         options.worker_thread_id.clone(),
         handoff_cache.as_deref(),
         parent,
+        definition.iteration_policy == IterationPolicy::Extended,
     )
     .await?;
+
+    // Determine status: if the turn engine exited early because of
+    // ask_user_clarification, checkpoint the history and return
+    // AwaitingUser so the orchestrator can relay the user's answer.
+    let status = if early_exit_tool.as_deref() == Some("ask_user_clarification") {
+        let question = output.clone();
+        let options_vec: Option<Vec<String>> = None;
+
+        // Persist checkpoint so `continue_subagent` can resume later.
+        let checkpoint_dir = options
+            .checkpoint_dir
+            .clone()
+            .unwrap_or_else(|| parent.workspace_dir.join(".openhuman/subagent_checkpoints"));
+        if let Err(e) = std::fs::create_dir_all(&checkpoint_dir) {
+            tracing::warn!(
+                task_id = %task_id,
+                error = %e,
+                "[subagent_runner] failed to create checkpoint directory"
+            );
+        } else {
+            let checkpoint_data = super::types::SubagentCheckpointData {
+                task_id: task_id.to_string(),
+                agent_id: definition.id.clone(),
+                worker_thread_id: options.worker_thread_id.clone(),
+                history: history.clone(),
+                question: question.clone(),
+                options: options_vec.clone(),
+                toolkit_override: options.toolkit_override.clone(),
+                skill_filter_override: options.skill_filter_override.clone(),
+                model_override: options.model_override.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+            let checkpoint_path = checkpoint_dir.join(format!("{task_id}.json"));
+            match serde_json::to_string_pretty(&checkpoint_data) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&checkpoint_path, json) {
+                        tracing::warn!(
+                            task_id = %task_id,
+                            path = %checkpoint_path.display(),
+                            error = %e,
+                            "[subagent_runner] failed to write checkpoint"
+                        );
+                    } else {
+                        tracing::info!(
+                            task_id = %task_id,
+                            path = %checkpoint_path.display(),
+                            history_len = history.len(),
+                            "[subagent_runner] checkpoint written for awaiting_user"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        error = %e,
+                        "[subagent_runner] failed to serialize checkpoint"
+                    );
+                }
+            }
+        }
+
+        super::types::SubagentRunStatus::AwaitingUser {
+            question,
+            options: options_vec,
+        }
+    } else {
+        super::types::SubagentRunStatus::Completed
+    };
 
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
@@ -1188,6 +1269,7 @@ async fn run_typed_mode(
         iterations,
         elapsed: started.elapsed(),
         mode: SubagentMode::Typed,
+        status,
     })
 }
 
@@ -1231,7 +1313,8 @@ async fn run_inner_loop(
     worker_thread_id: Option<String>,
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
-) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
+    extended_policy: bool,
+) -> Result<(String, usize, AggregatedUsage, Option<String>), SubagentRunError> {
     // An autonomous skill run (set via `with_autonomous_iter_cap`) lifts the
     // per-agent cap so sub-agents run until done / the circuit breaker trips.
     let max_iterations = super::autonomous::autonomous_iter_cap()
@@ -1333,6 +1416,7 @@ async fn run_inner_loop(
         sink: parent.on_progress.clone(),
         agent_id: agent_id.to_string(),
         task_id: task_id.to_string(),
+        extended_policy,
     };
 
     let parser = super::super::engine::DefaultParser;
@@ -1351,10 +1435,16 @@ async fn run_inner_loop(
         &crate::openhuman::config::MultimodalConfig::default(),
         max_iterations,
         None, // sub-agents don't stream a draft
+        &["ask_user_clarification"],
     )
     .await?;
 
-    Ok((outcome.text, outcome.iterations as usize, observer.usage))
+    Ok((
+        outcome.text,
+        outcome.iterations as usize,
+        observer.usage,
+        outcome.early_exit_tool,
+    ))
 }
 
 /// Apply the progressive-disclosure handoff to a tool result. If a cache is

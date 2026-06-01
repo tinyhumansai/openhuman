@@ -557,6 +557,7 @@ impl Agent {
                 &multimodal,
                 max_iterations,
                 None, // the web bridge streams via on_progress deltas, not on_delta
+                &[],
             )
             .await?;
 

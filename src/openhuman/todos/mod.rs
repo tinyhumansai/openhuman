@@ -16,6 +16,7 @@
 pub mod ops;
 pub mod schemas;
 pub mod store;
+pub mod tools;
 
 pub use schemas::{
     all_controller_schemas as all_todos_controller_schemas,

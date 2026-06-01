@@ -324,9 +324,11 @@ function ModePicker({ onConfirm }: PickerProps) {
                 <code className="text-[10px]">OPENHUMAN_CORE_TOKEN</code>)
               </label>
               <input
-                type="password"
+                type="text"
                 autoComplete="off"
                 spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
                 placeholder={t('bootCheck.bearerTokenPlaceholder')}
                 value={cloudToken}
                 onChange={e => {

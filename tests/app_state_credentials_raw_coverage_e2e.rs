@@ -220,6 +220,7 @@ async fn round14_snapshot_preserves_rich_local_state_with_backend_or_stored_user
         .expect("seed app session profile");
 
     let updated = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  round14-key  ".to_string())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: true,

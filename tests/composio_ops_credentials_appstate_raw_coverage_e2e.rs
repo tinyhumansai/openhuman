@@ -511,6 +511,7 @@ async fn round18_app_state_snapshot_uses_local_session_cache_and_patch_edges() {
         .expect("store local app session");
 
     let first = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("   ".to_string())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: true,
@@ -528,6 +529,7 @@ async fn round18_app_state_snapshot_uses_local_session_cache_and_patch_edges() {
     assert!(first.onboarding_tasks.is_some());
 
     let cleared = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(None),
         onboarding_tasks: Some(None),
     })

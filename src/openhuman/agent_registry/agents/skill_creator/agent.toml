@@ -4,6 +4,7 @@ delegate_name = "create_skill"
 when_to_use = "JavaScript skill/runtime specialist — creates or updates OpenHuman SKILL.md packages, Node-backed JS helpers, and tool-facing JavaScript code meant to be executed by the core's Node runtime bridge or by other agents."
 temperature = 0.3
 max_iterations = 10
+iteration_policy = "extended"
 max_result_chars = 16000
 sandbox_mode = "sandboxed"
 omit_identity = true

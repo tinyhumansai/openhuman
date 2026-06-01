@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
+import McpServersTab from '../components/channels/mcp/McpServersTab';
 import ComposioConnectModal from '../components/composio/ComposioConnectModal';
 import {
   composioToolkitMeta,
@@ -273,35 +274,6 @@ function ChannelTile({ def, status, icon, testId, onOpen }: ChannelTileProps) {
         </span>
       </div>
     </button>
-  );
-}
-
-function McpComingSoonPanel() {
-  const { t } = useT();
-  return (
-    <EmptyStateCard
-      icon={
-        <svg
-          className="h-7 w-7 text-primary-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M6.75 7.5h10.5m-10.5 4.5h10.5m-10.5 4.5h6m-9.75 3h13.5A2.25 2.25 0 0 0 19.5 17.25V6.75A2.25 2.25 0 0 0 17.25 4.5H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5A2.25 2.25 0 0 0 6.75 19.5Z"
-          />
-        </svg>
-      }
-      title={t('skills.mcpComingSoon.title')}
-      description={t('skills.mcpComingSoon.description')}
-      footer={
-        <span className="mt-4 inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-500/10 px-3 py-1 text-xs font-medium text-primary-600 dark:text-primary-400">
-          {t('common.comingSoon')}
-        </span>
-      }
-    />
   );
 }
 
@@ -1130,7 +1102,12 @@ export default function Skills() {
                         {t('channels.mcp.description')}
                       </p>
                     </div>
-                    <McpComingSoonPanel />
+                    {/* The real browse/install/manage surface (issue #3039).
+                        McpServersTab manages its own height via h-full, so it
+                        needs a sized container to fill. */}
+                    <div className="h-[72vh] min-h-[480px]">
+                      <McpServersTab />
+                    </div>
                   </div>
                 )}
               </>

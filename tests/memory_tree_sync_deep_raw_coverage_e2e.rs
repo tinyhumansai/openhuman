@@ -29,7 +29,6 @@ use openhuman_core::openhuman::memory_store::chunks::types::{
     chunk_id, Chunk, Metadata, SourceKind, SourceRef,
 };
 use openhuman_core::openhuman::memory_store::trees::types::{SummaryNode, Tree, TreeKind};
-use openhuman_core::openhuman::memory_tree::retrieval::topic::query_topic;
 use openhuman_core::openhuman::memory_tree::score::embed::EMBEDDING_DIM;
 use openhuman_core::openhuman::memory_tree::score::extract::{
     EntityExtractor, EntityKind, ExtractedEntities, LlmEntityExtractor, LlmExtractorConfig,
@@ -38,8 +37,7 @@ use openhuman_core::openhuman::memory_tree::score::resolver::{canonicalise, Cano
 use openhuman_core::openhuman::memory_tree::score::store::{index_entity, lookup_entity};
 use openhuman_core::openhuman::memory_tree::tree::rpc::{
     backfill_status_rpc, get_chunk_rpc, ingest_rpc, list_chunks_rpc, pipeline_status_rpc,
-    set_enabled_rpc, trigger_digest_rpc, GetChunkRequest, IngestRequest, ListChunksRequest,
-    SetEnabledRequest, TriggerDigestRequest,
+    set_enabled_rpc, GetChunkRequest, IngestRequest, ListChunksRequest, SetEnabledRequest,
 };
 use openhuman_core::openhuman::memory_tree::tree::set_summary_embedding;
 use openhuman_core::openhuman::memory_tree::tree::store as tree_store;
@@ -139,6 +137,7 @@ fn sample_chunk(cfg: &Config, source_id: &str, seq: u32, text: &str, timestamp_m
             time_range: (ts, ts),
             tags: vec!["round18".into()],
             source_ref: Some(SourceRef::new(format!("slack://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: 32,
         seq_in_source: seq,
@@ -436,137 +435,6 @@ async fn llm_extractor_recovers_spans_topics_strict_filters_and_retry_paths() {
 }
 
 #[tokio::test]
-async fn topic_retrieval_merges_topic_root_leaf_and_summary_hits_with_rerank_edges() {
-    let tmp = TempDir::new().expect("tempdir");
-    let cfg = test_config(&tmp);
-    let entity_id = "topic:phoenix";
-    let summary = seed_topic_summary(
-        &cfg,
-        entity_id,
-        "summary:round18-root",
-        0.30,
-        1_700_000_000_000,
-    );
-    set_summary_embedding(&cfg, &summary.id, &one_hot(0)).expect("set summary embedding");
-
-    let newer_chunk = sample_chunk(
-        &cfg,
-        "slack:#round18",
-        1,
-        "Phoenix rollout update from Alice.",
-        1_800_000_000_000,
-    );
-    set_chunk_embedding(&cfg, &newer_chunk.id, &one_hot(1)).expect("set chunk embedding");
-    let older_chunk = sample_chunk(
-        &cfg,
-        "slack:#round18",
-        2,
-        "Older Phoenix note from Bob.",
-        1_500_000_000_000,
-    );
-
-    let newer_entity = CanonicalEntity {
-        canonical_id: entity_id.into(),
-        kind: EntityKind::Topic,
-        surface: "Phoenix".into(),
-        span_start: 0,
-        span_end: 7,
-        score: 0.95,
-    };
-    let older_entity = CanonicalEntity {
-        score: 0.90,
-        ..newer_entity.clone()
-    };
-    index_entity(
-        &cfg,
-        &newer_entity,
-        &newer_chunk.id,
-        "leaf",
-        newer_chunk.metadata.timestamp.timestamp_millis(),
-        None,
-    )
-    .expect("index newer leaf");
-    index_entity(
-        &cfg,
-        &older_entity,
-        &older_chunk.id,
-        "leaf",
-        older_chunk.metadata.timestamp.timestamp_millis(),
-        Some("missing-tree"),
-    )
-    .expect("index older leaf");
-    index_entity(
-        &cfg,
-        &CanonicalEntity {
-            score: 0.80,
-            ..newer_entity.clone()
-        },
-        &summary.id,
-        "summary",
-        summary.time_range_end.timestamp_millis(),
-        Some(&summary.tree_id),
-    )
-    .expect("index summary duplicate");
-    index_entity(
-        &cfg,
-        &newer_entity,
-        "missing-leaf-row",
-        "leaf",
-        Utc::now().timestamp_millis(),
-        None,
-    )
-    .expect("index stale row");
-    index_entity(
-        &cfg,
-        &newer_entity,
-        "missing-summary-row",
-        "summary",
-        Utc::now().timestamp_millis(),
-        Some(&summary.tree_id),
-    )
-    .expect("index stale summary row");
-
-    let raw_hits = lookup_entity(&cfg, entity_id, Some(10)).expect("lookup entity");
-    assert!(raw_hits.iter().any(|hit| hit.node_id == "missing-leaf-row"));
-
-    let by_score = query_topic(&cfg, entity_id, None, None, 10)
-        .await
-        .expect("query topic");
-    assert_eq!(by_score.hits.len(), 3);
-    assert_eq!(by_score.total, 3);
-    assert_eq!(by_score.hits[0].node_id, newer_chunk.id);
-    assert!(by_score.hits.iter().any(|hit| hit.node_id == summary.id));
-    assert!(by_score
-        .hits
-        .iter()
-        .any(|hit| hit.node_id == older_chunk.id && hit.tree_scope == "slack:#round18"));
-
-    let truncated = query_topic(&cfg, entity_id, None, None, 2)
-        .await
-        .expect("query limit");
-    assert_eq!(truncated.hits.len(), 2);
-    assert!(truncated.truncated);
-
-    let windowed = query_topic(&cfg, entity_id, Some(1), None, 10)
-        .await
-        .expect("query with narrow window");
-    assert!(windowed.hits.is_empty());
-
-    let semantic = query_topic(&cfg, entity_id, None, Some("prefer embedded rows"), 10)
-        .await
-        .expect("semantic query");
-    assert_eq!(semantic.hits.len(), 3);
-    assert!(
-        semantic
-            .hits
-            .iter()
-            .position(|hit| hit.node_id == older_chunk.id)
-            .unwrap()
-            > 0
-    );
-}
-
-#[tokio::test]
 async fn memory_tree_rpc_status_set_enabled_backfill_and_ingest_errors() {
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
@@ -652,36 +520,6 @@ async fn memory_tree_rpc_status_set_enabled_backfill_and_ingest_errors() {
         .value;
     assert!(changed.changed);
     assert_eq!(changed.mode, "auto");
-
-    let digest = trigger_digest_rpc(
-        &cfg,
-        TriggerDigestRequest {
-            date_iso: Some("2026-05-28".into()),
-        },
-    )
-    .await
-    .expect("trigger digest")
-    .value;
-    assert_eq!(digest.date_iso, "2026-05-28");
-    let duplicate = trigger_digest_rpc(
-        &cfg,
-        TriggerDigestRequest {
-            date_iso: Some("2026-05-28".into()),
-        },
-    )
-    .await
-    .expect("trigger duplicate")
-    .value;
-    assert!(!duplicate.enqueued);
-    let invalid = trigger_digest_rpc(
-        &cfg,
-        TriggerDigestRequest {
-            date_iso: Some("05/28/2026".into()),
-        },
-    )
-    .await
-    .unwrap_err();
-    assert!(invalid.contains("invalid date_iso"));
 
     jobs::enqueue(
         &cfg,

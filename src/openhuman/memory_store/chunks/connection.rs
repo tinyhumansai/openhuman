@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use crate::openhuman::config::Config;
 
 use super::{
-    add_column_if_missing, migrate_legacy_embeddings_to_sidecar, DB_DIR, DB_FILE, SCHEMA,
-    SQLITE_BUSY_TIMEOUT,
+    add_column_if_missing, migrate_legacy_embeddings_to_sidecar, purge_global_topic_trees, DB_DIR,
+    DB_FILE, SCHEMA, SQLITE_BUSY_TIMEOUT,
 };
 
 // ── Schema-apply instrumentation (test-only) ─────────────────────────────────
@@ -257,6 +257,8 @@ fn init_db(conn: &Connection, config: &Config) -> Result<()> {
     apply_schema(conn)?;
     // #1574 §7: one-shot, version-gated legacy→sidecar embedding migration.
     migrate_legacy_embeddings_to_sidecar(conn, config)?;
+    // One-shot, version-gated purge of the removed global/topic trees.
+    purge_global_topic_trees(conn, config)?;
     Ok(())
 }
 

@@ -68,6 +68,12 @@ pub struct AddRequest {
     #[serde(default)]
     pub paths: Vec<String>,
     #[serde(default)]
+    pub max_commits: Option<u32>,
+    #[serde(default)]
+    pub max_issues: Option<u32>,
+    #[serde(default)]
+    pub max_prs: Option<u32>,
+    #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]
     pub since_days: Option<u32>,
@@ -105,6 +111,12 @@ pub async fn add_rpc(req: AddRequest) -> Result<RpcOutcome<AddResponse>, String>
         url: req.url,
         branch: req.branch,
         paths: req.paths,
+        // Per-type GitHub sync caps default to DEFAULT_GITHUB_ITEM_LIMIT
+        // (2000) in the reader when None. Overrides are applied via the
+        // update/patch path (`MemorySourcePatch`).
+        max_commits: req.max_commits,
+        max_issues: req.max_issues,
+        max_prs: req.max_prs,
         query: req.query,
         since_days: req.since_days,
         max_items: req.max_items,
@@ -256,4 +268,17 @@ pub async fn status_list_rpc() -> Result<RpcOutcome<StatusListResponse>, String>
     let config = config_rpc::load_config_with_timeout().await?;
     let statuses = crate::openhuman::memory_sources::status::status_list(&config).await?;
     Ok(RpcOutcome::new(StatusListResponse { statuses }, vec![]))
+}
+
+// ── Sync Audit Log ──
+
+#[derive(Debug, serde::Serialize)]
+pub struct SyncAuditLogResponse {
+    pub entries: Vec<crate::openhuman::memory_sync::sources::audit::SyncAuditEntry>,
+}
+
+pub async fn sync_audit_log_rpc() -> Result<RpcOutcome<SyncAuditLogResponse>, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    let entries = crate::openhuman::memory_sync::sources::audit::read_audit_log(&config);
+    Ok(RpcOutcome::new(SyncAuditLogResponse { entries }, vec![]))
 }

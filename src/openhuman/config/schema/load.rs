@@ -409,6 +409,10 @@ fn decrypt_optional_secret(
                     log::warn!(
                         "[config] Failed to decrypt {field_name} — field cleared (key inaccessible): {e}"
                     );
+                    crate::openhuman::keyring_consent::policy::notify_decrypt_failure(
+                        field_name,
+                        &e.to_string(),
+                    );
                     *value = None;
                 }
             }
@@ -1926,6 +1930,15 @@ impl Config {
         if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_LLM_MODEL") {
             let trimmed = raw.trim();
             self.memory_tree.cloud_llm_model = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_SMART_WALK_MODEL") {
+            let trimmed = raw.trim();
+            self.memory_tree.smart_walk_model = if trimmed.is_empty() {
                 None
             } else {
                 Some(trimmed.to_string())

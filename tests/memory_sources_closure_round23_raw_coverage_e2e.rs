@@ -131,6 +131,9 @@ fn source_entry(id: &str, kind: SourceKind) -> MemorySourceEntry {
         query: None,
         since_days: None,
         max_items: None,
+        max_commits: None,
+        max_issues: None,
+        max_prs: None,
         selector: None,
     }
 }

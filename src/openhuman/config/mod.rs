@@ -12,6 +12,7 @@ pub mod ops;
 pub mod schema;
 mod schemas;
 pub mod settings_cli;
+pub mod tools;
 
 #[allow(unused_imports)]
 pub use daemon::DaemonConfig;

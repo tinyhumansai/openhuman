@@ -352,10 +352,11 @@ fn does_not_classify_unrelated_messages_as_context_window_exceeded() {
 
 #[test]
 fn classifies_vault_create_root_path_not_a_directory_as_filesystem_user_path_invalid() {
-    // TAURI-RUST-4QH: verbatim wire shape from
-    // `openhuman::vault::ops::vault_create` line 37 when the
-    // user-picked vault folder doesn't resolve to an existing
-    // directory. Bubbles up as the RPC dispatcher's
+    // TAURI-RUST-4QH: verbatim wire shape historically emitted by the
+    // now-removed knowledge-vault `vault_create` path when the
+    // user-picked folder didn't resolve to an existing directory.
+    // Retained as a classifier fixture in case the shape recurs from
+    // another caller. Bubbles up as the RPC dispatcher's
     // `display_message` and reaches `report_error_or_expected` —
     // must classify so no Sentry event fires.
     assert_eq!(

@@ -2,15 +2,15 @@
 description: >-
   The generic summary-tree engine under the Memory Tree feature - bucket-seal
   cascades, scoring, embedding, entity extraction, retrieval, summarisation.
-  Kind-agnostic mechanics that Source / Global / Topic trees all share.
+  Kind-agnostic mechanics for the Source trees (the only kind now built).
 icon: diagram-project
 ---
 
 # Memory Tree (`src/openhuman/memory_tree/`)
 
-`src/openhuman/memory_tree/` is the **generic tree engine** sitting under the user-facing [Memory Tree feature](../../features/obsidian-wiki/memory-tree.md). It owns the kind-agnostic mechanics — appending leaves, cascading bucket seals, summarising one level to the next, scoring and embedding, retrieving for agents — that every concrete tree flavour (`Source`, `Global`, `Topic`) shares. It is deliberately **unaware** of which flavour a tree belongs to.
+`src/openhuman/memory_tree/` is the **generic tree engine** sitting under the user-facing [Memory Tree feature](../../features/obsidian-wiki/memory-tree.md). It owns the kind-agnostic mechanics — appending leaves, cascading bucket seals, summarising one level to the next, scoring and embedding, retrieving for agents — that a concrete tree uses. It is deliberately **unaware** of which flavour a tree belongs to.
 
-Kind-specific policy — when to spawn a topic tree, what scope a global tree covers, how digests are written — lives in `src/openhuman/memory/tree_global` and `src/openhuman/memory/tree_topic`. Persistence (the single `Tree` table and its schema) lives one layer down in `memory_store::trees`. This module sits between them.
+> **Removed: Global & Topic trees.** Earlier revisions also built a singleton **Global** (cross-source, time-axis: day → week → month → year) digest tree and per-entity **Topic** (subject-axis) trees. Both were derived projections over the Source trees — no original content lived only in them — and were removed in favour of "walk the Source trees + the entity index." Source-tree policy lives in `src/openhuman/memory/tree_source`; persistence (the single `Tree` table) lives one layer down in `memory_store::trees`. The `TreeKind::Global`/`Topic` enum variants survive only as inert serialization plumbing so the one-shot purge migration can read and delete legacy rows.
 
 ```text
 memory (orchestrator) ──┐
@@ -36,7 +36,7 @@ memory_store::trees    (persistence: one Tree table, one schema)
 | `io.rs`                                                                                          | Canonical contract types: `TreeWriteRequest` / `TreeWriteOutcome`, `TreeReadRequest` / `TreeReadHit` / `TreeReadResult`, `TreeLeafPayload`, `TreeLabelStrategy`. Pure types, no IO.                                                  |
 | `tree/`                                                                                          | `bucket_seal` (append leaf + cascade seal), `flush` (time-based partial seal), `registry` (kind-parameterized `get_or_create_tree` with UNIQUE-race recovery), `mod.rs` (re-exports + `memory_store::trees` shims for legacy paths). |
 | `summarise.rs`                                                                                   | One function: produce the next-level summary text for a bucket. Wraps the chat model with a fixed prompt and token budget.                                                                                                           |
-| `retrieval/`                                                                                     | Agent-facing tools. Read: `walk` (agentic), `drill_down`, `fetch_leaves`, `query_{source,global,topic}`, `search_entities`. Write: `ingest_document` (orchestrator-facing).                                                          |
+| `retrieval/`                                                                                     | Agent-facing tools. Read: `walk` (agentic), `drill_down`, `fetch_leaves`, `query_source`, `search_entities`. Write: `ingest_document` (orchestrator-facing). (`query_global`/`query_topic` were removed with those trees.)            |
 | `score/`                                                                                         | Scoring signals, embedding (cloud / Ollama / inert), entity extraction (regex / LLM), canonical resolver, entity index store.                                                                                                        |
 | `tools.rs`                                                                                       | Re-exports from `memory::query` for backward compatibility.                                                                                                                                                                          |
 | `tree_runtime/`                                                                                  | Tree-summarizer controller registry — exposed through `all_tree_summarizer_controller_schemas` / `all_tree_summarizer_registered_controllers` re-exports in `mod.rs`.                                                                |
@@ -65,7 +65,7 @@ Agents reach this module through the tools in `retrieval/`:
 - `walk` — agentic exploration; the agent picks summary nodes to drill into.
 - `drill_down` — deterministic traversal from a known starting summary.
 - `fetch_leaves` — pull raw leaves for a sealed bucket.
-- `query_{source,global,topic}` — kind-scoped retrieval; the orchestrator's tree-kind policy decides which one the agent sees.
+- `query_source` — source-scoped retrieval (the only kind-scoped query left; `query_global`/`query_topic` were removed).
 - `search_entities` — entity-index lookup backed by `score/`.
 
 All retrieval handlers consult `memory_store::trees::hotness` so warm content surfaces first.

@@ -392,6 +392,7 @@ fn agent_definition(id: &str, max_result_chars: Option<usize>) -> AgentDefinitio
         skill_filter: None,
         extra_tools: Vec::new(),
         max_iterations: 2,
+        iteration_policy: Default::default(),
         max_result_chars,
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,
@@ -850,6 +851,7 @@ async fn round16_app_state_config_and_session_snapshot_edges() {
     std::fs::write(harness.app_state_file(), "{broken").expect("write corrupt app state");
 
     let stored = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  round16-key  ".to_string())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: true,
@@ -918,6 +920,7 @@ async fn round16_app_state_config_and_session_snapshot_edges() {
     );
 
     let cleared = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(None),
         onboarding_tasks: Some(None),
     })
