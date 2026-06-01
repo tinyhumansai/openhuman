@@ -86,10 +86,14 @@ pub fn stage_chunks(content_root: &Path, chunks: &[Chunk]) -> anyhow::Result<Vec
         }
 
         let source_kind = chunk.metadata.source_kind.as_str();
-        let source_id = &chunk.metadata.source_id;
+        let path_id = chunk
+            .metadata
+            .path_scope
+            .as_deref()
+            .unwrap_or(&chunk.metadata.source_id);
 
-        let rel_path = paths::chunk_rel_path(source_kind, source_id, &chunk.id);
-        let abs_path = paths::chunk_abs_path(content_root, source_kind, source_id, &chunk.id);
+        let rel_path = paths::chunk_rel_path(source_kind, path_id, &chunk.id);
+        let abs_path = paths::chunk_abs_path(content_root, source_kind, path_id, &chunk.id);
 
         let (full_bytes, body_bytes) = compose::compose_chunk_file(chunk);
         let sha256 = atomic::sha256_hex(&body_bytes);
@@ -148,6 +152,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 5,
             seq_in_source: seq,

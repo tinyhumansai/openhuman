@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 
 import CostDashboardPanel from '../components/dashboard/CostDashboardPanel';
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
@@ -10,6 +10,7 @@ import AgentEditorPage from '../components/settings/panels/AgentEditorPage';
 import AgentsPanel from '../components/settings/panels/AgentsPanel';
 import AIPanel from '../components/settings/panels/AIPanel';
 import AppearancePanel from '../components/settings/panels/AppearancePanel';
+import ApprovalHistoryPanel from '../components/settings/panels/ApprovalHistoryPanel';
 import AutocompleteDebugPanel from '../components/settings/panels/AutocompleteDebugPanel';
 import AutocompletePanel from '../components/settings/panels/AutocompletePanel';
 import AutonomyPanel from '../components/settings/panels/AutonomyPanel';
@@ -39,6 +40,7 @@ import RecoveryPhrasePanel from '../components/settings/panels/RecoveryPhrasePan
 import ScreenAwarenessDebugPanel from '../components/settings/panels/ScreenAwarenessDebugPanel';
 import ScreenIntelligencePanel from '../components/settings/panels/ScreenIntelligencePanel';
 import SearchPanel from '../components/settings/panels/SearchPanel';
+import SecurityPanel from '../components/settings/panels/SecurityPanel';
 import SkillsRunnerPanel from '../components/settings/panels/SkillsRunnerPanel';
 import TaskSourcesPanel from '../components/settings/panels/TaskSourcesPanel';
 import TeamInvitesPanel from '../components/settings/panels/TeamInvitesPanel';
@@ -86,6 +88,16 @@ const PrivacyIcon = (
       strokeLinejoin="round"
       strokeWidth={2}
       d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
+    />
+  </svg>
+);
+const SecurityIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
     />
   </svg>
 );
@@ -142,6 +154,16 @@ const ToolsIcon = (
       strokeLinejoin="round"
       strokeWidth={2}
       d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+    />
+  </svg>
+);
+const NotificationSettingsIcon = (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={2}
+      d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
     />
   </svg>
 );
@@ -228,6 +250,7 @@ const WrappedSettingsPage = ({
 
 const Settings = () => {
   const { t } = useT();
+  const navigate = useNavigate();
 
   const wrapSettingsPage = (element: ReactNode, opts?: { maxWidthClass?: string }) => (
     <WrappedSettingsPage maxWidthClass={opts?.maxWidthClass}>
@@ -239,13 +262,6 @@ const Settings = () => {
   );
 
   const accountSettingsItems = [
-    {
-      id: 'recovery-phrase',
-      title: t('pages.settings.account.recoveryPhrase'),
-      description: t('pages.settings.account.recoveryPhraseDesc'),
-      route: 'recovery-phrase',
-      icon: RecoveryPhraseIcon,
-    },
     {
       id: 'team',
       title: t('pages.settings.account.team'),
@@ -261,11 +277,49 @@ const Settings = () => {
       icon: PrivacyIcon,
     },
     {
+      id: 'security',
+      title: t('pages.settings.account.security'),
+      description: t('pages.settings.account.securityDesc'),
+      route: 'security',
+      icon: SecurityIcon,
+    },
+    {
       id: 'migration',
       title: t('pages.settings.account.migration'),
       description: t('pages.settings.account.migrationDesc'),
       route: 'migration',
       icon: MigrationIcon,
+    },
+  ];
+
+  // Notifications hub (lives under Advanced) — gathers the Alerts inbox and the
+  // notification preferences/routing panel under one section page.
+  const notificationsHubItems = [
+    {
+      id: 'alerts',
+      title: t('nav.alerts'),
+      description: t('settings.alertsDesc'),
+      // Alerts is the top-level inbox at `/notifications`, outside the settings
+      // tree, so navigate explicitly instead of via `navigateToSettings`.
+      onClick: () => navigate('/notifications'),
+      icon: NotificationsIcon,
+    },
+    {
+      id: 'notification-settings',
+      title: t('settings.notificationsHub.settingsItem'),
+      description: t('settings.notificationsHub.settingsItemDesc'),
+      route: 'notifications',
+      icon: NotificationSettingsIcon,
+    },
+  ];
+
+  const cryptoSettingsItems = [
+    {
+      id: 'recovery-phrase',
+      title: t('pages.settings.account.recoveryPhrase'),
+      description: t('pages.settings.account.recoveryPhraseDesc'),
+      route: 'recovery-phrase',
+      icon: RecoveryPhraseIcon,
     },
     {
       id: 'wallet-balances',
@@ -484,6 +538,26 @@ const Settings = () => {
             />
           )}
         />
+        <Route
+          path="crypto"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.cryptoSection.title')}
+              description={t('settings.cryptoSection.description')}
+              items={cryptoSettingsItems}
+            />
+          )}
+        />
+        <Route
+          path="notifications-hub"
+          element={wrapSettingsPage(
+            <SettingsSectionPage
+              title={t('settings.notificationsHub.title')}
+              description={t('settings.notificationsHub.description')}
+              items={notificationsHubItems}
+            />
+          )}
+        />
         {/* Account & Billing leaf panels */}
         <Route path="recovery-phrase" element={wrapSettingsPage(<RecoveryPhrasePanel />)} />
         <Route path="team" element={wrapSettingsPage(<TeamPanel />)} />
@@ -501,6 +575,7 @@ const Settings = () => {
         {/* BillingPanel intentionally uses its own wider layout. */}
         <Route path="billing" element={<BillingPanel />} />
         <Route path="privacy" element={wrapSettingsPage(<PrivacyPanel />)} />
+        <Route path="security" element={wrapSettingsPage(<SecurityPanel />)} />
         <Route path="migration" element={wrapSettingsPage(<MigrationPanel />)} />
         <Route path="wallet-balances" element={wrapSettingsPage(<WalletBalancesPanel />)} />
         {/* Features leaf panels */}
@@ -512,6 +587,7 @@ const Settings = () => {
         <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
+        <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
         <Route path="agents" element={wrapSettingsPage(<AgentsPanel />)} />
         <Route path="agents/new" element={wrapSettingsPage(<AgentEditorPage />)} />
         <Route path="agents/edit/:id" element={wrapSettingsPage(<AgentEditorPage />)} />

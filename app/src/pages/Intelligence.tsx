@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
-import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
-import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
-import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
+import MemorySection from '../components/intelligence/MemorySection';
+import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
 import {
@@ -20,7 +19,7 @@ import type {
 } from '../types/intelligence';
 import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'diagram' | 'centrality';
+type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'council';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -98,8 +97,7 @@ export default function Intelligence() {
         label: t('memory.tab.workflows'),
         description: t('memory.tab.workflowsDescription'),
       },
-      { id: 'diagram', label: t('memory.tab.diagram') },
-      { id: 'centrality', label: t('memory.tab.centrality') },
+      { id: 'council', label: t('memory.tab.council') },
     ];
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
@@ -160,7 +158,7 @@ export default function Intelligence() {
             </div>
 
             {/* Tab content */}
-            {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
+            {activeTab === 'memory' && <MemorySection onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
@@ -187,9 +185,7 @@ export default function Intelligence() {
 
             {activeTab === 'workflows' && <AgentWorkflows />}
 
-            {activeTab === 'diagram' && <DiagramViewerTab />}
-
-            {activeTab === 'centrality' && <GraphCentralityTab />}
+            {activeTab === 'council' && <ModelCouncilTab />}
           </div>
         </div>
       </div>

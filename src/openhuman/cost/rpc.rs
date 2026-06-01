@@ -308,6 +308,15 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
+    /// Serialize all tests that mutate the process-global `FALLBACK_TRACKER`
+    /// so they don't race each other within the same test binary.
+    fn tracker_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
     fn tempdir_config() -> (TempDir, Config) {
         let tmp = TempDir::new().unwrap();
         let mut cfg = Config::default();
@@ -419,6 +428,7 @@ mod tests {
 
     #[test]
     fn dashboard_rpc_returns_value_against_tempdir_workspace() {
+        let _lock = tracker_test_lock();
         // Reset FALLBACK_TRACKER state so a previous test's cache cannot
         // interfere with this isolated workspace.
         *FALLBACK_TRACKER.lock() = None;
@@ -432,6 +442,7 @@ mod tests {
 
     #[test]
     fn daily_history_rpc_clamps_and_returns_array() {
+        let _lock = tracker_test_lock();
         *FALLBACK_TRACKER.lock() = None;
         let (_tmp, cfg) = tempdir_config();
         let outcome = daily_history(&cfg, 0).expect("clamped to 1");
@@ -441,6 +452,7 @@ mod tests {
 
     #[test]
     fn summary_rpc_returns_object() {
+        let _lock = tracker_test_lock();
         *FALLBACK_TRACKER.lock() = None;
         let (_tmp, cfg) = tempdir_config();
         let outcome = summary(&cfg).expect("summary should resolve");
@@ -451,6 +463,7 @@ mod tests {
 
     #[test]
     fn resolve_tracker_caches_fallback_across_calls() {
+        let _lock = tracker_test_lock();
         *FALLBACK_TRACKER.lock() = None;
         let (_tmp, cfg) = tempdir_config();
         let first = resolve_tracker(&cfg).unwrap();
@@ -464,6 +477,7 @@ mod tests {
 
     #[test]
     fn resolve_tracker_replays_cached_error_until_ttl() {
+        let _lock = tracker_test_lock();
         // Pre-seed cache with a synthetic failure. Even though
         // CostTracker::new would succeed against this tempdir, the cache
         // takes precedence until the TTL elapses.
@@ -486,6 +500,7 @@ mod tests {
 
     #[test]
     fn dashboard_query_includes_persisted_record() {
+        let _lock = tracker_test_lock();
         // Skip when the process-global tracker has been initialised by a
         // sibling test — the global is one-shot per process and points
         // at whatever workspace won the race, so we cannot reliably

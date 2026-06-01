@@ -58,6 +58,7 @@ fn make_def_named_tools(names: &[&str]) -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 5,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: crate::openhuman::agent::harness::definition::SandboxMode::None,
@@ -465,6 +466,8 @@ async fn typed_mode_returns_text_through_runner() {
                 model_override: None,
                 task_id: Some("t1".into()),
                 worker_thread_id: None,
+                initial_history: None,
+                checkpoint_dir: None,
             },
         )
         .await
@@ -574,6 +577,8 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 model_override: None,
                 task_id: None,
                 worker_thread_id: None,
+                initial_history: None,
+                checkpoint_dir: None,
             },
         )
         .await

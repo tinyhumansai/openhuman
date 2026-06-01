@@ -51,7 +51,12 @@ pub struct OpenAiCompatibleProvider {
     /// When false, do not fall back to /v1/responses on chat completions 404.
     /// GLM/Zhipu does not support the responses API.
     supports_responses_fallback: bool,
+    /// When true, call the Responses API directly instead of first trying
+    /// chat completions. Required for ChatGPT-account Codex OAuth.
+    responses_api_primary: bool,
     user_agent: Option<String>,
+    extra_headers: Vec<(String, String)>,
+    extra_query_params: Vec<(String, String)>,
     /// When true, collect all `system` messages and prepend their content
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
@@ -182,7 +187,10 @@ impl OpenAiCompatibleProvider {
             credential: credential.map(ToString::to_string),
             auth_header: auth_style,
             supports_responses_fallback,
+            responses_api_primary: false,
             user_agent: user_agent.map(ToString::to_string),
+            extra_headers: Vec::new(),
+            extra_query_params: Vec::new(),
             merge_system_into_user,
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
@@ -202,6 +210,43 @@ impl OpenAiCompatibleProvider {
     /// Set by the factory when the provider string carries an `@<temp>` suffix.
     pub fn with_temperature_override(mut self, temperature: Option<f64>) -> Self {
         self.temperature_override = temperature;
+        self
+    }
+
+    pub fn with_extra_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        let name = name.into();
+        let value = value.into();
+        if !name.trim().is_empty() && !value.trim().is_empty() {
+            self.extra_headers
+                .push((name.trim().to_string(), value.trim().to_string()));
+        }
+        self
+    }
+
+    pub fn with_user_agent(mut self, value: impl Into<String>) -> Self {
+        let value = value.into();
+        if !value.trim().is_empty() {
+            self.user_agent = Some(value.trim().to_string());
+        }
+        self
+    }
+
+    pub fn with_responses_api_primary(mut self) -> Self {
+        self.responses_api_primary = true;
+        self
+    }
+
+    pub fn with_extra_query_param(
+        mut self,
+        name: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Self {
+        let name = name.into();
+        let value = value.into();
+        if !name.trim().is_empty() && !value.trim().is_empty() {
+            self.extra_query_params
+                .push((name.trim().to_string(), value.trim().to_string()));
+        }
         self
     }
 
@@ -1246,6 +1291,12 @@ impl Provider for OpenAiCompatibleProvider {
             fallback_messages
         };
 
+        if self.responses_api_primary {
+            return self
+                .chat_via_responses(credential, &fallback_messages, model)
+                .await;
+        }
+
         let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
@@ -1409,6 +1460,12 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
+        if self.responses_api_primary {
+            return self
+                .chat_via_responses(credential, &effective_messages, model)
+                .await;
+        }
+
         let response = match self
             .apply_auth_header(self.http_client().post(&url).json(&request), credential)
             .send()
@@ -1602,6 +1659,32 @@ impl Provider for OpenAiCompatibleProvider {
         } else {
             request.messages.to_vec()
         };
+
+        if self.responses_api_primary {
+            let response_messages = if request.tools.is_some() {
+                Self::with_prompt_guided_tool_instructions(request.messages, request.tools)
+            } else {
+                effective_messages.clone()
+            };
+            let text = self
+                .chat_via_responses(credential, &response_messages, model)
+                .await?;
+            if let Some(tx) = request.stream {
+                let _ = tx
+                    .send(
+                        crate::openhuman::inference::provider::ProviderDelta::TextDelta {
+                            delta: text.clone(),
+                        },
+                    )
+                    .await;
+            }
+            return Ok(ProviderChatResponse {
+                text: Some(text),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            });
+        }
 
         // ── Streaming branch ─────────────────────────────────────────
         // When the caller supplied a `ProviderDelta` sender, request
@@ -1880,6 +1963,7 @@ impl Provider for OpenAiCompatibleProvider {
         let url = self.chat_completions_url();
         let client = self.http_client();
         let auth_header = self.auth_header.clone();
+        let extra_headers = self.extra_headers.clone();
         let provider_name = self.name.clone();
         let model_owned = model.to_string();
 
@@ -1906,6 +1990,10 @@ impl Provider for OpenAiCompatibleProvider {
                     req_builder.header(header, credential)
                 }
             };
+
+            for (name, value) in &extra_headers {
+                req_builder = req_builder.header(name.as_str(), value.as_str());
+            }
 
             // Set accept header for streaming
             req_builder = req_builder.header("Accept", "text/event-stream");
@@ -2002,6 +2090,164 @@ impl Provider for OpenAiCompatibleProvider {
         });
 
         // Convert channel receiver to stream
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|chunk| (chunk, rx))
+        })
+        .boxed()
+    }
+
+    fn stream_chat_with_history(
+        &self,
+        messages: &[ChatMessage],
+        model: &str,
+        temperature: f64,
+        options: StreamOptions,
+    ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
+        let credential = match self.credential_for_request() {
+            Ok(value) => value.map(str::to_string),
+            Err(err) => {
+                return stream::once(async move { Err(StreamError::Provider(err.to_string())) })
+                    .boxed();
+            }
+        };
+
+        let effective_messages = if self.merge_system_into_user {
+            Self::flatten_system_messages(messages)
+        } else {
+            messages.to_vec()
+        };
+        let api_messages = effective_messages
+            .into_iter()
+            .map(|message| Message {
+                role: message.role,
+                content: message.content,
+            })
+            .collect();
+
+        let request = ApiChatRequest {
+            model: model.to_string(),
+            messages: api_messages,
+            temperature: self.effective_temperature(model, temperature),
+            stream: Some(options.enabled),
+            tools: None,
+            tool_choice: None,
+        };
+
+        let url = self.chat_completions_url();
+        let client = self.http_client();
+        let auth_header = self.auth_header.clone();
+        let provider_name = self.name.clone();
+        let model_owned = model.to_string();
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
+
+        tokio::spawn(async move {
+            let mut req_builder = client.post(&url).json(&request);
+            req_builder = match (&auth_header, credential.as_deref()) {
+                (AuthStyle::None, _) | (_, None) => req_builder,
+                (AuthStyle::Bearer, Some(credential)) => {
+                    req_builder.header("Authorization", format!("Bearer {credential}"))
+                }
+                (AuthStyle::XApiKey, Some(credential)) => {
+                    req_builder.header("x-api-key", credential)
+                }
+                (AuthStyle::Anthropic, Some(credential)) => req_builder
+                    .header("x-api-key", credential)
+                    .header("anthropic-version", "2023-06-01"),
+                (AuthStyle::Custom(header), Some(credential)) => {
+                    req_builder.header(header, credential)
+                }
+            };
+            req_builder = req_builder.header("Accept", "text/event-stream");
+
+            let response = match req_builder.send().await {
+                Ok(response) => response,
+                Err(error) => {
+                    crate::core::observability::report_error(
+                        error.to_string().as_str(),
+                        "llm_provider",
+                        "stream_chat_history",
+                        &[
+                            ("provider", provider_name.as_str()),
+                            ("model", model_owned.as_str()),
+                            ("failure", "transport"),
+                        ],
+                    );
+                    let _ = tx.send(Err(StreamError::Http(error))).await;
+                    return;
+                }
+            };
+
+            if !response.status().is_success() {
+                let status = response.status();
+                let status_str = status.as_u16().to_string();
+                let raw_error = match response.text().await {
+                    Ok(error) => error,
+                    Err(_) => format!("HTTP error: {status}"),
+                };
+                let sanitized_error = super::sanitize_api_error(&raw_error);
+                let message = format!("{status}: {sanitized_error}");
+                if super::is_budget_exhausted_http_400(status, &raw_error) {
+                    super::log_budget_exhausted_http_400(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_custom_openai_upstream_bad_request_http_400(
+                    provider_name.as_str(),
+                    status,
+                    &raw_error,
+                ) {
+                    super::log_custom_openai_upstream_bad_request_http_400(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_access_policy_denied_http_403(status, &raw_error) {
+                    super::log_provider_access_policy_denied_http_403(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::is_provider_config_rejection_http(
+                    status,
+                    provider_name.as_str(),
+                    &raw_error,
+                ) {
+                    super::log_provider_config_rejection(
+                        "stream_chat_history",
+                        provider_name.as_str(),
+                        Some(model_owned.as_str()),
+                        status,
+                    );
+                } else if super::should_report_provider_http_failure(status) {
+                    crate::core::observability::report_error(
+                        message.as_str(),
+                        "llm_provider",
+                        "stream_chat_history",
+                        &[
+                            ("provider", provider_name.as_str()),
+                            ("model", model_owned.as_str()),
+                            ("status", status_str.as_str()),
+                            ("failure", "non_2xx"),
+                        ],
+                    );
+                }
+                let _ = tx.send(Err(StreamError::Provider(message))).await;
+                return;
+            }
+
+            let mut chunk_stream = sse_bytes_to_chunks(response, options.count_tokens);
+            while let Some(chunk) = chunk_stream.next().await {
+                if tx.send(chunk).await.is_err() {
+                    break;
+                }
+            }
+        });
+
         stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(|chunk| (chunk, rx))
         })

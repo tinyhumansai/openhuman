@@ -66,6 +66,14 @@ subagents = [
     # so there is exactly one canonical route — through this delegate —
     # which keeps the venue-specific approval-gate prompt in scope.
     "markets_agent",
+    # MCP setup specialist (#3039). Synthesised into a `delegate_setup_mcp_server`
+    # tool at agent-build time. Route any "install / add / set up / connect an MCP
+    # server" request here — the agent owns the full flow: search registries →
+    # request required secrets via a native dialog (raw values never enter the
+    # agent context) → test the connection → commit the install + connect. Without
+    # this entry the agent-native install path (issue #3039 gap B5) is unreachable
+    # from chat.
+    "mcp_setup",
     # NOTE: `summarizer` used to be listed here for the runtime-only
     # oversized-tool-result hook. That path is currently disabled
     # (`context.summarizer_payload_threshold_tokens = 0`) after recursive

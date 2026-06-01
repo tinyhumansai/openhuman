@@ -3,6 +3,7 @@ display_name = "Tools Agent"
 when_to_use = "Generalist for heavyweight ad-hoc execution that does NOT touch a code repository — host shell, HTTP/web fetch, web search, memory helpers, file READS (`file_read` / `grep` / `glob`). Lacks `edit` / `apply_patch` / `file_write` / `git_operations` / `codegraph_search` — do **not** use for any task scoped to a code repo (cloning, locating, modifying, building, testing, git, push, PR); those route to `delegate_run_code` end-to-end. Do not use for managed Composio OAuth integrations either — those route to `integrations_agent` with a `toolkit` argument."
 temperature = 0.4
 max_iterations = 10
+iteration_policy = "extended"
 sandbox_mode = "none"
 omit_identity = true
 omit_memory_context = true

@@ -139,6 +139,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::doctor::all_doctor_registered_controllers());
     // Secret storage and encryption
     controllers.extend(crate::openhuman::encryption::all_encryption_registered_controllers());
+    // Keyring consent — user approval before local secret storage fallback
+    controllers
+        .extend(crate::openhuman::keyring_consent::all_keyring_consent_registered_controllers());
     // Security policy metadata
     controllers.extend(crate::openhuman::security::all_security_registered_controllers());
     // Interactive approval workflow (#1339 — gate external-effect tool calls)
@@ -169,6 +172,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::service::all_service_registered_controllers());
     // Data migration utilities
     controllers.extend(crate::openhuman::migration::all_migration_registered_controllers());
+    // Model Council: multi-model deliberation (parallel members + chair synthesis)
+    controllers.extend(crate::openhuman::model_council::all_model_council_registered_controllers());
     // Unified inference domain: text / vision / local runtime / cloud providers.
     // (Formerly split across inference, local_ai, and providers namespaces.)
     controllers.extend(crate::openhuman::inference::all_inference_registered_controllers());
@@ -189,8 +194,6 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::skills::all_skills_registered_controllers());
     // User workspace and file management
     controllers.extend(crate::openhuman::workspace::all_workspace_registered_controllers());
-    // Knowledge vaults — folder-of-files mirrored into memory
-    controllers.extend(crate::openhuman::vault::all_vault_registered_controllers());
     // Skill tool registry
     controllers.extend(crate::openhuman::tools::all_tools_registered_controllers());
     // Unified read-only registry across MCP stdio tools and controller-backed tools
@@ -312,6 +315,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::health::all_health_controller_schemas());
     schemas.extend(crate::openhuman::doctor::all_doctor_controller_schemas());
     schemas.extend(crate::openhuman::encryption::all_encryption_controller_schemas());
+    schemas.extend(crate::openhuman::keyring_consent::all_keyring_consent_controller_schemas());
     schemas.extend(crate::openhuman::security::all_security_controller_schemas());
     schemas.extend(crate::openhuman::approval::all_approval_controller_schemas());
     schemas.extend(crate::openhuman::artifacts::all_artifacts_controller_schemas());
@@ -327,6 +331,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::credentials::all_credentials_controller_schemas());
     schemas.extend(crate::openhuman::service::all_service_controller_schemas());
     schemas.extend(crate::openhuman::migration::all_migration_controller_schemas());
+    schemas.extend(crate::openhuman::model_council::all_model_council_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_inference_controller_schemas());
     schemas.extend(crate::openhuman::inference::all_local_ai_controller_schemas());
     schemas.extend(crate::openhuman::embeddings::all_embeddings_controller_schemas());
@@ -338,7 +343,6 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
     schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
     schemas.extend(crate::openhuman::workspace::all_workspace_controller_schemas());
-    schemas.extend(crate::openhuman::vault::all_vault_controller_schemas());
     schemas.extend(crate::openhuman::tools::all_tools_controller_schemas());
     schemas.extend(crate::openhuman::tool_registry::all_tool_registry_controller_schemas());
     schemas.extend(crate::openhuman::memory::all_memory_controller_schemas());

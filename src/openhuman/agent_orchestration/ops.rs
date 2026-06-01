@@ -414,6 +414,9 @@ impl AgentOrchestrationSession {
         });
 
         if let Some(progress) = parent.on_progress.clone() {
+            let resolved_display_name = AgentDefinitionRegistry::global()
+                .and_then(|reg| reg.get(&agent_id))
+                .map(|def| def.display_name().to_string());
             let _ = progress
                 .send(AgentProgress::SubagentSpawned {
                     agent_id: agent_id.clone(),
@@ -422,6 +425,7 @@ impl AgentOrchestrationSession {
                     dedicated_thread: false,
                     prompt_chars: prompt.chars().count(),
                     worker_thread_id: None,
+                    display_name: resolved_display_name,
                 })
                 .await;
         }
@@ -433,6 +437,8 @@ impl AgentOrchestrationSession {
             model_override: request.model,
             task_id: Some(orchestration_id.clone()),
             worker_thread_id: None,
+            initial_history: None,
+            checkpoint_dir: None,
         };
 
         let task_session = self.clone();

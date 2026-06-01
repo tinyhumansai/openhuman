@@ -761,3 +761,23 @@ fn composio_tool_accepts_empty_api_key_without_panic() {
     let tool = ComposioTool::new("", None, test_security());
     assert_eq!(tool.api_key, "");
 }
+
+#[test]
+fn is_loopback_http_url_accepts_real_loopback_hosts() {
+    assert!(is_loopback_http_url("http://127.0.0.1:8080/api/v3/tools"));
+    assert!(is_loopback_http_url("http://localhost:3000/"));
+    assert!(is_loopback_http_url("http://[::1]:9000/tools"));
+}
+
+#[test]
+fn is_loopback_http_url_rejects_userinfo_smuggling_and_non_loopback() {
+    // Prefix-matching would have accepted these; host parsing rejects them.
+    assert!(!is_loopback_http_url(
+        "http://127.0.0.1:8080@evil.com/api/v3/tools"
+    ));
+    assert!(!is_loopback_http_url("http://localhost:8080@evil.com/"));
+    assert!(!is_loopback_http_url("http://evil.com:8080/"));
+    // HTTPS and unparseable inputs are not loopback-HTTP.
+    assert!(!is_loopback_http_url("https://127.0.0.1:8080/"));
+    assert!(!is_loopback_http_url("not a url"));
+}

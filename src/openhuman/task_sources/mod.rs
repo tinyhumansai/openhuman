@@ -24,6 +24,7 @@ pub mod pipeline;
 pub mod route;
 mod schemas;
 pub mod store;
+pub mod tools;
 pub mod types;
 
 pub use crate::openhuman::memory_sync::composio::providers::{NormalizedTask, TaskFetchFilter};

@@ -57,6 +57,9 @@ pub use whatsapp::WhatsAppChannel;
 pub use whatsapp_web::WhatsAppWebChannel;
 pub use yuanbao::YuanbaoChannel;
 
+#[cfg(any(test, debug_assertions))]
+pub use runtime::test_support;
+
 pub use commands::doctor_channels;
 pub use controllers::{ChannelAuthMode, ChannelDefinition};
 // Channel system-prompt assembly lives in

@@ -122,6 +122,17 @@ pub async fn ingest_document(
     tags: Vec<String>,
     doc: DocumentInput,
 ) -> Result<IngestResult> {
+    ingest_document_with_scope(config, source_id, owner, tags, doc, None).await
+}
+
+pub async fn ingest_document_with_scope(
+    config: &Config,
+    source_id: &str,
+    owner: &str,
+    tags: Vec<String>,
+    doc: DocumentInput,
+    path_scope: Option<String>,
+) -> Result<IngestResult> {
     if already_ingested(config, SourceKind::Document, source_id).await? {
         log::debug!(
             "[memory::ingest_pipeline] skip ingest_document — source_id_hash={} already ingested",
@@ -129,11 +140,12 @@ pub async fn ingest_document(
         );
         return Ok(IngestResult::already_ingested(source_id));
     }
-    let canonical =
-        match document::canonicalise(source_id, owner, &tags, doc).map_err(anyhow::Error::msg)? {
-            Some(c) => c,
-            None => return Ok(IngestResult::empty(source_id)),
-        };
+    let canonical = match document::canonicalise(source_id, owner, &tags, doc, path_scope)
+        .map_err(anyhow::Error::msg)?
+    {
+        Some(c) => c,
+        None => return Ok(IngestResult::empty(source_id)),
+    };
     persist(config, source_id, canonical).await
 }
 

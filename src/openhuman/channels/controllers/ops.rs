@@ -54,6 +54,28 @@ fn credential_provider(channel_id: &str, mode: ChannelAuthMode) -> String {
     format!("channel:{}:{}", channel_id, mode)
 }
 
+fn channel_config_connected(config: &Config, channel_id: &str, mode: ChannelAuthMode) -> bool {
+    let channels = &config.channels_config;
+    match (channel_id, mode) {
+        ("telegram", ChannelAuthMode::BotToken) => channels.telegram.is_some(),
+        ("discord", ChannelAuthMode::BotToken) => channels.discord.is_some(),
+        ("slack", _) => channels.slack.is_some(),
+        ("mattermost", _) => channels.mattermost.is_some(),
+        ("imessage", ChannelAuthMode::ManagedDm) => channels.imessage.is_some(),
+        ("matrix", _) => channels.matrix.is_some(),
+        ("signal", _) => channels.signal.is_some(),
+        ("whatsapp", _) => channels.whatsapp.is_some(),
+        ("linq", _) => channels.linq.is_some(),
+        ("email", _) => channels.email.is_some(),
+        ("irc", _) => channels.irc.is_some(),
+        ("lark", _) => channels.lark.is_some(),
+        ("dingtalk", _) => channels.dingtalk.is_some(),
+        ("qq", _) => channels.qq.is_some(),
+        ("yuanbao", ChannelAuthMode::ApiKey) => channels.yuanbao.is_some(),
+        _ => false,
+    }
+}
+
 fn parse_allowed_users(value: Option<&Value>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
 
@@ -599,10 +621,16 @@ pub async fn channel_status(
         for spec in &def.auth_modes {
             let provider_key = credential_provider(def.id, spec.mode);
             let has_creds = stored_providers.iter().any(|p| p == &provider_key);
+            let has_config = channel_config_connected(config, def.id, spec.mode);
+            let connected = has_creds || has_config;
             entries.push(ChannelStatusEntry {
                 channel_id: def.id.to_string(),
                 auth_mode: spec.mode,
-                connected: has_creds,
+                connected,
+                // Reflect actual credential presence, not connection state:
+                // a config-only channel is `connected` but has no stored
+                // credentials. Collapsing these misleads callers that branch on
+                // credential presence (e.g. "needs re-auth" surfaces).
                 has_credentials: has_creds,
             });
         }

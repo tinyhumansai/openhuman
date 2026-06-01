@@ -1242,9 +1242,10 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
 /// boundary when a user typed/picked a path that doesn't resolve to an
 /// existing directory:
 ///
-/// - `"root_path is not a directory: <path>"` —
-///   [`crate::openhuman::vault::ops::vault_create`] when the chosen vault
-///   folder doesn't exist or points at a file (Sentry TAURI-RUST-4QH).
+/// - `"root_path is not a directory: <path>"` — historically emitted by the
+///   now-removed knowledge-vault `vault_create` path when the chosen folder
+///   didn't exist or pointed at a file (Sentry TAURI-RUST-4QH). Kept as a
+///   classifier fixture since the wire shape may recur from other callers.
 /// - `"hosted path is not a directory: <path>"` —
 ///   [`crate::openhuman::http_host::path_utils`] when an HTTP host config
 ///   references a missing directory. Not yet observed in Sentry but

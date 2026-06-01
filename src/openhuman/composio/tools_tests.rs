@@ -938,6 +938,10 @@ async fn authorize_in_direct_mode_refuses_with_app_composio_dev_hint() {
     // call which reads from disk — see the matching note on
     // `execute_tool_per_call_factory_means_no_baked_client`.
     use crate::openhuman::config::TEST_ENV_LOCK;
+    // Also hold the composio cache lock so we don't race against ops_tests
+    // that mutate INTEGRATIONS_CACHE at the same time as we reload config.
+    let _cache_guard =
+        crate::openhuman::composio::connected_integrations::composio_cache_test_lock();
     let _env_guard = TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let tmp = tempfile::tempdir().expect("tempdir");
