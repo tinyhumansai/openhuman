@@ -339,6 +339,7 @@ fn sample_memory_chunk_with_owner(
             time_range: (ts, ts),
             tags: vec!["composio".to_string()],
             source_ref: Some(SourceRef::new(format!("composio://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: 12,
         seq_in_source: seq,

@@ -496,6 +496,7 @@ fn memory_sync_canonicalizers_sort_clean_and_preserve_provenance() {
             modified_at: t1,
             source_ref: None,
         },
+        None,
     )
     .expect("empty doc")
     .is_none());
@@ -508,7 +509,7 @@ fn memory_sync_canonicalizers_sort_clean_and_preserve_provenance() {
     });
     let doc_input: DocumentInput = serde_json::from_value(doc_json).expect("document input");
     assert_eq!(doc_input.provider, "unknown");
-    let doc = canonicalise_document("doc-1", "alice", &["plans".into()], doc_input)
+    let doc = canonicalise_document("doc-1", "alice", &["plans".into()], doc_input, None)
         .expect("document")
         .expect("document output");
     assert_eq!(doc.metadata.timestamp.timestamp_millis(), 1_700_000_000_000);

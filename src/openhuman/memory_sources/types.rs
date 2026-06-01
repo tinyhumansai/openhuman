@@ -65,13 +65,13 @@ pub struct MemorySourceEntry {
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
-    /// Max commits to pull per sync (default 2000 when absent).
+    /// Max commits to pull per sync (default 1000 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_commits: Option<u32>,
-    /// Max issues to pull per sync (default 2000 when absent).
+    /// Max issues to pull per sync (default 1000 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_issues: Option<u32>,
-    /// Max pull requests to pull per sync (default 2000 when absent).
+    /// Max pull requests to pull per sync (default 1000 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_prs: Option<u32>,
 

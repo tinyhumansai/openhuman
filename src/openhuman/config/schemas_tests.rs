@@ -45,6 +45,8 @@ fn every_registered_key_resolves_to_non_unknown_schema() {
         "get_meet_settings",
         "update_autonomy_settings",
         "get_autonomy_settings",
+        "get_agent_settings",
+        "update_agent_settings",
         "agent_server_status",
         "reset_local_data",
         "get_onboarding_completed",
