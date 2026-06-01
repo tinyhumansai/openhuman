@@ -6,6 +6,21 @@ const DEFAULT_SECOND_QUESTION = "那我应该先改哪一块？";
 const DEFAULT_EXPECTED_DOCUMENTS = 1779;
 const DEFAULT_EXPECTED_CHUNKS = 14597;
 const DEFAULT_TIMEOUT_MS = 120_000;
+export const FINAL_ACCEPTANCE_SCENARIOS = [
+  {
+    id: "visual-conversion",
+    question: "主图视觉点击率转化率怎么优化？",
+    followUp: "那我应该先改哪一块？",
+  },
+  {
+    id: "product-selection",
+    question: "新品选品应该如何判断是否值得做？",
+  },
+  {
+    id: "listing-keywords",
+    question: "Listing 文案关键词布局收录应该怎么做？",
+  },
+];
 
 export function validateAmazonQaSmoke(input = {}, options = {}) {
   const expectedDocuments = Number(options.expectedDocuments || DEFAULT_EXPECTED_DOCUMENTS);
@@ -205,6 +220,157 @@ export async function runAmazonQaSmoke(options = {}) {
       firstQuestion,
       secondQuestion,
       requireSourceContext: options.requireSourceContext,
+    },
+  );
+}
+
+export function validateAmazonQaFinalAcceptance(input = {}, options = {}) {
+  const scenarios = Array.isArray(options.scenarios) && options.scenarios.length
+    ? options.scenarios
+    : FINAL_ACCEPTANCE_SCENARIOS;
+  const status = input.status || {};
+  validateAmazonQaSmoke(
+    {
+      status,
+      sourceSelection: input.sourceSelections?.[0],
+      first: input.scenarios?.[0]?.first,
+      second: input.scenarios?.[0]?.second || input.scenarios?.[0]?.first,
+      sourceContext: input.sourceContext,
+      notebook: input.notebook,
+      studyPack: input.studyPack,
+    },
+    {
+      expectedDocuments: options.expectedDocuments,
+      expectedChunks: options.expectedChunks,
+      firstQuestion: scenarios[0]?.question || DEFAULT_FIRST_QUESTION,
+      secondQuestion: scenarios[0]?.followUp || DEFAULT_SECOND_QUESTION,
+      requireSourceContext: options.requireSourceContext,
+    },
+  );
+
+  assertSmoke(Array.isArray(input.scenarios), "Final acceptance scenarios are missing.");
+  assertSmoke(input.scenarios.length >= scenarios.length, `Expected ${scenarios.length} final acceptance scenarios.`);
+  const summaries = input.scenarios.slice(0, scenarios.length).map((entry, index) => {
+    const scenario = scenarios[index];
+    assertSmoke(entry?.id === scenario.id, `Scenario ${index + 1} id mismatch.`);
+    assertSourceSelection(input.sourceSelections?.[index]);
+    assertAskPayload(entry.first, `${scenario.id} question`);
+    assertSmoke(
+      entry.first.learningQueue?.items?.length > 0,
+      `${scenario.id} did not return a learning queue.`,
+    );
+    assertSmoke(
+      String(entry.first.answerGeneration?.boundary || "").includes("来源"),
+      `${scenario.id} answer boundary is missing source language.`,
+    );
+    if (scenario.followUp) {
+      assertAskPayload(entry.second, `${scenario.id} follow-up`);
+      assertSmoke(
+        Array.isArray(entry.second.messages) && entry.second.messages.length >= 4,
+        `${scenario.id} follow-up did not preserve conversation history.`,
+      );
+    }
+    return {
+      id: scenario.id,
+      question: scenario.question,
+      followUp: scenario.followUp || "",
+      sources: entry.first.sources.length,
+      graphNodes: entry.first.graph.nodes.length,
+      learningQueueItems: entry.first.learningQueue.items.length,
+      answerMode: entry.first.answerGeneration?.mode || "template",
+    };
+  });
+
+  return {
+    ok: true,
+    scenarios: summaries,
+    documents: Number(status.health?.documents || 0),
+    chunks: Number(status.health?.chunks || 0),
+    embeddedChunks: Number(status.health?.embeddedChunks || 0),
+    vectorCoveragePercent: Number(status.health?.vectorCoveragePercent || 0),
+    sourceTreeQueuedJobs: Number(status.health?.sourceTree?.queuedJobs || 0),
+    sourceTreeFailedJobs: Number(status.health?.sourceTree?.failedJobs || 0),
+    notebookMessages: Array.isArray(input.notebook?.messages) ? input.notebook.messages.length : 0,
+    studyPackSources: Array.isArray(input.studyPack?.sourceLedger) ? input.studyPack.sourceLedger.length : 0,
+    studioFlashcards: Array.isArray(input.studyPack?.studio?.flashcards) ? input.studyPack.studio.flashcards.length : 0,
+    studioMindMapNodes: Array.isArray(input.studyPack?.studio?.mindMap?.nodes) ? input.studyPack.studio.mindMap.nodes.length : 0,
+    studioMasteryItems: Array.isArray(input.studyPack?.studio?.masteryQuiz?.items) ? input.studyPack.studio.masteryQuiz.items.length : 0,
+    studioActionSteps: Array.isArray(input.studyPack?.studio?.actionPlan?.steps) ? input.studyPack.studio.actionPlan.steps.length : 0,
+  };
+}
+
+export async function runAmazonQaFinalAcceptance(options = {}) {
+  const baseUrl = String(options.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "");
+  const timeoutMs = Number(options.timeoutMs || DEFAULT_TIMEOUT_MS);
+  const scenarios = Array.isArray(options.scenarios) && options.scenarios.length
+    ? options.scenarios
+    : FINAL_ACCEPTANCE_SCENARIOS;
+  const sessionId = options.sessionId || `amazon-qa-acceptance-${Date.now()}`;
+  const status = await fetchJson(`${baseUrl}/api/status`, { timeoutMs });
+  const scenarioResults = [];
+  const sourceSelections = [];
+  let firstSessionId = "";
+
+  for (const scenario of scenarios) {
+    const sourceSelectionPayload = await fetchJson(`${baseUrl}/api/source-selection`, {
+      method: "POST",
+      timeoutMs,
+      body: {
+        question: scenario.question,
+        sessionId,
+        history: [],
+      },
+    });
+    const sourceSelection = sourceSelectionPayload.sourceSelection || sourceSelectionPayload;
+    sourceSelections.push(sourceSelection);
+    const first = await fetchJson(`${baseUrl}/api/ask`, {
+      method: "POST",
+      timeoutMs,
+      body: {
+        question: scenario.question,
+        sessionId: `${sessionId}-${scenario.id}`,
+        history: [],
+        intentPreference: sourceSelection.intent?.type || undefined,
+      },
+    });
+    let second;
+    if (scenario.followUp) {
+      second = await fetchJson(`${baseUrl}/api/ask`, {
+        method: "POST",
+        timeoutMs,
+        body: {
+          question: scenario.followUp,
+          sessionId: first.sessionId || `${sessionId}-${scenario.id}`,
+          history: Array.isArray(first.messages) ? first.messages : [],
+        },
+      });
+    }
+    if (!firstSessionId) firstSessionId = second?.sessionId || first.sessionId || "";
+    scenarioResults.push({ id: scenario.id, first, second });
+  }
+
+  const anchor = scenarioResults[0];
+  const sourceContext = options.requireSourceContext === false || !anchor?.second
+    ? undefined
+    : await fetchSourceContext(baseUrl, {
+        timeoutMs,
+        sessionId: anchor.second.sessionId || anchor.first.sessionId || firstSessionId,
+        second: anchor.second,
+      });
+  const notebook = firstSessionId
+    ? await fetchNotebook(baseUrl, { timeoutMs, sessionId: firstSessionId })
+    : undefined;
+  const studyPack = firstSessionId
+    ? await fetchNotebookStudyPack(baseUrl, { timeoutMs, sessionId: firstSessionId })
+    : undefined;
+
+  return validateAmazonQaFinalAcceptance(
+    { status, sourceSelections, scenarios: scenarioResults, sourceContext, notebook, studyPack },
+    {
+      expectedDocuments: options.expectedDocuments,
+      expectedChunks: options.expectedChunks,
+      requireSourceContext: options.requireSourceContext,
+      scenarios,
     },
   );
 }

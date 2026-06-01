@@ -7,7 +7,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import { runAmazonQaSmoke } from "./amazon-qa-e2e-smoke.mjs";
+import { runAmazonQaFinalAcceptance, runAmazonQaSmoke } from "./amazon-qa-e2e-smoke.mjs";
 import { resolveAmazonQaPaths } from "./amazon-qa-paths.mjs";
 import { buildSourceTreeDrainPreflight } from "./amazon-source-tree-lib.mjs";
 
@@ -42,6 +42,7 @@ function usage() {
   ${PRODUCT_COMMAND} start [--port ${DEFAULT_PORT}] [--core-port ${DEFAULT_CORE_PORT}]
   ${PRODUCT_COMMAND} status [--json]
   ${PRODUCT_COMMAND} smoke [--base-url ${DEFAULT_BASE_URL}]
+  ${PRODUCT_COMMAND} acceptance [--base-url ${DEFAULT_BASE_URL}]
   ${PRODUCT_COMMAND} handoff
 
 Purpose:
@@ -67,6 +68,7 @@ async function main() {
   if (command === "start") return startProduct(args);
   if (command === "status") return printStatus(args);
   if (command === "smoke") return runSmoke(args);
+  if (command === "acceptance") return runAcceptance(args);
   if (command === "handoff") return writeHandoff();
   throw new Error(`Unknown command: ${command}`);
 }
@@ -333,6 +335,12 @@ async function waitForStatus(baseUrl, timeoutMs) {
 async function runSmoke(args) {
   const baseUrl = argValue(args, "--base-url", DEFAULT_BASE_URL);
   const result = await runAmazonQaSmoke({ baseUrl });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function runAcceptance(args) {
+  const baseUrl = argValue(args, "--base-url", DEFAULT_BASE_URL);
+  const result = await runAmazonQaFinalAcceptance({ baseUrl });
   console.log(JSON.stringify(result, null, 2));
 }
 

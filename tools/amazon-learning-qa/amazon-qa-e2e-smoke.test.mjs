@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateAmazonQaSmoke } from "./amazon-qa-e2e-smoke.mjs";
+import { FINAL_ACCEPTANCE_SCENARIOS, validateAmazonQaFinalAcceptance, validateAmazonQaSmoke } from "./amazon-qa-e2e-smoke.mjs";
 
 function statusPayload(overrides = {}) {
   return {
@@ -33,6 +33,11 @@ function askPayload(question, overrides = {}) {
     question,
     sessionId: "smoke-session",
     answer: `问题：${question}\n\n本轮回答。`,
+    answerGeneration: {
+      mode: "template_fallback",
+      model: "stable-template",
+      boundary: "模板回答只整理本轮检索到的来源和摘录；引用仍需回到下方来源卡片核对。",
+    },
     sources: [
       {
         author: "飞翔的波波",
@@ -200,6 +205,37 @@ test("validateAmazonQaSmoke accepts a source-backed two-turn answer path", () =>
   assert.equal(report.studioMasteryItems, 1);
   assert.equal(report.studioActionSteps, 1);
   assert.equal(report.sourceContextStatus, "located");
+});
+
+test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning questions", () => {
+  const scenarios = FINAL_ACCEPTANCE_SCENARIOS.map((scenario) => ({
+    id: scenario.id,
+    first: askPayload(scenario.question),
+    second: scenario.followUp ? askPayload(scenario.followUp) : undefined,
+  }));
+  const report = validateAmazonQaFinalAcceptance({
+    status: statusPayload(),
+    sourceSelections: FINAL_ACCEPTANCE_SCENARIOS.map(() => sourceSelectionPayload()),
+    scenarios,
+    sourceContext: { status: "located", match: "点击率反映主图吸引力" },
+    notebook: {
+      id: "acceptance-notebook",
+      boundary: "学习专题会话不是作者原文证据。",
+      messages: [
+        { role: "user", content: FINAL_ACCEPTANCE_SCENARIOS[0].question },
+        { role: "assistant", content: "第一轮" },
+        { role: "user", content: FINAL_ACCEPTANCE_SCENARIOS[0].followUp },
+        { role: "assistant", content: "第二轮" },
+      ],
+    },
+    studyPack: studyPackPayload(),
+  });
+
+  assert.equal(report.ok, true);
+  assert.equal(report.scenarios.length, 3);
+  assert.deepEqual(report.scenarios.map((item) => item.id), ["visual-conversion", "product-selection", "listing-keywords"]);
+  assert.equal(report.scenarios[0].followUp, "那我应该先改哪一块？");
+  assert.ok(report.scenarios.every((item) => item.sources >= 1 && item.graphNodes >= 1 && item.learningQueueItems >= 1));
 });
 
 test("validateAmazonQaSmoke rejects incomplete semantic index status", () => {

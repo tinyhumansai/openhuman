@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { buildProductDoctorReport, handoffMarkdown } from "./amazon-qa-product.mjs";
@@ -71,7 +72,7 @@ test("product doctor fails the delivery gate when semantic vectors are incomplet
   }
 });
 
-test("handoff uses real status, local deployment boundary, and no audio/video scope", () => {
+test("handoff uses real status, local deployment boundary, and no audio/video scope", async () => {
   const report = {
     ok: false,
     warnings: [],
@@ -107,6 +108,7 @@ test("handoff uses real status, local deployment boundary, and no audio/video sc
   assert.match(markdown, /来源决策表[\s\S]*导出 Markdown 或 CSV/);
   assert.match(markdown, /本地学习包预览/);
   assert.match(markdown, /不包含音频或视频/);
+  assert.match(await readFile(new URL("./amazon-qa-product.mjs", import.meta.url), "utf8"), /command === "acceptance"/);
   assert.doesNotMatch(markdown, /1779 篇资料、14597 个片段已完成/);
   assert.doesNotMatch(markdown, /## 已交付能力/);
 });
