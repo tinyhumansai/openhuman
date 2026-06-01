@@ -102,7 +102,9 @@ async function completeAuthCallback(page: Page, token: string): Promise<void> {
   await applyBrowserCoreModeInPage(page);
   await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}&key=auth`);
   await expect
-    .poll(async () => page.evaluate(() => window.location.hash), { timeout: 15_000 })
+    .poll(async () => page.evaluate(() => window.location.hash), {
+      timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
+    })
     .toMatch(/^#\/home/);
 }
 
