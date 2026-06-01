@@ -19,11 +19,12 @@
 //! - **[`fork_context`]**: Task-local storage for parent context sharing.
 //! - **[`interrupt`]**: Infrastructure for graceful cancellation of agent loops.
 
-pub(crate) mod archivist;
+pub mod archivist;
 pub(crate) mod builtin_definitions;
 mod credentials;
 pub mod definition;
 pub(crate) mod definition_loader;
+pub(crate) mod engine;
 pub mod fork_context;
 mod instructions;
 pub mod interrupt;

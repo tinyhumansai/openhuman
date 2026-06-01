@@ -44,11 +44,27 @@ const EXTRACT_MODEL_ID: &str = "summarization-v1";
 /// answer, without straying into creative territory.
 const EXTRACT_TEMPERATURE: f64 = 0.2;
 
-/// Char budget per extraction call. Chosen so a single chunk + prompt
-/// scaffolding + output stays well below the extraction model's context
-/// window (~196k tokens) — at ~4 chars/token that leaves comfortable
-/// headroom for the extraction contract and response.
-const EXTRACT_CHUNK_CHAR_BUDGET: usize = 60_000;
+/// Char budget per extraction call, derived from the extraction model's
+/// context window. A payload at or under this budget is extracted in a single
+/// shot over its **entire** content — higher quality than the chunk+concat
+/// fallback, which has no reduce stage and can miss facts that span a chunk
+/// boundary or need global context. `summarization-v1` resolves to a
+/// long-context flash model (~1M tokens), so this is large; only payloads that
+/// exceed it fall back to parallel chunked extraction. Headroom is reserved for
+/// the extraction contract, the query, and the response.
+fn extract_chunk_char_budget() -> usize {
+    /// Fallback window (tokens) when the model id is unknown to the registry.
+    const FALLBACK_WINDOW_TOKENS: u64 = 128_000;
+    /// Approximate chars per token used for budgeting.
+    const CHARS_PER_TOKEN: u64 = 4;
+    /// Fraction of the window spent on the payload slice; the remainder covers
+    /// the prompt scaffolding, query, and model response.
+    const USABLE_PCT: u64 = 70;
+
+    let window_tokens = crate::openhuman::inference::context_window_for_model(EXTRACT_MODEL_ID)
+        .unwrap_or(FALLBACK_WINDOW_TOKENS);
+    (window_tokens * USABLE_PCT / 100 * CHARS_PER_TOKEN) as usize
+}
 
 /// System prompt fed to the provider on every `extract_from_result`
 /// call. Lifted in spirit from the old `summarizer` agent's prompt but
@@ -168,8 +184,16 @@ impl Tool for ExtractFromResultTool {
             }
         };
 
+        // Allow test harnesses to lower the chunk budget so multi-chunk
+        // extraction can be exercised on compacted payloads. Never consulted
+        // in production (env var absent).
+        let effective_chunk_budget = std::env::var("OPENHUMAN_TEST_EXTRACT_CHUNK_BUDGET")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or_else(extract_chunk_char_budget);
+
         // Fast path: payload fits in a single provider turn.
-        if cached.content.len() <= EXTRACT_CHUNK_CHAR_BUDGET {
+        if cached.content.len() <= effective_chunk_budget {
             tracing::debug!(
                 tool = %cached.tool_name,
                 bytes = cached.content.len(),
@@ -195,12 +219,12 @@ impl Tool for ExtractFromResultTool {
         // failure when the upstream provider stalls. For
         // listing/extraction queries concatenation is equivalent; for
         // top-N / global-ordering queries the caller can post-process.
-        let chunks = chunk_content(&cached.content, EXTRACT_CHUNK_CHAR_BUDGET);
+        let chunks = chunk_content(&cached.content, effective_chunk_budget);
         tracing::info!(
             tool = %cached.tool_name,
             total_bytes = cached.content.len(),
             chunk_count = chunks.len(),
-            chunk_budget = EXTRACT_CHUNK_CHAR_BUDGET,
+            chunk_budget = effective_chunk_budget,
             "[extract_from_result] chunked extraction"
         );
 

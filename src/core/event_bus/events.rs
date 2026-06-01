@@ -76,6 +76,15 @@ pub enum DomainEvent {
         agent_id: String,
         error: String,
     },
+    /// A sub-agent called `ask_user_clarification` and paused, waiting
+    /// for the orchestrator to relay the user's answer via
+    /// `continue_subagent`.
+    SubagentAwaitingUser {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        question: String,
+    },
     /// High-level orchestration accepted a child agent for execution.
     AgentOrchestrationSpawned {
         session_id: String,
@@ -309,6 +318,12 @@ pub enum DomainEvent {
     /// Agent attempted a tool call that produces an external side
     /// effect; awaiting user approval. Published by `ApprovalGate`
     /// before parking the tool-call future. Issue #1339.
+    ///
+    /// Note: this variant intentionally does not carry a `session_id`.
+    /// Session provenance is internal to `ApprovalGate`; downstream
+    /// surfaces (frontend approval card, audit log readers, web channel
+    /// bridge) only need the request correlation id plus optional chat
+    /// thread/client routing.
     ApprovalRequested {
         /// Unique id used to correlate the decision back to the
         /// parked future.
@@ -320,9 +335,6 @@ pub enum DomainEvent {
         action_summary: String,
         /// Redacted JSON arguments — also stripped of raw user content.
         args_redacted: serde_json::Value,
-        /// Session id binding the request to the current core launch
-        /// so stale approvals cannot be replayed after restart.
-        session_id: String,
         /// Chat thread the gated call belongs to, when the turn originated
         /// from a chat channel — lets the web channel route a `yes`/`no`
         /// reply back to this request. `None` for non-chat callers.
@@ -484,6 +496,23 @@ pub enum DomainEvent {
     },
     /// A full tree rebuild completed.
     TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
+
+    /// Fine-grained progress during the memory tree build pipeline.
+    /// Emitted at each sub-phase so the frontend can show detailed status.
+    MemoryTreeBuildProgress {
+        /// Which phase: "extract", "append", "seal", "flush", "embed"
+        phase: String,
+        /// Sub-step within the phase (e.g. "loading", "summarising", "persisting")
+        step: String,
+        /// Tree scope when available (e.g. "github:org/repo")
+        tree_scope: Option<String>,
+        /// Tree level being processed (0 = leaves, 1+ = summaries)
+        level: Option<u32>,
+        /// Number of items being processed in this step
+        item_count: Option<u32>,
+        /// Human-readable detail
+        detail: Option<String>,
+    },
 
     // ── Notification ────────────────────────────────────────────────────
     /// An integration notification was ingested from an embedded webview.
@@ -649,6 +678,17 @@ pub enum DomainEvent {
     /// A component restart was observed.
     HealthRestarted { component: String },
 
+    // ── Keyring ─────────────────────────────────────────────────────────
+    /// The OS keyring is unavailable and no user consent for local fallback
+    /// has been recorded. Published once (deduplicated) when a secret
+    /// operation hits the consent gate. The frontend surfaces a consent
+    /// dialog in response.
+    KeyringConsentRequired,
+    /// A secret field failed to decrypt (rotated master key, corrupted
+    /// ciphertext, keychain reset). Published so the frontend can surface
+    /// a recovery prompt instead of silently clearing the field.
+    KeyringDecryptFailed { field_name: String, reason: String },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -709,6 +749,7 @@ impl DomainEvent {
             | Self::SubagentSpawned { .. }
             | Self::SubagentCompleted { .. }
             | Self::SubagentFailed { .. }
+            | Self::SubagentAwaitingUser { .. }
             | Self::AgentOrchestrationSpawned { .. }
             | Self::AgentOrchestrationCompleted { .. }
             | Self::AgentOrchestrationFailed { .. }
@@ -763,7 +804,8 @@ impl DomainEvent {
 
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }
-            | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
+            | Self::TreeSummarizerRebuildCompleted { .. }
+            | Self::MemoryTreeBuildProgress { .. } => "tree_summarizer",
 
             Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
 
@@ -785,6 +827,8 @@ impl DomainEvent {
             | Self::AutonomyConfigChanged
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
+
+            Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
             Self::SessionExpired { .. } => "auth",
 
@@ -813,6 +857,7 @@ impl DomainEvent {
             Self::SubagentSpawned { .. } => "SubagentSpawned",
             Self::SubagentCompleted { .. } => "SubagentCompleted",
             Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::SubagentAwaitingUser { .. } => "SubagentAwaitingUser",
             Self::AgentOrchestrationSpawned { .. } => "AgentOrchestrationSpawned",
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
@@ -858,6 +903,7 @@ impl DomainEvent {
             Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
             Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
             Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
+            Self::MemoryTreeBuildProgress { .. } => "MemoryTreeBuildProgress",
             Self::NotificationIngested { .. } => "NotificationIngested",
             Self::NotificationTriaged { .. } => "NotificationTriaged",
             Self::DevicePaired { .. } => "DevicePaired",
@@ -876,6 +922,8 @@ impl DomainEvent {
             Self::AutonomyConfigChanged => "AutonomyConfigChanged",
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
+            Self::KeyringConsentRequired => "KeyringConsentRequired",
+            Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
@@ -901,6 +949,7 @@ impl DomainEvent {
             Self::SubagentSpawned { agent_id, .. }
             | Self::SubagentCompleted { agent_id, .. }
             | Self::SubagentFailed { agent_id, .. }
+            | Self::SubagentAwaitingUser { agent_id, .. }
             | Self::AgentOrchestrationSpawned { agent_id, .. }
             | Self::AgentOrchestrationCompleted { agent_id, .. }
             | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),

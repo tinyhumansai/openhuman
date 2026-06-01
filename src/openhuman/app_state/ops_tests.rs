@@ -126,9 +126,10 @@ fn save_and_reload_stored_app_state_round_trips() {
             connected_sources: vec!["telegram".into()],
             updated_at_ms: Some(42),
         }),
+        keyring_consent: None,
     };
 
-    save_stored_app_state(&cfg, &state).expect("save app state");
+    save_app_state(&cfg, &state).expect("save app state");
     let reloaded = load_stored_app_state(&cfg).expect("reload app state");
     assert_eq!(reloaded.encryption_key, Some("enc-key".into()));
     let tasks = reloaded.onboarding_tasks.expect("onboarding tasks");

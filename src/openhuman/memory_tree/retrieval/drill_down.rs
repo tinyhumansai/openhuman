@@ -302,6 +302,7 @@ mod tests {
                     time_range: (ts, ts),
                     tags: vec![],
                     source_ref: Some(SourceRef::new("slack://x")),
+                    path_scope: None,
                 },
                 token_count: crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET * 6
                     / 10,
@@ -460,6 +461,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
+                path_scope: None,
             },
             token_count: 10,
             seq_in_source: 0,

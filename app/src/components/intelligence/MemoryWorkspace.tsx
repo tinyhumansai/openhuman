@@ -11,9 +11,6 @@
  *   │   Sync button, status chip, chunk count, freshness)   │
  *   └───────────────────────────────────────────────────────┘
  *   ┌───────────────────────────────────────────────────────┐
- *   │  VaultPanel — Obsidian vault link / folder picker     │
- *   └───────────────────────────────────────────────────────┘
- *   ┌───────────────────────────────────────────────────────┐
  *   │  WhatsAppMemorySection                                │
  *   └───────────────────────────────────────────────────────┘
  *   ┌───────────────────────────────────────────────────────┐
@@ -51,7 +48,7 @@ import { MemoryGraph } from './MemoryGraph';
 import { MemorySourcesRegistry } from './MemorySourcesRegistry';
 import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
 import { ObsidianVaultSection } from './ObsidianVaultSection';
-import { VaultPanel } from './VaultPanel';
+import { SyncAuditPanel } from './SyncAuditPanel';
 import { WhatsAppMemorySection } from './WhatsAppMemorySection';
 
 interface MemoryWorkspaceProps {
@@ -67,13 +64,13 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
   const [resetting, setResetting] = useState(false);
   const [mode, setMode] = useState<GraphMode>('tree');
 
-  // (Re)load the graph whenever the mode toggle flips. The Memory
-  // sources panel manages its own polling.
+  const [graphVersion, setGraphVersion] = useState(0);
+
+  // (Re)load the graph whenever the mode toggle flips or tree events arrive.
   useEffect(() => {
-    console.debug('[ui-flow][memory-workspace] graph load: entry mode=%s', mode);
+    console.debug('[ui-flow][memory-workspace] graph load: entry mode=%s v=%d', mode, graphVersion);
     let cancelled = false;
     setError(null);
-    setGraph(null);
     void (async () => {
       try {
         const resp = await memoryTreeGraphExport(mode);
@@ -94,7 +91,25 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     return () => {
       cancelled = true;
     };
-  }, [mode]);
+  }, [mode, graphVersion]);
+
+  useEffect(() => {
+    const onTreeDone = () => {
+      setTimeout(() => setGraphVersion(v => v + 1), 2000);
+    };
+    const onSyncDone = (e: Event) => {
+      const data = (e as CustomEvent).detail as { stage?: string } | null;
+      if (data?.stage === 'completed') {
+        setTimeout(() => setGraphVersion(v => v + 1), 3000);
+      }
+    };
+    window.addEventListener('openhuman:memory-tree-completed', onTreeDone);
+    window.addEventListener('openhuman:memory-sync-stage', onSyncDone);
+    return () => {
+      window.removeEventListener('openhuman:memory-tree-completed', onTreeDone);
+      window.removeEventListener('openhuman:memory-sync-stage', onSyncDone);
+    };
+  }, []);
 
   const handleWipe = useCallback(async () => {
     // Two-step confirm so accidental clicks can't nuke a workspace.
@@ -214,7 +229,6 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
     <div className="space-y-4" data-testid="memory-workspace">
       <MemoryTreeStatusPanel onToast={onToast} />
       <MemorySourcesRegistry onToast={onToast} />
-      <VaultPanel onToast={onToast} />
       <WhatsAppMemorySection />
 
       <div
@@ -301,6 +315,13 @@ export function MemoryWorkspace({ onToast }: MemoryWorkspaceProps) {
       ) : (
         <MemoryGraph nodes={graph.nodes} edges={graph.edges} mode={mode} />
       )}
+
+      <div className="rounded-lg border border-stone-100 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4">
+        <h3 className="mb-2 text-sm font-medium text-stone-700 dark:text-neutral-200">
+          {t('sync.auditTitle', 'Sync History')}
+        </h3>
+        <SyncAuditPanel />
+      </div>
     </div>
   );
 }

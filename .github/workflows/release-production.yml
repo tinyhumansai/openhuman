@@ -82,12 +82,52 @@ concurrency:
 # ---------------------------------------------------------------------------
 jobs:
   # =========================================================================
+  # Phase 0: Manual approval gate (main_head only).
+  #
+  # The `main_head` path bumps the version, COMMITS to `main`, and pushes that
+  # commit + tag using a GitHub App token that bypasses branch protection
+  # (prepare-build → "Commit, push and tag (main_head)"). If that App private
+  # key (secrets.XGITHUB_APP_PRIVATE_KEY) ever leaked, an attacker could push
+  # arbitrary commits to the default branch — CWE-250. This job parks the run
+  # on the `Release-Approval` environment (configured with required reviewers
+  # in repo settings) so a human must explicitly approve before prepare-build
+  # is allowed to run its push step. A rejected/cancelled approval leaves
+  # prepare-build skipped, so nothing is ever pushed.
+  #
+  # Scoped to `main_head` only: the `staging_tag` promotion path pushes just an
+  # immutable `v<version>` tag at an already-validated staging commit — it does
+  # NOT push a commit to `main` — so it stays gated only by the existing
+  # `Production` environment and is intentionally skipped here (no regression).
+  # =========================================================================
+  review-approval:
+    name: Manual approval gate (main_head)
+    runs-on: ubuntu-latest
+    environment: Release-Approval
+    if: inputs.release_source == 'main_head'
+    steps:
+      - name: Record approval
+        run: |
+          echo "[release-production] main_head push to main approved by a required reviewer."
+          echo "Proceeding to version bump + commit/tag push on prepare-build."
+
+  # =========================================================================
   # Phase 1: Resolve build ref and (for main_head) bump version + create tag
   # =========================================================================
   prepare-build:
     name: Prepare build context
     runs-on: ubuntu-latest
     environment: Production
+    needs: [review-approval]
+    # The push-to-main step lives inside this job (main_head path), so gating
+    # prepare-build on review-approval gates the push. `!cancelled()` (not
+    # `always()`) so a cancelled run never pushes; the success/skipped guard
+    # lets the `staging_tag` path through (review-approval is skipped there)
+    # while requiring an explicit approval success for `main_head`. A rejected
+    # approval yields result == 'failure', failing the guard → no push.
+    if: >-
+      !cancelled()
+      && (needs.review-approval.result == 'success'
+          || needs.review-approval.result == 'skipped')
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}

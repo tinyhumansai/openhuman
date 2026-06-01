@@ -380,6 +380,31 @@ pub fn count_total(config: &Config) -> Result<u64> {
     })
 }
 
+/// Reset all terminally-failed jobs back to `ready` so the worker pool
+/// re-attempts them. Resets `attempts` to 0 and clears the lock/error
+/// state. Returns the number of jobs reset.
+pub fn retry_all_failed(config: &Config) -> Result<u64> {
+    with_connection(config, |conn| {
+        let now_ms = Utc::now().timestamp_millis();
+        let n = conn.execute(
+            "UPDATE mem_tree_jobs
+                SET status = 'ready',
+                    attempts = 0,
+                    available_at_ms = ?1,
+                    locked_until_ms = NULL,
+                    started_at_ms = NULL,
+                    completed_at_ms = NULL,
+                    last_error = NULL
+              WHERE status = 'failed'",
+            params![now_ms],
+        )?;
+        if n > 0 {
+            log::info!("[memory::jobs] retry_all_failed: reset {n} jobs back to ready");
+        }
+        Ok(n as u64)
+    })
+}
+
 /// Fetch one job by id (test/diagnostic helper).
 pub fn get_job(config: &Config, id: &str) -> Result<Option<Job>> {
     with_connection(config, |conn| {

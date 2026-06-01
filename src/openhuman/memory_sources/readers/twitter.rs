@@ -87,6 +87,9 @@ mod tests {
             query: Some("AI safety".into()),
             since_days: Some(3),
             max_items: None,
+            max_commits: None,
+            max_issues: None,
+            max_prs: None,
             selector: None,
         }
     }

@@ -4,6 +4,79 @@ interface ParsedToolArgs {
   agent_id?: string;
   prompt?: string;
   toolkit?: string;
+  command?: string;
+  url?: string;
+  path?: string;
+  file_path?: string;
+  pattern?: string;
+  query?: string;
+  tool_name?: string;
+}
+
+const TOOL_DISPLAY_NAMES: Record<string, string> = {
+  shell: 'Running command',
+  node_exec: 'Running command',
+  npm_exec: 'Running command',
+  web_fetch: 'Fetching',
+  http_request: 'Fetching',
+  curl: 'Fetching',
+  web_search: 'Searching the web',
+  gitbooks_search: 'Searching docs',
+  file_read: 'Reading file',
+  file_write: 'Writing file',
+  edit: 'Editing file',
+  apply_patch: 'Applying patch',
+  grep: 'Searching code',
+  glob: 'Finding files',
+  list: 'Listing directory',
+  read_diff: 'Reading diff',
+  git_operations: 'Git operation',
+  browser: 'Browsing',
+  browser_open: 'Opening browser',
+  screenshot: 'Taking screenshot',
+  image_info: 'Analyzing image',
+  install_tool: 'Installing tool',
+  lsp: 'Code intelligence',
+  keyboard: 'Typing',
+  mouse: 'Clicking',
+  csv_export: 'Exporting CSV',
+  update_memory_md: 'Updating memory',
+  read_workspace_state: 'Reading workspace',
+  current_time: 'Checking time',
+  schedule: 'Scheduling',
+  detect_tools: 'Detecting tools',
+  tool_stats: 'Tool statistics',
+  vault_write_markdown: 'Writing to vault',
+  run_linter: 'Running linter',
+  run_tests: 'Running tests',
+  proxy_config: 'Configuring proxy',
+  update_check: 'Checking for updates',
+  update_apply: 'Applying update',
+  pushover: 'Sending notification',
+  insert_sql_record: 'Inserting record',
+  mcp_list_servers: 'Listing MCP servers',
+  mcp_list_tools: 'Listing MCP tools',
+  mcp_call_tool: 'Calling MCP tool',
+  mcp_setup_search: 'Searching MCP tools',
+  mcp_setup_get: 'Getting MCP tool',
+  mcp_setup_install_and_connect: 'Installing MCP server',
+  mcp_setup_request_secret: 'Requesting secret',
+  mcp_setup_test_connection: 'Testing connection',
+  polymarket: 'Checking markets',
+  gmail_unsubscribe: 'Unsubscribing',
+  gitbooks_get_page: 'Reading docs page',
+  audio_generate_podcast: 'Generating podcast',
+  audio_email_podcast: 'Emailing podcast',
+  audio_generate_and_email_podcast: 'Generating & emailing podcast',
+  composio_list_connections: 'Viewing your Connections',
+};
+
+/**
+ * Format a raw tool name into a short human-readable label.
+ * Used for subagent child tool rows and sub-mascot activity text.
+ */
+export function formatToolName(toolName: string): string {
+  return TOOL_DISPLAY_NAMES[toolName] ?? humanizeIdentifier(toolName);
 }
 
 export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; detail?: string } {
@@ -56,15 +129,6 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
       inferIntegrationNameFromPrompt(parsedArgs?.prompt) ??
       inferIntegrationName(entry.name);
 
-    // The collapsed `delegate_to_integrations_agent` tool has no toolkit
-    // baked into its name; if we couldn't infer a provider from args or
-    // prompt, surface a generic connected-app label (matches the
-    // `spawn_subagent → integrations_agent` fallback above) instead of
-    // humanising the tool name into "To Integrations Agent". Unknown
-    // toolkit slugs from args fall back to a humanised toolkit label so
-    // composio integrations outside KNOWN_TOOLKIT_RE still render
-    // meaningfully (e.g. `slack_bot` → "Slack Bot") rather than the
-    // generic copy.
     let title: string;
     if (provider) {
       title = integrationActivityTitle(provider);
@@ -80,6 +144,12 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
     return { title, detail: entry.detail ?? parsedArgs?.prompt };
   }
 
+  // ── Tool-specific formatting with args-derived detail ──────────────
+  const toolDetail = formatToolDetail(entry.name, parsedArgs);
+  if (toolDetail) {
+    return { title: toolDetail.title, detail: toolDetail.detail ?? entry.detail };
+  }
+
   return {
     title: entry.displayName ?? humanizeIdentifier(entry.name),
     detail: entry.detail ?? parsedArgs?.prompt,
@@ -88,6 +158,137 @@ export function formatTimelineEntry(entry: ToolTimelineEntry): { title: string; 
 
 export function promptFromArgsBuffer(argsBuffer?: string): string | undefined {
   return parseToolArgs(argsBuffer)?.prompt?.trim() || undefined;
+}
+
+const MAX_DETAIL_LEN = 120;
+
+function truncateDetail(value: string): string {
+  const cleaned = value.trim().replace(/\s+/g, ' ');
+  if (cleaned.length <= MAX_DETAIL_LEN) return cleaned;
+  return `${cleaned.slice(0, MAX_DETAIL_LEN - 1)}…`;
+}
+
+function hostnameFromUrl(url: string): string | undefined {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function shortenPath(filePath: string): string {
+  const parts = filePath.split('/');
+  if (parts.length <= 3) return filePath;
+  return `…/${parts.slice(-2).join('/')}`;
+}
+
+function formatToolDetail(
+  name: string,
+  args: ParsedToolArgs | null
+): { title: string; detail?: string } | null {
+  switch (name) {
+    case 'shell':
+    case 'node_exec':
+    case 'npm_exec': {
+      const cmd = args?.command?.trim();
+      return { title: 'Running command', detail: cmd ? truncateDetail(cmd) : undefined };
+    }
+
+    case 'web_fetch':
+    case 'http_request':
+    case 'curl': {
+      const url = args?.url?.trim();
+      const host = url ? hostnameFromUrl(url) : undefined;
+      return {
+        title: host ? `Fetching ${host}` : 'Fetching',
+        detail: url ? truncateDetail(url) : undefined,
+      };
+    }
+
+    case 'web_search': {
+      const query = args?.query?.trim();
+      return { title: query ? `Searching: ${truncateDetail(query)}` : 'Searching the web' };
+    }
+
+    case 'gitbooks_search': {
+      const query = args?.query?.trim();
+      return { title: query ? `Searching docs: ${truncateDetail(query)}` : 'Searching docs' };
+    }
+
+    case 'file_read': {
+      const p = args?.path?.trim() ?? args?.file_path?.trim();
+      return { title: 'Reading file', detail: p ? shortenPath(p) : undefined };
+    }
+
+    case 'file_write':
+    case 'vault_write_markdown': {
+      const p = args?.path?.trim() ?? args?.file_path?.trim();
+      return { title: 'Writing file', detail: p ? shortenPath(p) : undefined };
+    }
+
+    case 'edit':
+    case 'apply_patch': {
+      const p = args?.path?.trim() ?? args?.file_path?.trim();
+      return { title: 'Editing file', detail: p ? shortenPath(p) : undefined };
+    }
+
+    case 'grep': {
+      const pat = args?.pattern?.trim();
+      return { title: pat ? `Searching: ${truncateDetail(pat)}` : 'Searching code' };
+    }
+
+    case 'glob': {
+      const pat = args?.pattern?.trim();
+      return { title: pat ? `Finding: ${truncateDetail(pat)}` : 'Finding files' };
+    }
+
+    case 'list': {
+      const p = args?.path?.trim();
+      return { title: 'Listing directory', detail: p ? shortenPath(p) : undefined };
+    }
+
+    case 'git_operations': {
+      const cmd = args?.command?.trim();
+      if (cmd) {
+        const verb = cmd.split(/\s+/)[0];
+        return { title: `Git ${verb}`, detail: truncateDetail(cmd) };
+      }
+      return { title: 'Git operation' };
+    }
+
+    case 'browser':
+    case 'browser_open': {
+      const url = args?.url?.trim();
+      const host = url ? hostnameFromUrl(url) : undefined;
+      return { title: host ? `Browsing ${host}` : 'Browsing' };
+    }
+
+    case 'screenshot':
+      return { title: 'Taking screenshot' };
+
+    case 'image_info':
+      return { title: 'Analyzing image' };
+
+    case 'install_tool': {
+      const tn = args?.tool_name?.trim();
+      return { title: tn ? `Installing ${tn}` : 'Installing tool' };
+    }
+
+    case 'lsp':
+      return { title: 'Code intelligence' };
+
+    case 'run_tests':
+      return { title: 'Running tests' };
+
+    case 'run_linter':
+      return { title: 'Running linter' };
+
+    case 'read_diff':
+      return { title: 'Reading diff' };
+
+    default:
+      return null;
+  }
 }
 
 /**

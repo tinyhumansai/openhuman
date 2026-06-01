@@ -687,15 +687,20 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       expect(store.getState().chatRuntime.inferenceStatusByThread['t-err']).toBeUndefined();
     });
 
-    it('adds a sanitized user-facing error bubble with Discord report action on chat_error', async () => {
+    it('forwards the server-provided inference error message verbatim', async () => {
       const listeners = renderProvider();
+      // Transport-level failures yield no provider `error.message` body, so
+      // `with_provider_detail()` in web_errors.rs returns just the friendly
+      // generic message with no raw URL appended — the FE forwards it as-is
+      // (backend owns sanitization; see web_errors_tests.rs).
+      const serverMessage =
+        'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
 
       act(() => {
         listeners.onError?.({
           thread_id: 't-err-sanitized',
           request_id: 'r1',
-          message:
-            'agent job failed: error sending request for url (https://staging-api.alphahuman.xyz/openai/v1/chat/completions)',
+          message: serverMessage,
           error_type: 'inference',
           round: 0,
         });
@@ -704,36 +709,20 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
           't-err-sanitized',
-          expect.objectContaining({
-            sender: 'agent',
-            content: expect.stringContaining('Something went wrong. Please try again.'),
-          })
+          expect.objectContaining({ sender: 'agent', content: serverMessage })
         )
-      );
-      expect(threadApi.appendMessage).toHaveBeenCalledWith(
-        't-err-sanitized',
-        expect.objectContaining({
-          content: expect.stringContaining(
-            '<openhuman-link path="community/discord">Report on Discord</openhuman-link>'
-          ),
-        })
-      );
-      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
-        't-err-sanitized',
-        expect.objectContaining({
-          content: expect.stringContaining('https://staging-api.alphahuman.xyz'),
-        })
       );
     });
 
-    it('does not append duplicate fallback error bubble when the previous message already matches', async () => {
+    it('does not append a duplicate error bubble when the previous message already matches', async () => {
       const listeners = renderProvider();
+      const repeated = 'Your AI provider is temporarily unavailable. Please try again later.';
 
       act(() => {
         listeners.onError?.({
           thread_id: 't-err-dedupe',
           request_id: 'r1',
-          message: 'transport fail one',
+          message: repeated,
           error_type: 'inference',
           round: 0,
         });
@@ -742,9 +731,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       await waitFor(() =>
         expect(threadApi.appendMessage).toHaveBeenCalledWith(
           't-err-dedupe',
-          expect.objectContaining({
-            content: expect.stringContaining('Something went wrong. Please try again.'),
-          })
+          expect.objectContaining({ content: repeated })
         )
       );
 
@@ -752,7 +739,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
         listeners.onError?.({
           thread_id: 't-err-dedupe',
           request_id: 'r2',
-          message: 'transport fail two',
+          message: repeated,
           error_type: 'inference',
           round: 0,
         });
@@ -765,7 +752,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
             call =>
               call[0] === 't-err-dedupe' &&
               typeof call[1]?.content === 'string' &&
-              call[1].content.includes('Something went wrong. Please try again.')
+              call[1].content.includes(repeated)
           );
         expect(matchingCalls).toHaveLength(1);
       });
@@ -987,12 +974,13 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
 
   // Error classifier full set — Batch-5 coverage (#1506, pr#1566).
   //
-  // For the generic 'inference' error type the raw server message is
-  // replaced with USER_FACING_AGENT_ERROR_MESSAGE.  For all classified
-  // types (rate_limited, auth_error, budget_exhausted, context_overflow,
-  // timeout, network, tool_error, provider_error, model_unavailable) the
-  // server already provides a user-friendly message, which is forwarded
-  // directly.  'cancelled' produces no bubble at all.
+  // Every error_type — including the generic 'inference' fallback — carries a
+  // user-friendly `message` from classify_inference_error() in web_errors.rs,
+  // which is forwarded directly so the user sees the real reason (for
+  // 'inference' that message is a friendly summary plus the sanitized upstream
+  // provider error as a `> quote` block). The USER_FACING_FALLBACK constant is
+  // only used when the server sends an empty/missing message. 'cancelled'
+  // produces no bubble at all.
   describe('inference error classifier — full type set', () => {
     const USER_FACING_FALLBACK =
       'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
@@ -1029,15 +1017,42 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       );
     });
 
-    it('replaces raw internal message with user-facing constant for inference type', async () => {
+    it('surfaces the server inference message (friendly summary + sanitized provider detail)', async () => {
       const listeners = renderProvider();
-      const threadId = 't-raw-inference';
+      const threadId = 't-inference-detail';
+      // Shape produced by web_errors.rs `with_provider_detail(generic, err)`:
+      // the friendly summary, then the real upstream reason as a `> quote`
+      // block (already secret-scrubbed and length-capped server-side).
+      const serverMessage =
+        'Something went wrong. Please try again.\n\n> Project `proj_x` does not have access to model `gpt-5.5`.';
 
       act(() => {
         listeners.onError?.({
           thread_id: threadId,
           request_id: 'r1',
-          message: 'internal panic: channel closed unexpectedly at line 42',
+          message: serverMessage,
+          error_type: 'inference',
+          round: 0,
+        });
+      });
+
+      await waitFor(() =>
+        expect(threadApi.appendMessage).toHaveBeenCalledWith(
+          threadId,
+          expect.objectContaining({ content: serverMessage, sender: 'agent' })
+        )
+      );
+    });
+
+    it('falls back to the constant when an inference error has no message', async () => {
+      const listeners = renderProvider();
+      const threadId = 't-inference-empty';
+
+      act(() => {
+        listeners.onError?.({
+          thread_id: threadId,
+          request_id: 'r1',
+          message: '',
           error_type: 'inference',
           round: 0,
         });
@@ -1048,11 +1063,6 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
           threadId,
           expect.objectContaining({ content: USER_FACING_FALLBACK, sender: 'agent' })
         )
-      );
-      // The raw server string must NOT leak through.
-      expect(threadApi.appendMessage).not.toHaveBeenCalledWith(
-        threadId,
-        expect.objectContaining({ content: expect.stringContaining('channel closed unexpectedly') })
       );
     });
 

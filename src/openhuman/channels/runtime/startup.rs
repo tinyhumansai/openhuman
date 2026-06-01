@@ -227,6 +227,17 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         )),
         config.workspace_dir.clone(),
     );
+    // Seed the live tool-execution timeout from the persisted `[agent]` config so
+    // a user-configured value (Settings → Agent OS access → Action timeout) is in
+    // effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when set,
+    // still overrides this inside `set_tool_timeout_secs`.
+    let effective_timeout =
+        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    tracing::debug!(
+        configured = config.agent.agent_timeout_secs,
+        effective = effective_timeout,
+        "[startup] seeded tool-execution timeout from config"
+    );
     // Phase 1 of #1401: audit logger is wired with defaults so emission paths
     // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
     // therefore the `audit` knob) onto the runtime `Config` schema so users
@@ -787,6 +798,18 @@ fn resolve_yuanbao_app_secret(
         }
     }
     yb_cfg
+}
+
+#[cfg(any(test, debug_assertions))]
+pub mod test_support {
+    use super::*;
+
+    pub fn resolve_yuanbao_app_secret_for_test(
+        yb_cfg: crate::openhuman::channels::providers::yuanbao::YuanbaoConfig,
+        config: &Config,
+    ) -> crate::openhuman::channels::providers::yuanbao::YuanbaoConfig {
+        resolve_yuanbao_app_secret(yb_cfg, config)
+    }
 }
 
 #[cfg(test)]

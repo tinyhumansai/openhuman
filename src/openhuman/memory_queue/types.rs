@@ -17,11 +17,6 @@ pub enum JobKind {
     AppendBuffer,
     /// Seal exactly one buffer level; cascades enqueue a follow-up.
     Seal,
-    /// Match a chunk's entities against active topic trees and enqueue
-    /// per-topic `AppendBuffer` jobs.
-    TopicRoute,
-    /// Build the global tree's daily digest for a given UTC date.
-    DigestDaily,
     /// Walk stale buffers and enqueue `Seal` jobs for any over the age cap.
     FlushStale,
     /// #1574 §6: re-embed a bounded batch of chunks/summaries that lack a
@@ -37,8 +32,6 @@ impl JobKind {
             JobKind::ExtractChunk => "extract_chunk",
             JobKind::AppendBuffer => "append_buffer",
             JobKind::Seal => "seal",
-            JobKind::TopicRoute => "topic_route",
-            JobKind::DigestDaily => "digest_daily",
             JobKind::FlushStale => "flush_stale",
             JobKind::ReembedBackfill => "reembed_backfill",
         }
@@ -50,27 +43,27 @@ impl JobKind {
             "extract_chunk" => JobKind::ExtractChunk,
             "append_buffer" => JobKind::AppendBuffer,
             "seal" => JobKind::Seal,
-            "topic_route" => JobKind::TopicRoute,
-            "digest_daily" => JobKind::DigestDaily,
             "flush_stale" => JobKind::FlushStale,
+            // Legacy kinds from the removed global/topic trees. Tolerated on
+            // parse so a queue row left over from before the removal is
+            // recognised and can be drained/discarded rather than crashing
+            // the worker loop; the startup migration purges them.
+            "topic_route" | "digest_daily" => {
+                return Err(anyhow!(
+                    "retired JobKind '{s}' (global/topic trees removed)"
+                ))
+            }
             "reembed_backfill" => JobKind::ReembedBackfill,
             other => return Err(anyhow!("unknown JobKind '{other}'")),
         })
     }
 
     /// True when handling this kind should hold a slot from the global
-    /// LLM concurrency semaphore. `TopicRoute` is bound because
-    /// `maybe_spawn_topic_tree → backfill_topic_tree` can transitively
-    /// trigger summariser LLM calls when an entity first crosses the
-    /// hotness threshold.
+    /// LLM concurrency semaphore.
     pub fn is_llm_bound(&self) -> bool {
         matches!(
             self,
-            JobKind::ExtractChunk
-                | JobKind::Seal
-                | JobKind::DigestDaily
-                | JobKind::TopicRoute
-                | JobKind::ReembedBackfill
+            JobKind::ExtractChunk | JobKind::Seal | JobKind::ReembedBackfill
         )
     }
 }
@@ -233,34 +226,6 @@ impl SealPayload {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct TopicRoutePayload {
-    pub node: NodeRef,
-}
-
-impl TopicRoutePayload {
-    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
-    /// unique index can suppress in-flight duplicates.
-    pub fn dedupe_key(&self) -> String {
-        format!("topic_route:{}", self.node.dedupe_fragment())
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DigestDailyPayload {
-    /// UTC calendar date in `YYYY-MM-DD` form. Stored as a string so the
-    /// dedupe key doesn't need to know about chrono.
-    pub date_iso: String,
-}
-
-impl DigestDailyPayload {
-    /// Stable dedupe key written to `mem_tree_jobs.dedupe_key` so a partial
-    /// unique index can suppress in-flight duplicates.
-    pub fn dedupe_key(&self) -> String {
-        format!("digest_daily:{}", self.date_iso)
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct FlushStalePayload {
     /// Override the configured `DEFAULT_FLUSH_AGE_SECS`. Optional so the
@@ -370,28 +335,6 @@ impl NewJob {
         })
     }
 
-    /// Build an [`JobKind::TopicRoute`] enqueue request.
-    pub fn topic_route(p: &TopicRoutePayload) -> Result<Self> {
-        Ok(Self {
-            kind: JobKind::TopicRoute,
-            payload_json: serde_json::to_string(p)?,
-            dedupe_key: Some(p.dedupe_key()),
-            available_at_ms: None,
-            max_attempts: None,
-        })
-    }
-
-    /// Build an [`JobKind::DigestDaily`] enqueue request.
-    pub fn digest_daily(p: &DigestDailyPayload) -> Result<Self> {
-        Ok(Self {
-            kind: JobKind::DigestDaily,
-            payload_json: serde_json::to_string(p)?,
-            dedupe_key: Some(p.dedupe_key()),
-            available_at_ms: None,
-            max_attempts: None,
-        })
-    }
-
     /// Build a [`JobKind::FlushStale`] enqueue request scoped to a
     /// 3-hour UTC block. Callers compute `date_iso` and `hour_block`
     /// from a single `Utc::now()` reading so the dedupe key is
@@ -428,13 +371,14 @@ mod tests {
             JobKind::ExtractChunk,
             JobKind::AppendBuffer,
             JobKind::Seal,
-            JobKind::TopicRoute,
-            JobKind::DigestDaily,
             JobKind::FlushStale,
             JobKind::ReembedBackfill,
         ] {
             assert_eq!(JobKind::parse(k.as_str()).unwrap(), k);
         }
+        // Retired kinds parse to an error (global/topic trees removed).
+        assert!(JobKind::parse("topic_route").is_err());
+        assert!(JobKind::parse("digest_daily").is_err());
     }
 
     #[test]
@@ -486,18 +430,6 @@ mod tests {
             },
         };
         assert_ne!(p_leaf.dedupe_key(), p_summary.dedupe_key());
-
-        let r_leaf = TopicRoutePayload {
-            node: NodeRef::Leaf {
-                chunk_id: "x".into(),
-            },
-        };
-        let r_summary = TopicRoutePayload {
-            node: NodeRef::Summary {
-                summary_id: "x".into(),
-            },
-        };
-        assert_ne!(r_leaf.dedupe_key(), r_summary.dedupe_key());
     }
 
     #[test]
@@ -518,8 +450,6 @@ mod tests {
     fn llm_bound_kinds() {
         assert!(JobKind::ExtractChunk.is_llm_bound());
         assert!(JobKind::Seal.is_llm_bound());
-        assert!(JobKind::DigestDaily.is_llm_bound());
-        assert!(JobKind::TopicRoute.is_llm_bound());
         assert!(JobKind::ReembedBackfill.is_llm_bound());
         assert!(!JobKind::AppendBuffer.is_llm_bound());
         assert!(!JobKind::FlushStale.is_llm_bound());

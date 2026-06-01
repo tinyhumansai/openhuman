@@ -83,6 +83,7 @@ describe('McpServersTab', () => {
     mockStatus.mockReset();
     mockInstall.mockReset();
     mockConnect.mockReset();
+    mockConnect.mockResolvedValue({ server_id: '', status: 'connected', tools: [] });
     mockDisconnect.mockReset();
     mockUninstall.mockReset();
     mockRegistryGet.mockReset();

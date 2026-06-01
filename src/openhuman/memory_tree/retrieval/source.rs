@@ -267,6 +267,7 @@ const PLATFORM_KINDS: &[(&str, &str)] = &[
     ("protonmail", "email"),
     // Document platforms
     ("notion", "document"),
+    ("linear", "document"),
     ("drive", "document"),
     ("googledoc", "document"),
     ("doc", "document"),
@@ -347,6 +348,7 @@ mod tests {
                     time_range: (ts, ts),
                     tags: vec!["eng".into()],
                     source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
+                    path_scope: None,
                 },
                 token_count: crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET * 6
                     / 10,
@@ -502,6 +504,7 @@ mod tests {
         assert!(scope_matches_kind("slack:#eng", "chat"));
         assert!(scope_matches_kind("gmail:alice", "email"));
         assert!(scope_matches_kind("notion:page123", "document"));
+        assert!(scope_matches_kind("linear:conn-1:issue-abc", "document"));
         assert!(!scope_matches_kind("slack:#eng", "email"));
         assert!(scope_matches_kind("chat:custom", "chat"));
     }

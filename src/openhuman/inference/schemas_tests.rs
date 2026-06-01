@@ -38,6 +38,7 @@ fn inference_schema_function_names_are_stable() {
     assert!(functions.contains(&"diagnostics"));
     assert!(functions.contains(&"openai_oauth_start"));
     assert!(functions.contains(&"openai_oauth_complete"));
+    assert!(functions.contains(&"openai_oauth_import_codex_cli"));
     assert!(functions.contains(&"openai_oauth_status"));
     assert!(functions.contains(&"openai_oauth_disconnect"));
     assert!(functions.contains(&"prompt"));
@@ -66,6 +67,7 @@ fn inference_openai_oauth_schemas_are_registered_with_expected_shapes() {
     for function in [
         "openai_oauth_start",
         "openai_oauth_complete",
+        "openai_oauth_import_codex_cli",
         "openai_oauth_status",
         "openai_oauth_disconnect",
     ] {
@@ -83,6 +85,7 @@ fn inference_openai_oauth_schemas_are_registered_with_expected_shapes() {
     assert!(complete.inputs[0].required);
 
     assert!(schemas("openai_oauth_start").inputs.is_empty());
+    assert!(schemas("openai_oauth_import_codex_cli").inputs.is_empty());
     assert!(schemas("openai_oauth_status").inputs.is_empty());
     assert!(schemas("openai_oauth_disconnect").inputs.is_empty());
 }

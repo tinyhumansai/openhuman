@@ -97,12 +97,16 @@ describe('SettingsHome', () => {
     it('renders the core menu items in a single list', () => {
       renderSettingsHome();
       expect(screen.getByText('Account')).toBeInTheDocument();
-      expect(screen.getByText('Alerts')).toBeInTheDocument();
-      expect(screen.getByText('Notifications')).toBeInTheDocument();
       expect(screen.getByText('Billing & Usage')).toBeInTheDocument();
       expect(screen.getByText('Advanced')).toBeInTheDocument();
       expect(screen.getByTestId('settings-nav-account')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-nav-notifications')).toBeInTheDocument();
+    });
+
+    it('no longer renders Alerts / Notifications on the home screen', () => {
+      // Both moved into the Advanced → Notifications hub.
+      renderSettingsHome();
+      expect(screen.queryByTestId('settings-nav-alerts')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('settings-nav-notifications')).not.toBeInTheDocument();
     });
 
     it('no longer renders destructive actions on the home screen', () => {
@@ -148,14 +152,6 @@ describe('SettingsHome', () => {
       expect(mockNavigateToSettings).toHaveBeenCalledWith('account');
     });
 
-    it('navigates to notifications settings when Notifications is clicked', async () => {
-      const user = userEvent.setup();
-      renderSettingsHome();
-
-      await user.click(screen.getByText('Notifications').closest('button')!);
-      expect(mockNavigateToSettings).toHaveBeenCalledWith('notifications');
-    });
-
     it('navigates to the Agents section when Agents is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
@@ -165,12 +161,13 @@ describe('SettingsHome', () => {
       expect(mockNavigateToSettings).toHaveBeenCalledWith('agents-settings');
     });
 
-    it('navigates to /notifications inbox when Alerts is clicked', async () => {
+    it('navigates to the Crypto section when Crypto is clicked', async () => {
       const user = userEvent.setup();
       renderSettingsHome();
 
-      await user.click(screen.getByText('Alerts').closest('button')!);
-      expect(mockNavigate).toHaveBeenCalledWith('/notifications');
+      // Recovery phrase + wallet balances now live under the Crypto section page.
+      await user.click(screen.getByText('Crypto').closest('button')!);
+      expect(mockNavigateToSettings).toHaveBeenCalledWith('crypto');
     });
 
     it('opens billing URL when Billing & Usage is clicked', async () => {
