@@ -4482,7 +4482,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'Связи',
   'relationshipTypes.empty': 'Пока нет графа знаний.',
   'relationshipTypes.emptyHint':
     'По мере того как ассистент фиксирует связанные факты, здесь появятся используемые типы отношений.',

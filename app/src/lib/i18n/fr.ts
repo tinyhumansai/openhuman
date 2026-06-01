@@ -4537,7 +4537,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'Relations',
   'relationshipTypes.empty': 'Pas encore de graphe de connaissances.',
   'relationshipTypes.emptyHint':
     "À mesure que l'assistant enregistre des faits liés, les types de relations qu'il utilise apparaîtront ici.",

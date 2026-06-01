@@ -4362,7 +4362,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'العلاقات',
   'relationshipTypes.empty': 'لا يوجد رسم معرفي بعد.',
   'relationshipTypes.emptyHint':
     'كلما سجّل المساعد حقائق مترابطة، ستظهر هنا أنواع العلاقات التي يستخدمها.',

@@ -4556,7 +4556,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'Beziehungen',
   'relationshipTypes.empty': 'Noch kein Wissensgraph.',
   'relationshipTypes.emptyHint':
     'Während der Assistent verbundene Fakten erfasst, erscheinen hier die verwendeten Beziehungstypen.',

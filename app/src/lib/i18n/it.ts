@@ -4514,7 +4514,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'Relazioni',
   'relationshipTypes.empty': 'Ancora nessun grafo della conoscenza.',
   'relationshipTypes.emptyHint':
     "Man mano che l'assistente registra fatti correlati, qui appariranno i tipi di relazione utilizzati.",

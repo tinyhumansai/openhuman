@@ -4405,7 +4405,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': '관계',
   'relationshipTypes.empty': '아직 지식 그래프가 없습니다.',
   'relationshipTypes.emptyHint':
     '어시스턴트가 관련 사실을 기록함에 따라, 사용하는 관계 유형이 여기에 나타납니다.',

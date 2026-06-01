@@ -4456,7 +4456,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'Relasi',
   'relationshipTypes.empty': 'Belum ada graf pengetahuan.',
   'relationshipTypes.emptyHint':
     'Saat asisten mencatat fakta terkait, jenis hubungan yang digunakan akan muncul di sini.',

@@ -4226,7 +4226,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': '关系',
   'relationshipTypes.empty': '暂无知识图。',
   'relationshipTypes.emptyHint': '随着助手记录相关事实,它所使用的关系类型将在此显现。',
   'relationshipTypes.errorPrefix': '无法加载图:',

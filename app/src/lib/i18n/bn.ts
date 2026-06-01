@@ -4439,7 +4439,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'সম্পর্কসমূহ',
   'relationshipTypes.empty': 'এখনও কোনো জ্ঞান গ্রাফ নেই।',
   'relationshipTypes.emptyHint':
     'সহকারী যখন সম্পর্কিত তথ্য রেকর্ড করে, এটি ব্যবহৃত সম্পর্কের প্রকারগুলি এখানে দেখা যাবে।',

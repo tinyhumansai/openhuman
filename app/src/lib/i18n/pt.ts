@@ -4511,7 +4511,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Recusar armazenamento local',
   'pages.settings.account.security': 'Segurança',
   'pages.settings.account.securityDesc': 'Modo de armazenamento de segredos e status do chaveiro',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'Relações',
   'relationshipTypes.empty': 'Ainda sem grafo de conhecimento.',
   'relationshipTypes.emptyHint':
     'À medida que o assistente registra fatos relacionados, os tipos de relações que usa aparecerão aqui.',

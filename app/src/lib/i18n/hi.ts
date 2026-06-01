@@ -4446,7 +4446,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
-  'memory.tab.relationships': 'Relationships',
+  'memory.tab.relationships': 'संबंध',
   'relationshipTypes.empty': 'अभी कोई नॉलेज ग्राफ नहीं।',
   'relationshipTypes.emptyHint':
     'जैसे-जैसे सहायक संबंधित तथ्य दर्ज करता है, उपयोग किए जाने वाले संबंध प्रकार यहाँ दिखेंगे।',
