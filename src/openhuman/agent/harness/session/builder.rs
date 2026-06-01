@@ -546,9 +546,10 @@ impl AgentBuilder {
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
-            tool_dispatcher: self
-                .tool_dispatcher
-                .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
+            tool_dispatcher: std::sync::Arc::from(
+                self.tool_dispatcher
+                    .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
+            ),
             memory_loader: self
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),

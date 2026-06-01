@@ -25,6 +25,30 @@ use serde::ser::SerializeMap;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Iteration-cap policy for a sub-agent.
+///
+/// Controls how the harness enforces [`AgentDefinition::max_iterations`]:
+///
+/// * **Strict** — hard-fail at `max_iterations` (the current default).
+///   Right for short-running agents (summarizer, triage) where hitting
+///   the cap signals a likely loop.
+/// * **Extended** — the per-agent `max_iterations` is replaced at runtime
+///   by a higher harness-wide constant
+///   ([`EXTENDED_MAX_TOOL_ITERATIONS`](super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS))
+///   so the agent can complete realistic multi-tool workflows. The
+///   repeated-failure circuit breaker and cost budget still apply. The
+///   UI omits the denominator ("step N" instead of "turn N/M") to avoid
+///   a misleading terminal countdown.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IterationPolicy {
+    /// Hard cap at `max_iterations`. Default for most agents.
+    #[default]
+    Strict,
+    /// Raised cap for multi-step specialists. Guards still apply.
+    Extended,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent definition
 // ─────────────────────────────────────────────────────────────────────────────
@@ -126,6 +150,12 @@ pub struct AgentDefinition {
     /// Maximum number of tool iterations for this sub-agent's task.
     #[serde(default = "defaults::max_iterations")]
     pub max_iterations: usize,
+
+    /// Iteration-cap policy. See [`IterationPolicy`] for semantics.
+    /// Defaults to [`IterationPolicy::Strict`]; long-running specialists
+    /// set `iteration_policy = "extended"` in their `agent.toml`.
+    #[serde(default)]
+    pub iteration_policy: IterationPolicy,
 
     /// Maximum character length for this sub-agent's output before the
     /// harness truncates it before feeding it back as a tool result to the
@@ -316,6 +346,20 @@ impl AgentDefinition {
     /// Display name with fallback to id.
     pub fn display_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(&self.id)
+    }
+
+    /// Effective iteration cap after applying [`IterationPolicy`].
+    ///
+    /// * `Strict` → `self.max_iterations` unchanged.
+    /// * `Extended` → the higher of `self.max_iterations` and the
+    ///   harness-wide [`EXTENDED_MAX_TOOL_ITERATIONS`](super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS).
+    pub fn effective_max_iterations(&self) -> usize {
+        match self.iteration_policy {
+            IterationPolicy::Strict => self.max_iterations,
+            IterationPolicy::Extended => self
+                .max_iterations
+                .max(super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS),
+        }
     }
 }
 

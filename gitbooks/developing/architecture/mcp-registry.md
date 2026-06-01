@@ -1,14 +1,15 @@
 ---
 description: >-
   The dynamic, user-facing side of MCP-client support — discover servers on
-  Smithery.ai, persist installs to SQLite, supervise local-spawn subprocess
-  lifecycle, surface their tools to agents via the unified tool registry.
+  Smithery and the official MCP registry, persist installs to SQLite, supervise
+  local-spawn subprocess lifecycle, surface their tools to agents via the
+  unified tool registry.
 icon: plug
 ---
 
 # MCP Registry (`src/openhuman/mcp_registry/`)
 
-`src/openhuman/mcp_registry/` is the **dynamic, user-facing** half of OpenHuman's Model Context Protocol client support. It lets a user browse the Smithery.ai MCP registry, install a chosen server, persist that choice to SQLite, and (for servers launched as local subprocesses) supervise the subprocess lifecycle. Installed servers' tools are surfaced to agents via the unified tool registry (`crate::openhuman::tool_registry`).
+`src/openhuman/mcp_registry/` is the **dynamic, user-facing** half of OpenHuman's Model Context Protocol client support. It lets a user browse the supported upstream registries (Smithery and the official modelcontextprotocol registry), install a chosen server, persist that choice to SQLite, and (for servers launched as local subprocesses or HTTP-remote endpoints) supervise the connection lifecycle. Installed servers' tools are surfaced to agents via the unified tool registry (`crate::openhuman::tool_registry`).
 
 > **Naming note**: the Rust module path is `mcp_registry`, but the RPC namespace and on-disk SQLite filename are still `mcp_clients` for backward compatibility with existing frontend code and stored user state. Grep both names when chasing call sites.
 
@@ -16,7 +17,7 @@ This module is paired with `src/openhuman/mcp_client/` — the **transport libra
 
 ```text
                  ┌───────────────────────────────────────────────┐
-   Smithery.ai ──► registries/ + registry.rs (10-min SQLite cache)│
+   Registries ───► registries/ + registry.rs (10-min SQLite cache)│
                  └────────────────────┬──────────────────────────┘
                                       │ browse / install
                                       ▼
@@ -47,13 +48,16 @@ This module is paired with `src/openhuman/mcp_client/` — the **transport libra
 
 ## Server transport model
 
-Today every `InstalledServer` is a **local subprocess** launched by `npx`, `uvx`, or a direct binary (see `types::CommandKind`). The connection is **stdio JSON-RPC**, owned by `connections.rs`.
+An `InstalledServer` carries a `transport: Transport` discriminator (`types.rs`) with two variants:
 
-HTTP-remote MCP servers (the majority of what Smithery actually lists) are **not yet modelled** as an `InstalledServer` variant. Adding a remote transport variant is planned follow-up work; after that, the registry will hold both kinds and `connections.rs` will dispatch by transport.
+- **`Stdio`** — a local subprocess launched by `npx`, `uvx`, or a direct binary (see `types::CommandKind`), speaking **stdio JSON-RPC**.
+- **`HttpRemote { url }`** — a hosted server (the majority of what Smithery lists), dialled over streamable HTTP by `mcp_client::McpHttpClient`.
+
+`connections.rs` dispatches on the transport. Both the manual install dialog (`mcp_clients_install`) and the setup-agent path (`mcp_setup_install_and_connect`) pick the best connection via `setup_ops::pick_connection` (published stdio → any stdio → published http_remote → any http_remote) and build the transport with `setup_ops::build_install_transport`, so the two paths behave identically.
 
 ## Boot-time spawn
 
-`boot::spawn_installed_servers` is called from `bootstrap_core_runtime` so every local-spawn server is connected as soon as the core comes up. Errors are logged per-server and **never block boot** — a broken MCP install should not gate the desktop app starting.
+`boot::spawn_installed_servers` is called from `bootstrap_core_runtime` so every installed server is connected as soon as the core comes up. Errors are logged per-server and **never block boot** — a broken MCP install should not gate the desktop app starting. The lifecycle log subscriber (`bus::init`) is registered alongside the other domain subscribers in `register_domain_subscribers` so those connect events are observed.
 
 ## Layout
 
@@ -62,7 +66,7 @@ HTTP-remote MCP servers (the majority of what Smithery actually lists) are **not
 | `types.rs`                  | Data structures: `InstalledServer`, `McpTool`, `ConnStatus`, Smithery DTOs, etc.                                                                       |
 | `store.rs`                  | SQLite persistence — `mcp_clients.db`, CRUD over `InstalledServer` rows.                                                                               |
 | `registry.rs`               | Smithery HTTP client with a 10-minute SQLite cache so re-browsing doesn't hammer the upstream registry.                                                |
-| `registries/`               | Adapters for the upstream registries this code can browse (currently Smithery).                                                                        |
+| `registries/`               | Adapters for the upstream registries this code can browse: Smithery (`smithery.rs`) + the official modelcontextprotocol registry (`mcp_official.rs`). Each reads optional auth config-first with an env-var fallback (`mcp_client.registry_auth`). |
 | `connections.rs`            | Global in-process connection registry. Wraps `crate::openhuman::mcp_client::McpStdioClient` — there is no separate stdio client implementation here.   |
 | `boot.rs`                   | Boot-time spawn (`spawn_installed_servers`) called from `bootstrap_core_runtime`.                                                                      |
 | `setup.rs` / `setup_ops.rs` | "Setup agent" support — the small agent that walks a user through configuring a freshly installed server (env vars, secrets, first connect).           |
@@ -96,7 +100,7 @@ Everything else — `boot`, `bus`, `connections`, `store`, `setup`, `setup_ops` 
 ## Called by
 
 - `bootstrap_core_runtime` (via `boot::spawn_installed_servers`).
-- Frontend Skills UI — the (currently stubbed) MCP servers panel will dispatch through `ops.rs` over the `openhuman.mcp_clients_*` RPC namespace.
+- Frontend Skills UI — the **MCP** tab at `/skills?tab=mcp` (`McpServersTab`) dispatches through `ops.rs` over the `openhuman.mcp_clients_*` RPC namespace: browse, install (auto-connects), connect/disconnect, status, tool_call, `update_env` (reconfigure + reconnect), and `registry_settings_get` / `registry_settings_set` (Smithery / official-registry credentials; secret values are write-only). The agent-native flow uses `openhuman.mcp_setup_*` via the `mcp_setup` sub-agent (orchestrator delegate `setup_mcp_server`).
 - The setup agent in `setup_ops.rs` — for first-connect onboarding.
 
 ## Tests

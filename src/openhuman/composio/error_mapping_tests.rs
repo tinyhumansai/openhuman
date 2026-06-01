@@ -59,3 +59,73 @@ fn true_gateway_stays_gateway_class() {
         "expected gateway class, got: {mapped}"
     );
 }
+
+// ── Trigger-permission denial (issue #2913) ───────────────────────────
+
+#[test]
+fn classifies_trigger_permission_from_403_without_scope() {
+    // The backend 403 body does NOT contain the word "scope", so it must be
+    // classified as TriggerPermission rather than InsufficientScope or Other.
+    let raw = "Backend returned 403 Forbidden for POST \
+               https://api.example.com/agent-integrations/composio/triggers: \
+               You do not have permission to enable triggers on this connection";
+    assert_eq!(
+        classify_composio_error("GMAIL_NEW_GMAIL_MESSAGE", raw),
+        ComposioErrorClass::TriggerPermission
+    );
+}
+
+#[test]
+fn trigger_permission_is_not_classified_as_insufficient_scope() {
+    let raw = "403 Forbidden: You do not have permission to enable triggers on this connection";
+    // Regression guard: the scope heuristic requires the literal "scope" token,
+    // which this message lacks — so it must not be InsufficientScope.
+    assert_ne!(
+        classify_composio_error("GMAIL_NEW_GMAIL_MESSAGE", raw),
+        ComposioErrorClass::InsufficientScope
+    );
+}
+
+#[test]
+fn formats_trigger_permission_as_actionable_reconnect_guidance() {
+    let raw = "Backend returned 403 Forbidden for POST \
+               https://api.example.com/agent-integrations/composio/triggers: \
+               You do not have permission to enable triggers on this connection";
+    let mapped = format_provider_error("GMAIL_NEW_GMAIL_MESSAGE", raw);
+    assert!(
+        mapped.contains("[composio:error:trigger_permission]"),
+        "expected trigger_permission class prefix, got: {mapped}"
+    );
+    // Branded, actionable copy that points the user at reconnecting.
+    assert!(
+        mapped.contains("gmail"),
+        "expected toolkit branding: {mapped}"
+    );
+    assert!(
+        mapped.contains("Settings"),
+        "expected reconnect guidance: {mapped}"
+    );
+    assert!(
+        mapped.contains("Connections"),
+        "expected reconnect guidance: {mapped}"
+    );
+    assert!(
+        mapped.to_lowercase().contains("permission"),
+        "expected permission wording: {mapped}"
+    );
+    // Must not leak the raw backend blob as the message.
+    assert!(
+        !mapped.contains("Backend returned 403"),
+        "raw backend blob leaked: {mapped}"
+    );
+}
+
+#[test]
+fn generic_403_without_trigger_context_is_not_trigger_permission() {
+    // A 403 with no "trigger" context must not be miscategorised.
+    let raw = "403 Forbidden: you do not have permission to read this file";
+    assert_ne!(
+        classify_composio_error("GMAIL_FETCH_EMAILS", raw),
+        ComposioErrorClass::TriggerPermission
+    );
+}

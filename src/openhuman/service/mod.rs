@@ -8,6 +8,7 @@ pub mod ops;
 mod restart;
 mod schemas;
 mod shutdown;
+pub mod tools;
 
 mod common;
 #[cfg(target_os = "linux")]

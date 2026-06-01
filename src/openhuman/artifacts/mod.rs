@@ -1,6 +1,7 @@
 pub mod ops;
 pub mod schemas;
 pub mod store;
+pub mod tools;
 pub mod types;
 
 pub use schemas::{

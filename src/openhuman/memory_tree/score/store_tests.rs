@@ -205,3 +205,44 @@ fn summary_entity_index_kind_is_parseable() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].entity_kind, EntityKind::Email);
 }
+
+// ---------- get_scores_batch ----------
+//
+// Narrow on purpose: returns only chunk_id -> total. `fetch_leaves` is
+// the call-site and only needs the float. Missing chunk_ids are absent
+// from the map (mirrors per-row `get_score` Ok(None) → caller fallback
+// to 0.0 neutral).
+
+#[test]
+fn get_scores_batch_returns_present_chunk_ids() {
+    let (_tmp, cfg) = test_config();
+    let r1 = sample_row("c1", false);
+    let mut r2 = sample_row("c2", false);
+    r2.total = 0.3;
+    upsert_score(&cfg, &r1).unwrap();
+    upsert_score(&cfg, &r2).unwrap();
+
+    let ids = vec!["c1".to_string(), "c2".to_string()];
+    let map = get_scores_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 2);
+    assert!((map.get("c1").copied().unwrap() - 0.7).abs() < 1e-6);
+    assert!((map.get("c2").copied().unwrap() - 0.3).abs() < 1e-6);
+}
+
+#[test]
+fn get_scores_batch_empty_input_and_missing_chunk_ids() {
+    // Empty input: empty map (no SQL issued).
+    let (_tmp, cfg) = test_config();
+    let empty = get_scores_batch(&cfg, &[]).unwrap();
+    assert!(empty.is_empty());
+
+    // Missing ids: silently absent so `fetch_leaves` can fall back to
+    // its documented 0.0 neutral without ambient errors.
+    let r = sample_row("c1", false);
+    upsert_score(&cfg, &r).unwrap();
+    let ids = vec!["c1".to_string(), "ghost:no-such".to_string()];
+    let map = get_scores_batch(&cfg, &ids).unwrap();
+    assert_eq!(map.len(), 1);
+    assert!((map.get("c1").copied().unwrap() - 0.7).abs() < 1e-6);
+    assert!(map.get("ghost:no-such").is_none());
+}

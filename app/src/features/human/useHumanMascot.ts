@@ -6,7 +6,12 @@ import { type ChatSubagentDoneEvent, subscribeChatEvents } from '../../services/
 import { selectEffectiveMascotVoiceId } from '../../store/mascotSlice';
 import type { MascotFace } from './Mascot';
 import { lerpViseme, VISEMES, type VisemeShape } from './Mascot/visemes';
-import { type PlaybackHandle, playBase64Audio, swallowAudioStop } from './voice/audioPlayer';
+import {
+  type PlaybackHandle,
+  type PlaybackOptions,
+  playBase64Audio,
+  swallowAudioStop,
+} from './voice/audioPlayer';
 import {
   proceduralVisemes,
   synthesizeSpeech,
@@ -19,6 +24,14 @@ const mascotLog = debug('human:mascot');
 
 /** ms the mouth holds the target viseme before decaying back to rest. */
 const VISEME_DECAY_MS = 180;
+
+/**
+ * Safety ceiling for a single TTS utterance. Runaway audio (network stall,
+ * decoder that never emits `ended`) is auto-stopped at this limit so the
+ * mascot never gets stuck in a permanent `speaking` pose.
+ * 5 minutes comfortably covers any real reply; exported for tests.
+ */
+export const TTS_MAX_PLAYBACK_MS = 5 * 60 * 1_000;
 
 /**
  * Heuristic — does this timeline contain at least one frame whose code maps
@@ -336,9 +349,13 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
   useEffect(() => {
     if (!listening) return;
     clearAckTimer();
+    const ttsWasInFlight = playbackRef.current != null;
     mascotLog(
-      'voice-session listening interrupt — cancelling TTS (had playback=%s)',
-      !!playbackRef.current
+      'voice-session listening-active tts-in-flight=%s — %s',
+      ttsWasInFlight,
+      ttsWasInFlight
+        ? 'user started recording while TTS was playing (interrupted)'
+        : 'mic activated, no TTS to cancel'
     );
     // Treat mic-hot as an explicit interruption: stale synthesis/playback
     // callbacks must not switch the mascot back to speaking after we listen.
@@ -413,7 +430,12 @@ export function useHumanMascot(options: UseHumanMascotOptions = {}): UseHumanMas
       // the user-gesture chain that authorized speech stays intact. If we
       // awaited anything else between the user click and play(), CEF would
       // reject playback under its autoplay policy.
-      const handle = await playBase64Audio(tts.audio_base64, tts.audio_mime ?? 'audio/mpeg');
+      const ttsOptions: PlaybackOptions = { maxDurationMs: TTS_MAX_PLAYBACK_MS };
+      const handle = await playBase64Audio(
+        tts.audio_base64,
+        tts.audio_mime ?? 'audio/mpeg',
+        ttsOptions
+      );
       if (!isStillCurrent()) {
         handle.stop();
         handle.ended.catch(swallowAudioStop);

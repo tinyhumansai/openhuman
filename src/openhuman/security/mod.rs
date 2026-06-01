@@ -1,6 +1,7 @@
 mod core;
 pub mod ops;
 mod schemas;
+pub mod tools;
 
 pub mod audit;
 pub mod bubblewrap;

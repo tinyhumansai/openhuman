@@ -15,7 +15,13 @@ function makeSnapshotResult(overrides: Record<string, unknown> = {}) {
     currentUser: null,
     onboardingCompleted: false,
     analyticsEnabled: true,
-    localState: { encryptionKey: null, onboardingTasks: null },
+    localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
+    keyringStatus: {
+      available: true,
+      failureReason: null,
+      activeMode: 'os_keyring',
+      backendName: 'os',
+    },
     runtime: { screenIntelligence: {}, localAi: {}, autocomplete: {}, service: {} },
     ...overrides,
   };

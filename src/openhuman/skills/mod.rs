@@ -12,6 +12,7 @@ pub mod preflight;
 pub mod registry;
 pub mod run_log;
 pub mod schemas;
+pub mod tools;
 pub mod types;
 
 pub use ops::*;

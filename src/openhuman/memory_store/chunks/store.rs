@@ -25,7 +25,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, TimeZone, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,6 +73,12 @@ pub const CHUNK_STATUS_DROPPED: &str = "dropped";
 /// migration (#1574 §7) has run. `0` (fresh/legacy DB) triggers the copy on
 /// next open; `>= 1` skips it. Bump only for a new one-shot data migration.
 const TREE_EMBEDDING_MIGRATION_VERSION: i64 = 1;
+
+/// `PRAGMA user_version` value once the global/topic-tree purge has run.
+/// The global (time-axis) and topic (subject-axis) trees were removed; this
+/// one-shot migration deletes their rows + on-disk summary folders. `< 2`
+/// triggers the purge on next open; `>= 2` skips it.
+const GLOBAL_TOPIC_PURGE_MIGRATION_VERSION: i64 = 2;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS mem_tree_chunks (
@@ -538,6 +544,78 @@ pub fn get_chunk(config: &Config, id: &str) -> Result<Option<Chunk>> {
     })
 }
 
+/// Defensive cap for batched `IN (?,?,…)` reads.
+///
+/// SQLite's compile-time limit on bound parameters in a single statement
+/// (`SQLITE_MAX_VARIABLE_NUMBER`) has been **32 766** since 3.32 (2020),
+/// so 500 leaves a ~65× safety margin. The current call-site
+/// (`memory_tree::retrieval::fetch::fetch_leaves`) is capped at 20 ids,
+/// so the chunked loop runs exactly once today. The window exists so
+/// future call-sites passing larger id lists do not blow up against a
+/// host with a lower compile-time SQLite cap (older builds, custom
+/// embeddings, etc.).
+///
+/// Volume is **not** reduced: all input ids in → all matching rows out.
+/// The loop only splits the SQL; the merged `HashMap` is byte-identical
+/// to what one giant query would return.
+const MAX_FETCH_BATCH: usize = 500;
+
+/// Batched read of full chunk rows by id.
+///
+/// Contract mirror of looping [`get_chunk`] per id, but in
+/// `O(ceil(n / MAX_FETCH_BATCH))` SQLite round-trips instead of `O(n)`.
+/// The returned map contains only ids that exist in `mem_tree_chunks`;
+/// missing ids are silently absent (same as `get_chunk` returning
+/// `Ok(None)`). Callers that depend on input order must iterate their
+/// own id slice and look each id up in the map.
+///
+/// Reuses [`row_to_chunk`] so decoding stays bit-identical to the
+/// per-row helper — no risk of decoder drift.
+pub fn get_chunks_batch(config: &Config, chunk_ids: &[String]) -> Result<HashMap<String, Chunk>> {
+    if chunk_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    log::debug!(
+        "[memory::chunk_store] get_chunks_batch: n={} windows={}",
+        chunk_ids.len(),
+        chunk_ids.len().div_ceil(MAX_FETCH_BATCH)
+    );
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, Chunk> = HashMap::with_capacity(chunk_ids.len());
+        for window in chunk_ids.chunks(MAX_FETCH_BATCH) {
+            // Build the placeholder list `?1, ?2, …, ?n` matching the
+            // window length; rusqlite assigns positional binds 1..n in
+            // the order the values are passed.
+            let placeholders = (1..=window.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT id, source_kind, source_id, source_ref, owner,
+                        timestamp_ms, time_range_start_ms, time_range_end_ms,
+                        tags_json, content, token_count, seq_in_source, created_at_ms
+                   FROM mem_tree_chunks WHERE id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql).context("prepare get_chunks_batch")?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                window.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(params.as_slice(), row_to_chunk)
+                .context("query get_chunks_batch")?;
+            for row in rows {
+                let chunk = row.context("decode get_chunks_batch row")?;
+                out.insert(chunk.id.clone(), chunk);
+            }
+        }
+        log::debug!(
+            "[memory::chunk_store] get_chunks_batch: matched {}/{} ids",
+            out.len(),
+            chunk_ids.len()
+        );
+        Ok(out)
+    })
+}
+
 /// Query parameters for [`list_chunks`]. All fields are optional filters —
 /// callers pass `ListChunksQuery::default()` to get recent-across-everything.
 #[derive(Debug, Default, Clone)]
@@ -999,6 +1077,7 @@ fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
             time_range,
             tags,
             source_ref: source_ref.map(SourceRef::new),
+            path_scope: None,
         },
         token_count: token_count.max(0) as u32,
         seq_in_source: seq.max(0) as u32,
@@ -1117,6 +1196,96 @@ fn migrate_legacy_embeddings_to_sidecar(conn: &Connection, config: &Config) -> R
     log::info!(
         "[memory_tree::migrate] #1574 §7 done: copied chunks={copied_chunks} summaries={copied_summaries} \
          skipped_dim_mismatch={skipped_dim_mismatch} (left for §6 re-embed); user_version={TREE_EMBEDDING_MIGRATION_VERSION}"
+    );
+    Ok(())
+}
+
+/// One-shot purge of the removed global + topic trees.
+///
+/// The global (time-axis) and topic (subject-axis) trees were deleted in
+/// favour of the source trees (which hold all content). This migration
+/// removes their now-orphaned DB rows and on-disk summary folders so old
+/// vaults clean themselves up on next open. Version-gated via
+/// `PRAGMA user_version` (see [`GLOBAL_TOPIC_PURGE_MIGRATION_VERSION`]); a
+/// no-op on workspaces that never had those trees.
+fn purge_global_topic_trees(conn: &Connection, config: &Config) -> Result<()> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .context("read PRAGMA user_version for global/topic purge")?;
+    if version >= GLOBAL_TOPIC_PURGE_MIGRATION_VERSION {
+        return Ok(());
+    }
+
+    let tx = conn.unchecked_transaction()?;
+    // Child rows first (summary sidecars / skip-lists are keyed by
+    // summary_id; entity-index + buffers carry an FK on tree_id).
+    let removed_summary_sidecars = tx.execute(
+        "DELETE FROM mem_tree_summary_embeddings WHERE summary_id IN \
+         (SELECT id FROM mem_tree_summaries WHERE tree_kind IN ('global','topic'))",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM mem_tree_summary_reembed_skipped WHERE summary_id IN \
+         (SELECT id FROM mem_tree_summaries WHERE tree_kind IN ('global','topic'))",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM mem_tree_entity_index WHERE tree_id IN \
+         (SELECT id FROM mem_tree_trees WHERE kind IN ('global','topic'))",
+        [],
+    )?;
+    let removed_summaries = tx.execute(
+        "DELETE FROM mem_tree_summaries WHERE tree_kind IN ('global','topic')",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM mem_tree_buffers WHERE tree_id IN \
+         (SELECT id FROM mem_tree_trees WHERE kind IN ('global','topic'))",
+        [],
+    )?;
+    let removed_trees = tx.execute(
+        "DELETE FROM mem_tree_trees WHERE kind IN ('global','topic')",
+        [],
+    )?;
+    // Drain any queued jobs for the retired kinds so the worker loop never
+    // trips over a payload it can no longer parse.
+    let removed_jobs = tx.execute(
+        "DELETE FROM mem_tree_jobs WHERE kind IN ('topic_route','digest_daily')",
+        [],
+    )?;
+    tx.commit()?;
+
+    // On-disk: drop the `wiki/summaries/global*` (both the legacy per-day
+    // `global-<date>/` folders and the singleton `global/`) and `topic-*`
+    // summary folders. Best-effort — a filesystem error must not abort the
+    // version bump, or the purge would retry forever.
+    let summaries_root = config
+        .memory_tree_content_root()
+        .join("wiki")
+        .join("summaries");
+    let mut removed_dirs = 0usize;
+    if let Ok(entries) = std::fs::read_dir(&summaries_root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("global") || name.starts_with("topic-") {
+                match std::fs::remove_dir_all(entry.path()) {
+                    Ok(()) => removed_dirs += 1,
+                    Err(e) => log::warn!(
+                        "[memory_tree::migrate] purge: failed to remove {} : {e}",
+                        entry.path().display()
+                    ),
+                }
+            }
+        }
+    }
+
+    conn.pragma_update(None, "user_version", GLOBAL_TOPIC_PURGE_MIGRATION_VERSION)
+        .context("set PRAGMA user_version after global/topic purge")?;
+    log::info!(
+        "[memory_tree::migrate] global/topic purge done: trees={removed_trees} \
+         summaries={removed_summaries} sidecars={removed_summary_sidecars} jobs={removed_jobs} \
+         dirs={removed_dirs}; user_version={GLOBAL_TOPIC_PURGE_MIGRATION_VERSION}"
     );
     Ok(())
 }
@@ -1291,7 +1460,8 @@ fn add_column_if_missing(conn: &Connection, table: &str, name: &str, sql_type: &
 mod embeddings;
 pub use embeddings::{
     clear_chunk_reembed_skipped, clear_reembed_skipped_for_signature, get_chunk_embedding,
-    get_chunk_embedding_for_signature, mark_chunk_reembed_skipped, set_chunk_embedding,
+    get_chunk_embedding_for_signature, get_chunk_embeddings_batch,
+    get_chunk_embeddings_for_signature_batch, mark_chunk_reembed_skipped, set_chunk_embedding,
     set_chunk_embedding_for_signature,
 };
 #[cfg(test)]
@@ -1300,6 +1470,7 @@ pub(crate) use embeddings::{
     has_uncovered_reembed_work, set_chunk_embedding_for_signature_tx, tree_active_signature,
     validate_reembed_skip_key,
 };
+// ── Phase 2: embedding column accessors ─────────────────────────────────
 
 #[cfg(test)]
 #[path = "store_tests.rs"]

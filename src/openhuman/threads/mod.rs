@@ -8,6 +8,7 @@ pub mod error;
 pub mod ops;
 pub mod schemas;
 pub mod title;
+pub mod tools;
 pub mod turn_state;
 pub mod welcome_migration;
 

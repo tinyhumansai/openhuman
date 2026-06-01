@@ -1,19 +1,21 @@
-//! Eager prefetch of the cross-source memory-tree digest into the
-//! orchestrator's session context (Phase 4 follow-on, #710 wiring).
+//! Eager prefetch of recent memory-tree activity into the orchestrator's
+//! session context (Phase 4 follow-on, #710 wiring).
 //!
 //! The orchestrator answers "what happened this week?" / "what's been going
 //! on with X?" style questions out of the user's own ingested memory. We
-//! pre-load a 7-day global digest on the session's first turn AND
-//! periodically thereafter (every [`REFRESH_INTERVAL`]) so long-running
-//! conversations stay current with newly-ingested memory without needing
-//! the LLM to round-trip a tool call. The injection rides on the user
-//! message (NOT the system prompt) to keep the KV-cache prefix stable.
+//! pre-load a 7-day recap on the session's first turn AND periodically
+//! thereafter (every [`REFRESH_INTERVAL`]) so long-running conversations
+//! stay current with newly-ingested memory without needing the LLM to
+//! round-trip a tool call. The injection rides on the user message (NOT the
+//! system prompt) to keep the KV-cache prefix stable.
 //!
-//! When the workspace has no global summaries yet (early-life workspaces
-//! or no ingest configured), [`TreeContextLoader::load`] returns an empty
-//! string and the caller silently no-ops. The session-side timestamp is
-//! still bumped on those empty results so an empty workspace doesn't get
-//! re-queried every turn.
+//! The recap is assembled by walking the **per-source** trees across the
+//! window (the global digest tree was removed — source trees plus the
+//! entity index are the substrate). When the workspace has no source
+//! summaries yet (early-life workspaces or no ingest configured),
+//! [`TreeContextLoader::load`] returns an empty string and the caller
+//! silently no-ops. The session-side timestamp is still bumped on those
+//! empty results so an empty workspace doesn't get re-queried every turn.
 //!
 //! Failure is non-fatal by design — the orchestrator must still be able to
 //! reply when the memory tree is unavailable, mis-configured, or empty. We
@@ -21,7 +23,7 @@
 //! concatenate without branching.
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::retrieval::query_global;
+use crate::openhuman::memory_tree::retrieval::query_source;
 
 /// Default lookback window for the eager digest. Mirrors the language in
 /// the orchestrator prompt ("7-day digest pre-loaded into session context").
@@ -39,9 +41,9 @@ pub const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs
 /// would otherwise dominate the prompt budget.
 const MAX_CONTENT_CHARS: usize = 500;
 
-/// Number of hits to surface from the digest. The recap typically returns
-/// one hit per fold (day/week/month) — three is enough headroom for a
-/// 7-day window without flooding the system prompt.
+/// Number of hits to surface from the recap. Source-tree summaries across
+/// the window are newest-first — three is enough headroom for a 7-day
+/// window without flooding the system prompt.
 const MAX_HITS: usize = 3;
 
 const HEADER: &str = "[Memory tree — last 7 days]\n";
@@ -67,19 +69,30 @@ impl TreeContextLoader {
     /// Build the eager-prefetch context block for the current workspace.
     ///
     /// Returns:
-    /// - `Ok("")` when the workspace has no global digest yet, or when
-    ///   `query_global` returns an error (logged at warn level).
+    /// - `Ok("")` when the workspace has no source summaries yet, or when
+    ///   `query_source` returns an error (logged at warn level).
     /// - `Ok(rendered)` with the formatted block when there are hits.
     pub async fn load(config: &Config) -> anyhow::Result<String> {
         log::debug!(
             "[memory_tree] tree_loader.load window_days={}",
             DEFAULT_WINDOW_DAYS
         );
-        let resp = match query_global(config, DEFAULT_WINDOW_DAYS).await {
+        // Walk all source trees across the window (no source filter, no
+        // semantic query — just the most recent summaries everywhere).
+        let resp = match query_source(
+            config,
+            None,
+            None,
+            Some(DEFAULT_WINDOW_DAYS),
+            None,
+            MAX_HITS,
+        )
+        .await
+        {
             Ok(r) => r,
             Err(e) => {
                 log::warn!(
-                    "[memory_tree] tree_loader.load: query_global failed — returning empty: {e}"
+                    "[memory_tree] tree_loader.load: query_source failed — returning empty: {e}"
                 );
                 return Ok(String::new());
             }
@@ -130,12 +143,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_returns_empty_when_no_global_digest() {
+    async fn load_returns_empty_when_no_source_summaries() {
         let (_tmp, cfg) = empty_config();
         let s = TreeContextLoader::load(&cfg).await.unwrap();
         assert!(
             s.is_empty(),
-            "fresh workspace has no global digest — expected empty string, got: {s}"
+            "fresh workspace has no source summaries — expected empty string, got: {s}"
         );
     }
 

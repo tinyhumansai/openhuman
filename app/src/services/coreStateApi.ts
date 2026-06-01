@@ -15,9 +15,22 @@ export interface OnboardingTasks {
   updatedAtMs?: number;
 }
 
+export interface KeyringConsentPreference {
+  storageMode: string;
+  consentedAtMs?: number;
+}
+
+export interface KeyringStatus {
+  available: boolean;
+  failureReason?: string | null;
+  activeMode: string;
+  backendName: string;
+}
+
 export interface UpdateCoreLocalStateParams {
   encryptionKey?: string | null;
   onboardingTasks?: OnboardingTasks | null;
+  keyringConsent?: KeyringConsentPreference | null;
 }
 
 interface AppStateSnapshotResult {
@@ -39,7 +52,12 @@ interface AppStateSnapshotResult {
    * never observe `undefined` here.
    */
   meetAutoOrchestratorHandoff?: boolean;
-  localState: { encryptionKey?: string | null; onboardingTasks?: OnboardingTasks | null };
+  localState: {
+    encryptionKey?: string | null;
+    onboardingTasks?: OnboardingTasks | null;
+    keyringConsent?: KeyringConsentPreference | null;
+  };
+  keyringStatus?: KeyringStatus;
   runtime: {
     screenIntelligence: AccessibilityStatus;
     localAi: LocalAiStatus;

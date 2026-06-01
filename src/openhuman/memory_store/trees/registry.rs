@@ -1,12 +1,15 @@
 //! Kind-parameterized tree registry helpers.
 //!
-//! All three tree flavors (Source, Global, Topic) live in the same
-//! `mem_tree_trees` table keyed by [`TreeKind`]. The generic get-or-create
-//! dance with UNIQUE-race recovery lives in
+//! Trees live in the `mem_tree_trees` table keyed by [`TreeKind`]. The
+//! generic get-or-create dance with UNIQUE-race recovery lives in
 //! [`memory_tree::tree::registry::get_or_create_tree`] (logic file — stays
-//! in memory_tree). This module hosts the thin per-kind convenience wrappers
-//! (formerly spread across `trees_global::registry` and
-//! `trees_topic::registry`) so callers have one place to land.
+//! in memory_tree). This module hosts the generic list / archive helpers.
+//!
+//! The global (time-axis) and topic (subject-axis) trees were removed; only
+//! source trees are created now, so there are no per-kind creation wrappers
+//! here anymore — [`TreeKind::Global`]/[`TreeKind::Topic`] remain only as
+//! inert serialization plumbing for reading legacy rows during the one-shot
+//! purge migration.
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -15,38 +18,6 @@ use rusqlite::params;
 use crate::openhuman::config::Config;
 use crate::openhuman::memory_store::chunks::store::with_connection;
 use crate::openhuman::memory_store::trees::types::{Tree, TreeKind};
-use crate::openhuman::memory_tree::tree::TreeFactory;
-
-/// Return the workspace's singleton global tree, creating it lazily on first
-/// call. Safe to call on every ingest; subsequent calls short-circuit to the
-/// existing row.
-pub fn get_or_create_global_tree(config: &Config) -> Result<Tree> {
-    log::debug!("[trees::registry] get_or_create_global_tree");
-    TreeFactory::global().get_or_create(config)
-}
-
-/// Look up the topic tree for `entity_id`, or create a new one.
-///
-/// Callers should NOT use this directly to materialise topic trees eagerly —
-/// go through `memory::tree_topic::curator::maybe_spawn_topic_tree` so
-/// creation is gated on hotness. Admin / forced-materialisation flows can
-/// call this directly (or its alias [`force_create_topic_tree`]).
-pub fn get_or_create_topic_tree(config: &Config, entity_id: &str) -> Result<Tree> {
-    let entity_kind = entity_id
-        .split_once(':')
-        .map(|(k, _)| k)
-        .unwrap_or("unknown");
-    log::debug!(
-        "[trees::registry] get_or_create_topic_tree entity_kind={}",
-        entity_kind
-    );
-    TreeFactory::topic(entity_id).get_or_create(config)
-}
-
-/// Semantic alias used by the admin "force materialise" path.
-pub fn force_create_topic_tree(config: &Config, entity_id: &str) -> Result<Tree> {
-    get_or_create_topic_tree(config, entity_id)
-}
 
 /// List every tree of the given kind, ordered by creation time ascending.
 pub fn list_trees_by_kind(config: &Config, kind: TreeKind) -> Result<Vec<Tree>> {
@@ -66,11 +37,6 @@ pub fn list_trees_by_kind(config: &Config, kind: TreeKind) -> Result<Vec<Tree>> 
     })
 }
 
-/// Topic-specific alias preserved for call-site readability.
-pub fn list_topic_trees(config: &Config) -> Result<Vec<Tree>> {
-    list_trees_by_kind(config, TreeKind::Topic)
-}
-
 /// Flip a tree's status to `archived`. Idempotent. Existing rows remain
 /// queryable; new leaves will not be routed to this tree until it is
 /// manually unarchived (which is not currently a primitive).
@@ -88,11 +54,6 @@ pub fn archive_tree(config: &Config, tree_id: &str) -> Result<()> {
         log::debug!("[trees::registry] archive_tree id={} rows={}", tree_id, n);
         Ok(())
     })
-}
-
-/// Topic-specific alias preserved for call-site readability.
-pub fn archive_topic_tree(config: &Config, tree_id: &str) -> Result<()> {
-    archive_tree(config, tree_id)
 }
 
 fn row_to_tree_loose(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tree> {
@@ -129,7 +90,6 @@ mod tests {
     use super::*;
     use crate::openhuman::memory_store::trees::store::insert_tree;
     use crate::openhuman::memory_store::trees::types::TreeStatus;
-    use crate::openhuman::memory_tree::tree::factory::GLOBAL_SCOPE;
     use tempfile::TempDir;
 
     fn test_config() -> (TempDir, Config) {
@@ -181,7 +141,7 @@ mod tests {
             vec!["source-1".to_string(), "source-2".to_string()]
         );
 
-        let topic_ids: Vec<String> = list_topic_trees(&cfg)
+        let topic_ids: Vec<String> = list_trees_by_kind(&cfg, TreeKind::Topic)
             .unwrap()
             .into_iter()
             .map(|tree| tree.id)
@@ -192,23 +152,13 @@ mod tests {
     #[test]
     fn archive_tree_flips_status_to_archived() {
         let (_tmp, cfg) = test_config();
-        let tree = sample_tree("topic-1", TreeKind::Topic, "person:alice");
+        let tree = sample_tree("source-arch", TreeKind::Source, "chat:slack:#x");
         insert_tree(&cfg, &tree).unwrap();
 
-        archive_tree(&cfg, "topic-1").unwrap();
+        archive_tree(&cfg, "source-arch").unwrap();
 
-        let archived = list_topic_trees(&cfg).unwrap();
+        let archived = list_trees_by_kind(&cfg, TreeKind::Source).unwrap();
         assert_eq!(archived.len(), 1);
         assert_eq!(archived[0].status, TreeStatus::Archived);
-    }
-
-    #[test]
-    fn get_or_create_global_tree_is_idempotent() {
-        let (_tmp, cfg) = test_config();
-        let first = get_or_create_global_tree(&cfg).unwrap();
-        let second = get_or_create_global_tree(&cfg).unwrap();
-        assert_eq!(first.id, second.id);
-        assert_eq!(first.kind, TreeKind::Global);
-        assert_eq!(first.scope, GLOBAL_SCOPE);
     }
 }

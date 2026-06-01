@@ -463,6 +463,7 @@ mod scoping_tests {
             skill_filter: None,
             extra_tools: vec![],
             max_iterations: 8,
+            iteration_policy: Default::default(),
             max_result_chars: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,
@@ -591,6 +592,21 @@ mod scoping_tests {
         assert!(scoping.target_agent_id.is_none());
         assert!(scoping.visible_tool_names.is_none());
         assert!(scoping.extra_tools.is_empty());
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+pub mod test_support {
+    //! Debug-build seams for raw integration coverage of dispatch helpers.
+
+    use super::*;
+
+    pub fn build_channel_context_block_for_test(msg: &traits::ChannelMessage) -> String {
+        build_channel_context_block(msg)
+    }
+
+    pub fn select_acknowledgment_reaction_for_test(content: &str) -> &'static str {
+        select_acknowledgment_reaction(content)
     }
 }
 

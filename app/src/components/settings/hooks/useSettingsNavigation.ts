@@ -25,6 +25,7 @@ export type SettingsRoute =
   | 'tools'
   | 'memory-data'
   | 'memory-debug'
+  | 'crypto'
   | 'recovery-phrase'
   | 'wallet-balances'
   | 'webhooks-debug'
@@ -34,10 +35,12 @@ export type SettingsRoute =
   | 'voice-debug'
   | 'local-model-debug'
   | 'notifications'
+  | 'notifications-hub'
   | 'notification-routing'
   | 'mascot'
   | 'persona'
   | 'appearance'
+  | 'approval-history'
   | 'intelligence'
   | 'webhooks-triggers'
   | 'composio-triggers'
@@ -112,6 +115,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     if (path.includes('/settings/composio-triggers')) return 'composio-triggers';
     if (path.includes('/settings/composio-routing')) return 'composio-routing';
     if (path.includes('/settings/intelligence')) return 'intelligence';
+    if (path.includes('/settings/crypto')) return 'crypto';
     if (path.includes('/settings/recovery-phrase')) return 'recovery-phrase';
     if (path.includes('/settings/wallet-balances')) return 'wallet-balances';
     if (path.includes('/settings/agent-chat')) return 'agent-chat';
@@ -119,11 +123,17 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     // specific `notification-routing` path doesn't get swallowed by the
     // shorter `notifications` prefix.
     if (path.includes('/settings/notification-routing')) return 'notification-routing';
+    // `notifications-hub` must be checked before the shorter `notifications`
+    // prefix (the tabbed settings panel) so it isn't swallowed.
+    if (path.includes('/settings/notifications-hub')) return 'notifications-hub';
     if (path.includes('/settings/notifications')) return 'notifications';
     if (path.includes('/settings/devices')) return 'devices';
     if (path.includes('/settings/mascot')) return 'mascot';
     if (path.includes('/settings/persona')) return 'persona';
     if (path.includes('/settings/appearance')) return 'appearance';
+    // `approval-history` is an explicit leaf route under Agent access; it has a
+    // distinct prefix from `agent-access`, so ordering between them is cosmetic.
+    if (path.includes('/settings/approval-history')) return 'approval-history';
     // `agents-settings` (the Agents section page) must be checked before the
     // shorter `agents` (the manage-agents registry panel) so it isn't swallowed.
     if (path.includes('/settings/agents-settings')) return 'agents-settings';
@@ -187,9 +197,24 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     onClick: () => navigate('/settings/developer-options'),
   };
 
+  const agentAccessCrumb: BreadcrumbItem = {
+    label: 'Agent access',
+    onClick: () => navigate('/settings/agent-access'),
+  };
+
   const agentsCrumb: BreadcrumbItem = {
     label: 'Agents',
     onClick: () => navigate('/settings/agents-settings'),
+  };
+
+  const cryptoCrumb: BreadcrumbItem = {
+    label: 'Crypto',
+    onClick: () => navigate('/settings/crypto'),
+  };
+
+  const notificationsHubCrumb: BreadcrumbItem = {
+    label: 'Notifications',
+    onClick: () => navigate('/settings/notifications-hub'),
   };
 
   const getBreadcrumbs = (): BreadcrumbItem[] => {
@@ -199,6 +224,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'features':
       case 'ai':
       case 'agents-settings':
+      case 'crypto':
         return [settingsCrumb];
 
       // Leaf panels under the Agents section
@@ -208,9 +234,12 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'persona':
         return [settingsCrumb, agentsCrumb];
 
-      // Leaf panels under account
+      // Leaf panels under the Crypto section
       case 'recovery-phrase':
       case 'wallet-balances':
+        return [settingsCrumb, cryptoCrumb];
+
+      // Leaf panels under account
       case 'team':
       case 'privacy':
         return [settingsCrumb, accountCrumb];
@@ -252,15 +281,17 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       case 'notification-routing':
       case 'mcp-server':
       case 'dev-workflow':
+      case 'notifications-hub': // Notifications hub section page lives under Advanced.
         return [settingsCrumb, developerCrumb];
 
       // Developer options section page
       case 'developer-options':
         return [settingsCrumb];
 
-      // Notifications panel sits at the top level of Settings.
+      // Notification preferences panel is a leaf under the Advanced →
+      // Notifications hub.
       case 'notifications':
-        return [settingsCrumb];
+        return [settingsCrumb, developerCrumb, notificationsHubCrumb];
 
       case 'devices':
         return [settingsCrumb];
@@ -272,6 +303,11 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Appearance (theme) panel sits at the top level of Settings.
       case 'appearance':
         return [settingsCrumb];
+
+      // Approval history is a leaf under Agent access, which itself lives under
+      // the Agents section — so the trail is Settings → Agents → Agent access.
+      case 'approval-history':
+        return [settingsCrumb, agentsCrumb, agentAccessCrumb];
 
       case 'home':
       default:
