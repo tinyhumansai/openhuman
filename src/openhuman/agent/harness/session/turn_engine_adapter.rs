@@ -211,13 +211,18 @@ impl TurnObserver for AgentObserver<'_> {
         &mut self,
         buf: &mut Vec<ChatMessage>,
         tools: &mut dyn crate::openhuman::agent::harness::engine::ToolSource,
-        _iteration: usize,
+        iteration: usize,
     ) -> Result<()> {
         if self.agent.drain_composio_integrations_changed_events() {
             let refreshed = self
                 .agent
                 .refresh_delegation_tools_from_cached_integrations("event");
             if refreshed {
+                log::debug!(
+                    "[agent_loop] midturn:resync-delegation-tools — composio integrations changed; resyncing tool surface (iteration={} visible_tools={})",
+                    iteration,
+                    self.agent.visible_tool_names.len()
+                );
                 tools.sync_agent_surface(
                     Arc::clone(&self.agent.tools),
                     self.agent.visible_tool_names.clone(),
