@@ -328,12 +328,11 @@ fn system_prompt(_budget: u32, structured_facets: bool) -> String {
     format!(
         "{base}\n\
          \n\
-         After the summary, output a JSON object as the second part of your response, \
+         After the summary, output a compact JSON object as the second part of your response, \
          fenced in a ```json block:\n\
          \n\
          ```json\n\
          {{\n\
-           \"summary\": \"<the summary text you just produced>\",\n\
            \"facets\": [\n\
              {{\n\
                \"class\": \"style|identity|tooling|veto|goal\",\n\
@@ -349,13 +348,15 @@ fn system_prompt(_budget: u32, structured_facets: bool) -> String {
          \n\
          Rules:\n\
          - Only include facets that are clearly evidenced in the content above.\n\
+         - Do not repeat the prose summary inside JSON; the JSON block is only for facets.\n\
+         - Keep each value under 80 characters; use a short label, not a sentence.\n\
          - Each facet must cite at least one chunk_id from this batch (the id in brackets \
            before each contribution, e.g. [chunk-abc]).\n\
          - Every facet object must include confidence as a number from 0.0 to 1.0. \
            If you cannot estimate confidence, omit that facet.\n\
          - Use canonical keys: verbosity, format, name, timezone, role, package_manager, \
            lang, framework, runtime, etc.\n\
-         - Cap the facets array at 8 items per call. Skip the array entirely (emit \
+         - Cap the facets array at 4 items per call. Skip the array entirely (emit \
            facets: []) if no clear evidence.\n\
          - No commentary outside the prose summary and the JSON block."
     )
@@ -394,22 +395,106 @@ fn split_structured_response(raw: &str) -> (&str, Option<anyhow::Result<Structur
 }
 
 fn parse_structured_summary(json_str: &str) -> anyhow::Result<StructuredSummary> {
-    match serde_json::from_str::<StructuredSummary>(json_str) {
+    match parse_structured_summary_inner(json_str) {
         Ok(parsed) => Ok(parsed),
         Err(first_error) => {
-            let repaired = strip_json_trailing_commas(json_str);
+            let trimmed = trim_to_first_json_object(json_str);
+            if trimmed != json_str {
+                if let Ok(parsed) = parse_structured_summary_inner(&trimmed) {
+                    return Ok(parsed);
+                }
+            }
+            let repaired = strip_json_trailing_commas(&trimmed);
             if repaired == json_str {
                 return Err(anyhow::anyhow!(
                     "structured summary JSON parse error: {first_error}"
                 ));
             }
-            serde_json::from_str::<StructuredSummary>(&repaired).map_err(|second_error| {
+            parse_structured_summary_inner(&repaired).map_err(|second_error| {
                 anyhow::anyhow!(
                     "structured summary JSON parse error: {first_error}; repair failed: {second_error}"
                 )
             })
         }
     }
+}
+
+fn trim_to_first_json_object(json_str: &str) -> String {
+    let mut started = false;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut start_byte = 0usize;
+
+    for (index, ch) in json_str.char_indices() {
+        if !started {
+            if ch.is_whitespace() {
+                continue;
+            }
+            if ch != '{' {
+                return json_str.to_string();
+            }
+            started = true;
+            depth = 1;
+            start_byte = index;
+            continue;
+        }
+
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            continue;
+        }
+
+        if ch == '{' {
+            depth = depth.saturating_add(1);
+            continue;
+        }
+
+        if ch == '}' {
+            depth = depth.saturating_sub(1);
+            if depth == 0 {
+                return json_str[start_byte..index + ch.len_utf8()]
+                    .trim()
+                    .to_string();
+            }
+        }
+    }
+
+    json_str.to_string()
+}
+
+fn parse_structured_summary_inner(json_str: &str) -> anyhow::Result<StructuredSummary> {
+    let mut value = serde_json::from_str::<serde_json::Value>(json_str)?;
+    if value.get("facets").is_none() {
+        if let Some(nested) = value.get("summary").and_then(|summary| summary.as_object()) {
+            if nested.get("facets").is_some() {
+                value = serde_json::Value::Object(nested.clone());
+            }
+        }
+    }
+    if let Some(object) = value.as_object_mut() {
+        if !object
+            .get("summary")
+            .is_some_and(|summary| summary.is_string())
+        {
+            object.insert(
+                "summary".to_string(),
+                serde_json::Value::String(String::new()),
+            );
+        }
+    }
+    serde_json::from_value::<StructuredSummary>(value).map_err(Into::into)
 }
 
 fn strip_json_trailing_commas(json_str: &str) -> String {
@@ -568,12 +653,24 @@ mod tests {
         );
         assert!(p.contains("\"facets\""), "should mention the facets array");
         assert!(
+            !p.contains("\"summary\""),
+            "structured JSON should not duplicate the prose summary"
+        );
+        assert!(
             p.contains("evidence_chunks"),
             "should mention evidence_chunks"
         );
         assert!(
             p.contains("must include confidence"),
             "should require confidence for every facet"
+        );
+        assert!(
+            p.contains("under 80 characters"),
+            "should keep facet values compact"
+        );
+        assert!(
+            p.contains("Cap the facets array at 4 items"),
+            "should keep structured JSON compact"
         );
         assert!(
             p.contains("canonical keys"),
@@ -639,7 +736,7 @@ mod tests {
     fn repairs_common_trailing_commas_in_structured_response() {
         let raw = "The user prefers pnpm.\n\n\
                    ```json\n\
-                   {\"summary\":\"The user prefers pnpm.\",\"facets\":[\
+                   {\"facets\":[\
                    {\"class\":\"tooling\",\"key\":\"package_manager\",\
                    \"value\":\"pnpm\",\"evidence_chunks\":[\"c1\",],\
                    \"confidence\":0.9,\"cue_family\":\"explicit\",},\
@@ -649,6 +746,60 @@ mod tests {
         let parsed = maybe
             .expect("should find JSON block")
             .expect("trailing commas should be repaired");
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
+    }
+
+    #[test]
+    fn parses_facets_only_structured_response() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"facets\":[{\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":\"pnpm\",\"evidence_chunks\":[\"c1\"],\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\"}]}\n\
+                   ```";
+        let (prose, maybe) = split_structured_response(raw);
+        assert!(prose.contains("prefers pnpm"));
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("facets-only JSON should parse");
+        assert!(parsed.summary.is_empty());
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
+    }
+
+    #[test]
+    fn ignores_non_string_summary_when_facets_are_present() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"summary\":{\"ignored\":\"object\"},\"facets\":[\
+                   {\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":\"pnpm\",\"evidence_chunks\":[\"c1\"],\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\"}]}\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("non-string summary should not reject facets");
+        assert!(parsed.summary.is_empty());
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
+    }
+
+    #[test]
+    fn accepts_facets_nested_under_summary_object() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"summary\":{\"facets\":[\
+                   {\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":\"pnpm\",\"evidence_chunks\":[\"c1\"],\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\"}]}}\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("nested facets should be promoted");
+        assert!(parsed.summary.is_empty());
         assert_eq!(parsed.facets.len(), 1);
         assert_eq!(parsed.facets[0].key, "package_manager");
     }
@@ -664,6 +815,23 @@ mod tests {
             .expect("should find JSON block")
             .expect("trailing object comma should be repaired");
         assert_eq!(parsed.summary, "Keep commas, ] and } inside this string.");
+    }
+
+    #[test]
+    fn ignores_text_after_first_json_object() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"facets\":[{\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":\"pnpm\",\"evidence_chunks\":[\"c1\"],\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\"}]}\n\
+                   Extra explanation that should not be parsed.\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("trailing text after JSON object should be ignored");
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
     }
 
     #[test]
