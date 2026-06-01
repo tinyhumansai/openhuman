@@ -592,7 +592,13 @@ async fn round20_spawn_subagent_covers_validation_schema_and_disabled_worker_bra
         .await
         .expect("dedicated thread disabled returns tool result");
     assert!(dedicated_thread.is_error);
-    assert!(dedicated_thread.output().contains("temporarily disabled"));
+    let dedicated_thread_output = dedicated_thread.output();
+    assert!(!dedicated_thread_output.contains("temporarily disabled"));
+    assert!(
+        dedicated_thread_output.contains("AgentDefinitionRegistry")
+            || dedicated_thread_output.contains("outside of an agent turn"),
+        "unexpected dedicated_thread error: {dedicated_thread_output}"
+    );
 }
 
 async fn start_loopback(app: Router) -> String {
