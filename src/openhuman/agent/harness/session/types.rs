@@ -196,6 +196,16 @@ pub struct Agent {
     /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
     pub(super) composio_integrations_rx:
         Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
+    /// Toolkit slugs already surfaced to the model as freshly-connected
+    /// this session. Seeded at turn 1 with the startup connected set, then
+    /// extended whenever a mid-session connect is announced — so each new
+    /// toolkit is announced exactly once, never re-announced per turn.
+    pub(super) announced_integrations: std::collections::HashSet<String>,
+    /// One-shot note ("X connected this session, use it now") parked by
+    /// `refresh_delegation_tools_from_cached_integrations` and consumed when
+    /// the next user message is built — rides on the user turn (NOT the
+    /// system prompt) so the KV-cache prefix stays byte-identical.
+    pub(super) pending_integration_announcement: Option<String>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the

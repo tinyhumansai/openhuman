@@ -98,6 +98,37 @@ fn normalize_tool_call<'a>(call: &'a ParsedToolCall) -> Cow<'a, ParsedToolCall> 
     })
 }
 
+/// Compute the one-shot mid-session connect announcement.
+///
+/// Given the toolkit slugs currently connected and the set of slugs already
+/// announced to the model this session, returns a natural-language note for
+/// any genuinely-new slugs (and records them in `announced` so they are never
+/// re-announced). Returns `None` when nothing new connected.
+///
+/// Kept as a free function (no `&self`) so the delta logic is unit-testable
+/// without standing up a full `Agent` — see `turn_tests.rs`.
+fn integration_announcement(
+    connected: &[String],
+    announced: &mut std::collections::HashSet<String>,
+) -> Option<String> {
+    let newly: Vec<String> = connected
+        .iter()
+        .filter(|slug| !announced.contains(*slug))
+        .cloned()
+        .collect();
+    if newly.is_empty() {
+        return None;
+    }
+    for slug in &newly {
+        announced.insert(slug.clone());
+    }
+    Some(format!(
+        "[integration update] These integration(s) connected during this conversation and are available right now: {}. \
+Use delegate_to_integrations_agent with the matching toolkit slug to act on them immediately — do not tell the user to reconnect or restart.",
+        newly.join(", ")
+    ))
+}
+
 impl Agent {
     /// Executes a single interaction "turn" with the agent.
     ///
@@ -189,6 +220,13 @@ impl Agent {
             // Subsequent turns short-circuit unless this hash changes.
             self.last_seen_integrations_hash =
                 crate::openhuman::composio::connected_set_hash(&self.connected_integrations);
+            // Seed the announced set with the startup connected toolkits so
+            // only genuinely-new mid-session connects get announced later.
+            self.announced_integrations = self
+                .connected_integrations
+                .iter()
+                .map(|i| i.toolkit.clone())
+                .collect();
         } else {
             // Deliberately do NOT rebuild the system prompt on subsequent
             // turns. The rendered prompt is the KV-cache prefix the inference
@@ -423,6 +461,16 @@ impl Agent {
                     format!("{}\n{}", injection.rendered, enriched)
                 }
             }
+        };
+
+        // Consume any one-shot mid-session connect announcement parked by
+        // `refresh_delegation_tools_from_cached_integrations`. It rides on the
+        // user turn (NOT a system message — `trim_history` hoists system
+        // messages to the front and would bust the KV-cache prefix) and
+        // `.take()` clears it so it fires exactly once.
+        let enriched = match self.pending_integration_announcement.take() {
+            Some(note) => format!("{note}\n\n{enriched}"),
+            None => enriched,
         };
 
         self.history
@@ -1177,6 +1225,20 @@ impl Agent {
         if self.refresh_delegation_tools() {
             self.last_seen_integrations_hash = new_hash;
             self.connected_integrations_initialized = true;
+            // Surface newly-connected toolkits onto the next user message so
+            // the model acts on them on the FIRST post-connect ask instead of
+            // refusing from stale chat context. Schema-only refresh already
+            // updated the enum; this closes the prose/decision gap.
+            let connected_slugs: Vec<String> = self
+                .connected_integrations
+                .iter()
+                .map(|i| i.toolkit.clone())
+                .collect();
+            if let Some(note) =
+                integration_announcement(&connected_slugs, &mut self.announced_integrations)
+            {
+                self.pending_integration_announcement = Some(note);
+            }
             true
         } else {
             self.connected_integrations = prev_integrations;

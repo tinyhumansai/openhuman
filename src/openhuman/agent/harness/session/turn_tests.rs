@@ -1622,3 +1622,37 @@ fn bound_cached_transcript_messages_strips_multiple_trailing_envelopes() {
         "all trailing tool_calls envelopes must be stripped"
     );
 }
+
+#[test]
+fn integration_announcement_fires_once_for_new_toolkit() {
+    // Seed the announced set with the startup-connected toolkit, mirroring the
+    // turn-1 seed in `run_turn`.
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("gmail".to_string());
+
+    // A mid-session connect adds `slack`: it should be announced, and recorded
+    // so it never re-announces.
+    let connected = vec!["gmail".to_string(), "slack".to_string()];
+    let note = integration_announcement(&connected, &mut announced)
+        .expect("a newly-connected toolkit must produce an announcement");
+    assert!(
+        note.contains("slack"),
+        "announcement must name the new toolkit slug, got: {note}"
+    );
+    assert!(
+        !note.contains("gmail"),
+        "already-announced toolkit must not be re-announced, got: {note}"
+    );
+    assert!(
+        announced.contains("slack"),
+        "the new slug must be recorded as announced"
+    );
+
+    // A second refresh with the identical connected set parks nothing — every
+    // slug is now in `announced`.
+    let second = integration_announcement(&connected, &mut announced);
+    assert!(
+        second.is_none(),
+        "an unchanged connected set must not re-park a note, got: {second:?}"
+    );
+}

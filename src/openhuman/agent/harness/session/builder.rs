@@ -614,6 +614,8 @@ impl AgentBuilder {
             }),
             last_seen_integrations_hash: 0,
             composio_integrations_rx: None,
+            announced_integrations: std::collections::HashSet::new(),
+            pending_integration_announcement: None,
             archivist_hook: self.archivist_hook,
             synthesized_tool_names: std::collections::HashSet::new(),
         })
