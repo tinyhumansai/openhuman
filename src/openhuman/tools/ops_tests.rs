@@ -10,6 +10,7 @@ mod integration_test_support;
 fn test_config(tmp: &TempDir) -> Config {
     Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     }
@@ -1436,6 +1437,7 @@ async fn readonly_acting_tools_carry_policy_blocked_marker() {
     let sec = Arc::new(SecurityPolicy {
         autonomy: AutonomyLevel::ReadOnly,
         workspace_dir: tmp.path().to_path_buf(),
+        action_dir: tmp.path().to_path_buf(),
         ..SecurityPolicy::default()
     });
 

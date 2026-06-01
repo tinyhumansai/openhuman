@@ -1138,6 +1138,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'হ্যাঁ, আনইনস্টল করুন',
   'mcp.detail.uninstall': 'আনইনস্টল',
   'mcp.detail.envVars': 'এনভায়রনমেন্ট ভেরিয়েবল',
+  'mcp.detail.reconfigure': 'পুনঃকনফিগার করুন',
+  'mcp.detail.reconfigureHint':
+    'প্রতিটি ভেরিয়েবলের জন্য নতুন মান লিখুন, তারপর পুনরায় সংযোগ করুন। এটি সংরক্ষিত মান প্রতিস্থাপন করে।',
+  'mcp.detail.saveReconnect': 'সংরক্ষণ ও পুনঃসংযোগ',
+  'mcp.detail.reconfigureSaving': 'সংরক্ষণ করা হচ্ছে…',
+  'mcp.detail.reconfigureSuccess': 'এনভায়রনমেন্ট আপডেট ও পুনঃসংযোগ করা হয়েছে।',
+  'mcp.detail.reconfigureReconnectFailed':
+    'সংরক্ষিত হয়েছে, তবে নতুন মান দিয়ে পুনঃসংযোগ ব্যর্থ হয়েছে।',
   'mcp.detail.tools': 'টুলস',
   'onboarding.skipForNow': 'এখনই এড়িয়ে যান',
   'onboarding.localAI.continueWithCloud': 'ক্লাউডের সাথে চালিয়ে যান',
@@ -1982,6 +1990,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'পৃষ্ঠার xqxqx',
   'memorySources.cssSelector': 'xqxqx নির্বাচক',
   'memorySources.searchQuery': 'অনুসন্ধান',
+  'memorySources.build.title': 'তৈরি',
+  'memorySources.build.building': 'তৈরি হচ্ছে…',
+  'memorySources.build.successTitle': 'ট্রি তৈরি হয়েছে',
+  'memorySources.build.failedTitle': 'তৈরি ব্যর্থ',
+  'memorySources.build.sealsMessage': 'সিল সম্পন্ন হয়েছে',
   'backend.aiBackend': 'AI ব্যাকএন্ড',
   'backend.cloud': 'ক্লাউড',
   'backend.recommended': 'প্রস্তাবিত',
@@ -2493,6 +2506,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'চলছে',
   'conversations.subagent.statusCompleted': 'সম্পন্ন',
   'conversations.subagent.statusFailed': 'ব্যর্থ',
+  'conversations.subagent.statusAwaitingUser': 'ব্যবহারকারীর অপেক্ষায়',
   'daemon.serviceBlockingGate.body': 'বডি',
   'daemon.serviceBlockingGate.downloadHint': 'ডাউনলোড হিন্ট',
   'daemon.serviceBlockingGate.downloadLatest': 'সর্বশেষ সংস্করণ ডাউনলোড করুন',
@@ -3588,6 +3602,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'কাজের পরিকল্পনা অনুমোদন প্রয়োজন',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'নির্ধারিত কর্মের পূর্বে একটি author-ed কর্মের সঞ্চালনার পূর্বে কর্ম স্থগিত করা হবে।',
+  'settings.agentAccess.timeout.label': 'অ্যাকশন টাইমআউট',
+  'settings.agentAccess.timeout.desc':
+    'একটি একক টুল বা অ্যাকশন বাতিল হওয়ার আগে কতক্ষণ চলতে পারে। বড় লোকাল মডেল উত্তর শেষ করার আগেই থেমে গেলে এটি বাড়ান।',
+  'settings.agentAccess.timeout.unit': 'সেকেন্ড',
+  'settings.agentAccess.timeout.invalid': 'অনুমোদিত পরিসরের মধ্যে সেকেন্ডের একটি পূর্ণসংখ্যা লিখুন',
+  'settings.agentAccess.timeout.envOverride':
+    'OPENHUMAN_TOOL_TIMEOUT_SECS এনভায়রনমেন্ট ভেরিয়েবলটি এই সেটিং ওভাররাইড করছে, তাই এটি আনসেট না করা পর্যন্ত এখানে পরিবর্তনের কোনো প্রভাব পড়বে না।',
   'settings.agentAccess.grantedFolders': 'ফোল্ডার',
   'settings.agentAccess.alwaysAllow': 'সর্বদা অপসারণযোগ্য সরঞ্জাম',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3604,6 +3625,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'যোগ করুন',
   'settings.agentAccess.saving': 'ইনস্টল করা হয়েছে...',
   'settings.agentAccess.changesApply': 'পরবর্তী বার্তায় পরিবর্তন প্রয়োগ করা হবে।',
+  'settings.agentAccess.directories': 'ডিরেক্টরি',
+  'settings.agentAccess.actionSandbox': 'অ্যাকশন স্যান্ডবক্স',
+  'settings.agentAccess.readWriteAccess': 'পড়া + লেখা',
+  'settings.agentAccess.actionSandboxDesc':
+    'শেল, ফাইল এবং git টুলের জন্য ডিফল্ট কার্যকরী ডিরেক্টরি।',
+  'settings.agentAccess.internalState': 'অভ্যন্তরীণ অবস্থা',
+  'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
+  'settings.agentAccess.internalStateDesc':
+    'মেমরি ডেটাবেস, সেশন, টোকেন এবং অন্যান্য মূল ডেটা। এজেন্ট টুলের কাছে অ্যাক্সেসযোগ্য নয়।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4382,6 +4412,42 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'গড় ক্লাস্টারিং {avg} · সংক্রমণতা {transitivity}',
   'graphCohesion.title': 'গ্রাফ সংসক্তি',
   'memory.tab.cohesion': 'Cohesion',
+
+  // Keyring consent & security
+  'keyring.consent.title': 'নিরাপদ সঞ্চয়স্থান অনুপলব্ধ',
+  'keyring.consent.description':
+    'আপনার অপারেটিং সিস্টেমের কিচেন অ্যাক্সেসযোগ্য নয়। OpenHuman-এর পরিবর্তে স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান ব্যবহার করে গোপনীয়তা সংরক্ষণ করতে আপনার অনুমতি প্রয়োজন।',
+  'keyring.consent.reasonPrefix': 'কারণ:',
+  'keyring.consent.showDetails': 'এটার মানে কী?',
+  'keyring.consent.hideDetails': 'বিবরণ লুকান',
+  'keyring.consent.tradeoffTitle': 'নিরাপত্তা বিনিময়',
+  'keyring.consent.tradeoffBody':
+    'স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থানে, আপনার গোপনীয়তা ডিস্কে একটি মাস্টার কী দিয়ে এনক্রিপ্ট করা হয় যা ডেটার পাশাপাশি সংরক্ষিত থাকে। এটি OS কিচেনের চেয়ে কম নিরাপদ, যা হার্ডওয়্যার-সমর্থিত সুরক্ষা ব্যবহার করে। ব্যাকআপ বা ফাইল সিঙ্কিংয়ে এনক্রিপ্টেড ডেটা অন্তর্ভুক্ত হতে পারে।',
+  'keyring.consent.consentButton': 'স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান ব্যবহার করুন',
+  'keyring.consent.retryButton': 'OS Keychain পুনরায় চেষ্টা করুন',
+  'keyring.consent.declineButton': 'প্রত্যাখ্যান করুন',
+  'keyring.consent.retrying': 'পুনরায় চেষ্টা হচ্ছে…',
+  'keyring.consent.error': 'পছন্দ সংরক্ষণ ব্যর্থ। অনুগ্রহ করে আবার চেষ্টা করুন।',
+  'keyring.consent.retryFailed': 'কিচেন এখনও অনুপলব্ধ।',
+  'keyring.settings.title': 'নিরাপত্তা',
+  'keyring.settings.storageMode': 'গোপনীয়তা সঞ্চয়স্থান মোড',
+  'keyring.settings.mode.osKeychain': 'OS কীচেইন',
+  'keyring.settings.mode.encryptedFile': 'স্থানীয় এনক্রিপ্টেড',
+  'keyring.settings.mode.consentPending': 'কনফিগার করা হয়নি',
+  'keyring.settings.mode.declined': 'প্রত্যাখ্যান করা হয়েছে',
+  'keyring.settings.availability': 'কিচেন প্রাপ্যতা',
+  'keyring.settings.available': 'OS কিচেন উপলব্ধ',
+  'keyring.settings.unavailable': 'OS কিচেন অনুপলব্ধ',
+  'keyring.settings.backend': 'ব্যাকএন্ড',
+  'keyring.settings.retryButton': 'কিচেন সনাক্তকরণ পুনরায় চেষ্টা করুন',
+  'keyring.settings.retryFailed': 'পুনরায় চেষ্টা ব্যর্থ। কিচেন এখনও অনুপলব্ধ।',
+  'keyring.settings.consentTitle': 'সঞ্চয়স্থান সম্মতি',
+  'keyring.settings.consentDescription':
+    'OS কিচেন অনুপলব্ধ থাকলে গোপনীয়তা কীভাবে সংরক্ষণ করা হবে তা বেছে নিন।',
+  'keyring.settings.grantConsent': 'স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান অনুমতি দিন',
+  'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
+  'pages.settings.account.security': 'নিরাপত্তা',
+  'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
 };
 
 export default messages;

@@ -163,6 +163,23 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
     Ok(())
 }
 
+/// Update only the `env_keys` list for an installed server. Used by
+/// `mcp_clients_update_env` to keep the persisted key-name list in sync with a
+/// reconfigure — the env *values* live in the separate `mcp_client_env` table,
+/// while the key-name list shown in list/status responses lives on the server
+/// row. A plain `insert_server` would conflict on the primary key.
+pub fn update_server_env_keys(config: &Config, server_id: &str, env_keys: &[String]) -> Result<()> {
+    let env_keys_json = serde_json::to_string(env_keys)?;
+    with_connection(config, |conn| {
+        conn.execute(
+            "UPDATE mcp_servers SET env_keys_json = ?2 WHERE server_id = ?1",
+            params![server_id, env_keys_json],
+        )
+        .context("Failed to update mcp_server env_keys")?;
+        Ok(())
+    })
+}
+
 pub fn list_servers(config: &Config) -> Result<Vec<InstalledServer>> {
     with_connection(config, |conn| list_servers_conn(conn))
 }

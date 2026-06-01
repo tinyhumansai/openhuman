@@ -1223,6 +1223,37 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
+                AgentProgress::SubagentAwaitingUser {
+                    agent_id,
+                    task_id,
+                    question,
+                    worker_thread_id,
+                } => {
+                    log::debug!(
+                        "[web_channel][bridge] subagent_awaiting_user agent_id={} task_id={} client_id={} thread_id={} request_id={}",
+                        agent_id,
+                        task_id,
+                        client_id,
+                        thread_id,
+                        request_id,
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_awaiting_user".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        message: Some(question),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        success: Some(true),
+                        round: Some(round),
+                        subagent: Some(SubagentProgressDetail {
+                            worker_thread_id,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
                 AgentProgress::SubagentIterationStarted {
                     agent_id,
                     task_id,

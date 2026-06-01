@@ -466,6 +466,8 @@ async fn typed_mode_returns_text_through_runner() {
                 model_override: None,
                 task_id: Some("t1".into()),
                 worker_thread_id: None,
+                initial_history: None,
+                checkpoint_dir: None,
             },
         )
         .await
@@ -575,6 +577,8 @@ async fn typed_mode_filters_tools_by_skill_filter() {
                 model_override: None,
                 task_id: None,
                 worker_thread_id: None,
+                initial_history: None,
+                checkpoint_dir: None,
             },
         )
         .await

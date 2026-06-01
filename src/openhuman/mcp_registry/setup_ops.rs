@@ -271,26 +271,7 @@ pub async fn mcp_setup_install_and_connect(
     // Branch on the picked transport. Stdio installs still populate
     // command/args (current behavior). HTTP-remote installs leave them
     // empty and stash the deployment URL in `transport`.
-    let (transport, command_kind, command, args) = match picked.transport_kind() {
-        "http_remote" => {
-            let url = picked.deployment_url.clone().unwrap_or_default();
-            if url.is_empty() {
-                return Err(format!(
-                    "server `{q}` http_remote connection has empty deployment_url"
-                ));
-            }
-            (
-                Transport::HttpRemote { url },
-                CommandKind::Node, // unused for HTTP, but a sensible default
-                String::new(),
-                Vec::new(),
-            )
-        }
-        _ => {
-            let (kind, command, args) = resolve_command(q, Some(picked));
-            (Transport::Stdio, kind, command, args)
-        }
-    };
+    let (transport, command_kind, command, args) = build_install_transport(q, picked)?;
 
     // Consume refs only after `registry_get` succeeds — that way a
     // misconfigured server name doesn't burn the user's collected
@@ -441,10 +422,43 @@ pub(super) fn pick_connection(connections: &[SmitheryConnection]) -> Option<&Smi
         .find(|c| c.transport_kind() == "http_remote")
 }
 
+/// Resolve the persisted [`Transport`] + launch command for an install from the
+/// connection the picker selected. Stdio installs populate `command`/`args`;
+/// HTTP-remote installs leave them empty and stash the deployment URL in the
+/// `Transport`. Shared by the setup-agent path
+/// ([`mcp_setup_install_and_connect`]) and the manual install dialog path
+/// ([`super::ops::mcp_clients_install`]) so both transports behave identically
+/// (issue #3039 gap A2).
+pub(super) fn build_install_transport(
+    qualified_name: &str,
+    picked: &SmitheryConnection,
+) -> Result<(Transport, CommandKind, String, Vec<String>), String> {
+    match picked.transport_kind() {
+        "http_remote" => {
+            let url = picked.deployment_url.clone().unwrap_or_default();
+            if url.is_empty() {
+                return Err(format!(
+                    "server `{qualified_name}` http_remote connection has empty deployment_url"
+                ));
+            }
+            Ok((
+                Transport::HttpRemote { url },
+                CommandKind::Node, // unused for HTTP, but a sensible default
+                String::new(),
+                Vec::new(),
+            ))
+        }
+        _ => {
+            let (kind, command, args) = resolve_command(qualified_name, Some(picked));
+            Ok((Transport::Stdio, kind, command, args))
+        }
+    }
+}
+
 /// Normalise a [`SmitheryConnection::r#type`] string into the same vocabulary
 /// the persisted [`Transport`] enum uses. The registry side uses `"http"`
 /// in its DTOs; we route those into the `"http_remote"` install path.
-trait ConnectionKind {
+pub(super) trait ConnectionKind {
     fn transport_kind(&self) -> &str;
 }
 
@@ -526,5 +540,46 @@ mod tests {
     fn pick_connection_returns_none_for_only_unknown_kinds() {
         let conns = vec![conn("websocket-future", true, None)];
         assert!(pick_connection(&conns).is_none());
+    }
+
+    /// `build_install_transport` turns a picked stdio connection into a
+    /// `Transport::Stdio` with a resolved launch command (npx default when the
+    /// example_config has no command). Shared by both install paths (gap A2).
+    #[test]
+    fn build_install_transport_stdio_resolves_command() {
+        let picked = conn("stdio", true, None);
+        let (transport, _kind, command, args) =
+            build_install_transport("@scope/echo", &picked).expect("stdio install resolves");
+        assert_eq!(transport, Transport::Stdio);
+        assert_eq!(command, "npx");
+        assert_eq!(args, vec!["-y".to_string(), "@scope/echo".to_string()]);
+    }
+
+    /// A picked http_remote connection becomes `Transport::HttpRemote { url }`
+    /// with empty command/args — the manual install dialog can now install
+    /// Smithery's HTTP-only listings (gap A2).
+    #[test]
+    fn build_install_transport_http_remote_uses_deployment_url() {
+        let picked = conn("http", true, Some("https://x.io/mcp"));
+        let (transport, _kind, command, args) =
+            build_install_transport("io.x/remote", &picked).expect("http install resolves");
+        assert_eq!(
+            transport,
+            Transport::HttpRemote {
+                url: "https://x.io/mcp".to_string()
+            }
+        );
+        assert!(command.is_empty());
+        assert!(args.is_empty());
+    }
+
+    /// An http_remote connection with no deployment URL is a hard error rather
+    /// than installing an undialable server.
+    #[test]
+    fn build_install_transport_http_remote_requires_url() {
+        let picked = conn("http", true, None);
+        let err = build_install_transport("io.x/remote", &picked)
+            .expect_err("missing deployment_url must error");
+        assert!(err.contains("deployment_url"), "got: {err}");
     }
 }

@@ -162,6 +162,7 @@ impl TurnStateMirror {
                     subagent: Some(SubagentActivity {
                         task_id: task_id.clone(),
                         agent_id: agent_id.clone(),
+                        status: None,
                         mode: Some(mode.clone()),
                         dedicated_thread: Some(*dedicated_thread),
                         child_iteration: None,
@@ -202,6 +203,15 @@ impl TurnStateMirror {
                 }
                 self.state.active_subagent = None;
                 self.state.phase = Some(TurnPhase::Thinking);
+                self.flush();
+                true
+            }
+            AgentProgress::SubagentAwaitingUser { task_id, .. } => {
+                if let Some(entry) = self.find_subagent_entry_mut(task_id) {
+                    if let Some(activity) = entry.subagent.as_mut() {
+                        activity.status = Some("awaiting_user".to_string());
+                    }
+                }
                 self.flush();
                 true
             }

@@ -380,6 +380,17 @@ pub struct AutonomySettingsPatch {
     pub require_task_plan_approval: Option<bool>,
 }
 
+/// Partial update for the `[agent]` block. Currently carries the single
+/// user-facing `agent_timeout_secs` knob (the tool/action wall-clock timeout);
+/// other `AgentConfig` fields are not yet UI-exposed. `None` leaves the value
+/// unchanged.
+#[derive(Debug, Clone, Default)]
+pub struct AgentSettingsPatch {
+    /// Tool/action wall-clock timeout in seconds. Validated to
+    /// `tool_timeout::MIN_TIMEOUT_SECS..=tool_timeout::MAX_TIMEOUT_SECS`.
+    pub agent_timeout_secs: Option<u64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct BrowserSettingsPatch {
     pub enabled: Option<bool>,
@@ -947,6 +958,82 @@ pub async fn get_autonomy_settings() -> Result<RpcOutcome<serde_json::Value>, St
     let config = load_config_with_timeout().await?;
     let value = serde_json::to_value(&config.autonomy).map_err(|e| e.to_string())?;
     Ok(RpcOutcome::single_log(value, "autonomy settings read"))
+}
+
+/// Updates the `[agent]` block (currently the `agent_timeout_secs` tool/action
+/// wall-clock timeout).
+///
+/// After persisting, pushes the new value into the live
+/// [`crate::openhuman::tool_timeout`] runtime so subsequent tool calls honour
+/// it without a core restart. The `OPENHUMAN_TOOL_TIMEOUT_SECS` env var, when
+/// set, still overrides the config value (the push is a no-op in that case).
+/// Returns the updated config snapshot.
+pub async fn apply_agent_settings(
+    config: &mut Config,
+    update: AgentSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    use crate::openhuman::tool_timeout::{MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS};
+
+    if let Some(timeout_secs) = update.agent_timeout_secs {
+        if !(MIN_TIMEOUT_SECS..=MAX_TIMEOUT_SECS).contains(&timeout_secs) {
+            log::warn!(
+                "[config][agent] rejected agent_timeout_secs={timeout_secs} (valid {MIN_TIMEOUT_SECS}..={MAX_TIMEOUT_SECS})"
+            );
+            return Err(format!(
+                "agent_timeout_secs must be between {MIN_TIMEOUT_SECS} and {MAX_TIMEOUT_SECS} seconds (got {timeout_secs})"
+            ));
+        }
+        config.agent.agent_timeout_secs = timeout_secs;
+    }
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    // Push the persisted value into the live tool-timeout runtime so the change
+    // takes effect on the next tool call without restarting the core. The env
+    // override (if any) still wins inside `set_tool_timeout_secs`.
+    let effective =
+        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    log::debug!(
+        "[config][agent] agent settings saved; agent_timeout_secs={} effective={}s",
+        config.agent.agent_timeout_secs,
+        effective
+    );
+
+    let snapshot = snapshot_config_json(config)?;
+    Ok(RpcOutcome::new(
+        snapshot,
+        vec![format!(
+            "agent settings saved to {}",
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies agent settings updates, and saves it.
+pub async fn load_and_apply_agent_settings(
+    update: AgentSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_agent_settings(&mut config, update).await
+}
+
+/// Returns the agent execution settings (currently the action timeout) plus the
+/// runtime-effective value and whether the `OPENHUMAN_TOOL_TIMEOUT_SECS` env var
+/// is overriding the configured value, so the UI can explain a no-op control.
+pub async fn get_agent_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    // Ensure the runtime timeout is seeded from the persisted config so the
+    // `effective_timeout_secs` field is correct even if startup didn't seed it
+    // (e.g. in CLI invocations or tests that skip the full boot sequence).
+    crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    let value = serde_json::json!({
+        "agent_timeout_secs": config.agent.agent_timeout_secs,
+        "effective_timeout_secs": crate::openhuman::tool_timeout::tool_execution_timeout_secs(),
+        "env_override": crate::openhuman::tool_timeout::env_override_active(),
+        "min_timeout_secs": crate::openhuman::tool_timeout::MIN_TIMEOUT_SECS,
+        "max_timeout_secs": crate::openhuman::tool_timeout::MAX_TIMEOUT_SECS,
+    });
+    Ok(RpcOutcome::single_log(value, "agent settings read"))
 }
 
 /// Updates the analytics-related settings in the configuration.

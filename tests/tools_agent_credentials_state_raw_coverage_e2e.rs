@@ -448,6 +448,7 @@ fn browser_tool(endpoint: String, workspace: &Path) -> BrowserTool {
     let security = Arc::new(SecurityPolicy::from_config(
         &Config::default().autonomy,
         workspace,
+        workspace,
     ));
     BrowserTool::new_with_backend(
         security,
@@ -573,6 +574,7 @@ fn round16_all_tools_registry_branches_and_browser_allowlist() {
         &Arc::new(SecurityPolicy::from_config(
             &cfg.autonomy,
             &harness.workspace,
+            &harness.workspace,
         )),
         AuditLogger::disabled(),
         Arc::new(StubMemory),
@@ -654,8 +656,18 @@ async fn round16_spawn_subagent_tool_and_runner_error_success_paths() {
         }))
         .await
         .expect("dedicated thread returns tool result");
-    assert!(disabled_thread.is_error);
-    assert!(disabled_thread.output().contains("temporarily disabled"));
+    assert!(
+        disabled_thread.is_error,
+        "dedicated_thread should error: {}",
+        disabled_thread.output()
+    );
+    // #3049 superseded #1624: dedicated_thread is no longer "temporarily
+    // disabled" — it's accepted but the tool may still error for other
+    // reasons (e.g. no provider configured). Just verify it errors.
+    assert!(
+        !disabled_thread.output().is_empty(),
+        "error output should not be empty"
+    );
 
     let provider = Arc::new(ScriptedProvider::new(vec![response(
         Some("subagent final answer that will be clipped"),
@@ -851,6 +863,7 @@ async fn round16_app_state_config_and_session_snapshot_edges() {
     std::fs::write(harness.app_state_file(), "{broken").expect("write corrupt app state");
 
     let stored = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  round16-key  ".to_string())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: true,
@@ -919,6 +932,7 @@ async fn round16_app_state_config_and_session_snapshot_edges() {
     );
 
     let cleared = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(None),
         onboarding_tasks: Some(None),
     })

@@ -142,6 +142,7 @@ async fn round24_app_state_update_and_snapshot_preserve_local_state() {
     };
 
     let updated = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  round24-key  ".into())),
         onboarding_tasks: Some(Some(tasks.clone())),
     })
@@ -166,6 +167,7 @@ async fn round24_app_state_update_and_snapshot_preserve_local_state() {
     assert!(snapshot.session_token.is_none());
 
     let cleared = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("   ".into())),
         onboarding_tasks: Some(None),
     })

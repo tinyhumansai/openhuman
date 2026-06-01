@@ -73,6 +73,10 @@ pub struct ToolTimelineEntry {
 pub struct SubagentActivity {
     pub task_id: String,
     pub agent_id: String,
+    /// High-level status: `"running"`, `"awaiting_user"`, `"completed"`,
+    /// `"failed"`. `None` for legacy snapshots written before this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

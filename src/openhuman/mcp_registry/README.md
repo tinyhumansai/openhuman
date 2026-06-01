@@ -114,7 +114,9 @@ The in-process connection registry (`connections.rs`) is a `OnceLock<RwLock<Hash
 ## Notes / gotchas
 
 - **`mcp_clients` vs `mcp_registry`**: the RPC namespace and db filename keep the old `mcp_clients` name for backwards-compat; only the Rust module path is `mcp_registry`.
-- **Two install paths**: legacy `mcp_clients_install` is **stdio-only** (filters for `stdio` connections). HTTP-remote installs go exclusively through the newer `mcp_setup_install_and_connect`, which routes via `pick_connection` (preference: published stdio → any stdio → published http_remote → any http_remote).
+- **Unified install transport**: both `mcp_clients_install` (manual install dialog) and `mcp_setup_install_and_connect` (setup agent) pick the best connection via `setup_ops::pick_connection` and build the `Transport` via `setup_ops::build_install_transport` (preference: published stdio → any stdio → published http_remote → any http_remote). So HTTP-remote listings install from the UI too, not just via the setup agent.
+- **Reconfigure**: `mcp_clients_update_env` replaces the stored env values (and the server row's `env_keys`), disconnects, and reconnects — API-key rotation without uninstall/reinstall.
+- **Registry credentials**: `mcp_clients_registry_settings_get` / `_set` expose Smithery / official-registry auth (config-first, env-fallback via `mcp_client.registry_auth`). The getter reports `*_set` booleans only; secret values are write-only and never returned.
 - **Smithery DTO naming**: the canonical result shapes are named `Smithery*` for wire compat; non-Smithery registries adapt into the same shapes and tag the `source` field.
 - **HTTP-remote env**: env vars for HTTP-remote installs (typically OAuth tokens) are picked up by `McpHttpClient`'s own auth config, not injected at dial time by this module.
 - **Secret safety**: raw secret values flow only through `submit_secret` and the just-in-time resolve in `test_connection`/`install_and_connect`; never echoed in responses or logged. `consume_refs` only removes refs after values are persisted.

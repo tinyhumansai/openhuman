@@ -30,10 +30,10 @@ pub mod tools;
 pub mod util;
 
 // Tree instances — policy and orchestration over the generic memory_tree engine.
-pub mod tree_global;
+// The global (time-axis) and topic (subject-axis) trees were removed; source
+// trees plus the entity index are the substrate.
 pub mod tree_policy;
 pub mod tree_source;
-pub mod tree_topic;
 
 #[cfg(test)]
 mod sync_pipeline_e2e_tests;
