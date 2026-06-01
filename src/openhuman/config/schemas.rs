@@ -221,6 +221,12 @@ struct AutonomySettingsUpdate {
     require_task_plan_approval: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AgentSettingsUpdate {
+    /// Tool/action wall-clock timeout in seconds (1–3600). Validated server-side.
+    agent_timeout_secs: Option<u64>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -254,6 +260,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_composio_trigger_settings"),
         schemas("get_autonomy_settings"),
         schemas("update_autonomy_settings"),
+        schemas("get_agent_settings"),
+        schemas("update_agent_settings"),
         schemas("update_search_settings"),
         schemas("get_search_settings"),
     ]
@@ -384,6 +392,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_autonomy_settings"),
             handler: handle_update_autonomy_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_agent_settings"),
+            handler: handle_get_agent_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_agent_settings"),
+            handler: handle_update_agent_settings,
         },
         RegisteredController {
             schema: schemas("update_search_settings"),
@@ -618,6 +634,28 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 optional_bool("require_task_plan_approval", "Require approval before an agent executes a task-board plan."),
             ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
+        "get_agent_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_agent_settings",
+            description: "Read agent execution settings: the action/tool wall-clock timeout, the runtime-effective value, and whether the OPENHUMAN_TOOL_TIMEOUT_SECS env var overrides it.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "settings",
+                "Agent settings: agent_timeout_secs, effective_timeout_secs, env_override, min_timeout_secs, max_timeout_secs.",
+            )],
+        },
+        "update_agent_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_agent_settings",
+            description: "Update agent execution settings. Currently the action/tool wall-clock timeout (seconds). Applies to the next tool call without a restart; the OPENHUMAN_TOOL_TIMEOUT_SECS env var still overrides it when set.",
+            inputs: vec![FieldSchema {
+                name: "agent_timeout_secs",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Wall-clock timeout for a single tool/action execution, in seconds (1–3600). Extend this when large local models are interrupted before finishing.",
+                required: false,
+            }],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
         "update_browser_settings" => ControllerSchema {
@@ -1249,6 +1287,48 @@ fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFutu
             require_task_plan_approval: update.require_task_plan_approval,
         };
         to_json(config_rpc::load_and_apply_autonomy_settings(patch).await?)
+    })
+}
+
+fn handle_get_agent_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_agent_settings enter");
+        match config_rpc::get_agent_settings().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_agent_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_agent_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_update_agent_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_agent_settings enter");
+        let update = match deserialize_params::<AgentSettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_agent_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        let patch = config_rpc::AgentSettingsPatch {
+            agent_timeout_secs: update.agent_timeout_secs,
+        };
+        match config_rpc::load_and_apply_agent_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_agent_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_agent_settings failed: {err}");
+                Err(err)
+            }
+        }
     })
 }
 

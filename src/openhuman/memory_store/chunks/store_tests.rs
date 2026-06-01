@@ -36,6 +36,7 @@ fn sample_chunk(source_id: &str, seq: u32, ts_ms: i64) -> Chunk {
             time_range: (ts, ts),
             tags: vec!["eng".into()],
             source_ref: Some(SourceRef::new(format!("slack://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: 12,
         seq_in_source: seq,

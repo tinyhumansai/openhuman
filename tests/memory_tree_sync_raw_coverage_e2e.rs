@@ -125,6 +125,7 @@ fn staged_chunk(cfg: &Config, source_id: &str, seq: u32, tokens: u32) -> Chunk {
             time_range: (ts, ts),
             tags: vec!["coverage".into(), "sync".into()],
             source_ref: Some(SourceRef::new(format!("chat://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: tokens,
         seq_in_source: seq,

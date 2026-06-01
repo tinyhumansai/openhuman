@@ -137,6 +137,7 @@ fn sample_chunk(cfg: &Config, source_id: &str, seq: u32, text: &str, timestamp_m
             time_range: (ts, ts),
             tags: vec!["round18".into()],
             source_ref: Some(SourceRef::new(format!("slack://{source_id}/{seq}"))),
+            path_scope: None,
         },
         token_count: 32,
         seq_in_source: seq,
