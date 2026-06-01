@@ -1,4 +1,4 @@
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Deserializer};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -142,6 +142,7 @@ struct LocalAiSettingsUpdate {
     /// having to also apply a tier preset.
     opt_in_confirmed: Option<bool>,
     provider: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present_json")]
     base_url: Option<Value>,
     model_id: Option<String>,
     chat_model_id: Option<String>,
@@ -1578,6 +1579,13 @@ fn handle_get_search_settings(_params: Map<String, Value>) -> ControllerFuture {
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
+}
+
+fn deserialize_present_json<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
