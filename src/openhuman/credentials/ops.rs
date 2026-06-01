@@ -171,6 +171,15 @@ pub async fn store_session(
     // Determine user_id so we can scope the openhuman directory to this user.
     let resolved_user_id = metadata.get("user_id").cloned();
 
+    // Bind the signed-in user's id to the Sentry scope as early as possible
+    // (on fresh login and on account switch, both of which route through here)
+    // so events reported by background loops carry `user.id` even before the
+    // frontend `app_state_snapshot` RPC has warmed the identity cache. Only
+    // the id is sent — never email/name/IP. See `set_sentry_user_id`.
+    if let Some(ref uid) = resolved_user_id {
+        crate::core::observability::set_sentry_user_id(uid);
+    }
+
     // If we know the user_id, activate the user-scoped directory BEFORE storing
     // the auth profile so that credentials land in the correct place.
     let mut logs = if local_session {
@@ -363,6 +372,10 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
             tracing::warn!(error = %e, "failed to clear active_user.toml on logout");
         }
     }
+
+    // Drop the Sentry scope user so post-logout events aren't misattributed to
+    // the account that just signed out. The next `store_session` re-binds it.
+    crate::core::observability::clear_sentry_user();
 
     // Stop all login-gated services (voice, autocomplete, screen
     // intelligence, local AI) so they don't run as orphan processes after
