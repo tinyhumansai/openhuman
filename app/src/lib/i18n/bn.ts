@@ -4439,7 +4439,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'ক্রমাঙ্কন',
   'predictionLedger.addButton': 'ভবিষ্যদ্বাণী যোগ করুন',
   'predictionLedger.addHeading': 'একটি ভবিষ্যদ্বাণী লগ করুন',
   'predictionLedger.baseRateLabel': 'ভিত্তি হার',

@@ -4226,7 +4226,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '拒绝本地存储',
   'pages.settings.account.security': '安全',
   'pages.settings.account.securityDesc': '密钥存储模式和密钥链状态',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': '校准',
   'predictionLedger.addButton': '添加预测',
   'predictionLedger.addHeading': '记录预测',
   'predictionLedger.baseRateLabel': '基础比率',

@@ -4556,7 +4556,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'Kalibrierung',
   'predictionLedger.addButton': 'Vorhersage hinzufügen',
   'predictionLedger.addHeading': 'Vorhersage protokollieren',
   'predictionLedger.baseRateLabel': 'Grundrate',

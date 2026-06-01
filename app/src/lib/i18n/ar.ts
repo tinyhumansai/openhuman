@@ -4362,7 +4362,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'المعايرة',
   'predictionLedger.addButton': 'إضافة توقع',
   'predictionLedger.addHeading': 'سجّل توقعاً',
   'predictionLedger.baseRateLabel': 'المعدل الأساسي',

@@ -4446,7 +4446,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'अंशांकन',
   'predictionLedger.addButton': 'भविष्यवाणी जोड़ें',
   'predictionLedger.addHeading': 'एक भविष्यवाणी लॉग करें',
   'predictionLedger.baseRateLabel': 'आधार दर',

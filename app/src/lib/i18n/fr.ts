@@ -4537,7 +4537,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Refuser le stockage local',
   'pages.settings.account.security': 'Sécurité',
   'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'Étalonnage',
   'predictionLedger.addButton': 'Ajouter une prédiction',
   'predictionLedger.addHeading': 'Enregistrer une prédiction',
   'predictionLedger.baseRateLabel': 'Taux de base',

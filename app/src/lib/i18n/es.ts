@@ -4522,7 +4522,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'Calibración',
   'predictionLedger.addButton': 'Añadir predicción',
   'predictionLedger.addHeading': 'Registrar una predicción',
   'predictionLedger.baseRateLabel': 'Tasa base',

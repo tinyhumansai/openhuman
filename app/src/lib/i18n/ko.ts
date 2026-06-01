@@ -4405,7 +4405,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': '보정',
   'predictionLedger.addButton': '예측 추가',
   'predictionLedger.addHeading': '예측 기록',
   'predictionLedger.baseRateLabel': '기저율',

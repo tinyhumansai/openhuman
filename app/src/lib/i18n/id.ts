@@ -4456,7 +4456,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'Kalibrasi',
   'predictionLedger.addButton': 'Tambah prediksi',
   'predictionLedger.addHeading': 'Catat prediksi',
   'predictionLedger.baseRateLabel': 'Tingkat dasar',

@@ -39,6 +39,12 @@ describe('predictionLedgerApi.loadLedger', () => {
     expect(mockReadMemoryFile).toHaveBeenCalledWith(LEDGER_PATH);
   });
 
+  it('propagates non-missing read errors', async () => {
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    mockReadMemoryFile.mockRejectedValueOnce(denied);
+    await expect(loadLedger()).rejects.toBe(denied);
+  });
+
   it('returns [] for empty/whitespace content', async () => {
     mockReadMemoryFile.mockResolvedValueOnce('   ');
     expect(await loadLedger()).toEqual([]);

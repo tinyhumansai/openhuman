@@ -21,6 +21,14 @@ const log = debug('prediction-ledger:api');
 /** Workspace-relative path of the single ledger blob. */
 export const LEDGER_PATH = 'predictions/ledger.json';
 
+function isMissingFileError(err: unknown): boolean {
+  if (typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT') {
+    return true;
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return /ENOENT|not found|does not exist/i.test(message);
+}
+
 /**
  * Load and parse the ledger.
  *
@@ -38,8 +46,13 @@ export async function loadLedger(): Promise<PredictionRecord[]> {
   try {
     content = await aiReadMemoryFile(LEDGER_PATH);
   } catch (err) {
-    log('loadLedger: no ledger file yet (%s)', err instanceof Error ? err.message : String(err));
-    return [];
+    const message = err instanceof Error ? err.message : String(err);
+    if (isMissingFileError(err)) {
+      log('[rpc] loadLedger no-ledger-file path=%s reason=%s', LEDGER_PATH, message);
+      return [];
+    }
+    log('[rpc] loadLedger read-failed path=%s reason=%s', LEDGER_PATH, message);
+    throw err;
   }
   if (!content || !content.trim()) return [];
   let parsed: unknown;
@@ -57,7 +70,7 @@ export async function loadLedger(): Promise<PredictionRecord[]> {
 
 /** Persist the full ledger as pretty-printed JSON (diff-friendly on disk). */
 export async function saveLedger(records: PredictionRecord[]): Promise<void> {
-  log('saveLedger: writing %d records', records.length);
+  log('[rpc] saveLedger path=%s recordCount=%d', LEDGER_PATH, records.length);
   await aiWriteMemoryFile(LEDGER_PATH, JSON.stringify(records, null, 2));
 }
 

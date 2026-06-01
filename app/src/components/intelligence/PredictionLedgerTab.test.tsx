@@ -39,7 +39,7 @@ describe('<PredictionLedgerTab />', () => {
   it('loads on mount and shows the empty state when there are none', async () => {
     mockLoadLedger.mockResolvedValueOnce([]);
     render(<PredictionLedgerTab onToast={() => {}} />);
-    expect(mockLoadLedger).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(mockLoadLedger).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByText('No predictions yet.')).toBeInTheDocument());
   });
 

@@ -4482,7 +4482,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
-  'memory.tab.calibration': 'Calibration',
+  'memory.tab.calibration': 'Калибровка',
   'predictionLedger.addButton': 'Добавить прогноз',
   'predictionLedger.addHeading': 'Зарегистрировать прогноз',
   'predictionLedger.baseRateLabel': 'Базовая ставка',
