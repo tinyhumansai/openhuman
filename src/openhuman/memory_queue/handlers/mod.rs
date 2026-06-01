@@ -32,6 +32,39 @@ use crate::openhuman::memory_tree::tree::{LeafRef, TreeFactory};
 /// 1 hour means low-volume sources get summaries within a working session.
 const L0_DEFAULT_FLUSH_AGE_SECS: i64 = 60 * 60;
 
+/// Derive the tree scope from a source_id. For GitHub per-item ids like
+/// `github:owner/repo:commit:sha` or `github:owner/repo:issue:42`,
+/// strips the item suffix and returns `github:owner/repo` so all items
+/// from one repo share a single tree. Non-GitHub ids pass through as-is.
+fn derive_tree_scope(source_id: &str) -> String {
+    if let Some(rest) = source_id.strip_prefix("github:") {
+        if let Some(idx) = rest.find(':') {
+            return format!("github:{}", &rest[..idx]);
+        }
+    }
+    source_id.to_string()
+}
+
+fn emit_build_progress(
+    phase: &str,
+    step: &str,
+    tree_scope: Option<&str>,
+    level: Option<u32>,
+    item_count: Option<u32>,
+    detail: Option<String>,
+) {
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::MemoryTreeBuildProgress {
+            phase: phase.to_string(),
+            step: step.to_string(),
+            tree_scope: tree_scope.map(str::to_string),
+            level,
+            item_count,
+            detail,
+        },
+    );
+}
+
 /// Dispatch a claimed job to the matching per-kind handler.
 ///
 /// Existing handlers all return `Ok(JobOutcome::Done)` on success. The
@@ -72,23 +105,48 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
         c
     };
 
+    emit_build_progress(
+        "extract",
+        "scoring",
+        None,
+        None,
+        None,
+        Some(format!(
+            "chunk {}",
+            &payload.chunk_id[..payload.chunk_id.len().min(16)]
+        )),
+    );
+
     let scoring_cfg = score::ScoringConfig::from_config(config);
     let result = score::score_chunk(&chunk_with_body, &scoring_cfg).await?;
     let chunk_embedding: Option<Vec<f32>> = if result.kept {
-        let embedder =
-            build_embedder_from_config(config).context("build embedder in extract handler")?;
-        // Reuse the body already read — avoid a second disk read.
-        let vector = embedder
-            .embed(&body)
-            .await
-            .with_context(|| format!("embed chunk_id={} in extract handler", chunk.id))?;
-        // Preserve the pre-cutover dimension guard (the job fails fast on a
-        // misconfigured embedder) even though #1574 no longer persists the
-        // packed blob to the legacy `mem_tree_chunks.embedding` column —
-        // the vector now goes to the per-model sidecar instead.
-        pack_checked(&vector)
-            .with_context(|| format!("validate embedding dims for chunk_id={}", chunk.id))?;
-        Some(vector)
+        match build_embedder_from_config(config) {
+            Ok(embedder) => match embedder.embed(&body).await {
+                Ok(vector) => match pack_checked(&vector) {
+                    Ok(_) => Some(vector),
+                    Err(e) => {
+                        log::warn!(
+                            "[memory::jobs] embed dim check failed chunk_id={} err={e:#} — skipping embedding",
+                            chunk.id
+                        );
+                        None
+                    }
+                },
+                Err(e) => {
+                    log::warn!(
+                        "[memory::jobs] embed failed chunk_id={} err={e:#} — continuing without embedding",
+                        chunk.id
+                    );
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!(
+                    "[memory::jobs] build embedder failed err={e:#} — continuing without embedding"
+                );
+                None
+            }
+        }
     } else {
         None
     };
@@ -104,15 +162,29 @@ async fn handle_extract(config: &Config, job: &Job) -> Result<JobOutcome> {
                 chunk_id: chunk.id.clone(),
             },
             target: AppendTarget::Source {
-                source_id: chunk.metadata.source_id.clone(),
+                source_id: chunk
+                    .metadata
+                    .path_scope
+                    .clone()
+                    .unwrap_or_else(|| derive_tree_scope(&chunk.metadata.source_id)),
             },
         })?)
     } else {
         None
     };
 
-    // #1574: resolve the active embedding signature once (probe-stable,
-    // config-derived) so the sidecar write below is keyed correctly.
+    emit_build_progress(
+        "extract",
+        if result.kept { "admitted" } else { "dropped" },
+        None,
+        None,
+        None,
+        Some(format!(
+            "chunk {}",
+            &payload.chunk_id[..payload.chunk_id.len().min(16)]
+        )),
+    );
+
     let active_sig = chunk_store::tree_active_signature(config);
     let did_enqueue_source = chunk_store::with_connection(config, |conn| {
         let tx = conn.unchecked_transaction()?;
@@ -292,6 +364,20 @@ async fn handle_append_buffer(config: &Config, job: &Job) -> Result<JobOutcome> 
     };
 
     let is_source_target = matches!(payload.target, AppendTarget::Source { .. });
+
+    emit_build_progress(
+        "append",
+        "buffering",
+        Some(&tree.scope),
+        Some(0),
+        None,
+        Some(format!(
+            "leaf {} → tree {}",
+            &leaf.chunk_id[..leaf.chunk_id.len().min(16)],
+            &tree.scope
+        )),
+    );
+
     let leaf_for_tx = leaf.clone();
     let tree_for_tx = tree.clone();
     let lifecycle_chunk_id = chunk_id_for_lifecycle.clone();
@@ -397,13 +483,32 @@ async fn handle_seal(config: &Config, job: &Job) -> Result<JobOutcome> {
     // defensive default.
     let strategy = TreeFactory::from_tree(&tree).label_strategy(config);
 
-    // `seal_one_level` with `enqueue_follow_ups: true` atomically inserts
-    // the parent-cascade seal (if the parent buffer now meets its gate)
-    // and the summary-side `topic_route` (for source trees) inside the
-    // same SQLite transaction that commits the seal. This eliminates the
-    // crash window where the seal succeeds but the follow-up enqueues
-    // are silently lost.
+    emit_build_progress(
+        "seal",
+        "started",
+        Some(&tree.scope),
+        Some(payload.level),
+        Some(buf.item_ids.len() as u32),
+        Some(format!(
+            "{} items, {} tokens",
+            buf.item_ids.len(),
+            buf.token_sum
+        )),
+    );
+
     let summary_id = seal_one_level(config, &tree, &buf, &strategy, true).await?;
+
+    emit_build_progress(
+        "seal",
+        "completed",
+        Some(&tree.scope),
+        Some(payload.level),
+        Some(buf.item_ids.len() as u32),
+        Some(format!(
+            "summary {}",
+            &summary_id[..summary_id.len().min(16)]
+        )),
+    );
 
     // Phase MD-content: rewrite the `tags:` block in the sealed summary's
     // on-disk .md file. Entity index rows were committed inside

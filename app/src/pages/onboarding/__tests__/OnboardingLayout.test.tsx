@@ -100,7 +100,7 @@ function buildStore() {
   });
 }
 
-async function setupLayout() {
+async function setupLayout(onboardingTasks: unknown = null) {
   const { useCoreState } = await import('../../../providers/CoreStateProvider');
 
   const mockSetOnboardingCompletedFlag = vi.fn().mockResolvedValue(undefined);
@@ -114,7 +114,7 @@ async function setupLayout() {
       onboardingCompleted: false,
       chatOnboardingCompleted: false,
       analyticsEnabled: false,
-      localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
+      localState: { encryptionKey: null, onboardingTasks, keyringConsent: null },
       keyringStatus: {
         available: true,
         failureReason: null,
@@ -253,5 +253,41 @@ describe('OnboardingLayout — Joyride walkthrough integration (#1123)', () => {
     expect(screen.getByTestId('home-page')).toBeInTheDocument();
 
     warnSpy.mockRestore();
+  });
+
+  // [#3096] Tool preference persistence on completion.
+  it('seeds default enabledTools when no preference was persisted', async () => {
+    const { mockSetOnboardingTasks } = await setupLayout(null);
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('complete-btn'));
+    });
+
+    // Mocks: getDefaultEnabledTools() → [], getEnabledRustToolNames(x) → x.
+    expect(mockSetOnboardingTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ enabledTools: [] })
+    );
+  });
+
+  it('preserves an existing customized enabledTools list instead of resetting to defaults', async () => {
+    const existing = ['shell', 'cron_add', 'cron_list'];
+    const { mockSetOnboardingTasks } = await setupLayout({
+      accessibilityPermissionGranted: false,
+      localModelConsentGiven: false,
+      localModelDownloadStarted: false,
+      enabledTools: existing,
+      connectedSources: [],
+      updatedAtMs: 1,
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('complete-btn'));
+    });
+
+    // The user's prior selection must be carried through verbatim — completing
+    // onboarding must never silently narrow an already-customized tool list.
+    expect(mockSetOnboardingTasks).toHaveBeenCalledWith(
+      expect.objectContaining({ enabledTools: existing })
+    );
   });
 });

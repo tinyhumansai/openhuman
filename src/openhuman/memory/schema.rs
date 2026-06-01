@@ -41,6 +41,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("graph_export"),
         schemas("obsidian_vault_status"),
         schemas("flush_now"),
+        schemas("flush_source"),
         schemas("wipe_all"),
         schemas("reset_tree"),
         schemas("pipeline_status"),
@@ -112,6 +113,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("flush_now"),
             handler: handle_flush_now,
+        },
+        RegisteredController {
+            schema: schemas("flush_source"),
+            handler: handle_flush_source,
         },
         RegisteredController {
             schema: schemas("wipe_all"),
@@ -551,6 +556,33 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     name: "jobs_enqueued",
                     ty: TypeSchema::U64,
                     comment: "extract_chunk jobs enqueued (one per chunk).",
+                    required: true,
+                },
+            ],
+        },
+        "flush_source" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "flush_source",
+            description: "Immediately seal one source tree's L0 buffer, bypassing the job \
+                          queue. Mutex per source scope so concurrent clicks are serialised. \
+                          Returns the number of seal cascades that fired.",
+            inputs: vec![FieldSchema {
+                name: "source_scope",
+                ty: TypeSchema::String,
+                comment: "Source tree scope (e.g. `github:org/repo`, `slack:#eng`).",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "tree_scope",
+                    ty: TypeSchema::String,
+                    comment: "Echo of the source scope.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "seals_fired",
+                    ty: TypeSchema::U64,
+                    comment: "Number of seal cascades that fired.",
                     required: true,
                 },
             ],
@@ -1042,6 +1074,18 @@ fn handle_obsidian_vault_status(params: Map<String, Value>) -> ControllerFuture 
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
         to_json(read_rpc::obsidian_vault_status_rpc(&config, req.obsidian_config_dir).await?)
+    })
+}
+
+fn handle_flush_source(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            source_scope: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::flush_source_tree_rpc(&config, &req.source_scope).await?)
     })
 }
 

@@ -555,6 +555,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: Some(SourceRef::new("slack://x")),
+                path_scope: None,
             },
             token_count: 12,
             seq_in_source: 0,
