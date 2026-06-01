@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::body::Body;
 use axum::extract::ws::WebSocketUpgrade;
@@ -74,8 +74,16 @@ impl Drop for EnvVarGuard {
     }
 }
 
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("env test lock poisoned")
+}
+
 #[tokio::test]
 async fn http_models_and_chat_use_mocked_ollama_without_real_runtime() {
+    let _env = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -225,6 +233,7 @@ async fn dictation_ws_empty_stop_and_audio_cap_do_not_load_whisper() {
 
 #[tokio::test]
 async fn local_service_assets_and_whisper_fallback_use_fake_files_and_binaries() {
+    let _env = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let scripts = tempdir().expect("scripts");
