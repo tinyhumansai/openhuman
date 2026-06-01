@@ -108,7 +108,18 @@ impl InferenceChatProvider {
             .chat(request, &self.model, prompt.temperature)
             .await?;
 
-        let text = response.text.unwrap_or_default();
+        // Fail fast on a missing body rather than masking it as an empty
+        // string: an empty summary would still be ingested (and, post-#3110,
+        // counted against the run's real charge) as if it were valid output.
+        // The caller's fallback path (`fallback_summary`) is the correct
+        // recovery for a silent provider, and it only runs on `Err`.
+        let Some(text) = response.text else {
+            anyhow::bail!(
+                "inference provider '{}' returned no text for {} summarise request",
+                self.display,
+                prompt.kind
+            );
+        };
         let usage = response.usage;
 
         log::debug!(
