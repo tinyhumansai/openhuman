@@ -746,37 +746,52 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
   ]);
   const isValidArtifactKind = (k: unknown): k is ArtifactKind =>
     typeof k === 'string' && validArtifactKinds.has(k as ArtifactKind);
+  // Type-narrowing guards: previously `!args.title` etc. only checked
+  // truthiness, so a non-string `title` (number, object, true) would
+  // pass — and then `.slice(0, 80)` on a non-string `error` crashed
+  // at L833. Type the payload as `unknown` and narrow each field with
+  // `typeof` so the runtime contract matches the TS contract.
+  const isNonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+  const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+  const readEnvelope = (
+    payload: unknown
+  ): { thread_id: string; client_id?: string; args: Record<string, unknown> } | null => {
+    if (!payload || typeof payload !== 'object') return null;
+    const env = payload as { thread_id?: unknown; client_id?: unknown; args?: unknown };
+    if (!isNonEmptyString(env.thread_id)) return null;
+    const client_id = typeof env.client_id === 'string' ? env.client_id : undefined;
+    const args =
+      env.args && typeof env.args === 'object' && !Array.isArray(env.args)
+        ? (env.args as Record<string, unknown>)
+        : {};
+    return { thread_id: env.thread_id, client_id, args };
+  };
+
   if (listeners.onArtifactReady) {
     const cb = (payload: unknown) => {
-      const raw = payload as {
-        thread_id: string;
-        client_id?: string;
-        args?: {
-          artifact_id?: string;
-          kind?: ArtifactKind;
-          title?: string;
-          path?: string;
-          size_bytes?: number;
-        };
-      };
-      const args = raw.args ?? {};
+      const env = readEnvelope(payload);
+      if (!env) {
+        chatLog('%s — skipping malformed payload (bad envelope)', EVENTS.artifactReady);
+        return;
+      }
+      const { args } = env;
       if (
-        !args.artifact_id ||
+        !isNonEmptyString(args.artifact_id) ||
         !isValidArtifactKind(args.kind) ||
-        !args.title ||
-        !args.path ||
-        args.size_bytes == null
+        !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.path) ||
+        !isFiniteNumber(args.size_bytes)
       ) {
         chatLog(
-          '%s thread_id=%s — skipping malformed payload (missing args)',
+          '%s thread_id=%s — skipping malformed payload (bad args)',
           EVENTS.artifactReady,
-          raw.thread_id
+          env.thread_id
         );
         return;
       }
       const event: ArtifactReadyEvent = {
-        thread_id: raw.thread_id,
-        client_id: raw.client_id,
+        thread_id: env.thread_id,
+        client_id: env.client_id,
         artifact_id: args.artifact_id,
         kind: args.kind,
         title: args.title,
@@ -799,23 +814,28 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
 
   if (listeners.onArtifactFailed) {
     const cb = (payload: unknown) => {
-      const raw = payload as {
-        thread_id: string;
-        client_id?: string;
-        args?: { artifact_id?: string; kind?: ArtifactKind; title?: string; error?: string };
-      };
-      const args = raw.args ?? {};
-      if (!args.artifact_id || !isValidArtifactKind(args.kind) || !args.title || !args.error) {
+      const env = readEnvelope(payload);
+      if (!env) {
+        chatLog('%s — skipping malformed payload (bad envelope)', EVENTS.artifactFailed);
+        return;
+      }
+      const { args } = env;
+      if (
+        !isNonEmptyString(args.artifact_id) ||
+        !isValidArtifactKind(args.kind) ||
+        !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.error)
+      ) {
         chatLog(
-          '%s thread_id=%s — skipping malformed payload (missing args)',
+          '%s thread_id=%s — skipping malformed payload (bad args)',
           EVENTS.artifactFailed,
-          raw.thread_id
+          env.thread_id
         );
         return;
       }
       const event: ArtifactFailedEvent = {
-        thread_id: raw.thread_id,
-        client_id: raw.client_id,
+        thread_id: env.thread_id,
+        client_id: env.client_id,
         artifact_id: args.artifact_id,
         kind: args.kind,
         title: args.title,
@@ -823,7 +843,8 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
       };
       // Defence-in-depth: producer is expected to pre-truncate, but
       // cap the log preview again so a leaky producer cannot blast
-      // unbounded provider stderr into client telemetry.
+      // unbounded provider stderr into client telemetry. (`event.error`
+      // is now guaranteed a string by the guard above — no .slice crash.)
       chatLog(
         '%s thread_id=%s artifact_id=%s kind=%s err=%s',
         EVENTS.artifactFailed,

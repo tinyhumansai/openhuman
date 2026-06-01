@@ -206,6 +206,88 @@ describe('chatService.subscribeChatEvents', () => {
     expect(onTaskBoardUpdated).toHaveBeenCalledWith(payload);
   });
 
+  it('drops malformed artifact_ready payloads without crashing', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onArtifactReady = vi.fn();
+    const onArtifactFailed = vi.fn();
+
+    subscribeChatEvents({ onArtifactReady, onArtifactFailed });
+
+    // 1. Non-string title — previously passed truthiness check, would
+    //    have downstream consumers crash on `.slice()` / `.length`.
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 42, // ← non-string
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 2. Non-number size_bytes
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        path: '/some/path.pptx',
+        size_bytes: 'lots', // ← non-number
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 3. Non-string error on artifact_failed — used to crash at
+    //    `.slice(0, 80)` because the truthiness check let it pass.
+    socket.emit('artifact_failed', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        error: { reason: 'object instead of string' }, // ← non-string
+      },
+    });
+    expect(onArtifactFailed).not.toHaveBeenCalled();
+
+    // 4. Missing thread_id on the envelope
+    socket.emit('artifact_ready', {
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 5. Sanity — a well-formed payload still flows through.
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).toHaveBeenCalledWith({
+      thread_id: 't1',
+      client_id: undefined,
+      artifact_id: 'a1',
+      kind: 'presentation',
+      title: 'Deck',
+      path: '/some/path.pptx',
+      size_bytes: 1024,
+    });
+  });
+
   it('sends chat payload with consistent optional RPC params', async () => {
     const socket = createMockSocket();
     vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
