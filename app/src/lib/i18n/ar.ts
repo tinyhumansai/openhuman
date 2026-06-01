@@ -1951,6 +1951,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'رابط الصفحة',
   'memorySources.cssSelector': 'محدد CSS (اختياري)',
   'memorySources.searchQuery': 'استفسار البحث',
+  'memorySources.build.title': 'بناء',
+  'memorySources.build.building': 'جارٍ البناء…',
+  'memorySources.build.successTitle': 'تم بناء الشجرة',
+  'memorySources.build.failedTitle': 'فشل البناء',
+  'memorySources.build.sealsMessage': 'تم إتمام عملية الختم',
   'backend.aiBackend': 'خلفية الذكاء الاصطناعي',
   'backend.cloud': 'سحابي',
   'backend.recommended': 'موصى به',
@@ -3533,6 +3538,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'الموافقة على خطة العمل المطلوبة',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'وقف أمام عميل معين يقوم بتنفيذ موجز عمل مشرف على عميل',
+  'settings.agentAccess.timeout.label': 'مهلة الإجراء',
+  'settings.agentAccess.timeout.desc':
+    'المدة التي يُسمح خلالها بتشغيل أداة أو إجراء واحد قبل إلغائه. زِد هذه القيمة إذا كان نموذج محلي كبير يُقاطَع قبل أن ينهي رده.',
+  'settings.agentAccess.timeout.unit': 'ثوانٍ',
+  'settings.agentAccess.timeout.invalid': 'أدخل عدداً صحيحاً من الثواني ضمن النطاق المسموح به',
+  'settings.agentAccess.timeout.envOverride':
+    'متغير البيئة OPENHUMAN_TOOL_TIMEOUT_SECS يتجاوز هذا الإعداد، لذا لن يكون للتغييرات هنا أي تأثير حتى يتم إلغاء ضبطه.',
   'settings.agentAccess.grantedFolders': 'الملفات الممنوحة',
   'settings.agentAccess.alwaysAllow': 'الأدوات المتدنية دائما',
   'settings.agentAccess.alwaysAllowDesc':

@@ -2783,6 +2783,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             vec![
                 "openhuman.config_agent_server_status",
                 "openhuman.config_get",
+                "openhuman.config_get_agent_settings",
                 "openhuman.config_get_analytics_settings",
                 "openhuman.config_get_autonomy_settings",
                 "openhuman.config_get_client_config",
@@ -2799,6 +2800,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
+                "openhuman.config_update_agent_settings",
                 "openhuman.config_update_analytics_settings",
                 "openhuman.config_update_autonomy_settings",
                 "openhuman.config_update_browser_settings",
