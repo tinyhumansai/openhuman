@@ -234,7 +234,7 @@ impl ShellTool {
         // (CWE-200), then re-add only safe, functional variables.
         let mut cmd = match self
             .runtime
-            .build_shell_command(command, &self.security.workspace_dir)
+            .build_shell_command(command, &self.security.action_dir)
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -329,6 +329,7 @@ mod tests {
         Arc::new(SecurityPolicy {
             autonomy,
             workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
             ..SecurityPolicy::default()
         })
     }
@@ -535,6 +536,7 @@ mod tests {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
             allowed_commands: vec!["echo".into(), "mkdir".into()],
             ..SecurityPolicy::default()
         })
@@ -700,6 +702,7 @@ mod tests {
             autonomy: AutonomyLevel::Supervised,
             max_actions_per_hour: 0,
             workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
             ..SecurityPolicy::default()
         });
         let tool = ShellTool::new(security, test_runtime(), test_audit());

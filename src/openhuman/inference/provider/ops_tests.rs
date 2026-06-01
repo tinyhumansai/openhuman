@@ -106,6 +106,7 @@ async fn configure_openrouter_workspace(tmp: &TempDir, endpoint: String, token: 
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Config::default()
     };
     config.secrets.encrypt = false;
@@ -318,6 +319,7 @@ async fn models_404_returns_empty_list_not_error() {
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Config::default()
     };
     config.secrets.encrypt = false;
@@ -798,6 +800,7 @@ async fn configure_generic_workspace(tmp: &TempDir, endpoint: String) -> Config 
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Config::default()
     };
     config.secrets.encrypt = false;
