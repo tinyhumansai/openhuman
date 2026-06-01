@@ -148,6 +148,7 @@ fn full_security(workspace: &std::path::Path) -> Arc<SecurityPolicy> {
             ..Default::default()
         },
         workspace,
+        workspace,
     ))
 }
 
@@ -158,6 +159,7 @@ fn readonly_security(workspace: &std::path::Path) -> Arc<SecurityPolicy> {
             max_actions_per_hour: 10_000,
             ..Default::default()
         },
+        workspace,
         workspace,
     ))
 }

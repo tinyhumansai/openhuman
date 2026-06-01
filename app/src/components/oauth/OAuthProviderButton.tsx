@@ -25,8 +25,11 @@ interface OAuthProviderButtonProps {
 
 // Reset the loading state if the OAuth round-trip never completes — covers
 // the case where the user cancels in the system browser, or the backend
-// redirect fails so the `openhuman://` deep link never fires.
-const OAUTH_LOADING_TIMEOUT_MS = 90_000;
+// redirect fails so the `openhuman://` deep link never fires. Kept >= the
+// loopback listener lifetime (`DEFAULT_TIMEOUT_SECS`, 300s) so the button
+// never re-enables while the loopback server is still legitimately waiting
+// for a slow (2FA / consent) sign-in to redirect back.
+const OAUTH_LOADING_TIMEOUT_MS = 300_000;
 
 // Pre-flight budget for `/health` before we open the system browser. Kept
 // short so a healthy backend adds barely any perceptible click→browser delay,

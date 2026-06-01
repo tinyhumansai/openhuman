@@ -1926,8 +1926,15 @@ fn register_domain_subscribers(
         // calls instead of importing `run_tool_call_loop` directly.
         crate::openhuman::agent::bus::register_agent_handlers();
 
+        // MCP clients lifecycle subscriber: logs McpServer{Installed,Connected,
+        // Disconnected} + McpClientToolExecuted for observability. The boot-time
+        // spawn of installed servers (boot::spawn_installed_servers) runs later
+        // in bootstrap_core_runtime; this subscriber must be live before then so
+        // those connect events are observed (issue #3039 gap A1).
+        crate::openhuman::mcp_registry::bus::init();
+
         log::info!(
-            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent, session_expired)"
+            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent, session_expired, mcp_client)"
         );
     });
 }
@@ -2003,12 +2010,15 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // injects the default projects root, so this matches what `start_channels`
     // installs; idempotent — a later `start_channels` re-installs an equivalent
     // policy.
+    let action_dir = cfg.action_dir.clone();
     crate::openhuman::security::live_policy::install(
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
             &cfg.autonomy,
             &workspace_dir,
+            &action_dir,
         )),
         workspace_dir.clone(),
+        action_dir,
     );
 
     // --- Approval gate (#1339) ---

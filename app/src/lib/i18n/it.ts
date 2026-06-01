@@ -1166,6 +1166,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Sì, disinstalla',
   'mcp.detail.uninstall': 'Disinstalla',
   'mcp.detail.envVars': 'Variabili di ambiente',
+  'mcp.detail.reconfigure': 'Riconfigura',
+  'mcp.detail.reconfigureHint':
+    'Inserisci nuovi valori per ogni variabile, quindi riconnetti. Questo sostituisce i valori memorizzati.',
+  'mcp.detail.saveReconnect': 'Salva e riconnetti',
+  'mcp.detail.reconfigureSaving': 'Salvataggio…',
+  'mcp.detail.reconfigureSuccess': 'Ambiente aggiornato e riconnesso.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Salvato, ma la riconnessione con i nuovi valori non è riuscita.',
   'mcp.detail.tools': 'Strumenti',
   'onboarding.skipForNow': 'Salta per ora',
   'onboarding.localAI.continueWithCloud': 'Continua con Cloud',
@@ -2015,6 +2023,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'Pagina URL',
   'memorySources.cssSelector': 'Selettore CSS (opzionale)',
   'memorySources.searchQuery': 'Query di ricerca',
+  'memorySources.build.title': 'Costruisci',
+  'memorySources.build.building': 'Costruzione…',
+  'memorySources.build.successTitle': 'Albero costruito',
+  'memorySources.build.failedTitle': 'Costruzione fallita',
+  'memorySources.build.sealsMessage': 'sigillatura completata',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Cloud',
   'backend.recommended': 'Consigliato',
@@ -2531,6 +2544,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'in esecuzione',
   'conversations.subagent.statusCompleted': 'completato',
   'conversations.subagent.statusFailed': 'non riuscito',
+  'conversations.subagent.statusAwaitingUser': "in attesa dell'utente",
   'daemon.serviceBlockingGate.body': 'Corpo',
   'daemon.serviceBlockingGate.downloadHint': 'Suggerimento di download',
   'daemon.serviceBlockingGate.downloadLatest': "Scarica l'ultima versione",
@@ -3647,6 +3661,14 @@ const messages: TranslationMap = {
     "Richiedere l'approvazione del piano di lavoro",
   'settings.agentAccess.requireTaskPlanApproval.desc':
     "Pausa prima che un agente assegnato esegua un brief del compito scritto dall'agente.",
+  'settings.agentAccess.timeout.label': "Timeout dell'azione",
+  'settings.agentAccess.timeout.desc':
+    'Per quanto tempo un singolo strumento o azione può essere eseguito prima di essere annullato. Aumenta questo valore se un modello locale di grandi dimensioni viene interrotto prima di completare la risposta.',
+  'settings.agentAccess.timeout.unit': 'secondi',
+  'settings.agentAccess.timeout.invalid':
+    "Inserisci un numero intero di secondi entro l'intervallo consentito",
+  'settings.agentAccess.timeout.envOverride':
+    "La variabile d'ambiente OPENHUMAN_TOOL_TIMEOUT_SECS sta sovrascrivendo questa impostazione, quindi le modifiche qui non avranno effetto finché non viene rimossa.",
   'settings.agentAccess.grantedFolders': 'Cartelle concesse',
   'settings.agentAccess.alwaysAllow': 'Strumenti sempre consentiti',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3663,6 +3685,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Aggiungi',
   'settings.agentAccess.saving': 'Salvataggio…',
   'settings.agentAccess.changesApply': 'Le modifiche verranno applicate al tuo prossimo messaggio.',
+  'settings.agentAccess.directories': 'Directory',
+  'settings.agentAccess.actionSandbox': 'Sandbox azioni',
+  'settings.agentAccess.readWriteAccess': 'lettura + scrittura',
+  'settings.agentAccess.actionSandboxDesc':
+    'Directory di lavoro predefinita per gli strumenti shell, file e git.',
+  'settings.agentAccess.internalState': 'Stato interno',
+  'settings.agentAccess.agentBlocked': "bloccato per l'agente",
+  'settings.agentAccess.internalStateDesc':
+    "Database memoria, sessioni, token e altri dati fondamentali. Non accessibile dagli strumenti dell'agente.",
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4457,6 +4488,41 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Raggruppamento medio {avg} · transitività {transitivity}',
   'graphCohesion.title': 'Coesione del grafo',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'Archivio sicuro non disponibile',
+  'keyring.consent.description':
+    "Il portachiavi del sistema operativo non è accessibile. OpenHuman necessita del tuo permesso per archiviare i segreti utilizzando l'archiviazione locale crittografata.",
+  'keyring.consent.reasonPrefix': 'Motivo:',
+  'keyring.consent.showDetails': 'Cosa significa?',
+  'keyring.consent.hideDetails': 'Nascondi dettagli',
+  'keyring.consent.tradeoffTitle': 'Compromesso di sicurezza',
+  'keyring.consent.tradeoffBody':
+    "Con l'archiviazione locale crittografata, i tuoi segreti vengono crittografati su disco utilizzando una chiave master archiviata insieme ai dati. Questo è meno sicuro del portachiavi del SO, che utilizza protezione hardware. I backup o la sincronizzazione dei file possono includere i dati crittografati.",
+  'keyring.consent.consentButton': 'Usa archiviazione locale crittografata',
+  'keyring.consent.retryButton': 'Riprova OS Keychain',
+  'keyring.consent.declineButton': 'Rifiuta',
+  'keyring.consent.retrying': 'Nuovo tentativo…',
+  'keyring.consent.error': 'Impossibile salvare la preferenza. Riprova.',
+  'keyring.consent.retryFailed': 'Il portachiavi è ancora non disponibile.',
+  'keyring.settings.title': 'Sicurezza',
+  'keyring.settings.storageMode': 'Modalità archiviazione segreti',
+  'keyring.settings.mode.osKeychain': 'Portachiavi del SO',
+  'keyring.settings.mode.encryptedFile': 'Locale crittografato',
+  'keyring.settings.mode.consentPending': 'Non configurato',
+  'keyring.settings.mode.declined': 'Rifiutato',
+  'keyring.settings.availability': 'Disponibilità portachiavi',
+  'keyring.settings.available': 'Il portachiavi del SO è disponibile',
+  'keyring.settings.unavailable': 'Il portachiavi del SO non è disponibile',
+  'keyring.settings.backend': 'Motore',
+  'keyring.settings.retryButton': 'Riprova rilevamento portachiavi',
+  'keyring.settings.retryFailed': 'Tentativo fallito. Il portachiavi è ancora non disponibile.',
+  'keyring.settings.consentTitle': 'Consenso archiviazione',
+  'keyring.settings.consentDescription':
+    'Scegli come vengono archiviati i segreti quando il portachiavi del SO non è disponibile.',
+  'keyring.settings.grantConsent': 'Consenti archiviazione locale crittografata',
+  'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
+  'pages.settings.account.security': 'Sicurezza',
+  'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
 };
 
 export default messages;

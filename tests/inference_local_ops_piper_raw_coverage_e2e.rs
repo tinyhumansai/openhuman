@@ -4,7 +4,7 @@
 //! It must not call host Ollama, MLX, Python, Piper, or model binaries.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
@@ -73,8 +73,18 @@ impl Drop for EnvVarGuard {
     }
 }
 
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[tokio::test]
 async fn piper_controller_installs_skips_existing_and_records_failures_from_mock_downloads() {
+    let _lock = env_lock();
     let (base, state) = serve_piper_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);

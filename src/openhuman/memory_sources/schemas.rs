@@ -93,6 +93,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("read_item"),
         schemas("sync"),
         schemas("status_list"),
+        schemas("sync_audit_log"),
     ]
 }
 
@@ -133,6 +134,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("status_list"),
             handler: handle_status_list,
+        },
+        RegisteredController {
+            schema: schemas("sync_audit_log"),
+            handler: handle_sync_audit_log,
         },
     ]
 }
@@ -346,6 +351,19 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 required: true,
             }],
         },
+        "sync_audit_log" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "sync_audit_log",
+            description:
+                "Sync audit history — timestamp, tokens consumed, cost, duration for each sync run.",
+            inputs: vec![],
+            outputs: vec![FieldSchema {
+                name: "entries",
+                ty: TypeSchema::Array(Box::new(TypeSchema::Ref("SyncAuditEntry"))),
+                comment: "Audit entries, most recent first.",
+                required: true,
+            }],
+        },
         other => panic!("unknown memory_sources schema function: {other}"),
     }
 }
@@ -405,6 +423,10 @@ fn handle_sync(params: Map<String, Value>) -> ControllerFuture {
 
 fn handle_status_list(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move { to_json(rpc::status_list_rpc().await?) })
+}
+
+fn handle_sync_audit_log(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(rpc::sync_audit_log_rpc().await?) })
 }
 
 fn parse_value<T: DeserializeOwned>(v: Value) -> Result<T, String> {

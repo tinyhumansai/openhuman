@@ -159,6 +159,12 @@ pub fn format_event(ev: &AgentProgress) -> Option<String> {
         AgentProgress::SubagentFailed {
             agent_id, error, ..
         } => format!("  ⮑ subagent {agent_id} FAILED: {}", truncate(error, 200)),
+        AgentProgress::SubagentAwaitingUser {
+            agent_id, question, ..
+        } => format!(
+            "  ⮑ subagent {agent_id} awaiting user: {}",
+            truncate(question, 200)
+        ),
         AgentProgress::TurnCompleted { iterations } => {
             format!("turn completed ({iterations} iterations)")
         }

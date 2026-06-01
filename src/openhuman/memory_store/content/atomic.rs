@@ -113,9 +113,9 @@ pub struct StagedSummary {
 /// SQLite upsert.
 ///
 /// The relative path is built from the input metadata and the `tree_kind`. The
-/// `date_for_global` argument is required when `input.tree_kind ==
-/// SummaryTreeKind::Global`. The `scope_slug` must already be slugified by the
-/// caller.
+/// `scope_slug` must already be slugified by the caller. The global tree is a
+/// singleton, so its summaries all land under one `global/` folder regardless
+/// of the day they cover — no date argument is needed.
 ///
 /// If the file already exists with the same body SHA-256 (idempotent re-stage),
 /// the existing `StagedSummary` is returned without rewriting.
@@ -123,22 +123,14 @@ pub fn stage_summary(
     content_root: &Path,
     input: &SummaryComposeInput<'_>,
     scope_slug: &str,
-    date_for_global: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<StagedSummary> {
-    let rel_path = summary_rel_path(
-        input.tree_kind,
-        scope_slug,
-        input.level,
-        input.summary_id,
-        date_for_global,
-    );
+    let rel_path = summary_rel_path(input.tree_kind, scope_slug, input.level, input.summary_id);
     let abs_path = summary_abs_path(
         content_root,
         input.tree_kind,
         scope_slug,
         input.level,
         input.summary_id,
-        date_for_global,
     );
 
     let composed = compose_summary_md(input);
@@ -298,7 +290,7 @@ mod tests {
             "summary body",
             &children,
         );
-        let staged = stage_summary(dir.path(), &input, "gmail-alice-x-com", None).unwrap();
+        let staged = stage_summary(dir.path(), &input, "gmail-alice-x-com").unwrap();
         assert_eq!(staged.summary_id, "summary:L1:test1");
         assert!(staged.content_path.starts_with("wiki/summaries/source-"));
         assert!(staged.content_path.ends_with(".md"));
@@ -323,17 +315,15 @@ mod tests {
             "idempotent body",
             &children,
         );
-        let first = stage_summary(dir.path(), &input, "person-alex", None).unwrap();
-        let second = stage_summary(dir.path(), &input, "person-alex", None).unwrap();
+        let first = stage_summary(dir.path(), &input, "person-alex").unwrap();
+        let second = stage_summary(dir.path(), &input, "person-alex").unwrap();
         assert_eq!(first.content_sha256, second.content_sha256);
         assert_eq!(first.content_path, second.content_path);
     }
 
     #[test]
-    fn stage_summary_global_uses_date_in_path() {
-        use chrono::TimeZone;
+    fn stage_summary_global_uses_singleton_folder_no_date() {
         let dir = TempDir::new().unwrap();
-        let date = chrono::Utc.with_ymd_and_hms(2026, 4, 28, 12, 0, 0).unwrap();
         let children = vec![];
         let input = mk_summary_input(
             SummaryTreeKind::Global,
@@ -342,10 +332,13 @@ mod tests {
             "daily recap",
             &children,
         );
-        let staged = stage_summary(dir.path(), &input, "global", Some(date)).unwrap();
-        assert!(
-            staged.content_path.contains("2026-04-28"),
-            "global summary path must contain date; got: {}",
+        let staged = stage_summary(dir.path(), &input, "global").unwrap();
+        // Singleton global tree → one folder, no per-day date segment. The
+        // `L1` segment comes from `mk_summary_input`'s level=1; what matters
+        // is the single `global/` folder with no date.
+        assert_eq!(
+            staged.content_path, "wiki/summaries/global/L1/summary-L0-daily.md",
+            "global summary must land in the singleton global/ folder; got: {}",
             staged.content_path
         );
     }
@@ -362,7 +355,7 @@ mod tests {
             body,
             &children,
         );
-        let staged = stage_summary(dir.path(), &input, "gmail-x-y-com", None).unwrap();
+        let staged = stage_summary(dir.path(), &input, "gmail-x-y-com").unwrap();
         let expected = sha256_hex(body.as_bytes());
         assert_eq!(staged.content_sha256, expected);
     }
@@ -384,7 +377,7 @@ mod tests {
         );
 
         // First stage with the real body to get the path.
-        let first = stage_summary(dir.path(), &input, "gmail-stale-test-com", None).unwrap();
+        let first = stage_summary(dir.path(), &input, "gmail-stale-test-com").unwrap();
 
         // Corrupt the on-disk file by writing a different body to the path.
         let mut abs = dir.path().to_path_buf();
@@ -395,7 +388,7 @@ mod tests {
         std::fs::write(&abs, b"---\nstale_key: true\n---\nSTALE BODY CONTENT").unwrap();
 
         // Now re-stage: must detect sha mismatch and re-write.
-        let second = stage_summary(dir.path(), &input, "gmail-stale-test-com", None).unwrap();
+        let second = stage_summary(dir.path(), &input, "gmail-stale-test-com").unwrap();
 
         // The returned sha must match the new body.
         let expected_sha = sha256_hex(new_body.as_bytes());

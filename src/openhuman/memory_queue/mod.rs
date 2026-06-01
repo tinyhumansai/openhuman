@@ -40,14 +40,13 @@ pub mod types;
 pub(crate) mod worker;
 
 pub use ops::{backfill_in_progress, ensure_reembed_backfill, set_backfill_in_progress};
-pub use scheduler::{backfill_missing_digests, trigger_digest};
 pub use store::{
     claim_next, count_by_status, count_total, enqueue, enqueue_tx, get_job, mark_deferred,
     mark_done, mark_failed, recover_stale_locks, DEFAULT_LOCK_DURATION_MS,
 };
 pub use testing::drain_until_idle;
 pub use types::{
-    AppendBufferPayload, AppendTarget, DigestDailyPayload, ExtractChunkPayload, FlushStalePayload,
-    Job, JobKind, JobOutcome, JobStatus, NewJob, NodeRef, SealPayload, TopicRoutePayload,
+    AppendBufferPayload, AppendTarget, ExtractChunkPayload, FlushStalePayload, Job, JobKind,
+    JobOutcome, JobStatus, NewJob, NodeRef, SealPayload,
 };
 pub use worker::{start, wake_workers};

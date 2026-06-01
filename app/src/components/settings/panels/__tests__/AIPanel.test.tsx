@@ -380,6 +380,82 @@ describe('AIPanel', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('renders Phase 1 built-in provider chips including SumoPod', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    for (const label of ['Groq', 'DeepSeek', 'MiniMax', 'SumoPod']) {
+      await waitFor(() =>
+        expect(
+          screen.getByRole('switch', { name: new RegExp(`Connect ${label}`, 'i') })
+        ).toBeInTheDocument()
+      );
+    }
+  });
+
+  it('connects SumoPod with the native endpoint and provider:sumopod key', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect SumoPod/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect SumoPod/i });
+    fireEvent.change(within(dialog).getByLabelText(/API key/i), {
+      target: { value: 'sk-sumopod-test' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(setCloudProviderKey)).toHaveBeenCalledWith('sumopod', 'sk-sumopod-test')
+    );
+    await waitFor(() => expect(vi.mocked(listProviderModels)).toHaveBeenCalledWith('sumopod'));
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'sumopod',
+          label: 'SumoPod',
+          endpoint: 'https://ai.sumopod.com/v1',
+          auth_style: 'bearer',
+          has_api_key: true,
+        }),
+      ])
+    );
+  });
+
+  it('connects MiniMax with anthropic auth style', async () => {
+    vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
+
+    renderWithProviders(<AIPanel />);
+
+    fireEvent.click(await screen.findByRole('switch', { name: /Connect MiniMax/i }));
+    const dialog = await screen.findByRole('dialog', { name: /Connect MiniMax/i });
+    fireEvent.change(within(dialog).getByLabelText(/API key/i), {
+      target: { value: 'sk-minimax-test' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Save$/i }));
+
+    await waitFor(() =>
+      expect(vi.mocked(setCloudProviderKey)).toHaveBeenCalledWith('minimax', 'sk-minimax-test')
+    );
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+    expect(nextSettings.cloudProviders).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slug: 'minimax',
+          label: 'MiniMax',
+          endpoint: 'https://api.minimax.io/anthropic',
+          auth_style: 'anthropic',
+        }),
+      ])
+    );
+  });
+
   it('surfaces provider setup errors in an alert with technical details collapsed', async () => {
     vi.mocked(loadAISettings).mockResolvedValue({ ...baseSettings, cloudProviders: [] });
     vi.mocked(listProviderModels).mockRejectedValueOnce(
