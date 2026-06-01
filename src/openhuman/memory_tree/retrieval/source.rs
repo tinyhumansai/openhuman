@@ -348,6 +348,7 @@ mod tests {
                     time_range: (ts, ts),
                     tags: vec!["eng".into()],
                     source_ref: Some(SourceRef::new(format!("slack://{scope}/{seq}"))),
+                    path_scope: None,
                 },
                 token_count: crate::openhuman::memory_store::trees::types::INPUT_TOKEN_BUDGET * 6
                     / 10,

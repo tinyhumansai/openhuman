@@ -353,6 +353,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec!["old/Tag".into()],
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 4,
             seq_in_source: 0,

@@ -104,6 +104,7 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
+            action_dir: workspace.clone(),
             workspace_dir: workspace,
             ..SecurityPolicy::default()
         })
@@ -116,6 +117,7 @@ mod tests {
     ) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy,
+            action_dir: workspace.clone(),
             workspace_dir: workspace,
             max_actions_per_hour,
             ..SecurityPolicy::default()

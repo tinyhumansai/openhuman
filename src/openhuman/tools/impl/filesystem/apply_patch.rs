@@ -148,7 +148,7 @@ impl Tool for ApplyPatchTool {
         let mut buffers: HashMap<String, FileBuffer> = HashMap::new();
         for edit in &parsed {
             if !buffers.contains_key(&edit.path) {
-                let full = self.security.workspace_dir.join(&edit.path);
+                let full = self.security.action_dir.join(&edit.path);
 
                 // Symlink check must happen on the *unresolved* path —
                 // canonicalize resolves symlinks, so a check after that
@@ -286,7 +286,8 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }

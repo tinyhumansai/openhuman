@@ -176,6 +176,7 @@ async fn seal_populates_summary_embedding() {
             time_range: (ts, ts),
             tags: vec![],
             source_ref: Some(SourceRef::new("slack://x")),
+            path_scope: None,
         },
         token_count: tokens,
         seq_in_source: seq,

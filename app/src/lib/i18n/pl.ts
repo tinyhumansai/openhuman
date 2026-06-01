@@ -2012,6 +2012,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL strony',
   'memorySources.cssSelector': 'Selektor CSS (opcjonalnie)',
   'memorySources.searchQuery': 'Zapytanie wyszukiwania',
+  'memorySources.build.title': 'Zbuduj',
+  'memorySources.build.building': 'Budowanie…',
+  'memorySources.build.successTitle': 'Drzewo zbudowane',
+  'memorySources.build.failedTitle': 'Budowanie nie powiodło się',
+  'memorySources.build.sealsMessage': 'pieczętowanie zakończone',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Chmura',
   'backend.recommended': 'Zalecane',
@@ -3660,6 +3665,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Wymagaj zatwierdzenia planu zadania',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Wstrzymaj, zanim przypisany agent wykona opis zadania utworzony przez agenta.',
+  'settings.agentAccess.timeout.label': 'Limit czasu akcji',
+  'settings.agentAccess.timeout.desc':
+    'Jak długo pojedyncze narzędzie lub akcja może działać przed anulowaniem. Zwiększ tę wartość, jeśli duży lokalny model jest przerywany, zanim zakończy odpowiedź.',
+  'settings.agentAccess.timeout.unit': 'sekundy',
+  'settings.agentAccess.timeout.invalid': 'Wprowadź całkowitą liczbę sekund w dozwolonym zakresie',
+  'settings.agentAccess.timeout.envOverride':
+    'Zmienna środowiskowa OPENHUMAN_TOOL_TIMEOUT_SECS zastępuje to ustawienie, więc zmiany tutaj nie odniosą skutku, dopóki nie zostanie ona usunięta.',
   'settings.agentAccess.grantedFolders': 'Przyznane foldery',
   'settings.agentAccess.alwaysAllow': 'Zawsze dozwolone narzędzia',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3676,6 +3688,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Dodaj',
   'settings.agentAccess.saving': 'Zapisywanie…',
   'settings.agentAccess.changesApply': 'Zmiany zostaną zastosowane w następnej wiadomości.',
+  'settings.agentAccess.directories': 'Katalogi',
+  'settings.agentAccess.actionSandbox': 'Piaskownica akcji',
+  'settings.agentAccess.readWriteAccess': 'odczyt + zapis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Domyślny katalog roboczy dla narzędzi shell, plików i git.',
+  'settings.agentAccess.internalState': 'Stan wewnętrzny',
+  'settings.agentAccess.agentBlocked': 'zablokowane dla agenta',
+  'settings.agentAccess.internalStateDesc':
+    'Bazy danych pamięci, sesje, tokeny i inne podstawowe dane. Niedostępne dla narzędzi agenta.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

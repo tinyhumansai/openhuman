@@ -1077,6 +1077,7 @@ fn row_to_chunk(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chunk> {
             time_range,
             tags,
             source_ref: source_ref.map(SourceRef::new),
+            path_scope: None,
         },
         token_count: token_count.max(0) as u32,
         seq_in_source: seq.max(0) as u32,

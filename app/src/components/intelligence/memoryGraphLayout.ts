@@ -35,6 +35,7 @@ export const LEVEL_COLOR = [
 ];
 export const LEAF_COLOR = '#94A3B8'; // raw chunks / leaves (no level)
 export const CONTACT_COLOR = '#A78BFA'; // person entities (contacts mode)
+export const SOURCE_COLOR = '#F97316'; // synthetic source root nodes
 
 /** Layout is computed in this fixed coordinate space; the renderer pans/zooms it. */
 export const VIEWPORT_W = 1100;
@@ -48,18 +49,20 @@ export function levelColor(level: number | null | undefined): string {
 }
 
 export function nodeColor(node: GraphNode): string {
+  if (node.kind === 'source') return SOURCE_COLOR;
   if (node.kind === 'summary') return levelColor(node.level);
   if (node.kind === 'contact') return CONTACT_COLOR;
   return LEAF_COLOR; // chunk
 }
 
 export function nodeRadius(node: GraphNode): number {
-  if (node.kind === 'summary') return Math.max(4, 10 - (node.level ?? 0) * 0.8);
+  if (node.kind === 'source') return 16;
+  if (node.kind === 'summary') return 5 + (node.level ?? 0) * 2.5;
   if (node.kind === 'contact') return 9;
-  return 4; // chunk
+  return 3; // chunk / document leaf
 }
 
-/** Summary / contact nodes glow; leaves stay flat so the structure pops. */
+/** Source / summary / contact nodes glow; leaves stay flat so the structure pops. */
 export function nodeGlows(node: GraphNode): boolean {
   return node.kind !== 'chunk';
 }

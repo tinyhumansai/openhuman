@@ -1892,6 +1892,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': '页面 URL',
   'memorySources.cssSelector': 'CSS 选择器（可选）',
   'memorySources.searchQuery': '搜索查询',
+  'memorySources.build.title': '构建',
+  'memorySources.build.building': '正在构建…',
+  'memorySources.build.successTitle': '树构建完成',
+  'memorySources.build.failedTitle': '构建失败',
+  'memorySources.build.sealsMessage': '密封完成',
   'backend.aiBackend': 'AI 后端',
   'backend.cloud': '云端',
   'backend.recommended': '推荐',
@@ -3427,6 +3432,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': '要求批准任务计划',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     '在指定智能体执行由智能体编写的任务简报前暂停。',
+  'settings.agentAccess.timeout.label': '操作超时',
+  'settings.agentAccess.timeout.desc':
+    '单个工具或操作在被取消前可运行的时长。如果大型本地模型在完成响应前被中断，请增大此值。',
+  'settings.agentAccess.timeout.unit': '秒',
+  'settings.agentAccess.timeout.invalid': '请输入允许范围内的整数秒数',
+  'settings.agentAccess.timeout.envOverride':
+    '环境变量 OPENHUMAN_TOOL_TIMEOUT_SECS 正在覆盖此设置，因此在取消该变量之前，此处的更改不会生效。',
   'settings.agentAccess.grantedFolders': '已授权文件夹',
   'settings.agentAccess.alwaysAllow': '始终允许的工具',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3443,6 +3455,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': '添加',
   'settings.agentAccess.saving': '保存中…',
   'settings.agentAccess.changesApply': '更改将在你的下一条消息后生效。',
+  'settings.agentAccess.directories': '目录',
+  'settings.agentAccess.actionSandbox': '操作沙箱',
+  'settings.agentAccess.readWriteAccess': '读取 + 写入',
+  'settings.agentAccess.actionSandboxDesc': 'Shell、文件和 git 工具的默认工作目录。',
+  'settings.agentAccess.internalState': '内部状态',
+  'settings.agentAccess.agentBlocked': '代理已阻止',
+  'settings.agentAccess.internalStateDesc':
+    '内存数据库、会话、令牌和其他核心数据。代理工具无法访问。',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

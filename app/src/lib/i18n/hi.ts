@@ -1991,6 +1991,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'पृष्ठ URL',
   'memorySources.cssSelector': 'CSS चयनकर्ता (वैकल्पिक)',
   'memorySources.searchQuery': 'खोज क्वेरी',
+  'memorySources.build.title': 'बनाएं',
+  'memorySources.build.building': 'बना रहा है…',
+  'memorySources.build.successTitle': 'ट्री बन गई',
+  'memorySources.build.failedTitle': 'निर्माण विफल',
+  'memorySources.build.sealsMessage': 'सील पूर्ण हुई',
   'backend.aiBackend': 'AI बैकएंड',
   'backend.cloud': 'क्लाउड',
   'backend.recommended': 'सुझावित',
@@ -3604,6 +3609,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'कार्य योजना अनुमोदन की आवश्यकता',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'एक निर्धारित एजेंट से पहले रोकें एक एजेंट-लेखित कार्य संक्षिप्त निष्पादित करता है।',
+  'settings.agentAccess.timeout.label': 'क्रिया टाइमआउट',
+  'settings.agentAccess.timeout.desc':
+    'किसी एकल टूल या क्रिया को रद्द होने से पहले कितनी देर चलने दिया जाए। यदि कोई बड़ा लोकल मॉडल अपना उत्तर पूरा करने से पहले रुक जाता है तो इसे बढ़ाएँ।',
+  'settings.agentAccess.timeout.unit': 'सेकंड',
+  'settings.agentAccess.timeout.invalid': 'अनुमत सीमा के भीतर सेकंड की एक पूर्ण संख्या दर्ज करें',
+  'settings.agentAccess.timeout.envOverride':
+    'OPENHUMAN_TOOL_TIMEOUT_SECS एनवायरनमेंट वेरिएबल इस सेटिंग को ओवरराइड कर रहा है, इसलिए जब तक इसे अनसेट नहीं किया जाता, यहाँ किए गए बदलावों का कोई असर नहीं होगा।',
   'settings.agentAccess.grantedFolders': 'स्वीकृत फ़ोल्डर',
   'settings.agentAccess.alwaysAllow': 'हमेशा की अनुमति उपकरण',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3620,6 +3632,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'जोड़ें',
   'settings.agentAccess.saving': 'बचत',
   'settings.agentAccess.changesApply': 'परिवर्तन आपके अगले संदेश पर लागू होते हैं।',
+  'settings.agentAccess.directories': 'निर्देशिकाएँ',
+  'settings.agentAccess.actionSandbox': 'एक्शन सैंडबॉक्स',
+  'settings.agentAccess.readWriteAccess': 'पढ़ना + लिखना',
+  'settings.agentAccess.actionSandboxDesc':
+    'शेल, फ़ाइल और git टूल के लिए डिफ़ॉल्ट कार्य निर्देशिका।',
+  'settings.agentAccess.internalState': 'आंतरिक स्थिति',
+  'settings.agentAccess.agentBlocked': 'एजेंट-अवरुद्ध',
+  'settings.agentAccess.internalStateDesc':
+    'मेमोरी डेटाबेस, सत्र, टोकन और अन्य मुख्य डेटा। एजेंट टूल के लिए सुलभ नहीं।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

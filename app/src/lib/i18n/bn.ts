@@ -1990,6 +1990,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'পৃষ্ঠার xqxqx',
   'memorySources.cssSelector': 'xqxqx নির্বাচক',
   'memorySources.searchQuery': 'অনুসন্ধান',
+  'memorySources.build.title': 'তৈরি',
+  'memorySources.build.building': 'তৈরি হচ্ছে…',
+  'memorySources.build.successTitle': 'ট্রি তৈরি হয়েছে',
+  'memorySources.build.failedTitle': 'তৈরি ব্যর্থ',
+  'memorySources.build.sealsMessage': 'সিল সম্পন্ন হয়েছে',
   'backend.aiBackend': 'AI ব্যাকএন্ড',
   'backend.cloud': 'ক্লাউড',
   'backend.recommended': 'প্রস্তাবিত',
@@ -3597,6 +3602,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'কাজের পরিকল্পনা অনুমোদন প্রয়োজন',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'নির্ধারিত কর্মের পূর্বে একটি author-ed কর্মের সঞ্চালনার পূর্বে কর্ম স্থগিত করা হবে।',
+  'settings.agentAccess.timeout.label': 'অ্যাকশন টাইমআউট',
+  'settings.agentAccess.timeout.desc':
+    'একটি একক টুল বা অ্যাকশন বাতিল হওয়ার আগে কতক্ষণ চলতে পারে। বড় লোকাল মডেল উত্তর শেষ করার আগেই থেমে গেলে এটি বাড়ান।',
+  'settings.agentAccess.timeout.unit': 'সেকেন্ড',
+  'settings.agentAccess.timeout.invalid': 'অনুমোদিত পরিসরের মধ্যে সেকেন্ডের একটি পূর্ণসংখ্যা লিখুন',
+  'settings.agentAccess.timeout.envOverride':
+    'OPENHUMAN_TOOL_TIMEOUT_SECS এনভায়রনমেন্ট ভেরিয়েবলটি এই সেটিং ওভাররাইড করছে, তাই এটি আনসেট না করা পর্যন্ত এখানে পরিবর্তনের কোনো প্রভাব পড়বে না।',
   'settings.agentAccess.grantedFolders': 'ফোল্ডার',
   'settings.agentAccess.alwaysAllow': 'সর্বদা অপসারণযোগ্য সরঞ্জাম',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3613,6 +3625,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'যোগ করুন',
   'settings.agentAccess.saving': 'ইনস্টল করা হয়েছে...',
   'settings.agentAccess.changesApply': 'পরবর্তী বার্তায় পরিবর্তন প্রয়োগ করা হবে।',
+  'settings.agentAccess.directories': 'ডিরেক্টরি',
+  'settings.agentAccess.actionSandbox': 'অ্যাকশন স্যান্ডবক্স',
+  'settings.agentAccess.readWriteAccess': 'পড়া + লেখা',
+  'settings.agentAccess.actionSandboxDesc':
+    'শেল, ফাইল এবং git টুলের জন্য ডিফল্ট কার্যকরী ডিরেক্টরি।',
+  'settings.agentAccess.internalState': 'অভ্যন্তরীণ অবস্থা',
+  'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
+  'settings.agentAccess.internalStateDesc':
+    'মেমরি ডেটাবেস, সেশন, টোকেন এবং অন্যান্য মূল ডেটা। এজেন্ট টুলের কাছে অ্যাক্সেসযোগ্য নয়।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
