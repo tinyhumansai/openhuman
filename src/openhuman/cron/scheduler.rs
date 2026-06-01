@@ -146,6 +146,7 @@ pub async fn run(config: Config) -> Result<()> {
     let security = Arc::new(SecurityPolicy::from_config(
         &config.autonomy,
         &config.workspace_dir,
+        &config.action_dir,
     ));
 
     publish_global(DomainEvent::SystemStartup {
@@ -186,7 +187,8 @@ pub async fn deliver_job(config: &Config, job: &CronJob, output: &str) {
 }
 
 pub async fn execute_job_now(config: &Config, job: &CronJob) -> (bool, String) {
-    let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
+    let security =
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir, &config.action_dir);
     execute_job_with_retry(config, &security, job).await
 }
 
@@ -770,7 +772,7 @@ async fn run_job_command_with_timeout(
     let child = match Command::new("sh")
         .arg("-lc")
         .arg(&job.command)
-        .current_dir(&config.workspace_dir)
+        .current_dir(&config.action_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -128,16 +128,20 @@ pub async fn mcp_clients_install(
         .await
         .map_err(|e| format!("Failed to fetch registry detail: {e}"))?;
 
-    // Resolve stdio connection details (prefer published=true, fall back to first)
-    let stdio_conn = detail
-        .connections
-        .iter()
-        .filter(|c| c.r#type == "stdio")
-        .find(|c| c.published)
-        .or_else(|| detail.connections.iter().find(|c| c.r#type == "stdio"));
-
-    // Derive command and args from qualified_name (npm/npx convention)
-    let (command_kind, command, args) = resolve_command(qualified_name.trim(), stdio_conn);
+    // Pick the best dialable connection — published stdio > any stdio >
+    // published http_remote > any http_remote — using the same picker the
+    // setup-agent path uses. Previously this path was stdio-only, so most
+    // Smithery listings (HTTP-remote) could not be installed from the manual
+    // install dialog at all; now both transports work identically
+    // (issue #3039 gap A2).
+    let picked = super::setup_ops::pick_connection(&detail.connections).ok_or_else(|| {
+        format!(
+            "server `{}` exposes neither stdio nor http_remote connections; nothing to install",
+            qualified_name.trim()
+        )
+    })?;
+    let (transport, command_kind, command, args) =
+        super::setup_ops::build_install_transport(qualified_name.trim(), picked)?;
 
     // Derive required env keys from provided map + schema
     let env_keys: Vec<String> = env.keys().cloned().collect();
@@ -148,12 +152,6 @@ pub async fn mcp_clients_install(
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
 
-    // The legacy install path only ever picked stdio connections (see the
-    // `c.r#type == "stdio"` filter above), so legacy installs continue to
-    // be stdio-only. HTTP-remote installs go through the newer
-    // `setup_ops::mcp_setup_install_and_connect` setup-agent path, which
-    // picks the right transport based on what the registry actually
-    // exposes.
     let server = InstalledServer {
         server_id: server_id.clone(),
         qualified_name: qualified_name.trim().to_string(),
@@ -167,7 +165,7 @@ pub async fn mcp_clients_install(
         config: config_value,
         installed_at: now_ms,
         last_connected_at: None,
-        transport: super::types::Transport::Stdio,
+        transport,
     };
 
     store::insert_server(config, &server).map_err(|e| e.to_string())?;
@@ -314,6 +312,169 @@ pub async fn mcp_clients_disconnect(server_id: String) -> Result<RpcOutcome<Valu
     Ok(RpcOutcome::new(
         json!({ "server_id": server_id.trim(), "status": "disconnected" }),
         vec![format!("disconnected server_id={}", server_id.trim())],
+    ))
+}
+
+// ── update_env ───────────────────────────────────────────────────────────────
+
+/// Replace the stored env values for an already-installed server and reconnect
+/// so the new credentials take effect immediately (issue #3039 gap A3 — API-key
+/// rotation / reconfigure without uninstall+reinstall).
+///
+/// Flow: persist env → disconnect (drop the stale session) → reload the install
+/// record → reconnect with the fresh env. The reconnect reuses the transport
+/// dispatch in [`connections::connect`], so this works for both stdio and
+/// HTTP-remote installs. Values are never logged — only the key names.
+///
+/// A failed reconnect does **not** roll back the persisted env (matching
+/// `mcp_setup_install_and_connect`): the user fixed a value, we keep it, and the
+/// error is surfaced so they can retry `mcp_clients_connect`.
+pub async fn mcp_clients_update_env(
+    config: &Config,
+    server_id: String,
+    env: HashMap<String, String>,
+) -> Result<RpcOutcome<Value>, String> {
+    if server_id.trim().is_empty() {
+        return Err("server_id must not be empty".to_string());
+    }
+    let server_id = server_id.trim();
+
+    tracing::debug!(
+        "[mcp-client] update_env server_id={} env_keys={:?}",
+        server_id,
+        env.keys().collect::<Vec<_>>()
+    );
+
+    // Persist first so the new values survive even if the reconnect fails.
+    store::set_env_values(config, server_id, &env).map_err(|e| e.to_string())?;
+
+    // Drop any live session so the reconnect picks up the new env.
+    connections::disconnect(server_id).await;
+    let _ = publish_global(DomainEvent::McpServerDisconnected {
+        server_id: server_id.to_string(),
+        reason: Some("env reconfigured".to_string()),
+    });
+
+    let mut server = store::get_server(config, server_id).map_err(|e| e.to_string())?;
+
+    // Keep the install record's `env_keys` list in sync with the values we just
+    // wrote — `set_env_values` replaces the value table wholesale, so the
+    // key-name list shown in the UI (and returned below) must track it too.
+    let mut new_keys: Vec<String> = env.keys().cloned().collect();
+    new_keys.sort();
+    if server.env_keys != new_keys {
+        server.env_keys = new_keys;
+        store::update_server_env_keys(config, server_id, &server.env_keys)
+            .map_err(|e| e.to_string())?;
+    }
+
+    match connections::connect(config, &server).await {
+        Ok(tools) => {
+            let tool_count = tools.len() as u32;
+            let _ = publish_global(DomainEvent::McpServerConnected {
+                server_id: server_id.to_string(),
+                tool_count,
+            });
+            Ok(RpcOutcome::new(
+                json!({
+                    "server_id": server_id,
+                    "status": "connected",
+                    "env_keys": server.env_keys,
+                    "tools": tools,
+                }),
+                vec![format!(
+                    "update_env reconnected server_id={server_id} tools={tool_count}"
+                )],
+            ))
+        }
+        Err(err) => Ok(RpcOutcome::new(
+            json!({
+                "server_id": server_id,
+                "status": "disconnected",
+                "env_keys": server.env_keys,
+                "error": err.to_string(),
+            }),
+            vec![format!(
+                "update_env persisted env for server_id={server_id} but reconnect failed: {err}"
+            )],
+        )),
+    }
+}
+
+// ── registry settings ──────────────────────────────────────────────────────
+
+/// Build the non-secret registry-settings snapshot: booleans reporting whether
+/// each credential is set (from config OR env) plus the user-configured
+/// official-registry base URL. Secret *values* are never included.
+fn registry_settings_snapshot(config: &Config) -> Value {
+    json!({
+        "smithery_api_key_set":
+            super::registries::smithery::smithery_api_key(config).is_some(),
+        "mcp_official_token_set":
+            super::registries::mcp_official::auth_token(config).is_some(),
+        "mcp_official_base":
+            config
+                .mcp_client
+                .registry_auth
+                .mcp_official_base
+                .clone()
+                .filter(|s| !s.trim().is_empty()),
+    })
+}
+
+/// Report which registry credentials are configured. NEVER returns secret
+/// values — only `*_set` booleans + the (non-secret) base URL override
+/// (issue #3039 gap A6).
+pub async fn mcp_clients_registry_settings_get(
+    config: &Config,
+) -> Result<RpcOutcome<Value>, String> {
+    tracing::debug!("[mcp-client] registry_settings_get");
+    Ok(RpcOutcome::new(
+        registry_settings_snapshot(config),
+        vec!["registry_settings_get".to_string()],
+    ))
+}
+
+/// Persist registry credentials to config (issue #3039 gap A6).
+///
+/// Per-field semantics: `None` leaves the stored value unchanged; `Some(s)`
+/// sets it, where an empty/whitespace string clears the value (falling back to
+/// the env var, if any). Secrets are write-only — the response is the same
+/// non-secret snapshot as the getter, never the values just written.
+pub async fn mcp_clients_registry_settings_set(
+    config: &mut Config,
+    smithery_api_key: Option<String>,
+    mcp_official_base: Option<String>,
+    mcp_official_token: Option<String>,
+) -> Result<RpcOutcome<Value>, String> {
+    fn apply(field: &mut Option<String>, update: Option<String>) {
+        if let Some(value) = update {
+            let trimmed = value.trim();
+            *field = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+    }
+
+    tracing::debug!(
+        "[mcp-client] registry_settings_set smithery_key_present={} official_token_present={} official_base_present={}",
+        smithery_api_key.is_some(),
+        mcp_official_token.is_some(),
+        mcp_official_base.is_some()
+    );
+
+    let auth = &mut config.mcp_client.registry_auth;
+    apply(&mut auth.smithery_api_key, smithery_api_key);
+    apply(&mut auth.mcp_official_base, mcp_official_base);
+    apply(&mut auth.mcp_official_token, mcp_official_token);
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    Ok(RpcOutcome::new(
+        registry_settings_snapshot(config),
+        vec!["registry_settings_set saved".to_string()],
     ))
 }
 

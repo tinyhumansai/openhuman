@@ -66,7 +66,7 @@ impl Registry for SmitheryRegistry {
                 ("pageSize", &page_size.to_string()),
             ])
             .header("Accept", "application/json");
-        req = apply_auth(req);
+        req = apply_auth(config, req);
 
         let resp = req.send().await.context("Smithery search request failed")?;
         let status = resp.status();
@@ -116,7 +116,10 @@ impl Registry for SmitheryRegistry {
             "{SMITHERY_BASE}/servers/{}",
             urlencoding_encode(qualified_name)
         );
-        let req = apply_auth(client.get(&url).header("Accept", "application/json"));
+        let req = apply_auth(
+            config,
+            client.get(&url).header("Accept", "application/json"),
+        );
 
         let resp = req.send().await.context("Smithery get request failed")?;
         let status = resp.status();
@@ -150,14 +153,25 @@ fn http_client() -> Result<Client> {
         .context("Failed to build Smithery HTTP client")
 }
 
-fn smithery_api_key() -> Option<String> {
-    std::env::var("SMITHERY_API_KEY")
-        .ok()
-        .filter(|s| !s.is_empty())
+/// Effective Smithery API key: config-first (`mcp_client.registry_auth`), then
+/// the `SMITHERY_API_KEY` env var (issue #3039 gap A6). Empty strings are
+/// treated as unset so a blank config/env value doesn't send `Bearer `.
+pub(crate) fn smithery_api_key(config: &Config) -> Option<String> {
+    config
+        .mcp_client
+        .registry_auth
+        .smithery_api_key
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("SMITHERY_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
 }
 
-fn apply_auth(builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-    if let Some(key) = smithery_api_key() {
+fn apply_auth(config: &Config, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    if let Some(key) = smithery_api_key(config) {
         builder.bearer_auth(key)
     } else {
         builder

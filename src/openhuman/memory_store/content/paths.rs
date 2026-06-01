@@ -20,8 +20,6 @@
 
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
-
 use crate::openhuman::memory::util::redact::redact;
 
 /// Which kind of summary tree a summary belongs to. Determines the
@@ -33,7 +31,13 @@ use crate::openhuman::memory::util::redact::redact;
 pub enum SummaryTreeKind {
     /// Per-source-tree summary. Layout: `wiki/summaries/source-<scope_slug>/L<level>/<id>.md`
     Source,
-    /// Global digest tree. Layout: `wiki/summaries/global-<yyyy-mm-dd>/L<level>/<id>.md`
+    /// Global digest tree — the singleton cross-source activity tree.
+    /// Layout: `wiki/summaries/global/L<level>/<id>.md`. There is exactly
+    /// one global tree, so (unlike the historical `global-<yyyy-mm-dd>/`
+    /// layout) the day/week/month/year grouping is expressed by the
+    /// `L<level>/` subdirectory + each node's time range, NOT by a
+    /// date-stamped top-level folder. A per-day folder name shattered the
+    /// one logical tree into one look-alike folder per calendar day.
     Global,
     /// Per-topic (entity) tree. Layout: `wiki/summaries/topic-<scope_slug>/L<level>/<id>.md`
     Topic,
@@ -53,9 +57,9 @@ pub const WIKI_PREFIX: &str = "wiki";
 /// flattening the historical two-level `<kind>/<scope>/` so users see
 /// one folder per logical source in their Obsidian sidebar:
 /// - Source: `"wiki/summaries/source-<scope_slug>/L<level>/<summary_filename>.md"`
-/// - Global: `"wiki/summaries/global-<yyyy-mm-dd>/L<level>/<summary_filename>.md"`
-///   Falls back to `unknown-date` (with a warn log) if `date_for_global` is
-///   `None` — preferable to panicking inside a path utility.
+/// - Global: `"wiki/summaries/global/L<level>/<summary_filename>.md"` — one
+///   folder for the singleton global tree; the temporal grouping lives in
+///   the `L<level>/` subdirectory, not the folder name.
 /// - Topic:  `"wiki/summaries/topic-<scope_slug>/L<level>/<summary_filename>.md"`
 ///
 /// `scope_slug` must already be slugified by the caller (use [`slugify_source_id`] or
@@ -75,7 +79,6 @@ pub fn summary_rel_path(
     scope_slug: &str,
     level: u32,
     summary_id: &str,
-    date_for_global: Option<DateTime<Utc>>,
 ) -> String {
     let filename = summary_filename(summary_id);
 
@@ -87,21 +90,10 @@ pub fn summary_rel_path(
             )
         }
         SummaryTreeKind::Global => {
-            let date_str = match date_for_global {
-                Some(d) => d.format("%Y-%m-%d").to_string(),
-                None => {
-                    log::warn!(
-                        "[content_store::paths] summary_rel_path called for Global \
-                         without date_for_global; using sentinel 'unknown-date'. \
-                         Caller bug — please pass a date."
-                    );
-                    "unknown-date".to_string()
-                }
-            };
-            format!(
-                "{WIKI_PREFIX}/summaries/global-{}/L{}/{}.md",
-                date_str, level, filename
-            )
+            // The global tree is a singleton: one folder, with the
+            // day/week/month/year hierarchy carried by `L<level>/` and the
+            // node's time range — never a per-day folder name.
+            format!("{WIKI_PREFIX}/summaries/global/L{}/{}.md", level, filename)
         }
         SummaryTreeKind::Topic => {
             format!(
@@ -194,9 +186,8 @@ pub fn summary_abs_path(
     scope_slug: &str,
     level: u32,
     summary_id: &str,
-    date_for_global: Option<DateTime<Utc>>,
 ) -> PathBuf {
-    let rel = summary_rel_path(tree_kind, scope_slug, level, summary_id, date_for_global);
+    let rel = summary_rel_path(tree_kind, scope_slug, level, summary_id);
     let mut abs = content_root.to_path_buf();
     for component in rel.split('/') {
         abs.push(component);
@@ -475,7 +466,6 @@ mod tests {
             "gmail-alice-x-com-bob-y-com",
             1,
             "summary:L1:abc",
-            None,
         );
         // Colons in summary_id are replaced with '-' for cross-platform filenames.
         assert_eq!(
@@ -491,7 +481,6 @@ mod tests {
             "slack-eng",
             2,
             "summary:1700000000000:L2-deadbeef",
-            None,
         );
         assert_eq!(
             p,
@@ -501,16 +490,23 @@ mod tests {
 
     #[test]
     fn summary_rel_path_global() {
-        use chrono::TimeZone;
-        let date = chrono::Utc.with_ymd_and_hms(2026, 4, 28, 12, 0, 0).unwrap();
-        let p = summary_rel_path(
-            SummaryTreeKind::Global,
-            "global",
-            0,
-            "summary:L0:daily",
-            Some(date),
-        );
-        assert_eq!(p, "wiki/summaries/global-2026-04-28/L0/summary-L0-daily.md");
+        // The singleton global tree gets ONE folder; the date is NOT part of
+        // the folder name. Day/week/month grouping lives in `L<level>/`.
+        let p = summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:daily");
+        assert_eq!(p, "wiki/summaries/global/L0/summary-L0-daily.md");
+    }
+
+    #[test]
+    fn summary_rel_path_global_levels_share_one_folder() {
+        // Regression guard for the per-day-folder bug: every level of the
+        // global tree must land under the same `global/` folder, only the
+        // `L<level>/` segment differs.
+        let l0 = summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:a");
+        let l1 = summary_rel_path(SummaryTreeKind::Global, "global", 1, "summary:L1:b");
+        let l3 = summary_rel_path(SummaryTreeKind::Global, "global", 3, "summary:L3:c");
+        assert_eq!(l0, "wiki/summaries/global/L0/summary-L0-a.md");
+        assert_eq!(l1, "wiki/summaries/global/L1/summary-L1-b.md");
+        assert_eq!(l3, "wiki/summaries/global/L3/summary-L3-c.md");
     }
 
     #[test]
@@ -520,7 +516,6 @@ mod tests {
             "person-alex-johnson",
             1,
             "summary:L1:xyz",
-            None,
         );
         assert_eq!(
             p,
@@ -536,7 +531,6 @@ mod tests {
             "entity-slug",
             2,
             "summary:L2:foo.md",
-            None,
         );
         assert_eq!(p, "wiki/summaries/topic-entity-slug/L2/summary-L2-foo.md");
     }
@@ -612,29 +606,13 @@ mod tests {
     }
 
     #[test]
-    fn summary_rel_path_global_falls_back_to_sentinel_without_date() {
-        // Caller bug to omit date for Global, but a path utility shouldn't
-        // panic — fall back to a sentinel `unknown-date` segment so the
-        // file lands somewhere predictable rather than aborting the seal.
-        let p = summary_rel_path(SummaryTreeKind::Global, "global", 0, "summary:L0:x", None);
-        assert_eq!(p, "wiki/summaries/global-unknown-date/L0/summary-L0-x.md");
-    }
-
-    #[test]
     fn summary_abs_path_rooted_under_content_root() {
-        use chrono::TimeZone;
         use std::path::Path;
         let root = Path::new("/workspace/content");
-        let date = chrono::Utc.with_ymd_and_hms(2026, 1, 15, 0, 0, 0).unwrap();
-        let abs = summary_abs_path(
-            root,
-            SummaryTreeKind::Global,
-            "global",
-            0,
-            "daily-123",
-            Some(date),
-        );
+        let abs = summary_abs_path(root, SummaryTreeKind::Global, "global", 0, "daily-123");
         assert!(abs.starts_with(root));
         assert!(abs.ends_with("daily-123.md"));
+        // Singleton folder, no date segment.
+        assert!(abs.to_string_lossy().contains("summaries/global/L0/"));
     }
 }

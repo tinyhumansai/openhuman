@@ -16,7 +16,7 @@ use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::agent::harness::definition::AgentDefinitionRegistry;
 use crate::openhuman::agent::harness::fork_context::current_parent;
 use crate::openhuman::agent::harness::subagent_runner::{
-    run_subagent, SubagentRunOptions, SubagentRunOutcome,
+    run_subagent, SubagentRunOptions, SubagentRunOutcome, SubagentRunStatus,
 };
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::memory_conversations::{
@@ -132,7 +132,7 @@ impl Tool for SpawnSubagentTool {
                 },
                 "dedicated_thread": {
                     "type": "boolean",
-                    "description": "Temporarily disabled (see tinyhumansai/openhuman#1624). Passing `true` causes this tool to return an explicit error. Omit the field or pass `false` until the worker-thread UI surface lands."
+                    "description": "Legacy compatibility flag. Delegations now always create a persistent worker thread when parent context is available, so this flag no longer gates thread creation."
                 }
             }
         })
@@ -176,25 +176,15 @@ impl Tool for SpawnSubagentTool {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
-        // Worker-thread spawning is temporarily disabled until a proper UI
-        // showcase lands (see tinyhumansai/openhuman#1624). Return an
-        // explicit error when callers request a dedicated thread so the
-        // behaviour is observable rather than silently downgraded.
-        let dedicated_thread_requested = args
+        // Worker threads are now always created for delegations that may
+        // need follow-up (checkpoint + replay for ask_user_clarification).
+        // The `dedicated_thread` parameter is accepted but no longer
+        // gates thread creation — every delegation gets a persistent
+        // worker thread. (#3049 supersedes the #1624 disable.)
+        let dedicated_thread = args
             .get("dedicated_thread")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if dedicated_thread_requested {
-            log::debug!(
-                "[spawn_subagent] dedicated_thread requested but temporarily \
-                 disabled (see tinyhumansai/openhuman#1624); rejecting call"
-            );
-            return Ok(ToolResult::error(
-                "spawn_subagent: `dedicated_thread` is temporarily disabled \
-                 (see tinyhumansai/openhuman#1624); retry without it.",
-            ));
-        }
-        let dedicated_thread = false;
 
         // ── Validation ─────────────────────────────────────────────────
         if agent_id.is_empty() {
@@ -446,71 +436,112 @@ impl Tool for SpawnSubagentTool {
             model_override,
             task_id: Some(task_id.clone()),
             worker_thread_id: worker_thread_id.clone(),
+            initial_history: None,
+            checkpoint_dir: None,
         };
 
         let progress_sink = current_parent().and_then(|p| p.on_progress.clone());
 
         match run_subagent(definition, &prompt, options).await {
             Ok(outcome) => {
-                publish_global(DomainEvent::SubagentCompleted {
-                    parent_session,
-                    task_id: outcome.task_id.clone(),
-                    agent_id: outcome.agent_id.clone(),
-                    elapsed_ms: outcome.elapsed.as_millis() as u64,
-                    output_chars: outcome.output.chars().count(),
-                    iterations: outcome.iterations,
-                });
-
-                if let Some(ref tx) = progress_sink {
-                    let _ = tx
-                        .send(AgentProgress::SubagentCompleted {
-                            agent_id: outcome.agent_id.clone(),
+                match &outcome.status {
+                    SubagentRunStatus::AwaitingUser {
+                        question,
+                        options: _,
+                    } => {
+                        // Sub-agent paused for user input — publish
+                        // awaiting event and return structured envelope so
+                        // the orchestrator can relay the question and later
+                        // call continue_subagent.
+                        publish_global(DomainEvent::SubagentAwaitingUser {
+                            parent_session,
                             task_id: outcome.task_id.clone(),
+                            agent_id: outcome.agent_id.clone(),
+                            question: question.clone(),
+                        });
+                        if let Some(ref tx) = progress_sink {
+                            let _ = tx
+                                .send(AgentProgress::SubagentAwaitingUser {
+                                    agent_id: outcome.agent_id.clone(),
+                                    task_id: outcome.task_id.clone(),
+                                    question: question.clone(),
+                                    worker_thread_id: worker_thread_id.clone(),
+                                })
+                                .await;
+                        }
+                        let wt_display = worker_thread_id.as_deref().unwrap_or("(none)");
+                        let envelope = format!(
+                            "[SUBAGENT_AWAITING_USER]\n\
+                             task_id: {}\n\
+                             agent_id: {}\n\
+                             worker_thread_id: {}\n\
+                             question: {}\n\
+                             [/SUBAGENT_AWAITING_USER]\n\n\
+                             The sub-agent needs clarification before it can continue. \
+                             Surface the above question to the user. When the user responds, \
+                             call continue_subagent with the task_id, agent_id, and the \
+                             user's answer as the message parameter.",
+                            outcome.task_id, outcome.agent_id, wt_display, question,
+                        );
+                        Ok(ToolResult::success(envelope))
+                    }
+                    SubagentRunStatus::Completed => {
+                        publish_global(DomainEvent::SubagentCompleted {
+                            parent_session,
+                            task_id: outcome.task_id.clone(),
+                            agent_id: outcome.agent_id.clone(),
                             elapsed_ms: outcome.elapsed.as_millis() as u64,
-                            iterations: outcome.iterations as u32,
                             output_chars: outcome.output.chars().count(),
-                        })
-                        .await;
-                }
+                            iterations: outcome.iterations,
+                        });
 
-                if dedicated_thread {
-                    let workspace_dir = current_parent()
-                        .map(|p| p.workspace_dir.clone())
-                        .unwrap_or_else(|| PathBuf::from("."));
-                    let parent_visible = match persist_worker_thread(
-                        &workspace_dir,
-                        &definition.id,
-                        &prompt,
-                        &outcome,
-                    ) {
-                        Ok(thread_id) => {
-                            render_worker_thread_result(&thread_id, &definition.id, &outcome)
+                        if let Some(ref tx) = progress_sink {
+                            let _ = tx
+                                .send(AgentProgress::SubagentCompleted {
+                                    agent_id: outcome.agent_id.clone(),
+                                    task_id: outcome.task_id.clone(),
+                                    elapsed_ms: outcome.elapsed.as_millis() as u64,
+                                    iterations: outcome.iterations as u32,
+                                    output_chars: outcome.output.chars().count(),
+                                })
+                                .await;
                         }
-                        Err(error) => {
-                            // Persistence failure must not silently swallow the
-                            // sub-agent's work — return the full output and
-                            // surface the worker-thread error so the parent
-                            // model can mention it. We deliberately fall
-                            // through to a `success` ToolResult so the agent
-                            // loop doesn't prepend "Error:" to text the
-                            // sub-agent produced legitimately.
-                            tracing::error!(
-                                target: "spawn_subagent",
-                                agent_id = %definition.id,
-                                error = %error,
-                                "[spawn_subagent] dedicated_thread persistence failed; \
-                                 returning full sub-agent output inline"
-                            );
-                            format!(
-                                "{}\n\n[worker_thread_error] failed to persist worker thread: {}",
-                                outcome.output, error
-                            )
-                        }
-                    };
-                    return Ok(ToolResult::success(parent_visible));
-                }
 
-                Ok(ToolResult::success(outcome.output))
+                        if dedicated_thread {
+                            let workspace_dir = current_parent()
+                                .map(|p| p.workspace_dir.clone())
+                                .unwrap_or_else(|| PathBuf::from("."));
+                            let parent_visible = match persist_worker_thread(
+                                &workspace_dir,
+                                &definition.id,
+                                &prompt,
+                                &outcome,
+                            ) {
+                                Ok(thread_id) => render_worker_thread_result(
+                                    &thread_id,
+                                    &definition.id,
+                                    &outcome,
+                                ),
+                                Err(error) => {
+                                    tracing::error!(
+                                        target: "spawn_subagent",
+                                        agent_id = %definition.id,
+                                        error = %error,
+                                        "[spawn_subagent] dedicated_thread persistence failed; \
+                                         returning full sub-agent output inline"
+                                    );
+                                    format!(
+                                        "{}\n\n[worker_thread_error] failed to persist worker thread: {}",
+                                        outcome.output, error
+                                    )
+                                }
+                            };
+                            return Ok(ToolResult::success(parent_visible));
+                        }
+
+                        Ok(ToolResult::success(outcome.output))
+                    }
+                }
             }
             Err(err) => {
                 let message = err.to_string();
@@ -760,6 +791,7 @@ mod tests {
             elapsed: Duration::from_millis(120),
             iterations: 3,
             mode: SubagentMode::Typed,
+            status: SubagentRunStatus::Completed,
         }
     }
 
@@ -933,7 +965,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dedicated_thread_flag_is_rejected_explicitly() {
+    async fn dedicated_thread_flag_no_longer_returns_disabled_error() {
+        let _ = AgentDefinitionRegistry::init_global_builtins();
         let tool = SpawnSubagentTool;
         let result = tool
             .execute(json!({
@@ -944,7 +977,7 @@ mod tests {
             .await
             .unwrap();
         assert!(result.is_error);
-        assert!(result.output().contains("temporarily disabled"));
+        assert!(!result.output().contains("temporarily disabled"));
     }
 
     #[tokio::test]

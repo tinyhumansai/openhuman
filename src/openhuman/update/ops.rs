@@ -412,6 +412,7 @@ mod tests {
     async fn write_update_policy(tmp: &TempDir, update: UpdateConfig) {
         let mut cfg = crate::openhuman::config::Config {
             workspace_dir: tmp.path().join("workspace"),
+            action_dir: tmp.path().join("workspace"),
             config_path: tmp.path().join("config.toml"),
             ..crate::openhuman::config::Config::default()
         };

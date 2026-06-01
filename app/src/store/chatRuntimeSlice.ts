@@ -13,7 +13,7 @@ import { resetUserScopedState } from './resetActions';
 
 const turnStateLog = debug('chatRuntime.turnState');
 
-export type ToolTimelineEntryStatus = 'running' | 'success' | 'error';
+export type ToolTimelineEntryStatus = 'running' | 'success' | 'error' | 'awaiting_user';
 
 export interface InferenceStatus {
   phase: 'thinking' | 'tool_use' | 'subagent';
@@ -38,6 +38,8 @@ export interface SubagentActivity {
   taskId: string;
   /** Sub-agent definition id (e.g. `researcher`). */
   agentId: string;
+  /** High-level status: `"running"`, `"awaiting_user"`, `"completed"`, `"failed"`. */
+  status?: string;
   /** Human-readable display name from the agent registry (e.g. "Researcher"). */
   displayName?: string;
   /**

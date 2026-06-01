@@ -212,10 +212,26 @@ pub struct AgentConfig {
     /// `DEFAULT_TOOL_RESULT_BUDGET_BYTES` (16 KiB).
     #[serde(default = "default_tool_result_budget_bytes")]
     pub tool_result_budget_bytes: usize,
+
+    /// Wall-clock timeout, in seconds, for a single tool/action execution
+    /// (and the per-agent delegated chat call). Bounded to
+    /// `tool_timeout::MIN_TIMEOUT_SECS..=tool_timeout::MAX_TIMEOUT_SECS`
+    /// (`1..=3600`); the default is `tool_timeout::DEFAULT_TIMEOUT_SECS`
+    /// (120). Surfaced in **Settings → Agent OS access → Action timeout** so
+    /// users running large local models can extend it without editing config
+    /// files (issue #3100). Pushed into the live
+    /// [`crate::openhuman::tool_timeout`] runtime on save; the
+    /// `OPENHUMAN_TOOL_TIMEOUT_SECS` env var still overrides it when set.
+    #[serde(default = "default_agent_timeout_secs")]
+    pub agent_timeout_secs: u64,
 }
 
 fn default_tool_result_budget_bytes() -> usize {
     crate::openhuman::context::DEFAULT_TOOL_RESULT_BUDGET_BYTES
+}
+
+fn default_agent_timeout_secs() -> u64 {
+    crate::openhuman::tool_timeout::DEFAULT_TIMEOUT_SECS
 }
 
 fn default_agent_max_tool_iterations() -> usize {
@@ -284,6 +300,7 @@ impl Default for AgentConfig {
             memory_window: None,
             channel_permissions: std::collections::HashMap::new(),
             tool_result_budget_bytes: default_tool_result_budget_bytes(),
+            agent_timeout_secs: default_agent_timeout_secs(),
         }
     }
 }

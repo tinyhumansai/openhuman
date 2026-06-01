@@ -80,6 +80,73 @@ fn build_description(connected: &[(String, String)]) -> String {
     buf
 }
 
+/// Test-only override for the live status fetch. When set, the live re-check
+/// returns this value instead of touching `Config::load_or_init` /
+/// `fetch_connected_integrations_status` — which would otherwise read the host
+/// machine's login/config state and could hit the Composio backend over HTTP,
+/// making the reject-path unit tests environment-dependent. `Some(None)`
+/// forces the "Unavailable" outcome (no live data); `Some(Some(vec))` injects
+/// a deterministic connected set.
+#[cfg(test)]
+thread_local! {
+    static LIVE_FETCH_OVERRIDE: std::cell::RefCell<Option<Option<Vec<String>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_live_fetch_override(value: Option<Vec<String>>) {
+    LIVE_FETCH_OVERRIDE.with(|o| *o.borrow_mut() = Some(value));
+}
+
+#[cfg(test)]
+fn clear_live_fetch_override() {
+    LIVE_FETCH_OVERRIDE.with(|o| *o.borrow_mut() = None);
+}
+
+async fn fetch_live_connected_toolkit_slugs_once() -> Option<Vec<String>> {
+    #[cfg(test)]
+    {
+        if let Some(injected) = LIVE_FETCH_OVERRIDE.with(|o| o.borrow().clone()) {
+            return injected;
+        }
+    }
+    let config = crate::openhuman::config::Config::load_or_init()
+        .await
+        .ok()?;
+    match crate::openhuman::composio::fetch_connected_integrations_status(&config).await {
+        crate::openhuman::composio::FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+            let mut toolkits: Vec<String> = entries
+                .into_iter()
+                .filter(|entry| entry.connected)
+                .map(|entry| sanitise_slug(&entry.toolkit))
+                .collect();
+            toolkits.sort();
+            toolkits.dedup();
+            Some(toolkits)
+        }
+        crate::openhuman::composio::FetchConnectedIntegrationsStatus::Unavailable => None,
+    }
+}
+
+fn resolve_connected_toolkits(
+    snapshot: &[(String, String)],
+    slug: &str,
+    live_connected: Option<&[String]>,
+) -> (bool, Vec<String>) {
+    if snapshot.iter().any(|(known_slug, _)| known_slug == slug) {
+        let allowed = snapshot.iter().map(|(slug, _)| slug.clone()).collect();
+        return (true, allowed);
+    }
+    if let Some(live) = live_connected {
+        let known = live.iter().any(|s| s == slug);
+        return (known, live.to_vec());
+    }
+    (
+        false,
+        snapshot.iter().map(|(slug, _)| slug.clone()).collect(),
+    )
+}
+
 #[async_trait]
 impl Tool for SkillDelegationTool {
     fn name(&self) -> &str {
@@ -153,16 +220,27 @@ impl Tool for SkillDelegationTool {
             )));
         }
         let slug = sanitise_slug(&raw_toolkit);
-        let known = self
+        let mut live_connected: Option<Vec<String>> = None;
+        let mut known = self
             .connected_toolkits
             .iter()
             .any(|(known_slug, _)| known_slug == &slug);
         if !known {
-            let allowed: Vec<&str> = self
-                .connected_toolkits
-                .iter()
-                .map(|(slug, _)| slug.as_str())
-                .collect();
+            // Safety net for same-thread OAuth races: do one live status
+            // refresh before rejecting an unknown toolkit, mirroring the
+            // spawn_subagent integrations pre-flight.
+            live_connected = fetch_live_connected_toolkit_slugs_once().await;
+        }
+        let (known_after_recheck, allowed) =
+            resolve_connected_toolkits(&self.connected_toolkits, &slug, live_connected.as_deref());
+        if known_after_recheck && !known {
+            log::info!(
+                "[skill-delegation] toolkit '{}' accepted after live re-check (session schema stale)",
+                slug
+            );
+        }
+        known = known_after_recheck;
+        if !known {
             log::debug!(
                 "[skill-delegation] reject: toolkit '{}' (sanitised='{}') not in connected set {:?}",
                 raw_toolkit,
@@ -282,6 +360,10 @@ mod tests {
 
     #[tokio::test]
     async fn execute_rejects_unknown_toolkit_with_allowed_list() {
+        // Force the live re-check to return "Unavailable" so the test never
+        // reads host config or reaches the Composio backend — the reject must
+        // come purely from the in-memory snapshot (gmail/notion, no slack).
+        set_live_fetch_override(None);
         let tool = SkillDelegationTool::for_connected(vec![
             ("gmail".to_string(), "Email.".to_string()),
             ("notion".to_string(), "Docs.".to_string()),
@@ -291,6 +373,7 @@ mod tests {
             .execute(json!({"toolkit": "slack", "prompt": "hi"}))
             .await
             .unwrap();
+        clear_live_fetch_override();
         assert!(result.is_error);
         let body = result.output();
         assert!(body.contains("slack"));
@@ -315,6 +398,10 @@ mod tests {
     async fn execute_normalises_toolkit_input_before_matching() {
         // Mixed-case + odd-character user input must collapse onto the
         // canonical slug before the connectedness check fires.
+        // Pin the live re-check to the same snapshot so the test is hermetic
+        // (no host config / backend read): `gmail` stays unknown, while the
+        // normalised `google_calendar` is accepted.
+        set_live_fetch_override(Some(vec!["google_calendar".to_string()]));
         let tool = SkillDelegationTool::for_connected(vec![(
             "google_calendar".to_string(),
             "Calendar.".to_string(),
@@ -360,5 +447,28 @@ mod tests {
                 );
             }
         }
+        clear_live_fetch_override();
+    }
+
+    #[test]
+    fn resolve_connected_toolkits_prefers_live_recheck_for_unknown_slug() {
+        let snapshot = vec![("gmail".to_string(), "Email".to_string())];
+
+        let (known_snapshot, allowed_snapshot) =
+            resolve_connected_toolkits(&snapshot, "gmail", None);
+        assert!(known_snapshot);
+        assert_eq!(allowed_snapshot, vec!["gmail".to_string()]);
+
+        let live = vec!["gmail".to_string(), "notion".to_string()];
+        let (known_live, allowed_live) =
+            resolve_connected_toolkits(&snapshot, "notion", Some(live.as_slice()));
+        assert!(known_live);
+        assert_eq!(allowed_live, live);
+
+        let live_no_match = vec!["gmail".to_string(), "notion".to_string()];
+        let (known_none, allowed_none) =
+            resolve_connected_toolkits(&snapshot, "slack", Some(live_no_match.as_slice()));
+        assert!(!known_none);
+        assert_eq!(allowed_none, live_no_match);
     }
 }

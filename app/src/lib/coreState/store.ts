@@ -14,9 +14,22 @@ export interface CoreOnboardingTasks {
   updatedAtMs?: number;
 }
 
+export interface KeyringConsentPreference {
+  storageMode: string;
+  consentedAtMs?: number;
+}
+
+export interface KeyringStatus {
+  available: boolean;
+  failureReason?: string | null;
+  activeMode: string;
+  backendName: string;
+}
+
 export interface CoreLocalState {
   encryptionKey: string | null;
   onboardingTasks: CoreOnboardingTasks | null;
+  keyringConsent: KeyringConsentPreference | null;
 }
 
 export interface CoreRuntimeSnapshot {
@@ -55,6 +68,7 @@ export interface CoreAppSnapshot {
    */
   meetAutoOrchestratorHandoff: boolean;
   localState: CoreLocalState;
+  keyringStatus: KeyringStatus;
   runtime: CoreRuntimeSnapshot;
 }
 
@@ -75,7 +89,13 @@ const emptySnapshot: CoreAppSnapshot = {
   chatOnboardingCompleted: false,
   analyticsEnabled: false,
   meetAutoOrchestratorHandoff: false,
-  localState: { encryptionKey: null, onboardingTasks: null },
+  localState: { encryptionKey: null, onboardingTasks: null, keyringConsent: null },
+  keyringStatus: {
+    available: true,
+    failureReason: null,
+    activeMode: 'os_keyring',
+    backendName: 'os',
+  },
   runtime: { screenIntelligence: null, localAi: null, autocomplete: null, service: null },
 };
 

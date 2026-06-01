@@ -269,3 +269,16 @@ pub async fn status_list_rpc() -> Result<RpcOutcome<StatusListResponse>, String>
     let statuses = crate::openhuman::memory_sources::status::status_list(&config).await?;
     Ok(RpcOutcome::new(StatusListResponse { statuses }, vec![]))
 }
+
+// ── Sync Audit Log ──
+
+#[derive(Debug, serde::Serialize)]
+pub struct SyncAuditLogResponse {
+    pub entries: Vec<crate::openhuman::memory_sync::sources::audit::SyncAuditEntry>,
+}
+
+pub async fn sync_audit_log_rpc() -> Result<RpcOutcome<SyncAuditLogResponse>, String> {
+    let config = config_rpc::load_config_with_timeout().await?;
+    let entries = crate::openhuman::memory_sync::sources::audit::read_audit_log(&config);
+    Ok(RpcOutcome::new(SyncAuditLogResponse { entries }, vec![]))
+}
