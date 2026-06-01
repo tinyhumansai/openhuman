@@ -81,26 +81,38 @@ impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         match &self.previous {
             Some(value) => {
-                // SAFETY: this integration test is validated with --test-threads=1.
+                // SAFETY: mutation is serialized by `env_lock()` (see below).
                 unsafe { std::env::set_var(self.key, value) }
             }
             None => {
-                // SAFETY: this integration test is validated with --test-threads=1.
+                // SAFETY: mutation is serialized by `env_lock()` (see below).
                 unsafe { std::env::remove_var(self.key) }
             }
         }
     }
 }
 
+/// Serializes the whole suite's process-global env access.
+///
+/// Several tests mutate `OPENHUMAN_WORKSPACE` / `OPENHUMAN_OLLAMA_BASE_URL` /
+/// `PATH` via [`EnvVarGuard`]. `cargo test` (and `cargo llvm-cov`) run a
+/// binary's tests on multiple threads by default, so without this lock those
+/// mutations race and a test reads another test's workspace/config - observed
+/// as a flaky failure under `cargo llvm-cov` (the coverage job does not pass
+/// `--test-threads=1`). Every test takes this guard up front so the suite is
+/// effectively serialized regardless of the runner's thread count.
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
         .lock()
-        .expect("env test lock poisoned")
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 #[tokio::test]
 async fn compatible_provider_covers_responses_fallback_auth_and_merge_system_edges() {
+    let _env = env_lock();
     let (base, state) = serve_mock().await;
 
     let fallback = OpenAiCompatibleProvider::new(
@@ -381,6 +393,7 @@ async fn factory_covers_legacy_api_key_scoping_and_abstract_model_errors() {
 
 #[tokio::test]
 async fn reliable_provider_covers_chat_tools_streaming_and_context_bail_edges() {
+    let _env = env_lock();
     let calls = Arc::new(AtomicUsize::new(0));
     let provider = ReliableProvider::new(
         vec![(
