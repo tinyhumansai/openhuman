@@ -44,6 +44,22 @@ const GITHUB_RELEASES_METADATA: Option<CapabilityPrivacy> = Some(CapabilityPriva
     destinations: &["GitHub Releases"],
 });
 
+// GitHub repo memory source: the reader queries a repository's activity
+// (commits / issues / PRs) directly against the GitHub API — via the `gh`
+// CLI when available, otherwise the public REST API — not through the
+// OpenHuman backend. The *outbound* payload is metadata (which repo, which
+// activity, pagination) plus whatever auth `gh` carries; the fetched content
+// is archived locally under the vault and only its embeddings travel onward
+// (covered by the embedding-provider capability). Mirrors the
+// `GITHUB_RELEASES_METADATA` shape — third-party GitHub host, metadata-class
+// outbound — so the Privacy surface reflects that the request leaves the
+// device to a destination distinct from the managed backend.
+const GITHUB_REPO_SOURCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
+    leaves_device: true,
+    data_kind: PrivacyDataKind::Metadata,
+    destinations: &["GitHub API (api.github.com)"],
+});
+
 const SEARXNG_RAW_TO_CONFIGURED_INSTANCE: Option<CapabilityPrivacy> = Some(CapabilityPrivacy {
     leaves_device: true,
     data_kind: PrivacyDataKind::Raw,
@@ -309,6 +325,25 @@ pub(super) const CAPABILITIES: &[Capability] = &[
         how_to: "Chat > ask the assistant about people, conversations, or windows",
         status: CapabilityStatus::Beta,
         privacy: LOCAL_RAW,
+    },
+    Capability {
+        id: "intelligence.github_repo_memory_source",
+        name: "GitHub Repo Memory Source",
+        domain: "memory_sources",
+        category: CapabilityCategory::Intelligence,
+        description: "Sync a GitHub repository's project activity — commits, issues, and \
+            pull requests (not source code) — into your memory. Items are archived verbatim \
+            under a browsable, repo-grouped vault layout \
+            (raw/github-com-<owner>-<repo>/{commits,issues,prs}/) and ingested into the \
+            memory tree for recall. Contributors are surfaced as @handle entities, and \
+            commit messages plus closed/merged issues & PRs get a priority boost so \
+            high-signal history leads at summary time. Pulls up to 2000 items of each type \
+            per sync by default, overridable per source via max_commits / max_issues / \
+            max_prs.",
+        how_to: "Settings > Memory & Data > Memory Sources — add a GitHub repository URL. \
+            Programmatic: openhuman.memory_sources_add (RPC).",
+        status: CapabilityStatus::Beta,
+        privacy: GITHUB_REPO_SOURCE,
     },
     Capability {
         id: "intelligence.embedding_provider_config",
