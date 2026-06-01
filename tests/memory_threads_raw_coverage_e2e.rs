@@ -3804,8 +3804,32 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
 
     let schemas = all_memory_sources_controller_schemas();
     let controllers = all_memory_sources_registered_controllers();
-    assert_eq!(schemas.len(), 9);
+    let expected_functions = [
+        "list",
+        "get",
+        "add",
+        "update",
+        "remove",
+        "list_items",
+        "read_item",
+        "sync",
+        "status_list",
+        "sync_audit_log",
+    ];
+    assert_eq!(schemas.len(), expected_functions.len());
     assert_eq!(schemas.len(), controllers.len());
+    for function in expected_functions {
+        assert!(
+            schemas.iter().any(|schema| schema.function == function),
+            "missing schema for {function}"
+        );
+        assert!(
+            controllers
+                .iter()
+                .any(|controller| controller.schema.function == function),
+            "missing controller for {function}"
+        );
+    }
     assert_eq!(
         openhuman_core::openhuman::memory_sources::schemas::schemas("read_item").function,
         "read_item"
