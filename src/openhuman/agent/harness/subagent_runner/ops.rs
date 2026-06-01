@@ -1174,7 +1174,11 @@ async fn run_typed_mode(
     // Transcript persistence lives INSIDE the loop (one write per
     // provider response), mirroring the main-agent turn loop in
     // `session/turn.rs`. No post-loop write needed here.
-    let (output, iterations, _agg_usage, early_exit_tool) = run_inner_loop(
+    // Box-pin so `run_inner_loop`'s state machine (which itself wraps
+    // the engine call below) is heap-allocated independently of
+    // `run_typed_mode`. Belt-and-braces with the inner engine box at
+    // the recursion boundary inside `run_inner_loop`.
+    let (output, iterations, _agg_usage, early_exit_tool) = Box::pin(run_inner_loop(
         subagent_provider.as_ref(),
         &mut history,
         &parent.all_tools,
@@ -1191,7 +1195,7 @@ async fn run_typed_mode(
         handoff_cache.as_deref(),
         parent,
         definition.iteration_policy == IterationPolicy::Extended,
-    )
+    ))
     .await?;
 
     // Determine status: if the turn engine exited early because of
@@ -1420,7 +1424,21 @@ async fn run_inner_loop(
     };
 
     let parser = super::super::engine::DefaultParser;
-    let outcome = super::super::engine::run_turn_engine(
+    // Heap-allocate the child `run_turn_engine` state machine. Sub-agents
+    // run as nested polls inside the *parent* agent's `run_turn_engine`
+    // (the orchestrator → tool exec → `dispatch_subagent` → `run_subagent`
+    // chain), so without the box the parent's tokio worker poll stack
+    // also has to carry the child engine's ~600-line generator. That
+    // crosses the 2 MiB tokio worker default and aborts with
+    // "thread 'tokio-rt-worker' has overflowed its stack" — see the
+    // `chat-harness-subagent` Playwright lane crash logged here:
+    // `[subagent_runner] dispatching agent_id=researcher ... → fatal
+    // runtime error: stack overflow`. Boxing here breaks the stack
+    // accumulation at the recursion boundary. Smoke-tested in
+    // `nested_subagent_dispatch_runs_on_a_constrained_worker_stack`;
+    // the deep end-to-end catcher is the `chat-harness-subagent`
+    // Playwright spec.
+    let outcome = Box::pin(super::super::engine::run_turn_engine(
         provider,
         history,
         &mut tool_source,
@@ -1437,7 +1455,7 @@ async fn run_inner_loop(
         max_iterations,
         None, // sub-agents don't stream a draft
         &["ask_user_clarification"],
-    )
+    ))
     .await?;
 
     Ok((
