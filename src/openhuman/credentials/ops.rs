@@ -404,6 +404,11 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
 /// (e.g. the periodic Composio sync tick) report with `user = None`. Called
 /// from the boot path once an existing session is detected. Returns the active
 /// user id when one is found. Only the id reaches Sentry — never email/name/IP.
+///
+/// Note: this does double duty — it returns the active user id *and* binds the
+/// Sentry scope as a side effect, since the boot path needs both together. If a
+/// future caller only wants the id without touching observability, read
+/// `read_active_user_id` directly instead.
 pub fn warm_sentry_user_from_active_session(root_dir: &std::path::Path) -> Option<String> {
     let uid = read_active_user_id(root_dir)?;
     crate::core::observability::set_sentry_user_id(&uid);
