@@ -394,6 +394,20 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
     ))
 }
 
+/// Warm the Sentry scope from the on-disk active session at boot.
+///
+/// `store_session` binds the Sentry user only on a fresh login / account
+/// switch. A restored session (the app reopened while already signed in) never
+/// routes through `store_session`, so without this its background-loop errors
+/// (e.g. the periodic Composio sync tick) report with `user = None`. Called
+/// from the boot path once an existing session is detected. Returns the active
+/// user id when one is found. Only the id reaches Sentry — never email/name/IP.
+pub fn warm_sentry_user_from_active_session(root_dir: &std::path::Path) -> Option<String> {
+    let uid = read_active_user_id(root_dir)?;
+    crate::core::observability::set_sentry_user_id(&uid);
+    Some(uid)
+}
+
 pub async fn auth_get_state(
     config: &Config,
 ) -> Result<RpcOutcome<super::responses::AuthStateResponse>, String> {
