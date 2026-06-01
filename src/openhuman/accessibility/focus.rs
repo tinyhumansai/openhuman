@@ -311,11 +311,13 @@ fn focused_text_via_osascript() -> Result<FocusedTextContext, String> {
       end tell
     "##;
 
-    let output = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(script)
-        .output()
-        .map_err(|e| format!("failed to run osascript: {e}"))?;
+    let mut command = Command::new("osascript");
+    command.arg("-e").arg(script);
+    let output = command_output_with_timeout(
+        "osascript focused_text_via_osascript",
+        &mut command,
+        FOREGROUND_CONTEXT_COMMAND_TIMEOUT,
+    )?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         if stderr.is_empty() {
