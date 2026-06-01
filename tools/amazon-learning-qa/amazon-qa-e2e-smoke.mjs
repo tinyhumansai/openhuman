@@ -26,6 +26,18 @@ export const TOPIC_SWITCH_ACCEPTANCE_SCENARIO = {
   firstQuestion: "主图视觉点击率转化率怎么优化？",
   standaloneQuestions: [
     {
+      id: "product-title",
+      question: "产品标题怎么写",
+      requireSources: true,
+      relevancePattern: /标题|关键词|Search Terms|收录|文案|Listing/i,
+    },
+    {
+      id: "listing-prep",
+      question: "写 listing 之前，应该要进行哪些准备工作？具体收集哪些资料",
+      requireSources: true,
+      relevancePattern: /Listing|关键词|标题|五点|Search Terms|资料|竞品|收集|文案/i,
+    },
+    {
       id: "persona",
       question: "人群画像应该怎么构建？有哪些实操指导建议",
       allowNoSources: true,

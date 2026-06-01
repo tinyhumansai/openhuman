@@ -196,6 +196,20 @@ function topicSwitchPayload() {
     first: askPayload(TOPIC_SWITCH_ACCEPTANCE_SCENARIO.firstQuestion),
     standaloneResults: [
       {
+        id: "product-title",
+        response: askPayload("产品标题怎么写", {
+          answer: "问题：产品标题怎么写\n\n可执行结论：标题前段要优先承接最相关、最有购买意图的关键词。",
+          sourceScope: { summary: "本轮使用全部作者资料。" },
+        }),
+      },
+      {
+        id: "listing-prep",
+        response: askPayload("写 listing 之前，应该要进行哪些准备工作？具体收集哪些资料", {
+          answer: "问题：写 listing 之前，应该要进行哪些准备工作？具体收集哪些资料\n\n可执行结论：先收集竞品、关键词、标题、五点和 Search Terms。",
+          sourceScope: { summary: "本轮使用全部作者资料。" },
+        }),
+      },
+      {
         id: "persona",
         response: askPayload("人群画像应该怎么构建？有哪些实操指导建议", {
           answer: "问题：人群画像应该怎么构建？有哪些实操指导建议\n\n这次没有从本地知识库里找到足够相关的资料。 【缺少来源】",
@@ -305,10 +319,17 @@ test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning qu
   assert.deepEqual(report.scenarios.map((item) => item.id), ["visual-conversion", "product-selection", "listing-keywords"]);
   assert.equal(report.scenarios[0].followUp, "那我应该先改哪一块？");
   assert.ok(report.scenarios.every((item) => item.sources >= 1 && item.graphNodes >= 1 && item.learningQueueItems >= 1));
-  assert.equal(report.topicSwitch.standaloneResults.length, 2);
-  assert.deepEqual(report.topicSwitch.standaloneResults.map((item) => item.id), ["persona", "selection-methods"]);
-  assert.equal(report.topicSwitch.standaloneResults[0].sources, 0);
+  assert.equal(report.topicSwitch.standaloneResults.length, 4);
+  assert.deepEqual(report.topicSwitch.standaloneResults.map((item) => item.id), [
+    "product-title",
+    "listing-prep",
+    "persona",
+    "selection-methods",
+  ]);
+  assert.equal(report.topicSwitch.standaloneResults[0].sources, 1);
   assert.equal(report.topicSwitch.standaloneResults[1].sources, 1);
+  assert.equal(report.topicSwitch.standaloneResults[2].sources, 0);
+  assert.equal(report.topicSwitch.standaloneResults[3].sources, 1);
   assert.equal(report.confirmationLoop.status, "needs_source");
   assert.equal(report.confirmationLoop.followUpSources, 1);
 });
