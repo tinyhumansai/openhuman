@@ -115,6 +115,122 @@ pub fn estimate_cost_usd(input_tokens: u64, output_tokens: u64) -> f64 {
     input_cost + output_cost
 }
 
+/// Accumulates per-batch token/charge figures over a sync run and decides
+/// whether the run's totals may be reported as provider-"real" or must fall
+/// back to the local `len/4` estimate.
+///
+/// The rule (issue #3110): provider-reported tokens/charges are only
+/// promoted to the run-level audit figure when **every** batch in the run
+/// carried that signal. A run where some batches reported usage and others
+/// fell back (provider silent / fallback summary) would otherwise produce a
+/// partial "real" total that undercounts the run — worse than the estimate.
+/// In that mixed case we keep the estimate, which covers all batches.
+#[derive(Debug, Default, Clone)]
+pub struct RealCostAccumulator {
+    total_batches: u32,
+    /// Number of batches that reported provider token usage (`input_tokens`
+    /// or `output_tokens` non-zero).
+    batches_with_usage: u32,
+    /// Number of batches that reported a provider charge.
+    batches_with_charge: u32,
+    est_input_tokens: u64,
+    est_output_tokens: u64,
+    real_input_tokens: u64,
+    real_output_tokens: u64,
+    real_charged_usd: f64,
+}
+
+impl RealCostAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fold one batch into the accumulator.
+    ///
+    /// `est_input` / `est_output` are the local-heuristic token counts for
+    /// the batch and are always summed. `real_input` / `real_output` are the
+    /// provider-reported counts (`0` = "no usage" sentinel). `charge` is the
+    /// provider charge for the batch when reported.
+    pub fn add_batch(
+        &mut self,
+        est_input: u64,
+        est_output: u64,
+        real_input: u64,
+        real_output: u64,
+        charge: Option<f64>,
+    ) {
+        self.total_batches += 1;
+        self.est_input_tokens += est_input;
+        self.est_output_tokens += est_output;
+
+        // `input_tokens == 0 && output_tokens == 0` is the sentinel for "no
+        // usage" (set by the fallback path and by providers that don't report
+        // usage), so a batch only counts as carrying real usage when one of
+        // them is non-zero.
+        if real_input > 0 || real_output > 0 {
+            self.batches_with_usage += 1;
+            self.real_input_tokens += real_input;
+            self.real_output_tokens += real_output;
+        }
+        if let Some(charge) = charge {
+            self.batches_with_charge += 1;
+            self.real_charged_usd += charge;
+        }
+    }
+
+    /// True when every batch reported provider token usage. Only then are the
+    /// real token totals complete enough to replace the estimate.
+    fn usage_is_complete(&self) -> bool {
+        self.total_batches > 0 && self.batches_with_usage == self.total_batches
+    }
+
+    /// True when every batch reported a provider charge. Only then is the
+    /// summed charge a faithful total for the run.
+    fn charge_is_complete(&self) -> bool {
+        self.total_batches > 0 && self.batches_with_charge == self.total_batches
+    }
+
+    /// Input tokens to record on the audit entry: real total when complete
+    /// across all batches, else the estimate.
+    pub fn audit_input_tokens(&self) -> u64 {
+        if self.usage_is_complete() {
+            self.real_input_tokens
+        } else {
+            self.est_input_tokens
+        }
+    }
+
+    /// Output tokens to record on the audit entry.
+    pub fn audit_output_tokens(&self) -> u64 {
+        if self.usage_is_complete() {
+            self.real_output_tokens
+        } else {
+            self.est_output_tokens
+        }
+    }
+
+    /// The hardcoded-pricing estimate over the run's estimated tokens —
+    /// always recorded as the fallback cost.
+    pub fn estimated_cost(&self) -> f64 {
+        estimate_cost_usd(self.est_input_tokens, self.est_output_tokens)
+    }
+
+    /// The authoritative provider charge for the run when every batch
+    /// reported one, else `None` (falls back to the estimate downstream).
+    pub fn actual_charged_usd(&self) -> Option<f64> {
+        if self.charge_is_complete() {
+            Some(self.real_charged_usd)
+        } else {
+            None
+        }
+    }
+
+    /// True when this run's token figures came from complete provider usage.
+    pub fn usage_is_real(&self) -> bool {
+        self.usage_is_complete()
+    }
+}
+
 impl SyncAuditEntry {
     /// The cost figure to display for this run: the real backend charge
     /// when the provider reported one ([`Self::actual_charged_usd`]),
@@ -144,6 +260,58 @@ mod tests {
         let cost = estimate_cost_usd(50_000, 5_000);
         // $0.0035 input + $0.0014 output = $0.0049
         assert!((cost - 0.0049).abs() < 0.0001);
+    }
+
+    #[test]
+    fn accumulator_all_batches_real_promotes_usage_and_charge() {
+        let mut acc = RealCostAccumulator::new();
+        acc.add_batch(1_000, 100, 900, 90, Some(0.005));
+        acc.add_batch(1_000, 100, 800, 80, Some(0.004));
+
+        assert!(acc.usage_is_real());
+        assert_eq!(acc.audit_input_tokens(), 1_700);
+        assert_eq!(acc.audit_output_tokens(), 170);
+        let charge = acc.actual_charged_usd().expect("charge complete");
+        assert!((charge - 0.009).abs() < 1e-9);
+    }
+
+    #[test]
+    fn accumulator_mixed_usage_falls_back_to_estimate() {
+        // One batch reports real usage, the second is silent (fallback).
+        // A partial real total (900/90) would *undercount* the run versus
+        // the estimate (2000/200), so we must keep the estimate.
+        let mut acc = RealCostAccumulator::new();
+        acc.add_batch(1_000, 100, 900, 90, Some(0.005));
+        acc.add_batch(1_000, 100, 0, 0, None);
+
+        assert!(!acc.usage_is_real());
+        assert_eq!(acc.audit_input_tokens(), 2_000);
+        assert_eq!(acc.audit_output_tokens(), 200);
+        // Charge incomplete (only one batch reported) → no actual charge.
+        assert_eq!(acc.actual_charged_usd(), None);
+    }
+
+    #[test]
+    fn accumulator_usage_complete_but_charge_partial() {
+        // Every batch reports usage, but only one reports a charge. Tokens
+        // promote to real; charge stays None because the run-level sum would
+        // be missing the second batch's charge.
+        let mut acc = RealCostAccumulator::new();
+        acc.add_batch(1_000, 100, 900, 90, Some(0.005));
+        acc.add_batch(1_000, 100, 800, 80, None);
+
+        assert!(acc.usage_is_real());
+        assert_eq!(acc.audit_input_tokens(), 1_700);
+        assert_eq!(acc.actual_charged_usd(), None);
+    }
+
+    #[test]
+    fn accumulator_no_batches_uses_estimate() {
+        let acc = RealCostAccumulator::new();
+        assert!(!acc.usage_is_real());
+        assert_eq!(acc.audit_input_tokens(), 0);
+        assert_eq!(acc.actual_charged_usd(), None);
+        assert_eq!(acc.estimated_cost(), 0.0);
     }
 
     #[test]
