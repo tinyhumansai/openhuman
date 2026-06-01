@@ -13,7 +13,7 @@ use async_trait::async_trait;
 
 use crate::openhuman::config::{Config, DEFAULT_CLOUD_LLM_MODEL};
 use crate::openhuman::inference::provider::{
-    create_chat_provider, provider_for_role, ChatMessage, Provider,
+    create_chat_provider, provider_for_role, ChatMessage, ChatRequest, Provider, UsageInfo,
 };
 
 /// One pair of prompt messages handed to the memory LLM backend.
@@ -35,6 +35,24 @@ pub trait ChatProvider: Send + Sync {
     async fn chat_for_text(&self, prompt: &ChatPrompt) -> Result<String> {
         self.chat_for_json(prompt).await
     }
+
+    /// Like [`chat_for_text`], but also surfaces the provider-reported
+    /// [`UsageInfo`] (real token counts + `charged_amount_usd`) when the
+    /// backing provider returns it.
+    ///
+    /// The default implementation simply runs `chat_for_text` and reports
+    /// `None` usage, so implementors (e.g. test doubles, external impls)
+    /// that don't thread usage keep compiling unchanged. The production
+    /// `InferenceChatProvider` overrides this to route through the
+    /// inference `Provider::chat` API, which already parses usage out of
+    /// the backend response (see `compatible::extract_usage`).
+    async fn chat_for_text_with_usage(
+        &self,
+        prompt: &ChatPrompt,
+    ) -> Result<(String, Option<UsageInfo>)> {
+        let text = self.chat_for_text(prompt).await?;
+        Ok((text, None))
+    }
 }
 
 struct InferenceChatProvider {
@@ -54,6 +72,17 @@ impl InferenceChatProvider {
     }
 
     async fn run(&self, prompt: &ChatPrompt) -> Result<String> {
+        let (text, _usage) = self.run_with_usage(prompt).await?;
+        Ok(text)
+    }
+
+    /// Run the prompt through the inference `Provider::chat` API and return
+    /// both the text and the provider-reported usage. Memory historically
+    /// called `chat_with_history` (which returns only `String` and drops
+    /// the parsed usage); routing through `chat` instead lets us thread the
+    /// real token counts + `charged_amount_usd` into the sync audit log
+    /// (issue #3110) without re-deriving them from `body.len() / 4`.
+    async fn run_with_usage(&self, prompt: &ChatPrompt) -> Result<(String, Option<UsageInfo>)> {
         log::debug!(
             "[memory::chat] provider={} kind={} model={} sys_chars={} user_chars={}",
             self.display,
@@ -68,19 +97,43 @@ impl InferenceChatProvider {
             ChatMessage::user(prompt.user.clone()),
         ];
 
-        let text = self
+        let request = ChatRequest {
+            messages: &messages,
+            tools: None,
+            stream: None,
+        };
+
+        let response = self
             .inner
-            .chat_with_history(&messages, &self.model, prompt.temperature)
+            .chat(request, &self.model, prompt.temperature)
             .await?;
 
+        // Fail fast on a missing body rather than masking it as an empty
+        // string: an empty summary would still be ingested (and, post-#3110,
+        // counted against the run's real charge) as if it were valid output.
+        // The caller's fallback path (`fallback_summary`) is the correct
+        // recovery for a silent provider, and it only runs on `Err`.
+        let Some(text) = response.text else {
+            anyhow::bail!(
+                "inference provider '{}' returned no text for {} summarise request",
+                self.display,
+                prompt.kind
+            );
+        };
+        let usage = response.usage;
+
         log::debug!(
-            "[memory::chat] provider={} kind={} response_chars={}",
+            "[memory::chat] provider={} kind={} response_chars={} usage_present={} input_tokens={} output_tokens={} charged_usd={}",
             self.display,
             prompt.kind,
-            text.len()
+            text.len(),
+            usage.is_some(),
+            usage.as_ref().map(|u| u.input_tokens).unwrap_or(0),
+            usage.as_ref().map(|u| u.output_tokens).unwrap_or(0),
+            usage.as_ref().map(|u| u.charged_amount_usd).unwrap_or(0.0),
         );
 
-        Ok(text)
+        Ok((text, usage))
     }
 }
 
@@ -96,6 +149,13 @@ impl ChatProvider for InferenceChatProvider {
 
     async fn chat_for_text(&self, prompt: &ChatPrompt) -> Result<String> {
         self.run(prompt).await
+    }
+
+    async fn chat_for_text_with_usage(
+        &self,
+        prompt: &ChatPrompt,
+    ) -> Result<(String, Option<UsageInfo>)> {
+        self.run_with_usage(prompt).await
     }
 }
 
@@ -261,5 +321,23 @@ mod tests {
         };
         assert_eq!(p.chat_for_json(&prompt).await.unwrap(), "hello");
         assert_eq!(p.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn chat_for_text_with_usage_default_impl_reports_no_usage() {
+        // A provider that doesn't override `chat_for_text_with_usage`
+        // (here the `chat_for_json`-only `StaticChatProvider`) must still
+        // return its text, with `None` usage — so summarise() falls back
+        // to the estimate rather than reporting a bogus zero charge.
+        let p = StaticChatProvider::new("summary text");
+        let prompt = ChatPrompt {
+            system: "sys".into(),
+            user: "u".into(),
+            temperature: 0.0,
+            kind: "test",
+        };
+        let (text, usage) = p.chat_for_text_with_usage(&prompt).await.unwrap();
+        assert_eq!(text, "summary text");
+        assert!(usage.is_none());
     }
 }
