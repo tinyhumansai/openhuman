@@ -430,12 +430,16 @@ async fn round20_memory_sources_readers_and_sync_cover_error_edges_without_netwo
     std::fs::create_dir_all(&bin).expect("bin dir");
     let script = bin.join("gh");
     write_fake_gh_round20(&script);
+    write_fake_git_round20(&bin.join("git"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
     let github = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
     let mut entry = source_entry("github-round20", SourceKind::GithubRepo);
     entry.url = Some("git@github.com:tinyhumansai/openhuman.git".to_string());
+    entry.max_commits = Some(30);
+    entry.max_issues = Some(30);
+    entry.max_prs = Some(30);
     let items = github
         .list_items(&entry, &config)
         .await
@@ -760,17 +764,17 @@ if [[ "${1:-}" != "api" ]]; then
   exit 2
 fi
 case "${2:-}" in
-  repos/tinyhumansai/openhuman/commits?per_page=30)
+  repos/tinyhumansai/openhuman/commits?per_page=30\&page=1)
     cat <<'JSON'
 [{"sha":"def456","commit":{"message":"Round20 commit fixture","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-29T00:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-29T00:00:00Z"}}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/issues?per_page=100\&page=1\&state=all)
     cat <<'JSON'
 [{"number":20,"title":"Round20 issue","body":null,"state":"closed","user":null,"labels":[],"created_at":null,"updated_at":"2026-05-29T00:30:00Z","pull_request":null}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/pulls?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/pulls?per_page=30\&page=1\&state=all)
     cat <<'JSON'
 [{"number":21,"title":"Round20 merged PR","body":null,"state":"closed","user":null,"labels":[],"created_at":null,"updated_at":"2026-05-29T01:00:00Z","merged_at":"2026-05-29T01:00:00Z","comments":0}]
 JSON
@@ -800,5 +804,22 @@ esac
             .permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).expect("chmod fake gh");
+    }
+}
+
+fn write_fake_git_round20(path: &PathBuf) {
+    std::fs::write(
+        path,
+        "#!/usr/bin/env sh\necho 'git disabled for round20 fixture' >&2\nexit 42\n",
+    )
+    .expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("fake git metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
     }
 }
