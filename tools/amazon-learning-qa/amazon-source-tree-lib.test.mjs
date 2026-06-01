@@ -53,6 +53,16 @@ test("sourceTreeSearchTerms expands visual conversion questions for source-tree 
   assert.ok(terms.includes("页面"));
 });
 
+test("sourceTreeSearchTerms expands persona questions using corpus language", () => {
+  const terms = sourceTreeSearchTerms("人群画像应该怎么构建？有哪些实操指导建议");
+
+  assert.ok(terms.includes("用户画像"));
+  assert.ok(terms.includes("目标客户"));
+  assert.ok(terms.includes("目标用户"));
+  assert.ok(terms.includes("竞品信息"));
+  assert.ok(terms.includes("搜索词"));
+});
+
 test("buildSourceTreeCalibration keeps summary hits as routing hints, not evidence", () => {
   const calibration = buildSourceTreeCalibration({
     query: "主图视觉点击率转化率怎么优化？",

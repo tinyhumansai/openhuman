@@ -59,6 +59,22 @@ const MAIN_IMAGE_CONTEXT = `Query: 主图视觉点击率转化率怎么优化？
 主图是唯一一个纯视觉元素。一个真正具备接客资格的图片体系，必须包含差异化的主图、场景化的副图、尺寸细节对比图和核心功能演示图。
 广告是放大器，不是救命稻草。转化取决于 Listing 质量、产品力和评价基础。`;
 
+const PERSONA_CONTEXT = `Query: 人群画像应该怎么构建？有哪些实操指导建议
+
+跨境电商长期主义 2026-02-21 假如你的创业起步预算比较少。: # 假如你的创业起步预算比较少。
+作者：跨境电商长期主义
+发布时间：2026-02-21 00:00:00
+原文链接：https://mp.weixin.qq.com/s/persona1
+来源文件：跨境电商长期主义html/persona1.html
+假设我们要开发一条汽配产品的品线，最好的方式并不是直接筛选一款我们认为成功率最高的产品，而是先根据我们的选品条件找出售价，回款金额，利润率符合预期的几款产品，然后花一点时间完成每一款产品的词库，竞品库，用户画像，产品文案的搭建，至于产品的视觉，弄个简易的初稿就成，先创建一下链接，售价定的高一点，投放下广告做下测试。
+
+跨境电商长期主义 2022-02-18 销售第一步：搞明白谁是你的用户: # 销售第一步：搞明白谁是你的用户
+作者：跨境电商长期主义
+发布时间：2022-02-18 00:00:00
+原文链接：https://mp.weixin.qq.com/s/persona2
+来源文件：跨境电商长期主义html/persona2.html
+通常面对咨询我的卖家朋友我都喜欢先问一个问题：你的目标客户到底是谁。要搞明白目标客户的精准画像，诸如兴趣偏好，活动领域以及消费价值，这才有可能服务好他们。`;
+
 const STRUCTURED_RESULT = {
   data: {
     context: {
@@ -905,7 +921,11 @@ test("buildRetrievalQuery does not carry old visual context into a standalone ne
     },
   ]);
 
-  assert.equal(query, "人群画像应该怎么构建？有哪些实操指导建议");
+  assert.match(query, /^人群画像应该怎么构建？有哪些实操指导建议/);
+  assert.match(query, /检索补充/);
+  assert.match(query, /用户画像/);
+  assert.match(query, /竞品信息/);
+  assert.match(query, /搜索词/);
   assert.doesNotMatch(query, /主图视觉点击率转化率怎么优化/);
   assert.doesNotMatch(query, /产品首图极大程度上决定了点击率/);
 });
@@ -1547,6 +1567,17 @@ test("buildQaPayload creates action-oriented sections for visual conversion ques
   assert.match(payload.answer, /执行顺序/);
   assert.match(payload.answer, /先看主图|先看点击率|主图/);
   assert.match(payload.answer, /作者视角/);
+});
+
+test("buildQaPayload keeps persona questions out of visual-conversion templates", () => {
+  const question = "人群画像应该怎么构建？有哪些实操指导建议";
+  const retrievalQuery = `${question}\n检索补充：用户画像 竞品信息 搜索词 基本功 词库 竞品库 产品文案 产品视觉 目标客户是谁`;
+  const payload = buildQaPayload(question, PERSONA_CONTEXT, retrievalQuery);
+
+  assert.ok(payload.sources.length >= 1);
+  assert.match(payload.answer, /目标客户|用户画像|竞品信息|搜索词/);
+  assert.match(payload.answer, /明确目标客户/);
+  assert.doesNotMatch(payload.answer.slice(0, 420), /先把主图|主图点击率|主图差异化|视觉转化/);
 });
 
 test("buildQaPayload discloses stable template fallback cost separately from local model answers", () => {

@@ -3988,7 +3988,7 @@ function buildSourceScopeSummary(rawArticles, scopedArticles, allowedAuthors, al
 }
 
 export function buildRetrievalQuery(question, history = [], options = {}) {
-  const current = retrievalCurrentQuestionText(question);
+  const current = expandAmazonRetrievalQuestion(retrievalCurrentQuestionText(question));
   const safeHistory = Array.isArray(history) ? history : [];
   const recent = safeHistory.slice(-6);
   if (safeHistory.length === 0) return current;
@@ -4051,6 +4051,49 @@ function retrievalCurrentQuestionText(question) {
   const redacted = compactRetrievalUserText(raw);
   if (redacted) return redacted;
   return compactHistoryText(redactBusinessFactsForRetrieval(raw), 500) || raw.slice(0, 120);
+}
+
+function expandAmazonRetrievalQuestion(question) {
+  const current = String(question || "").trim();
+  if (!current) return current;
+  const terms = amazonRetrievalExpansionTerms(current);
+  if (terms.length === 0) return current;
+  return compactHistoryText(`${current}\n检索补充：${terms.join(" ")}`, 700);
+}
+
+function amazonRetrievalExpansionTerms(question) {
+  const value = String(question || "");
+  const terms = [];
+  const add = (...items) => {
+    for (const item of items) {
+      const term = String(item || "").trim();
+      if (term && !terms.includes(term)) terms.push(term);
+    }
+  };
+
+  if (/人群画像|用户画像|买家画像|客户画像|目标客户|目标用户|目标受众|受众群体|精准用户/.test(value)) {
+    add(
+      "用户画像",
+      "竞品信息",
+      "搜索词",
+      "基本功",
+      "词库",
+      "竞品库",
+      "产品文案",
+      "产品视觉",
+      "目标客户是谁",
+      "目标用户",
+      "目标受众",
+      "精准用户",
+      "用户痛点",
+      "使用场景",
+      "聚集渠道",
+      "消费习惯",
+      "搜索习惯",
+    );
+  }
+
+  return terms.slice(0, 20);
 }
 
 function retrievalHistoryLine(entry, excludedSourceKeys = new Set()) {
@@ -4901,6 +4944,13 @@ function buildActionConclusion(question) {
       "预算、竞价、位置、否词要围绕阶段目标调整，不要盲目高举高打。",
     ];
   }
+  if (type === "persona") {
+    return [
+      "先搞清楚目标客户是谁，再决定产品、词库、文案、视觉和推广渠道。",
+      "人群画像不是抽象标签，要落到搜索词、竞品、使用场景、痛点和消费习惯上。",
+      "判断画像是否有用，要看它能不能指导选品、Listing、广告素材和渠道选择。",
+    ];
+  }
   return [
     "先把问题拆成市场、产品、页面、流量四层，不要直接跳到单一动作。",
     "每个动作都要能回到资料来源验证，避免只凭经验判断。",
@@ -4921,6 +4971,9 @@ function buildExecutionSteps(question) {
   }
   if (type === "ads") {
     return ["确认 Listing 基本面", "跑自动或探索广告找词", "筛出能转化的词", "集中预算推重点词", "用否词和位置调整控制浪费"];
+  }
+  if (type === "persona") {
+    return ["明确目标客户", "收集竞品和搜索词", "拆使用场景和用户痛点", "沉淀词库和竞品库", "反推文案、视觉和广告素材"];
   }
   return ["明确问题类型", "找对应来源", "提炼判断标准", "形成检查清单", "用真实数据回测"];
 }
@@ -5382,6 +5435,7 @@ function buildValidationPrompt(type) {
 
 function detectAnswerType(question) {
   const value = String(question || "").toLowerCase();
+  if (/人群画像|用户画像|买家画像|客户画像|目标客户|目标用户|目标受众|受众群体|精准用户/.test(value)) return "persona";
   if (/主图|图片|视觉|点击率|转化率/.test(value)) return "visual";
   if (/选品|值不值得做|能不能做|做不做|市场容量|新品/.test(value)) return "product";
   if (/listing|文案|关键词|收录|标题|search term|五点|bullet/.test(value)) return "listing";

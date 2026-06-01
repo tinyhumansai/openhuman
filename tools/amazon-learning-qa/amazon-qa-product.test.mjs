@@ -238,7 +238,7 @@ function acceptanceEvidenceResult() {
       standaloneResults: [
         { id: "product-title", sources: 5, graphNodes: 20 },
         { id: "listing-prep", sources: 5, graphNodes: 21 },
-        { id: "persona", sources: 0, graphNodes: 8 },
+        { id: "persona", sources: 4, graphNodes: 8 },
         { id: "selection-methods", sources: 5, graphNodes: 21 },
       ],
     },

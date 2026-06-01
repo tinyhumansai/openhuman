@@ -524,6 +524,7 @@ function validateAcceptanceEvidence(evidence) {
     && topicRows.length >= 4
     && topicRows.some((item) => item.id === "product-title" && Number(item.sources || 0) > 0)
     && topicRows.some((item) => item.id === "listing-prep" && Number(item.sources || 0) > 0)
+    && topicRows.some((item) => item.id === "persona" && Number(item.sources || 0) > 0)
     && topicRows.some((item) => item.id === "selection-methods" && Number(item.sources || 0) > 0)
     && topicRows.some((item) => item.id === "persona" && Number(item.graphNodes || 0) > 0)
     && confirmation.status === "needs_source"

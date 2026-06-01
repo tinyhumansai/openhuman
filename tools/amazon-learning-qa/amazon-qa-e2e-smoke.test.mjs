@@ -212,8 +212,7 @@ function topicSwitchPayload() {
       {
         id: "persona",
         response: askPayload("人群画像应该怎么构建？有哪些实操指导建议", {
-          answer: "问题：人群画像应该怎么构建？有哪些实操指导建议\n\n这次没有从本地知识库里找到足够相关的资料。 【缺少来源】",
-          sources: [],
+          answer: "问题：人群画像应该怎么构建？有哪些实操指导建议\n\n可执行结论：先围绕目标客户、用户画像、竞品信息和搜索词建立基础判断。",
           sourceScope: { summary: "本轮使用全部作者资料。" },
         }),
       },
@@ -328,7 +327,7 @@ test("validateAmazonQaFinalAcceptance accepts three realistic Amazon learning qu
   ]);
   assert.equal(report.topicSwitch.standaloneResults[0].sources, 1);
   assert.equal(report.topicSwitch.standaloneResults[1].sources, 1);
-  assert.equal(report.topicSwitch.standaloneResults[2].sources, 0);
+  assert.equal(report.topicSwitch.standaloneResults[2].sources, 1);
   assert.equal(report.topicSwitch.standaloneResults[3].sources, 1);
   assert.equal(report.confirmationLoop.status, "needs_source");
   assert.equal(report.confirmationLoop.followUpSources, 1);

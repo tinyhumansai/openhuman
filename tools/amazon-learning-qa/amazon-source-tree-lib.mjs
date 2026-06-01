@@ -375,6 +375,9 @@ export function sourceTreeSearchTerms(query = "", limit = 12) {
   if (/广告|推广|投放|acos|cpc/i.test(value)) add("广告", "推广", "投放", "ACOS", "CPC", "关键词");
   if (/listing|文案|关键词|收录|标题|search term|五点|bullet/i.test(value)) add("Listing", "文案", "关键词", "收录", "标题", "Search Term", "五点");
   if (/选品|产品|值不值得|市场|竞争|利润|差异化/.test(value)) add("选品", "产品", "市场", "竞争", "利润", "差异化");
+  if (/人群画像|用户画像|买家画像|客户画像|目标客户|目标用户|目标受众|受众群体|精准用户/.test(value)) {
+    add("用户画像", "目标客户", "目标用户", "目标受众", "精准用户", "受众", "搜索词", "竞品信息", "词库", "竞品库", "使用场景", "用户痛点");
+  }
 
   for (const keyword of SOURCE_TREE_KNOWN_TERMS) {
     if (value.includes(keyword) || lower.includes(keyword.toLowerCase())) add(keyword);
@@ -516,6 +519,10 @@ const SOURCE_TREE_KNOWN_TERMS = [
   "页面",
   "图片",
   "视觉",
+  "用户画像",
+  "目标客户",
+  "目标用户",
+  "受众",
 ];
 
 const SOURCE_TREE_STOP_WORDS = new Set(["the", "and", "for", "with", "this", "that", "listing"]);

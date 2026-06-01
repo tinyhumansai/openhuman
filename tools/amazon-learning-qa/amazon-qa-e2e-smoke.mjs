@@ -40,8 +40,8 @@ export const TOPIC_SWITCH_ACCEPTANCE_SCENARIO = {
     {
       id: "persona",
       question: "人群画像应该怎么构建？有哪些实操指导建议",
-      allowNoSources: true,
-      relevancePattern: /人群|画像|用户|受众|买家|缺少来源|没有.*资料/,
+      requireSources: true,
+      relevancePattern: /人群|画像|用户|受众|买家|目标客户|竞品信息|搜索词|词库|基本功/i,
     },
     {
       id: "selection-methods",
