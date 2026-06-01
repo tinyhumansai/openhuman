@@ -14,7 +14,7 @@ use serde_json::json;
 use serde_json::{Map, Value};
 use std::ffi::OsString;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
 use openhuman_core::openhuman::agent::progress::AgentProgress;
@@ -171,15 +171,25 @@ use openhuman_core::openhuman::tools::traits::{PermissionLevel, Tool, ToolCatego
 struct EnvVarGuard {
     key: &'static str,
     old: Option<OsString>,
+    _lock: MutexGuard<'static, ()>,
 }
 
 impl EnvVarGuard {
     fn set_to_path(key: &'static str, value: &Path) -> Self {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned");
         let old = std::env::var_os(key);
         unsafe {
             std::env::set_var(key, value.as_os_str());
         }
-        Self { key, old }
+        Self {
+            key,
+            old,
+            _lock: lock,
+        }
     }
 }
 
@@ -989,7 +999,7 @@ fn memory_schema_registries_and_query_tool_metadata_cover_public_surfaces() {
     let legacy_tree_schemas = openhuman_core::openhuman::memory::schema::all_controller_schemas();
     let legacy_tree_controllers =
         openhuman_core::openhuman::memory::schema::all_registered_controllers();
-    assert_eq!(legacy_tree_schemas.len(), 19);
+    assert_eq!(legacy_tree_schemas.len(), 21);
     assert_eq!(legacy_tree_schemas.len(), legacy_tree_controllers.len());
     for function in [
         "ingest",
@@ -1208,7 +1218,7 @@ fn memory_sync_composio_catalog_scope_and_state_helpers_cover_edge_cases() {
     assert_eq!(classify_unknown("GMAIL_FETCH_EMAILS"), ToolScope::Read);
     assert_eq!(
         toolkit_from_slug(" MICROSOFT_TEAMS_SEND_MESSAGE "),
-        Some("microsoft".into())
+        Some("microsoft_teams".into())
     );
     assert_eq!(toolkit_from_slug(""), None);
     let catalog = &[CuratedTool {
@@ -3761,7 +3771,7 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
 
     let schemas = all_memory_sources_controller_schemas();
     let controllers = all_memory_sources_registered_controllers();
-    assert_eq!(schemas.len(), 9);
+    assert_eq!(schemas.len(), 10);
     assert_eq!(schemas.len(), controllers.len());
     assert_eq!(
         openhuman_core::openhuman::memory_sources::schemas::schemas("read_item").function,
