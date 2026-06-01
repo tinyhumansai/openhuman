@@ -79,6 +79,8 @@ pub struct StoredAppState {
     pub encryption_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onboarding_tasks: Option<StoredOnboardingTasks>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyring_consent: Option<crate::openhuman::keyring_consent::ConsentPreference>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +104,7 @@ pub struct AppStateSnapshot {
     /// issue #1299.
     pub meet_auto_orchestrator_handoff: bool,
     pub local_state: StoredAppState,
+    pub keyring_status: crate::openhuman::keyring_consent::KeyringStatus,
     pub runtime: RuntimeSnapshot,
 }
 
@@ -121,6 +124,8 @@ pub struct StoredAppStatePatch {
     pub encryption_key: Option<Option<String>>,
     #[serde(default)]
     pub onboarding_tasks: Option<Option<StoredOnboardingTasks>>,
+    #[serde(default)]
+    pub keyring_consent: Option<Option<crate::openhuman::keyring_consent::ConsentPreference>>,
 }
 
 fn app_state_path(config: &Config) -> Result<PathBuf, String> {
@@ -257,7 +262,7 @@ fn save_stored_app_state_unlocked(config: &Config, state: &StoredAppState) -> Re
     Ok(())
 }
 
-fn save_stored_app_state(config: &Config, state: &StoredAppState) -> Result<(), String> {
+pub fn save_app_state(config: &Config, state: &StoredAppState) -> Result<(), String> {
     let _guard = APP_STATE_FILE_LOCK.lock();
     save_stored_app_state_unlocked(config, state)
 }
@@ -649,6 +654,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
 
     let t_local_state = Instant::now();
     let local_state = load_stored_app_state(&config)?;
+    crate::openhuman::keyring_consent::policy::initialize(local_state.keyring_consent.clone());
     let local_state_ms = t_local_state.elapsed().as_millis();
 
     let total_ms = t_total.elapsed().as_millis();
@@ -671,6 +677,8 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
         runtime.service.state
     );
 
+    let keyring_status = crate::openhuman::keyring_consent::policy::current_status();
+
     Ok(RpcOutcome::new(
         AppStateSnapshot {
             auth,
@@ -681,6 +689,7 @@ pub async fn snapshot() -> Result<RpcOutcome<AppStateSnapshot>, String> {
             analytics_enabled: config.observability.analytics_enabled,
             meet_auto_orchestrator_handoff: config.meet.auto_orchestrator_handoff,
             local_state,
+            keyring_status,
             runtime,
         },
         vec!["core app state snapshot fetched".to_string()],
@@ -773,12 +782,17 @@ pub async fn update_local_state(
         current.onboarding_tasks = onboarding_tasks;
     }
 
+    if let Some(keyring_consent) = patch.keyring_consent {
+        current.keyring_consent = keyring_consent;
+    }
+
     save_stored_app_state_unlocked(&config, &current)?;
 
     debug!(
-        "{LOG_PREFIX} local state updated encryption_key={} onboarding_tasks={}",
+        "{LOG_PREFIX} local state updated encryption_key={} onboarding_tasks={} keyring_consent={}",
         current.encryption_key.is_some(),
-        current.onboarding_tasks.is_some()
+        current.onboarding_tasks.is_some(),
+        current.keyring_consent.is_some(),
     );
 
     Ok(RpcOutcome::new(

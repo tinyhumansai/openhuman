@@ -217,6 +217,20 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
             });
         }
     }
+    // Ensure the action sandbox directory exists (defaults to ~/OpenHuman/projects).
+    let action_dir = config.action_dir.clone();
+    if let Err(e) = tokio::fs::create_dir_all(&action_dir).await {
+        tracing::warn!(
+            dir = %action_dir.display(),
+            error = %e,
+            "[startup] could not create action sandbox dir"
+        );
+    }
+    tracing::info!(
+        workspace = %config.workspace_dir.display(),
+        action = %action_dir.display(),
+        "[startup] workspace (internal state) and action sandbox (tool cwd) directories configured"
+    );
     // Install as the process-global live policy so runtime autonomy changes
     // (config.update_autonomy_settings) are reflected by `live_policy::current()`
     // and picked up by the next session.
@@ -224,8 +238,21 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
+            &config.action_dir,
         )),
         config.workspace_dir.clone(),
+        config.action_dir.clone(),
+    );
+    // Seed the live tool-execution timeout from the persisted `[agent]` config so
+    // a user-configured value (Settings → Agent OS access → Action timeout) is in
+    // effect from the first tool call. `OPENHUMAN_TOOL_TIMEOUT_SECS`, when set,
+    // still overrides this inside `set_tool_timeout_secs`.
+    let effective_timeout =
+        crate::openhuman::tool_timeout::set_tool_timeout_secs(config.agent.agent_timeout_secs);
+    tracing::debug!(
+        configured = config.agent.agent_timeout_secs,
+        effective = effective_timeout,
+        "[startup] seeded tool-execution timeout from config"
     );
     // Phase 1 of #1401: audit logger is wired with defaults so emission paths
     // are exercised at runtime. A follow-up promotes `SecurityConfig` (and
@@ -260,7 +287,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         Arc::clone(&mem),
         &config.browser,
         &config.http_request,
-        &workspace,
+        &action_dir,
         &config.agents,
         &config,
     ));
@@ -680,6 +707,7 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
         workspace_dir: Arc::new(config.workspace_dir.clone()),
         message_timeout_secs,
         multimodal: config.multimodal.clone(),
+        multimodal_files: config.multimodal_files.clone(),
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;

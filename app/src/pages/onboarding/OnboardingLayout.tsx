@@ -29,12 +29,26 @@ const OnboardingLayout = () => {
     });
 
     try {
+      // Preserve a tool preference the user already customized (e.g. via
+      // Settings → Tools or an earlier onboarding run) rather than resetting
+      // to catalog defaults on every completion. Re-applying defaults here
+      // could silently narrow an existing selection. Only seed defaults when
+      // no preference has been persisted yet. The Rust-side filter
+      // (`filter_tools_by_user_preference`) is the authoritative guard against
+      // stale snapshots stripping newer tools (issue #3096); this is
+      // defense-in-depth on the write path.
+      const existingEnabledTools = snapshot.localState.onboardingTasks?.enabledTools;
+      const enabledTools =
+        existingEnabledTools && existingEnabledTools.length > 0
+          ? existingEnabledTools
+          : getEnabledRustToolNames(getDefaultEnabledTools());
+
       await setOnboardingTasks({
         accessibilityPermissionGranted:
           snapshot.localState.onboardingTasks?.accessibilityPermissionGranted ?? false,
         localModelConsentGiven: false,
         localModelDownloadStarted: false,
-        enabledTools: getEnabledRustToolNames(getDefaultEnabledTools()),
+        enabledTools,
         connectedSources: draft.connectedSources,
         updatedAtMs: Date.now(),
       });

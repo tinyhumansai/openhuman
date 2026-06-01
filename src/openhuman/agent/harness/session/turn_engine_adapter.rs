@@ -144,6 +144,27 @@ impl ToolSource for AgentToolSource {
             success: exec_result.success,
         }
     }
+
+    fn sync_agent_surface(
+        &mut self,
+        tools: Arc<Vec<Box<dyn Tool>>>,
+        visible_tool_names: HashSet<String>,
+        tool_policy_session: ToolPolicySession,
+        payload_summarizer: Option<Arc<dyn PayloadSummarizer>>,
+        prefer_markdown: bool,
+        budget_bytes: usize,
+        should_send_specs: bool,
+        advertised_specs: Vec<ToolSpec>,
+    ) {
+        self.tools = tools;
+        self.visible_tool_names = visible_tool_names;
+        self.tool_policy_session = tool_policy_session;
+        self.payload_summarizer = payload_summarizer;
+        self.prefer_markdown = prefer_markdown;
+        self.budget_bytes = budget_bytes;
+        self.should_send_specs = should_send_specs;
+        self.advertised_specs = advertised_specs;
+    }
 }
 
 /// Turn observer for `Agent::turn`: owns the typed-history rebuild, context
@@ -189,8 +210,32 @@ impl TurnObserver for AgentObserver<'_> {
     async fn before_dispatch(
         &mut self,
         buf: &mut Vec<ChatMessage>,
-        _iteration: usize,
+        tools: &mut dyn crate::openhuman::agent::harness::engine::ToolSource,
+        iteration: usize,
     ) -> Result<()> {
+        if self.agent.drain_composio_integrations_changed_events() {
+            let refreshed = self
+                .agent
+                .refresh_delegation_tools_from_cached_integrations("event");
+            if refreshed {
+                log::debug!(
+                    "[agent_loop] midturn:resync-delegation-tools — composio integrations changed; resyncing tool surface (iteration={} visible_tools={})",
+                    iteration,
+                    self.agent.visible_tool_names.len()
+                );
+                tools.sync_agent_surface(
+                    Arc::clone(&self.agent.tools),
+                    self.agent.visible_tool_names.clone(),
+                    self.agent.tool_policy_session.clone(),
+                    self.agent.payload_summarizer.clone(),
+                    self.agent.context.prefer_markdown_tool_output(),
+                    self.agent.context.tool_result_budget_bytes(),
+                    self.agent.tool_dispatcher.should_send_tool_specs(),
+                    self.agent.visible_tool_specs.as_ref().clone(),
+                );
+            }
+        }
+
         // Pre-dispatch token-budget trim on the typed history.
         if let Some(context_window) = context_window_for_model(&self.effective_model) {
             super::super::token_budget::trim_conversation_history_to_budget(

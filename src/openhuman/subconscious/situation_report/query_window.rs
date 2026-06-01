@@ -1,9 +1,11 @@
-//! `query_global` recap window section (#623).
+//! Source-tree recap window section (#623).
 //!
-//! Wraps `tree::retrieval::global::query_global` for the window between
-//! `last_tick_at` and now. Translates seconds-since-last-tick into a
-//! day window (rounded up to ≥ 1 so cold start still produces a useful
-//! recap).
+//! Walks the per-source summary trees (`retrieval::query_source`) for the
+//! window between `last_tick_at` and now. Translates seconds-since-last-tick
+//! into a day window (rounded up to ≥ 1 so cold start still produces a
+//! useful recap). The global digest tree was removed — source trees plus
+//! the entity index are the substrate, so the recap is reconstructed by
+//! walking source-tree summaries across the window.
 //!
 //! Failures degrade gracefully — the section just reports
 //! "Recap unavailable" rather than aborting the tick.
@@ -11,13 +13,16 @@
 use std::fmt::Write;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_tree::retrieval::global::query_global;
+use crate::openhuman::memory_tree::retrieval::query_source;
 
 /// Cold-start fallback window when `last_tick_at` is unset.
 const COLD_START_DAYS: u32 = 7;
 
-/// Minimum window — `query_global` ignores sub-day windows.
+/// Minimum window — sub-day windows round up to one day.
 const MIN_WINDOW_DAYS: u32 = 1;
+
+/// Max source summaries to pull into the recap window.
+const MAX_RECAP_HITS: usize = 20;
 
 pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
     let window_days = compute_window_days(last_tick_at);
@@ -26,7 +31,8 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
          last_tick_at={last_tick_at}"
     );
 
-    let resp = match query_global(config, window_days).await {
+    let resp = match query_source(config, None, None, Some(window_days), None, MAX_RECAP_HITS).await
+    {
         Ok(r) => r,
         Err(e) => {
             log::warn!("[subconscious::situation_report::query_window] failed: {e}");
@@ -34,11 +40,11 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
         }
     };
 
-    // Post-filter the hits against `last_tick_at`. `query_global` rounds
-    // up to whole days (`MIN_WINDOW_DAYS=1`), so even a 5-minute gap
-    // between ticks pulls back the same 24h window of digest summaries
-    // — those would re-feed the LLM the very content that produced the
-    // last tick's reflections, and the no-insert-time-dedupe path on
+    // Post-filter the hits against `last_tick_at`. The window rounds up to
+    // whole days (`MIN_WINDOW_DAYS=1`), so even a 5-minute gap between ticks
+    // pulls back the same 24h window of source summaries — those would
+    // re-feed the LLM the very content that produced the last tick's
+    // reflections, and the no-insert-time-dedupe path on
     // `persist_and_surface_reflections` would happily store the
     // duplicates. Cutoff semantics match `summaries::build_section`:
     // anything whose `time_range_end` is at or before `last_tick_at` has

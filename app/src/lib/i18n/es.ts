@@ -1170,6 +1170,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Sí, desinstalar',
   'mcp.detail.uninstall': 'Desinstalar',
   'mcp.detail.envVars': 'Variables ambientales',
+  'mcp.detail.reconfigure': 'Reconfigurar',
+  'mcp.detail.reconfigureHint':
+    'Introduce nuevos valores para cada variable y vuelve a conectar. Esto reemplaza los valores guardados.',
+  'mcp.detail.saveReconnect': 'Guardar y reconectar',
+  'mcp.detail.reconfigureSaving': 'Guardando…',
+  'mcp.detail.reconfigureSuccess': 'Entorno actualizado y reconectado.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Guardado, pero no se pudo reconectar con los nuevos valores.',
   'mcp.detail.tools': 'Herramientas',
   'onboarding.skipForNow': 'Saltar por ahora',
   'onboarding.localAI.continueWithCloud': 'Continuar con la nube',
@@ -2024,6 +2032,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'Página URL',
   'memorySources.cssSelector': 'Selector CSS (opcional)',
   'memorySources.searchQuery': 'Consulta de búsqueda',
+  'memorySources.build.title': 'Construir',
+  'memorySources.build.building': 'Construyendo…',
+  'memorySources.build.successTitle': 'Árbol construido',
+  'memorySources.build.failedTitle': 'Construcción fallida',
+  'memorySources.build.sealsMessage': 'sellado(s) completado(s)',
   'backend.aiBackend': 'Backend de IA',
   'backend.cloud': 'Nube',
   'backend.recommended': 'Recomendado',
@@ -2540,6 +2553,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'en ejecución',
   'conversations.subagent.statusCompleted': 'completado',
   'conversations.subagent.statusFailed': 'fallido',
+  'conversations.subagent.statusAwaitingUser': 'esperando al usuario',
   'daemon.serviceBlockingGate.body': 'Cuerpo',
   'daemon.serviceBlockingGate.downloadHint': 'Sugerencia de descarga',
   'daemon.serviceBlockingGate.downloadLatest': 'Descargar la última versión',
@@ -3654,6 +3668,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Requerir la aprobación del plan de tareas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pausa antes de que un agente asignado ejecute un breve tarea elaborada por el agente.',
+  'settings.agentAccess.timeout.label': 'Tiempo de espera de la acción',
+  'settings.agentAccess.timeout.desc':
+    'Cuánto tiempo puede ejecutarse una sola herramienta o acción antes de cancelarse. Aumenta este valor si un modelo local grande se interrumpe antes de terminar su respuesta.',
+  'settings.agentAccess.timeout.unit': 'segundos',
+  'settings.agentAccess.timeout.invalid':
+    'Introduce un número entero de segundos dentro del rango permitido',
+  'settings.agentAccess.timeout.envOverride':
+    'La variable de entorno OPENHUMAN_TOOL_TIMEOUT_SECS está anulando este ajuste, por lo que los cambios aquí no tendrán efecto hasta que se elimine.',
   'settings.agentAccess.grantedFolders': 'Carpetas concedidas',
   'settings.agentAccess.alwaysAllow': 'Herramientas siempre permitidas',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3670,6 +3692,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Añadir',
   'settings.agentAccess.saving': 'Guardando…',
   'settings.agentAccess.changesApply': 'Los cambios se aplican en tu próximo mensaje.',
+  'settings.agentAccess.directories': 'Directorios',
+  'settings.agentAccess.actionSandbox': 'Sandbox de acciones',
+  'settings.agentAccess.readWriteAccess': 'lectura + escritura',
+  'settings.agentAccess.actionSandboxDesc':
+    'Directorio de trabajo predeterminado para herramientas de shell, archivos y git.',
+  'settings.agentAccess.internalState': 'Estado interno',
+  'settings.agentAccess.agentBlocked': 'bloqueado para el agente',
+  'settings.agentAccess.internalStateDesc':
+    'Bases de datos de memoria, sesiones, tokens y otros datos esenciales. No accesible para herramientas del agente.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4465,6 +4496,41 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Agrupamiento promedio {avg} · transitividad {transitivity}',
   'graphCohesion.title': 'Cohesión del grafo',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'Almacenamiento seguro no disponible',
+  'keyring.consent.description':
+    'El llavero de su sistema operativo no está accesible. OpenHuman necesita su permiso para almacenar secretos usando almacenamiento local cifrado.',
+  'keyring.consent.reasonPrefix': 'Motivo:',
+  'keyring.consent.showDetails': '¿Qué significa esto?',
+  'keyring.consent.hideDetails': 'Ocultar detalles',
+  'keyring.consent.tradeoffTitle': 'Compromiso de seguridad',
+  'keyring.consent.tradeoffBody':
+    'Con el almacenamiento local cifrado, sus secretos se cifran en disco usando una clave maestra almacenada junto a los datos. Esto es menos seguro que el llavero del SO, que usa protección respaldada por hardware. Las copias de seguridad o la sincronización de archivos pueden incluir los datos cifrados.',
+  'keyring.consent.consentButton': 'Usar almacenamiento local cifrado',
+  'keyring.consent.retryButton': 'Reintentar OS Keychain',
+  'keyring.consent.declineButton': 'Rechazar',
+  'keyring.consent.retrying': 'Reintentando…',
+  'keyring.consent.error': 'No se pudo guardar la preferencia. Inténtelo de nuevo.',
+  'keyring.consent.retryFailed': 'El llavero sigue sin estar disponible.',
+  'keyring.settings.title': 'Seguridad',
+  'keyring.settings.storageMode': 'Modo de almacenamiento de secretos',
+  'keyring.settings.mode.osKeychain': 'Llavero del SO',
+  'keyring.settings.mode.encryptedFile': 'Local cifrado',
+  'keyring.settings.mode.consentPending': 'No configurado',
+  'keyring.settings.mode.declined': 'Rechazado',
+  'keyring.settings.availability': 'Disponibilidad del llavero',
+  'keyring.settings.available': 'El llavero del SO está disponible',
+  'keyring.settings.unavailable': 'El llavero del SO no está disponible',
+  'keyring.settings.backend': 'Motor',
+  'keyring.settings.retryButton': 'Reintentar detección del llavero',
+  'keyring.settings.retryFailed': 'Reintento fallido. El llavero sigue sin estar disponible.',
+  'keyring.settings.consentTitle': 'Consentimiento de almacenamiento',
+  'keyring.settings.consentDescription':
+    'Elija cómo se almacenan los secretos cuando el llavero del SO no está disponible.',
+  'keyring.settings.grantConsent': 'Permitir almacenamiento local cifrado',
+  'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
+  'pages.settings.account.security': 'Seguridad',
+  'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
 };
 
 export default messages;

@@ -47,11 +47,24 @@ export function PixiGraph({
   onErrorRef.current = onError;
   darkRef.current = dark;
 
-  // (Re)mount the renderer whenever the graph data or mode changes.
+  // Mount the renderer once; update in-place when graph data changes.
+  const mountedModeRef = useRef<GraphMode | null>(null);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+
+    // Mode change requires full remount (different edge semantics).
+    if (handleRef.current && mountedModeRef.current === mode) {
+      const { simNodes, links } = buildGraph(nodes, edges, mode);
+      handleRef.current.updateGraph(simNodes, links);
+      return;
+    }
+
+    // First mount or mode flip — full init.
     let cancelled = false;
+    handleRef.current?.destroy();
+    handleRef.current = null;
     const { simNodes, links } = buildGraph(nodes, edges, mode);
     const pending = mountPixiGraph(host, {
       simNodes,
@@ -66,11 +79,10 @@ export function PixiGraph({
           return null;
         }
         handleRef.current = handle;
+        mountedModeRef.current = mode;
         return handle;
       })
       .catch(err => {
-        // Runtime WebGL failure (driver / lost context) even though
-        // supportsWebGL() was true — let the parent fall back to SVG.
         console.error('[memory-graph] Pixi init failed; falling back to SVG', err);
         if (!cancelled) onErrorRef.current?.();
         return null;
@@ -78,8 +90,10 @@ export function PixiGraph({
     return () => {
       cancelled = true;
       handleRef.current = null;
+      mountedModeRef.current = null;
       void pending.then(handle => handle?.destroy());
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges, mode]);
 
   useEffect(() => {
