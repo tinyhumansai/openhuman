@@ -595,19 +595,20 @@ mod tests {
     }
 
     #[test]
-    fn run_summarize_skips_cleanly_on_empty_buffer_without_local_ai() {
-        // #002 FR-007: with no local AI configured, `run` no longer hard-errors
-        // on a provider precondition — it builds the cloud fallback provider and
-        // proceeds. An empty buffer then takes the normal "no buffered data"
-        // skip path (success), NOT a "requires local_ai" error.
+    fn run_summarize_errors_cleanly_without_provider() {
+        // With no local AI and no cloud opt-in (default), `run` returns a clean
+        // actionable error rather than panicking or giving an opaque failure.
+        // Users must enable local AI (Ollama) or set cloud_summarization_opt_in
+        // in Settings → AI → Memory (or via OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION=true).
         let tmp = TempDir::new().unwrap();
         let _workspace = WorkspaceEnvGuard::set(tmp.path());
 
-        let result = run_summarize(&["fresh-ns".to_string()]);
+        let err = run_summarize(&["fresh-ns".to_string()])
+            .expect_err("should error without any summarization provider");
+        let msg = err.to_string();
         assert!(
-            result.is_ok(),
-            "empty-buffer run should skip cleanly, not error: {:#}",
-            result.err().map(|e| e.to_string()).unwrap_or_default()
+            msg.contains("no summarization provider"),
+            "error should name the missing provider: {msg}"
         );
     }
 

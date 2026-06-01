@@ -1945,6 +1945,16 @@ impl Config {
             };
         }
 
+        if let Some(raw) = env.get("OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION") {
+            match raw.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" => self.memory_tree.cloud_summarization_opt_in = true,
+                "0" | "false" | "no" => self.memory_tree.cloud_summarization_opt_in = false,
+                other => log::warn!(
+                    "[config] OPENHUMAN_MEMORY_TREE_CLOUD_SUMMARIZATION: unknown value {other:?} (expected true/false)"
+                ),
+            }
+        }
+
         // Auto-update overrides
         if let Some(flag) = env.get("OPENHUMAN_AUTO_UPDATE_ENABLED") {
             let normalized = flag.trim().to_ascii_lowercase();
