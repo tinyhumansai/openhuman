@@ -207,13 +207,14 @@ impl Summariser for LlmSummariser {
         // When structured_facet_extraction is enabled, attempt to split the response
         // into a prose summary and an optional JSON block. On parse failure, the
         // prose is used as-is and zero facets are emitted (fail-soft).
-        let summary_text: &str;
+        let summary_text: String;
 
         if self.cfg.structured_facet_extraction {
             let (prose, maybe_structured) = split_structured_response(raw.trim());
-            summary_text = prose;
+            let mut parsed_summary_text = String::new();
             match maybe_structured {
                 Some(Ok(parsed)) => {
+                    parsed_summary_text = parsed.summary.trim().to_string();
                     tracing::debug!(
                         "[learning::extract::summary] source_id={} facets_emitted={}",
                         ctx.tree_id,
@@ -239,11 +240,26 @@ impl Summariser for LlmSummariser {
                     );
                 }
             }
+            summary_text = if !prose.trim().is_empty() {
+                prose.trim().to_string()
+            } else {
+                parsed_summary_text
+            };
         } else {
-            summary_text = raw.trim();
+            summary_text = raw.trim().to_string();
         }
 
-        let (content, token_count) = clamp_to_budget(summary_text, effective_budget);
+        if summary_text.trim().is_empty() {
+            log::warn!(
+                "[tree_source::summariser::llm] provider returned no usable summary \
+                 tree_id={} level={} — falling back to inert summariser",
+                ctx.tree_id,
+                ctx.target_level
+            );
+            return self.fallback.summarise(inputs, ctx).await;
+        }
+
+        let (content, token_count) = clamp_to_budget(&summary_text, effective_budget);
         log::debug!(
             "[tree_source::summariser::llm] sealed tree_id={} level={} inputs={} tokens={}",
             ctx.tree_id,
@@ -335,6 +351,8 @@ fn system_prompt(_budget: u32, structured_facets: bool) -> String {
          - Only include facets that are clearly evidenced in the content above.\n\
          - Each facet must cite at least one chunk_id from this batch (the id in brackets \
            before each contribution, e.g. [chunk-abc]).\n\
+         - Every facet object must include confidence as a number from 0.0 to 1.0. \
+           If you cannot estimate confidence, omit that facet.\n\
          - Use canonical keys: verbosity, format, name, timezone, role, package_manager, \
            lang, framework, runtime, etc.\n\
          - Cap the facets array at 8 items per call. Skip the array entirely (emit \
@@ -370,10 +388,69 @@ fn split_structured_response(raw: &str) -> (&str, Option<anyhow::Result<Structur
         after_open.trim()
     };
 
-    let result = serde_json::from_str::<StructuredSummary>(json_str)
-        .map_err(|e| anyhow::anyhow!("structured summary JSON parse error: {e}"));
+    let result = parse_structured_summary(json_str);
 
     (prose, Some(result))
+}
+
+fn parse_structured_summary(json_str: &str) -> anyhow::Result<StructuredSummary> {
+    match serde_json::from_str::<StructuredSummary>(json_str) {
+        Ok(parsed) => Ok(parsed),
+        Err(first_error) => {
+            let repaired = strip_json_trailing_commas(json_str);
+            if repaired == json_str {
+                return Err(anyhow::anyhow!(
+                    "structured summary JSON parse error: {first_error}"
+                ));
+            }
+            serde_json::from_str::<StructuredSummary>(&repaired).map_err(|second_error| {
+                anyhow::anyhow!(
+                    "structured summary JSON parse error: {first_error}; repair failed: {second_error}"
+                )
+            })
+        }
+    }
+}
+
+fn strip_json_trailing_commas(json_str: &str) -> String {
+    let mut out = String::with_capacity(json_str.len());
+    let mut chars = json_str.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+
+        if ch == ',' {
+            let mut lookahead = chars.clone();
+            while matches!(lookahead.peek(), Some(next) if next.is_whitespace()) {
+                lookahead.next();
+            }
+            if matches!(lookahead.peek(), Some('}' | ']')) {
+                continue;
+            }
+        }
+
+        out.push(ch);
+    }
+
+    out
 }
 
 /// Truncate to the caller's token budget using the same ~4 chars/token
@@ -495,6 +572,10 @@ mod tests {
             "should mention evidence_chunks"
         );
         assert!(
+            p.contains("must include confidence"),
+            "should require confidence for every facet"
+        );
+        assert!(
             p.contains("canonical keys"),
             "should specify canonical keys"
         );
@@ -523,12 +604,66 @@ mod tests {
     }
 
     #[test]
+    fn keeps_valid_facets_when_one_facet_is_malformed() {
+        let raw = "The user prefers pnpm and terse replies.\n\n\
+                   ```json\n\
+                   {\"summary\": \"The user prefers pnpm and terse replies.\", \"facets\": [\
+                   {\"class\": \"tooling\", \"key\": \"package_manager\", \
+                   \"value\": \"pnpm\", \"evidence_chunks\": [\"c1\"], \
+                   \"confidence\": 0.9, \"cue_family\": \"explicit\"},\
+                   {\"class\": \"style\", \"key\": \"verbosity\", \
+                   \"value\": \"terse\", \"evidence_chunks\": [\"c2\"], \
+                   \"cue_family\": \"explicit\"}\
+                   ]}\n\
+                   ```";
+
+        let (prose, maybe) = split_structured_response(raw);
+        assert!(prose.contains("prefers pnpm"));
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("should parse with malformed facet dropped");
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
+    }
+
+    #[test]
     fn gracefully_falls_back_on_invalid_json() {
         let raw = "Summary text.\n\n```json\nnot valid json\n```";
         let (prose, maybe) = split_structured_response(raw);
         assert!(prose.contains("Summary"), "prose should be extracted");
         let result = maybe.expect("fence found");
         assert!(result.is_err(), "invalid JSON should produce Err");
+    }
+
+    #[test]
+    fn repairs_common_trailing_commas_in_structured_response() {
+        let raw = "The user prefers pnpm.\n\n\
+                   ```json\n\
+                   {\"summary\":\"The user prefers pnpm.\",\"facets\":[\
+                   {\"class\":\"tooling\",\"key\":\"package_manager\",\
+                   \"value\":\"pnpm\",\"evidence_chunks\":[\"c1\",],\
+                   \"confidence\":0.9,\"cue_family\":\"explicit\",},\
+                   ],}\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("trailing commas should be repaired");
+        assert_eq!(parsed.facets.len(), 1);
+        assert_eq!(parsed.facets[0].key, "package_manager");
+    }
+
+    #[test]
+    fn trailing_comma_repair_ignores_commas_inside_strings() {
+        let raw = "```json\n\
+                   {\"summary\":\"Keep commas, ] and } inside this string.\",\
+                   \"facets\":[],}\n\
+                   ```";
+        let (_prose, maybe) = split_structured_response(raw);
+        let parsed = maybe
+            .expect("should find JSON block")
+            .expect("trailing object comma should be repaired");
+        assert_eq!(parsed.summary, "Keep commas, ] and } inside this string.");
     }
 
     #[test]
@@ -642,6 +777,42 @@ mod tests {
         assert_eq!(out.content, "alice decided to ship friday");
         assert!(out.token_count > 0);
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn json_only_structured_response_uses_structured_summary_text() {
+        let provider = std::sync::Arc::new(StubProvider::ok(
+            "```json\n{\"summary\":\"alice decided to ship friday\",\"facets\":[]}\n```",
+        ));
+        let s = LlmSummariser::new(
+            LlmSummariserConfig {
+                model: "qwen2.5:0.5b".into(),
+                structured_facet_extraction: true,
+            },
+            provider,
+        );
+        let inputs = vec![sample_input("a", "alice ships friday")];
+        let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
+
+        assert_eq!(out.content, "alice decided to ship friday");
+        assert!(out.token_count > 0);
+    }
+
+    #[tokio::test]
+    async fn invalid_json_without_prose_falls_back_to_inert_summary() {
+        let provider = std::sync::Arc::new(StubProvider::ok("```json\n{\"summary\":"));
+        let s = LlmSummariser::new(
+            LlmSummariserConfig {
+                model: "qwen2.5:0.5b".into(),
+                structured_facet_extraction: true,
+            },
+            provider,
+        );
+        let inputs = vec![sample_input("a", "alice ships friday")];
+        let out = s.summarise(&inputs, &test_ctx()).await.unwrap();
+
+        assert!(out.content.contains("alice ships friday"));
+        assert!(out.token_count > 0);
     }
 
     #[test]
