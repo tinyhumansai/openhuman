@@ -324,6 +324,75 @@ fn refresh_delegation_tools_updates_schema_even_when_tool_arc_is_shared() {
     );
 }
 
+/// Regression for #3044: repeated mid-session connects while the `tools`
+/// Arc stays shared (the normal `before_dispatch` path, where
+/// `AgentToolSource` holds a clone) must not accumulate duplicate
+/// synthesised `ToolSpec`s.
+///
+/// Before the fix, a failed `tools` reconcile rolled `synthesized_tool_names`
+/// back to the *old* mask. On the next refresh the spec `retain` used that
+/// stale mask and failed to drop the intervening refresh's specs, so the
+/// synthesised delegate spec piled up once per connect.
+#[test]
+fn refresh_delegation_tools_no_duplicate_specs_across_shared_arc_connects() {
+    use crate::openhuman::agent::harness::AgentDefinitionRegistry;
+
+    AgentDefinitionRegistry::init_global_builtins().unwrap();
+    let mut agent = build_minimal_agent_with_definition_name(Some("orchestrator"));
+
+    let conn = |slug: &str, desc: &str| crate::openhuman::context::prompt::ConnectedIntegration {
+        toolkit: slug.into(),
+        description: desc.into(),
+        tools: vec![],
+        gated_tools: vec![],
+        connected: true,
+        non_active_status: None,
+    };
+
+    let delegate_spec_count = |agent: &Agent| -> usize {
+        agent
+            .tool_specs()
+            .iter()
+            .filter(|s| s.name == "delegate_to_integrations_agent")
+            .count()
+    };
+
+    // Turn 1: gmail connects.
+    agent.set_connected_integrations(vec![conn("gmail", "Email")]);
+    assert!(agent.refresh_delegation_tools());
+
+    // Hold a shared clone across every subsequent refresh so `Arc::get_mut`
+    // always fails — exactly what happens during an in-flight turn.
+    let _shared_tools = agent.tools_arc();
+
+    // Turn 2: notion connects mid-session.
+    agent.set_connected_integrations(vec![conn("gmail", "Email"), conn("notion", "Docs")]);
+    assert!(agent.refresh_delegation_tools());
+
+    // Turn 3: slack connects mid-session — this is where the old code
+    // produced a duplicate `delegate_to_integrations_agent` spec.
+    agent.set_connected_integrations(vec![
+        conn("gmail", "Email"),
+        conn("notion", "Docs"),
+        conn("slack", "Chat"),
+    ]);
+    assert!(agent.refresh_delegation_tools());
+
+    assert_eq!(
+        delegate_spec_count(&agent),
+        1,
+        "exactly one synthesised delegate spec must remain after repeated shared-Arc connects"
+    );
+    assert_eq!(
+        integration_delegate_toolkit_enum(&agent),
+        vec![
+            "gmail".to_string(),
+            "notion".to_string(),
+            "slack".to_string()
+        ]
+    );
+}
+
 #[test]
 fn composio_listener_drains_integrations_changed_events() {
     let _ = init_global(64);
