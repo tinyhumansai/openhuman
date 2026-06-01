@@ -458,6 +458,11 @@ pub enum DomainEvent {
         toolkit: String,
         connection_id: String,
     },
+    /// The connected Composio toolkit set changed (connect/revoke/config flip).
+    ///
+    /// `toolkits` is the currently-active, sanitised slug list that should
+    /// drive orchestrator delegation schema rebuilds.
+    ComposioIntegrationsChanged { toolkits: Vec<String> },
     /// A Composio action was executed (success or failure) via the backend.
     ComposioActionExecuted {
         tool: String,
@@ -841,6 +846,7 @@ impl DomainEvent {
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
             | Self::ComposioConnectionDeleted { .. }
+            | Self::ComposioIntegrationsChanged { .. }
             | Self::ComposioActionExecuted { .. }
             | Self::ComposioConfigChanged { .. } => "composio",
 
@@ -943,6 +949,7 @@ impl DomainEvent {
             Self::ComposioTriggerReceived { .. } => "ComposioTriggerReceived",
             Self::ComposioConnectionCreated { .. } => "ComposioConnectionCreated",
             Self::ComposioConnectionDeleted { .. } => "ComposioConnectionDeleted",
+            Self::ComposioIntegrationsChanged { .. } => "ComposioIntegrationsChanged",
             Self::ComposioActionExecuted { .. } => "ComposioActionExecuted",
             Self::ComposioConfigChanged { .. } => "ComposioConfigChanged",
             Self::TriggerEvaluated { .. } => "TriggerEvaluated",
