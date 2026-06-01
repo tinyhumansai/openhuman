@@ -1,7 +1,7 @@
 //! Round 20 near-90 raw integration coverage closures.
 //!
 //! All fixtures are local and deterministic: temp workspaces, loopback HTTP,
-//! and a fake `gh` binary. Run with `--test-threads=1`; several covered
+//! and fake `git` / `gh` binaries. Run with `--test-threads=1`; several covered
 //! surfaces resolve config/workspace through process environment.
 
 use std::collections::HashMap;
@@ -428,8 +428,8 @@ async fn round20_memory_sources_readers_and_sync_cover_error_edges_without_netwo
     let tmp = tempdir();
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh_round20(&script);
+    write_fake_git_round20(&bin.join("git"));
+    write_fake_gh_round20(&bin.join("gh"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set("PATH", format!("{}:{old_path}", bin.display()));
 
@@ -748,6 +748,24 @@ async fn round20_threads_fallback_title_delete_missing_and_welcome_noop_paths() 
     assert_eq!(migration.transcripts_updated, 0);
 }
 
+fn write_fake_git_round20(path: &PathBuf) {
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "git fixture forces GitHub reader API fallback" >&2
+exit 3
+"#;
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)
+            .expect("fake git metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
+    }
+}
+
 fn write_fake_gh_round20(path: &PathBuf) {
     let script = r#"#!/usr/bin/env bash
 set -euo pipefail
@@ -760,17 +778,17 @@ if [[ "${1:-}" != "api" ]]; then
   exit 2
 fi
 case "${2:-}" in
-  repos/tinyhumansai/openhuman/commits?per_page=30)
+  repos/tinyhumansai/openhuman/commits\?per_page=*\&page=*)
     cat <<'JSON'
 [{"sha":"def456","commit":{"message":"Round20 commit fixture","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-29T00:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-29T00:00:00Z"}}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/issues\?per_page=*\&page=*\&state=all)
     cat <<'JSON'
 [{"number":20,"title":"Round20 issue","body":null,"state":"closed","user":null,"labels":[],"created_at":null,"updated_at":"2026-05-29T00:30:00Z","pull_request":null}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/pulls?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/pulls\?per_page=*\&page=*\&state=all)
     cat <<'JSON'
 [{"number":21,"title":"Round20 merged PR","body":null,"state":"closed","user":null,"labels":[],"created_at":null,"updated_at":"2026-05-29T01:00:00Z","merged_at":"2026-05-29T01:00:00Z","comments":0}]
 JSON
