@@ -190,6 +190,12 @@ pub struct Agent {
     /// dormant on session startup and only fires when integrations
     /// actually change mid-conversation.
     pub(super) last_seen_integrations_hash: u64,
+    /// Per-session raw receiver for `DomainEvent::ComposioIntegrationsChanged`.
+    /// Armed lazily on first turn when the global event bus is available.
+    /// Drained before each provider dispatch so a connection that flips to
+    /// ACTIVE mid-turn can refresh the delegation schema in the same thread.
+    pub(super) composio_integrations_rx:
+        Option<tokio::sync::broadcast::Receiver<crate::core::event_bus::DomainEvent>>,
     /// Optional reference to the `ArchivistHook` registered in
     /// `post_turn_hooks`. Kept separately so the turn loop can call
     /// `flush_open_segment` at session-memory-extraction time (the
