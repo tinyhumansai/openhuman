@@ -458,7 +458,7 @@ async fn composio_providers_sync_state_and_bus_surfaces_cover_read_write_edges()
     );
     assert_eq!(
         toolkit_from_slug("MICROSOFT_TEAMS_SEND_MESSAGE").as_deref(),
-        Some("microsoft")
+        Some("microsoft_teams")
     );
     assert_eq!(classify_unknown("GMAIL_DELETE_DRAFT"), ToolScope::Admin);
     assert_eq!(classify_unknown("NOTION_CREATE_PAGE"), ToolScope::Write);
