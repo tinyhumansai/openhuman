@@ -1606,6 +1606,16 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
 
 #[tokio::test]
 async fn orchestrator_tool_synthesis_covers_agent_and_integration_delegation_edges() {
+    // Serialise against other env-mutating tests in this binary
+    // (`HOME` / `OPENHUMAN_WORKSPACE` are mutated by sibling tests via
+    // `EnvVarGuard`). The `SkillDelegationTool::execute` path hits
+    // `Config::load_or_init()` for its live-toolkit refresh, which
+    // reads those env vars; without the lock a concurrent test's
+    // workspace leaks in and `fetch_connected_integrations_status`
+    // returns a different toolkit list than the test's own snapshot,
+    // making the `unknown_toolkit.output().contains("gmail_pro")`
+    // assertion at line ~1689 flake under cargo-llvm-cov.
+    let _lock = env_lock();
     let mut registry = AgentDefinitionRegistry::default();
     registry.insert(coverage_agent_definition(
         "researcher",
