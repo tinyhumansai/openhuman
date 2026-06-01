@@ -208,7 +208,7 @@ impl Tool for NodeExecTool {
                 shell_quote(code)
             )
         } else if let Some(path) = script_path.as_deref() {
-            let resolved_script = match resolve_script_path(&self.security.workspace_dir, path) {
+            let resolved_script = match resolve_script_path(&self.security.action_dir, path) {
                 Ok(p) => p,
                 Err(msg) => return Ok(ToolResult::error(msg)),
             };
@@ -230,7 +230,7 @@ impl Tool for NodeExecTool {
 
         let mut cmd = match self
             .runtime
-            .build_shell_command(&command, &self.security.workspace_dir)
+            .build_shell_command(&command, &self.security.action_dir)
         {
             Ok(cmd) => cmd,
             Err(e) => {

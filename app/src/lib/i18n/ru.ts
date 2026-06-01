@@ -3655,6 +3655,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Добавлять',
   'settings.agentAccess.saving': 'Сохранение…',
   'settings.agentAccess.changesApply': 'Изменения вступят в силу в следующем сообщении.',
+  'settings.agentAccess.directories': 'Каталоги',
+  'settings.agentAccess.actionSandbox': 'Песочница действий',
+  'settings.agentAccess.readWriteAccess': 'чтение + запись',
+  'settings.agentAccess.actionSandboxDesc':
+    'Рабочий каталог по умолчанию для инструментов оболочки, файлов и git.',
+  'settings.agentAccess.internalState': 'Внутреннее состояние',
+  'settings.agentAccess.agentBlocked': 'заблокировано для агента',
+  'settings.agentAccess.internalStateDesc':
+    'Базы данных памяти, сеансы, токены и другие основные данные. Недоступно для инструментов агента.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
