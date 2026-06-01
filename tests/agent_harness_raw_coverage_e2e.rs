@@ -273,6 +273,7 @@ fn coverage_definition() -> AgentDefinition {
         skill_filter: None,
         extra_tools: Vec::new(),
         max_iterations: 3,
+        iteration_policy: Default::default(),
         max_result_chars: Some(18),
         timeout_secs: None,
         sandbox_mode: SandboxMode::ReadOnly,

@@ -463,6 +463,7 @@ mod scoping_tests {
             skill_filter: None,
             extra_tools: vec![],
             max_iterations: 8,
+            iteration_policy: Default::default(),
             max_result_chars: None,
             timeout_secs: None,
             sandbox_mode: SandboxMode::None,

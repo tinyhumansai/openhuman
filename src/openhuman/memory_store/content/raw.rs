@@ -52,6 +52,12 @@ pub enum RawKind {
     Contact,
     /// Long-form posts — LinkedIn posts, tweets, blog entries.
     Post,
+    /// Git commits (one file per commit) — GitHub repo sources.
+    Commit,
+    /// Issues with their conversation + metadata — GitHub repo sources.
+    Issue,
+    /// Pull requests with their body + metadata — GitHub repo sources.
+    PullRequest,
 }
 
 impl RawKind {
@@ -64,6 +70,9 @@ impl RawKind {
             Self::Document => "documents",
             Self::Contact => "contacts",
             Self::Post => "posts",
+            Self::Commit => "commits",
+            Self::Issue => "issues",
+            Self::PullRequest => "prs",
         }
     }
 }
@@ -436,6 +445,31 @@ mod tests {
         assert_eq!(
             raw_rel_path("slack:team", RawKind::Chat, 42, "msg/with:bad"),
             "raw/slack-team/chats/42_msg-with-bad.md"
+        );
+    }
+
+    #[test]
+    fn github_raw_kinds_use_repo_grouped_subdirs() {
+        assert_eq!(RawKind::Commit.as_dir(), "commits");
+        assert_eq!(RawKind::Issue.as_dir(), "issues");
+        assert_eq!(RawKind::PullRequest.as_dir(), "prs");
+        // `github.com/<owner>/<repo>` slugifies to `github-com-<owner>-<repo>`.
+        assert_eq!(
+            raw_rel_path(
+                "github.com/tinyhumansai/openhuman",
+                RawKind::Commit,
+                1_700_000_000_000,
+                "2a958e87"
+            ),
+            "raw/github-com-tinyhumansai-openhuman/commits/1700000000000_2a958e87.md"
+        );
+        assert_eq!(
+            raw_rel_path("github.com/org/repo", RawKind::Issue, 0, "42"),
+            "raw/github-com-org-repo/issues/0_42.md"
+        );
+        assert_eq!(
+            raw_rel_path("github.com/org/repo", RawKind::PullRequest, 0, "99"),
+            "raw/github-com-org-repo/prs/0_99.md"
         );
     }
 }

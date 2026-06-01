@@ -184,6 +184,7 @@ pub(crate) struct SubagentProgress {
     pub sink: Option<tokio::sync::mpsc::Sender<AgentProgress>>,
     pub agent_id: String,
     pub task_id: String,
+    pub extended_policy: bool,
 }
 
 #[async_trait]
@@ -196,6 +197,7 @@ impl ProgressReporter for SubagentProgress {
                     task_id: self.task_id.clone(),
                     iteration,
                     max_iterations,
+                    extended_policy: self.extended_policy,
                 })
                 .await;
         }

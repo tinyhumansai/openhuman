@@ -4,6 +4,7 @@ pub(crate) mod cli;
 pub mod ops;
 mod schemas;
 pub mod server;
+pub mod tools;
 
 mod capture;
 mod capture_worker;

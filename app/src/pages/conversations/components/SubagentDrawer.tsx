@@ -50,7 +50,7 @@ function transcriptFromMessages(messages: ThreadMessage[]): {
 function statusTone(status: ToolTimelineEntryStatus | undefined): {
   dot: string;
   pill: string;
-  label: 'statusRunning' | 'statusCompleted' | 'statusFailed';
+  label: 'statusRunning' | 'statusCompleted' | 'statusFailed' | 'statusAwaitingUser';
 } {
   if (status === 'success') {
     return {
@@ -64,6 +64,13 @@ function statusTone(status: ToolTimelineEntryStatus | undefined): {
       dot: 'bg-coral-500',
       pill: 'bg-coral-100 dark:bg-coral-500/20 text-coral-700 dark:text-coral-300',
       label: 'statusFailed',
+    };
+  }
+  if (status === 'awaiting_user') {
+    return {
+      dot: 'bg-amber-400 animate-pulse',
+      pill: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-300',
+      label: 'statusAwaitingUser',
     };
   }
   return {
@@ -197,10 +204,11 @@ export function SubagentDrawer({
               <span className={`rounded-full px-1.5 py-0.5 ${tone.pill}`}>
                 {t(`conversations.subagent.${tone.label}`)}
               </span>
-              {subagent.childIteration != null && subagent.childMaxIterations != null ? (
+              {subagent.childIteration != null ? (
                 <span>
-                  {t('conversations.toolTimeline.turn')} {subagent.childIteration}/
-                  {subagent.childMaxIterations}
+                  {subagent.childMaxIterations != null
+                    ? `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
+                    : `${t('conversations.toolTimeline.step')} ${subagent.childIteration}`}
                 </span>
               ) : subagent.iterations != null ? (
                 <span>

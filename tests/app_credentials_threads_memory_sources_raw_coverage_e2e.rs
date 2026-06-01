@@ -186,6 +186,9 @@ fn source_entry(id: &str, kind: SourceKind, label: &str) -> MemorySourceEntry {
         query: None,
         since_days: None,
         max_items: None,
+        max_commits: None,
+        max_issues: None,
+        max_prs: None,
         selector: None,
     }
 }
@@ -242,6 +245,7 @@ async fn round19_app_state_local_state_snapshot_and_corruption_edges() {
         .expect("seed local app session");
 
     let updated = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("  round19-key  ".to_string())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: true,
@@ -281,6 +285,7 @@ async fn round19_app_state_local_state_snapshot_and_corruption_edges() {
     assert!(snap.meet_auto_orchestrator_handoff);
 
     let cleared = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some("   ".to_string())),
         onboarding_tasks: Some(None),
     })

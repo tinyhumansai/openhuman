@@ -198,6 +198,8 @@ export interface SubagentProgressDetail {
   output_chars?: number;
   /** Persistent worker sub-thread id backing the delegation (on `subagent_spawned`). */
   worker_thread_id?: string;
+  /** Human-readable display name from the agent registry. */
+  display_name?: string;
 }
 
 /** Extended payload for `subagent_spawned`. */
@@ -339,6 +341,7 @@ export interface ChatEventListeners {
   onToolResult?: (event: ChatToolResultEvent) => void;
   onSubagentSpawned?: (event: ChatSubagentSpawnedEventV2) => void;
   onSubagentDone?: (event: ChatSubagentDoneEvent) => void;
+  onSubagentAwaitingUser?: (event: ChatSubagentDoneEvent) => void;
   onSubagentIterationStart?: (event: ChatSubagentIterationStartEvent) => void;
   onSubagentToolCall?: (event: ChatSubagentToolCallEvent) => void;
   onSubagentToolResult?: (event: ChatSubagentToolResultEvent) => void;
@@ -371,6 +374,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     subagentSpawned: 'subagent_spawned',
     subagentCompleted: 'subagent_completed',
     subagentFailed: 'subagent_failed',
+    subagentAwaitingUser: 'subagent_awaiting_user',
     subagentIterationStart: 'subagent_iteration_start',
     subagentToolCall: 'subagent_tool_call',
     subagentToolResult: 'subagent_tool_result',
@@ -497,6 +501,23 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
     };
     socket.on(EVENTS.subagentFailed, onFailed);
     handlers.push([EVENTS.subagentFailed, onFailed]);
+  }
+
+  if (listeners.onSubagentAwaitingUser) {
+    const onAwaitingUser = (payload: unknown) => {
+      const e = payload as ChatSubagentDoneEvent;
+      chatLog(
+        '%s thread_id=%s request_id=%s round=%d agent=%s',
+        EVENTS.subagentAwaitingUser,
+        e.thread_id,
+        e.request_id,
+        e.round,
+        e.tool_name
+      );
+      listeners.onSubagentAwaitingUser?.(e);
+    };
+    socket.on(EVENTS.subagentAwaitingUser, onAwaitingUser);
+    handlers.push([EVENTS.subagentAwaitingUser, onAwaitingUser]);
   }
 
   if (listeners.onSubagentIterationStart) {

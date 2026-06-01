@@ -4,7 +4,9 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import {
   type AutonomyLevel,
   isTauri,
+  openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
+  openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
   type TrustedAccess,
   type TrustedRoot,
@@ -59,6 +61,18 @@ const AgentAccessPanel = () => {
   const [newRootPath, setNewRootPath] = useState('');
   const [newRootAccess, setNewRootAccess] = useState<TrustedAccess>('read');
 
+  // Action timeout (the tool/action wall-clock limit, issue #3100). Held as the
+  // raw input string so the field can be edited freely; validated on save.
+  const [timeoutInput, setTimeoutInput] = useState('');
+  const [timeoutEnvOverride, setTimeoutEnvOverride] = useState(false);
+  const [timeoutMin, setTimeoutMin] = useState(1);
+  const [timeoutMax, setTimeoutMax] = useState(3600);
+  // Last persisted value, kept so blur/Enter can no-op when nothing changed.
+  const [savedTimeoutSecs, setSavedTimeoutSecs] = useState<number | null>(null);
+  const [timeoutError, setTimeoutError] = useState<string | null>(null);
+  const [timeoutSavedNote, setTimeoutSavedNote] = useState<string | null>(null);
+  const timeoutSeqRef = useRef(0);
+
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,18 +89,30 @@ const AgentAccessPanel = () => {
         return;
       }
       try {
-        const resp = await openhumanGetAutonomySettings();
+        const autonomyResp = await openhumanGetAutonomySettings();
         if (cancelled) return;
-        setLevel(resp.result.level);
-        setWorkspaceOnly(resp.result.workspace_only);
-        setRequireTaskPlanApproval(resp.result.require_task_plan_approval ?? true);
-        setTrustedRoots(resp.result.trusted_roots ?? []);
-        setAutoApprove(resp.result.auto_approve ?? []);
+        setLevel(autonomyResp.result.level);
+        setWorkspaceOnly(autonomyResp.result.workspace_only);
+        setRequireTaskPlanApproval(autonomyResp.result.require_task_plan_approval ?? true);
+        setTrustedRoots(autonomyResp.result.trusted_roots ?? []);
+        setAutoApprove(autonomyResp.result.auto_approve ?? []);
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
       } finally {
         if (!cancelled) setIsLoading(false);
+      }
+      try {
+        const agentResp = await openhumanGetAgentSettings();
+        if (cancelled) return;
+        setTimeoutInput(String(agentResp.result.agent_timeout_secs));
+        setSavedTimeoutSecs(agentResp.result.agent_timeout_secs);
+        setTimeoutEnvOverride(agentResp.result.env_override);
+        setTimeoutMin(agentResp.result.min_timeout_secs);
+        setTimeoutMax(agentResp.result.max_timeout_secs);
+      } catch {
+        // Non-fatal: autonomy controls still render; timeout section
+        // stays at defaults and the user can try saving manually.
       }
     };
     void load();
@@ -184,6 +210,46 @@ const AgentAccessPanel = () => {
       trustedRoots,
       autoApprove: nextList,
     });
+  };
+
+  // Persist the action timeout on blur / Enter. Validates the integer range
+  // client-side (the core re-validates) and no-ops when unchanged. Separate
+  // from the autonomy `persist` path so a timeout edit can't clobber the
+  // autonomy block and vice-versa.
+  const commitTimeout = async () => {
+    if (!isTauri()) return;
+    const trimmed = timeoutInput.trim();
+    const parsed = Number(trimmed);
+    if (!Number.isInteger(parsed) || parsed < timeoutMin || parsed > timeoutMax) {
+      setTimeoutError(`${t('settings.agentAccess.timeout.invalid')} (${timeoutMin}–${timeoutMax})`);
+      setTimeoutSavedNote(null);
+      return;
+    }
+    if (savedTimeoutSecs !== null && parsed === savedTimeoutSecs) {
+      // Normalize the field (e.g. strip whitespace / leading zeros) but skip the RPC.
+      setTimeoutInput(String(parsed));
+      setTimeoutError(null);
+      return;
+    }
+    const seq = ++timeoutSeqRef.current;
+    const draftAtCommit = timeoutInput;
+    setTimeoutError(null);
+    setTimeoutSavedNote(null);
+    try {
+      await openhumanUpdateAgentSettings({ agent_timeout_secs: parsed });
+      if (timeoutSeqRef.current === seq) {
+        setSavedTimeoutSecs(parsed);
+        // Only snap the field value back if the user hasn't typed further.
+        if (timeoutInput === draftAtCommit) {
+          setTimeoutInput(String(parsed));
+        }
+        setTimeoutSavedNote(t('settings.agentAccess.saved'));
+      }
+    } catch (e) {
+      if (timeoutSeqRef.current === seq) {
+        setTimeoutError(e instanceof Error ? e.message : t('settings.agentAccess.saveError'));
+      }
+    }
   };
 
   return (
@@ -290,6 +356,54 @@ const AgentAccessPanel = () => {
                   </span>
                 </span>
               </label>
+            </section>
+
+            {/* Action timeout — wall-clock limit for a single tool/action.
+                Extend it when large local models get cut off mid-response
+                (issue #3100). Persists independently of the autonomy block. */}
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+                {t('settings.agentAccess.timeout.label')}
+              </h2>
+              <p className="text-xs text-stone-600 dark:text-neutral-400">
+                {t('settings.agentAccess.timeout.desc')}
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={timeoutMin}
+                  max={timeoutMax}
+                  step={1}
+                  value={timeoutInput}
+                  disabled={timeoutEnvOverride}
+                  onChange={e => setTimeoutInput(e.target.value)}
+                  onBlur={() => void commitTimeout()}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void commitTimeout();
+                    }
+                  }}
+                  aria-label={t('settings.agentAccess.timeout.label')}
+                  className="w-28 rounded border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-stone-900 dark:text-neutral-100 px-2 py-1 text-sm disabled:opacity-60"
+                />
+                <span className="text-xs text-stone-600 dark:text-neutral-400">
+                  {t('settings.agentAccess.timeout.unit')} ({timeoutMin}–{timeoutMax})
+                </span>
+              </div>
+              {timeoutEnvOverride && (
+                <p className="rounded border border-amber/40 bg-amber/5 dark:bg-amber/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                  {t('settings.agentAccess.timeout.envOverride')}
+                </p>
+              )}
+              <div className="min-h-[1.25rem] text-xs" aria-live="polite">
+                {timeoutError ? (
+                  <span className="text-coral-600 dark:text-coral-300">{timeoutError}</span>
+                ) : timeoutSavedNote ? (
+                  <span className="text-sage-700 dark:text-sage-300">✓ {timeoutSavedNote}</span>
+                ) : null}
+              </div>
             </section>
 
             {/* Granted folders (trusted roots) — extra read/write reach. */}

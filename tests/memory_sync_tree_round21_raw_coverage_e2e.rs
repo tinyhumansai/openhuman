@@ -547,7 +547,6 @@ fn seed_source_summary(
             body,
         },
         scope,
-        None,
     )
     .expect("stage summary body");
     let embedding_blob = embedding.as_ref().map(|values| pack_embedding(values));

@@ -32,6 +32,7 @@ pub mod scheduler;
 pub mod schemas;
 pub mod stability_detector;
 pub mod tool_tracker;
+pub mod tools;
 pub mod transcript_ingest;
 pub mod user_profile;
 

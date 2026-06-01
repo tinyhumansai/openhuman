@@ -147,7 +147,7 @@ async fn local_services_cover_mocked_inference_assets_speech_and_whisper_install
             .summarize(&config, "decision: ship tests", Some(32))
             .await
             .expect("summary"),
-        "generated: Summarize this text in concise bullet points. Preserve decisions and commitments.\\n\\ndecision: ship tests"
+        "generated: Summarize this text in concise bullet points. Preserve decisions and commitments.\n\ndecision: ship tests"
     );
     assert_eq!(
         service

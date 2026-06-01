@@ -12,6 +12,179 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuiltinCloudProvider {
+    pub slug: &'static str,
+    pub label: &'static str,
+    pub endpoint: &'static str,
+    pub auth_style: AuthStyle,
+}
+
+pub const BUILTIN_CLOUD_PROVIDERS: &[BuiltinCloudProvider] = &[
+    BuiltinCloudProvider {
+        slug: "openhuman",
+        label: "OpenHuman",
+        endpoint: "https://api.openhuman.ai/v1",
+        auth_style: AuthStyle::OpenhumanJwt,
+    },
+    BuiltinCloudProvider {
+        slug: "openai",
+        label: "OpenAI",
+        endpoint: "https://api.openai.com/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "anthropic",
+        label: "Anthropic",
+        endpoint: "https://api.anthropic.com/v1",
+        auth_style: AuthStyle::Anthropic,
+    },
+    BuiltinCloudProvider {
+        slug: "openrouter",
+        label: "OpenRouter",
+        endpoint: "https://openrouter.ai/api/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "orcarouter",
+        label: "OrcaRouter",
+        endpoint: "https://api.orcarouter.ai/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "gmi",
+        label: "GMI",
+        endpoint: "https://api.gmi-serving.com/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "fireworks",
+        label: "Fireworks",
+        endpoint: "https://api.fireworks.ai/inference/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "moonshot",
+        label: "Kimi (Moonshot)",
+        endpoint: "https://api.moonshot.ai/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "groq",
+        label: "Groq",
+        endpoint: "https://api.groq.com/openai/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "mistral",
+        label: "Mistral",
+        endpoint: "https://api.mistral.ai/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "deepseek",
+        label: "DeepSeek",
+        endpoint: "https://api.deepseek.com/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "together",
+        label: "Together AI",
+        endpoint: "https://api.together.xyz/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "google",
+        label: "Google Gemini",
+        endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "cerebras",
+        label: "Cerebras",
+        endpoint: "https://api.cerebras.ai/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "xai",
+        label: "xAI",
+        endpoint: "https://api.x.ai/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "huggingface",
+        label: "Hugging Face",
+        endpoint: "https://router.huggingface.co/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "nvidia",
+        label: "NVIDIA",
+        endpoint: "https://integrate.api.nvidia.com/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "zai",
+        label: "Z.AI",
+        endpoint: "https://api.z.ai/api/paas/v4",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "minimax",
+        label: "MiniMax",
+        endpoint: "https://api.minimax.io/anthropic",
+        auth_style: AuthStyle::Anthropic,
+    },
+    BuiltinCloudProvider {
+        slug: "stepfun",
+        label: "StepFun",
+        endpoint: "https://api.stepfun.ai/step_plan/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "kilocode",
+        label: "Kilo Code",
+        endpoint: "https://api.kilo.ai/api/gateway",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "deepinfra",
+        label: "DeepInfra",
+        endpoint: "https://api.deepinfra.com/v1/openai",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "novita",
+        label: "Novita",
+        endpoint: "https://api.novita.ai/v3/openai",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "venice",
+        label: "Venice",
+        endpoint: "https://api.venice.ai/api/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "vercel-ai-gateway",
+        label: "Vercel AI Gateway",
+        endpoint: "https://ai-gateway.vercel.sh/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+    BuiltinCloudProvider {
+        slug: "sumopod",
+        label: "SumoPod",
+        endpoint: "https://ai.sumopod.com/v1",
+        auth_style: AuthStyle::Bearer,
+    },
+];
+
+fn builtin_cloud_provider(type_str: &str) -> Option<&'static BuiltinCloudProvider> {
+    BUILTIN_CLOUD_PROVIDERS
+        .iter()
+        .find(|provider| provider.slug == type_str)
+}
+
 /// Authentication header style for a cloud provider.
 ///
 /// Wire format is lowercase (e.g. `"bearer"`). Determines which HTTP headers
@@ -160,41 +333,24 @@ pub fn migrate_legacy_fields(entry: &mut CloudProviderCreds) {
 
     // Auth style from legacy type when still at default Bearer.
     if entry.auth_style == AuthStyle::Bearer {
-        match lt {
-            "anthropic" => {
-                entry.auth_style = AuthStyle::Anthropic;
-            }
-            "openhuman" => {
-                entry.auth_style = AuthStyle::OpenhumanJwt;
-            }
-            _ => {}
+        if let Some(provider) = builtin_cloud_provider(lt) {
+            entry.auth_style = provider.auth_style;
         }
     }
 }
 
 /// Map a legacy type string (or slug) to a human-readable label.
 fn legacy_label_for(type_str: &str) -> &'static str {
-    match type_str {
-        "openhuman" => "OpenHuman",
-        "openai" => "OpenAI",
-        "anthropic" => "Anthropic",
-        "openrouter" => "OpenRouter",
-        "orcarouter" => "OrcaRouter",
-        "custom" => "Custom",
-        _ => "Custom",
-    }
+    builtin_cloud_provider(type_str)
+        .map(|provider| provider.label)
+        .unwrap_or("Custom")
 }
 
 /// Map a legacy type string to its well-known default endpoint.
 fn legacy_default_endpoint(type_str: &str) -> &'static str {
-    match type_str {
-        "openhuman" => "https://api.openhuman.ai/v1",
-        "openai" => "https://api.openai.com/v1",
-        "anthropic" => "https://api.anthropic.com/v1",
-        "openrouter" => "https://openrouter.ai/api/v1",
-        "orcarouter" => "https://api.orcarouter.ai/v1",
-        _ => "",
-    }
+    builtin_cloud_provider(type_str)
+        .map(|provider| provider.endpoint)
+        .unwrap_or("")
 }
 
 /// Generate a short opaque id for a new provider entry.
@@ -303,7 +459,10 @@ impl CloudProviderType {
 
 #[cfg(test)]
 mod tests {
-    use super::is_slug_reserved;
+    use super::{
+        is_slug_reserved, migrate_legacy_fields, AuthStyle, CloudProviderCreds,
+        BUILTIN_CLOUD_PROVIDERS,
+    };
 
     #[test]
     fn reserved_slugs() {
@@ -328,5 +487,59 @@ mod tests {
             !is_slug_reserved("lmstudio"),
             "lmstudio is a free-form OpenAI-compatible slug"
         );
+    }
+
+    #[test]
+    fn builtin_cloud_provider_defaults_cover_phase_one_presets() {
+        for (slug, label, endpoint, auth_style) in [
+            (
+                "groq",
+                "Groq",
+                "https://api.groq.com/openai/v1",
+                AuthStyle::Bearer,
+            ),
+            (
+                "deepseek",
+                "DeepSeek",
+                "https://api.deepseek.com/v1",
+                AuthStyle::Bearer,
+            ),
+            (
+                "minimax",
+                "MiniMax",
+                "https://api.minimax.io/anthropic",
+                AuthStyle::Anthropic,
+            ),
+            (
+                "sumopod",
+                "SumoPod",
+                "https://ai.sumopod.com/v1",
+                AuthStyle::Bearer,
+            ),
+        ] {
+            let mut entry = CloudProviderCreds {
+                id: format!("p_{slug}"),
+                legacy_type: Some(slug.to_string()),
+                ..Default::default()
+            };
+            migrate_legacy_fields(&mut entry);
+
+            assert_eq!(entry.slug, slug);
+            assert_eq!(entry.label, label);
+            assert_eq!(entry.endpoint, endpoint);
+            assert_eq!(entry.auth_style, auth_style);
+        }
+    }
+
+    #[test]
+    fn builtin_cloud_provider_slugs_are_unique() {
+        let mut slugs = std::collections::HashSet::new();
+        for provider in BUILTIN_CLOUD_PROVIDERS {
+            assert!(
+                slugs.insert(provider.slug),
+                "duplicate built-in cloud provider slug {}",
+                provider.slug
+            );
+        }
     }
 }

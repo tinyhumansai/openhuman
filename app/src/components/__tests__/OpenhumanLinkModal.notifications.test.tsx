@@ -49,7 +49,7 @@ describe('OpenhumanLinkModal notifications test flow', () => {
     await flushAsyncWork();
 
     expect(
-      screen.getByText(/Test notification sent\. If you didn’t receive it/i)
+      screen.getByText(/Test notification sent\. If you didn't receive it/i)
     ).toBeInTheDocument();
     expect(showNativeNotification).toHaveBeenCalledWith(
       expect.objectContaining({ tag: 'welcome-notification-test' })
@@ -115,7 +115,7 @@ describe('OpenhumanLinkModal notifications test flow', () => {
     await flushAsyncWork();
 
     expect(
-      screen.getByText(/Test notification sent\. If you didn’t receive it/i)
+      screen.getByText(/Test notification sent\. If you didn't receive it/i)
     ).toBeInTheDocument();
     expect(showNativeNotification).toHaveBeenCalledTimes(1);
   });

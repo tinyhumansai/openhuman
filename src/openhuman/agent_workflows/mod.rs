@@ -14,6 +14,7 @@ pub mod ops;
 pub mod parse;
 pub mod schemas;
 pub mod select;
+pub mod tools;
 pub mod types;
 pub mod workdir;
 

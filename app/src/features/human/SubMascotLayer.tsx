@@ -2,6 +2,7 @@ import debug from 'debug';
 import { type FC, useMemo } from 'react';
 
 import type { ToolTimelineEntry, ToolTimelineEntryStatus } from '../../store/chatRuntimeSlice';
+import { formatToolName } from '../../utils/toolTimelineFormatting';
 import { type MascotFace, RiveMascot } from './Mascot';
 import type { MascotColor } from './Mascot/mascotPalette';
 
@@ -49,7 +50,7 @@ function truncateActivity(value: string): string {
   return `${trimmed.slice(0, ACTIVITY_LIMIT - 3).trimEnd()}...`;
 }
 
-function humanizeIdentifier(value: string): string {
+function humanizeAgentId(value: string): string {
   const cleaned = value
     .replace(/^subagent:/, '')
     .replace(/[_-]+/g, ' ')
@@ -84,13 +85,13 @@ function activityForEntry(entry: ToolTimelineEntry): string {
 
   const lastRunningTool = [...subagent.toolCalls].reverse().find(call => call.status === 'running');
   if (lastRunningTool) {
-    return `Using ${humanizeIdentifier(lastRunningTool.toolName)}`;
+    return `Using ${formatToolName(lastRunningTool.toolName)}`;
   }
 
   if (subagent.childIteration) {
     return subagent.childMaxIterations
       ? `Iteration ${subagent.childIteration}/${subagent.childMaxIterations}`
-      : `Iteration ${subagent.childIteration}`;
+      : `Step ${subagent.childIteration}`;
   }
 
   if (entry.detail?.trim()) {
@@ -119,7 +120,7 @@ export function subMascotModelsFromTimeline(entries: ToolTimelineEntry[]): SubMa
       return {
         id: entry.id,
         agentId,
-        label: humanizeIdentifier(agentId),
+        label: entry.subagent?.displayName ?? entry.displayName ?? humanizeAgentId(agentId),
         status: entry.status,
         face: faceForStatus(entry.status),
         activity: activityForEntry(entry),
