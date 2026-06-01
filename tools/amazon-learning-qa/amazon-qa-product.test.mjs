@@ -19,9 +19,16 @@ const READY_STATUS = {
     learningStatus: "processing",
   },
   sourceTreeDrain: {
+    state: "paused",
+    message: "来源树深加工本轮批次已暂停，本轮处理 10 个任务，剩余约 10 个。",
+    processedJobs: 10,
     queuedJobs: 10,
+    readyJobs: 10,
+    runningJobs: 0,
     doneJobs: 20,
     failedJobs: 0,
+    jobsPerMinute: 1.5,
+    estimatedMinutesRemaining: 90,
   },
 };
 
@@ -40,6 +47,10 @@ test("product doctor marks semantic Q&A ready while keeping Vercel boundary expl
     assert.equal(report.service.answerStatus, "ready");
     assert.equal(report.service.embedded, 14597);
     assert.equal(report.service.learningNoteCount, 0);
+    assert.equal(report.service.sourceTreeDrainState, "paused");
+    assert.equal(report.service.sourceTreeJobsPerMinute, 1.5);
+    assert.equal(report.service.sourceTreeEstimatedMinutesRemaining, 90);
+    assert.equal(report.service.sourceTreeEstimatedRemainingText, "2 小时");
     assert.equal(report.localAi.preflight.ok, true);
     assert.equal(report.deployment.vercelReady, false);
     assert.match(report.deployment.reason, /本地 SQLite/);
@@ -90,6 +101,8 @@ test("handoff uses real status, local deployment boundary, and no audio/video sc
       sourceTreeQueuedJobs: 9,
       sourceTreeDoneJobs: 1,
       sourceTreeFailedJobs: 0,
+      sourceTreeJobsPerMinute: 1.5,
+      sourceTreeEstimatedRemainingText: "2 小时",
     },
     deployment: {
       reason: "本地依赖",
@@ -103,7 +116,9 @@ test("handoff uses real status, local deployment boundary, and no audio/video sc
   assert.match(markdown, /未通过本机验收/);
   assert.match(markdown, /本机入口/);
   assert.match(markdown, /不是 Vercel 线上部署/);
+  assert.match(markdown, /来源树预计：按最近速度约 2 小时/);
   assert.match(markdown, /100 篇资料、200 个片段，语义索引 20\/200/);
+  assert.match(markdown, /来源树速度：1.5 个\/分钟；预计剩余 2 小时/);
   assert.match(markdown, /本地模型主回答/);
   assert.match(markdown, /换题不串题/);
   assert.match(markdown, /人群画像、选品实操/);

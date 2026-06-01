@@ -127,9 +127,17 @@ export async function buildProductDoctorReport(options = {}) {
       readinessLevel: readiness.level || "",
       answerStatus: readiness.answerStatus || "",
       learningStatus: readiness.learningStatus || "",
+      sourceTreeDrainState: drain.state || drain.level || "",
+      sourceTreeDrainMessage: drain.message || "",
+      sourceTreeProcessedJobs: Number(drain.processedJobs || 0),
       sourceTreeQueuedJobs: Number(drain.queuedJobs || 0),
+      sourceTreeReadyJobs: Number(drain.readyJobs || 0),
+      sourceTreeRunningJobs: Number(drain.runningJobs || 0),
       sourceTreeDoneJobs: Number(drain.doneJobs || 0),
       sourceTreeFailedJobs: Number(drain.failedJobs || 0),
+      sourceTreeJobsPerMinute: Number(drain.jobsPerMinute || 0),
+      sourceTreeEstimatedMinutesRemaining: Number(drain.estimatedMinutesRemaining || 0),
+      sourceTreeEstimatedRemainingText: formatMinutes(drain.estimatedMinutesRemaining),
     },
     localAi,
     paths,
@@ -291,6 +299,9 @@ async function printStatus(args) {
   console.log(`状态：${report.service.answerStatus === "ready" ? "可问答" : "未就绪"}，${report.service.learningStatus === "ready" ? "来源树完成" : "来源树增强中"}`);
   console.log(`资料：${report.service.documents} 篇，我的资料 ${report.service.userSourceCount || 0} 份，学习笔记 ${report.service.learningNoteCount || 0} 条，片段 ${report.service.chunks} 个，语义索引 ${report.service.embedded}/${report.service.chunks}。`);
   console.log(`来源树：等待 ${report.service.sourceTreeQueuedJobs}，完成 ${report.service.sourceTreeDoneJobs}，失败 ${report.service.sourceTreeFailedJobs}。`);
+  if (report.service.sourceTreeEstimatedRemainingText) {
+    console.log(`来源树预计：按最近速度约 ${report.service.sourceTreeEstimatedRemainingText}；不影响当前问答和引用。`);
+  }
 }
 
 async function startProduct(args) {
@@ -359,6 +370,9 @@ export function handoffMarkdown(report) {
   const learningState = report.service.learningStatus === "ready"
     ? "完整学习层已就绪"
     : `完整来源树学习仍在处理中：等待 ${report.service.sourceTreeQueuedJobs}，完成 ${report.service.sourceTreeDoneJobs}，失败 ${report.service.sourceTreeFailedJobs}`;
+  const learningEta = report.service.sourceTreeEstimatedRemainingText
+    ? `按最近速度约 ${report.service.sourceTreeEstimatedRemainingText}，建议继续有限批次处理，不要一次性无边界运行`
+    : "暂无可靠耗时估计，以下一批实际速度为准";
   return `# 亚马逊学习问答交付说明
 
 生成时间：${report.generatedAt}
@@ -370,6 +384,7 @@ export function handoffMarkdown(report) {
 - 部署限制：当前不能原样部署到 Vercel。原因：${report.deployment.reason}
 - 现实交付方式：${report.deployment.realisticTarget}
 - 学习状态：${learningState}
+- 来源树预计：${learningEta}
 - 音视频：本次不包含音频或视频录制、转写、播放、剪辑、生成、上传功能
 
 ## 当前状态
@@ -382,6 +397,7 @@ export function handoffMarkdown(report) {
 - 片段：${report.service.chunks} 个
 - 本地语义索引：${report.service.embedded}/${report.service.chunks}，覆盖率 ${report.service.coverage}%
 - 来源树深加工：等待 ${report.service.sourceTreeQueuedJobs}，完成 ${report.service.sourceTreeDoneJobs}，失败 ${report.service.sourceTreeFailedJobs}
+- 来源树速度：${report.service.sourceTreeJobsPerMinute ? `${report.service.sourceTreeJobsPerMinute} 个/分钟` : "暂无稳定速度"}；预计剩余 ${report.service.sourceTreeEstimatedRemainingText || "暂无可靠估计"}
 
 ## 常用命令
 
@@ -447,6 +463,9 @@ function printHumanReport(report) {
   console.log(`问答：${report.service.answerStatus === "ready" ? "可问答、可引用" : "未就绪"}`);
   console.log(`资料：${report.service.documents} 篇，我的资料 ${report.service.userSourceCount || 0} 份，学习笔记 ${report.service.learningNoteCount || 0} 条，片段 ${report.service.chunks} 个，语义索引 ${report.service.embedded}/${report.service.chunks}，覆盖率 ${report.service.coverage}%。`);
   console.log(`来源树：等待 ${report.service.sourceTreeQueuedJobs}，完成 ${report.service.sourceTreeDoneJobs}，失败 ${report.service.sourceTreeFailedJobs}。`);
+  if (report.service.sourceTreeEstimatedRemainingText) {
+    console.log(`来源树预计：按最近速度约 ${report.service.sourceTreeEstimatedRemainingText}；不影响当前问答和引用。`);
+  }
   console.log(`本地模型：${report.localAi.preflight.ok ? "就绪" : "未就绪"}。${report.localAi.preflight.message}`);
   if (report.critical.length) {
     console.log("\n必须处理：");
@@ -464,6 +483,15 @@ function printHumanReport(report) {
 
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function formatMinutes(value) {
+  const minutes = Math.max(0, Number(value || 0));
+  if (!Number.isFinite(minutes) || minutes <= 0) return "";
+  if (minutes < 60) return `${Math.ceil(minutes)} 分钟`;
+  const hours = minutes / 60;
+  if (hours < 48) return `${Math.ceil(hours)} 小时`;
+  return `${Math.ceil(hours / 24)} 天`;
 }
 
 function unique(items) {
