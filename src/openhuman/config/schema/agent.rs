@@ -262,36 +262,22 @@ fn default_max_memory_context_chars() -> usize {
 }
 
 impl AgentConfig {
-    /// Resolve the active memory-context budgets for this agent config.
+    /// Seed legacy installs whose channel-permissions map is empty and
+    /// that already have at least one non-web channel configured,
+    /// writing explicit per-channel execute entries.
     ///
-    /// Two cases:
+    /// The engine layer keeps its legacy empty-map shortcut; this
+    /// migration replaces it with an explicit policy so the
+    /// per-channel cap engages on the very first boot after upgrade.
+    /// `known_channels` is the set of channels the user has configured
+    /// in `channels::ChannelsConfig`. The web channel is always added
+    /// on top so the desktop UI stays usable.
     ///
-    /// 1. **Preset chosen** (`memory_window = Some(_)`) — the preset is
-    ///    authoritative. The legacy raw `max_memory_context_chars`
-    ///    field is ignored entirely. This is the steady-state path: the
-    ///    UI control is the single source of truth.
-    ///
-    /// 2. **Unmigrated config** (`memory_window = None`) — fall back to
-    ///    the legacy raw `max_memory_context_chars` for the recall cap
-    ///    so a config upgraded from an older build keeps its previous
-    ///    recall behaviour. The raw value is still bounded by the
-    ///    `Maximum` preset's recall cap so safety limits are preserved.
-    ///    Tree-summary caps come from the `Balanced` baseline because
-    ///    older builds had no notion of a per-namespace tree cap on
-    ///    this code path.
-    /// Seed legacy installs (`channel_permissions` empty AND at least
-    /// one channel configured) with explicit per-channel `execute`
-    /// entries so the new fail-closed-to-`readonly` default in
-    /// [`crate::openhuman::agent_tool_policy::engine::ToolPolicyEngine`]
-    /// does not regress them.
-    ///
-    /// `known_channels` should be the union of channels the user has
-    /// configured (web + every entry in `channels::ChannelsConfig`).
-    /// Returns `true` when a migration write is required (caller saves
-    /// + reloads); `false` when the map was already populated or there
-    /// were no channels to seed.
-    ///
-    /// Idempotent: subsequent boots see the populated map and no-op.
+    /// Returns `true` when a migration write is required so the caller
+    /// can save and reload; returns `false` when the map was already
+    /// populated, no non-web channels were configured (fresh install,
+    /// engine's legacy unrestricted shortcut continues), or the
+    /// migration is otherwise a no-op. Idempotent.
     pub fn migrate_channel_permissions_if_legacy<I, S>(&mut self, known_channels: I) -> bool
     where
         I: IntoIterator<Item = S>,
@@ -316,9 +302,7 @@ impl AgentConfig {
         // Seed web + every known channel = execute so the engine's
         // per-channel cap evaluates against an explicit policy instead
         // of the legacy unrestricted default.
-        let names: Vec<String> = std::iter::once("web".to_string())
-            .chain(extra.into_iter())
-            .collect();
+        let names: Vec<String> = std::iter::once("web".to_string()).chain(extra).collect();
         for name in &names {
             self.channel_permissions
                 .insert(name.clone(), "execute".to_string());
@@ -332,6 +316,23 @@ impl AgentConfig {
         true
     }
 
+    /// Resolve the active memory-context budgets for this agent config.
+    ///
+    /// Two cases:
+    ///
+    /// 1. **Preset chosen** (`memory_window = Some(_)`) — the preset is
+    ///    authoritative. The legacy raw `max_memory_context_chars`
+    ///    field is ignored entirely. This is the steady-state path: the
+    ///    UI control is the single source of truth.
+    ///
+    /// 2. **Unmigrated config** (`memory_window = None`) — fall back to
+    ///    the legacy raw `max_memory_context_chars` for the recall cap
+    ///    so a config upgraded from an older build keeps its previous
+    ///    recall behaviour. The raw value is still bounded by the
+    ///    `Maximum` preset's recall cap so safety limits are preserved.
+    ///    Tree-summary caps come from the `Balanced` baseline because
+    ///    older builds had no notion of a per-namespace tree cap on
+    ///    this code path.
     pub fn resolved_memory_limits(&self) -> MemoryWindowLimits {
         match self.memory_window {
             Some(window) => window.limits(),

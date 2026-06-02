@@ -111,7 +111,7 @@ pub(super) fn has_dangerous_env_prefix(s: &str) -> bool {
 /// Used by [`SecurityPolicy::is_command_allowed`] as a structural guard
 /// alongside the existing dangerous-prefix check.
 pub(super) fn has_leading_env_assignment(s: &str) -> bool {
-    let Some(word) = s.trim_start().split_whitespace().next() else {
+    let Some(word) = s.split_whitespace().next() else {
         return false;
     };
     let Some((name, _value)) = word.split_once('=') else {
