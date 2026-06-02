@@ -1,14 +1,14 @@
 /**
  * Analytics & Sentry service
  *
- * Initializes Sentry for error reporting and OpenPanel for anonymous
+ * Initializes Sentry for error reporting and OpenPanel for privacy-limited
  * usage tracking. Both are gated on user analytics consent.
  *
  * Sentry privacy guarantees enforced in `beforeSend`:
  *   - No breadcrumbs, requests, extras, or arbitrary contexts (only OS /
  *     browser / device metadata kept)
  *   - No frame-level locals or source-context snippets
- *   - No PII — `user` is reduced to a stable anonymous id (or omitted)
+ *   - No PII — `user` is reduced to a stable account id (or omitted)
  *   - `sendDefaultPii: false` (no IP, no cookies)
  *   - All breadcrumb-producing integrations disabled
  *
@@ -20,12 +20,19 @@ import * as Sentry from '@sentry/react';
 
 import { getCoreStateSnapshot } from '../lib/coreState/store';
 import {
+  APP_BINARY_VERSION,
   APP_ENVIRONMENT,
+  APP_VERSION,
+  BUILD_SHA,
+  CORE_CARGO_VERSION,
   GA_MEASUREMENT_ID,
   IS_DEV,
+  OPENPANEL_API_URL,
+  OPENPANEL_CLIENT_ID,
   SENTRY_DSN,
   SENTRY_RELEASE,
   SENTRY_SMOKE_TEST,
+  TAURI_CARGO_VERSION,
 } from '../utils/config';
 import { CoreRpcError } from './coreRpcClient';
 
@@ -38,26 +45,19 @@ interface GtagFn {
   (...args: [GtagCommand, ...unknown[]]): void;
 }
 
-// ---------------------------------------------------------------------------
-// OpenPanel typings — raw script injection API
-// ---------------------------------------------------------------------------
-
-type OpMethod = 'init' | 'track' | 'identify' | 'increment' | 'decrement' | 'clear' | 'alias';
-interface OpFn {
-  (...args: [OpMethod, ...unknown[]]): void;
-  q?: unknown[];
-}
-
 declare global {
   interface Window {
     dataLayer: unknown[];
     gtag: GtagFn;
-    op: OpFn;
   }
 }
 
-const OPENPANEL_CLIENT_ID = 'e9c996d5-497f-4eec-9bde-630019ad525b';
-const OPENPANEL_API_URL = 'https://panel.tinyhumans.ai/api';
+const OPENPANEL_TRACK_URL = `${OPENPANEL_API_URL}/track`;
+const MAX_PENDING_ANALYTICS_EVENTS = 20;
+const INTERACTIVE_CLICK_SELECTOR =
+  'button,a,[role="button"],summary,[data-track],[data-analytics-id],[data-testid],[data-walkthrough]';
+const CONTROL_CHANGE_SELECTOR =
+  'select,input[type="checkbox"],input[type="radio"],input[type="range"],[role="switch"],[role="checkbox"],[role="radio"]';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -65,6 +65,18 @@ const OPENPANEL_API_URL = 'https://panel.tinyhumans.ai/api';
 
 let gaInitialized = false;
 let opInitialized = false;
+let analyticsConsentSynced = false;
+let uiInteractionTrackingStarted = false;
+
+type AnalyticsParams = Record<string, string | number | boolean>;
+
+interface PendingAnalyticsEvent {
+  type: 'event' | 'page_view';
+  name: string;
+  params?: AnalyticsParams;
+}
+
+const pendingAnalyticsEvents: PendingAnalyticsEvent[] = [];
 
 /**
  * Shadow of the user's analytics consent state. Kept in sync by
@@ -90,6 +102,10 @@ export const ALLOWED_EVENTS = new Set([
   'chat_message_sent',
   'skill_install',
   'skill_uninstall',
+  'tab_bar_change',
+  'ui_click',
+  'ui_control_change',
+  'ui_form_submit',
 ]);
 
 /** Check if the current user has opted into analytics. */
@@ -192,7 +208,7 @@ export function initSentry(): void {
       // Tag with surface so events filter cleanly inside `openhuman-react`.
       event.tags = { ...(event.tags ?? {}), surface: 'react' };
 
-      // Strip PII; keep a stable anonymous user id only.
+      // Strip PII; keep a stable account id only.
       const userId = getCoreStateSnapshot().snapshot.currentUser?._id;
       event.user = userId ? { id: userId } : undefined;
 
@@ -250,8 +266,15 @@ export function syncAnalyticsConsent(enabled: boolean): void {
   }
 
   analyticsEnabled = enabled;
+  analyticsConsentSynced = true;
   if (gaInitialized || opInitialized) {
     console.debug(`[analytics] consent updated: enabled=${enabled}`);
+  }
+  if (enabled) {
+    initializeAnalyticsProviders();
+    flushPendingAnalyticsEvents();
+  } else {
+    pendingAnalyticsEvents.length = 0;
   }
 }
 
@@ -285,49 +308,17 @@ function initGoogleAnalytics(): void {
 }
 
 function initOpenPanel(): void {
-  if (opInitialized) return;
-  try {
-    window.op =
-      window.op ||
-      (function (this: void) {
-        const n: unknown[] = [];
-        return new Proxy(
-          function (this: void) {
-            if (arguments.length) n.push([].slice.call(arguments));
-          } as unknown as OpFn,
-          {
-            get(_t: unknown, r: string) {
-              if (r === 'q') return n;
-              return function () {
-                n.push([r].concat([].slice.call(arguments)));
-              };
-            },
-            has(_t: unknown, r: string) {
-              return r === 'q';
-            },
-          }
-        );
-      })();
+  if (opInitialized || !OPENPANEL_CLIENT_ID || !OPENPANEL_API_URL) return;
+  opInitialized = true;
+  console.debug('[analytics] OpenPanel initialized (direct ingestion)', {
+    clientId: OPENPANEL_CLIENT_ID,
+    apiUrl: OPENPANEL_API_URL,
+  });
+}
 
-    window.op('init', {
-      apiUrl: OPENPANEL_API_URL,
-      clientId: OPENPANEL_CLIENT_ID,
-      trackScreenViews: false,
-      trackOutgoingLinks: false,
-      trackAttributes: false,
-    });
-
-    const script = document.createElement('script');
-    script.defer = true;
-    script.async = true;
-    script.src = 'https://openpanel.dev/op1.js';
-    document.head.appendChild(script);
-
-    opInitialized = true;
-    console.debug('[analytics] OpenPanel initialized', { clientId: OPENPANEL_CLIENT_ID });
-  } catch (err) {
-    console.warn('[analytics] OpenPanel initialization failed:', err);
-  }
+function initializeAnalyticsProviders(): void {
+  initGoogleAnalytics();
+  initOpenPanel();
 }
 
 /**
@@ -335,33 +326,48 @@ function initOpenPanel(): void {
  * Idempotent — each provider initializes at most once.
  */
 export function initGA(): void {
-  initGoogleAnalytics();
-  initOpenPanel();
   analyticsEnabled = isAnalyticsEnabled();
+  if (analyticsEnabled) {
+    initializeAnalyticsProviders();
+    flushPendingAnalyticsEvents();
+  }
 }
 
 /**
- * Send an anonymous page view to all initialized providers.
+ * Send a privacy-limited page view to all initialized providers.
  */
 export function trackPageView(path: string): void {
-  if ((!gaInitialized && !opInitialized) || !analyticsEnabled) return;
-  console.debug('[analytics] trackPageView', { path });
-  if (gaInitialized) window.gtag('event', 'page_view', { page_path: path });
-  if (opInitialized) window.op('track', 'screen_view', { page: path });
+  const pagePath = normalizeAnalyticsPagePath(path);
+  if (!analyticsEnabled) {
+    queuePendingAnalyticsEvent({
+      type: 'page_view',
+      name: 'screen_view',
+      params: { page: pagePath },
+    });
+    return;
+  }
+  if (!gaInitialized && !opInitialized) return;
+  console.debug('[analytics] trackPageView', { path: pagePath });
+  const properties = { page: pagePath, __path: pagePath, ...analyticsPageContextProperties() };
+  if (gaInitialized) {
+    window.gtag('event', 'page_view', {
+      page_path: pagePath,
+      page_location: analyticsPageLocation(),
+      ...properties,
+    });
+  }
+  if (opInitialized) {
+    void sendOpenPanelTrack('screen_view', { ...properties, __title: currentDocumentTitle() });
+  }
 }
 
 /**
- * Send an anonymous feature-engagement event to all initialized providers.
+ * Send a privacy-limited feature-engagement event to all initialized providers.
  *
  * Event names must appear in `ALLOWED_EVENTS`. Calls with unlisted names
  * are dropped and a console warning is emitted.
  */
-export function trackEvent(
-  eventName: string,
-  params?: Record<string, string | number | boolean>
-): void {
-  if ((!gaInitialized && !opInitialized) || !analyticsEnabled) return;
-
+export function trackEvent(eventName: string, params?: AnalyticsParams): void {
   if (!ALLOWED_EVENTS.has(eventName)) {
     console.warn(
       `[analytics] trackEvent dropped — '${eventName}' is not in ALLOWED_EVENTS allowlist`
@@ -369,9 +375,284 @@ export function trackEvent(
     return;
   }
 
-  console.debug('[analytics] trackEvent', { eventName, params });
-  if (gaInitialized) window.gtag('event', eventName, params);
-  if (opInitialized) window.op('track', eventName, params);
+  if (!analyticsEnabled) {
+    queuePendingAnalyticsEvent({ type: 'event', name: eventName, params });
+    return;
+  }
+  if (!gaInitialized && !opInitialized) return;
+
+  const properties = { ...(params ?? {}), ...analyticsContextProperties() };
+  const loggableProperties = { ...properties };
+  delete loggableProperties.user_id;
+  console.debug('[analytics] trackEvent', { eventName, params: loggableProperties });
+  if (gaInitialized) window.gtag('event', eventName, properties);
+  if (opInitialized) {
+    void sendOpenPanelTrack(eventName, properties);
+  }
+}
+
+export function startUiInteractionTracking(): () => void {
+  if (uiInteractionTrackingStarted || typeof document === 'undefined') return () => undefined;
+  uiInteractionTrackingStarted = true;
+
+  const handleClick = (event: MouseEvent) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const element = target?.closest(INTERACTIVE_CLICK_SELECTOR);
+    if (!(element instanceof HTMLElement) || shouldSkipInteractionElement(element)) return;
+
+    trackEvent('ui_click', {
+      ...interactionBaseProperties(element),
+      interaction_kind: 'click',
+      control_id: controlIdentifier(element),
+      destination: destinationForElement(element),
+    });
+  };
+
+  const handleChange = (event: Event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const element = target?.closest(CONTROL_CHANGE_SELECTOR);
+    if (!(element instanceof HTMLElement) || shouldSkipInteractionElement(element)) return;
+
+    trackEvent('ui_control_change', {
+      ...interactionBaseProperties(element),
+      interaction_kind: 'change',
+      control_id: controlIdentifier(element),
+      control_state: controlState(element),
+    });
+  };
+
+  const handleSubmit = (event: SubmitEvent) => {
+    const form = event.target instanceof HTMLFormElement ? event.target : null;
+    if (!form || shouldSkipInteractionElement(form)) return;
+
+    trackEvent('ui_form_submit', {
+      ...interactionBaseProperties(form),
+      interaction_kind: 'submit',
+      control_id: controlIdentifier(form),
+    });
+  };
+
+  document.addEventListener('click', handleClick, true);
+  document.addEventListener('change', handleChange, true);
+  document.addEventListener('submit', handleSubmit, true);
+
+  return () => {
+    document.removeEventListener('click', handleClick, true);
+    document.removeEventListener('change', handleChange, true);
+    document.removeEventListener('submit', handleSubmit, true);
+    uiInteractionTrackingStarted = false;
+  };
+}
+
+function queuePendingAnalyticsEvent(event: PendingAnalyticsEvent): void {
+  if (analyticsConsentSynced) return;
+  pendingAnalyticsEvents.push(event);
+  if (pendingAnalyticsEvents.length > MAX_PENDING_ANALYTICS_EVENTS) {
+    pendingAnalyticsEvents.splice(0, pendingAnalyticsEvents.length - MAX_PENDING_ANALYTICS_EVENTS);
+  }
+}
+
+function flushPendingAnalyticsEvents(): void {
+  if (!analyticsEnabled || pendingAnalyticsEvents.length === 0) return;
+  const events = pendingAnalyticsEvents.splice(0, pendingAnalyticsEvents.length);
+  for (const event of events) {
+    if (event.type === 'page_view') {
+      trackPageView(String(event.params?.page ?? event.name));
+    } else {
+      trackEvent(event.name, event.params);
+    }
+  }
+}
+
+function interactionBaseProperties(element: HTMLElement): AnalyticsParams {
+  return {
+    page: currentAppPath(),
+    page_hash: currentPageHash(),
+    element_tag: element.tagName.toLowerCase(),
+    element_role: scrubIdentifier(element.getAttribute('role')) ?? '',
+    element_type: scrubIdentifier(element.getAttribute('type')) ?? '',
+  };
+}
+
+function controlIdentifier(element: HTMLElement): string {
+  const explicit =
+    element.getAttribute('data-analytics-id') ??
+    element.getAttribute('data-track') ??
+    element.getAttribute('data-testid') ??
+    element.getAttribute('data-walkthrough') ??
+    element.getAttribute('name') ??
+    element.id;
+  const scrubbed = scrubIdentifier(explicit);
+  if (scrubbed) return scrubbed;
+
+  const hrefDestination = destinationForElement(element);
+  if (hrefDestination) return `link_${scrubIdentifier(hrefDestination) ?? 'internal'}`;
+
+  const container = nearestStableContainer(element);
+  const tag = element.tagName.toLowerCase();
+  if (container) return `${tag}_in_${container}`;
+  return tag;
+}
+
+function destinationForElement(element: HTMLElement): string {
+  const href = element instanceof HTMLAnchorElement ? element.getAttribute('href') : null;
+  if (!href) return '';
+  if (href.startsWith('#/')) return href.slice(1);
+  if (href.startsWith('/')) return href;
+  return href.startsWith('http') ? 'external' : '';
+}
+
+function controlState(element: HTMLElement): string {
+  if (element instanceof HTMLInputElement) {
+    if (element.type === 'checkbox' || element.type === 'radio') {
+      return element.checked ? 'checked' : 'unchecked';
+    }
+    if (element.type === 'range') return 'changed';
+  }
+  if (element instanceof HTMLSelectElement) return 'selected';
+
+  const ariaChecked = element.getAttribute('aria-checked');
+  if (ariaChecked === 'true' || ariaChecked === 'false' || ariaChecked === 'mixed') {
+    return ariaChecked;
+  }
+  return 'changed';
+}
+
+function nearestStableContainer(element: HTMLElement): string | undefined {
+  const container = element.closest('[data-testid],[data-walkthrough],[data-analytics-id]');
+  if (!(container instanceof HTMLElement) || container === element) return undefined;
+  return scrubIdentifier(
+    container.getAttribute('data-analytics-id') ??
+      container.getAttribute('data-testid') ??
+      container.getAttribute('data-walkthrough')
+  );
+}
+
+function shouldSkipInteractionElement(element: HTMLElement): boolean {
+  if (element.closest('[data-analytics-skip="true"],[data-no-analytics="true"]')) return true;
+  if (element.closest('[contenteditable="true"]')) return true;
+  if (element instanceof HTMLInputElement) {
+    return ['text', 'search', 'email', 'password', 'tel', 'url', 'number', 'file'].includes(
+      element.type
+    );
+  }
+  if (element instanceof HTMLTextAreaElement) return true;
+  return false;
+}
+
+function scrubIdentifier(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const withoutQuery = trimmed.split(/[?#]/)[0] ?? trimmed;
+  const scrubbed = withoutQuery
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, ':email')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, ':id')
+    .replace(/\b[0-9a-f]{16,}\b/gi, ':id')
+    .replace(/\b\d{3,}\b/g, ':num')
+    .replace(/[^a-zA-Z0-9:_/-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase()
+    .slice(0, 80);
+  return scrubbed || undefined;
+}
+
+function currentAppPath(): string {
+  if (typeof window === 'undefined') return '';
+  return normalizeAnalyticsPagePath(window.location.pathname);
+}
+
+function currentPageHash(): string {
+  if (typeof window === 'undefined') return '';
+  return window.location.hash.startsWith('#/') ? window.location.hash : '';
+}
+
+function normalizeAnalyticsPagePath(path: string): string {
+  if (typeof window !== 'undefined' && window.location.hash.startsWith('#/')) {
+    return hashToPath(window.location.hash);
+  }
+  if (path.startsWith('#/')) return hashToPath(path);
+  return path || '/';
+}
+
+function hashToPath(hash: string): string {
+  const withoutHash = hash.slice(1);
+  return withoutHash || '/';
+}
+
+async function sendOpenPanelTrack(eventName: string, params?: AnalyticsParams): Promise<void> {
+  const profileId = currentAnalyticsUserId();
+  const properties = {
+    __path: currentOpenPanelPath(),
+    __referrer: currentDocumentReferrer(),
+    __timestamp: new Date().toISOString(),
+    ...(params ?? {}),
+  };
+
+  try {
+    const response = await fetch(OPENPANEL_TRACK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'openpanel-client-id': OPENPANEL_CLIENT_ID,
+        'openpanel-sdk-name': 'openhuman-react',
+        'openpanel-sdk-version': '0.1.0',
+      },
+      body: JSON.stringify({
+        type: 'track',
+        payload: { name: eventName, ...(profileId ? { profileId } : {}), properties },
+      }),
+      keepalive: true,
+    });
+
+    if (!response.ok) {
+      console.warn('[analytics] OpenPanel track failed:', response.status, await response.text());
+    }
+  } catch (err) {
+    console.warn('[analytics] OpenPanel track failed:', err);
+  }
+}
+
+function analyticsContextProperties(): AnalyticsParams {
+  const userId = currentAnalyticsUserId();
+  return {
+    user_id: userId ?? '',
+    app_version: APP_VERSION,
+    binary_version: APP_BINARY_VERSION,
+    core_cargo_version: CORE_CARGO_VERSION,
+    tauri_cargo_version: TAURI_CARGO_VERSION,
+    release: SENTRY_RELEASE,
+    build_sha: BUILD_SHA,
+    app_environment: APP_ENVIRONMENT,
+  };
+}
+
+function analyticsPageContextProperties(): AnalyticsParams {
+  return { ...analyticsContextProperties(), page_hash: currentPageHash() };
+}
+
+function currentAnalyticsUserId(): string | undefined {
+  return getCoreStateSnapshot().snapshot.currentUser?._id;
+}
+
+function currentOpenPanelPath(): string {
+  return currentAppPath();
+}
+
+function analyticsPageLocation(): string {
+  if (typeof window === 'undefined') return '';
+  const pagePath = currentAppPath();
+  return `${window.location.origin}${pagePath}`;
+}
+
+function currentDocumentTitle(): string {
+  if (typeof document === 'undefined') return '';
+  return document.title;
+}
+
+function currentDocumentReferrer(): string {
+  if (typeof document === 'undefined') return '';
+  return document.referrer;
 }
 
 /**

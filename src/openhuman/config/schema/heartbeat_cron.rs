@@ -1,7 +1,56 @@
-//! Heartbeat and cron configuration.
+//! Heartbeat, cron, and subconscious mode configuration.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// Subconscious operating mode — controls tool access and tick frequency.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SubconsciousMode {
+    /// Disabled — the subconscious loop does not run.
+    #[default]
+    Off,
+    /// Read-only observation every 30 minutes. Memory recall and file
+    /// reading only — no writes, no sub-agent spawning.
+    Simple,
+    /// Full tool access every 5 minutes. Can write, spawn sub-agents,
+    /// and delegate tasks to the orchestrator.
+    Aggressive,
+}
+
+impl SubconsciousMode {
+    pub fn is_enabled(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+
+    pub fn default_interval_minutes(self) -> u32 {
+        match self {
+            Self::Off => 5,
+            Self::Simple => 30,
+            Self::Aggressive => 5,
+        }
+    }
+
+    pub fn is_read_only(self) -> bool {
+        matches!(self, Self::Simple)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Simple => "simple",
+            Self::Aggressive => "aggressive",
+        }
+    }
+
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "simple" => Self::Simple,
+            "aggressive" => Self::Aggressive,
+            _ => Self::Off,
+        }
+    }
+}
 
 /// Heartbeat configuration — periodic background loop that evaluates
 /// HEARTBEAT.md tasks and proactive notification sources.
@@ -47,6 +96,11 @@ pub struct HeartbeatConfig {
     /// Maximum lookahead window for reminder notifications.
     #[serde(default = "default_reminder_lookahead_minutes")]
     pub reminder_lookahead_minutes: u32,
+    /// Subconscious operating mode. Controls tool access and tick frequency.
+    /// Off (default) = disabled. Simple = read-only every 30 min.
+    /// Aggressive = full access every 5 min.
+    #[serde(default)]
+    pub subconscious_mode: SubconsciousMode,
 }
 
 fn default_context_budget() -> u32 {
@@ -93,6 +147,25 @@ impl Default for HeartbeatConfig {
             meeting_lookahead_minutes: default_meeting_lookahead_minutes(),
             max_calendar_connections_per_tick: default_max_calendar_connections_per_tick(),
             reminder_lookahead_minutes: default_reminder_lookahead_minutes(),
+            subconscious_mode: SubconsciousMode::Off,
+        }
+    }
+}
+
+impl HeartbeatConfig {
+    /// Resolve the effective subconscious mode, handling backward
+    /// compatibility for configs that pre-date the `subconscious_mode`
+    /// field. If `subconscious_mode` is explicitly set (not Off-by-default),
+    /// use it. Otherwise, if the legacy `enabled && inference_enabled`
+    /// flags are true, treat as `Simple`.
+    pub fn effective_subconscious_mode(&self) -> SubconsciousMode {
+        if self.subconscious_mode != SubconsciousMode::Off {
+            return self.subconscious_mode;
+        }
+        if self.enabled && self.inference_enabled {
+            SubconsciousMode::Simple
+        } else {
+            SubconsciousMode::Off
         }
     }
 }
@@ -112,6 +185,50 @@ mod tests {
         assert!(!config.external_delivery_enabled);
         assert_eq!(config.interval_minutes, 5);
         assert_eq!(config.max_calendar_connections_per_tick, 2);
+        assert_eq!(config.subconscious_mode, SubconsciousMode::Off);
+    }
+
+    #[test]
+    fn subconscious_mode_serde_round_trip() {
+        assert_eq!(
+            serde_json::to_string(&SubconsciousMode::Simple).unwrap(),
+            r#""simple""#
+        );
+        assert_eq!(
+            serde_json::from_str::<SubconsciousMode>(r#""aggressive""#).unwrap(),
+            SubconsciousMode::Aggressive
+        );
+        assert_eq!(SubconsciousMode::default(), SubconsciousMode::Off);
+    }
+
+    #[test]
+    fn subconscious_mode_helpers() {
+        assert!(!SubconsciousMode::Off.is_enabled());
+        assert!(SubconsciousMode::Simple.is_enabled());
+        assert!(SubconsciousMode::Aggressive.is_enabled());
+        assert!(SubconsciousMode::Simple.is_read_only());
+        assert!(!SubconsciousMode::Aggressive.is_read_only());
+        assert_eq!(SubconsciousMode::Simple.default_interval_minutes(), 30);
+        assert_eq!(SubconsciousMode::Aggressive.default_interval_minutes(), 5);
+    }
+
+    #[test]
+    fn effective_mode_backward_compat() {
+        let mut config = HeartbeatConfig::default();
+        assert_eq!(config.effective_subconscious_mode(), SubconsciousMode::Off);
+
+        config.enabled = true;
+        config.inference_enabled = true;
+        assert_eq!(
+            config.effective_subconscious_mode(),
+            SubconsciousMode::Simple
+        );
+
+        config.subconscious_mode = SubconsciousMode::Aggressive;
+        assert_eq!(
+            config.effective_subconscious_mode(),
+            SubconsciousMode::Aggressive
+        );
     }
 
     #[test]

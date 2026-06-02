@@ -1,216 +1,88 @@
-//! Prompt builders for the subconscious evaluation and execution phases.
+//! Prompt builder for the subconscious agent.
 //!
-//! Injects OpenClaw identity context (SOUL.md, PROFILE.md) so the local model
-//! reasons as the agent, not a generic evaluator.
+//! The subconscious agent is a periodic summarizer that reads the situation
+//! report (memory-tree signals, recent activity, hotness deltas) and
+//! produces structured thoughts (reflections) about the user's state.
 
-use super::types::SubconsciousTask;
 use std::path::Path;
 
 const IDENTITY_EXCERPT_CHARS: usize = 2000;
 
-// ── Evaluation prompt ────────────────────────────────────────────────────────
-
-/// Build the per-tick evaluation prompt. The local model evaluates each due
-/// task against the situation report and returns a per-task decision.
-pub fn build_evaluation_prompt(
-    tasks: &[SubconsciousTask],
-    situation_report: &str,
-    identity_context: &str,
-) -> String {
-    let task_list = tasks
-        .iter()
-        .map(|t| format!("- [{}] {}", t.id, t.title))
-        .collect::<Vec<_>>()
-        .join("\n");
-
+/// Build the system prompt for the subconscious agent tick. The agent
+/// observes the user's world via the situation report and produces
+/// structured reflections.
+pub fn build_agent_prompt(situation_report: &str, identity_context: &str) -> String {
     format!(
         r#"{identity_context}
 
-# Subconscious Loop — Task Evaluation
+# Subconscious Agent
 
-You are the background awareness layer. You run periodically to evaluate
-user-defined tasks against the current workspace state.
+You are the user's background awareness layer. You wake up periodically,
+review what's happening in their world, and surface useful thoughts.
 
-## Due tasks
-
-{task_list}
-
-## Current state
+## Situation Report (pre-loaded context)
 
 {situation_report}
 
-## Your job
+## Instructions
 
-For each task, check if the current state has anything relevant. Decide:
-- **noop**: Nothing actionable for this task right now.
-- **act**: The task should be executed now (state has relevant data).
-- **escalate**: The task needs user approval before acting (ambiguous, risky, or irreversible).
+1. **Research**: Use your tools to look up relevant memory, recent activity,
+   conversations, or web context that would deepen your understanding.
+   Use `memory_recall` to query specific topics. Use `web_fetch` or search
+   tools if external context would help.
 
-## Reflections (#623 — proactive layer)
+2. **Observe**: Based on both the situation report and your research,
+   identify patterns, deadlines, risks, opportunities, or interesting
+   cross-source connections.
 
-You also surface **reflections**: free-form observations grounded in the
-memory-tree signal sections (Hotness deltas, Recent summaries, Latest
-daily digest, Recap window). Reflections are *not* task evaluations —
-they let you point out something the user should know, even if no task
-covers it.
+3. **Promote to orchestrator**: If you find something that needs a deeper
+   investigation or multi-step action, use `spawn_subagent` or
+   `spawn_worker_thread` to delegate the work. The orchestrator can take
+   action; you observe and delegate.
 
-**Self vs. others (#1365)**: the situation report includes a *Your
-Identifiers* section listing the user's connected-account handles,
-emails, and user_ids. Use it as the source of truth for who the user is.
+4. **Surface thoughts**: Produce structured observations for the user.
+   Only surface genuinely useful insights — skip trivial observations.
 
-- *Hotness deltas* tagged `(you)` are the user's own identifiers. Frame
-  reflections grounded in those in second person: *"Your phoenix mentions
-  surged 4× this hour."* Untagged hotness items are someone or something
-  else — reflect on them as *about that other entity*, not as the user.
-- For *Recent summaries*, *Latest global digest*, and *Recap window*
-  body text, the prose mentions people by name, email, or handle inline.
-  Match each mention against the *Your Identifiers* list: if it appears
-  there, that sentence is about the user; otherwise it's about a
-  collaborator/contact. **Never attribute another person's activity to
-  the user.** A digest line "Cyrus deployed phoenix" is the user's
-  activity only when *Cyrus* (or the matching email/handle) appears in
-  *Your Identifiers* — otherwise Cyrus is someone the user is reading
-  about, and the reflection should reflect that.
-- If a reflection mixes self and other signals, separate them
-  explicitly: *"You spent the morning on phoenix; meanwhile, Sam pushed
-  a refactor."*
+**Self vs. others**: the *Your Identifiers* section (if present) lists
+the user's handles, emails, and user_ids. Never attribute someone else's
+activity to the user.
 
-For each reflection:
-- `kind`: one of `hotness_spike` | `cross_source_pattern` | `daily_digest`
-  | `due_item` | `risk` | `opportunity`.
-- `body`: short markdown-friendly observation.
-- `proposed_action` (optional): one-tap action text. When the user taps
-  the action button, OpenHuman opens a *new* conversation thread seeded
-  with the body + this action — never auto-executed, never written into
-  any existing chat.
-- `source_refs`: opaque ids from the situation report so we can trace
-  provenance.
+**Anti-double-emit**: the *Recent reflections* section shows what you
+already surfaced. Re-emit only if the signal materially intensified.
 
-**Anti-double-emit**: the situation report's "Recent reflections" section
-shows what you already noticed. Re-emit only if the underlying signal
-materially intensified — otherwise let it decay silently.
+Cap: at most **5 thoughts per tick**.
 
-**No side effects, no thread bloat**: reflections are observation-only.
-They surface on the Intelligence tab; nothing is auto-posted into any
-conversation. Only emit a `proposed_action` when there is a concrete
-follow-up the user could plausibly want to start a chat about.
+## Final output
 
-Cap: emit at most **5 reflections per tick**. Excess is dropped.
+After you've finished researching, end your final message with a JSON
+block containing your thoughts:
 
-## Output format (strict JSON, no other text)
-
+```json
 {{
-  "evaluations": [
-    {{"task_id": "<id>", "decision": "noop|act|escalate", "reason": "one sentence"}}
-  ],
-  "reflections": [
+  "thoughts": [
     {{
-      "kind": "hotness_spike",
-      "body": "Phoenix mentions surged 4× in last hour across Slack + email.",
-      "proposed_action": "Pull the last 24h of Phoenix mentions into a thread",
-      "source_refs": ["entity:phoenix", "summary:abc123"]
+      "kind": "hotness_spike | cross_source_pattern | daily_digest | due_item | risk | opportunity",
+      "body": "Short markdown observation.",
+      "proposed_action": "Optional one-tap action text (or null).",
+      "source_refs": ["entity:foo", "summary:bar"]
     }}
   ]
 }}
+```
 "#
     )
 }
 
-/// Render a slice of recent reflections as a wire-format prompt block —
-/// matches what the LLM was taught about in `build_evaluation_prompt`.
-/// Used by the situation_report's "Recent reflections" section so the
-/// representation is identical between teaching and reading.
+/// Render a slice of recent reflections as a prompt block for the
+/// situation report's "Recent reflections" section.
 pub fn format_recent_reflections_for_prompt(
     reflections: &[crate::openhuman::subconscious::reflection::Reflection],
 ) -> String {
     crate::openhuman::subconscious::situation_report::reflections::build_section(reflections)
 }
 
-// ── Execution prompts ────────────────────────────────────────────────────────
-
-/// Build the prompt for executing a text-only task via local Ollama model.
-/// Used for tasks that don't need tools (summarize, extract, classify, etc.)
-pub fn build_text_execution_prompt(
-    task: &SubconsciousTask,
-    situation_report: &str,
-    identity_context: &str,
-) -> String {
-    format!(
-        r#"{identity_context}
-
-# Task Execution
-
-Execute the following task based on the current state. Respond with the result only.
-
-## Task
-{task_title}
-
-## Current state
-{situation_report}
-
-Do the task now. Return only the result — no explanations or meta-commentary."#,
-        task_title = task.title
-    )
-}
-
-/// Build the prompt for executing a tool-required task via the full agentic loop.
-/// Used for tasks that need side effects (send message, create doc, etc.)
-pub fn build_tool_execution_prompt(
-    task: &SubconsciousTask,
-    situation_report: &str,
-    identity_context: &str,
-) -> String {
-    format!(
-        r#"{identity_context}
-
-# Background Task Execution
-
-You are executing a user-defined background task. Use your available tools to complete it.
-
-## Task
-{task_title}
-
-## Current state
-{situation_report}
-
-Execute this task using the appropriate tools. Complete the task fully — don't just describe what to do."#,
-        task_title = task.title
-    )
-}
-
-/// Build a read-only analysis prompt for agentic-v1. Used when a read-only task
-/// is escalated — the agent should analyze and recommend but NOT execute writes.
-pub fn build_analysis_only_prompt(
-    task: &SubconsciousTask,
-    situation_report: &str,
-    identity_context: &str,
-) -> String {
-    format!(
-        r#"{identity_context}
-
-# Background Task — Analysis Only
-
-You are analyzing a background task. You may use read-only tools to gather information,
-but you MUST NOT execute any write actions (send, post, create, delete, forward, reply, update, publish).
-
-If you determine that a write action is needed, describe exactly what you would do in your response
-but do not execute it. Start your recommendation with "RECOMMENDED ACTION:" on its own line.
-
-## Task
-{task_title}
-
-## Current state
-{situation_report}
-
-Analyze the situation and report your findings. If action is needed, describe it clearly but do NOT execute."#,
-        task_title = task.title
-    )
-}
-
 // ── Identity loading ─────────────────────────────────────────────────────────
 
-/// Load identity context from SOUL.md and PROFILE.md in the workspace.
-/// Returns a formatted string to prepend to prompts.
 pub fn load_identity_context(workspace_dir: &Path) -> String {
     let prompts_dir = resolve_prompts_dir(workspace_dir);
     let mut ctx = String::new();
@@ -222,8 +94,6 @@ pub fn load_identity_context(workspace_dir: &Path) -> String {
         }
     }
 
-    // PROFILE.md lives in the workspace root (not prompts dir) — it's
-    // generated by the onboarding enrichment pipeline, not bundled.
     if let Some(profile) = load_file_excerpt(workspace_dir, "PROFILE.md") {
         ctx.push_str("## User Profile\n\n");
         ctx.push_str(&profile);
@@ -238,13 +108,11 @@ pub fn load_identity_context(workspace_dir: &Path) -> String {
 }
 
 fn resolve_prompts_dir(workspace_dir: &Path) -> Option<std::path::PathBuf> {
-    // Check workspace AI dir
     let workspace_ai = workspace_dir.join("ai");
     if workspace_ai.is_dir() {
         return Some(workspace_ai);
     }
 
-    // Try CARGO_MANIFEST_DIR (dev builds)
     if let Some(dir) = option_env!("CARGO_MANIFEST_DIR").map(std::path::PathBuf::from) {
         let candidate = dir
             .join("src")
@@ -256,7 +124,6 @@ fn resolve_prompts_dir(workspace_dir: &Path) -> Option<std::path::PathBuf> {
         }
     }
 
-    // Walk up from cwd
     if let Ok(cwd) = std::env::current_dir() {
         return crate::openhuman::dev_paths::repo_ai_prompts_dir(&cwd);
     }
@@ -281,60 +148,22 @@ fn load_file_excerpt(dir: &Path, filename: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::openhuman::subconscious::types::{TaskRecurrence, TaskSource};
-
-    fn test_task(id: &str, title: &str) -> SubconsciousTask {
-        SubconsciousTask {
-            id: id.to_string(),
-            title: title.to_string(),
-            source: TaskSource::User,
-            recurrence: TaskRecurrence::Once,
-            enabled: true,
-            last_run_at: None,
-            next_run_at: None,
-            completed: false,
-            created_at: 0.0,
-        }
-    }
 
     #[test]
-    fn evaluation_prompt_includes_tasks_and_report() {
-        let tasks = vec![
-            test_task("t1", "Check email"),
-            test_task("t2", "Review calendar"),
-        ];
-        let prompt = build_evaluation_prompt(&tasks, "## State\nSome data.", "Identity here");
-        assert!(prompt.contains("[t1] Check email"));
-        assert!(prompt.contains("[t2] Review calendar"));
+    fn agent_prompt_includes_report_and_identity() {
+        let prompt = build_agent_prompt("## State\nSome data.", "Identity here");
         assert!(prompt.contains("Some data."));
         assert!(prompt.contains("Identity here"));
+        assert!(prompt.contains("thoughts"));
     }
 
     #[test]
-    fn evaluation_prompt_includes_decision_schema() {
-        let tasks = vec![test_task("t1", "Task")];
-        let prompt = build_evaluation_prompt(&tasks, "", "");
-        assert!(prompt.contains("noop"));
-        assert!(prompt.contains("act"));
-        assert!(prompt.contains("escalate"));
-        assert!(prompt.contains("evaluations"));
-        assert!(prompt.contains("task_id"));
-    }
-
-    #[test]
-    fn text_execution_prompt_includes_task_title() {
-        let task = test_task("t1", "Summarize urgent emails");
-        let prompt = build_text_execution_prompt(&task, "3 new emails", "Identity");
-        assert!(prompt.contains("Summarize urgent emails"));
-        assert!(prompt.contains("3 new emails"));
-    }
-
-    #[test]
-    fn tool_execution_prompt_includes_tool_instructions() {
-        let task = test_task("t1", "Send digest to Telegram");
-        let prompt = build_tool_execution_prompt(&task, "Email data here", "Identity");
-        assert!(prompt.contains("Send digest to Telegram"));
-        assert!(prompt.contains("tools"));
+    fn agent_prompt_includes_output_schema() {
+        let prompt = build_agent_prompt("", "");
+        assert!(prompt.contains("kind"));
+        assert!(prompt.contains("body"));
+        assert!(prompt.contains("proposed_action"));
+        assert!(prompt.contains("source_refs"));
     }
 
     #[test]

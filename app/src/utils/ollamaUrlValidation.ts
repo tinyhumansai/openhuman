@@ -41,8 +41,15 @@ export function validateOllamaUrl(raw: string): OllamaUrlValidationResult {
   if (parsed.hash) {
     return { valid: false, error: 'URL must not contain a fragment' };
   }
-  // Normalize to scheme://host[:port]
+  // Normalize to scheme://host[:port]; rewrite bind-all addresses to loopback.
+  // JS URL API strips brackets from IPv6 hostnames: new URL('http://[::]:11434').hostname === '::'
+  const hostname =
+    parsed.hostname === '0.0.0.0'
+      ? 'localhost'
+      : parsed.hostname === '::'
+        ? '[::1]'
+        : parsed.hostname;
   const port = parsed.port ? `:${parsed.port}` : '';
-  const normalized = `${parsed.protocol}//${parsed.hostname}${port}`;
+  const normalized = `${parsed.protocol}//${hostname}${port}`;
   return { valid: true, normalized };
 }

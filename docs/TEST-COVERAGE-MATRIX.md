@@ -208,8 +208,8 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature                      | Layer | Test path(s)                                                                                                                                | Status | Notes                                                                               |
 | ----- | ---------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------- |
-| 5.2.1 | Inline Suggestion Generation | MS+WD | `app/test/e2e/specs/autocomplete-flow.spec.ts` (settings surface only); release-manual-smoke for real inline-gen                            | 🟡     | Settings panel mounts (this PR); inline-gen requires macOS TCC grants — manual only |
-| 5.2.2 | Debounce Handling            | VU    | `app/src/features/autocomplete/__tests__/useAutocompleteSkillStatus.test.tsx` (this PR — status surface); core debounce timing is Rust-side | ✅     | Was ❌ — status branches now covered                                                |
+| 5.2.1 | Inline Suggestion Generation | MS+WD | `app/test/e2e/specs/autocomplete-flow.spec.ts` (settings surface only); release-manual-smoke for real inline-gen                            | 🟡     | Settings panel mounts; inline-gen requires macOS TCC grants — manual only |
+| 5.2.2 | Debounce Handling            | VU    | `app/src/features/autocomplete/__tests__/useAutocompleteSkillStatus.test.tsx` (status surface); core debounce timing is Rust-side | ✅     | Was ❌ — status branches now covered                                                |
 | 5.2.3 | Acceptance Trigger           | MS    | release-manual-smoke (#971)                                                                                                                 | 🟡     | Real keypress acceptance into a third-party text field — not driver-automatable     |
 
 ### 5.3 Voice Intelligence
@@ -219,15 +219,15 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 5.3.1 | Voice Input Capture       | WD    | `voice-mode.spec.ts` | ✅     |       |
 | 5.3.2 | Speech-to-Text Processing | WD    | `voice-mode.spec.ts` | ✅     |       |
 | 5.3.3 | Voice Command Execution   | WD    | `voice-mode.spec.ts` | ✅     |       |
-| 5.3.4 | Mascot Voice Selection    | VU    | `app/src/store/__tests__/mascotSlice.test.ts`, `app/src/components/settings/panels/__tests__/VoicePanel.test.tsx`, `app/src/features/human/useHumanMascot.test.ts` (this PR) | ✅ | Slice validation + persist REHYDRATE, Settings picker UI (#1762), `synthesizeSpeech` voiceId override propagation |
+| 5.3.4 | Mascot Voice Selection    | VU    | `app/src/store/__tests__/mascotSlice.test.ts`, `app/src/components/settings/panels/__tests__/VoicePanel.test.tsx`, `app/src/features/human/useHumanMascot.test.ts` | ✅ | Slice validation + persist REHYDRATE, Settings picker UI (#1762), `synthesizeSpeech` voiceId override propagation |
 
 ### 5.4 Persona
 
 | ID    | Feature                       | Layer | Test path(s)                                                                                                                          | Status | Notes                                                                                              |
 | ----- | ----------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------- |
-| 5.4.1 | Persona Name & Description    | VU    | `app/src/store/personaSlice.test.ts`, `app/src/components/settings/panels/PersonaPanel.test.tsx` (this PR)        | ✅     | Slice validation + persist REHYDRATE scrub; Settings identity fields persist on save (#2345)        |
-| 5.4.2 | SOUL.md Edit & Reset          | RU+VU | `src/openhuman/workspace/rpc.rs`, `app/src/components/settings/panels/PersonaPanel.test.tsx` (this PR)                       | ✅     | Core read/write/reset with allowlist + size cap; panel loads, saves, resets over RPC (#2345)        |
-| 5.4.3 | Persona Settings Surface      | VU    | `app/src/components/settings/panels/PersonaPanel.test.tsx` (this PR)                                                        | ✅     | Bundles identity + SOUL.md + link to Mascot avatar/voice (#2345)                                    |
+| 5.4.1 | Persona Name & Description    | VU    | `app/src/store/personaSlice.test.ts`, `app/src/components/settings/panels/PersonaPanel.test.tsx`        | ✅     | Slice validation + persist REHYDRATE scrub; Settings identity fields persist on save (#2345)        |
+| 5.4.2 | SOUL.md Edit & Reset          | RU+VU | `src/openhuman/workspace/rpc.rs`, `app/src/components/settings/panels/PersonaPanel.test.tsx`                       | ✅     | Core read/write/reset with allowlist + size cap; panel loads, saves, resets over RPC (#2345)        |
+| 5.4.3 | Persona Settings Surface      | VU    | `app/src/components/settings/panels/PersonaPanel.test.tsx`                                                        | ✅     | Bundles identity + SOUL.md + link to Mascot avatar/voice (#2345)                                    |
 
 ---
 
@@ -237,18 +237,18 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature                      | Layer | Test path(s)                                                                                                     | Status | Notes                                                                |
 | ----- | ---------------------------- | ----- | ---------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
-| 6.1.1 | File Read Access             | RU+WD | `src/openhuman/tools/impl/filesystem/file_read.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` (this PR)  | ✅     | Was 🟡 — WDIO drives memory_read_file + asserts via Node fs          |
-| 6.1.2 | File Write Access            | RU+WD | `src/openhuman/tools/impl/filesystem/file_write.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` (this PR) | ✅     | Was 🟡 — WDIO drives memory_write_file + asserts bytes match on disk |
-| 6.1.3 | Path Restriction Enforcement | RU+WD | `src/openhuman/tools/impl/filesystem/file_read.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` (this PR)  | ✅     | Was 🟡 — WDIO asserts traversal + absolute-path denial envelope      |
+| 6.1.1 | File Read Access             | RU+WD | `src/openhuman/tools/impl/filesystem/file_read.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts`  | ✅     | Was 🟡 — WDIO drives memory_read_file + asserts via Node fs          |
+| 6.1.2 | File Write Access            | RU+WD | `src/openhuman/tools/impl/filesystem/file_write.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts` | ✅     | Was 🟡 — WDIO drives memory_write_file + asserts bytes match on disk |
+| 6.1.3 | Path Restriction Enforcement | RU+WD | `src/openhuman/tools/impl/filesystem/file_read.rs`, `app/test/e2e/specs/tool-filesystem-flow.spec.ts`  | ✅     | Was 🟡 — WDIO asserts traversal + absolute-path denial envelope      |
 
 ### 6.2 Shell & Git
 
 | ID    | Feature                      | Layer | Test path(s)                                                                                                              | Status | Notes                                                                                            |
 | ----- | ---------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------ |
-| 6.2.1 | Shell Command Execution      | RU+WD | `src/openhuman/tools/impl/system/shell.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR)                    | ✅     | Was 🟡 — WDIO asserts agent runtime + `tools_agent` registry contract; full LLM path tracked #68 |
-| 6.2.2 | Command Restriction Handling | RU+WD | `src/openhuman/security/policy_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR)                      | ✅     | Was 🟡 — WDIO locks denial envelope shape `{ ok:false, error }` consumed by the React UI         |
-| 6.2.3 | Git Read Operations          | RU+WD | `src/openhuman/tools/impl/filesystem/git_operations_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR) | ✅     | Was 🟡 — WDIO seeds a fixture repo in OPENHUMAN_WORKSPACE and asserts read ops succeed           |
-| 6.2.4 | Git Write Operations         | RU+WD | `src/openhuman/tools/impl/filesystem/git_operations_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` (this PR) | ✅     | Was 🟡 — WDIO commits into the same fixture and asserts log advances                             |
+| 6.2.1 | Shell Command Execution      | RU+WD | `src/openhuman/tools/impl/system/shell.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts`                    | ✅     | Was 🟡 — WDIO asserts agent runtime + `tools_agent` registry contract; full LLM path tracked #68 |
+| 6.2.2 | Command Restriction Handling | RU+WD | `src/openhuman/security/policy_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts`                      | ✅     | Was 🟡 — WDIO locks denial envelope shape `{ ok:false, error }` consumed by the React UI         |
+| 6.2.3 | Git Read Operations          | RU+WD | `src/openhuman/tools/impl/filesystem/git_operations_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` | ✅     | Was 🟡 — WDIO seeds a fixture repo in OPENHUMAN_WORKSPACE and asserts read ops succeed           |
+| 6.2.4 | Git Write Operations         | RU+WD | `src/openhuman/tools/impl/filesystem/git_operations_tests.rs`, `app/test/e2e/specs/tool-shell-git-flow.spec.ts` | ✅     | Was 🟡 — WDIO commits into the same fixture and asserts log advances                             |
 
 ---
 
@@ -258,8 +258,8 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature            | Layer | Test path(s)                                                                                                       | Status | Notes                                                                                               |
 | ----- | ------------------ | ----- | ------------------------------------------------------------------------------------------------------------------ | ------ | --------------------------------------------------------------------------------------------------- |
-| 7.1.1 | Open URL           | RU+WD | `src/openhuman/tools/impl/browser/browser_open_tests.rs`, `app/test/e2e/specs/tool-browser-flow.spec.ts` (this PR) | ✅     | Was ❌ — WDIO asserts agent runtime + browser-bearing registry; mock backend captures HTTP shape    |
-| 7.1.2 | Browser Automation | RU+WD | `src/openhuman/tools/impl/browser/browser_tests.rs`, `app/test/e2e/specs/tool-browser-flow.spec.ts` (this PR)      | ✅     | Was ❌ — WDIO locks tools_agent wildcard scope (exposes the 22-action automation schema to the LLM) |
+| 7.1.1 | Open URL           | RU+WD | `src/openhuman/tools/impl/browser/browser_open_tests.rs`, `app/test/e2e/specs/tool-browser-flow.spec.ts` | ✅     | Was ❌ — WDIO asserts agent runtime + browser-bearing registry; mock backend captures HTTP shape    |
+| 7.1.2 | Browser Automation | RU+WD | `src/openhuman/tools/impl/browser/browser_tests.rs`, `app/test/e2e/specs/tool-browser-flow.spec.ts`      | ✅     | Was ❌ — WDIO locks tools_agent wildcard scope (exposes the 22-action automation schema to the LLM) |
 
 ### 7.2 Network
 
@@ -277,7 +277,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID    | Feature       | Layer | Test path(s)                                                                                       | Status | Notes  |
 | ----- | ------------- | ----- | -------------------------------------------------------------------------------------------------- | ------ | ------ |
-| 8.1.1 | Store Memory  | RI+WD | `tests/memory_roundtrip_e2e.rs` (this PR), `app/test/e2e/specs/memory-roundtrip.spec.ts` (this PR) | ✅     | Was ❌ |
+| 8.1.1 | Store Memory  | RI+WD | `tests/memory_roundtrip_e2e.rs`, `app/test/e2e/specs/memory-roundtrip.spec.ts` | ✅     | Was ❌ |
 | 8.1.2 | Recall Memory | RI+WD | same                                                                                               | ✅     | Was ❌ |
 | 8.1.3 | Forget Memory | RI+WD | same                                                                                               | ✅     | Was ❌ |
 
@@ -346,10 +346,10 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ID     | Feature             | Layer | Test path(s)                                         | Status | Notes  |
 | ------ | ------------------- | ----- | ---------------------------------------------------- | ------ | ------ |
 | 10.1.1 | Telegram Connection | WD    | `telegram-flow.spec.ts`                              | ✅     |        |
-| 10.1.2 | WhatsApp Connection | WD    | `app/test/e2e/specs/whatsapp-flow.spec.ts` (this PR) | ✅     | Was ❌ |
+| 10.1.2 | WhatsApp Connection | WD    | `app/test/e2e/specs/whatsapp-flow.spec.ts` | ✅     | Was ❌ |
 | 10.1.3 | Gmail Connection    | WD    | `gmail-flow.spec.ts`                                 | ✅     |        |
-| 10.1.4 | Slack Connection    | WD    | `app/test/e2e/specs/slack-flow.spec.ts` (this PR)    | ✅     | Was ❌ |
-| 10.1.5 | Yuanbao Connection  | RU    | `src/openhuman/channels/providers/yuanbao/` (this PR), `src/openhuman/channels/controllers/ops.rs::tests::connect_yuanbao_*` (this PR), `src/openhuman/channels/runtime/startup.rs::yuanbao_secret_tests` (this PR) | 🟡     | New API-key channel for Tencent Yuanbao. RU covers sign-token preflight (valid/invalid creds, env-override cluster routing), credentials store hydration (incl. stale app_key guard), and WS reconnect/shutdown. No WDIO spec yet — connect-flow UI is rendered via the generic `ChannelSetupModal` already exercised by other channel flow specs. |
+| 10.1.4 | Slack Connection    | WD    | `app/test/e2e/specs/slack-flow.spec.ts`    | ✅     | Was ❌ |
+| 10.1.5 | Yuanbao Connection  | RU    | `src/openhuman/channels/providers/yuanbao/`, `src/openhuman/channels/controllers/ops.rs::tests::connect_yuanbao_*`, `src/openhuman/channels/runtime/startup.rs::yuanbao_secret_tests` | 🟡     | New API-key channel for Tencent Yuanbao. RU covers sign-token preflight (valid/invalid creds, env-override cluster routing), credentials store hydration (incl. stale app_key guard), and WS reconnect/shutdown. No WDIO spec yet — connect-flow UI is rendered via the generic `ChannelSetupModal` already exercised by other channel flow specs. |
 
 ### 10.2 Authentication & Authorization
 
@@ -365,7 +365,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ------ | ------------------------- | ----- | ----------------------------------------------------- | ------ | ----- |
 | 10.3.1 | Incoming Message Sync     | RU+WD | `src/openhuman/channels/tests/`, `gmail-flow.spec.ts` | ✅     |       |
 | 10.3.2 | Message Deduplication     | RU    | `src/openhuman/channels/tests/`                       | ✅     |       |
-| 10.3.3 | WhatsApp Agent Retrieval  | RU    | `src/openhuman/whatsapp_data/tools/` (this PR), `tests/json_rpc_e2e.rs::whatsapp_data_agent_tools_e2e_1341` (this PR) | ✅     | Three read-only agent tools wrap the local SQLite store; ingest stays internal-only. See [`docs/whatsapp-data-flow.md`](whatsapp-data-flow.md). |
+| 10.3.3 | WhatsApp Agent Retrieval  | RU    | `src/openhuman/whatsapp_data/tools/`, `tests/json_rpc_e2e.rs::whatsapp_data_agent_tools_e2e_1341` | ✅     | Three read-only agent tools wrap the local SQLite store; ingest stays internal-only. See [`docs/whatsapp-data-flow.md`](whatsapp-data-flow.md). |
 | 10.3.4 | Real-Time vs Delayed Sync | RU    | `src/openhuman/channels/tests/runtime_dispatch.rs`    | ✅     |       |
 
 ### 10.4 Messaging Operations
@@ -411,8 +411,8 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ID     | Feature                    | Layer | Test path(s)                                                                                                        | Status | Notes                                                                                     |
 | ------ | -------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------- |
 | 11.1.1 | Multi-Source Analysis      | RI    | `tests/memory_graph_sync_e2e.rs`                                                                                    | 🟡     | Frontend trigger untested                                                                 |
-| 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts` (this PR)                                                 | ✅     | Was ❌                                                                                    |
-| 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route (this PR); explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
+| 11.1.2 | Actionable Item Extraction | VU    | `app/src/components/intelligence/__tests__/utils.test.ts`                                                 | ✅     | Was ❌                                                                                    |
+| 11.1.3 | Analyze Trigger            | WD    | `app/test/e2e/specs/insights-dashboard.spec.ts` mounts the route; explicit analyze-handler invocation TBD | 🟡     | Route mounts and search/filter UI assert — full analyze trigger flow tracked as follow-up |
 | 11.1.4 | MCP server (stdio + HTTP)  | RU    | `src/openhuman/mcp_server/`                                                                                         | ✅     | Stdio framing plus Streamable HTTP/SSE session lifecycle; `McpHttpClient` round-trip tests |
 | 11.1.5 | Global tool registry       | RI    | `src/openhuman/tool_registry/`, `tests/json_rpc_e2e.rs`, `tests/domain_modules_e2e.rs`, `tests/worker_b_domain_e2e.rs` | ✅     | Read-only MCP/controller discovery with routes, schemas, version, allowed agents, and health |
 | 11.1.6 | SearXNG MCP search         | RU    | `src/openhuman/integrations/searxng.rs`, `src/openhuman/mcp_server/tools.rs`, `src/openhuman/tools/schemas.rs`      | ✅     | Self-hosted search config, normalized results, MCP argument validation, and mocked HTTP execution |
@@ -428,9 +428,9 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID     | Feature            | Layer | Test path(s)                           | Status | Notes  |
 | ------ | ------------------ | ----- | -------------------------------------- | ------ | ------ |
-| 11.2.1 | Memory View        | WD    | `insights-dashboard.spec.ts` (this PR) | ✅     | Was ❌ |
-| 11.2.2 | Source Filtering   | WD    | `insights-dashboard.spec.ts` (this PR) | ✅     | Was ❌ |
-| 11.2.3 | Search & Retrieval | WD    | `insights-dashboard.spec.ts` (this PR) | ✅     | Was ❌ |
+| 11.2.1 | Memory View        | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
+| 11.2.2 | Source Filtering   | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
+| 11.2.3 | Search & Retrieval | WD    | `insights-dashboard.spec.ts` | ✅     | Was ❌ |
 
 ---
 
@@ -446,7 +446,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID     | Feature                  | Layer | Test path(s)                                                                                                          | Status | Notes                                                                |
 | ------ | ------------------------ | ----- | --------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------- |
-| 12.1.1 | Activity-Based Unlock    | VU+WD | `app/src/store/__tests__/rewardsSlice.test.ts` (this PR), `app/test/e2e/specs/rewards-unlock-flow.spec.ts` (this PR)  | ✅     | Was ❌ — streak/feature-driven unlock branch                         |
+| 12.1.1 | Activity-Based Unlock    | VU+WD | `app/src/store/__tests__/rewardsSlice.test.ts`, `app/test/e2e/specs/rewards-unlock-flow.spec.ts`  | ✅     | Was ❌ — streak/feature-driven unlock branch                         |
 | 12.1.2 | Integration-Based Unlock | VU+WD | same                                                                                                                   | ✅     | Was ❌ — Discord membership → role assignment branch                 |
 | 12.1.3 | Plan-Based Unlock        | VU+WD | same                                                                                                                   | ✅     | Was ❌ — plan tier + active subscription branch                      |
 
@@ -454,7 +454,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 
 | ID     | Feature                | Layer | Test path(s)                                                                                                                  | Status | Notes                                                                                                |
 | ------ | ---------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
-| 12.2.1 | Message Count Tracking | VU+WD | `rewardsSlice.test.ts` (this PR), `rewards-progression-persistence.spec.ts` (this PR)                                          | ✅     | Was ❌ — message-driven progress proxied by `metrics.featuresUsedCount` (no literal field)           |
+| 12.2.1 | Message Count Tracking | VU+WD | `rewardsSlice.test.ts`, `rewards-progression-persistence.spec.ts`                                          | ✅     | Was ❌ — message-driven progress proxied by `metrics.featuresUsedCount` (no literal field)           |
 | 12.2.2 | Usage Metrics          | VU+WD | same                                                                                                                           | ✅     | Was ❌ — current streak + cumulative tokens                                                          |
 | 12.2.3 | State Persistence      | VU+WD | same                                                                                                                           | ✅     | Was ❌ — restart-equivalent (page unmount + remount + re-fetch); admin request log asserts re-fetch  |
 
@@ -468,7 +468,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | ------ | ------------------ | ----- | -------------------------------------------------------------------- | ------ | --------------------- |
 | 13.1.1 | Profile Management | VU    | `app/src/components/settings/panels/__tests__/PrivacyPanel.test.tsx` | 🟡     |                       |
 | 13.1.2 | Linked Accounts    | WD    | `auth-access-control.spec.ts`                                        | 🟡     | UI surface unasserted |
-| 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` (this PR) | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
+| 13.1.3 | Meet Handoff Prompt-Injection Guard | VU | `app/src/services/__tests__/webviewAccountService.meetPromptInjection.test.ts` | ✅ | Was ❌ — guard blocks handoff on hostile transcripts and wraps non-blocked transcripts in `<meeting_transcript source="untrusted_external_audio">` delimiters (#1920) |
 | 13.1.4 | Wallet Balances Panel | VU | `app/src/components/settings/panels/__tests__/WalletBalancesPanel.test.tsx`, `app/src/services/walletApi.test.ts` | ✅ | Loading/error/empty/loaded states; Retry + Refresh re-invocation; chain badges; truncated address; providerStatus chip |
 | 13.1.5 | Approval History | VU | `app/src/components/settings/panels/__tests__/ApprovalHistoryPanel.test.tsx`, `app/src/services/api/approvalApi.test.ts` (this PR) | ✅ | Was ❌ — read-only audit surface over `approval_list_recent_decisions`; covers loaded/empty/error/refresh states, per-decision badge, and the bare-array vs `{result,logs}` envelope normalization |
 | 13.1.6 | Action Timeout | VU, RU, RI | `app/src/components/settings/panels/__tests__/AgentAccessPanel.test.tsx`, `src/openhuman/tool_timeout/mod.rs`, `src/openhuman/config/ops_tests.rs`, `tests/json_rpc_e2e.rs` (this PR) | ✅ | New (#3100) — UI control over `config_get/update_agent_settings` for `[agent].agent_timeout_secs`; covers load/persist-on-blur/range-rejection/no-op/env-override-disable, the runtime-mutable `tool_timeout` resolver + env precedence, ops apply/reject, and the RPC roundtrip |
@@ -502,7 +502,7 @@ Canonical mapping of every product feature to its test source(s). Drives gap-fil
 | 13.5.1 | Clear App Data   | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Destructive — confirm-then-reset       |
 | 13.5.2 | Cache Reset      | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     |                                        |
 | 13.5.3 | Full State Reset | WD    | `app/test/e2e/specs/settings-data-management.spec.ts`   | ✅     | Restart-and-verify fresh-install state |
-| 13.5.4 | Migration from another assistant (OpenClaw) | VU+RU | `app/src/components/settings/panels/__tests__/MigrationPanel.test.tsx` (this PR), `src/openhuman/migration/ops.rs` (existing) | ✅ | Was ❌ — UI now wraps the existing `openhuman.migrate_openclaw` RPC with preview-then-apply + confirm. Hermes tracked as follow-up under #1440 (#1440) |
+| 13.5.4 | Migration from another assistant (OpenClaw) | VU+RU | `app/src/components/settings/panels/__tests__/MigrationPanel.test.tsx`, `src/openhuman/migration/ops.rs` (existing) | ✅ | Was ❌ — UI now wraps the existing `openhuman.migrate_openclaw` RPC with preview-then-apply + confirm. Hermes tracked as follow-up under #1440 |
 
 ---
 

@@ -81,6 +81,12 @@ pub struct AddRequest {
     pub max_items: Option<u32>,
     #[serde(default)]
     pub selector: Option<String>,
+    #[serde(default)]
+    pub max_tokens_per_sync: Option<u64>,
+    #[serde(default)]
+    pub max_cost_per_sync_usd: Option<f64>,
+    #[serde(default)]
+    pub sync_depth_days: Option<u32>,
 }
 
 fn default_true() -> bool {
@@ -121,6 +127,9 @@ pub async fn add_rpc(req: AddRequest) -> Result<RpcOutcome<AddResponse>, String>
         since_days: req.since_days,
         max_items: req.max_items,
         selector: req.selector,
+        max_tokens_per_sync: req.max_tokens_per_sync,
+        max_cost_per_sync_usd: req.max_cost_per_sync_usd,
+        sync_depth_days: req.sync_depth_days,
     };
 
     let source = registry::add_source(entry).await?;
@@ -281,4 +290,107 @@ pub async fn sync_audit_log_rpc() -> Result<RpcOutcome<SyncAuditLogResponse>, St
     let config = config_rpc::load_config_with_timeout().await?;
     let entries = crate::openhuman::memory_sync::sources::audit::read_audit_log(&config);
     Ok(RpcOutcome::new(SyncAuditLogResponse { entries }, vec![]))
+}
+
+// ── Estimate Sync Cost ──
+
+#[derive(Debug, serde::Deserialize)]
+pub struct EstimateSyncCostRequest {
+    pub source_id: String,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct EstimateSyncCostResponse {
+    pub source_id: String,
+    pub item_count: u32,
+    pub estimated_tokens: u64,
+    pub estimated_cost_usd: f64,
+    pub budget_max_cost_usd: Option<f64>,
+    pub budget_max_tokens: Option<u64>,
+}
+
+pub async fn estimate_sync_cost_rpc(
+    req: EstimateSyncCostRequest,
+) -> Result<RpcOutcome<EstimateSyncCostResponse>, String> {
+    tracing::debug!(source_id = %req.source_id, "[memory_sources] estimate_sync_cost_rpc: entry");
+
+    let source = registry::get_source(&req.source_id)
+        .await?
+        .ok_or_else(|| format!("source '{}' not found", req.source_id))?;
+
+    let config = config_rpc::load_config_with_timeout().await?;
+    let reader = readers::reader_for(&source.kind);
+    let items = reader.list_items(&source, &config).await?;
+
+    let item_count = items.len() as u32;
+    // estimated_tokens includes both input (500/item) and output (100/item)
+    // to be consistent with the cost calculation below.
+    let estimated_input_tokens = item_count as u64 * 500;
+    let estimated_output_tokens = item_count as u64 * 100;
+    let estimated_tokens = estimated_input_tokens + estimated_output_tokens;
+    let estimated_cost_usd = crate::openhuman::memory_sync::sources::audit::estimate_cost_usd(
+        estimated_input_tokens,
+        estimated_output_tokens,
+    );
+
+    Ok(RpcOutcome::new(
+        EstimateSyncCostResponse {
+            source_id: req.source_id,
+            item_count,
+            estimated_tokens,
+            estimated_cost_usd,
+            budget_max_cost_usd: source.max_cost_per_sync_usd,
+            budget_max_tokens: source.max_tokens_per_sync,
+        },
+        vec![],
+    ))
+}
+
+// ── Monthly Cost Summary ──
+
+#[derive(Debug, serde::Serialize)]
+pub struct MonthlyCostSummaryResponse {
+    pub month: String,
+    pub total_cost_usd: f64,
+    pub total_syncs: u32,
+    pub total_items: u32,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+}
+
+pub async fn monthly_cost_summary_rpc() -> Result<RpcOutcome<MonthlyCostSummaryResponse>, String> {
+    tracing::debug!("[memory_sources] monthly_cost_summary_rpc: entry");
+    let config = config_rpc::load_config_with_timeout().await?;
+    let entries = crate::openhuman::memory_sync::sources::audit::read_audit_log(&config);
+
+    let now = chrono::Utc::now();
+    let month_str = now.format("%Y-%m").to_string();
+
+    let mut total_cost_usd = 0.0f64;
+    let mut total_syncs = 0u32;
+    let mut total_items = 0u32;
+    let mut total_input_tokens = 0u64;
+    let mut total_output_tokens = 0u64;
+
+    for entry in &entries {
+        if entry.timestamp.format("%Y-%m").to_string() == month_str {
+            total_cost_usd += entry.effective_cost_usd();
+            total_syncs += 1;
+            total_items += entry.items_fetched;
+            total_input_tokens += entry.input_tokens;
+            total_output_tokens += entry.output_tokens;
+        }
+    }
+
+    Ok(RpcOutcome::new(
+        MonthlyCostSummaryResponse {
+            month: month_str,
+            total_cost_usd,
+            total_syncs,
+            total_items,
+            total_input_tokens,
+            total_output_tokens,
+        },
+        vec![],
+    ))
 }

@@ -34,6 +34,17 @@ pub struct SyncAuditEntry {
     /// where the backend reported no charge — still render a cost. Prefer
     /// [`SyncAuditEntry::actual_charged_usd`] when it is `Some`.
     pub estimated_cost_usd: f64,
+    /// Number of Composio billable API actions executed during this sync
+    /// (e.g. `GMAIL_FETCH_EMAILS`, `SLACK_LIST_CONVERSATIONS`). `0` for
+    /// non-Composio source kinds. `#[serde(default)]` keeps audit lines
+    /// written before #3111 parseable.
+    #[serde(default)]
+    pub composio_actions_called: u32,
+    /// Actual USD charged for those Composio actions, summed from each
+    /// response's backend-reported `cost_usd`. `0.0` for non-Composio kinds
+    /// or when the backend reports no charge (e.g. direct mode).
+    #[serde(default)]
+    pub composio_cost_usd: f64,
     /// Real amount billed by the backend in USD (sum of
     /// `openhuman.billing.charged_amount_usd` across batches), when the
     /// provider reported it for the run. `None` for runs that fell back to
@@ -50,6 +61,16 @@ pub struct SyncAuditEntry {
     /// Error message if the sync failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+impl SyncAuditEntry {
+    /// Total cost of the run: LLM summarisation cost plus the actual
+    /// Composio API-action cost. This is the "combined cost" the Sync
+    /// History UI surfaces so users see the full expense of a sync in one
+    /// number rather than just the summarisation slice (#3111).
+    pub fn combined_cost_usd(&self) -> f64 {
+        self.estimated_cost_usd + self.composio_cost_usd
+    }
 }
 
 const AUDIT_FILENAME: &str = "sync_audit.jsonl";
@@ -329,6 +350,8 @@ mod tests {
             input_tokens: 50_000,
             output_tokens: 5_000,
             estimated_cost_usd: 0.225,
+            composio_actions_called: 0,
+            composio_cost_usd: 0.0,
             actual_charged_usd: None,
             duration_ms: 12_000,
             success: true,
@@ -355,6 +378,8 @@ mod tests {
             input_tokens: 100,
             output_tokens: 10,
             estimated_cost_usd: estimated,
+            composio_actions_called: 0,
+            composio_cost_usd: 0.0,
             actual_charged_usd: actual,
             duration_ms: 1,
             success: true,
@@ -363,10 +388,40 @@ mod tests {
     }
 
     #[test]
+    fn combined_cost_sums_llm_and_composio() {
+        let entry = SyncAuditEntry {
+            timestamp: Utc::now(),
+            source_id: "src_gmail".to_string(),
+            source_kind: "composio".to_string(),
+            scope: "gmail".to_string(),
+            items_fetched: 40,
+            batches: 1,
+            input_tokens: 20_000,
+            output_tokens: 2_000,
+            estimated_cost_usd: 0.001_96,
+            composio_actions_called: 8,
+            composio_cost_usd: 0.04,
+            actual_charged_usd: None,
+            duration_ms: 5_000,
+            success: true,
+            error: None,
+        };
+        assert!((entry.combined_cost_usd() - 0.041_96).abs() < 1e-9);
+    }
+
+    #[test]
+    fn legacy_audit_line_without_composio_fields_deserializes() {
+        let legacy = r#"{"timestamp":"2026-05-01T00:00:00Z","source_id":"src_old","source_kind":"github_repo","scope":"github:org/repo","items_fetched":10,"batches":1,"input_tokens":1000,"output_tokens":100,"estimated_cost_usd":0.0001,"duration_ms":2000,"success":true}"#;
+        let entry: SyncAuditEntry =
+            serde_json::from_str(legacy).expect("legacy audit line must still parse");
+        assert_eq!(entry.composio_actions_called, 0);
+        assert_eq!(entry.composio_cost_usd, 0.0);
+        assert_eq!(entry.actual_charged_usd, None);
+        assert_eq!(entry.source_id, "src_old");
+    }
+
+    #[test]
     fn effective_cost_prefers_actual_charge_when_present() {
-        // An entry built from a provider `UsageInfo` carries the real
-        // backend charge — `effective_cost_usd` must return it, not the
-        // hardcoded-pricing estimate.
         let entry = entry_with_costs(0.0049, Some(0.0123));
         assert!(entry.cost_is_actual());
         assert!((entry.effective_cost_usd() - 0.0123).abs() < f64::EPSILON);
@@ -374,7 +429,6 @@ mod tests {
 
     #[test]
     fn effective_cost_falls_back_to_estimate_without_usage() {
-        // No provider usage → fall back to the estimate.
         let entry = entry_with_costs(0.0049, None);
         assert!(!entry.cost_is_actual());
         assert!((entry.effective_cost_usd() - 0.0049).abs() < f64::EPSILON);
@@ -382,9 +436,6 @@ mod tests {
 
     #[test]
     fn old_entry_without_actual_field_deserializes_and_renders_estimate() {
-        // A pre-#3110 audit line has no `actual_charged_usd` key. The
-        // `#[serde(default)]` must let it deserialize, and the entry must
-        // render its estimate via `effective_cost_usd`.
         let legacy = r#"{
             "timestamp": "2024-01-01T00:00:00Z",
             "source_id": "src_old",
