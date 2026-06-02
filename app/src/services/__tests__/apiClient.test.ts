@@ -11,6 +11,17 @@ const configMock = vi.hoisted(() => ({ isDev: true }));
 
 vi.mock('../../utils/config', () => ({
   APP_VERSION: '0.0.0-test',
+  APP_BINARY_VERSION: '0.0.0-test',
+  APP_ENVIRONMENT: 'test',
+  BUILD_SHA: 'test',
+  CORE_CARGO_VERSION: '0.0.0-test',
+  GA_MEASUREMENT_ID: undefined,
+  OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
+  OPENPANEL_CLIENT_ID: undefined,
+  SENTRY_DSN: undefined,
+  SENTRY_RELEASE: 'openhuman@test',
+  SENTRY_SMOKE_TEST: false,
+  TAURI_CARGO_VERSION: '0.0.0-test',
   get IS_DEV() {
     return configMock.isDev;
   },

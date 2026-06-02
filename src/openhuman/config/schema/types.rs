@@ -123,6 +123,12 @@ pub struct Config {
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
 
+    /// User-facing activity-level knob (0–4) controlling how proactive
+    /// background AI work is. Maps into scheduler_gate mode, periodic sync
+    /// cadence, heartbeat/subconscious toggles. See issue #3117.
+    #[serde(default)]
+    pub agent_activity_level: AgentActivityLevel,
+
     #[serde(default)]
     pub agent: AgentConfig,
 
@@ -653,6 +659,7 @@ impl Default for Config {
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
+            agent_activity_level: AgentActivityLevel::default(),
             agent: AgentConfig::default(),
             orchestrator: OrchestratorModelConfig::default(),
             teams: HashMap::new(),

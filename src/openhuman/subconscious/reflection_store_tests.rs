@@ -24,7 +24,7 @@ fn sample_reflection(id: &str, created_at: f64) -> Reflection {
         proposed_action: Some("Take a look".into()),
         source_refs: vec!["entity:foo".into()],
     };
-    hydrate_draft(draft, id.into(), created_at, Vec::new())
+    hydrate_draft(draft, id.into(), created_at, Vec::new(), None)
 }
 
 #[test]

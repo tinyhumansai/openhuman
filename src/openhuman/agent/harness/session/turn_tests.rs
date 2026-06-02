@@ -889,12 +889,6 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
         },
         crate::openhuman::config::ContextConfig::default(),
     );
-    // Suppress the memory-tree eager prefetch — it reads the real workspace
-    // via `load_config_with_timeout`, not the injected loader, so leaving it
-    // on would make this test depend on whatever is in `~/.openhuman`. This
-    // test exercises the injected memory context + tool cycle, not the
-    // prefetch; marking it already-prefetched skips that path deterministically.
-    agent.last_tree_prefetch_at = Some(std::time::Instant::now());
 
     let response = agent
         .turn("hello world")
@@ -972,10 +966,6 @@ async fn turn_uses_cached_transcript_prefix_on_first_iteration() {
         ChatMessage::system("cached-system"),
         ChatMessage::assistant("cached-assistant"),
     ]);
-    // Skip the memory-tree eager prefetch (reads the real workspace, not the
-    // injected loader) so the user message stays exactly "fresh" regardless
-    // of local `~/.openhuman` content.
-    agent.last_tree_prefetch_at = Some(std::time::Instant::now());
 
     let response = agent.turn("fresh").await.expect("turn should succeed");
     assert_eq!(response, "cached-final");

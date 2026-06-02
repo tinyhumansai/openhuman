@@ -28,7 +28,7 @@ const HumanPage = () => {
     window.localStorage.setItem(SPEAK_REPLIES_KEY, speakReplies ? '1' : '0');
   }, [speakReplies]);
 
-  const { face } = useHumanMascot({ speakReplies });
+  const { face, visemeCode } = useHumanMascot({ speakReplies });
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimary = useAppSelector(selectCustomPrimaryColor);
   const customSecondary = useAppSelector(selectCustomSecondaryColor);
@@ -58,7 +58,12 @@ const HumanPage = () => {
           {customMascotGifUrl ? (
             <CustomGifMascot src={customMascotGifUrl} face={face} />
           ) : (
-            <RiveMascot face={face} primaryColor={primaryColor} secondaryColor={secondaryColor} />
+            <RiveMascot
+              face={face}
+              primaryColor={primaryColor}
+              secondaryColor={secondaryColor}
+              visemeCode={visemeCode}
+            />
           )}
         </div>
       </div>

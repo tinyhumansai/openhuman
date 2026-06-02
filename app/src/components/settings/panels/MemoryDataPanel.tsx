@@ -4,6 +4,7 @@ import { useT } from '../../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../../types/intelligence';
 import { MemoryWorkspace } from '../../intelligence/MemoryWorkspace';
 import { ToastContainer } from '../../intelligence/Toast';
+import { VaultHealthChecklist } from '../../intelligence/VaultHealthChecklist';
 import MemoryWindowControl from '../components/MemoryWindowControl';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
@@ -30,16 +31,20 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
 
   const handleWindowError = useCallback(
     (message: string) => {
-      addToast({ type: 'error', title: 'Memory window', message });
+      addToast({ type: 'error', title: t('memoryData.windowError'), message });
     },
-    [addToast]
+    [addToast, t]
   );
 
   const handleWindowSaved = useCallback(
     (window: string) => {
-      addToast({ type: 'success', title: 'Memory window updated', message: `Set to ${window}.` });
+      addToast({
+        type: 'success',
+        title: t('memoryData.windowUpdated'),
+        message: t('memoryData.windowUpdatedMsg').replace('{window}', window),
+      });
     },
-    [addToast]
+    [addToast, t]
   );
 
   return (
@@ -53,6 +58,38 @@ const MemoryDataPanel = ({ embedded = false }: MemoryDataPanelProps = {}) => {
         />
       )}
       <div className={embedded ? 'space-y-4' : 'p-4 space-y-4'}>
+        <section className="rounded-xl border border-stone-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {t('memoryData.howItWorks')}
+          </h3>
+          <dl className="space-y-2.5">
+            <div>
+              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+                {t('memoryData.workspaceVault')}
+              </dt>
+              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                {t('memoryData.workspaceVaultDesc')}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+                {t('memoryData.connectedSources')}
+              </dt>
+              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                {t('memoryData.connectedSourcesDesc')}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold text-stone-900 dark:text-neutral-100">
+                {t('memoryData.internalFiles')}
+              </dt>
+              <dd className="text-xs leading-relaxed text-stone-600 dark:text-neutral-300">
+                {t('memoryData.internalFilesDesc')}
+              </dd>
+            </div>
+          </dl>
+        </section>
+        <VaultHealthChecklist onToast={addToast} title={t('vaultHealth.setupTitle')} />
         <MemoryWindowControl onError={handleWindowError} onSaved={handleWindowSaved} />
         <MemoryWorkspace onToast={addToast} />
       </div>

@@ -111,9 +111,9 @@ export async function openhumanCronRun(
 ): Promise<
   CommandResponse<{
     job_id: string;
-    status: 'ok' | 'error' | string;
-    duration_ms: number;
-    output: string;
+    status: 'queued' | 'ok' | 'error' | string;
+    duration_ms?: number;
+    output?: string;
   }>
 > {
   if (!isTauri()) {
@@ -122,9 +122,9 @@ export async function openhumanCronRun(
   return await callCoreRpc<
     CommandResponse<{
       job_id: string;
-      status: 'ok' | 'error' | string;
-      duration_ms: number;
-      output: string;
+      status: 'queued' | 'ok' | 'error' | string;
+      duration_ms?: number;
+      output?: string;
     }>
   >({ method: 'openhuman.cron_run', params: { job_id: jobId } });
 }

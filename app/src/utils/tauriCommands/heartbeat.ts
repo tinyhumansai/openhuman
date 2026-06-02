@@ -4,6 +4,8 @@
 import { callCoreRpc } from '../../services/coreRpcClient';
 import { type CommandResponse, isTauri } from './common';
 
+export type SubconsciousMode = 'off' | 'simple' | 'aggressive';
+
 export interface HeartbeatSettings {
   enabled: boolean;
   interval_minutes: number;
@@ -15,6 +17,7 @@ export interface HeartbeatSettings {
   meeting_lookahead_minutes: number;
   max_calendar_connections_per_tick: number;
   reminder_lookahead_minutes: number;
+  subconscious_mode: SubconsciousMode;
 }
 
 export type HeartbeatSettingsPatch = Partial<HeartbeatSettings>;

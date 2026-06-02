@@ -16,6 +16,8 @@ import {
   type MascotMeetPlatform,
   type MeetCallRecord,
 } from '../../services/meetCallService';
+import { useAppSelector } from '../../store/hooks';
+import { selectPersonaDisplayName } from '../../store/personaSlice';
 
 type Toast = { type: 'success' | 'error' | 'info'; title: string; message?: string };
 
@@ -131,7 +133,17 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
   // remote participant from issuing tool calls in the owner's
   // name. Empty fails closed; the submit handler will surface an
   // explicit error before opening the CEF window.
-  const [ownerDisplayName, setOwnerDisplayName] = useState('');
+  //
+  // Effective value = Persona display name (Settings → Persona) until
+  // the user types into the field — the "name prompt" UX complaint in
+  // #2945, so repeat callers don't retype the same value every meeting.
+  // Once the user edits the field, the dirty flag latches and the
+  // input becomes fully controlled — Persona changes no longer
+  // overwrite their input, and clearing the field stays empty.
+  const personaDisplayName = useAppSelector(selectPersonaDisplayName);
+  const [ownerDisplayNameDraft, setOwnerDisplayNameDraft] = useState('');
+  const [isOwnerNameEdited, setIsOwnerNameEdited] = useState(false);
+  const ownerDisplayName = isOwnerNameEdited ? ownerDisplayNameDraft : personaDisplayName;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Recent-calls history loaded from core when the modal opens.
@@ -305,7 +317,10 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
               <input
                 type="text"
                 value={ownerDisplayName}
-                onChange={e => setOwnerDisplayName(e.target.value)}
+                onChange={e => {
+                  setOwnerDisplayNameDraft(e.target.value);
+                  setIsOwnerNameEdited(true);
+                }}
                 maxLength={64}
                 placeholder="As shown in Google Meet (e.g. Nikhil Bajaj)"
                 disabled={isComingSoon || submitting}
