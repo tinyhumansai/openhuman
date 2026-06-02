@@ -519,6 +519,13 @@ const en: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} hr ago',
   'memoryTree.status.dayAgo': '1 day ago',
   'memoryTree.status.daysAgo': '{count} days ago',
+  // Per-integration health strip (#2763) — rendered between the 4-tile grid
+  // and the auto-sync toggle in MemoryTreeStatusPanel.
+  'memoryTree.status.integrationsTitle': 'Per-integration health',
+  'memoryTree.status.integrationsEmpty': 'No integrations connected',
+  'memoryTree.status.integrationActive': 'Active',
+  'memoryTree.status.integrationStale': 'Stale',
+  'memoryTree.status.integrationChunks': '{count} chunks',
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
