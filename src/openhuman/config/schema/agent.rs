@@ -200,15 +200,27 @@ pub struct AgentConfig {
     /// Values are permission levels: "none", "readonly" (or "read_only"),
     /// "write", "execute", "dangerous".
     ///
-    /// When this map is empty the policy engine fails closed to
-    /// `readonly` (see
-    /// [`crate::openhuman::agent_tool_policy::engine::ToolPolicyEngine`]).
-    /// Existing installs that were authored against the historical
-    /// "empty == unrestricted" semantics keep their behaviour because
+    /// Runtime semantics (see
+    /// [`crate::openhuman::agent_tool_policy::engine::ToolPolicyEngine`]):
+    ///
+    /// * **Empty map** — the policy engine preserves the legacy
+    ///   unrestricted surface and returns `PermissionLevel::Dangerous`
+    ///   for every channel. This branch only matters before the
+    ///   one-time migration runs.
+    /// * **Non-empty map, channel present** — the configured level is
+    ///   used.
+    /// * **Non-empty map, channel absent** — the engine falls back to
+    ///   `PermissionLevel::ReadOnly` (the fail-closed default for an
+    ///   already-policy-managed install).
+    ///
     /// [`AgentConfig::migrate_channel_permissions_if_legacy`] seeds the
-    /// map with `web=Execute` + each configured channel = `Execute`
-    /// on first boot after upgrade. New installs ship with an explicit
-    /// map and do not exercise the fail-closed default.
+    /// map with `web=Execute` + each configured channel = `Execute` on
+    /// first boot after upgrade, so legacy installs land in the
+    /// non-empty branch before any tool dispatch happens. New installs
+    /// ship with an explicit map. The empty-map "Dangerous" branch is
+    /// effectively reachable only by an operator manually wiping the
+    /// map in their on-disk config; if you change that branch's
+    /// behavior, update `AGENTS.md` and the engine docstring in lock-step.
     #[serde(default)]
     pub channel_permissions: std::collections::HashMap<String, String>,
 
