@@ -169,6 +169,10 @@ windows-sys = { version = "0.59", features = [
     # parameter is gated behind it in windows-sys 0.59.
     "Win32_System_Threading",
     "Win32_Security",
+    # CreateToolhelp32Snapshot / Process32FirstW / Process32NextW — used by the
+    # pre-CEF cache-lock wait (cef_singleton_wait.rs) that counts straggler
+    # processes from a dying prior instance before cef::initialize (TAURI-RUST-F).
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_Pipes",
