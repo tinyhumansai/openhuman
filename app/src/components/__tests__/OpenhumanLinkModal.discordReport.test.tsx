@@ -67,3 +67,55 @@ describe('OpenhumanLinkModal discord-report flow', () => {
     });
   });
 });
+
+describe('OpenhumanLinkModal discord join-community flow', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function openJoinModal() {
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent(OPENHUMAN_LINK_EVENT, { detail: { path: 'community/discord' } })
+      );
+    });
+  }
+
+  it('opens the join-community modal (not the error-report variant)', () => {
+    render(<OpenhumanLinkModal />);
+    openJoinModal();
+
+    expect(screen.getByText('Join the community')).toBeInTheDocument();
+    expect(screen.queryByText('Report this error')).not.toBeInTheDocument();
+  });
+
+  it('clicking "Open invite link" calls openUrl with the shared Discord URL', async () => {
+    const openUrlSpy = vi.spyOn(openUrlModule, 'openUrl').mockResolvedValue(undefined);
+
+    render(<OpenhumanLinkModal />);
+    openJoinModal();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open invite link' }));
+
+    await waitFor(() => {
+      expect(openUrlSpy).toHaveBeenCalledWith('https://discord.tinyhumans.ai');
+    });
+  });
+
+  it('swallows openUrl errors without throwing', async () => {
+    const openUrlSpy = vi
+      .spyOn(openUrlModule, 'openUrl')
+      .mockRejectedValue(new Error('launcher failed'));
+
+    render(<OpenhumanLinkModal />);
+    openJoinModal();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open invite link' }));
+
+    await waitFor(() => {
+      expect(openUrlSpy).toHaveBeenCalled();
+    });
+    // The modal stays mounted; the rejection is caught and ignored.
+    expect(screen.getByText('Join the community')).toBeInTheDocument();
+  });
+});
