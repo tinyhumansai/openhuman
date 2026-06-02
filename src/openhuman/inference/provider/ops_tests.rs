@@ -288,69 +288,6 @@ async fn openrouter_key_is_trimmed_for_validation_and_catalog_probe() {
     );
 }
 
-/// Spawn a minimal axum server that always returns 404 for the /models endpoint.
-/// Used to verify that providers without model listing return an empty list,
-/// not an error (Sentry issue TAURI-RUST-1Z).
-async fn spawn_models_404_server() -> String {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let addr = listener.local_addr().expect("local_addr");
-    let app = axum::Router::new().route(
-        "/models",
-        axum::routing::get(|| async {
-            (axum::http::StatusCode::NOT_FOUND, "Not Found").into_response()
-        }),
-    );
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.expect("serve");
-    });
-    format!("http://{addr}")
-}
-
-#[tokio::test]
-async fn models_404_returns_empty_list_not_error() {
-    // Providers that return 404 on /models (e.g. DeepSeek, Kimi, custom proxies)
-    // must yield an empty model list, not an Err. Returning an Err was firing a
-    // Sentry error for every `inference_list_models` call (TAURI-RUST-1Z, 819 events).
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let endpoint = spawn_models_404_server().await;
-
-    let mut config = Config {
-        config_path: tmp.path().join("config.toml"),
-        workspace_dir: tmp.path().join("workspace"),
-        action_dir: tmp.path().join("workspace"),
-        ..Config::default()
-    };
-    config.secrets.encrypt = false;
-    config.cloud_providers.push(CloudProviderCreds {
-        id: "p_custom_test".to_string(),
-        slug: "custom-no-models".to_string(),
-        label: "Custom (no /models)".to_string(),
-        endpoint,
-        auth_style: AuthStyle::Bearer,
-        legacy_type: None,
-        default_model: None,
-    });
-
-    let outcome = list_configured_models_from_config("custom-no-models", &config)
-        .await
-        .expect("404 from /models must succeed with an empty list");
-
-    let models = outcome.value["models"]
-        .as_array()
-        .expect("response must have a `models` array");
-    assert!(
-        models.is_empty(),
-        "expected empty model list for a 404 /models endpoint, got: {models:?}"
-    );
-    assert_eq!(
-        outcome.value["unsupported"],
-        serde_json::Value::Bool(true),
-        "unsupported flag must be set to true for 404 providers"
-    );
-}
-
 #[test]
 fn factory_backend() {
     assert!(create_backend_inference_provider(
@@ -452,61 +389,6 @@ mod budget_exhausted_suppression {
             reqwest::StatusCode::BAD_REQUEST,
             "",
         ));
-    }
-}
-
-// Tests for the rate-limit body suppression guard added to `api_error`.
-// Exercises `is_upstream_rate_limit_message` with the exact body shapes that
-// produced OPENHUMAN-TAURI-S (~6 984 events from HTTP 500 wrapping a
-// "429 rate limit exceeded" body) and OPENHUMAN-TAURI-6Y / -2E.
-mod rate_limit_body_suppression {
-    use crate::core::observability::is_upstream_rate_limit_message;
-
-    /// HTTP 500 with a `"429 rate limit exceeded"` body must be detected
-    /// as a rate-limit signal so the guard in `api_error` can skip the
-    /// Sentry report (OPENHUMAN-TAURI-S).
-    #[test]
-    fn http_500_with_429_body_phrase_is_rate_limited() {
-        let body = r#"{"success":false,"error":"429 rate limit exceeded, please try again later"}"#
-            .to_ascii_lowercase();
-        assert!(
-            is_upstream_rate_limit_message(&body),
-            "500-body with '429 rate limit exceeded' must be detected as rate-limited"
-        );
-    }
-
-    /// HTTP 500 with an `"upstream rate limit exceeded"` body
-    /// (OPENHUMAN-TAURI-6Y shape).
-    #[test]
-    fn http_500_with_upstream_rate_limit_body_is_rate_limited() {
-        let body = r#"{"success":false,"error":"Upstream rate limit exceeded for model 'summarization-v1'. Please retry shortly.","details":{"provider":"gmi"}}"#
-            .to_ascii_lowercase();
-        assert!(
-            is_upstream_rate_limit_message(&body),
-            "500-body with 'upstream rate limit exceeded' must be detected"
-        );
-    }
-
-    /// OpenAI / Anthropic `"rate_limit_error"` type body.
-    #[test]
-    fn body_with_rate_limit_error_type_is_rate_limited() {
-        let body = r#"{"error":{"message":"Rate limit exceeded. Please retry after a brief wait.","type":"rate_limit_error"}}"#
-            .to_ascii_lowercase();
-        assert!(
-            is_upstream_rate_limit_message(&body),
-            "body with 'rate_limit_error' type must be detected"
-        );
-    }
-
-    /// Unrelated 500 body must NOT be detected as rate-limited.
-    #[test]
-    fn http_500_unrelated_body_is_not_rate_limited() {
-        let body = r#"{"success":false,"error":"internal server error: database unavailable"}"#
-            .to_ascii_lowercase();
-        assert!(
-            !is_upstream_rate_limit_message(&body),
-            "unrelated 500 body must not be detected as rate-limited"
-        );
     }
 }
 

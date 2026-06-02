@@ -55,8 +55,33 @@ fn token_set_from_codex(token: &Token) -> TokenSet {
     }
 }
 
+fn normalize_persisted_token_set(mut token_set: TokenSet) -> Result<TokenSet, String> {
+    let access_token = token_set.access_token.trim().to_string();
+    if access_token.is_empty() {
+        return Err("OpenAI OAuth token is missing access_token".to_string());
+    }
+    token_set.access_token = access_token;
+    token_set.refresh_token = token_set.refresh_token.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    token_set.id_token = token_set.id_token.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    token_set.token_type = token_set.token_type.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    token_set.scope = token_set.scope.and_then(|value| {
+        let trimmed = value.trim().to_string();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    Ok(token_set)
+}
+
 pub fn persist_openai_oauth_token(config: &Config, token: &Token) -> Result<AuthProfile, String> {
-    let account_id = extract_account_id_from_access_token(&token.access_token);
+    let account_id = extract_account_id_from_access_token(token.access_token.trim());
     persist_openai_oauth_token_set(config, token_set_from_codex(token), account_id)
 }
 
@@ -65,6 +90,7 @@ pub(super) fn persist_openai_oauth_token_set(
     token_set: TokenSet,
     account_id: Option<String>,
 ) -> Result<AuthProfile, String> {
+    let token_set = normalize_persisted_token_set(token_set)?;
     let mut profile =
         AuthProfile::new_oauth(OPENAI_PROVIDER_KEY, OPENAI_OAUTH_PROFILE_NAME, token_set);
     if let Some(account_id) = account_id

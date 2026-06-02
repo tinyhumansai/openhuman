@@ -4,7 +4,22 @@ import { describe, expect, it, vi } from 'vitest';
 
 import DefaultRedirect from '../DefaultRedirect';
 
-vi.mock('../../utils/config', () => ({ DEV_FORCE_ONBOARDING: false }));
+vi.mock('../../utils/config', () => ({
+  APP_BINARY_VERSION: '0.0.0-test',
+  APP_ENVIRONMENT: 'test',
+  APP_VERSION: '0.0.0-test',
+  BUILD_SHA: 'test',
+  CORE_CARGO_VERSION: '0.0.0-test',
+  DEV_FORCE_ONBOARDING: false,
+  GA_MEASUREMENT_ID: undefined,
+  IS_DEV: true,
+  OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
+  OPENPANEL_CLIENT_ID: undefined,
+  SENTRY_DSN: undefined,
+  SENTRY_RELEASE: 'openhuman@test',
+  SENTRY_SMOKE_TEST: false,
+  TAURI_CARGO_VERSION: '0.0.0-test',
+}));
 
 const mockUseCoreState = vi.fn();
 vi.mock('../../providers/CoreStateProvider', () => ({ useCoreState: () => mockUseCoreState() }));

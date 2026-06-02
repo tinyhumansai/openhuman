@@ -10,7 +10,7 @@ for (let i = 2; i < process.argv.length; i += 1) {
   const arg = process.argv[i];
   if (arg === "--dist") {
     const value = process.argv[i + 1];
-    if (!value) {
+    if (!value || value.startsWith("-")) {
       console.error("verify-i18n-bundle: --dist requires a path");
       process.exit(2);
     }

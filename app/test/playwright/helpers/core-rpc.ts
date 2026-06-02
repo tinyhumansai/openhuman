@@ -2,6 +2,7 @@ import { expect, type Page } from '@playwright/test';
 
 const CORE_RPC_URL = process.env.PW_CORE_RPC_URL || 'http://127.0.0.1:17788/rpc';
 const CORE_RPC_TOKEN = process.env.PW_CORE_RPC_TOKEN || 'openhuman-playwright-token';
+const AUTH_CALLBACK_HOME_TIMEOUT_MS = 30_000;
 
 let nextRpcId = 1;
 
@@ -76,8 +77,13 @@ async function applyBrowserCoreModeInPage(page: Page): Promise<void> {
 async function completeAuthCallback(page: Page, token: string): Promise<void> {
   await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}&key=auth`);
   try {
+    // The app-side auth callback waits up to 15s for CoreStateProvider to
+    // commit currentUser before navigating to /home; CI occasionally needs
+    // more than Playwright's default 10s assertion window here.
     await expect
-      .poll(async () => page.evaluate(() => window.location.hash), { timeout: 10_000 })
+      .poll(async () => page.evaluate(() => window.location.hash), {
+        timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
+      })
       .toMatch(/^#\/home/);
     return;
   } catch {
@@ -96,7 +102,9 @@ async function completeAuthCallback(page: Page, token: string): Promise<void> {
   await applyBrowserCoreModeInPage(page);
   await page.goto(`/#/callback/auth?token=${encodeURIComponent(token)}&key=auth`);
   await expect
-    .poll(async () => page.evaluate(() => window.location.hash), { timeout: 15_000 })
+    .poll(async () => page.evaluate(() => window.location.hash), {
+      timeout: AUTH_CALLBACK_HOME_TIMEOUT_MS,
+    })
     .toMatch(/^#\/home/);
 }
 

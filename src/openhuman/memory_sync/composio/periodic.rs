@@ -321,6 +321,7 @@ pub(crate) async fn run_one_tick() -> Result<(), String> {
             config: Arc::clone(&config),
             toolkit: toolkit.clone(),
             connection_id: Some(conn.id.clone()),
+            usage: Default::default(),
         };
 
         tracing::debug!(

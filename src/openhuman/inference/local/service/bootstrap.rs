@@ -223,7 +223,7 @@ impl LocalAiService {
                     log::trace!(
                         "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available start model={embedding_model}"
                     );
-                    self.ensure_ollama_model_available(&embedding_model, "embedding")
+                    self.ensure_ollama_model_available(&effective_config, &embedding_model, "embedding")
                         .await?;
                     log::trace!(
                         "[local_ai] LM Studio bootstrap embedding ensure_ollama_model_available succeeded model={embedding_model}"

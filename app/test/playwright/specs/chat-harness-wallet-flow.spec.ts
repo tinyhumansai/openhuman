@@ -194,9 +194,11 @@ test.describe('Chat Harness - Wallet Flow', () => {
     await sendMessage(page, WALLET_PROMPT);
 
     await expect(
-      page.getByText(
-        /Prepared a wallet quote for John\..*wallet-quote-canary-8d13|Done\.\s*wallet-quote-canary-8d13/i
-      )
+      page
+        .getByText(
+          /Prepared a wallet quote for John\..*wallet-quote-canary-8d13|Done\.\s*wallet-quote-canary-8d13/i
+        )
+        .first()
     ).toBeVisible({ timeout: 40_000 });
   });
 });

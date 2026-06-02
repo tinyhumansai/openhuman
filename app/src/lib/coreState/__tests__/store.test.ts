@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type CoreAppSnapshot, isWelcomeLocked } from '../store';
+import { type CoreAppSnapshot, getCoreStateSnapshot, isWelcomeLocked } from '../store';
 
 function makeSnapshot(overrides: Partial<CoreAppSnapshot> = {}): CoreAppSnapshot {
   return {
@@ -26,6 +26,10 @@ function makeSnapshot(overrides: Partial<CoreAppSnapshot> = {}): CoreAppSnapshot
 // [#1123] isWelcomeLocked now always returns false — welcome-agent onboarding
 // replaced by Joyride walkthrough. Tests updated to reflect the new behavior.
 describe('isWelcomeLocked', () => {
+  it('keeps analytics off before the first core snapshot arrives', () => {
+    expect(getCoreStateSnapshot().snapshot.analyticsEnabled).toBe(false);
+  });
+
   it('[#1123] always returns false — welcome lockdown replaced by Joyride walkthrough', () => {
     // Previously returned true when onboardingCompleted=true and chatOnboardingCompleted=false.
     // Now always returns false since the welcome-lock UI was removed.

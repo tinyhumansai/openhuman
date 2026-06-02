@@ -2783,6 +2783,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             vec![
                 "openhuman.config_agent_server_status",
                 "openhuman.config_get",
+                "openhuman.config_get_activity_level_settings",
                 "openhuman.config_get_agent_settings",
                 "openhuman.config_get_analytics_settings",
                 "openhuman.config_get_autonomy_settings",
@@ -2800,6 +2801,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
+                "openhuman.config_update_activity_level_settings",
                 "openhuman.config_update_agent_settings",
                 "openhuman.config_update_analytics_settings",
                 "openhuman.config_update_autonomy_settings",
@@ -2846,6 +2848,23 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             ],
         ),
         ("connectivity", vec!["openhuman.connectivity_diag"]),
+        (
+            "memory_sources",
+            vec![
+                "openhuman.memory_sources_add",
+                "openhuman.memory_sources_estimate_sync_cost",
+                "openhuman.memory_sources_get",
+                "openhuman.memory_sources_list",
+                "openhuman.memory_sources_list_items",
+                "openhuman.memory_sources_monthly_cost_summary",
+                "openhuman.memory_sources_read_item",
+                "openhuman.memory_sources_remove",
+                "openhuman.memory_sources_status_list",
+                "openhuman.memory_sources_sync",
+                "openhuman.memory_sources_sync_audit_log",
+                "openhuman.memory_sources_update",
+            ],
+        ),
     ] {
         assert_eq!(
             schema_method_names(&schema, namespace),
@@ -5444,32 +5463,27 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    // An OAuth profile missing its access_token must not poison the whole
-    // store: it is dropped just like a bad-kind entry (see #3125), so the load
-    // succeeds with that single profile purged rather than returning an error.
-    let recovered_missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+    let missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
         .load()
-        .expect("oauth profile missing access_token should be dropped, not fail the whole load");
-    assert!(
-        !recovered_missing_secret
-            .profiles
-            .contains_key("github:missing-access"),
-        "oauth profile missing access_token should be dropped on load: {recovered_missing_secret:#?}"
-    );
-    assert!(
-        !recovered_missing_secret.active_profiles.contains_key("github"),
-        "active profile pointing at a dropped profile should be purged: {recovered_missing_secret:#?}"
-    );
+        .expect("oauth profile missing access token should be dropped");
+    assert!(missing_secret.profiles.is_empty());
+    assert!(missing_secret.active_profiles.is_empty());
     let rewritten_missing_secret: Value = serde_json::from_str(
         &std::fs::read_to_string(missing_oauth_secret_dir.join("auth-profiles.json"))
-            .expect("read rewritten missing-oauth-secret store"),
+            .expect("read rewritten missing oauth secret profile store"),
     )
-    .expect("rewritten missing-oauth-secret store should be json");
+    .expect("rewritten missing oauth secret store should be json");
     assert!(
         rewritten_missing_secret
             .pointer("/profiles/github:missing-access")
             .is_none(),
-        "dropped oauth profile should be purged from persisted store: {rewritten_missing_secret}"
+        "missing oauth secret profile should be purged from persisted store: {rewritten_missing_secret}"
+    );
+    assert!(
+        rewritten_missing_secret
+            .pointer("/active_profiles/github")
+            .is_none(),
+        "active pointer to missing oauth secret profile should be purged: {rewritten_missing_secret}"
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");

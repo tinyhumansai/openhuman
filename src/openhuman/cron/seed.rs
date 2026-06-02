@@ -18,7 +18,8 @@
 
 use crate::openhuman::config::Config;
 use crate::openhuman::cron::{
-    add_agent_job_with_definition, list_jobs, remove_job, DeliveryConfig, Schedule, SessionTarget,
+    add_agent_job_with_definition, dedup_named_jobs, list_jobs, remove_job, DeliveryConfig,
+    Schedule, SessionTarget,
 };
 use anyhow::Result;
 
@@ -49,6 +50,16 @@ fn proactive_delivery() -> DeliveryConfig {
 /// Also prunes any stale one-shot `welcome` job a prior build might
 /// have persisted (see [`prune_legacy_welcome`]).
 pub fn seed_proactive_agents(config: &Config) -> Result<()> {
+    // Remove any duplicate named jobs left behind by older builds that
+    // used a non-atomic check-then-insert. Best-effort: log but continue
+    // on error so a dedup failure never blocks seeding.
+    if let Err(e) = dedup_named_jobs(config) {
+        tracing::warn!(
+            error = %e,
+            "[cron::seed] dedup_named_jobs failed — continuing without dedup"
+        );
+    }
+
     let existing = list_jobs(config)?;
     let has = |name: &str| existing.iter().any(|j| j.name.as_deref() == Some(name));
 

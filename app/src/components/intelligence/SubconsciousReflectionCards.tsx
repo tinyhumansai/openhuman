@@ -259,6 +259,14 @@ export default function SubconsciousReflectionCards({
                 )}
               </div>
               <div className="flex flex-col gap-2 flex-shrink-0">
+                {r.thread_id && (
+                  <button
+                    data-testid={`reflection-view-${r.id}`}
+                    onClick={() => onNavigateToThread?.(r.thread_id!)}
+                    className="px-3 py-1.5 text-xs bg-stone-50 dark:bg-neutral-800/60 hover:bg-stone-100 dark:hover:bg-neutral-800 border border-stone-200 dark:border-neutral-700 text-stone-600 dark:text-neutral-300 rounded-lg transition-colors">
+                    {t('reflections.viewConversation')}
+                  </button>
+                )}
                 {r.proposed_action && (
                   <button
                     data-testid={`reflection-act-${r.id}`}

@@ -61,7 +61,7 @@ fn hydrate_draft_fills_lifecycle_fields() {
         proposed_action: Some("Draft an invite list".into()),
         source_refs: vec!["entity:dinner".into()],
     };
-    let r = hydrate_draft(draft, "abc-123".into(), 1_700_000_000.0, Vec::new());
+    let r = hydrate_draft(draft, "abc-123".into(), 1_700_000_000.0, Vec::new(), None);
     assert_eq!(r.id, "abc-123");
     assert_eq!(r.created_at, 1_700_000_000.0);
     assert!(r.acted_on_at.is_none());

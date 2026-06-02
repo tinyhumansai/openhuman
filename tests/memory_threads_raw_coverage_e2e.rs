@@ -229,6 +229,9 @@ fn source(kind: SourceKind, id: &str) -> MemorySourceEntry {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     }
 }
 
@@ -3040,6 +3043,7 @@ async fn memory_sync_provider_trait_defaults_and_connection_hook_are_determinist
         config: Arc::new(config_in(&tmp)),
         toolkit: "raw_coverage".into(),
         connection_id: Some("conn-1".into()),
+        usage: Default::default(),
     };
     let provider = RawCoverageProvider { fail_profile: true };
     assert_eq!(provider.sync_interval_secs(), Some(15 * 60));
@@ -3818,6 +3822,9 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     })
     .await
     .unwrap_err();
@@ -3841,6 +3848,9 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     })
     .await
     .expect("add folder")
@@ -3865,6 +3875,9 @@ async fn memory_sources_registry_rpc_and_schema_handlers_cover_crud_edges() {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     })
     .await
     .is_ok());
