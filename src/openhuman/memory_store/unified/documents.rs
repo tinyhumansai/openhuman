@@ -113,9 +113,9 @@ impl UnifiedMemory {
                 .map_err(|e| format!("begin tx: {e}"))?;
             tx.execute(
                 "INSERT INTO memory_docs
-                  (document_id, namespace, key, title, content, source_type, priority, tags_json, metadata_json, category, session_id, created_at, updated_at, markdown_rel_path)
+                  (document_id, namespace, key, title, content, source_type, priority, tags_json, metadata_json, category, session_id, created_at, updated_at, markdown_rel_path, taint)
                  VALUES
-                  (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                  (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT(namespace, key) DO UPDATE SET
                   title = excluded.title,
                   content = excluded.content,
@@ -126,7 +126,8 @@ impl UnifiedMemory {
                   category = excluded.category,
                   session_id = excluded.session_id,
                   updated_at = excluded.updated_at,
-                  markdown_rel_path = excluded.markdown_rel_path",
+                  markdown_rel_path = excluded.markdown_rel_path,
+                  taint = excluded.taint",
                 params![
                     document_id,
                     namespace,
@@ -141,7 +142,8 @@ impl UnifiedMemory {
                     input.session_id,
                     created_at,
                     updated_at,
-                    markdown_rel
+                    markdown_rel,
+                    input.taint.as_db_str()
                 ],
             )
             .map_err(|e| format!("upsert memory_docs: {e}"))?;
@@ -286,9 +288,9 @@ impl UnifiedMemory {
             let conn = self.conn.lock();
             conn.execute(
                 "INSERT INTO memory_docs
-                  (document_id, namespace, key, title, content, source_type, priority, tags_json, metadata_json, category, session_id, created_at, updated_at, markdown_rel_path)
+                  (document_id, namespace, key, title, content, source_type, priority, tags_json, metadata_json, category, session_id, created_at, updated_at, markdown_rel_path, taint)
                  VALUES
-                  (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                  (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
                  ON CONFLICT(namespace, key) DO UPDATE SET
                   title = excluded.title,
                   content = excluded.content,
@@ -299,7 +301,8 @@ impl UnifiedMemory {
                   category = excluded.category,
                   session_id = excluded.session_id,
                   updated_at = excluded.updated_at,
-                  markdown_rel_path = excluded.markdown_rel_path",
+                  markdown_rel_path = excluded.markdown_rel_path,
+                  taint = excluded.taint",
                 params![
                     document_id,
                     namespace,
@@ -314,7 +317,8 @@ impl UnifiedMemory {
                     input.session_id,
                     created_at,
                     updated_at,
-                    markdown_rel
+                    markdown_rel,
+                    input.taint.as_db_str()
                 ],
             )
             .map_err(|e| format!("upsert memory_docs: {e}"))?;
@@ -345,7 +349,8 @@ impl UnifiedMemory {
                     session_id,
                     created_at,
                     updated_at,
-                    markdown_rel_path
+                    markdown_rel_path,
+                    taint
                  FROM memory_docs
                  WHERE namespace = ?1
                  ORDER BY updated_at DESC",
@@ -361,6 +366,13 @@ impl UnifiedMemory {
         {
             let tags_json: String = row.get(7).map_err(|e| e.to_string())?;
             let metadata_json: String = row.get(8).map_err(|e| e.to_string())?;
+            // The `taint` column has a NOT NULL DEFAULT 'internal' clause
+            // from the migration, so legacy rows that pre-date the column
+            // surface as "internal" string and round-trip back to
+            // `MemoryTaint::Internal` (any unknown value also folds to
+            // Internal via `from_db_str`).
+            let taint_str: String = row.get(14).map_err(|e| e.to_string())?;
+            let taint = crate::openhuman::memory::MemoryTaint::from_db_str(&taint_str);
             docs.push(StoredMemoryDocument {
                 document_id: row.get(0).map_err(|e| e.to_string())?,
                 namespace: row.get(1).map_err(|e| e.to_string())?,
@@ -376,10 +388,7 @@ impl UnifiedMemory {
                 created_at: row.get(11).map_err(|e| e.to_string())?,
                 updated_at: row.get(12).map_err(|e| e.to_string())?,
                 markdown_rel_path: row.get(13).map_err(|e| e.to_string())?,
-                // Persistence-layer wiring lands in the next commit; for
-                // now the SELECT omits `taint`, so legacy reads default
-                // to `Internal` (safe for the gate's escalation policy).
-                taint: crate::openhuman::memory::MemoryTaint::Internal,
+                taint,
             });
         }
         Ok(docs)
