@@ -112,7 +112,7 @@ impl FailureCode {
     /// Retry policy for this cause.
     pub fn class(self) -> FailureClass {
         match self {
-            Self::Transient => FailureClass::Transient,
+            Self::Transient | Self::ExtractionTimeout => FailureClass::Transient,
             _ => FailureClass::Unrecoverable,
         }
     }
@@ -476,17 +476,26 @@ mod tests {
                 "{} remediation key has unexpected prefix: {key}",
                 code.as_str()
             );
-            // class() must be total (no panic) and only Transient is transient.
+            // class() must be total (no panic); Transient + ExtractionTimeout
+            // are retryable, everything else is unrecoverable.
             let class = code.class();
-            if code == FailureCode::Transient {
-                assert_eq!(class, FailureClass::Transient);
-            } else {
-                assert_eq!(
-                    class,
-                    FailureClass::Unrecoverable,
-                    "{} should be unrecoverable",
-                    code.as_str()
-                );
+            match code {
+                FailureCode::Transient | FailureCode::ExtractionTimeout => {
+                    assert_eq!(
+                        class,
+                        FailureClass::Transient,
+                        "{} should be transient",
+                        code.as_str()
+                    );
+                }
+                _ => {
+                    assert_eq!(
+                        class,
+                        FailureClass::Unrecoverable,
+                        "{} should be unrecoverable",
+                        code.as_str()
+                    );
+                }
             }
         }
     }

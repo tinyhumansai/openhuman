@@ -4565,6 +4565,8 @@ const messages: TranslationMap = {
     'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
   'memory.health.remediation.transient':
     'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
+  'memory.health.remediation.unknown':
+    'Przetwarzanie pamięci napotkało problem. Sprawdź Ustawienia → AI w celu konfiguracji.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefakt: {title}',
   'chat.artifact.generating': 'Tworzenie {kind}…',

@@ -488,6 +488,14 @@ pub(crate) async fn seal_one_level(
                     )));
                 }
             };
+            // Dimension guard: reject wrong-dimensionality vectors before
+            // they reach the store — same contract as handle_extract's
+            // pack_checked. Without this a provider returning the wrong
+            // shape slips into the summary sidecar silently.
+            crate::openhuman::memory_tree::score::embed::pack_checked(&v).context(format!(
+                "seal embed dim check tree_id={} level={}",
+                tree.id, level
+            ))?;
             log::debug!(
                 "[tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
                 tree.id,

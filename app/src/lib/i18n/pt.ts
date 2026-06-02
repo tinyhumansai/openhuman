@@ -4565,6 +4565,8 @@ const messages: TranslationMap = {
     'Nenhum provedor de resumo está disponível para Criar árvores de resumo. Ative a IA local (Ollama) ou ative o resumo na nuvem em Configurações → IA → Memória.',
   'memory.health.remediation.transient':
     'Um erro temporário interrompeu o processamento da memória. Será repetido automaticamente.',
+  'memory.health.remediation.unknown':
+    'O processamento da memória encontrou um problema. Verifique Configurações → IA para a configuração.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefato: {title}',
   'chat.artifact.generating': 'Gerando {kind}…',

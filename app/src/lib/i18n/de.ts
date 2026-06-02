@@ -4609,6 +4609,8 @@ const messages: TranslationMap = {
     'Für „Zusammenfassungsbäume erstellen” ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
   'memory.health.remediation.transient':
     'Ein vorübergehender Fehler hat die Speicherverarbeitung unterbrochen. Es wird automatisch erneut versucht.',
+  'memory.health.remediation.unknown':
+    'Bei der Speicherverarbeitung ist ein Problem aufgetreten. Überprüfe Einstellungen → KI für die Konfiguration.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefakt: {title}',
   'chat.artifact.generating': 'Erstelle {kind}…',

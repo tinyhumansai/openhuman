@@ -4455,6 +4455,8 @@ const messages: TranslationMap = {
     '요약 트리 만들기에 사용할 수 있는 요약 제공자가 없습니다. 로컬 AI(Ollama)를 활성화하거나, 설정 → AI → 메모리에서 클라우드 요약을 활성화하세요.',
   'memory.health.remediation.transient':
     '일시적인 오류로 메모리 처리가 중단되었습니다. 자동으로 다시 시도됩니다.',
+  'memory.health.remediation.unknown':
+    '메모리 처리 중 문제가 발생했습니다. 설정 → AI에서 구성을 확인하세요.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': '아티팩트: {title}',
   'chat.artifact.generating': '{kind} 생성 중…',

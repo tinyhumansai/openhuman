@@ -4275,6 +4275,7 @@ const messages: TranslationMap = {
   'memory.health.remediation.summarizer_unavailable':
     '没有可用于构建摘要树的摘要提供方。请启用本地 AI（Ollama），或在设置 → AI → 记忆中启用云端摘要。',
   'memory.health.remediation.transient': '临时错误中断了记忆处理。将自动重试。',
+  'memory.health.remediation.unknown': '记忆处理遇到问题。请在设置 → AI 中检查配置。',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': '工件：{title}',
   'chat.artifact.generating': '正在生成{kind}…',

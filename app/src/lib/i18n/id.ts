@@ -4508,6 +4508,8 @@ const messages: TranslationMap = {
     'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama), atau aktifkan ringkasan cloud di Pengaturan → AI → Memori.',
   'memory.health.remediation.transient':
     'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
+  'memory.health.remediation.unknown':
+    'Pemrosesan memori mengalami masalah. Periksa Pengaturan → AI untuk konfigurasi.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefak: {title}',
   'chat.artifact.generating': 'Membuat {kind}…',

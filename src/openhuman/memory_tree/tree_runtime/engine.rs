@@ -170,11 +170,20 @@ pub async fn run_summarization(
         );
     }
 
-    // Hour leaves are durably written and propagation is complete (modulo the
-    // per-node failures above, which are recoverable on the next run). Safe to
-    // delete the buffer entries — re-running would re-derive the same leaves.
-    store::buffer_delete(config, namespace, &buffer_filenames)
-        .context("delete buffer entries after successful summarization")?;
+    // Only clear the buffer when propagation was fully successful. If any nodes
+    // failed, keep the buffer entries so `run_hourly_loop` re-discovers this
+    // namespace on the next pass and retries the failed levels — otherwise a
+    // transient day/month/year/root failure becomes sticky degradation.
+    if failed.is_empty() {
+        store::buffer_delete(config, namespace, &buffer_filenames)
+            .context("delete buffer entries after successful summarization")?;
+    } else {
+        log::info!(
+            "[tree_summarizer] keeping buffer for '{namespace}' — {n} failed node(s) \
+             will be retried on the next run",
+            n = failed.len()
+        );
+    }
 
     Ok(last_hour_node)
 }

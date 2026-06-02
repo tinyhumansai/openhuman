@@ -4491,6 +4491,8 @@ const messages: TranslationMap = {
     'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন, অথবা সেটিংস → AI → মেমরিতে ক্লাউড সারাংশ সক্ষম করুন।',
   'memory.health.remediation.transient':
     'একটি অস্থায়ী ত্রুটি মেমরি প্রক্রিয়াকরণে বাধা দিয়েছে। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
+  'memory.health.remediation.unknown':
+    'মেমরি প্রক্রিয়াকরণে একটি সমস্যা হয়েছে। কনফিগারেশনের জন্য সেটিংস → AI পরীক্ষা করুন।',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'আর্টিফ্যাক্ট: {title}',
   'chat.artifact.generating': '{kind} তৈরি হচ্ছে…',

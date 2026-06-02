@@ -4498,6 +4498,8 @@ const messages: TranslationMap = {
     'सारांश ट्री बनाएँ के लिए कोई सारांश प्रदाता उपलब्ध नहीं है। स्थानीय AI (Ollama) सक्षम करें, या सेटिंग्स → AI → मेमोरी में क्लाउड सारांश सक्षम करें।',
   'memory.health.remediation.transient':
     'एक अस्थायी त्रुटि ने मेमोरी प्रोसेसिंग को बाधित किया। स्वचालित रूप से पुनः प्रयास किया जाएगा।',
+  'memory.health.remediation.unknown':
+    'मेमोरी प्रोसेसिंग में एक समस्या आई। कॉन्फ़िगरेशन के लिए सेटिंग्स → AI जाँचें।',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'आर्टिफैक्ट: {title}',
   'chat.artifact.generating': '{kind} बना रहा है…',

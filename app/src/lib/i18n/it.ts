@@ -4567,6 +4567,8 @@ const messages: TranslationMap = {
     "Nessun provider di riepilogo è disponibile per Crea alberi di riepilogo. Abilita l'IA locale (Ollama) o abilita il riepilogo cloud in Impostazioni → IA → Memoria.",
   'memory.health.remediation.transient':
     "Un errore temporaneo ha interrotto l'elaborazione della memoria. Verrà riprovato automaticamente.",
+  'memory.health.remediation.unknown':
+    "L'elaborazione della memoria ha riscontrato un problema. Controlla Impostazioni → IA per la configurazione.",
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefatto: {title}',
   'chat.artifact.generating': 'Generazione {kind}…',

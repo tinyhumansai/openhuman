@@ -4413,6 +4413,8 @@ const messages: TranslationMap = {
     'لا يتوفر مزوّد تلخيص لميزة إنشاء أشجار التلخيص. فعّل الذكاء الاصطناعي المحلي (Ollama)، أو فعّل تلخيص السحابة في الإعدادات → الذكاء الاصطناعي → الذاكرة.',
   'memory.health.remediation.transient':
     'حدث خطأ مؤقت أدى إلى مقاطعة معالجة الذاكرة. ستتم إعادة المحاولة تلقائيًا.',
+  'memory.health.remediation.unknown':
+    'واجهت معالجة الذاكرة مشكلة. تحقق من الإعدادات → الذكاء الاصطناعي للتكوين.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'الملف: {title}',
   'chat.artifact.generating': 'جارٍ إنشاء {kind}…',

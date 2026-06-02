@@ -4591,6 +4591,8 @@ const messages: TranslationMap = {
     "Aucun fournisseur de résumé n'est disponible pour Créer des arbres de résumé. Activez l'IA locale (Ollama) ou activez la synthèse cloud dans Paramètres → IA → Mémoire.",
   'memory.health.remediation.transient':
     'Une erreur temporaire a interrompu le traitement de la mémoire. Une nouvelle tentative aura lieu automatiquement.',
+  'memory.health.remediation.unknown':
+    'Le traitement de la mémoire a rencontré un problème. Vérifiez Paramètres → IA pour la configuration.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Artefact : {title}',
   'chat.artifact.generating': 'Génération de {kind}…',

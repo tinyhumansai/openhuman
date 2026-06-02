@@ -218,6 +218,7 @@ pub fn build_write_embedder(config: &Config) -> Result<Option<Box<dyn Embedder>>
             Some(Box::new(OllamaEmbedder::new(endpoint, model, timeout_ms)))
         }
         EmbedderChoice::OptOut => {
+            clear_semantic_recall_degraded();
             log::info!(
                 "[memory_tree::embed::factory] embeddings_provider=none — write path \
                  uses InertEmbedder (vector search disabled by choice)"

@@ -530,6 +530,8 @@ const en: TranslationMap = {
     'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
   'memory.health.remediation.transient':
     'A temporary error interrupted memory processing. It will retry automatically.',
+  'memory.health.remediation.unknown':
+    'Memory processing encountered an issue. Check Settings → AI for configuration.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
   'memoryTree.status.retry': 'Retry',
   'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",

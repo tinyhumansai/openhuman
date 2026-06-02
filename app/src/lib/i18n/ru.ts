@@ -4534,6 +4534,8 @@ const messages: TranslationMap = {
     'Нет доступного поставщика суммаризации для «Построить деревья сводок». Включите локальный ИИ (Ollama) или включите облачную суммаризацию в разделе Настройки → ИИ → Память.',
   'memory.health.remediation.transient':
     'Временная ошибка прервала обработку памяти. Повтор произойдёт автоматически.',
+  'memory.health.remediation.unknown':
+    'При обработке памяти возникла проблема. Проверьте конфигурацию в разделе Настройки → ИИ.',
   // Chat — agent-generated artifacts (#2779)
   'chat.artifact.aria': 'Артефакт: {title}',
   'chat.artifact.generating': 'Создание {kind}…',
