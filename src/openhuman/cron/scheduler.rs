@@ -432,7 +432,8 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     let origin =
                         crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
                             job_id: job.id.clone(),
-                            source: crate::openhuman::agent::turn_origin::TrustedAutomationSource::Cron,
+                            source:
+                                crate::openhuman::agent::turn_origin::TrustedAutomationSource::Cron,
                         };
                     crate::openhuman::agent::turn_origin::with_origin(
                         origin,

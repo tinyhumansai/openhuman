@@ -300,24 +300,32 @@ impl AgentConfig {
         if !self.channel_permissions.is_empty() {
             return false;
         }
-        let names: Vec<String> = std::iter::once("web".to_string())
-            .chain(
-                known_channels
-                    .into_iter()
-                    .map(|s| s.as_ref().to_string())
-                    .filter(|s| !s.is_empty() && s != "web"),
-            )
+        let extra: Vec<String> = known_channels
+            .into_iter()
+            .map(|s| s.as_ref().to_string())
+            .filter(|s| !s.is_empty() && s != "web")
             .collect();
-        if names.is_empty() {
+        if extra.is_empty() {
+            // No channels configured yet — leave the map empty so the
+            // engine's legacy "empty == unrestricted" shortcut keeps
+            // ruling fresh installs the same way it did pre-PR. The
+            // migration is for installs that already have channels
+            // active under the legacy unrestricted surface.
             return false;
         }
+        // Seed web + every known channel = execute so the engine's
+        // per-channel cap evaluates against an explicit policy instead
+        // of the legacy unrestricted default.
+        let names: Vec<String> = std::iter::once("web".to_string())
+            .chain(extra.into_iter())
+            .collect();
         for name in &names {
             self.channel_permissions
                 .insert(name.clone(), "execute".to_string());
         }
         log::info!(
             target: "openhuman::config",
-            "[agent-config] channel_permissions: migrated {} legacy channels to execute (preserved pre-fail-closed behavior): {:?}",
+            "[agent-config] channel_permissions: migrated {} legacy channels to execute (preserved pre-PR behavior): {:?}",
             names.len(),
             names
         );

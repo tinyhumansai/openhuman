@@ -1321,12 +1321,12 @@ async fn run_subagent_tool(params: &Map<String, Value>) -> Result<Value, ToolCal
         reply_target: agent_id.clone(),
         message_id: uuid::Uuid::new_v4().to_string(),
     };
-    let response = crate::openhuman::agent::turn_origin::with_origin(
-        origin,
-        agent.run_single(&prompt),
-    )
-    .await
-    .map_err(|err| ToolCallError::Internal(format!("subagent `{agent_id}` failed: {err}")))?;
+    let response =
+        crate::openhuman::agent::turn_origin::with_origin(origin, agent.run_single(&prompt))
+            .await
+            .map_err(|err| {
+                ToolCallError::Internal(format!("subagent `{agent_id}` failed: {err}"))
+            })?;
 
     Ok(json!({
         "content": [{
