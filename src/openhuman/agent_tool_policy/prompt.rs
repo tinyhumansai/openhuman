@@ -182,10 +182,13 @@ mod tests {
     }
 
     #[test]
-    fn unrestricted_policy_session_renders_none() {
+    fn read_only_session_with_only_read_tools_renders_none() {
+        // Empty channel_permissions now fails closed to ReadOnly. When
+        // every visible tool already fits the read-only cap, the policy
+        // boundary has nothing to surface to the prompt builder.
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(PromptTestTool {
-            name: "write_notes".into(),
-            permission: PermissionLevel::Write,
+            name: "read_notes".into(),
+            permission: PermissionLevel::ReadOnly,
         })];
         let session = ToolPolicyEngine::build_session(
             "orchestrator",
