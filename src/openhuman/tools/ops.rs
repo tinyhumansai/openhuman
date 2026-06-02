@@ -454,7 +454,7 @@ pub fn all_tools_with_runtime(
     if root_config.runtime_python.enabled {
         tools.push(Box::new(PresentationTool::new(
             Arc::clone(&config),
-            workspace_dir.to_path_buf(),
+            root_config.workspace_dir.clone(),
         )));
     } else {
         tracing::debug!(
