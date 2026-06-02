@@ -2106,6 +2106,15 @@ const Conversations = ({
             return (
               <div className="mb-2 flex flex-col gap-2">
                 {artifacts.map(artifact => (
+                  // NOTE: `onRetry` intentionally omitted — `ArtifactCard`
+                  // declares the prop as optional and renders a Retry
+                  // button only when it's wired. Real retry (either
+                  // `removeArtifact(thread, id)` to let the user re-prompt,
+                  // or full `re-dispatch the producing tool call`) is out
+                  // of scope for #2779 / this PR and is tracked in
+                  // follow-up issue #3162. The failed-card UI still shows
+                  // the truncated error reason; the button just stays
+                  // hidden until that issue lands.
                   <ArtifactCard key={artifact.artifactId} artifact={artifact} />
                 ))}
               </div>
