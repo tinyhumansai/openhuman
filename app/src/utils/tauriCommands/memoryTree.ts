@@ -885,3 +885,53 @@ export async function memorySyncAuditLog(): Promise<SyncAuditEntry[]> {
   >({ method: 'openhuman.memory_sources_sync_audit_log', params: {} });
   return unwrapResult(resp).entries ?? [];
 }
+
+// ── memory_sync_status_list (#2763 — per-integration health strip) ───────
+
+/**
+ * Freshness label emitted by `openhuman.memory_sync_status_list`. Snake-case
+ * mirrors the Rust `FreshnessLabel` serde rename. Derived from
+ * `now - last_chunk_at_ms` at RPC time, not stored.
+ */
+export type MemorySyncFreshness = 'active' | 'recent' | 'idle';
+
+/**
+ * One row per provider that has produced chunks. Mirrors the Rust
+ * `MemorySyncStatus` struct exactly — snake_case carried through so the
+ * wire payload deserialises without a remap layer.
+ */
+export interface MemorySyncStatusRow {
+  /** Provider key — `slack`, `gmail`, `notion`, `discord`, `telegram`, etc. */
+  provider: string;
+  /** Total chunks in `mem_tree_chunks` for this provider. */
+  chunks_synced: number;
+  /** Chunks fetched but not yet extracted/embedded. Lifetime metric. */
+  chunks_pending: number;
+  /** Total chunks in the current sync wave. Zero when no wave is active. */
+  batch_total: number;
+  /** Of `batch_total`, how many have been processed. */
+  batch_processed: number;
+  /** Epoch ms of the most-recent chunk for this provider; null if none yet. */
+  last_chunk_at_ms: number | null;
+  /** Coarse activity label — derived at RPC time. */
+  freshness: MemorySyncFreshness;
+}
+
+/**
+ * Fetch the per-provider sync-status list. Single SQL query against
+ * `mem_tree_chunks` (GROUP BY source_kind); safe to poll alongside
+ * `memoryTreePipelineStatus` on the same 1.5s / 4s adaptive cadence.
+ *
+ * Backed by `openhuman.memory_sync_status_list` (#1136). Surfaced by the
+ * per-integration health strip in `MemoryTreeStatusPanel` (#2763).
+ */
+export async function memorySyncStatusList(): Promise<MemorySyncStatusRow[]> {
+  console.debug('[memory-tree-rpc] memorySyncStatusList: entry');
+  const resp = await callCoreRpc<
+    { statuses: MemorySyncStatusRow[] } | ResultEnvelope<{ statuses: MemorySyncStatusRow[] }>
+  >({ method: 'openhuman.memory_sync_status_list', params: {} });
+  const out = unwrapResult(resp);
+  const rows = out.statuses ?? [];
+  console.debug('[memory-tree-rpc] memorySyncStatusList: exit rows=%d', rows.length);
+  return rows;
+}
