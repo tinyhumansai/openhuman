@@ -288,7 +288,7 @@ fn run_server_command(args: &[String]) -> Result<()> {
     // the JSON-RPC server down mid-request. Give workers a roomier stack.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(16 * 1024 * 1024)
+        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     rt.block_on(async {
         crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await
@@ -337,8 +337,11 @@ fn run_call_command(args: &[String]) -> Result<()> {
     let method = method.ok_or_else(|| anyhow::anyhow!("--method is required"))?;
     let params = parse_json_params(&params).map_err(anyhow::Error::msg)?;
 
+    // `call` invokes a JSON-RPC method that may run an orchestrator turn
+    // (e.g. `agent.chat`), so it needs the same roomy stack as the server.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     let value = rt
         .block_on(async { invoke_method(default_state(), &method, params).await })
@@ -415,8 +418,11 @@ fn run_namespace_command(
     let method = all::rpc_method_from_parts(namespace, function)
         .ok_or_else(|| anyhow::anyhow!("unregistered controller '{namespace}.{function}'"))?;
 
+    // Same as the explicit `call` path above — any registered controller may
+    // ultimately drive an orchestrator turn.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(crate::core::runtime::AGENT_WORKER_STACK_BYTES)
         .build()?;
     let value = rt
         .block_on(async { invoke_method(default_state(), &method, Value::Object(params)).await })

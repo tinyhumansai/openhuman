@@ -9,7 +9,7 @@
  * per row, so the resolved provider+model is always rendered inline.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LuCheck, LuCircleAlert, LuKeyRound } from 'react-icons/lu';
+import { LuCheck, LuCircleAlert, LuKeyRound, LuPencil } from 'react-icons/lu';
 
 import { listConnections as listComposioConnections } from '../../../lib/composio/composioApi';
 import type { ComposioConnection } from '../../../lib/composio/types';
@@ -582,6 +582,7 @@ const ProviderKeyDialog = ({
   slug,
   label,
   isLocalRuntime,
+  initialValue,
   oauthAction,
   onCancel,
   onSubmit,
@@ -590,6 +591,8 @@ const ProviderKeyDialog = ({
   label: string;
   /** When true, render an "Endpoint URL" field instead of API key. */
   isLocalRuntime: boolean;
+  /** Pre-populate the field when editing an existing provider's endpoint. */
+  initialValue?: string;
   oauthAction?: { label: string; description?: string; onClick: () => Promise<void> | void } | null;
   onCancel: () => void;
   /** Returns the entered value. For local runtimes this is the endpoint URL;
@@ -597,7 +600,9 @@ const ProviderKeyDialog = ({
   onSubmit: (value: string) => Promise<void> | void;
 }) => {
   const { t } = useT();
-  const [value, setValue] = useState<string>(isLocalRuntime ? defaultEndpointFor(slug) : '');
+  const [value, setValue] = useState<string>(
+    initialValue ?? (isLocalRuntime ? defaultEndpointFor(slug) : '')
+  );
   const [phase, setPhase] = useState<'idle' | 'saving' | 'oauth'>('idle');
   const [error, setError] = useState<string | null>(null);
   const busy = phase !== 'idle';
@@ -2884,6 +2889,19 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     key={localKind}
                     className={`inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-xs font-medium ring-1 transition-colors ${tone}`}>
                     <span>{label}</span>
+                    {enabled && (
+                      <button
+                        type="button"
+                        aria-label={t('settings.ai.editEndpoint')}
+                        title={t('settings.ai.editEndpoint')}
+                        onClick={() => {
+                          setKeyDialogFor(localKind);
+                          setPendingLocalLabel(label);
+                        }}
+                        className="rounded p-0.5 hover:bg-black/10 dark:hover:bg-white/10 transition-colors">
+                        <LuPencil className="h-3 w-3" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       role="switch"
@@ -3245,6 +3263,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
           slug={keyDialogFor}
           label={pendingLocalLabel ?? BUILTIN_PROVIDER_META[keyDialogFor]?.label ?? keyDialogFor}
           isLocalRuntime={Boolean(pendingLocalLabel)}
+          initialValue={
+            pendingLocalLabel
+              ? (draft.cloudProviders.find(cp => cp.slug === keyDialogFor)?.endpoint ?? undefined)
+              : undefined
+          }
           oauthAction={
             keyDialogFor === 'openrouter' && !pendingLocalLabel
               ? {

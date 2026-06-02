@@ -155,8 +155,7 @@ pub fn capability_matrix() -> Vec<ComposioCapability> {
 /// Lookup key is the lowercased prefix returned by
 /// [`toolkit_from_slug`] applied to the action slug — e.g.
 /// `GOOGLECALENDAR_CREATE_EVENT` → `"googlecalendar"`. Multi-segment
-/// prefixes like `MICROSOFT_TEAMS_*` are matched via their canonical
-/// multi-segment toolkit slug.
+/// prefixes like `MICROSOFT_TEAMS_*` return their known toolkit slug.
 /// Synchronous visibility check for a Composio action slug given a
 /// pre-loaded user scope preference.
 ///
@@ -200,8 +199,8 @@ pub fn catalog_for_toolkit(toolkit: &str) -> Option<&'static [CuratedTool]> {
         "googledocs" | "google_docs" => Some(catalogs::GOOGLEDOCS_CURATED),
         "googlesheets" | "google_sheets" => Some(catalogs::GOOGLESHEETS_CURATED),
         "outlook" => Some(catalogs::OUTLOOK_CURATED),
-        // Keep the legacy "microsoft" alias for older callers; action slugs
-        // now extract to the canonical "microsoft_teams" toolkit.
+        // Keep the legacy "microsoft" alias while toolkit_from_slug now
+        // returns the precise "microsoft_teams" slug for Teams actions.
         "microsoft" | "microsoft_teams" => Some(catalogs::MICROSOFT_TEAMS_CURATED),
         "jira" => Some(catalogs::JIRA_CURATED),
         "trello" => Some(catalogs::TRELLO_CURATED),
@@ -285,7 +284,8 @@ pub use scope_lookup::{curated_scope_for, toolkit_has_scope};
 pub use tool_scope::{classify_unknown, find_curated, toolkit_from_slug, CuratedTool, ToolScope};
 pub use traits::ComposioProvider;
 pub use types::{
-    NormalizedTask, ProviderContext, ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
+    ComposioUsage, ComposioUsageHandle, NormalizedTask, ProviderContext, ProviderUserProfile,
+    SyncOutcome, SyncReason, TaskFetchFilter,
 };
 pub use user_scopes::{load_or_default as load_user_scope_or_default, UserScopePref};
 

@@ -528,7 +528,18 @@ impl Agent {
             };
             let mut buf: Vec<ChatMessage> = Vec::new();
 
-            let outcome = super::super::engine::run_turn_engine(
+            // Box-pin the parent agent's engine call so its ~600-line
+            // generator state lives on the heap. Tools that delegate to
+            // sub-agents (orchestrator → researcher / personality /
+            // archetype / skill) recurse back into another
+            // `run_turn_engine` via `run_subagent`; without the box,
+            // both engines' state machines pile up on the same tokio
+            // worker stack and overflow the 2 MiB default. The inner
+            // boxes inside `run_typed_mode` aren't reached if the
+            // overflow happens during the parent's poll on the way in
+            // — verified against the `chat-harness-subagent` Playwright
+            // lane crash on PR #3151.
+            let outcome = Box::pin(super::super::engine::run_turn_engine(
                 provider.as_ref(),
                 &mut buf,
                 &mut tool_source,
@@ -545,7 +556,7 @@ impl Agent {
                 max_iterations,
                 None, // the web bridge streams via on_progress deltas, not on_delta
                 &[],
-            )
+            ))
             .await?;
 
             // Pull the observer's accounting out, then drop it to release the

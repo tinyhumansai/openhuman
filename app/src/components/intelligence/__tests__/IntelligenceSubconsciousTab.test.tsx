@@ -1,13 +1,5 @@
 /**
- * Vitest for the Intelligence Subconscious tab (#623).
- *
- * Covers `handleNavigateToReflectionThread` — the callback passed to
- * `SubconsciousReflectionCards`. The function is small but load-bearing:
- * it dispatches `setSelectedThread(threadId)` so `Conversations` resumes
- * the new thread on mount, then routes to `/chat` (the unified chat
- * surface; `/conversations` redirects to `/home`). Both dispatch and
- * navigate are mocked so we can assert the contract without spinning up
- * the full Redux/router stack.
+ * Vitest for the Intelligence Subconscious tab.
  */
 import { fireEvent, render, screen } from '@testing-library/react';
 import type { ComponentProps } from 'react';
@@ -23,10 +15,6 @@ vi.mock('react-redux', () => ({ useDispatch: () => mockDispatch, useSelector: ()
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mockNavigate }));
 
-// Stub out the cards component so we can trigger the navigate callback
-// directly without exercising the RPC / polling path (already covered by
-// `SubconsciousReflectionCards.test.tsx`). The stub renders a button
-// that fires `onNavigateToThread` with a known thread id when clicked.
 vi.mock('../SubconsciousReflectionCards', () => ({
   default: ({ onNavigateToThread }: { onNavigateToThread?: (id: string) => void }) => (
     <button
@@ -38,24 +26,16 @@ vi.mock('../SubconsciousReflectionCards', () => ({
   ),
 }));
 
-function baseProps() {
+function baseProps(): ComponentProps<typeof IntelligenceSubconsciousTab> {
   return {
-    addSubconsciousTask: vi.fn(),
-    approveEscalation: vi.fn(),
-    dismissEscalation: vi.fn(),
-    expandedLogIds: new Set<string>(),
-    logEntries: [],
-    newTaskTitle: '',
-    removeSubconsciousTask: vi.fn(),
-    setExpandedLogIds: vi.fn(),
-    setNewTaskTitle: vi.fn(),
-    status: null as ComponentProps<typeof IntelligenceSubconsciousTab>['status'],
-    tasks: [],
-    toggleSubconsciousTask: vi.fn(),
+    status: null,
+    mode: 'off',
+    intervalMinutes: 30,
     triggerTick: vi.fn(),
     triggering: false,
-    escalations: [],
-    loading: false,
+    settingMode: false,
+    setMode: vi.fn(),
+    setIntervalMinutes: vi.fn(),
   };
 }
 
@@ -68,48 +48,41 @@ describe('IntelligenceSubconsciousTab', () => {
     vi.restoreAllMocks();
   });
 
-  it('on Act → dispatches setSelectedThread + navigates to /chat', () => {
+  it('renders three mode options', () => {
     render(<IntelligenceSubconsciousTab {...baseProps()} />);
-    fireEvent.click(screen.getByTestId('cards-stub-trigger'));
-    // Redux dispatch payload should match the slice's action creator
-    // exactly — comparing the produced action keeps the assertion robust
-    // if the slice path changes.
-    expect(mockDispatch).toHaveBeenCalledWith(setSelectedThread('spawned-thread-42'));
-    // Route must be `/chat` (the unified chat surface), not
-    // `/conversations` — the latter falls through to a `/home` redirect
-    // and the user lands somewhere unexpected.
-    expect(mockNavigate).toHaveBeenCalledWith('/chat');
+    expect(screen.getByText('Off')).toBeInTheDocument();
+    expect(screen.getByText('Simple')).toBeInTheDocument();
+    expect(screen.getByText('Aggressive')).toBeInTheDocument();
   });
 
-  it('shows provider unavailable state and blocks manual ticks', () => {
-    const triggerTick = vi.fn();
-    render(
-      <IntelligenceSubconsciousTab
-        {...baseProps()}
-        triggerTick={triggerTick}
-        status={{
-          enabled: true,
-          provider_available: false,
-          provider_unavailable_reason: 'Sign in or configure a local Subconscious provider.',
-          interval_minutes: 5,
-          last_tick_at: null,
-          total_ticks: 0,
-          task_count: 3,
-          pending_escalations: 0,
-          consecutive_failures: 1,
-        }}
-      />
-    );
+  it('clicking a mode option calls setMode', () => {
+    const setMode = vi.fn();
+    render(<IntelligenceSubconsciousTab {...baseProps()} setMode={setMode} />);
+    fireEvent.click(screen.getByText('Simple'));
+    expect(setMode).toHaveBeenCalledWith('simple');
+  });
 
-    expect(screen.getByText('Subconscious is paused')).toBeInTheDocument();
-    expect(screen.getByText(/configure a local Subconscious provider/i)).toBeInTheDocument();
+  it('hides Run Now and reflections when mode is off', () => {
+    render(<IntelligenceSubconsciousTab {...baseProps()} mode="off" />);
+    expect(screen.queryByText('Run Now')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cards-stub-trigger')).not.toBeInTheDocument();
+  });
 
-    const runNow = screen.getByRole('button', { name: /Run Now/i });
-    expect(runNow).toBeDisabled();
-    fireEvent.click(runNow);
-    expect(triggerTick).not.toHaveBeenCalled();
+  it('shows Run Now and reflections when mode is simple', () => {
+    render(<IntelligenceSubconsciousTab {...baseProps()} mode="simple" />);
+    expect(screen.getByText('Run Now')).toBeInTheDocument();
+    expect(screen.getByTestId('cards-stub-trigger')).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: /AI settings/i }));
-    expect(mockNavigate).toHaveBeenCalledWith('/settings/llm');
+  it('shows aggressive warning when mode is aggressive', () => {
+    render(<IntelligenceSubconsciousTab {...baseProps()} mode="aggressive" />);
+    expect(screen.getByText(/full tool access including writes/)).toBeInTheDocument();
+  });
+
+  it('on Act → dispatches setSelectedThread + navigates to /chat', () => {
+    render(<IntelligenceSubconsciousTab {...baseProps()} mode="simple" />);
+    fireEvent.click(screen.getByTestId('cards-stub-trigger'));
+    expect(mockDispatch).toHaveBeenCalledWith(setSelectedThread('spawned-thread-42'));
+    expect(mockNavigate).toHaveBeenCalledWith('/chat');
   });
 });

@@ -214,6 +214,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'لم يهرب بعد',
   'routines.runNow': 'اركض الآن',
   'routines.running': 'تشغيل...',
+  'routines.runNowTimedOut': 'انتهت مهلة التشغيل — يرجى التحديث والمحاولة مرة أخرى.',
   'routines.viewHistory': 'تاريخ الرؤية',
   'routines.loadingHistory': 'التعبئة...',
   'routines.noHistory': 'لا يوجد تاريخ بعد',
@@ -1881,6 +1882,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'الإجراء المقترح',
   'reflections.act': 'تنفيذ',
   'reflections.dismiss': 'تجاهل',
+  'reflections.viewConversation': 'عرض',
+  'subconscious.mode.label': 'وضع اللاوعي',
+  'subconscious.mode.off.title': 'إيقاف',
+  'subconscious.mode.off.desc': 'اللاوعي معطل.',
+  'subconscious.mode.simple.title': 'بسيط',
+  'subconscious.mode.simple.desc': 'مراقبة للقراءة فقط. الوصول للذاكرة والملفات فقط.',
+  'subconscious.mode.aggressive.title': 'مكثف',
+  'subconscious.mode.aggressive.desc':
+    'وصول كامل للأدوات. يمكنه الكتابة وإنشاء وكلاء وتفويض المهام.',
+  'subconscious.mode.aggressiveWarning':
+    'الوضع المكثف يمنح اللاوعي وصولاً كاملاً للأدوات بما في ذلك الكتابة وإنشاء الوكلاء الفرعيين.',
+  'subconscious.interval.label': 'التردد',
+  'subconscious.interval.minutes': '{n} د',
+  'subconscious.interval.hours': '{n} س',
+  'subconscious.interval.oneHour': 'ساعة واحدة',
+  'subconscious.interval.oneDay': '24 ساعة',
   'whatsapp.chatsSynced': 'محادثات مزامنة',
   'whatsapp.chatSynced': 'محادثة مزامنة',
   'sync.active': 'نشط',
@@ -2752,7 +2769,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'مجموعة عبء عمل المحادثة',
   'settings.ai.disconnectProvider': 'قطع الاتصال {label}',
   'settings.ai.connectProviderLabel': 'الاتصال {label}',
+  'settings.ai.editProviderEndpoint': 'تعديل نقطة النهاية {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'تعديل نقطة الاتصال',
   'settings.ai.endpointUrlLabel': 'نقطة النهاية URL',
   'settings.ai.localRuntimeHelper':
     'حيث يمكن الوصول إلى {label}. الإعداد الافتراضي هو المضيف المحلي؛ وجّه هذا إلى مضيف بعيد (مثلًا http://10.0.0.4:11434/v1) لاستخدام نسخة مشتركة.',
@@ -4058,14 +4077,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'التصفية حسب المصدر',
   'calls.comingSoonDescription': 'المكالمات بمساعدة الذكاء الاصطناعي قادمة قريباً. ابقَ على اطلاع.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 دقائق',
-  'subconscious.interval.tenMinutes': '10 دقائق',
-  'subconscious.interval.fifteenMinutes': '15 دقيقة',
-  'subconscious.interval.thirtyMinutes': '30 دقيقة',
-  'subconscious.interval.oneHour': 'ساعة واحدة',
-  'subconscious.interval.sixHours': '6 ساعات',
-  'subconscious.interval.twelveHours': '12 ساعة',
-  'subconscious.interval.oneDay': 'يوم واحد',
   'subconscious.priority.critical': 'حرجة',
   'subconscious.priority.important': 'مهم',
   'subconscious.priority.normal': 'عادي',
@@ -4370,6 +4381,61 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'رفض التخزين المحلي',
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
+
+  // Agent activity level
+  'activityLevel.title': 'مستوى نشاط الوكيل',
+  'activityLevel.description':
+    'تحكم في مدى استباقية وكيلك. المستويات الأعلى تستخدم المزيد من الرموز.',
+  'activityLevel.off': 'إيقاف',
+  'activityLevel.offDesc': 'لا معالجة في الخلفية. يزامن فقط عند الضغط على الزر.',
+  'activityLevel.minimal': 'أدنى حد',
+  'activityLevel.minimalDesc': 'مزامنة المصادر مرة يوميًا. لا رسائل استباقية.',
+  'activityLevel.moderate': 'متوسط',
+  'activityLevel.moderateDesc': 'مزامنة كل ساعة. ملخص يومي. يقترح إجراءات.',
+  'activityLevel.active': 'نشط',
+  'activityLevel.activeDesc': 'مزامنة كل 10 دقائق. يراقب القنوات ويصنف ويصيغ الردود.',
+  'activityLevel.alwaysOn': 'دائم التشغيل',
+  'activityLevel.alwaysOnDesc': 'مزامنة فورية. استقلالية كاملة ضمن الحدود المحددة.',
+  'activityLevel.currentMonth': 'هذا الشهر: ${amount}',
+  'activityLevel.saved': 'تم تحديث مستوى النشاط.',
+  'activityLevel.default': 'افتراضي',
+  'activityLevel.costFree': '0$',
+  'activityLevel.costRange': '~${min}–${max}/شهر',
+
+  // Sync budget dialog
+  'syncBudget.title': 'ميزانية المزامنة',
+  'syncBudget.maxTokens': 'الحد الأقصى للرموز لكل مزامنة',
+  'syncBudget.maxTokensHelp': 'توقف المزامنة عند استهلاك هذا العدد من الرموز.',
+  'syncBudget.maxCost': 'الحد الأقصى للتكلفة لكل مزامنة (USD)',
+  'syncBudget.maxCostHelp': 'حد التكلفة المطلق بالدولار لكل تشغيل مزامنة.',
+  'syncBudget.syncDepth': 'عمق المزامنة',
+  'syncBudget.syncDepthHelp': 'جلب العناصر من هذه الفترة الزمنية فقط.',
+  'syncBudget.days7': 'آخر 7 أيام',
+  'syncBudget.days30': 'آخر 30 يومًا',
+  'syncBudget.days90': 'آخر 90 يومًا',
+  'syncBudget.allTime': 'كل الأوقات',
+  'syncBudget.unlimited': 'غير محدود',
+  'syncBudget.saved': 'تم حفظ الميزانية.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'تأكيد المزامنة',
+  'syncConfirm.message': 'ستعالج هذه المزامنة ~{items} عناصر (~{tokens} رمز، تقديري ${cost}).',
+  'syncConfirm.budgetNote': 'حد الميزانية: ${max}',
+  'syncConfirm.proceed': 'المتابعة',
+  'syncConfirm.cancel': 'إلغاء',
+  'syncConfirm.estimating': 'جارٍ تقدير التكلفة...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} هذا الشهر',
+  'monthlyCost.noData': 'لا مزامنات هذا الشهر',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'النشاط',
+  'onboarding.custom.activity.title': 'نشاط الوكيل',
+  'onboarding.custom.activity.subtitle': 'مدى استباقية وكيلك في المراقبة والتصرف في الخلفية.',
+  'onboarding.custom.activity.defaultDesc': 'نشاط متوسط — مزامنة كل ساعة، ملخص يومي.',
+  'onboarding.custom.activity.configureDesc':
+    'اختر مستوى نشاطك الخاص. الإعداد في الإعدادات › مستوى نشاط الوكيل.',
 };
 
 export default messages;

@@ -102,6 +102,15 @@ pub async fn update_source(
     if let Some(selector) = patch.selector {
         entry.selector = Some(selector);
     }
+    if let Some(v) = patch.max_tokens_per_sync {
+        entry.max_tokens_per_sync = Some(v);
+    }
+    if let Some(v) = patch.max_cost_per_sync_usd {
+        entry.max_cost_per_sync_usd = Some(v);
+    }
+    if let Some(v) = patch.sync_depth_days {
+        entry.sync_depth_days = Some(v);
+    }
 
     entry.validate()?;
     let updated = entry.clone();
@@ -212,6 +221,9 @@ pub async fn upsert_composio_source(
         since_days: None,
         max_items: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     };
     config.memory_sources.push(entry.clone());
     config
@@ -257,6 +269,12 @@ pub struct MemorySourcePatch {
     pub max_items: Option<u32>,
     #[serde(default)]
     pub selector: Option<String>,
+    #[serde(default)]
+    pub max_tokens_per_sync: Option<u64>,
+    #[serde(default)]
+    pub max_cost_per_sync_usd: Option<f64>,
+    #[serde(default)]
+    pub sync_depth_days: Option<u32>,
 }
 
 #[cfg(test)]

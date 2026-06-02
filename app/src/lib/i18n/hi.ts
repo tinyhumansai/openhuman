@@ -216,6 +216,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'अभी तक नहीं चला',
   'routines.runNow': 'अब चलायें',
   'routines.running': 'दौड़ना...',
+  'routines.runNowTimedOut': 'चलाने में समय समाप्त — कृपया रिफ्रेश करें और पुनः प्रयास करें।',
   'routines.viewHistory': 'इतिहास देखें',
   'routines.loadingHistory': 'लोड...',
   'routines.noHistory': 'अभी तक कोई रन इतिहास नहीं है।',
@@ -1919,6 +1920,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'प्रस्तावित एक्शन',
   'reflections.act': 'करें',
   'reflections.dismiss': 'हटाएं',
+  'reflections.viewConversation': 'देखें',
+  'subconscious.mode.label': 'अवचेतन मोड',
+  'subconscious.mode.off.title': 'बंद',
+  'subconscious.mode.off.desc': 'अवचेतन अक्षम है।',
+  'subconscious.mode.simple.title': 'सरल',
+  'subconscious.mode.simple.desc': 'केवल-पठन अवलोकन। केवल मेमोरी और फ़ाइल एक्सेस।',
+  'subconscious.mode.aggressive.title': 'आक्रामक',
+  'subconscious.mode.aggressive.desc':
+    'पूर्ण टूल एक्सेस। लिख सकता है, एजेंट बना सकता है और कार्य सौंप सकता है।',
+  'subconscious.mode.aggressiveWarning':
+    'आक्रामक मोड अवचेतन को लेखन और उप-एजेंट निर्माण सहित पूर्ण टूल एक्सेस देता है।',
+  'subconscious.interval.label': 'आवृत्ति',
+  'subconscious.interval.minutes': '{n} मि',
+  'subconscious.interval.hours': '{n} घं',
+  'subconscious.interval.oneHour': '1 घंटा',
+  'subconscious.interval.oneDay': '24 घंटे',
   'whatsapp.chatsSynced': 'चैट्स सिंक हुईं',
   'whatsapp.chatSynced': 'चैट सिंक हुई',
   'sync.active': 'एक्टिव',
@@ -2808,7 +2825,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'चैट वर्कलोड ग्रुप',
   'settings.ai.disconnectProvider': 'डिस्कनेक्ट करें {label}',
   'settings.ai.connectProviderLabel': 'कनेक्ट करें {label}',
+  'settings.ai.editProviderEndpoint': '{label} समापन बिंदु संपादित करें',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'समापन बिंदु संपादित करें',
   'settings.ai.endpointUrlLabel': 'समापन बिंदु URL',
   'settings.ai.localRuntimeHelper':
     'जहां {label} पहुंच योग्य है। डिफ़ॉल्ट स्थानीयहोस्ट है; इसे रिमोट होस्ट पर इंगित करें (उदाहरण के लिए, http://10.0.0.4:11434/v1) एक साझा उदाहरण का उपयोग करने के लिए)।',
@@ -4135,14 +4154,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'स्रोत के अनुसार फ़िल्टर करें',
   'calls.comingSoonDescription': 'एआई-सहायक कॉल जल्द ही आ रही हैं। बने रहें।',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 मिनट',
-  'subconscious.interval.tenMinutes': '10 मिनट',
-  'subconscious.interval.fifteenMinutes': '15 मि',
-  'subconscious.interval.thirtyMinutes': '30 मि',
-  'subconscious.interval.oneHour': '1 घंटा',
-  'subconscious.interval.sixHours': '6 घंटे',
-  'subconscious.interval.twelveHours': '12 घंटे',
-  'subconscious.interval.oneDay': '1 दिन',
   'subconscious.priority.critical': 'आलोचनात्मक',
   'subconscious.priority.important': 'महत्वपूर्ण',
   'subconscious.priority.normal': 'सामान्य',
@@ -4455,6 +4466,63 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+
+  // Agent activity level
+  'activityLevel.title': 'एजेंट गतिविधि स्तर',
+  'activityLevel.description':
+    'नियंत्रित करें कि आपका एजेंट कितना सक्रिय है। उच्च स्तर पर अधिक टोकन का उपयोग होता है।',
+  'activityLevel.off': 'बंद',
+  'activityLevel.offDesc': 'पृष्ठभूमि में कोई प्रसंस्करण नहीं। केवल बटन दबाने पर सिंक होता है।',
+  'activityLevel.minimal': 'न्यूनतम',
+  'activityLevel.minimalDesc': 'दिन में एक बार स्रोत सिंक करता है। कोई सक्रिय संदेश नहीं।',
+  'activityLevel.moderate': 'मध्यम',
+  'activityLevel.moderateDesc': 'हर घंटे सिंक करता है। दैनिक सारांश। क्रियाएं सुझाता है।',
+  'activityLevel.active': 'सक्रिय',
+  'activityLevel.activeDesc':
+    'हर 10 मिनट में सिंक करता है। चैनलों की निगरानी करता है, प्राथमिकता देता है और उत्तर तैयार करता है।',
+  'activityLevel.alwaysOn': 'हमेशा चालू',
+  'activityLevel.alwaysOnDesc': 'रीयल-टाइम सिंक। निर्धारित सीमाओं के भीतर पूर्ण स्वायत्तता।',
+  'activityLevel.currentMonth': 'इस महीने: ${amount}',
+  'activityLevel.saved': 'गतिविधि स्तर अपडेट किया गया।',
+  'activityLevel.default': 'डिफ़ॉल्ट',
+  'activityLevel.costFree': '$0',
+  'activityLevel.costRange': '~${min}–${max}/माह',
+
+  // Sync budget dialog
+  'syncBudget.title': 'सिंक बजट',
+  'syncBudget.maxTokens': 'प्रति सिंक अधिकतम टोकन',
+  'syncBudget.maxTokensHelp': 'इतने टोकन उपयोग होने पर सिंक बंद करें।',
+  'syncBudget.maxCost': 'प्रति सिंक अधिकतम लागत (USD)',
+  'syncBudget.maxCostHelp': 'प्रति सिंक रन के लिए डॉलर की सीमा।',
+  'syncBudget.syncDepth': 'सिंक गहराई',
+  'syncBudget.syncDepthHelp': 'केवल इस समय सीमा के आइटम लाएं।',
+  'syncBudget.days7': 'पिछले 7 दिन',
+  'syncBudget.days30': 'पिछले 30 दिन',
+  'syncBudget.days90': 'पिछले 90 दिन',
+  'syncBudget.allTime': 'सब समय',
+  'syncBudget.unlimited': 'असीमित',
+  'syncBudget.saved': 'बजट सहेजा गया।',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'सिंक की पुष्टि करें',
+  'syncConfirm.message': 'यह सिंक ~{items} आइटम (~{tokens} टोकन, अनुमानित ${cost}) प्रोसेस करेगा।',
+  'syncConfirm.budgetNote': 'बजट सीमा: ${max}',
+  'syncConfirm.proceed': 'आगे बढ़ें',
+  'syncConfirm.cancel': 'रद्द करें',
+  'syncConfirm.estimating': 'लागत का अनुमान लगाया जा रहा है...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': 'इस महीने ${amount}',
+  'monthlyCost.noData': 'इस महीने कोई सिंक नहीं',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'गतिविधि',
+  'onboarding.custom.activity.title': 'एजेंट गतिविधि',
+  'onboarding.custom.activity.subtitle':
+    'आपका एजेंट पृष्ठभूमि में कितनी सक्रियता से निगरानी और कार्य करता है।',
+  'onboarding.custom.activity.defaultDesc': 'मध्यम गतिविधि — प्रति घंटे सिंक, दैनिक सारांश।',
+  'onboarding.custom.activity.configureDesc':
+    'अपना गतिविधि स्तर चुनें। सेटिंग्स › एजेंट गतिविधि स्तर में कॉन्फ़िगर करें।',
 };
 
 export default messages;

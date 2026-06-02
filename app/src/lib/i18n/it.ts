@@ -222,6 +222,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Non ancora eseguito',
   'routines.runNow': 'Corri adesso',
   'routines.running': 'Correndo…',
+  'routines.runNowTimedOut': "Timeout durante l'esecuzione — aggiorna e riprova.",
   'routines.viewHistory': 'Visualizza cronologia',
   'routines.loadingHistory': 'Caricamento…',
   'routines.noHistory': 'Ancora nessuna cronologia delle esecuzioni.',
@@ -1950,6 +1951,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Azione proposta',
   'reflections.act': 'Agisci',
   'reflections.dismiss': 'Ignora',
+  'reflections.viewConversation': 'Visualizza',
+  'subconscious.mode.label': 'Modalità subconscio',
+  'subconscious.mode.off.title': 'Disattivato',
+  'subconscious.mode.off.desc': 'Il subconscio è disattivato.',
+  'subconscious.mode.simple.title': 'Semplice',
+  'subconscious.mode.simple.desc': 'Osservazione in sola lettura. Solo accesso a memoria e file.',
+  'subconscious.mode.aggressive.title': 'Aggressivo',
+  'subconscious.mode.aggressive.desc':
+    'Accesso completo agli strumenti. Può scrivere, creare agenti e delegare compiti.',
+  'subconscious.mode.aggressiveWarning':
+    'La modalità aggressiva concede al subconscio accesso completo agli strumenti, inclusa scrittura e creazione di sotto-agenti.',
+  'subconscious.interval.label': 'Frequenza',
+  'subconscious.interval.minutes': '{n} min',
+  'subconscious.interval.hours': '{n}h',
+  'subconscious.interval.oneHour': '1 ora',
+  'subconscious.interval.oneDay': '24 ore',
   'whatsapp.chatsSynced': 'chat sincronizzate',
   'whatsapp.chatSynced': 'chat sincronizzata',
   'sync.active': 'Attivo',
@@ -2846,7 +2863,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Gruppo carico di lavoro chat',
   'settings.ai.disconnectProvider': 'Disconnetti {label}',
   'settings.ai.connectProviderLabel': 'Connetti {label}',
+  'settings.ai.editProviderEndpoint': 'Modifica punto finale di {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': "Modifica l'endpoint",
   'settings.ai.endpointUrlLabel': "URL dell'endpoint",
   'settings.ai.localRuntimeHelper':
     "Dove {label} è raggiungibile. Il valore predefinito è localhost; punta questo a un host remoto (per esempio, http://10.0.0.4:11434/v1) per utilizzare un'istanza condivisa.",
@@ -4198,14 +4217,6 @@ const messages: TranslationMap = {
   'calls.comingSoonDescription':
     "Le chiamate assistite dall'IA sono in arrivo. Resta sintonizzato.",
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 minuti',
-  'subconscious.interval.tenMinutes': '10 minuti',
-  'subconscious.interval.fifteenMinutes': '15 minuti',
-  'subconscious.interval.thirtyMinutes': '30 minuti',
-  'subconscious.interval.oneHour': '1 ora',
-  'subconscious.interval.sixHours': '6 ore',
-  'subconscious.interval.twelveHours': '12 ore',
-  'subconscious.interval.oneDay': '1 giorno',
   'subconscious.priority.critical': 'critico',
   'subconscious.priority.important': 'importante',
   'subconscious.priority.normal': 'normale',
@@ -4523,6 +4534,69 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+
+  // Agent activity level
+  'activityLevel.title': "Livello di attività dell'agente",
+  'activityLevel.description':
+    'Controlla quanto è proattivo il tuo agente. I livelli più alti usano più token.',
+  'activityLevel.off': 'Disattivato',
+  'activityLevel.offDesc':
+    'Nessuna elaborazione in background. Sincronizza solo alla pressione del pulsante.',
+  'activityLevel.minimal': 'Minimo',
+  'activityLevel.minimalDesc':
+    'Sincronizza le sorgenti una volta al giorno. Nessun messaggio proattivo.',
+  'activityLevel.moderate': 'Moderato',
+  'activityLevel.moderateDesc': 'Sincronizza ogni ora. Riepilogo giornaliero. Suggerisce azioni.',
+  'activityLevel.active': 'Attivo',
+  'activityLevel.activeDesc':
+    'Sincronizza ogni 10 min. Monitora i canali, ordina e redige risposte.',
+  'activityLevel.alwaysOn': 'Sempre attivo',
+  'activityLevel.alwaysOnDesc':
+    'Sincronizzazione in tempo reale. Piena autonomia entro i limiti definiti.',
+  'activityLevel.currentMonth': 'Questo mese: ${amount}',
+  'activityLevel.saved': 'Livello di attività aggiornato.',
+  'activityLevel.default': 'predefinito',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/mese',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Budget di sincronizzazione',
+  'syncBudget.maxTokens': 'Token massimi per sincronizzazione',
+  'syncBudget.maxTokensHelp':
+    'Ferma la sincronizzazione dopo aver consumato questo numero di token.',
+  'syncBudget.maxCost': 'Costo massimo per sincronizzazione (USD)',
+  'syncBudget.maxCostHelp': 'Limite assoluto in dollari per ogni esecuzione di sincronizzazione.',
+  'syncBudget.syncDepth': 'Profondità di sincronizzazione',
+  'syncBudget.syncDepthHelp': 'Recupera solo gli elementi di questa finestra temporale.',
+  'syncBudget.days7': 'Ultimi 7 giorni',
+  'syncBudget.days30': 'Ultimi 30 giorni',
+  'syncBudget.days90': 'Ultimi 90 giorni',
+  'syncBudget.allTime': 'Sempre',
+  'syncBudget.unlimited': 'Illimitato',
+  'syncBudget.saved': 'Budget salvato.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Conferma sincronizzazione',
+  'syncConfirm.message':
+    'Questa sincronizzazione elaborerà ~{items} elementi (~{tokens} token, stima ${cost}).',
+  'syncConfirm.budgetNote': 'Limite budget: ${max}',
+  'syncConfirm.proceed': 'Procedi',
+  'syncConfirm.cancel': 'Annulla',
+  'syncConfirm.estimating': 'Stima del costo in corso...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} questo mese',
+  'monthlyCost.noData': 'Nessuna sincronizzazione questo mese',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Attività',
+  'onboarding.custom.activity.title': "Attività dell'agente",
+  'onboarding.custom.activity.subtitle':
+    'Quanto proattivamente il tuo agente monitora e agisce in background.',
+  'onboarding.custom.activity.defaultDesc':
+    'Attività moderata — sincronizzazione oraria, riepilogo giornaliero.',
+  'onboarding.custom.activity.configureDesc':
+    "Scegli il tuo livello di attività. Configura in Impostazioni › Livello di attività dell'agente.",
 };
 
 export default messages;

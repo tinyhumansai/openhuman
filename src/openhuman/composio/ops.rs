@@ -1205,6 +1205,7 @@ pub async fn composio_get_user_profile(
         config: Arc::new(config.clone()),
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
+        usage: Default::default(),
     };
 
     let profile = provider.fetch_user_profile(&ctx).await.map_err(|e| {
@@ -1276,6 +1277,7 @@ pub async fn composio_refresh_all_identities(
             config: Arc::new(config.clone()),
             toolkit: toolkit.clone(),
             connection_id: Some(connection_id.clone()),
+            usage: Default::default(),
         };
 
         match provider.fetch_user_profile(&ctx).await {
@@ -1372,6 +1374,7 @@ pub async fn composio_sync(
         config: Arc::new(config.clone()),
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
+        usage: Default::default(),
     };
     let started_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -1,4 +1,4 @@
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Deserializer};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -92,7 +92,8 @@ struct InferenceUpdateLocalSettingsParams {
     runtime_enabled: Option<bool>,
     opt_in_confirmed: Option<bool>,
     provider: Option<String>,
-    base_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present_json")]
+    base_url: Option<Value>,
     model_id: Option<String>,
     chat_model_id: Option<String>,
     usage_embeddings: Option<bool>,
@@ -276,7 +277,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 optional_bool("runtime_enabled", "Enable or disable local inference runtime routing."),
                 optional_bool("opt_in_confirmed", "Persist the local inference opt-in flag."),
                 optional_string("provider", "Optional local provider slug, e.g. ollama or lm_studio."),
-                optional_string("base_url", "Optional local provider base URL."),
+                optional_json(
+                    "base_url",
+                    "Optional local provider base URL string, or null to clear.",
+                ),
                 optional_string("model_id", "Optional generic model id override."),
                 optional_string("chat_model_id", "Optional chat model id override."),
                 optional_bool("usage_embeddings", "Whether embeddings workload may use the local provider."),
@@ -629,11 +633,17 @@ fn handle_inference_update_model_settings(params: Map<String, Value>) -> Control
 fn handle_inference_update_local_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<InferenceUpdateLocalSettingsParams>(params)?;
+        let base_url = match update.base_url {
+            None => None,
+            Some(Value::Null) => Some(None),
+            Some(Value::String(value)) => Some(Some(value)),
+            Some(_) => return Err("invalid params: base_url must be a string or null".to_string()),
+        };
         let patch = config_rpc::LocalAiSettingsPatch {
             runtime_enabled: update.runtime_enabled,
             opt_in_confirmed: update.opt_in_confirmed,
             provider: update.provider,
-            base_url: update.base_url,
+            base_url,
             model_id: update.model_id,
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
@@ -810,6 +820,13 @@ fn handle_inference_analyze_sentiment(params: Map<String, Value>) -> ControllerF
 
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
+}
+
+fn deserialize_present_json<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 fn to_json<T: serde::Serialize>(outcome: RpcOutcome<T>) -> Result<Value, String> {

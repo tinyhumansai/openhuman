@@ -118,6 +118,9 @@ fn source(kind: SourceKind, id: &str) -> MemorySourceEntry {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     }
 }
 
@@ -404,6 +407,9 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let reader = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
     let mut entry = source(SourceKind::GithubRepo, "github-round15");
     entry.url = Some("https://github.com/tinyhumansai/openhuman.git".to_string());
+    entry.max_commits = Some(30);
+    entry.max_issues = Some(30);
+    entry.max_prs = Some(30);
 
     let items = reader
         .list_items(&entry, &config)
@@ -501,6 +507,7 @@ async fn composio_providers_fetch_profiles_tasks_and_cover_error_branches() {
         config: Arc::new(config.clone()),
         toolkit: "github".to_string(),
         connection_id: Some("conn-github".to_string()),
+        usage: Default::default(),
     };
     let github = GitHubProvider::new();
     let github_profile = github

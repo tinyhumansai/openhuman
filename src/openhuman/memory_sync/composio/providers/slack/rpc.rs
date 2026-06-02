@@ -110,6 +110,7 @@ pub async fn sync_trigger_rpc(
             config: Arc::clone(&config_arc),
             toolkit: conn.toolkit.clone(),
             connection_id: Some(conn.id.clone()),
+            usage: Default::default(),
         };
         match provider.sync(&ctx, SyncReason::Manual).await {
             Ok(o) => outcomes.push(o),

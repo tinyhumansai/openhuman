@@ -22,6 +22,16 @@ import { visemePath, VISEMES, type VisemeShape } from './visemes';
  * - `proud` — task fully completed after meaningful tool/subagent work.
  * - `cautious` — gentle warning; less severe than `concerned`.
  *
+ * Activity poses — driven by what the agent is actively doing:
+ * - `celebrating` — success animation after meaningful work.
+ * - `writing` — agent is editing/creating files.
+ * - `reading` — agent is browsing or reading content.
+ * - `recording` — agent is capturing screen or recording.
+ * - `waving` — greeting or hello gesture.
+ * - `dancing` — celebratory/playful animation.
+ * - `drinking_coffee` — agent is processing / long-running task.
+ * - `drinking_boba` — relaxed variant of processing.
+ *
  * `normal` is the legacy alias for `idle` and stays accepted for backwards
  * compatibility with older callers.
  */
@@ -37,6 +47,14 @@ export type MascotFace =
   | 'curious'
   | 'proud'
   | 'cautious'
+  | 'celebrating'
+  | 'writing'
+  | 'reading'
+  | 'recording'
+  | 'waving'
+  | 'dancing'
+  | 'drinking_coffee'
+  | 'drinking_boba'
   | 'normal';
 
 export interface GhostyProps {
@@ -161,6 +179,70 @@ const FACE_PRESETS: Record<Exclude<MascotFace, 'normal'>, FacePreset> = {
     browDy: -3,
     showBrows: true,
     blushOpacity: 0.65,
+  },
+  celebrating: {
+    eyeScaleY: 0.4,
+    eyeScaleX: 1.15,
+    browTilt: -8,
+    browDy: -8,
+    showBrows: false,
+    blushOpacity: 1,
+  },
+  writing: {
+    eyeScaleY: 0.75,
+    eyeScaleX: 1,
+    browTilt: -2,
+    browDy: -1,
+    showBrows: false,
+    blushOpacity: 0.7,
+  },
+  reading: {
+    eyeScaleY: 0.85,
+    eyeScaleX: 1.05,
+    browTilt: -6,
+    browDy: -4,
+    showBrows: true,
+    blushOpacity: 0.75,
+  },
+  recording: {
+    eyeScaleY: 1,
+    eyeScaleX: 1,
+    browTilt: 0,
+    browDy: 0,
+    showBrows: false,
+    blushOpacity: 0.9,
+  },
+  waving: {
+    eyeScaleY: 0.5,
+    eyeScaleX: 1.1,
+    browTilt: -6,
+    browDy: -6,
+    showBrows: false,
+    blushOpacity: 1,
+  },
+  dancing: {
+    eyeScaleY: 0.4,
+    eyeScaleX: 1.15,
+    browTilt: -8,
+    browDy: -8,
+    showBrows: false,
+    blushOpacity: 1,
+  },
+  drinking_coffee: {
+    eyeScaleY: 0.6,
+    eyeScaleX: 1,
+    browTilt: 0,
+    browDy: 0,
+    showBrows: false,
+    blushOpacity: 0.8,
+  },
+  drinking_boba: {
+    eyeScaleY: 0.55,
+    eyeScaleX: 1.05,
+    browTilt: 0,
+    browDy: 0,
+    showBrows: false,
+    blushOpacity: 0.85,
   },
 };
 
@@ -375,6 +457,19 @@ function restMouthPath(face: MascotFace): string {
     case 'cautious':
       // Slight downward turn — concern lite.
       return 'M482,600 Q520,568 558,600 Q520,585 482,600 Z';
+    case 'celebrating':
+    case 'dancing':
+      return 'M460,565 Q520,635 580,565 Q520,605 460,565 Z';
+    case 'waving':
+      return 'M460,565 Q520,635 580,565 Q520,605 460,565 Z';
+    case 'writing':
+    case 'reading':
+      return 'M488,585 Q520,595 552,585 Q520,592 488,585 Z';
+    case 'recording':
+      return 'M495,580 Q520,600 545,580 Q520,615 495,580 Z';
+    case 'drinking_coffee':
+    case 'drinking_boba':
+      return 'M500,578 Q520,598 540,578 Q520,610 500,578 Z';
     default:
       return visemePath(VISEMES.REST);
   }
