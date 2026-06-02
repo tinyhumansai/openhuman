@@ -163,7 +163,11 @@ pub async fn run_connection_sync(
     // Read the Composio billable-action tally *before* propagating errors.
     // A sync that errors partway may still have fired billable actions;
     // reading here ensures the dispatcher audit sees partial cost (#3111).
-    let usage = ctx.usage.lock().map(|u| u.clone()).unwrap_or_default();
+    let usage = ctx
+        .usage
+        .lock()
+        .map(|u| u.clone())
+        .unwrap_or_else(|poisoned| poisoned.into_inner().clone());
 
     match sync_result {
         Ok(outcome) => Ok((outcome, usage)),
