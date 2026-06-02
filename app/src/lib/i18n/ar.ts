@@ -2222,7 +2222,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'خطأ في وكيل OpenHuman (لا تتوفر تفاصيل إضافية).',
   'app.openhumanLink.discordReport.intro':
-    'نعتذر — حدث خطأ من جانبنا. تم الإبلاغ عن هذا الخطأ تلقائيًا. يمكنك أيضًا مشاركة التفاصيل معنا على Discord حتى نتمكن من التحقيق بشكل أسرع.',
+    'نعتذر — حدث خطأ من جانبنا. نحاول تسجيل هذه الأخطاء تلقائيًا، لكن مشاركة التفاصيل على Discord تساعدنا على إصلاحها بشكل أسرع.',
   'app.openhumanLink.discordReport.openDiscord': 'فتح Discord',
   'app.openhumanLink.done': 'تم',
   'app.openhumanLink.loadingChannelSetup': 'جارٍ تحميل إعداد القناة',

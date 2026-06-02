@@ -2265,7 +2265,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'OpenHuman एजेंट त्रुटि (कोई अतिरिक्त विवरण उपलब्ध नहीं था)।',
   'app.openhumanLink.discordReport.intro':
-    'माफ करें — हमारी तरफ से कुछ गड़बड़ हुई। इस त्रुटि की सूचना स्वचालित रूप से दे दी गई है। आप Discord पर भी हमारे साथ विवरण साझा कर सकते हैं ताकि हम जल्दी जांच कर सकें।',
+    'माफ करें — हमारी तरफ से कुछ गड़बड़ हुई। हम इन्हें स्वचालित रूप से लॉग करने की कोशिश करते हैं, लेकिन Discord पर विवरण साझा करने से हमें इसे जल्दी ठीक करने में मदद मिलती है।',
   'app.openhumanLink.discordReport.openDiscord': 'Discord खोलें',
   'app.openhumanLink.done': 'हो गया',
   'app.openhumanLink.loadingChannelSetup': 'चैनल सेटअप लोड हो रहा है',

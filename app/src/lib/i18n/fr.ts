@@ -2315,7 +2315,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     "Erreur de l'agent OpenHuman (aucun détail supplémentaire disponible).",
   'app.openhumanLink.discordReport.intro':
-    "Désolé — quelque chose s'est mal passé de notre côté. Cette erreur a été signalée automatiquement. Vous pouvez aussi partager les détails avec nous sur Discord pour que nous puissions investiguer plus vite.",
+    "Désolé — quelque chose s'est mal passé de notre côté. Nous essayons de journaliser ces erreurs automatiquement, mais partager les détails sur Discord nous aide à les corriger plus vite.",
   'app.openhumanLink.discordReport.openDiscord': 'Ouvrir Discord',
   'app.openhumanLink.done': 'Terminé',
   'app.openhumanLink.loadingChannelSetup': 'Chargement de la configuration du canal',

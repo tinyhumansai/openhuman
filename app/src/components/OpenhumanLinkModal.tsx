@@ -410,23 +410,25 @@ const DiscordReportBody = ({ close, context }: { close: () => void; context?: st
   return (
     <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
       <p>{t('app.openhumanLink.discordReport.intro')}</p>
-      <button
-        type="button"
-        onClick={() => void handleCopy()}
-        className="w-full rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2.5 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
-        {copied
-          ? t('app.openhumanLink.discordReport.copied')
-          : t('app.openhumanLink.discordReport.copyDetails')}
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          void openUrl(DISCORD_INVITE_URL).catch(() => {});
-        }}
-        className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
-        {t('app.openhumanLink.discordReport.openDiscord')}
-      </button>
-      <DoneFooter close={close} skipLabel={t('app.openhumanLink.maybeLater')} />
+      <div className="flex items-stretch gap-2">
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="flex-1 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2.5 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
+          {copied
+            ? t('app.openhumanLink.discordReport.copied')
+            : t('app.openhumanLink.discordReport.copyDetails')}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void openUrl(DISCORD_INVITE_URL).catch(() => {});
+            close();
+          }}
+          className="flex-1 rounded-xl bg-primary-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
+          {t('app.openhumanLink.discordReport.openDiscord')}
+        </button>
+      </div>
     </div>
   );
 };

@@ -2153,7 +2153,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.copyDetails': '复制错误详情',
   'app.openhumanLink.discordReport.fallbackDetails': 'OpenHuman 代理错误（无其他详情）。',
   'app.openhumanLink.discordReport.intro':
-    '抱歉 — 我们这边发生了错误。此错误已自动上报。您也可以在 Discord 上与我们分享详情，以便我们更快地排查问题。',
+    '抱歉 — 我们这边出错了。我们会尝试自动记录这些错误，但在 Discord 上分享详情能帮助我们更快地修复问题。',
   'app.openhumanLink.discordReport.openDiscord': '打开 Discord',
   'app.openhumanLink.done': '完成',
   'app.openhumanLink.loadingChannelSetup': '正在加载渠道设置',

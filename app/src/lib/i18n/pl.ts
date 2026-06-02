@@ -2290,7 +2290,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'Błąd agenta OpenHuman (brak dodatkowych szczegółów).',
   'app.openhumanLink.discordReport.intro':
-    'Przepraszamy — coś poszło nie tak po naszej stronie. Ten błąd został automatycznie zgłoszony. Możesz też udostępnić nam szczegóły na Discord, abyśmy mogli szybciej to zbadać.',
+    'Przepraszamy — coś poszło nie tak po naszej stronie. Staramy się rejestrować takie błędy automatycznie, ale udostępnienie szczegółów na Discord pomaga nam szybciej je naprawić.',
   'app.openhumanLink.discordReport.openDiscord': 'Otwórz Discord',
   'app.openhumanLink.done': 'Gotowe',
   'app.openhumanLink.loadingChannelSetup': 'Wczytywanie konfiguracji kanału',

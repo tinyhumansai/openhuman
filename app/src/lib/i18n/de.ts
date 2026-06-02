@@ -2318,7 +2318,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'OpenHuman-Agent-Fehler (keine weiteren Details verfügbar).',
   'app.openhumanLink.discordReport.intro':
-    'Entschuldigung — bei uns ist etwas schiefgelaufen. Dieser Fehler wurde automatisch gemeldet. Du kannst uns die Details auch auf Discord mitteilen, damit wir schneller nachforschen können.',
+    'Entschuldigung — bei uns ist etwas schiefgelaufen. Wir versuchen, solche Fehler automatisch zu protokollieren, aber wenn du die Details auf Discord teilst, können wir sie schneller beheben.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord öffnen',
   'app.openhumanLink.done': 'Fertig',
   'app.openhumanLink.loadingChannelSetup': 'Kanal-Setup wird geladen',

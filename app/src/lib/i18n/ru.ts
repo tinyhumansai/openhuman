@@ -2279,7 +2279,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'Ошибка агента OpenHuman (дополнительная информация недоступна).',
   'app.openhumanLink.discordReport.intro':
-    'Приносим извинения — что-то пошло не так с нашей стороны. Эта ошибка была автоматически отправлена в службу поддержки. Вы также можете поделиться подробностями с нами в Discord, чтобы мы могли разобраться быстрее.',
+    'Приносим извинения — что-то пошло не так с нашей стороны. Мы стараемся фиксировать такие ошибки автоматически, но если вы поделитесь подробностями в Discord, мы исправим их быстрее.',
   'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',
   'app.openhumanLink.done': 'Готово',
   'app.openhumanLink.loadingChannelSetup': 'Загрузка настроек канала',

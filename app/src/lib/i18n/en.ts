@@ -2608,7 +2608,7 @@ const en: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'OpenHuman agent error (no additional details were available).',
   'app.openhumanLink.discordReport.intro':
-    'Sorry — something broke on our end. This error was reported automatically. You can also share the details with us on Discord so we can dig in faster.',
+    'Sorry — something broke on our end. We try to log these automatically, but sharing the details on Discord helps us fix it faster.',
   'app.openhumanLink.discordReport.openDiscord': 'Open Discord',
   'app.openhumanLink.done': 'Done',
   'app.openhumanLink.loadingChannelSetup': 'Loading channel setup',

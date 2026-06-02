@@ -2241,7 +2241,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'OpenHuman 에이전트 오류 (추가 세부 정보 없음).',
   'app.openhumanLink.discordReport.intro':
-    '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이 오류는 자동으로 보고되었습니다. Discord에서 세부 정보를 공유해 주시면 더 빠르게 조사할 수 있습니다.',
+    '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord 열기',
   'app.openhumanLink.done': '완료',
   'app.openhumanLink.loadingChannelSetup': '채널 설정 불러오는 중',

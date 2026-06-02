@@ -2263,7 +2263,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'OpenHuman এজেন্ট ত্রুটি (কোনো অতিরিক্ত বিবরণ পাওয়া যায়নি)।',
   'app.openhumanLink.discordReport.intro':
-    'দুঃখিত — আমাদের দিক থেকে কিছু ভুল হয়েছে। এই ত্রুটি স্বয়ংক্রিয়ভাবে রিপোর্ট করা হয়েছে। আপনি Discord-এ আমাদের সাথে বিবরণ শেয়ার করতে পারেন যাতে আমরা দ্রুত সমাধান করতে পারি।',
+    'দুঃখিত — আমাদের দিক থেকে কিছু ভুল হয়েছে। আমরা এগুলো স্বয়ংক্রিয়ভাবে লগ করার চেষ্টা করি, তবে Discord-এ বিবরণ শেয়ার করলে আমরা দ্রুত সমাধান করতে পারি।',
   'app.openhumanLink.discordReport.openDiscord': 'Discord খুলুন',
   'app.openhumanLink.done': 'সম্পন্ন',
   'app.openhumanLink.loadingChannelSetup': 'চ্যানেল সেটআপ লোড হচ্ছে',

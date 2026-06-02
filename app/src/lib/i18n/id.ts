@@ -2268,7 +2268,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.discordReport.fallbackDetails':
     'Error agen OpenHuman (tidak ada detail tambahan yang tersedia).',
   'app.openhumanLink.discordReport.intro':
-    'Mohon maaf — terjadi kesalahan di pihak kami. Error ini telah dilaporkan secara otomatis. Anda juga dapat berbagi detailnya dengan kami di Discord agar kami dapat menyelidiki lebih cepat.',
+    'Mohon maaf — terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
   'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',
   'app.openhumanLink.done': 'Selesai',
   'app.openhumanLink.loadingChannelSetup': 'Memuat pengaturan kanal',
