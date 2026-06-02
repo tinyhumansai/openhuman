@@ -309,6 +309,71 @@ describe('chatService.subscribeChatEvents', () => {
     });
   });
 
+  // Forces the well-formed `artifact_failed` branch (chatService.ts:869,
+  // 882-890) to execute end-to-end — event-object construction +
+  // capped chatLog preview + listener dispatch. Without this, the
+  // `onArtifactFailed` listener is wired but never fired.
+  it('forwards a well-formed artifact_failed payload through onArtifactFailed', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onArtifactFailed = vi.fn();
+
+    subscribeChatEvents({ onArtifactFailed });
+
+    socket.emit('artifact_failed', {
+      thread_id: 't1',
+      client_id: 'socket-1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'document',
+        title: 'Quarterly Report',
+        workspace_dir: '/workspace',
+        // Long error to exercise the .slice(0, 80) chatLog cap defence.
+        error: 'x'.repeat(200),
+      },
+    });
+
+    expect(onArtifactFailed).toHaveBeenCalledTimes(1);
+    expect(onArtifactFailed).toHaveBeenCalledWith({
+      thread_id: 't1',
+      client_id: 'socket-1',
+      artifact_id: 'a1',
+      kind: 'document',
+      title: 'Quarterly Report',
+      workspace_dir: '/workspace',
+      error: 'x'.repeat(200),
+    });
+  });
+
+  // Drives the bad-envelope skip in both artifact handlers
+  // (chatService.ts:851-852 for artifact_failed, plus the matching
+  // artifact_ready branch). Without this, the `if (!env)` arm never
+  // fires for the failed path.
+  it('drops artifact_ready / artifact_failed envelopes with non-string thread_id', () => {
+    const socket = createMockSocket();
+    vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
+    const onArtifactReady = vi.fn();
+    const onArtifactFailed = vi.fn();
+
+    subscribeChatEvents({ onArtifactReady, onArtifactFailed });
+
+    // Envelope with a non-string thread_id → readEnvelope returns null.
+    socket.emit('artifact_failed', {
+      thread_id: 42,
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
+        error: 'boom',
+      },
+    });
+    expect(onArtifactFailed).not.toHaveBeenCalled();
+
+    socket.emit('artifact_ready', null);
+    expect(onArtifactReady).not.toHaveBeenCalled();
+  });
+
   it('sends chat payload with consistent optional RPC params', async () => {
     const socket = createMockSocket();
     vi.mocked(socketService.getSocket).mockReturnValue(socket as never);
