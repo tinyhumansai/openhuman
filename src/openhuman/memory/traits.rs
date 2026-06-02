@@ -50,14 +50,20 @@ impl MemoryTaint {
         }
     }
 
-    /// Reverse of [`Self::as_db_str`]. Unknown values (e.g. from a
-    /// forward-rolled schema or a manual `UPDATE` typo) decode as the
-    /// conservative [`MemoryTaint::Internal`] so the subconscious gate
-    /// never silently escalates on garbage column data.
+    /// Reverse of [`Self::as_db_str`]. Unknown values (a forward-rolled
+    /// schema variant we don't know about yet, a manual `UPDATE` typo,
+    /// row corruption) decode as the more restrictive
+    /// [`MemoryTaint::ExternalSync`] so the subconscious gate fails
+    /// closed — we'd rather refuse external_effect tools on a chunk
+    /// of unknown provenance than silently treat it as user-authored.
+    /// Legacy rows that pre-date the column are not affected: the
+    /// migration writes a literal `'internal'` default so they
+    /// round-trip cleanly through the explicit arm.
     pub fn from_db_str(raw: &str) -> Self {
         match raw {
+            "internal" => Self::Internal,
             "external_sync" => Self::ExternalSync,
-            _ => Self::Internal,
+            _ => Self::ExternalSync,
         }
     }
 }
@@ -352,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn memory_taint_from_db_str_roundtrips_and_defaults_internal() {
+    fn memory_taint_from_db_str_known_values_roundtrip_unknown_fails_closed() {
         // Round-trip both known values.
         assert_eq!(
             MemoryTaint::from_db_str(MemoryTaint::Internal.as_db_str()),
@@ -362,14 +368,19 @@ mod tests {
             MemoryTaint::from_db_str(MemoryTaint::ExternalSync.as_db_str()),
             MemoryTaint::ExternalSync
         );
-        // Unknown / corrupted column values fall back to the conservative
-        // `Internal` so the subconscious gate never escalates on garbage.
-        assert_eq!(MemoryTaint::from_db_str(""), MemoryTaint::Internal);
+        // Unknown / corrupted column values fail closed to the more
+        // restrictive `ExternalSync` so the subconscious gate refuses
+        // external_effect tools on chunks of unknown provenance rather
+        // than silently treating them as user-authored.
+        assert_eq!(MemoryTaint::from_db_str(""), MemoryTaint::ExternalSync);
         assert_eq!(
             MemoryTaint::from_db_str("EXTERNAL_SYNC"),
-            MemoryTaint::Internal
+            MemoryTaint::ExternalSync
         );
-        assert_eq!(MemoryTaint::from_db_str("future"), MemoryTaint::Internal);
+        assert_eq!(
+            MemoryTaint::from_db_str("future"),
+            MemoryTaint::ExternalSync
+        );
     }
 
     #[test]
