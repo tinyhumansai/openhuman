@@ -37,6 +37,7 @@ mod native_notifications;
 mod notification_settings;
 mod process_kill;
 mod process_recovery;
+mod ptt_hotkeys;
 #[cfg(target_os = "windows")]
 mod reset_reboot_schedule;
 mod screen_capture;
