@@ -272,9 +272,13 @@ pub async fn all_connected_tools() -> Vec<(String, String, McpTool)> {
 // ── Boundary conversion ──────────────────────────────────────────────────────
 
 fn into_registry_tool(remote: McpRemoteTool) -> McpTool {
+    // Read through the sanitized display accessor so remote
+    // description content is always bounded + scrubbed before reaching
+    // the agent LLM context downstream.
+    let description = remote.display_description();
     McpTool {
         name: remote.name,
-        description: remote.description,
+        description,
         input_schema: remote.input_schema,
     }
 }
