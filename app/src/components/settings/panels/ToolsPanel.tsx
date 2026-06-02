@@ -129,6 +129,8 @@ const ToolsPanel = ({ embedded = false }: ToolsPanelProps = {}) => {
                     <button
                       key={tool.id}
                       type="button"
+                      role="switch"
+                      aria-checked={Boolean(enabled[tool.id])}
                       onClick={() => toggle(tool.id)}
                       className="w-full flex items-center justify-between p-2.5 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 hover:border-stone-300 dark:border-neutral-700 dark:hover:border-neutral-700 transition-colors text-left">
                       <div className="min-w-0 flex-1">

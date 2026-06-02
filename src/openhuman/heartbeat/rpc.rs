@@ -20,6 +20,7 @@ pub struct HeartbeatSettingsPatch {
     pub meeting_lookahead_minutes: Option<u32>,
     pub max_calendar_connections_per_tick: Option<u32>,
     pub reminder_lookahead_minutes: Option<u32>,
+    pub subconscious_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +35,7 @@ pub struct HeartbeatSettingsView {
     pub meeting_lookahead_minutes: u32,
     pub max_calendar_connections_per_tick: u32,
     pub reminder_lookahead_minutes: u32,
+    pub subconscious_mode: String,
 }
 
 pub async fn settings_get() -> Result<RpcOutcome<serde_json::Value>, String> {
@@ -90,23 +92,37 @@ pub async fn settings_set(
     if let Some(reminder_lookahead_minutes) = patch.reminder_lookahead_minutes {
         config.heartbeat.reminder_lookahead_minutes = reminder_lookahead_minutes.max(1);
     }
+    if let Some(ref mode_str) = patch.subconscious_mode {
+        use crate::openhuman::config::schema::SubconsciousMode;
+        let mode = SubconsciousMode::from_str_lossy(mode_str);
+        config.heartbeat.subconscious_mode = mode;
+        config.heartbeat.enabled = mode.is_enabled() || config.heartbeat.enabled;
+        config.heartbeat.inference_enabled = mode.is_enabled();
+        config.heartbeat.interval_minutes = mode.default_interval_minutes();
+    }
 
     config.save().await.map_err(|e| {
         warn!("[heartbeat][rpc] settings_set: config.save failed: {e}");
         e.to_string()
     })?;
 
-    if config.heartbeat.enabled {
-        debug!("[heartbeat][rpc] settings_set: enabling — running bootstrap_after_login()");
-        if let Err(error) = crate::openhuman::subconscious::global::bootstrap_after_login().await {
-            warn!("[heartbeat][rpc] settings_set: heartbeat bootstrap failed: {error}");
-            return Err(format!(
-                "heartbeat settings saved, but failed to start heartbeat loop: {error}"
-            ));
-        }
-    } else {
-        debug!("[heartbeat][rpc] settings_set: disabling — stopping heartbeat loop");
+    // Mode change requires a full engine restart so the new mode's interval
+    // and tool restrictions take effect. stop + bootstrap is idempotent.
+    if patch.subconscious_mode.is_some() || patch.enabled.is_some() {
         crate::openhuman::subconscious::global::stop_heartbeat_loop().await;
+        if config.heartbeat.effective_subconscious_mode().is_enabled() {
+            debug!("[heartbeat][rpc] settings_set: (re)starting for mode change");
+            if let Err(error) =
+                crate::openhuman::subconscious::global::bootstrap_after_login().await
+            {
+                warn!("[heartbeat][rpc] settings_set: heartbeat bootstrap failed: {error}");
+                return Err(format!(
+                    "heartbeat settings saved, but failed to start heartbeat loop: {error}"
+                ));
+            }
+        } else {
+            debug!("[heartbeat][rpc] settings_set: subconscious off — loop stopped");
+        }
     }
 
     debug!("[heartbeat][rpc] settings_set: exit ok");
@@ -146,5 +162,10 @@ fn view(config: &Config) -> HeartbeatSettingsView {
         meeting_lookahead_minutes: config.heartbeat.meeting_lookahead_minutes,
         max_calendar_connections_per_tick: config.heartbeat.max_calendar_connections_per_tick,
         reminder_lookahead_minutes: config.heartbeat.reminder_lookahead_minutes,
+        subconscious_mode: config
+            .heartbeat
+            .effective_subconscious_mode()
+            .as_str()
+            .to_string(),
     }
 }

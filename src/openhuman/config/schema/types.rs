@@ -51,6 +51,12 @@ pub struct ModelRegistryEntry {
 pub struct Config {
     #[serde(skip)]
     pub workspace_dir: PathBuf,
+    /// Agent action sandbox root — the default cwd for shell/file/git tools.
+    /// Kept separate from `workspace_dir` (which holds internal state like
+    /// memory DBs, sessions, tokens). Defaults to `~/OpenHuman/projects`
+    /// (`default_action_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+    #[serde(skip)]
+    pub action_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
     /// Workspace data-schema version. Bumped each time a one-shot data
@@ -116,6 +122,12 @@ pub struct Config {
     /// [`crate::openhuman::scheduler_gate`].
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
+
+    /// User-facing activity-level knob (0–4) controlling how proactive
+    /// background AI work is. Maps into scheduler_gate mode, periodic sync
+    /// cadence, heartbeat/subconscious toggles. See issue #3117.
+    #[serde(default)]
+    pub agent_activity_level: AgentActivityLevel,
 
     #[serde(default)]
     pub agent: AgentConfig,
@@ -628,6 +640,7 @@ impl Default for Config {
 
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
+            action_dir: crate::openhuman::config::default_action_dir(),
             config_path: openhuman_dir.join("config.toml"),
             schema_version: 0,
             api_url: None,
@@ -646,6 +659,7 @@ impl Default for Config {
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
+            agent_activity_level: AgentActivityLevel::default(),
             agent: AgentConfig::default(),
             orchestrator: OrchestratorModelConfig::default(),
             teams: HashMap::new(),

@@ -450,6 +450,7 @@ async fn main() -> Result<()> {
                 config: Arc::clone(&config),
                 toolkit: conn.toolkit.clone(),
                 connection_id: Some(conn.id.clone()),
+                usage: Default::default(),
             };
             match run_backfill_via_search(&ctx, cli.days).await {
                 Ok(outcome) => {
@@ -547,6 +548,7 @@ async fn main() -> Result<()> {
             config: Arc::clone(&config),
             toolkit: conn.toolkit.clone(),
             connection_id: Some(conn.id.clone()),
+            usage: Default::default(),
         };
         match provider.sync(&ctx, SyncReason::Manual).await {
             Ok(outcome) => {

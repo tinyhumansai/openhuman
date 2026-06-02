@@ -671,6 +671,53 @@ export async function memoryTreeObsidianVaultStatus(
   return out;
 }
 
+/** Response shape for `memory_tree_vault_health_check`. */
+export interface VaultHealthCheck {
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+  /** True when the vault directory exists on disk. */
+  exists: boolean;
+  /** True when the vault directory is readable. */
+  readable: boolean;
+  /** True when a temp-file create+delete probe succeeds in the vault. */
+  writable: boolean;
+  /** True when Obsidian has this folder (or an ancestor) registered as a vault. */
+  obsidian_registered: boolean;
+  /** True when pipeline status is not paused and not in error. */
+  pipeline_healthy: boolean;
+  /** Epoch ms of newest chunk timestamp; zero when no chunks exist yet. */
+  last_sync_ms: number;
+}
+
+/**
+ * Consolidated onboarding/settings health snapshot for the workspace memory
+ * vault (`<workspace>/memory_tree/content/`).
+ *
+ * Backed by `openhuman.memory_tree_vault_health_check`.
+ */
+export async function memoryTreeVaultHealthCheck(
+  obsidianConfigDir?: string
+): Promise<VaultHealthCheck> {
+  console.debug(
+    '[memory-tree-rpc] memoryTreeVaultHealthCheck: entry override=%s',
+    obsidianConfigDir ? 'set' : 'none'
+  );
+  const resp = await callCoreRpc<VaultHealthCheck | ResultEnvelope<VaultHealthCheck>>({
+    method: 'openhuman.memory_tree_vault_health_check',
+    params: obsidianConfigDir ? { obsidian_config_dir: obsidianConfigDir } : {},
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeVaultHealthCheck: exit exists=%s readable=%s writable=%s obsidian_registered=%s pipeline_healthy=%s',
+    out.exists,
+    out.readable,
+    out.writable,
+    out.obsidian_registered,
+    out.pipeline_healthy
+  );
+  return out;
+}
+
 /**
  * #1574 §4b: per-model embedding re-embed backfill status. The AI settings
  * panel polls this after an embedder change to warn that semantic recall

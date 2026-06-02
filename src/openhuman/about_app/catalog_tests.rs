@@ -105,6 +105,7 @@ fn catalog_includes_additional_user_facing_surfaces() {
         "intelligence.tool_registry",
         "intelligence.embedding_provider_config",
         "intelligence.embedding_provider_test",
+        "intelligence.github_repo_memory_source",
         "conversation.subagent_mascots",
     ] {
         assert!(
@@ -220,6 +221,89 @@ fn embedding_provider_test_destinations_cover_all_providers() {
         "expected ≥4 destinations covering managed + openai + cohere + custom, \
          got {}: {:?}",
         privacy.destinations.len(),
+        privacy.destinations
+    );
+}
+
+/// The GitHub repo memory source (#3047) is a user-facing capability — it
+/// surfaces a browsable repo-grouped raw archive plus priority/entity
+/// enrichment that the agent should be able to describe when asked "can you
+/// read my GitHub repo?". Pin its catalog shape: it lives under the
+/// `memory_sources` Rust domain but the Intelligence UI umbrella (same split
+/// the embeddings entries use — Rust domain on `domain`, UI grouping on
+/// `category`), and its `how_to` points at the real Settings breadcrumb +
+/// RPC, not a stale path.
+#[test]
+fn github_repo_memory_source_is_registered_with_expected_shape() {
+    let cap =
+        lookup("intelligence.github_repo_memory_source").expect("github memory source registered");
+
+    assert_eq!(
+        cap.domain, "memory_sources",
+        "domain should reflect the Rust `memory_sources` domain"
+    );
+    assert_eq!(cap.category, CapabilityCategory::Intelligence);
+    assert_eq!(cap.status, CapabilityStatus::Beta);
+
+    // how_to must point at the live Settings surface + the programmatic RPC,
+    // so a future nav rename can't silently strand the breadcrumb.
+    assert!(
+        cap.how_to.contains("Memory Sources"),
+        "how_to must name the Memory Sources surface, got: {}",
+        cap.how_to
+    );
+    assert!(
+        cap.how_to.contains("memory_sources_add"),
+        "how_to must cite the programmatic RPC, got: {}",
+        cap.how_to
+    );
+
+    // The description has to make clear this reads project *activity*, not
+    // source code — that distinction is the whole point of the GitHub memory
+    // source and keeps users from expecting code search.
+    let desc = cap.description.to_lowercase();
+    assert!(
+        desc.contains("commits") && desc.contains("issues"),
+        "description must enumerate the synced item types, got: {}",
+        cap.description
+    );
+    assert!(
+        desc.contains("not source code"),
+        "description must clarify it ingests activity, not source code, got: {}",
+        cap.description
+    );
+}
+
+/// Privacy: the GitHub memory source reaches out to the GitHub API directly
+/// (via `gh` / public REST), so it must report `leaves_device = true` with
+/// GitHub as the destination — not the managed OpenHuman backend. Treating it
+/// as local-only or attributing it to the backend would under-report where the
+/// sync request actually goes (the exact under-reporting failure mode #2656's
+/// review flagged for the embeddings probe).
+#[test]
+fn github_repo_memory_source_reports_github_destination() {
+    let cap =
+        lookup("intelligence.github_repo_memory_source").expect("github memory source registered");
+    let privacy = cap
+        .privacy
+        .expect("github memory source is privacy-annotated");
+
+    assert!(
+        privacy.leaves_device,
+        "syncing a repo issues an outbound request to GitHub — must report leaves_device"
+    );
+
+    let haystack = privacy.destinations.join(" | ").to_lowercase();
+    assert!(
+        haystack.contains("github"),
+        "destinations must name GitHub so the Privacy surface attributes the \
+         request to the right third-party host, got: {:?}",
+        privacy.destinations
+    );
+    assert!(
+        !haystack.contains("openhuman backend"),
+        "the reader talks to GitHub directly, not the managed backend — listing \
+         the backend would mis-attribute the destination: {:?}",
         privacy.destinations
     );
 }

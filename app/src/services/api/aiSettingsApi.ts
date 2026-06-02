@@ -215,7 +215,7 @@ export async function loadAISettings(): Promise<AISettings> {
   );
 
   const cloudProviders: CloudProviderView[] = config.cloud_providers
-    .filter(p => !['', 'cloud', 'openhuman', 'ollama', 'pid'].includes(p.slug.trim()))
+    .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug.trim()))
     .map(p => {
       const newKey = authKeyForSlug(p.slug).toLowerCase();
       const legacyKey = p.slug.toLowerCase();
@@ -282,7 +282,7 @@ export async function saveAISettings(prev: AISettings, next: AISettings): Promis
     })
   ) {
     patch.cloud_providers = next.cloudProviders
-      .filter(p => !['', 'cloud', 'openhuman', 'ollama', 'pid'].includes(p.slug.trim()))
+      .filter(p => !['', 'cloud', 'openhuman', 'pid'].includes(p.slug.trim()))
       .map(({ id, slug, label, endpoint, auth_style }) => ({
         id,
         slug,

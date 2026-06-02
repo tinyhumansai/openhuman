@@ -1492,6 +1492,22 @@ async fn run_server_inner(
                 // ship with the system — discoverable (skills_list) and runnable
                 // — without a manual drop. Idempotent; never clobbers user edits.
                 crate::openhuman::skills::registry::seed_default_skills(&cfg.workspace_dir);
+                // Boot-time Sentry user binding — issue #3135. If the user is
+                // already signed in (typical desktop restart), the auth-profile
+                // store has their `user_id` *now*, before any background loop
+                // (Composio sync tick, heartbeat, etc.) fires its first event.
+                // Reading from the store here means subsequent events carry
+                // `user.id` even when no `app_state_snapshot` RPC has run yet.
+                match crate::openhuman::credentials::session_support::build_session_state(&cfg) {
+                    Ok(state) => {
+                        if let Some(uid) = state.user_id.as_deref() {
+                            crate::openhuman::credentials::sentry_scope::bind(uid);
+                        }
+                    }
+                    Err(e) => log::debug!(
+                        "[boot] sentry scope user bind skipped — build_session_state failed: {e}"
+                    ),
+                }
             }
             Err(e) => {
                 log::error!(
@@ -2010,12 +2026,15 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // injects the default projects root, so this matches what `start_channels`
     // installs; idempotent — a later `start_channels` re-installs an equivalent
     // policy.
+    let action_dir = cfg.action_dir.clone();
     crate::openhuman::security::live_policy::install(
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
             &cfg.autonomy,
             &workspace_dir,
+            &action_dir,
         )),
         workspace_dir.clone(),
+        action_dir,
     );
 
     // --- Approval gate (#1339) ---

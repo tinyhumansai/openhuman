@@ -565,7 +565,6 @@ impl AgentBuilder {
             last_memory_context: None,
             last_turn_citations: Vec::new(),
             history: Vec::new(),
-            last_tree_prefetch_at: None,
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
             explicit_preferences_enabled: self.explicit_preferences_enabled,
@@ -842,6 +841,7 @@ impl Agent {
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
+            &config.action_dir,
         ));
         // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
         let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
@@ -866,7 +866,7 @@ impl Agent {
             memory.clone(),
             &config.browser,
             &config.http_request,
-            &config.workspace_dir,
+            &config.action_dir,
             &config.agents,
             config,
         );

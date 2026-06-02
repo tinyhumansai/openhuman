@@ -1287,3 +1287,97 @@ fn unsigned_in_user_fails_probe() {
         "user with neither backend session nor direct key must NOT be reported as signed in"
     );
 }
+
+/// Sanity-check: a parent agent delegating to a sub-agent must complete
+/// without panicking, even on a worker thread with a tight stack — this
+/// is the same recursion shape that crashed the
+/// `chat-harness-subagent` Playwright lane in production with
+/// `thread 'tokio-rt-worker' has overflowed its stack, fatal runtime
+/// error: stack overflow`.
+///
+/// The deep ground-truth regression catcher for this is the
+/// `chat-harness-subagent.spec.ts` Playwright spec, which exercises the
+/// real orchestrator → researcher dispatch end-to-end (real provider
+/// stream, real config load, real tool registry). The scripted unit
+/// path here has much smaller per-frame state than production, so a
+/// single stack size doesn't cleanly bracket boxed-vs-unboxed — we use
+/// the loose 1 MiB worker stack as a smoke check that the dispatch
+/// path remains poll-bounded after refactors. See `subagent_runner/
+/// ops.rs` `Box::pin` callsites for the structural fix.
+#[test]
+fn nested_subagent_dispatch_runs_on_a_constrained_worker_stack() {
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    struct RecursiveDelegateTool {
+        inner_def: AgentDefinition,
+    }
+
+    #[async_trait]
+    impl Tool for RecursiveDelegateTool {
+        fn name(&self) -> &str {
+            "delegate_inner"
+        }
+        fn description(&self) -> &str {
+            "Dispatches a nested sub-agent — reproduces the recursive engine poll."
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type":"object","properties":{}})
+        }
+        fn permission_level(&self) -> PermissionLevel {
+            PermissionLevel::Execute
+        }
+        async fn execute(&self, _args: serde_json::Value) -> anyhow::Result<ToolResult> {
+            let outcome = run_subagent(&self.inner_def, "inner go", SubagentRunOptions::default())
+                .await
+                .map_err(|e| anyhow::anyhow!("nested run_subagent failed: {e}"))?;
+            Ok(ToolResult::success(outcome.output))
+        }
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_stack_size(1024 * 1024)
+        .enable_all()
+        .build()
+        .expect("build constrained-stack tokio runtime");
+
+    let outcome = runtime.block_on(async {
+        // Three scripted responses, shared by outer + inner runs
+        // (providers are Arc-cloned, so both pull from the same queue):
+        //   [0] outer round 1: call `delegate_inner`
+        //   [1] inner round 1: return final text
+        //   [2] outer round 2: return final text using the tool result
+        let provider = ScriptedProvider::new(vec![
+            tool_response("delegate_inner", "{}"),
+            text_response("inner-final"),
+            text_response("outer-final: inner-final"),
+        ]);
+
+        let inner_def = make_def_named_tools(&[]);
+        let delegate_tool: Box<dyn Tool> = Box::new(RecursiveDelegateTool { inner_def });
+        let parent = make_parent(
+            Arc::clone(&(provider.clone() as Arc<dyn Provider>)),
+            vec![delegate_tool],
+        );
+        let outer_def = make_def_named_tools(&["delegate_inner"]);
+
+        with_parent_context(parent, async {
+            run_subagent(&outer_def, "outer go", SubagentRunOptions::default()).await
+        })
+        .await
+    });
+
+    let outcome = outcome.expect(
+        "nested run_subagent must complete on a 1 MiB worker stack — \
+         a stack overflow here means the recursion boundary in \
+         `run_typed_mode` regressed (see `Box::pin` callsites around \
+         `run_inner_loop` and `run_turn_engine`).",
+    );
+    assert!(
+        outcome.output.contains("inner-final"),
+        "outer should fold the inner sub-agent's result into its final \
+         answer, got: {}",
+        outcome.output
+    );
+}

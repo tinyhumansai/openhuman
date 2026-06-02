@@ -40,6 +40,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete_chunk"),
         schemas("graph_export"),
         schemas("obsidian_vault_status"),
+        schemas("vault_health_check"),
         schemas("flush_now"),
         schemas("flush_source"),
         schemas("wipe_all"),
@@ -109,6 +110,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("obsidian_vault_status"),
             handler: handle_obsidian_vault_status,
+        },
+        RegisteredController {
+            schema: schemas("vault_health_check"),
+            handler: handle_vault_health_check,
         },
         RegisteredController {
             schema: schemas("flush_now"),
@@ -693,6 +698,66 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "vault_health_check" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "vault_health_check",
+            description: "Consolidated workspace-vault health snapshot for onboarding and \
+                          settings. Checks whether <workspace>/memory_tree/content exists, is \
+                          readable, and is writable (via temp-file probe), whether Obsidian has \
+                          the vault registered, and whether the Memory Tree pipeline is healthy.",
+            inputs: vec![FieldSchema {
+                name: "obsidian_config_dir",
+                ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                comment: "Optional override for Obsidian's config directory (where \
+                          obsidian.json lives). Omitted ⇒ standard per-OS probe.",
+                required: false,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "content_root_abs",
+                    ty: TypeSchema::String,
+                    comment: "Absolute path to <workspace>/memory_tree/content/.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "exists",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the workspace vault directory exists on disk.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "readable",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the workspace vault directory can be read.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "writable",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the vault accepts a create+delete temp-file probe.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "obsidian_registered",
+                    ty: TypeSchema::Bool,
+                    comment: "True when Obsidian has this folder (or an ancestor) registered \
+                              as a vault.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "pipeline_healthy",
+                    ty: TypeSchema::Bool,
+                    comment: "True when Memory Tree pipeline is not paused and not in error.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "last_sync_ms",
+                    ty: TypeSchema::I64,
+                    comment: "Epoch ms of the newest chunk timestamp; 0 when empty.",
+                    required: true,
+                },
+            ],
+        },
         "pipeline_status" => ControllerSchema {
             namespace: NAMESPACE,
             function: "pipeline_status",
@@ -1074,6 +1139,19 @@ fn handle_obsidian_vault_status(params: Map<String, Value>) -> ControllerFuture 
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
         to_json(read_rpc::obsidian_vault_status_rpc(&config, req.obsidian_config_dir).await?)
+    })
+}
+
+fn handle_vault_health_check(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            obsidian_config_dir: Option<String>,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::vault_health_check_rpc(&config, req.obsidian_config_dir).await?)
     })
 }
 

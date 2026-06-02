@@ -34,12 +34,6 @@ describe('OpenhumanLinkModal notifications test flow', () => {
     });
   }
 
-  async function flushAsyncWork() {
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
   it('shows success after permission is granted and native notification send succeeds', async () => {
     vi.mocked(isTauri).mockReturnValue(true);
     vi.mocked(ensureNotificationPermission).mockResolvedValue(true);
@@ -52,7 +46,7 @@ describe('OpenhumanLinkModal notifications test flow', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Test notification sent\. If you didn't receive it/i)
+        screen.getByText(/Test notification sent\. If you didn['’]t receive it/i)
       ).toBeInTheDocument();
     });
     expect(showNativeNotification).toHaveBeenCalledWith(
@@ -69,9 +63,10 @@ describe('OpenhumanLinkModal notifications test flow', () => {
     openNotificationsModal();
 
     fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
-    await flushAsyncWork();
 
-    expect(screen.getByText(/Notification permission is off\./i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/Notification permission is off\./i)).toBeInTheDocument()
+    );
     expect(showNativeNotification).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Retry test notification' })).toBeInTheDocument();
   });
@@ -89,11 +84,12 @@ describe('OpenhumanLinkModal notifications test flow', () => {
     openNotificationsModal();
 
     fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
-    await flushAsyncWork();
 
-    expect(
-      screen.getByText(/Couldn't send: notification show failed: test error/i)
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Couldn't send: notification show failed: test error/i)
+      ).toBeInTheDocument()
+    );
   });
 
   it('retries successfully after user grants permission on a second attempt', async () => {
@@ -111,15 +107,16 @@ describe('OpenhumanLinkModal notifications test flow', () => {
     openNotificationsModal();
 
     fireEvent.click(screen.getByRole('button', { name: 'Send test notification' }));
-    await flushAsyncWork();
 
-    expect(screen.getByText(/Notification permission is off\./i)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText(/Notification permission is off\./i)).toBeInTheDocument()
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry test notification' }));
 
     await waitFor(() => {
       expect(
-        screen.getByText(/Test notification sent\. If you didn't receive it/i)
+        screen.getByText(/Test notification sent\. If you didn['’]t receive it/i)
       ).toBeInTheDocument();
     });
     expect(showNativeNotification).toHaveBeenCalledTimes(1);

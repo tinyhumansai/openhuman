@@ -1,13 +1,7 @@
 //! Global singleton for the SubconsciousEngine.
 //!
 //! Shared between the heartbeat background loop and RPC handlers
-//! so both see the same decision log, counters, and last_tick_at.
-//!
-//! Lifecycle note: the engine is bootstrapped **post-login** via
-//! [`bootstrap_after_login`] so that `seed_default_tasks` runs against the
-//! per-user workspace (`~/.openhuman/users/<id>/workspace/`) instead of the
-//! pre-login global default. See `load.rs::resolve_runtime_config_dirs` for
-//! how `active_user.toml` drives `config.workspace_dir`.
+//! so both see the same state and counters.
 
 use super::engine::SubconsciousEngine;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,12 +10,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 static ENGINE: OnceLock<Arc<Mutex<Option<SubconsciousEngine>>>> = OnceLock::new();
-
-/// True once [`bootstrap_after_login`] has successfully seeded the engine and
-/// spawned the heartbeat loop for the current active user.
 static BOOTSTRAPPED: AtomicBool = AtomicBool::new(false);
-
-/// Heartbeat loop handle so logout / user switch can abort it cleanly.
 static HEARTBEAT_HANDLE: OnceLock<Mutex<Option<JoinHandle<()>>>> = OnceLock::new();
 
 fn engine_lock() -> &'static Arc<Mutex<Option<SubconsciousEngine>>> {
@@ -32,7 +21,6 @@ fn heartbeat_slot() -> &'static Mutex<Option<JoinHandle<()>>> {
     HEARTBEAT_HANDLE.get_or_init(|| Mutex::new(None))
 }
 
-/// Get or initialize the global engine. Both heartbeat loop and RPC use this.
 pub async fn get_or_init_engine() -> Result<Arc<Mutex<Option<SubconsciousEngine>>>, String> {
     let lock = engine_lock();
     {
@@ -42,7 +30,6 @@ pub async fn get_or_init_engine() -> Result<Arc<Mutex<Option<SubconsciousEngine>
         }
     }
 
-    // Initialize
     let config = crate::openhuman::config::Config::load_or_init()
         .await
         .map_err(|e| format!("load config: {e}"))?;
@@ -63,15 +50,6 @@ pub async fn get_or_init_engine() -> Result<Arc<Mutex<Option<SubconsciousEngine>
     Ok(Arc::clone(lock))
 }
 
-/// Construct the engine (which seeds defaults into the per-user workspace)
-/// and spawn the heartbeat loop. Idempotent per-process via [`BOOTSTRAPPED`].
-///
-/// Call this:
-/// - after a successful login writes `active_user.toml`, OR
-/// - at sidecar startup **iff** `active_user.toml` already exists.
-///
-/// Calling before login would seed into the global pre-login workspace and
-/// then silently diverge from the per-user workspace the UI reads from.
 pub async fn bootstrap_after_login() -> Result<(), String> {
     if BOOTSTRAPPED.swap(true, Ordering::SeqCst) {
         tracing::debug!("[subconscious] bootstrap already ran — skipping");
@@ -91,10 +69,6 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
         return Ok(());
     }
 
-    // Build the engine against the NOW-correct per-user workspace_dir.
-    // SubconsciousEngine::new calls seed_default_tasks() inside the
-    // constructor, so by the time this returns the 3 system defaults are
-    // present in `<workspace>/subconscious/subconscious.db`.
     get_or_init_engine().await.inspect_err(|_e| {
         BOOTSTRAPPED.store(false, Ordering::SeqCst);
     })?;
@@ -103,9 +77,6 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
         "[subconscious] engine initialized against per-user workspace"
     );
 
-    // Spawn the heartbeat loop and keep the JoinHandle so we can cancel it
-    // on logout. Without this the task would leak: tokio::spawn returns a
-    // detached task that drops on handle-drop but keeps running.
     let heartbeat = crate::openhuman::heartbeat::engine::HeartbeatEngine::new(
         config.heartbeat.clone(),
         config.workspace_dir.clone(),
@@ -124,16 +95,9 @@ pub async fn bootstrap_after_login() -> Result<(), String> {
     Ok(())
 }
 
-/// Stop only the heartbeat loop. Keep the engine cache intact so manual
-/// subconscious RPCs can still inspect state, while a future enable can spawn
-/// a fresh loop.
 pub async fn stop_heartbeat_loop() {
     if let Some(handle) = heartbeat_slot().lock().await.take() {
         handle.abort();
-        // Await the aborted task so it fully releases its engine reference
-        // before we let bootstrap_after_login spawn a fresh loop. Without this
-        // the old task can still be executing engine.run_tick() against a
-        // replaced engine state.
         match handle.await {
             Ok(()) => {
                 tracing::debug!("[heartbeat] loop exited before abort completed");
@@ -150,12 +114,6 @@ pub async fn stop_heartbeat_loop() {
     BOOTSTRAPPED.store(false, Ordering::SeqCst);
 }
 
-/// Tear down the engine + heartbeat loop so the next login rebuilds them
-/// against the new user's workspace. Call on logout or account switch.
-///
-/// Without this, the engine `OnceLock` would stay frozen on the previous
-/// user's `workspace_dir` and subsequent ticks / RPC queries would leak
-/// into the wrong DB.
 pub async fn reset_engine_for_user_switch() {
     stop_heartbeat_loop().await;
 

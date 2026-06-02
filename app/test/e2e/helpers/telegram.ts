@@ -194,11 +194,21 @@ export async function getTelegramChannelStatus(): Promise<TelegramStatusEntry | 
         ? ((result as Record<string, unknown>).result as TelegramStatusEntry[])
         : [];
 
-  const match = entries.find(
+  const raw = entries.find(
     (e: TelegramStatusEntry) =>
-      (e.channelId === 'telegram' || e.channel_id === 'telegram') &&
+      (e.channelId === 'telegram' || (e as Record<string, unknown>).channel_id === 'telegram') &&
       (e.authMode === 'bot_token' || (e as Record<string, unknown>).auth_mode === 'bot_token')
-  ) as TelegramStatusEntry | undefined;
+  ) as (TelegramStatusEntry & Record<string, unknown>) | undefined;
+
+  // Normalise snake_case fields that the Rust core serialises.
+  const match: TelegramStatusEntry | undefined = raw
+    ? {
+        channelId: (raw.channelId ?? raw.channel_id) as string,
+        authMode: (raw.authMode ?? raw.auth_mode) as string,
+        connected: raw.connected,
+        hasCredentials: (raw.hasCredentials ?? raw.has_credentials ?? false) as boolean,
+      }
+    : undefined;
 
   console.log(`${LOG_PREFIX} getTelegramChannelStatus: ${JSON.stringify(match ?? null)}`);
   return match ?? null;

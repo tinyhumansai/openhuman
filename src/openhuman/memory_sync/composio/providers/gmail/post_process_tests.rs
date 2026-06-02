@@ -275,6 +275,63 @@ fn split_with_hint_skips_messages_with_blank_subject() {
     assert_eq!(slices.len(), 2);
 }
 
+// ── format_email_local_time ──────────────────────────────────────────────────
+
+#[test]
+fn format_email_local_time_returns_none_for_unparseable_date() {
+    assert!(super::format_email_local_time("not-a-date").is_none());
+    assert!(super::format_email_local_time("").is_none());
+}
+
+#[test]
+fn format_email_local_time_preserves_utc_raw_date_in_reshape() {
+    let mut v = json!({
+        "messages": [{
+            "messageId": "m1",
+            "threadId": "t1",
+            "subject": "Test",
+            "sender": "a@example.com",
+            "to": "b@example.com",
+            "messageTimestamp": "2026-05-31T10:33:00Z",
+            "labelIds": [],
+            "messageText": "body",
+            "payload": {}
+        }]
+    });
+    post_process("GMAIL_FETCH_EMAILS", None, &mut v);
+    let msg = &v["messages"][0];
+    assert_eq!(msg["date"], "2026-05-31T10:33:00Z");
+}
+
+#[test]
+fn parse_email_date_accepts_rfc3339_and_rfc2822() {
+    assert!(super::parse_email_date("2026-05-31T10:33:00Z").is_some());
+    assert!(super::parse_email_date("Sun, 31 May 2026 10:33:00 +0000").is_some());
+    assert!(super::parse_email_date("not-a-date").is_none());
+}
+
+#[test]
+fn format_at_tz_deterministic_with_fixed_offset() {
+    use chrono::FixedOffset;
+
+    let utc = super::parse_email_date("2026-05-31T10:33:00Z").unwrap();
+
+    let est = FixedOffset::west_opt(5 * 3600).unwrap();
+    let result = super::format_at_tz(utc, &est).unwrap();
+    assert_eq!(result, "2026-05-31 05:33 AM -05:00");
+
+    let ist = FixedOffset::east_opt(5 * 3600 + 1800).unwrap();
+    let result = super::format_at_tz(utc, &ist).unwrap();
+    assert_eq!(result, "2026-05-31 04:03 PM +05:30");
+}
+
+#[test]
+fn format_at_tz_returns_none_for_utc() {
+    let utc = super::parse_email_date("2026-05-31T10:33:00Z").unwrap();
+    let utc_tz = chrono::FixedOffset::east_opt(0).unwrap();
+    assert!(super::format_at_tz(utc, &utc_tz).is_none());
+}
+
 #[test]
 fn apply_response_level_markdown_stashes_per_message_field() {
     let mut data = json!({

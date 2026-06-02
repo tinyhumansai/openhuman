@@ -125,7 +125,13 @@ impl ToolMemoryRule {
 
     /// Generate a fresh, opaque rule id.
     pub fn generate_id() -> String {
-        uuid::Uuid::new_v4().to_string()
+        let mut id = String::with_capacity(33);
+        id.push('r');
+        for byte in uuid::Uuid::new_v4().as_bytes() {
+            id.push((b'a' + (byte >> 4)) as char);
+            id.push((b'a' + (byte & 0x0f)) as char);
+        }
+        id
     }
 
     /// Storage key used inside the tool namespace.
@@ -205,6 +211,29 @@ mod tests {
         let a = ToolMemoryRule::generate_id();
         let b = ToolMemoryRule::generate_id();
         assert_ne!(a, b);
+        assert!(a.starts_with('r'));
+        assert!(a[1..].chars().all(|c| matches!(c, 'a'..='p')));
+        assert!(
+            !crate::openhuman::memory_store::safety::pii::has_likely_pii(
+                &ToolMemoryRule::storage_key(&a)
+            )
+        );
+    }
+
+    #[test]
+    fn generated_rule_ids_are_safe_memory_document_keys() {
+        for _ in 0..128 {
+            let id = ToolMemoryRule::generate_id();
+            assert!(
+                id.chars().all(|ch| ch.is_ascii_lowercase()),
+                "generated id should avoid PII-shaped digits and separators: {id}"
+            );
+            let key = ToolMemoryRule::storage_key(&id);
+            assert!(
+                !crate::openhuman::memory_store::safety::pii::has_likely_pii(&key),
+                "generated storage key should not trip PII boundary: {key}"
+            );
+        }
     }
 
     #[test]
