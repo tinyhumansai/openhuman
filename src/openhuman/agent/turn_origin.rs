@@ -77,8 +77,18 @@ tokio::task_local! {
 
 /// Scope `origin` for the duration of `fut`. Mirrors the existing
 /// [`crate::openhuman::approval::APPROVAL_CHAT_CONTEXT`] scope pattern.
+///
+/// The inner future is `Box::pin`-ed before being handed to the task-local
+/// scope so the combined `with_origin(... scope(... run_turn(...)))` future
+/// state machine stays heap-allocated. The agent loop downstream of this
+/// scope can be deep (tool dispatch, recursive sub-agent invocations, LLM
+/// streaming), and stacking two task-local scopes plus the agent loop on a
+/// 2 MiB worker stack reliably blows the test runtime — same shape as the
+/// fix in PR #3151. Box-pinning here is the single-point remediation that
+/// covers every caller (web channel, channel runtime, subconscious, cron,
+/// CLI).
 pub async fn with_origin<F: std::future::Future>(origin: AgentTurnOrigin, fut: F) -> F::Output {
-    AGENT_TURN_ORIGIN.scope(origin, fut).await
+    AGENT_TURN_ORIGIN.scope(origin, Box::pin(fut)).await
 }
 
 /// Try to read the current origin. Returns `None` when no caller scoped one
