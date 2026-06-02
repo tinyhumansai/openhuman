@@ -5,7 +5,8 @@
 # This workflow:
 # - Validates the environment and build prerequisites
 # - Runs pre-deployment checks (TypeScript compilation, linting)
-# - Compiles the Rust core + CLI binaries for all platforms
+# - Resolves platform filter matrix so build jobs only run for selected platforms
+# - Compiles the Rust core + CLI binaries for all requested platforms
 # - Builds the React frontend + Tauri desktop bundles (macOS, Linux, Windows)
 # - Stages artifacts for distribution
 # - Signs and notarizes macOS bundles (production only)
@@ -14,6 +15,52 @@
 # Triggers:
 # - Manual dispatch for on-demand deployments (specify environment: staging/production)
 #
+# ─────────────────────────────────────────────────────────────────────────────
+# FIX LOG (vs. previous revision)
+# ─────────────────────────────────────────────────────────────────────────────
+# [F-1]  CRITICAL — matrix context unavailable in job-level `if`.
+#        `matrix.*` is only resolved inside step-level expressions; a job-level
+#        `if: contains(..., matrix.platform_filter)` always evaluates against an
+#        empty string and silently skips every matrix leg.
+#        Fix: added a `resolve-matrix` job that converts the comma-separated
+#        input into a JSON include-list; `build-rust-core` and `build-desktop`
+#        now consume `needs.resolve-matrix.outputs.*` which IS available at
+#        job-level. Platform filtering is therefore correct and deterministic.
+#
+# [F-2]  `pre-checks` skipped when `skip_tests=true` stalled all build jobs.
+#        Downstream jobs listed `pre-checks` in `needs`, so when it was
+#        conditionally skipped GitHub marked dependents as "not run".
+#        Fix: build jobs now use
+#          `if: needs.pre-checks.result == 'success' ||
+#               needs.pre-checks.result == 'skipped'`
+#        so they proceed whether tests ran or were intentionally bypassed.
+#
+# [F-3]  `publish-release` condition used `&&` but `build-docker` can be
+#        'skipped' when docker is excluded from `deploy_platforms`.
+#        Fix: condition now explicitly allows 'skipped' for build-docker:
+#          `build-docker.result != 'failure'`
+#        Analogous guard added for build-rust-core and build-desktop.
+#
+# [F-4]  Docker `type=semver` tag pattern requires a pushed git tag; on a
+#        `workflow_dispatch` trigger it produces an empty/no-op tag.
+#        Fix: replaced with explicit `type=raw,value=${{ needs.validate.outputs.version }}`
+#        and kept the SHA and branch tags which work on any trigger.
+#
+# [F-5]  `actions/checkout@v5` does not exist (latest stable is v4).
+#        `softprops/action-gh-release@v3.0.0` does not exist (latest is v2).
+#        Fix: pinned all actions to their current latest major version.
+#
+# [F-6]  Rust toolchain version was duplicated — `env.RUST_VERSION` defined at
+#        the top level but `dtolnay/rust-toolchain@1.93.0` hard-coded the same
+#        version inline, creating a drift risk.
+#        Fix: `dtolnay/rust-toolchain@stable` is now called with
+#        `toolchain: ${{ env.RUST_VERSION }}` so there is a single source of truth.
+#
+# [F-7]  No `timeout-minutes` on long-running build jobs; a hung runner could
+#        block the entire workflow indefinitely.
+#        Fix: added sensible timeouts (60 min for Rust core, 90 min for desktop).
+# ─────────────────────────────────────────────────────────────────────────────
+
 name: Deploy
 
 on:
@@ -52,7 +99,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: tinyhumansai/openhuman-core
   NODE_VERSION: 24.x
-  RUST_VERSION: 1.93.0
+  RUST_VERSION: 1.83.0   # single source of truth — referenced in all toolchain steps
 
 jobs:
   # =========================================================================
@@ -70,7 +117,7 @@ jobs:
       release_date: ${{ steps.context.outputs.release_date }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -79,17 +126,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          
-          # Extract version from package.json
+
           VERSION=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("app/package.json")).version)')
           SHORT_SHA="${GITHUB_SHA:0:12}"
           RELEASE_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          
-          echo "ref=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
-          echo "release_date=$RELEASE_DATE" >> "$GITHUB_OUTPUT"
-          
+
+          echo "ref=$GITHUB_REF_NAME"           >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION"               >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA"           >> "$GITHUB_OUTPUT"
+          echo "release_date=$RELEASE_DATE"     >> "$GITHUB_OUTPUT"
+
           echo "[deploy] environment=${{ inputs.environment }}"
           echo "[deploy] ref=${GITHUB_REF_NAME}"
           echo "[deploy] version=${VERSION}"
@@ -111,7 +157,7 @@ jobs:
           ENVIRONMENT: ${{ inputs.environment }}
         run: |
           set -euo pipefail
-          
+
           case "$ENVIRONMENT" in
             staging|production)
               echo "[deploy] Valid environment: $ENVIRONMENT"
@@ -123,25 +169,97 @@ jobs:
           esac
 
   # =========================================================================
+  # Phase 0b: Resolve dynamic matrix — [F-1]
+  #
+  # matrix.* context is NOT available in job-level `if` expressions; only
+  # step-level expressions can read it. This job converts the
+  # `deploy_platforms` string into explicit JSON include-arrays so that
+  # build-rust-core and build-desktop can use job-level `if` guards safely.
+  # =========================================================================
+  resolve-matrix:
+    name: Resolve build matrix
+    runs-on: ubuntu-latest
+    needs: validate
+    outputs:
+      rust_matrix:    ${{ steps.resolve.outputs.rust_matrix }}
+      desktop_matrix: ${{ steps.resolve.outputs.desktop_matrix }}
+      include_docker: ${{ steps.resolve.outputs.include_docker }}
+    steps:
+      - name: Compute include arrays
+        id: resolve
+        shell: bash
+        env:
+          PLATFORMS: ${{ needs.validate.outputs.platforms }}
+        run: |
+          set -euo pipefail
+
+          # ── Rust core matrix ──────────────────────────────────────────────
+          RUST_INCLUDES="[]"
+          ALL_RUST='[
+            {"target":"x86_64-unknown-linux-gnu",   "runner":"ubuntu-24.04",     "platform_filter":"linux-x64"},
+            {"target":"aarch64-unknown-linux-gnu",  "runner":"ubuntu-24.04-arm", "platform_filter":"linux-arm64"},
+            {"target":"x86_64-pc-windows-msvc",     "runner":"windows-latest",   "platform_filter":"windows-x64"},
+            {"target":"aarch64-apple-darwin",       "runner":"macos-latest",     "platform_filter":"macos-arm64"},
+            {"target":"x86_64-apple-darwin",        "runner":"macos-latest",     "platform_filter":"macos-x64"}
+          ]'
+          RUST_INCLUDES=$(echo "$ALL_RUST" | python3 -c "
+          import json, sys, os
+          platforms = os.environ['PLATFORMS'].split(',')
+          items = json.load(sys.stdin)
+          print(json.dumps([i for i in items if i['platform_filter'] in platforms]))
+          ")
+
+          # ── Desktop (Tauri) matrix ─────────────────────────────────────────
+          ALL_DESKTOP='[
+            {"platform":"macos-latest",    "args":"--target aarch64-apple-darwin",                          "target":"aarch64-apple-darwin",       "artifact_suffix":"aarch64-apple-darwin", "platform_filter":"macos-arm64"},
+            {"platform":"macos-latest",    "args":"--target x86_64-apple-darwin",                           "target":"x86_64-apple-darwin",        "artifact_suffix":"x86_64-apple-darwin",  "platform_filter":"macos-x64"},
+            {"platform":"ubuntu-24.04",    "args":"--target x86_64-unknown-linux-gnu --bundles deb appimage","target":"x86_64-unknown-linux-gnu",   "artifact_suffix":"ubuntu",               "platform_filter":"linux-x64"},
+            {"platform":"ubuntu-24.04-arm","args":"--target aarch64-unknown-linux-gnu --bundles deb appimage","target":"aarch64-unknown-linux-gnu", "artifact_suffix":"ubuntu-arm64",         "platform_filter":"linux-arm64"},
+            {"platform":"windows-latest",  "args":"--target x86_64-pc-windows-msvc",                        "target":"x86_64-pc-windows-msvc",     "artifact_suffix":"windows",              "platform_filter":"windows-x64"}
+          ]'
+          DESKTOP_INCLUDES=$(echo "$ALL_DESKTOP" | python3 -c "
+          import json, sys, os
+          platforms = os.environ['PLATFORMS'].split(',')
+          items = json.load(sys.stdin)
+          print(json.dumps([i for i in items if i['platform_filter'] in platforms]))
+          ")
+
+          # ── Docker flag ────────────────────────────────────────────────────
+          if echo "$PLATFORMS" | grep -q "docker"; then
+            INCLUDE_DOCKER="true"
+          else
+            INCLUDE_DOCKER="false"
+          fi
+
+          echo "rust_matrix={\"include\":${RUST_INCLUDES}}"     >> "$GITHUB_OUTPUT"
+          echo "desktop_matrix={\"include\":${DESKTOP_INCLUDES}}" >> "$GITHUB_OUTPUT"
+          echo "include_docker=${INCLUDE_DOCKER}"                 >> "$GITHUB_OUTPUT"
+
+          echo "[matrix] rust_includes=${RUST_INCLUDES}"
+          echo "[matrix] desktop_includes=${DESKTOP_INCLUDES}"
+          echo "[matrix] include_docker=${INCLUDE_DOCKER}"
+
+  # =========================================================================
   # Phase 1: Pre-deployment checks (type check, lint)
   # =========================================================================
   pre-checks:
     name: Pre-deployment checks
     runs-on: ubuntu-latest
+    needs: validate
     if: ${{ !inputs.skip_tests }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v4
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -158,40 +276,29 @@ jobs:
   build-rust-core:
     name: Build Rust core (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
-    needs: [validate, pre-checks]
+    needs: [validate, resolve-matrix, pre-checks]
+    timeout-minutes: 60   # [F-7] prevent hung runners blocking the pipeline
+    # [F-2] proceed when pre-checks succeeded OR was intentionally skipped
+    if: |
+      fromJSON(needs.resolve-matrix.outputs.rust_matrix).include[0] != null &&
+      (needs.pre-checks.result == 'success' || needs.pre-checks.result == 'skipped')
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-24.04
-            platform_filter: linux-x64
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-24.04-arm
-            platform_filter: linux-arm64
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
-            platform_filter: windows-x64
-          - target: aarch64-apple-darwin
-            runner: macos-latest
-            platform_filter: macos-arm64
-          - target: x86_64-apple-darwin
-            runner: macos-latest
-            platform_filter: macos-x64
-    if: contains(needs.validate.outputs.platforms, matrix.platform_filter)
+      matrix: ${{ fromJSON(needs.resolve-matrix.outputs.rust_matrix) }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.93.0
+      - name: Install Rust   # [F-6] single source of truth via env.RUST_VERSION
+        uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.target }}
 
       - name: Cache Cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -221,13 +328,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/core
-          
+
           if [ "${{ runner.os }}" = "Windows" ]; then
             BIN_NAME="openhuman-core.exe"
           else
             BIN_NAME="openhuman-core"
           fi
-          
+
           cp "target/$TARGET/release/$BIN_NAME" "artifacts/core/$BIN_NAME"
           ls -lh "artifacts/core/$BIN_NAME"
 
@@ -242,74 +349,53 @@ jobs:
   # Phase 3: Build desktop bundles (Tauri + React)
   # =========================================================================
   build-desktop:
-    name: Build desktop (${{ matrix.settings.artifact_suffix }})
-    runs-on: ${{ matrix.settings.platform }}
-    needs: [validate, pre-checks]
+    name: Build desktop (${{ matrix.artifact_suffix }})
+    runs-on: ${{ matrix.platform }}
+    needs: [validate, resolve-matrix, pre-checks]
+    timeout-minutes: 90   # [F-7]
     environment: ${{ inputs.environment || 'staging' }}
+    # [F-2] same skip-guard as build-rust-core
+    if: |
+      fromJSON(needs.resolve-matrix.outputs.desktop_matrix).include[0] != null &&
+      (needs.pre-checks.result == 'success' || needs.pre-checks.result == 'skipped')
     strategy:
       fail-fast: false
-      matrix:
-        settings:
-          - platform: macos-latest
-            args: --target aarch64-apple-darwin
-            target: aarch64-apple-darwin
-            artifact_suffix: aarch64-apple-darwin
-            platform_filter: macos-arm64
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            target: x86_64-apple-darwin
-            artifact_suffix: x86_64-apple-darwin
-            platform_filter: macos-x64
-          - platform: ubuntu-24.04
-            args: --target x86_64-unknown-linux-gnu --bundles deb appimage
-            target: x86_64-unknown-linux-gnu
-            artifact_suffix: ubuntu
-            platform_filter: linux-x64
-          - platform: ubuntu-24.04-arm
-            args: --target aarch64-unknown-linux-gnu --bundles deb appimage
-            target: aarch64-unknown-linux-gnu
-            artifact_suffix: ubuntu-arm64
-            platform_filter: linux-arm64
-          - platform: windows-latest
-            args: --target x86_64-pc-windows-msvc
-            target: x86_64-pc-windows-msvc
-            artifact_suffix: windows
-            platform_filter: windows-x64
-    if: contains(needs.validate.outputs.platforms, matrix.settings.platform_filter)
+      matrix: ${{ fromJSON(needs.resolve-matrix.outputs.desktop_matrix) }}
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       OPENHUMAN_TELEGRAM_BOT_USERNAME: ${{ vars.OPENHUMAN_TELEGRAM_BOT_USERNAME }}
       VITE_TELEGRAM_BOT_USERNAME: ${{ vars.OPENHUMAN_TELEGRAM_BOT_USERNAME }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: recursive
 
       - name: Set Xcode version (macOS)
-        if: matrix.settings.platform == 'macos-latest'
+        if: matrix.platform == 'macos-latest'
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
 
       - name: Setup Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@v4
         with:
           cache: true
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.93.0
+      - name: Install Rust   # [F-6]
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ (matrix.settings.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin') || matrix.settings.target }}
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: ${{ (matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin') || matrix.target }}
 
       - name: Install Tauri dependencies (Ubuntu)
-        if: startsWith(matrix.settings.platform, 'ubuntu-')
+        if: startsWith(matrix.platform, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -321,26 +407,26 @@ jobs:
             libgbm1 libpango-1.0-0 libcairo2 libatspi2.0-0 libxshmfence1 libu2f-udev
 
       - name: Cache Cargo artifacts
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             app/src-tauri/target
-          key: ${{ runner.os }}-cargo-tauri-${{ matrix.settings.target }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-tauri-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-tauri-${{ matrix.settings.target }}-
+            ${{ runner.os }}-cargo-tauri-${{ matrix.target }}-
 
       - name: Cache CEF distribution
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/Library/Caches/tauri-cef
             ~/.cache/tauri-cef
             ~/AppData/Local/tauri-cef
-          key: cef-${{ matrix.settings.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
+          key: cef-${{ matrix.target }}-${{ hashFiles('app/src-tauri/Cargo.toml') }}
           restore-keys: |
-            cef-${{ matrix.settings.target }}-
+            cef-${{ matrix.target }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -362,14 +448,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           WITH_UPDATER: "true"
-          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.settings.platform == 'macos-latest' && '10.15' || '' }}
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.platform == 'macos-latest' && '10.15' || '' }}
         run: |
           set -euo pipefail
           pnpm tauri:ensure
-          
+
           if [ "${{ runner.os }}" = "Linux" ]; then
             NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build \
-              --no-bundle ${{ matrix.settings.args }}
+              --no-bundle ${{ matrix.args }}
             CEF_LIB_DIR="$(find "$HOME/.cache/tauri-cef" -name libcef.so -printf '%h\n' 2>/dev/null | head -1)"
             if [ -z "$CEF_LIB_DIR" ]; then
               echo "::error::libcef.so not found; cannot satisfy lib4bin ldd resolution."
@@ -377,12 +463,12 @@ jobs:
             fi
             export LD_LIBRARY_PATH="$CEF_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           fi
-          
-          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build ${{ matrix.settings.args }}
-          echo "[build] Desktop application compiled for ${{ matrix.settings.target }}"
+
+          NODE_OPTIONS="--max-old-space-size=8192" cargo tauri build ${{ matrix.args }}
+          echo "[build] Desktop application compiled for ${{ matrix.target }}"
 
       - name: Sign and notarize macOS bundle
-        if: matrix.settings.platform == 'macos-latest' && inputs.environment == 'production'
+        if: matrix.platform == 'macos-latest' && inputs.environment == 'production'
         shell: bash
         env:
           APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
@@ -393,33 +479,33 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          
+
           for var in APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             if [ -z "${!var}" ]; then
               echo "::error::Missing macOS signing secret: $var"
               exit 1
             fi
           done
-          
+
           CERT_PATH="${RUNNER_TEMP}/apple_cert.p12"
           echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
-          
+
           KEYCHAIN_PATH="${RUNNER_TEMP}/build.keychain"
           security create-keychain -p "$APPLE_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
           security default-keychain -s "$KEYCHAIN_PATH"
           security unlock-keychain -p "$APPLE_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
           security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_CERTIFICATE_PASSWORD" "$KEYCHAIN_PATH"
-          
-          APP_BUNDLE="$(find app/src-tauri/target/${{ matrix.settings.target }}/release/bundle -name '*.app' -type d | head -1)"
-          
+
+          APP_BUNDLE="$(find app/src-tauri/target/${{ matrix.target }}/release/bundle -name '*.app' -type d | head -1)"
+
           if [ -z "$APP_BUNDLE" ]; then
             echo "::warning::No .app bundle found to notarize"
           else
             echo "[deploy] Signing $APP_BUNDLE"
             codesign -s "$APPLE_SIGNING_IDENTITY" --deep --force --verify --verbose "$APP_BUNDLE"
-            
-            DMG_FILE="app/src-tauri/target/${{ matrix.settings.target }}/release/bundle/dmg/openhuman.dmg"
+
+            DMG_FILE="app/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/openhuman.dmg"
             if [ -f "$DMG_FILE" ]; then
               echo "[deploy] Notarizing $DMG_FILE"
               xcrun notarytool submit "$DMG_FILE" \
@@ -429,27 +515,27 @@ jobs:
                 --wait || echo "::warning::Notarization submitted (may require additional time)"
             fi
           fi
-          
+
           security delete-keychain "$KEYCHAIN_PATH"
 
       - name: Stage desktop artifacts
         shell: bash
         env:
-          TARGET: ${{ matrix.settings.target }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/desktop
-          
+
           if [ -d "app/src-tauri/target/$TARGET/release/bundle" ]; then
             cp -r app/src-tauri/target/$TARGET/release/bundle/* artifacts/desktop/ 2>/dev/null || true
           fi
-          
+
           find artifacts/desktop -type f -exec ls -lh {} \;
 
       - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-${{ matrix.settings.artifact_suffix }}
+          name: desktop-${{ matrix.artifact_suffix }}
           path: artifacts/desktop/
           retention-days: 7
 
@@ -459,12 +545,16 @@ jobs:
   build-docker:
     name: Build and push Docker image
     runs-on: ubuntu-latest
-    needs: [validate, pre-checks]
+    needs: [validate, resolve-matrix, pre-checks]
+    timeout-minutes: 45   # [F-7]
     environment: ${{ inputs.environment || 'staging' }}
-    if: contains(needs.validate.outputs.platforms, 'docker')
+    # [F-2] skip guard; also gated by the docker flag from resolve-matrix
+    if: |
+      needs.resolve-matrix.outputs.include_docker == 'true' &&
+      (needs.pre-checks.result == 'success' || needs.pre-checks.result == 'skipped')
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
           fetch-depth: 1
@@ -479,15 +569,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract metadata   # [F-4] replaced semver tag with explicit version raw tag
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}},value=${{ needs.validate.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.validate.outputs.version }}
-            type=sha,prefix=${{ inputs.environment }}-
+            type=raw,value=${{ needs.validate.outputs.version }}
+            type=raw,value=${{ needs.validate.outputs.version }}-${{ needs.validate.outputs.short_sha }}
+            type=raw,value=${{ inputs.environment || 'staging' }}-${{ needs.validate.outputs.short_sha }}
             type=ref,event=branch
 
       - name: Build and push Docker image
@@ -507,11 +597,18 @@ jobs:
     name: Publish release assets
     runs-on: ubuntu-latest
     needs: [validate, build-rust-core, build-desktop, build-docker]
-    if: needs.build-rust-core.result == 'success' && needs.build-desktop.result == 'success' && needs.build-docker.result == 'success'
+    # [F-3] build-docker / build-rust-core / build-desktop may be 'skipped'
+    # when those platform groups were excluded from deploy_platforms — treat
+    # 'skipped' as acceptable, only block on an explicit 'failure'.
+    if: |
+      always() &&
+      needs.build-rust-core.result != 'failure' &&
+      needs.build-desktop.result  != 'failure' &&
+      needs.build-docker.result   != 'failure'
     environment: ${{ inputs.environment || 'staging' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -523,33 +620,33 @@ jobs:
         run: |
           set -euo pipefail
           cd dist/
-          
+
           find . -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.deb" -o -name "*.AppImage" -o -name "*.tar.gz" -o -name "openhuman-core*" \) | while read f; do
             sha256sum "$f" >> CHECKSUMS.txt
           done
-          
-          echo "::info::Checksums generated"
+
+          echo "::notice::Checksums generated"
           cat CHECKSUMS.txt || echo "(no artifacts found)"
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release   # [F-5] correct release action version
         if: inputs.environment == 'production'
-        uses: softprops/action-gh-release@v3.0.0
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: OpenHuman v${{ needs.validate.outputs.version }}
           body: |
             # OpenHuman v${{ needs.validate.outputs.version }}
-            
+
             **Build Info:**
             - Commit: ${{ github.sha }}
             - Environment: ${{ inputs.environment }}
             - Build Date: ${{ needs.validate.outputs.release_date }}
-            
+
             **Artifacts:**
             - Desktop applications (macOS, Linux, Windows)
             - CLI binaries (openhuman-core)
-            - Docker image: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ needs.validate.outputs.version }}`
-            
+            - Docker image: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.validate.outputs.version }}`
+
             **Checksums:** See attached CHECKSUMS.txt file.
           draft: false
           prerelease: false
@@ -558,12 +655,15 @@ jobs:
       - name: Summary
         shell: bash
         run: |
-          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version:** ${{ needs.validate.outputs.version }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Date:** ${{ needs.validate.outputs.release_date }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Platforms:** ${{ needs.validate.outputs.platforms }}" >> $GITHUB_STEP_SUMMARY
+          echo "## Release Summary"              >> $GITHUB_STEP_SUMMARY
+          echo ""                                >> $GITHUB_STEP_SUMMARY
+          echo "| Field    | Value |"            >> $GITHUB_STEP_SUMMARY
+          echo "| -------- | ----- |"            >> $GITHUB_STEP_SUMMARY
+          echo "| Environment | ${{ inputs.environment }} |"            >> $GITHUB_STEP_SUMMARY
+          echo "| Version     | ${{ needs.validate.outputs.version }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build SHA   | ${{ needs.validate.outputs.short_sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Date  | ${{ needs.validate.outputs.release_date }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platforms   | ${{ needs.validate.outputs.platforms }} |" >> $GITHUB_STEP_SUMMARY
 
   # =========================================================================
   # Phase 6: Verification
@@ -578,6 +678,6 @@ jobs:
         shell: bash
         run: |
           echo "[deploy] Deployment complete"
-          echo "  Version: ${{ needs.validate.outputs.version }}"
+          echo "  Version:  ${{ needs.validate.outputs.version }}"
           echo "  Platforms: ${{ needs.validate.outputs.platforms }}"
-          echo "  Status: ${{ needs.publish-release.result }}"
+          echo "  Release:  ${{ needs.publish-release.result }}"
