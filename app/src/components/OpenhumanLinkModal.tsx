@@ -30,7 +30,7 @@ import {
   type AccountStatus,
   PROVIDERS,
 } from '../types/accounts';
-import { BILLING_DASHBOARD_URL } from '../utils/links';
+import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
 import ChannelSetupModal from './channels/ChannelSetupModal';
@@ -46,6 +46,7 @@ const ALLOWED_PATHS = [
   'settings/billing',
   'settings/messaging',
   'community/discord',
+  'community/discord-report',
   'accounts/setup',
 ] as const;
 
@@ -169,6 +170,8 @@ function titleForPath(path: AllowedPath, t: (k: string) => string): string {
       return t('app.openhumanLink.title.messaging');
     case 'community/discord':
       return t('app.openhumanLink.title.discord');
+    case 'community/discord-report':
+      return t('app.openhumanLink.title.discordReport');
     case 'accounts/setup':
       return t('app.openhumanLink.title.accounts');
   }
@@ -188,6 +191,8 @@ function renderBody(path: AllowedPath, close: () => void) {
       return null;
     case 'community/discord':
       return <DiscordBody close={close} />;
+    case 'community/discord-report':
+      return <DiscordReportBody close={close} />;
     case 'accounts/setup':
       return <AccountsSetupBody close={close} />;
   }
@@ -332,8 +337,6 @@ const BillingBody = ({ close }: { close: () => void }) => {
 
 // ── Discord ──────────────────────────────────────────────────────────────
 
-const DISCORD_INVITE_URL = 'https://discord.tinyhumans.ai/';
-
 const DiscordBody = ({ close }: { close: () => void }) => {
   const { t } = useT();
   return (
@@ -359,13 +362,47 @@ const DiscordBody = ({ close }: { close: () => void }) => {
       </ul>
       <button
         type="button"
-        onClick={() => {
-          void openUrl(DISCORD_INVITE_URL).catch(() => {});
+        onClick={async () => {
+          try {
+            await openUrl(DISCORD_INVITE_URL);
+          } catch {
+            // Ignore launcher errors from OS URL handler failures.
+          }
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
         {t('app.openhumanLink.discord.openInvite')}
       </button>
       <DoneFooter close={close} skipLabel={t('app.openhumanLink.maybeLater')} />
+    </div>
+  );
+};
+
+/**
+ * Error-report variant of the Discord modal. Shown when an agent error pill
+ * with path "community/discord-report" is clicked. Distinct from DiscordBody
+ * (join-community flow):
+ *  - Leads with an apology/acknowledgement copy.
+ *  - Offers an "Open Discord" primary button to jump straight to the server
+ *    (and closes the modal).
+ */
+const DiscordReportBody = ({ close }: { close: () => void }) => {
+  const { t } = useT();
+
+  return (
+    <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
+      <p>{t('app.openhumanLink.discordReport.intro')}</p>
+      <button
+        type="button"
+        onClick={async () => {
+          try {
+            await openUrl(DISCORD_INVITE_URL);
+          } finally {
+            close();
+          }
+        }}
+        className="w-full rounded-xl bg-primary-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
+        {t('app.openhumanLink.discordReport.openDiscord')}
+      </button>
     </div>
   );
 };

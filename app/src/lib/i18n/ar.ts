@@ -2217,6 +2217,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'ميزة 2',
   'app.openhumanLink.discord.perk3': 'ميزة 3',
   'app.openhumanLink.discord.perk4': 'ميزة 4',
+  'app.openhumanLink.discordReport.intro':
+    'نعتذر — حدث خطأ من جانبنا. نحاول تسجيل هذه الأخطاء تلقائيًا، لكن مشاركة التفاصيل على Discord تساعدنا على إصلاحها بشكل أسرع.',
+  'app.openhumanLink.discordReport.openDiscord': 'فتح Discord',
   'app.openhumanLink.done': 'تم',
   'app.openhumanLink.loadingChannelSetup': 'جارٍ تحميل إعداد القناة',
   'app.openhumanLink.maybeLater': 'ربما لاحقًا',
@@ -2237,6 +2240,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'ربط تطبيقاتك',
   'app.openhumanLink.title.billing': 'الفوترة والرصيد',
   'app.openhumanLink.title.discord': 'الانضمام إلى المجتمع',
+  'app.openhumanLink.title.discordReport': 'الإبلاغ عن هذا الخطأ',
   'app.openhumanLink.title.messaging': 'ربط قناة محادثة',
   'app.openhumanLink.title.notifications': 'السماح بالإشعارات',
   'app.persistRehydration.body': 'المحتوى',

@@ -2274,6 +2274,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Преимущество 2',
   'app.openhumanLink.discord.perk3': 'Преимущество 3',
   'app.openhumanLink.discord.perk4': 'Преимущество 4',
+  'app.openhumanLink.discordReport.intro':
+    'Приносим извинения — что-то пошло не так с нашей стороны. Мы стараемся фиксировать такие ошибки автоматически, но если вы поделитесь подробностями в Discord, мы исправим их быстрее.',
+  'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',
   'app.openhumanLink.done': 'Готово',
   'app.openhumanLink.loadingChannelSetup': 'Загрузка настроек канала',
   'app.openhumanLink.maybeLater': 'Может, потом',
@@ -2294,6 +2297,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Подключи свои приложения',
   'app.openhumanLink.title.billing': 'Оплата и кредиты',
   'app.openhumanLink.title.discord': 'Вступи в сообщество',
+  'app.openhumanLink.title.discordReport': 'Сообщить об ошибке',
   'app.openhumanLink.title.messaging': 'Подключи канал связи',
   'app.openhumanLink.title.notifications': 'Разрешить уведомления',
   'app.persistRehydration.body': 'Текст',

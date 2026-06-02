@@ -197,6 +197,7 @@ whatsapp-rust = { version = "0.5", optional = true, default-features = false, fe
 whatsapp-rust-tokio-transport = { version = "0.5", optional = true, default-features = false }
 whatsapp-rust-ureq-http-client = { version = "0.5", optional = true }
 wacore = { version = "0.5", optional = true, default-features = false }
+ppt-rs = "0.2.14"
 
 [target.'cfg(windows)'.dependencies]
 # Windows: tokio-tungstenite uses native-tls (schannel) so wss://

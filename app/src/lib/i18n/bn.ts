@@ -2258,6 +2258,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'সুবিধা ২',
   'app.openhumanLink.discord.perk3': 'সুবিধা ৩',
   'app.openhumanLink.discord.perk4': 'সুবিধা ৪',
+  'app.openhumanLink.discordReport.intro':
+    'দুঃখিত — আমাদের দিক থেকে কিছু ভুল হয়েছে। আমরা এগুলো স্বয়ংক্রিয়ভাবে লগ করার চেষ্টা করি, তবে Discord-এ বিবরণ শেয়ার করলে আমরা দ্রুত সমাধান করতে পারি।',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord খুলুন',
   'app.openhumanLink.done': 'সম্পন্ন',
   'app.openhumanLink.loadingChannelSetup': 'চ্যানেল সেটআপ লোড হচ্ছে',
   'app.openhumanLink.maybeLater': 'হয়তো পরে',
@@ -2278,6 +2281,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'আপনার অ্যাপ সংযুক্ত করুন',
   'app.openhumanLink.title.billing': 'বিলিং ও ক্রেডিট',
   'app.openhumanLink.title.discord': 'কমিউনিটিতে যোগ দিন',
+  'app.openhumanLink.title.discordReport': 'এই ত্রুটি রিপোর্ট করুন',
   'app.openhumanLink.title.messaging': 'একটি চ্যাট চ্যানেল সংযুক্ত করুন',
   'app.openhumanLink.title.notifications': 'বিজ্ঞপ্তির অনুমতি দিন',
   'app.persistRehydration.body': 'বডি',

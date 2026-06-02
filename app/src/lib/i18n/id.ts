@@ -2263,6 +2263,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Keuntungan 2',
   'app.openhumanLink.discord.perk3': 'Keuntungan 3',
   'app.openhumanLink.discord.perk4': 'Keuntungan 4',
+  'app.openhumanLink.discordReport.intro':
+    'Mohon maaf — terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
+  'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',
   'app.openhumanLink.done': 'Selesai',
   'app.openhumanLink.loadingChannelSetup': 'Memuat pengaturan kanal',
   'app.openhumanLink.maybeLater': 'Mungkin nanti',
@@ -2283,6 +2286,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Hubungkan aplikasi Anda',
   'app.openhumanLink.title.billing': 'Tagihan & kredit',
   'app.openhumanLink.title.discord': 'Bergabung ke komunitas',
+  'app.openhumanLink.title.discordReport': 'Laporkan error ini',
   'app.openhumanLink.title.messaging': 'Hubungkan kanal chat',
   'app.openhumanLink.title.notifications': 'Izinkan notifikasi',
   'app.persistRehydration.body': 'Isi',

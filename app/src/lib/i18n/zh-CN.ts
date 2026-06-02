@@ -2149,6 +2149,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': '福利 2',
   'app.openhumanLink.discord.perk3': '福利 3',
   'app.openhumanLink.discord.perk4': '福利 4',
+  'app.openhumanLink.discordReport.intro':
+    '抱歉 — 我们这边出错了。我们会尝试自动记录这些错误，但在 Discord 上分享详情能帮助我们更快地修复问题。',
+  'app.openhumanLink.discordReport.openDiscord': '打开 Discord',
   'app.openhumanLink.done': '完成',
   'app.openhumanLink.loadingChannelSetup': '正在加载渠道设置',
   'app.openhumanLink.maybeLater': '稍后再说',
@@ -2169,6 +2172,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': '连接你的应用',
   'app.openhumanLink.title.billing': '账单与配额',
   'app.openhumanLink.title.discord': '加入社区',
+  'app.openhumanLink.title.discordReport': '报告此错误',
   'app.openhumanLink.title.messaging': '连接聊天渠道',
   'app.openhumanLink.title.notifications': '允许通知',
   'app.persistRehydration.body': '正在恢复应用状态',

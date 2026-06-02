@@ -2310,6 +2310,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Avantage 2',
   'app.openhumanLink.discord.perk3': 'Avantage 3',
   'app.openhumanLink.discord.perk4': 'Avantage 4',
+  'app.openhumanLink.discordReport.intro':
+    "Désolé — quelque chose s'est mal passé de notre côté. Nous essayons de journaliser ces erreurs automatiquement, mais partager les détails sur Discord nous aide à les corriger plus vite.",
+  'app.openhumanLink.discordReport.openDiscord': 'Ouvrir Discord',
   'app.openhumanLink.done': 'Terminé',
   'app.openhumanLink.loadingChannelSetup': 'Chargement de la configuration du canal',
   'app.openhumanLink.maybeLater': 'Peut-être plus tard',
@@ -2330,6 +2333,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Connecte tes apps',
   'app.openhumanLink.title.billing': 'Facturation & crédits',
   'app.openhumanLink.title.discord': 'Rejoins la communauté',
+  'app.openhumanLink.title.discordReport': 'Signaler cette erreur',
   'app.openhumanLink.title.messaging': 'Connecter un canal de chat',
   'app.openhumanLink.title.notifications': 'Autoriser les notifications',
   'app.persistRehydration.body': 'Corps',

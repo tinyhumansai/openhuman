@@ -694,7 +694,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
       // generic message with no raw URL appended — the FE forwards it as-is
       // (backend owns sanitization; see web_errors_tests.rs).
       const serverMessage =
-        'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
+        'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord-report">Report on Discord</openhuman-link>';
 
       act(() => {
         listeners.onError?.({
@@ -983,7 +983,7 @@ describe('ChatRuntimeProvider — dedupe, proactive resolution, mid-turn invaria
   // produces no bubble at all.
   describe('inference error classifier — full type set', () => {
     const USER_FACING_FALLBACK =
-      'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord">Report on Discord</openhuman-link>';
+      'Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path="community/discord-report">Report on Discord</openhuman-link>';
 
     it.each([
       ['rate_limited', 'You have been rate limited. Please try again later.'],

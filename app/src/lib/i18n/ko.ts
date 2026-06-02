@@ -2236,6 +2236,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': '혜택2',
   'app.openhumanLink.discord.perk3': '혜택3',
   'app.openhumanLink.discord.perk4': '혜택4',
+  'app.openhumanLink.discordReport.intro':
+    '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord 열기',
   'app.openhumanLink.done': '완료',
   'app.openhumanLink.loadingChannelSetup': '채널 설정 불러오는 중',
   'app.openhumanLink.maybeLater': '나중에',
@@ -2256,6 +2259,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': '앱 연결',
   'app.openhumanLink.title.billing': '결제 및 크레딧',
   'app.openhumanLink.title.discord': '커뮤니티 참여',
+  'app.openhumanLink.title.discordReport': '이 오류 신고',
   'app.openhumanLink.title.messaging': '채팅 채널 연결',
   'app.openhumanLink.title.notifications': '알림 허용',
   'app.persistRehydration.body': '본문',
