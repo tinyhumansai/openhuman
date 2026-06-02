@@ -609,13 +609,14 @@ const en: TranslationMap = {
   'onboarding.apiKeys.continue': 'Save and continue',
   'onboarding.apiKeys.saving': 'Saving…',
 
-  // Onboarding: Custom wizard (Inference / Voice / OAuth / Search / Activity / Memory)
+  // Onboarding: Custom wizard (Inference / Voice / OAuth / Search / Activity / Vault / Memory)
   'onboarding.custom.stepperInference': 'Inference',
   'onboarding.custom.stepperVoice': 'Voice',
   'onboarding.custom.stepperOAuth': 'OAuth',
   'onboarding.custom.stepperSearch': 'Search',
   'onboarding.custom.stepperEmbeddings': 'Embeddings',
   'onboarding.custom.stepperActivity': 'Activity',
+  'onboarding.custom.stepperVault': 'Vault',
   'onboarding.custom.stepperMemory': 'Memory',
   'onboarding.custom.stepCounter': 'Step {n} of {total}',
   'onboarding.custom.defaultTitle': 'Default',
@@ -681,6 +682,18 @@ const en: TranslationMap = {
     'Moderate activity — syncs every hour, sends a daily digest. Balanced cost and responsiveness.',
   'onboarding.custom.activity.configureDesc':
     'Pick your own activity level. Configure in Settings › Agent activity level.',
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Memory & Vault Setup',
+  'onboarding.custom.vault.subtitle':
+    'Confirm where memory notes are written, how source data is read, and whether your vault pipeline is healthy.',
+  'onboarding.custom.vault.defaultDesc':
+    'Use OpenHuman-managed memory defaults. Vault path and sync health can still be reviewed later.',
+  'onboarding.custom.vault.configureDesc':
+    'Review vault ownership, run health checks, and tune memory controls now.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Managed setup requires OpenHuman sign-in and is unavailable in local mode.',
+  'onboarding.custom.vault.exitError': 'Could not finish onboarding. Please try again.',
 
   // Onboarding: Custom > Memory
   'onboarding.custom.memory.title': 'Memory',
@@ -2121,6 +2134,56 @@ const en: TranslationMap = {
   'workspace.graphViewMode': 'Memory graph view mode',
   'workspace.trees': 'Trees',
   'workspace.contacts': 'Contacts',
+
+  // Vault health checklist
+  'vaultHealth.title': 'Vault Health Checklist',
+  'vaultHealth.setupTitle': 'Vault setup health',
+  'vaultHealth.workspaceVault': 'Workspace vault:',
+  'vaultHealth.refresh': 'Refresh',
+  'vaultHealth.refreshing': 'Refreshing…',
+  'vaultHealth.revealFolder': 'Reveal Folder',
+  'vaultHealth.openInObsidian': 'Open in Obsidian',
+  'vaultHealth.installObsidian': 'Install Obsidian',
+  'vaultHealth.openObsidianError': 'Could not open Obsidian',
+  'vaultHealth.revealError': 'Could not reveal vault folder',
+  'vaultHealth.downloadError': 'Could not open Obsidian download page',
+  'vaultHealth.loadError': 'Could not load vault health:',
+  'vaultHealth.lastSync': 'Last sync:',
+  'vaultHealth.passed': 'Passed',
+  'vaultHealth.needsAttention': 'Needs attention',
+  'vaultHealth.existsLabel': 'Workspace vault path exists',
+  'vaultHealth.existsRecovery':
+    'Vault folder is missing. Start a sync or create this folder, then refresh this checklist.',
+  'vaultHealth.writableLabel': 'Vault is writable by OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman cannot write to this vault yet. Grant write permissions and refresh.',
+  'vaultHealth.obsidianLabel': 'Vault is registered in Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'In Obsidian, choose "Open folder as vault" for this path, then refresh this checklist.',
+  'vaultHealth.pipelineLabel': 'Memory pipeline is healthy',
+  'vaultHealth.pipelineRecovery':
+    'Memory pipeline is paused or in error. Re-enable Auto-sync in Memory Tree status and retry.',
+  'vaultHealth.timeNever': 'Never',
+  'vaultHealth.timeJustNow': 'just now',
+  'vaultHealth.timeMinAgo': '{n} min ago',
+  'vaultHealth.timeHrAgo': '{n} hr ago',
+  'vaultHealth.timeDayAgo': '{n} day ago',
+  'vaultHealth.timeDaysAgo': '{n} days ago',
+
+  // Memory data panel (storage explainer)
+  'memoryData.howItWorks': 'How memory storage works',
+  'memoryData.workspaceVault': 'Workspace vault · write',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman writes generated memory notes to memory_tree/content.',
+  'memoryData.connectedSources': 'Connected sources · read',
+  'memoryData.connectedSourcesDesc':
+    'Folders, mailboxes, chats, and repos are imported for memory indexing — their original files are never rewritten.',
+  'memoryData.internalFiles': 'Internal memory-tree files',
+  'memoryData.internalFilesDesc':
+    'Indexes, queue state, and summaries are managed by OpenHuman to keep recall and sync healthy.',
+  'memoryData.windowError': 'Memory window',
+  'memoryData.windowUpdated': 'Memory window updated',
+  'memoryData.windowUpdatedMsg': 'Set to {window}.',
 
   // Graph
   'graph.noContactMentions': 'No contact mentions',
