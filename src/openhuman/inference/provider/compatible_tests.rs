@@ -2109,3 +2109,60 @@ fn convert_tool_specs_dedups_many_duplicates() {
         .collect();
     assert_eq!(names, vec!["x", "y", "z"]);
 }
+
+// ── #3193: completion-only model 404 detection + actionable message ──────────
+
+#[test]
+fn completion_only_model_404_detected_from_openai_signature() {
+    // The exact body OpenAI returns when a completion-only/base model is sent
+    // to /v1/chat/completions.
+    let body = "This is not a chat model and thus not supported in the \
+                v1/chat/completions endpoint. Did you mean to use v1/completions?";
+    assert!(OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::NOT_FOUND,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_model_404_ignores_ordinary_not_found() {
+    // A "model does not exist" 404 must NOT be misclassified — it should keep
+    // its existing fallback / enrich behaviour, not get the completion-only
+    // message.
+    let body = "The model `gpt-9o` does not exist or you do not have access to it.";
+    assert!(!OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::NOT_FOUND,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_model_404_requires_404_status() {
+    // Same phrasing under a non-404 status is not the completion-only case.
+    let body = "not a chat model";
+    assert!(!OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::BAD_REQUEST,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_message_names_model_and_remediation() {
+    let p = make_provider("openhuman", "https://api.example.com/v1", Some("k"));
+    let msg = p.completion_only_model_message(
+        "davinci-002",
+        "This is not a chat model ... Did you mean to use v1/completions?",
+    );
+    assert!(
+        msg.contains("davinci-002"),
+        "names the offending model: {msg}"
+    );
+    assert!(
+        msg.contains("completion-only") && msg.contains("chat-completions"),
+        "explains the capability mismatch: {msg}"
+    );
+    assert!(
+        msg.contains("chat-capable model"),
+        "states the remediation: {msg}"
+    );
+}

@@ -129,6 +129,23 @@ impl OpenAiCompatibleProvider {
         }
     }
 
+    /// Build an actionable error for a completion-only model that was routed
+    /// to `/v1/chat/completions`. OpenHuman only speaks the chat-completions
+    /// API (with an optional `/v1/responses` fallback) — a completion-only /
+    /// base model 404s here and the responses fallback cannot rescue it, so we
+    /// surface the model name and concrete remediation instead of an opaque
+    /// "responses fallback failed" chain. See issue #3193.
+    fn completion_only_model_message(&self, model: &str, sanitized: &str) -> String {
+        format!(
+            "{name} API error (404): model '{model}' does not support the \
+             chat-completions API that OpenHuman uses — it appears to be a \
+             completion-only / base model. Assign a chat-capable model to this \
+             provider (e.g. in Settings → AI), or pick a different model. \
+             Provider detail: {sanitized}",
+            name = self.name,
+        )
+    }
+
     /// Create a provider with a custom User-Agent header.
     ///
     /// Some providers (for example Kimi Code) require a specific User-Agent
@@ -798,6 +815,24 @@ impl OpenAiCompatibleProvider {
         Self::is_native_tool_schema_unsupported(reqwest::StatusCode::BAD_REQUEST, error)
     }
 
+    /// Detect a 404 whose body says the model is completion-only and cannot be
+    /// served from `/v1/chat/completions` (OpenAI: "This is not a chat model
+    /// and thus not supported in the v1/chat/completions endpoint. Did you
+    /// mean to use v1/completions?"). When this fires, attempting the
+    /// `/v1/responses` fallback is futile, so callers should fail fast with an
+    /// actionable message via [`completion_only_model_message`]. The match is
+    /// deliberately tight so ordinary "model does not exist" 404s are NOT
+    /// caught (those should keep their existing fallback / enrich behaviour).
+    /// See issue #3193.
+    fn is_completion_only_model_404(status: reqwest::StatusCode, error: &str) -> bool {
+        if status != reqwest::StatusCode::NOT_FOUND {
+            return false;
+        }
+        let lower = error.to_lowercase();
+        lower.contains("not a chat model")
+            || (lower.contains("v1/chat/completions") && lower.contains("v1/completions"))
+    }
+
     /// Streaming variant of the native-tools chat path.
     ///
     /// Sends the request with `stream: true`, consumes the upstream SSE
@@ -1343,6 +1378,14 @@ impl Provider for OpenAiCompatibleProvider {
             let error = response.text().await?;
             let sanitized = super::sanitize_api_error(&error);
 
+            // A completion-only model 404s here and the /v1/responses fallback
+            // cannot rescue it — fail fast with actionable guidance (#3193).
+            if Self::is_completion_only_model_404(status, &sanitized) {
+                return Err(anyhow::anyhow!(
+                    self.completion_only_model_message(model, &sanitized)
+                ));
+            }
+
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
                     .chat_via_responses(credential, &fallback_messages, model)
@@ -1857,6 +1900,14 @@ impl Provider for OpenAiCompatibleProvider {
                     usage: None,
                     reasoning_content: None,
                 });
+            }
+
+            // A completion-only model 404s here and the /v1/responses fallback
+            // cannot rescue it — fail fast with actionable guidance (#3193).
+            if Self::is_completion_only_model_404(status, &sanitized) {
+                return Err(anyhow::anyhow!(
+                    self.completion_only_model_message(model, &sanitized)
+                ));
             }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
