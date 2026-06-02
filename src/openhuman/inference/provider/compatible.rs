@@ -269,6 +269,7 @@ impl OpenAiCompatibleProvider {
             input,
             instructions,
             stream: Some(false),
+            store: Some(false),
         };
 
         let url = self.responses_url();
