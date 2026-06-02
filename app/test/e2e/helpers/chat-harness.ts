@@ -6,7 +6,7 @@
  * needs:
  *
  *   - `button[title="New thread"]`       — icon-only button, no text
- *   - `textarea[placeholder="Type a message..."]` — React-controlled
+ *   - `textarea[placeholder="How can I help you today?"]` — React-controlled
  *     input that should be driven through WebDriver so React observes
  *     the same input events a user would produce
  *   - `button[aria-label="Send message"]` — icon-only button
@@ -39,7 +39,7 @@ export async function clickByTitle(title: string, timeoutMs = 6_000): Promise<bo
   return false;
 }
 
-const COMPOSER_SELECTOR = 'textarea[placeholder="Type a message..."]';
+const COMPOSER_SELECTOR = 'textarea[placeholder="How can I help you today?"]';
 
 /** Type into the chat composer through WebDriver so React's controlled
  *  input state and the DOM stay in sync. */

@@ -229,7 +229,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'कमान',
   'nav.routines': 'Routines',
   'chat.newThread': 'नई थ्रेड',
-  'chat.typeMessage': 'मैसेज टाइप करें...',
+  'chat.typeMessage': 'आज मैं आपकी कैसे मदद कर सकता हूँ?',
   'chat.send': 'मैसेज भेजें',
   'chat.thinking': 'सोच रहा है...',
   'chat.noMessages': 'अभी कोई मैसेज नहीं',
@@ -4480,6 +4480,11 @@ const messages: TranslationMap = {
   'chat.artifact.show_more': 'और दिखाएं',
   'chat.artifact.show_less': 'कम दिखाएं',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'फ़ाइल संलग्न करें',
+  'composer.modelSelector': 'मॉडल',
+  'composer.voiceMode': 'वॉइस मोड',
+  'composer.qualityHigh': 'उच्च',
   // Agent activity level
   'activityLevel.title': 'एजेंट गतिविधि स्तर',
   'activityLevel.description':

@@ -237,7 +237,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Commande',
   'nav.routines': 'Routines',
   'chat.newThread': 'Nouveau fil',
-  'chat.typeMessage': 'Écris un message…',
+  'chat.typeMessage': "Comment puis-je t'aider aujourd'hui ?",
   'chat.send': 'Envoyer le message',
   'chat.thinking': 'En train de réfléchir…',
   'chat.noMessages': "Aucun message pour l'instant",
@@ -4572,6 +4572,11 @@ const messages: TranslationMap = {
   'chat.artifact.show_more': 'Voir plus',
   'chat.artifact.show_less': 'Voir moins',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Joindre un fichier',
+  'composer.modelSelector': 'Modèle',
+  'composer.voiceMode': 'Mode vocal',
+  'composer.qualityHigh': 'Élevé',
   // Agent activity level
   'activityLevel.title': "Niveau d'activité de l'agent",
   'activityLevel.description':

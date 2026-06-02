@@ -252,7 +252,7 @@ const en: TranslationMap = {
 
   // Chat / Conversations
   'chat.newThread': 'New thread',
-  'chat.typeMessage': 'Type a message...',
+  'chat.typeMessage': 'How can I help you today?',
   'chat.send': 'Send message',
   'chat.thinking': 'Thinking...',
   'chat.noMessages': 'No messages yet',
@@ -4797,6 +4797,11 @@ const en: TranslationMap = {
   'chat.artifact.reveal': 'Show in folder',
   'chat.artifact.show_more': 'Show more',
   'chat.artifact.show_less': 'Show less',
+  // Chat composer toolbar
+  'composer.attachFile': 'Attach file',
+  'composer.modelSelector': 'Model',
+  'composer.voiceMode': 'Voice mode',
+  'composer.qualityHigh': 'High',
   // Sync budget dialog
   'syncBudget.title': 'Sync budget',
   'syncBudget.maxTokens': 'Max tokens per sync',

@@ -227,7 +227,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'القيادة',
   'nav.routines': 'Routines',
   'chat.newThread': 'محادثة جديدة',
-  'chat.typeMessage': 'اكتب رسالة...',
+  'chat.typeMessage': 'كيف يمكنني مساعدتك اليوم؟',
   'chat.send': 'إرسال الرسالة',
   'chat.thinking': 'جارٍ التفكير...',
   'chat.noMessages': 'لا توجد رسائل بعد',
@@ -4395,6 +4395,11 @@ const messages: TranslationMap = {
   'chat.artifact.show_more': 'عرض المزيد',
   'chat.artifact.show_less': 'عرض أقل',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'إرفاق ملف',
+  'composer.modelSelector': 'النموذج',
+  'composer.voiceMode': 'وضع الصوت',
+  'composer.qualityHigh': 'عالٍ',
   // Agent activity level
   'activityLevel.title': 'مستوى نشاط الوكيل',
   'activityLevel.description':
