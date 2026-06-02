@@ -296,7 +296,26 @@ impl SubconsciousEngine {
         );
 
         debug!("[subconscious] spawning agent with tool access");
-        let response = agent.run_single(&user_message).await.map_err(|e| {
+        // Subconscious ticks are trusted automation: the user enabled the
+        // background loop knowing it should think about their state.
+        // The internal-memory variant is allowed through the approval
+        // gate without prompting. A `SubconsciousTainted` variant exists
+        // for ticks that read external-sync memory chunks (Gmail / Slack
+        // / Notion / Composio) — until the memory subsystem surfaces
+        // per-chunk taint to the engine, we conservatively label all
+        // ticks as `Subconscious` and rely on the memory-taint signal
+        // wiring planned in a follow-up to escalate when external-sync
+        // content is in context.
+        let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
+            job_id: format!("subconscious:tick:{}", now_secs() as u64),
+            source: crate::openhuman::agent::turn_origin::TrustedAutomationSource::Subconscious,
+        };
+        let response = crate::openhuman::agent::turn_origin::with_origin(
+            origin,
+            agent.run_single(&user_message),
+        )
+        .await
+        .map_err(|e| {
             warn!("[subconscious] agent run failed: {e}");
             format!("agent run: {e}")
         })?;
