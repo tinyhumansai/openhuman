@@ -511,6 +511,13 @@ const READ_ONLY_BASES: &[&str] = &[
     "lsblk",
     "lscpu",
     "cut",
+    // NOTE: OS-native launchers (`open`, `xdg-open`, `start`) are deliberately
+    // NOT in the read-only set. `classify_command` only sees the base command,
+    // not its args, and these launchers can open arbitrary `https://` URLs and
+    // custom URI handlers — i.e. trigger outbound network / system actions — so
+    // treating them as `Read` (no approval) is too broad. App launching now
+    // goes through the dedicated `launch_app` tool, which is scoped to named
+    // applications only and carries no shell-arg ambiguity.
     // Windows cmd / PowerShell read verbs + common aliases
     "dir",
     "type",

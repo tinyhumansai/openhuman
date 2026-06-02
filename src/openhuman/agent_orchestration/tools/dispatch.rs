@@ -119,9 +119,28 @@ pub(crate) async fn dispatch_subagent(
                 agent_id: definition.id.clone(),
                 error: message.clone(),
             });
-            Ok(ToolResult::error(format!("{tool_name} failed: {message}")))
+            // Make the failure unmistakable to the orchestrator: the delegated
+            // task did NOT run, so it must not be reported as success or have
+            // its output fabricated. Without this guardrail a weak orchestrator
+            // can narrate a plausible success from the bare error text — the
+            // "hallucinated success" half of #3193 (e.g. claiming `run_code`
+            // wrote a file when the coding model 404'd and nothing executed).
+            Ok(ToolResult::error(format_subagent_failure(
+                tool_name, &message,
+            )))
         }
     }
+}
+
+/// Format a subagent-delegation failure so the orchestrator cannot mistake it
+/// for success. Kept as a standalone, side-effect-free fn so the exact wording
+/// is unit-testable without standing up a registry + failing model (#3193).
+fn format_subagent_failure(tool_name: &str, message: &str) -> String {
+    format!(
+        "{tool_name} failed and did not complete — no work was performed and no \
+         results were produced. Do NOT treat this as success or fabricate an \
+         output; report the failure to the user. Error: {message}"
+    )
 }
 
 #[cfg(test)]
@@ -160,6 +179,33 @@ mod tests {
         assert!(
             out.contains("registry not initialised") || out.contains("not found in registry"),
             "unexpected graceful-failure message: {out}"
+        );
+    }
+
+    #[test]
+    fn subagent_failure_envelope_forbids_fabricated_success() {
+        // #3193: a hard delegation failure (e.g. run_code's coding model
+        // 404ing) must be surfaced so the orchestrator cannot narrate a
+        // plausible success. The envelope states the task did not run, tells
+        // the model not to fabricate output, and preserves the root error.
+        let msg = format_subagent_failure(
+            "run_code",
+            "openhuman API error (404): model 'davinci-002' does not support \
+             the chat-completions API",
+        );
+        assert!(msg.contains("run_code failed"), "names the tool: {msg}");
+        assert!(
+            msg.contains("did not complete"),
+            "states no completion: {msg}"
+        );
+        assert!(
+            msg.to_lowercase().contains("do not treat this as success")
+                && msg.contains("fabricate"),
+            "warns against fabricated success: {msg}"
+        );
+        assert!(
+            msg.contains("davinci-002") && msg.contains("404"),
+            "preserves the root error: {msg}"
         );
     }
 }

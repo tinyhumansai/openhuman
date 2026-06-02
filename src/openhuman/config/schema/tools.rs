@@ -972,6 +972,12 @@ pub struct ComputerControlConfig {
     /// the user must explicitly opt in.
     #[serde(default)]
     pub enabled: bool,
+    /// Opt-in for the mutating `ax_interact` actions (`press` / `set_value`).
+    /// Disabled by default: the read-only `list` action is always available,
+    /// but actuating arbitrary app controls / typing into arbitrary fields
+    /// requires explicit user opt-in (mirrors `enabled` for mouse/keyboard).
+    #[serde(default)]
+    pub ax_interact_mutations: bool,
 }
 
 // ── Agent integration tools (backend-proxied) ───────────────────────

@@ -93,6 +93,8 @@ pub(crate) struct ResponsesRequest {
     pub(crate) instructions: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) store: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

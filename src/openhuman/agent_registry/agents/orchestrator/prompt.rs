@@ -237,6 +237,19 @@ mod tests {
         );
     }
 
+    // Regression for issue #3102: orchestrator reads files via a worker
+    // (or directly) and then sits idle instead of delegating to the
+    // code executor. The fix is the same shape as the live-facts fix —
+    // a positive "do not stall after reading" sentence in the prompt.
+    #[test]
+    fn build_routes_code_repo_work_to_run_code_tool() {
+        let body = build(&ctx_with(&[])).unwrap();
+        assert!(body.contains("Do not stall after reading code-repo files"));
+        assert!(body.contains("Re-issue the entire task as one `delegate_run_code` call"));
+        assert!(body.contains("reading is step zero of execution"));
+        assert!(body.contains("The user does not need to write \"use the code executor\""));
+    }
+
     #[test]
     fn build_emits_delegation_guide_with_collapsed_tool() {
         let integrations = vec![ConnectedIntegration {

@@ -80,6 +80,14 @@ pub struct OpenAiCompatibleProvider {
     /// carries an `@<temp>` suffix (e.g. `"openai:gpt-4o@0.2"`). The
     /// `temperature_unsupported_models` glob filter still applies after.
     pub(crate) temperature_override: Option<f64>,
+    /// Value reported by `capabilities().native_tool_calling`. Defaults to
+    /// `true` because most OpenAI-compatible providers (OpenAI, Anthropic
+    /// adapters, GLM, Groq, Mistral, OpenHuman backend, …) implement the
+    /// `tools` parameter correctly. The factory flips this to `false` for
+    /// Ollama (sub-issue 3 of #3098), whose OpenAI-compat endpoint returns
+    /// HTTP 400 on `tools` for many models — making prompt-guided text
+    /// tool specs the only path that works across the Ollama model zoo.
+    native_tool_calling: bool,
 }
 
 /// How the provider expects the API key to be sent.
@@ -126,6 +134,43 @@ impl OpenAiCompatibleProvider {
             )
         } else {
             base
+        }
+    }
+
+    /// Build an actionable error for a completion-only model that was routed
+    /// to `/v1/chat/completions`. OpenHuman only speaks the chat-completions
+    /// API (with an optional `/v1/responses` fallback) — a completion-only /
+    /// base model 404s here and the responses fallback cannot rescue it, so we
+    /// surface the model name and concrete remediation instead of an opaque
+    /// "responses fallback failed" chain. See issue #3193.
+    fn completion_only_model_message(&self, model: &str, sanitized: &str) -> String {
+        format!(
+            "{name} API error (404): model '{model}' does not support the \
+             chat-completions API that OpenHuman uses — it appears to be a \
+             completion-only / base model. Assign a chat-capable model to this \
+             provider (e.g. in Settings → AI), or pick a different model. \
+             Provider detail: {sanitized}",
+            name = self.name,
+        )
+    }
+
+    /// Guard shared by every chat-completions 404 handler: if the body shows a
+    /// completion-only model, return the actionable error so the caller can
+    /// fail fast instead of attempting the futile `/v1/responses` fallback.
+    /// `None` means "not this case — proceed with normal fallback/enrich".
+    /// See issue #3193.
+    fn completion_only_404_guard(
+        &self,
+        status: reqwest::StatusCode,
+        sanitized: &str,
+        model: &str,
+    ) -> Option<anyhow::Error> {
+        if Self::is_completion_only_model_404(status, sanitized) {
+            Some(anyhow::anyhow!(
+                self.completion_only_model_message(model, sanitized)
+            ))
+        } else {
+            None
         }
     }
 
@@ -195,7 +240,18 @@ impl OpenAiCompatibleProvider {
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
             temperature_override: None,
+            native_tool_calling: true,
         }
+    }
+
+    /// Toggle whether this provider advertises native (OpenAI-style) tool
+    /// calling to the agent harness. The default is `true`; set to `false`
+    /// for providers whose `/v1/chat/completions` endpoint rejects the
+    /// `tools` parameter — the harness will then embed tool specs in the
+    /// system prompt and parse calls out of the response text instead.
+    pub fn with_native_tool_calling(mut self, enabled: bool) -> Self {
+        self.native_tool_calling = enabled;
+        self
     }
 
     /// Set the list of model glob patterns for which temperature must be
@@ -269,6 +325,7 @@ impl OpenAiCompatibleProvider {
             input,
             instructions,
             stream: Some(false),
+            store: Some(false),
         };
 
         let url = self.responses_url();
@@ -798,6 +855,24 @@ impl OpenAiCompatibleProvider {
         Self::is_native_tool_schema_unsupported(reqwest::StatusCode::BAD_REQUEST, error)
     }
 
+    /// Detect a 404 whose body says the model is completion-only and cannot be
+    /// served from `/v1/chat/completions` (OpenAI: "This is not a chat model
+    /// and thus not supported in the v1/chat/completions endpoint. Did you
+    /// mean to use v1/completions?"). When this fires, attempting the
+    /// `/v1/responses` fallback is futile, so callers should fail fast with an
+    /// actionable message via [`completion_only_model_message`]. The match is
+    /// deliberately tight so ordinary "model does not exist" 404s are NOT
+    /// caught (those should keep their existing fallback / enrich behaviour).
+    /// See issue #3193.
+    fn is_completion_only_model_404(status: reqwest::StatusCode, error: &str) -> bool {
+        if status != reqwest::StatusCode::NOT_FOUND {
+            return false;
+        }
+        let lower = error.to_lowercase();
+        lower.contains("not a chat model")
+            || (lower.contains("v1/chat/completions") && lower.contains("v1/completions"))
+    }
+
     /// Streaming variant of the native-tools chat path.
     ///
     /// Sends the request with `stream: true`, consumes the upstream SSE
@@ -1247,7 +1322,7 @@ impl OpenAiCompatibleProvider {
 impl Provider for OpenAiCompatibleProvider {
     fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
         crate::openhuman::inference::provider::traits::ProviderCapabilities {
-            native_tool_calling: true,
+            native_tool_calling: self.native_tool_calling,
             vision: false,
         }
     }
@@ -1342,6 +1417,12 @@ impl Provider for OpenAiCompatibleProvider {
             let status = response.status();
             let error = response.text().await?;
             let sanitized = super::sanitize_api_error(&error);
+
+            // A completion-only model 404s here and the /v1/responses fallback
+            // cannot rescue it — fail fast with actionable guidance (#3193).
+            if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
+            }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
@@ -1510,18 +1591,38 @@ impl Provider for OpenAiCompatibleProvider {
         if !response.status().is_success() {
             let status = response.status();
 
-            // Mirror chat_with_system: 404 may mean this provider uses the Responses API
-            if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
-                return self
-                    .chat_via_responses(credential, &effective_messages, model)
-                    .await
-                    .map_err(|responses_err| {
-                        let fb = super::format_anyhow_chain(&responses_err);
-                        anyhow::anyhow!(
-                            "{} API error (chat completions unavailable; responses fallback failed: {fb})",
-                            self.name
-                        )
-                    });
+            // A 404 may mean this provider uses the Responses API, OR that the
+            // model is completion-only. Read the body once so we can tell the
+            // two apart (#3193) — only the 404 branch needs it; the response is
+            // not used again here, so `api_error` below still owns the rest.
+            if status == reqwest::StatusCode::NOT_FOUND {
+                let error = response.text().await?;
+                let sanitized = super::sanitize_api_error(&error);
+
+                // Completion-only model: the responses fallback can't help —
+                // fail fast with actionable guidance.
+                if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                    return Err(err);
+                }
+
+                if self.supports_responses_fallback {
+                    return self
+                        .chat_via_responses(credential, &effective_messages, model)
+                        .await
+                        .map_err(|responses_err| {
+                            let fb = super::format_anyhow_chain(&responses_err);
+                            anyhow::anyhow!(
+                                "{} API error ({status}): {sanitized} (chat completions unavailable; responses fallback failed: {fb})",
+                                self.name
+                            )
+                        });
+                }
+
+                let enriched = self.enrich_404_message(
+                    format!("{} API error ({status}): {sanitized}", self.name),
+                    status,
+                );
+                return Err(anyhow::anyhow!("{enriched}"));
             }
 
             let err = super::api_error(&self.name, response).await;
@@ -1859,6 +1960,12 @@ impl Provider for OpenAiCompatibleProvider {
                 });
             }
 
+            // A completion-only model 404s here and the /v1/responses fallback
+            // cannot rescue it — fail fast with actionable guidance (#3193).
+            if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
+            }
+
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
                     .chat_via_responses(credential, &effective_messages, model)
@@ -1939,7 +2046,12 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn supports_native_tools(&self) -> bool {
-        true
+        // Must mirror `capabilities().native_tool_calling`. Both signals are
+        // read by the agent harness (`traits.rs:415`) to decide between an
+        // OpenAI-style `tools` array and the prompt-guided text fallback;
+        // letting them disagree would defeat `with_native_tool_calling(false)`
+        // for the Ollama branch of sub-issue 3 of #3098.
+        self.native_tool_calling
     }
 
     fn supports_streaming(&self) -> bool {

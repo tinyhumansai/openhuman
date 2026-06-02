@@ -159,6 +159,7 @@ vi.mock('../utils/config', () => ({
   E2E_DEFAULT_CORE_MODE: '',
   E2E_RESTART_APP_AS_RELOAD: false,
   DEV_FORCE_ONBOARDING: false,
+  CHAT_ATTACHMENTS_ENABLED: false,
   SKILLS_GITHUB_REPO: 'test/skills',
   GA_MEASUREMENT_ID: undefined,
   OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',

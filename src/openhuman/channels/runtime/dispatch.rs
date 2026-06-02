@@ -13,6 +13,7 @@ use crate::openhuman::channels::context::{
     conversation_memory_key, is_context_window_overflow_error, ChannelRuntimeContext,
     CHANNEL_TYPING_REFRESH_INTERVAL_SECS, MAX_CHANNEL_HISTORY,
 };
+use crate::openhuman::channels::providers::telegram::TELEGRAM_APPROVAL_CLIENT_ID;
 use crate::openhuman::channels::routes::{
     get_or_create_provider, get_route_selection, handle_runtime_command_if_needed,
 };
@@ -595,6 +596,41 @@ mod scoping_tests {
     }
 }
 
+#[cfg(test)]
+mod approval_surface_gating_tests {
+    use super::channel_has_approval_surface;
+
+    // Sub-issue 2 of #3098: this gate is what decides whether the dispatch
+    // loop sets an `ApprovalChatContext` (→ gate fires for `Prompt`-class
+    // tools) versus the legacy bypass (→ tool calls silently allowed).
+    // Pin the matrix so silently broadening to a new channel can't
+    // accidentally TTL-deny every parked tool call there.
+
+    #[test]
+    fn telegram_has_approval_surface() {
+        assert!(channel_has_approval_surface("telegram"));
+    }
+
+    #[test]
+    fn other_channels_do_not_yet_have_an_approval_surface() {
+        for channel in ["discord", "slack", "imessage", "mattermost", "web", "irc"] {
+            assert!(
+                !channel_has_approval_surface(channel),
+                "channel {channel:?} is not (yet) wired to a per-channel approval surface; \
+                 the dispatch loop must not scope an ApprovalChatContext for it or every \
+                 Prompt-class tool call will park with nobody to answer and TTL-deny"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_channel_does_not_have_approval_surface() {
+        assert!(!channel_has_approval_surface(""));
+        assert!(!channel_has_approval_surface("Telegram")); // case-sensitive on purpose
+        assert!(!channel_has_approval_surface("telegram-bot"));
+    }
+}
+
 #[cfg(any(test, debug_assertions))]
 pub mod test_support {
     //! Debug-build seams for raw integration coverage of dispatch helpers.
@@ -607,6 +643,80 @@ pub mod test_support {
 
     pub fn select_acknowledgment_reaction_for_test(content: &str) -> &'static str {
         select_acknowledgment_reaction(content)
+    }
+}
+
+/// Whether a channel currently has a registered approval surface — i.e.
+/// a subscriber that turns `ApprovalRequested` events into chat messages
+/// and a way for the user's reply to flow back into the
+/// [`ApprovalGate`]. When `true`, the dispatch loop scopes the agent
+/// turn in an [`ApprovalChatContext`] so the gate actually fires for
+/// `Prompt`-class tools and intercepts yes/no replies for parked
+/// approvals.
+///
+/// Only Telegram has a surface today (sub-issue 2 of #3098). Discord /
+/// Slack / iMessage / Mattermost remain in the legacy "no chat context
+/// → silently allow" state until each gets a per-channel surface in a
+/// follow-up PR; surfacing approvals there without a subscriber would
+/// just TTL-deny every parked call, which is worse than the status quo.
+///
+/// [`ApprovalChatContext`]: crate::openhuman::approval::ApprovalChatContext
+/// [`ApprovalGate`]: crate::openhuman::approval::ApprovalGate
+pub(crate) fn channel_has_approval_surface(channel: &str) -> bool {
+    channel == TELEGRAM_APPROVAL_CLIENT_ID
+}
+
+/// If the inbound message is a yes/no reply for a parked approval on
+/// this thread, route it to [`ApprovalGate::decide`] and return `true`.
+/// Otherwise return `false` so the caller can dispatch the message as a
+/// fresh turn (which intentionally cancels any parked approval — the
+/// user is redirecting). Mirrors the web channel intercept at
+/// `channels/providers/web.rs:493-525`.
+///
+/// [`ApprovalGate::decide`]: crate::openhuman::approval::ApprovalGate::decide
+async fn try_route_approval_reply(msg: &traits::ChannelMessage) -> bool {
+    let Some(gate) = crate::openhuman::approval::ApprovalGate::try_global() else {
+        return false;
+    };
+    let thread_id = conversation_history_key(msg);
+    let Some(request_id) = gate.pending_for_thread(&thread_id) else {
+        return false;
+    };
+    let Some(decision) = crate::openhuman::approval::parse_approval_reply(&msg.content) else {
+        return false;
+    };
+    match gate.decide(&request_id, decision) {
+        Ok(Some(_)) => {
+            tracing::info!(
+                "[dispatch] routed chat reply to approval gate channel={} thread_id={} request_id={} decision={}",
+                msg.channel,
+                thread_id,
+                request_id,
+                decision.as_str()
+            );
+            true
+        }
+        Ok(None) => {
+            // The request was already decided / cleared between our
+            // `pending_for_thread` check and `decide`. Don't claim the
+            // intercept; fall through so the reply lands as a normal turn.
+            tracing::warn!(
+                "[dispatch] approval reply targeted a non-pending request channel={} thread_id={} request_id={} — dispatching as fresh turn",
+                msg.channel,
+                thread_id,
+                request_id
+            );
+            false
+        }
+        Err(err) => {
+            tracing::warn!(
+                "[dispatch] approval gate decide failed channel={} thread_id={} request_id={}: {err}",
+                msg.channel,
+                thread_id,
+                request_id
+            );
+            false
+        }
     }
 }
 
@@ -634,6 +744,18 @@ pub(crate) async fn process_channel_message(
     let target_channel = ctx.channels_by_name.get(&msg.channel).cloned();
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
+    }
+
+    // Sub-issue 2 of #3098: if this channel has an approval surface and the
+    // inbound message is a yes/no reply for a parked approval on this same
+    // history key, route it to `ApprovalGate::decide` and return — running
+    // a fresh agent turn would cancel the parked tool call. Any other text
+    // falls through to the normal dispatch (the user is redirecting). Mirrors
+    // the same intercept in `channels/providers/web.rs:493-525`.
+    if channel_has_approval_surface(&msg.channel) {
+        if try_route_approval_reply(&msg).await {
+            return;
+        }
     }
 
     // Fire typing indicator as early as possible — before any async I/O — so the
@@ -925,7 +1047,7 @@ pub(crate) async fn process_channel_message(
         model = %route.model,
         "[channels::dispatch] dispatching {AGENT_RUN_TURN_METHOD} via native bus"
     );
-    let llm_result = tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), async {
+    let agent_call = async {
         request_native_global::<AgentTurnRequest, AgentTurnResponse>(
             AGENT_RUN_TURN_METHOD,
             turn_request,
@@ -947,6 +1069,27 @@ pub(crate) async fn process_channel_message(
             // startup wiring bugs are immediately obvious in logs.
             other => anyhow::anyhow!("[agent.run_turn dispatch] {other}"),
         })
+    };
+    // Sub-issue 2 of #3098: scope the agent turn in an `ApprovalChatContext`
+    // for channels that have a registered approval surface — currently
+    // Telegram only via `TelegramApprovalSurfaceSubscriber`. Without this
+    // scope the gate's "no chat context → allow straight through" branch
+    // (`approval/gate.rs:219-231`) silently bypasses every `Prompt`-class
+    // tool call, voiding the `supervised` autonomy tier on the channel.
+    // Discord / Slack / iMessage / Mattermost stay in the legacy bypass
+    // until each gets its own approval surface in a follow-up PR.
+    let llm_result = tokio::time::timeout(Duration::from_secs(ctx.message_timeout_secs), async {
+        if channel_has_approval_surface(&msg.channel) {
+            let approval_ctx = crate::openhuman::approval::ApprovalChatContext {
+                thread_id: history_key.clone(),
+                client_id: msg.channel.clone(),
+            };
+            crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
+                .scope(approval_ctx, agent_call)
+                .await
+        } else {
+            agent_call.await
+        }
     })
     .await;
 

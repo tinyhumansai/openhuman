@@ -3,7 +3,13 @@
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 compile_error!("src-tauri host supports desktop (Windows/macOS/Linux) only. Mobile lives in app/src-tauri-mobile.");
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod artifact_commands;
 mod cdp;
+// macOS/Linux only: depends on the `nix` crate (a `cfg(unix)` dependency) and
+// resolves a platform cache path that is only defined for those targets. On
+// Windows it must not be compiled — see issue: Windows release build failed
+// with E0433 (`nix` unresolved) + E0425 (`cache_path` undefined).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cef_preflight;
 mod cef_profile;
@@ -3081,6 +3087,12 @@ pub fn run() {
             core_rpc_token,
             overlay_parent_rpc_url,
             process_diagnostics_list_owned,
+            // `mod artifact_commands;` is `#[cfg(any(target_os = "macos", target_os = "linux"))]`
+            // (Downloads-dir + `tokio::fs::copy` flow is non-Windows-only today).
+            // The handler entry MUST carry the same gate or Windows builds fail
+            // with "function not found in scope" (CR #3328947313 on PR #3026).
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            artifact_commands::download_artifact_to_downloads,
             check_core_update,
             apply_core_update,
             check_app_update,

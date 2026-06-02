@@ -120,7 +120,9 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the workspace directory"
+        "Execute a shell command. Use this to run code, manipulate files in the workspace, \
+         or perform system actions on the user's machine — including launching applications \
+         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {

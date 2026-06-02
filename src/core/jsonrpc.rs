@@ -2081,6 +2081,13 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
              Prompt-class external-effect tool calls run unprompted"
         );
     }
+    // Artifact surface bridges DomainEvent::ArtifactReady/Failed onto the web
+    // channel ("Files in this chat" panel + ArtifactCard updates). This is
+    // independent of the approval-gate config — keep it outside the
+    // `if approval_gate` block so artifact events still publish when the user
+    // sets OPENHUMAN_APPROVAL_GATE=0 (CR #3328947323 on PR #3026). Idempotent
+    // (OnceLock-guarded inside register_artifact_surface_subscriber).
+    crate::openhuman::channels::providers::web::register_artifact_surface_subscriber();
 
     // --- Workspace migrations --------------------------------------------
     crate::openhuman::startup::run_workspace_migrations(&workspace_dir);

@@ -86,7 +86,7 @@ async function navigateChatAndSend(prompt: string): Promise<void> {
     async () => {
       if (await getSelectedThreadId()) return true;
       if (await textExists('No messages yet')) return true;
-      return textExists('Type a message');
+      return textExists('How can I help');
     },
     { timeout: 15_000, timeoutMsg: 'Chat surface did not mount' }
   );

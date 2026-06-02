@@ -153,7 +153,7 @@ describe('Chat tool-error recovery', () => {
           'button[aria-label="Send message"]'
         ) as HTMLButtonElement | null;
         const ta = document.querySelector(
-          'textarea[placeholder="Type a message..."]'
+          'textarea[placeholder="How can I help you today?"]'
         ) as HTMLTextAreaElement | null;
         return (btn !== null && !btn.disabled) || (ta !== null && !ta.disabled);
       });

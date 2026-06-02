@@ -154,13 +154,52 @@ impl UnifiedMemory {
         }
 
         let chunks = Self::chunk_document_content(&input.content, 225);
+
+        // Embed every chunk in a SINGLE provider call rather than one
+        // round-trip per chunk. All providers implement the batch `embed`
+        // (`embed_one` is just a convenience wrapper around it), so a document
+        // that chunks into N pieces previously paid N sequential network
+        // round-trips on the write path; this collapses them to one.
+        //
+        // Result handling preserves the previous per-chunk resilience:
+        //   * a failed batch (provider error) stores all chunks WITHOUT a
+        //     vector — exactly what `embed_one(...).await.ok()` did per chunk;
+        //   * a provider that returns fewer/empty vectors than chunks (e.g.
+        //     `NoopEmbedding` returns an empty Vec, or a blank position from
+        //     NaN recovery) leaves those chunks vector-less by position.
+        let mut embeddings: Vec<Option<Vec<f32>>> = if chunks.is_empty() {
+            Vec::new()
+        } else {
+            let chunk_refs: Vec<&str> = chunks.iter().map(String::as_str).collect();
+            log::debug!(
+                "[memory] batch-embedding {} chunk(s) for {namespace}/{document_id}",
+                chunk_refs.len()
+            );
+            match self.embedder.embed(&chunk_refs).await {
+                Ok(vectors) => vectors
+                    .into_iter()
+                    .map(|v| (!v.is_empty()).then_some(v))
+                    .collect(),
+                Err(e) => {
+                    log::warn!(
+                        "[memory] batch embed failed for {} chunk(s) in {namespace}/{document_id}; storing without vectors: {e}",
+                        chunks.len()
+                    );
+                    Vec::new()
+                }
+            }
+        };
+
+        // Computed once; only attached to chunks that actually got a vector.
+        let signature = self.embedder.signature();
         for (idx, chunk) in chunks.iter().enumerate() {
-            // Embed the chunk, capturing the model signature + dimension so recall
-            // can exclude vectors produced by a different embedding model (cross-model
-            // cosine is meaningless) and guard against dimension mismatches.
-            let embedded = self.embedder.embed_one(chunk).await.ok();
+            // Move the vector out by position so recall can exclude vectors
+            // produced by a different embedding model (cross-model cosine is
+            // meaningless) and guard against dimension mismatches. Missing
+            // positions (short/empty provider result) stay vector-less.
+            let embedded = embeddings.get_mut(idx).and_then(Option::take);
             let dim = embedded.as_ref().map(|v| v.len() as i64);
-            let model_signature = embedded.as_ref().map(|_| self.embedder.signature());
+            let model_signature = embedded.as_ref().map(|_| signature.clone());
             let embedding = embedded.as_ref().map(|v| Self::vec_to_bytes(v));
             let chunk_id = format!("{document_id}:{idx}");
             let conn = self.conn.lock();

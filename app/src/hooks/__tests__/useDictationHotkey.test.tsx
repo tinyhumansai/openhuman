@@ -79,4 +79,43 @@ describe('useDictationHotkey', () => {
     });
     expect(hoisted.mockSocket.on).not.toHaveBeenCalled();
   });
+
+  it('dispatches an autoSend insert-text event on transcription', async () => {
+    renderHook(() => useDictationHotkey());
+    await waitFor(() => {
+      expect(hoisted.handlers['dictation:transcription']).toBeDefined();
+    });
+
+    const received: CustomEvent<{ text?: string; autoSend?: boolean }>[] = [];
+    const listener = (e: Event) =>
+      received.push(e as CustomEvent<{ text?: string; autoSend?: boolean }>);
+    window.addEventListener('dictation://insert-text', listener);
+    try {
+      hoisted.handlers['dictation:transcription']({ text: '  hello world  ' });
+    } finally {
+      window.removeEventListener('dictation://insert-text', listener);
+    }
+
+    expect(received).toHaveLength(1);
+    // Trimmed text, and autoSend flag set so Conversations sends it straight to the agent.
+    expect(received[0].detail).toEqual({ text: 'hello world', autoSend: true });
+  });
+
+  it('ignores blank transcription text (no event dispatched)', async () => {
+    renderHook(() => useDictationHotkey());
+    await waitFor(() => {
+      expect(hoisted.handlers['dictation:transcription']).toBeDefined();
+    });
+
+    const received: Event[] = [];
+    const listener = (e: Event) => received.push(e);
+    window.addEventListener('dictation://insert-text', listener);
+    try {
+      hoisted.handlers['dictation:transcription']({ text: '   ' });
+    } finally {
+      window.removeEventListener('dictation://insert-text', listener);
+    }
+
+    expect(received).toHaveLength(0);
+  });
 });

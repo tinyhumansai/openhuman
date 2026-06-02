@@ -252,7 +252,7 @@ const en: TranslationMap = {
 
   // Chat / Conversations
   'chat.newThread': 'New thread',
-  'chat.typeMessage': 'Type a message...',
+  'chat.typeMessage': 'How can I help you today?',
   'chat.send': 'Send message',
   'chat.thinking': 'Thinking...',
   'chat.noMessages': 'No messages yet',
@@ -544,6 +544,13 @@ const en: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} hr ago',
   'memoryTree.status.dayAgo': '1 day ago',
   'memoryTree.status.daysAgo': '{count} days ago',
+  // Per-integration health strip (#2763) — rendered between the 4-tile grid
+  // and the auto-sync toggle in MemoryTreeStatusPanel.
+  'memoryTree.status.integrationsTitle': 'Per-integration health',
+  'memoryTree.status.integrationsEmpty': 'No integrations connected',
+  'memoryTree.status.integrationActive': 'Active',
+  'memoryTree.status.integrationStale': 'Stale',
+  'memoryTree.status.integrationChunks': 'Chunks: {count}',
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
@@ -2628,6 +2635,9 @@ const en: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Connect with other OpenHuman users',
   'app.openhumanLink.discord.perk3': 'Share feedback directly with the team',
   'app.openhumanLink.discord.perk4': 'Community help and support',
+  'app.openhumanLink.discordReport.intro':
+    'Sorry — something broke on our end. We try to log these automatically, but sharing the details on Discord helps us fix it faster.',
+  'app.openhumanLink.discordReport.openDiscord': 'Open Discord',
   'app.openhumanLink.done': 'Done',
   'app.openhumanLink.loadingChannelSetup': 'Loading channel setup',
   'app.openhumanLink.maybeLater': 'Maybe later',
@@ -2648,6 +2658,7 @@ const en: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Connect your apps',
   'app.openhumanLink.title.billing': 'Billing & credits',
   'app.openhumanLink.title.discord': 'Join the community',
+  'app.openhumanLink.title.discordReport': 'Report this error',
   'app.openhumanLink.title.messaging': 'Connect a chat channel',
   'app.openhumanLink.title.notifications': 'Allow notifications',
   'app.persistRehydration.body': 'Loading your saved settings…',
@@ -4809,6 +4820,24 @@ const en: TranslationMap = {
   'pages.settings.account.security': 'Security',
   'pages.settings.account.securityDesc': 'Secret storage mode and keychain status',
 
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artifact: {title}',
+  'chat.artifact.generating': 'Generating {kind}…',
+  'chat.artifact.ready': 'Ready',
+  'chat.artifact.failed': 'Generation failed',
+  'chat.artifact.download': 'Download',
+  'chat.artifact.downloading': 'Downloading…',
+  'chat.artifact.downloaded': 'Saved to {path}',
+  'chat.artifact.download_failed': 'Download failed: {reason}',
+  'chat.artifact.retry': 'Retry',
+  'chat.artifact.reveal': 'Show in folder',
+  'chat.artifact.show_more': 'Show more',
+  'chat.artifact.show_less': 'Show less',
+  // Chat composer toolbar
+  'composer.attachFile': 'Attach file',
+  'composer.modelSelector': 'Model',
+  'composer.voiceMode': 'Voice mode',
+  'composer.qualityHigh': 'High',
   // Sync budget dialog
   'syncBudget.title': 'Sync budget',
   'syncBudget.maxTokens': 'Max tokens per sync',

@@ -24,7 +24,7 @@ async function openChat(page: Page): Promise<void> {
     await skipButton.first().click({ force: true });
     await expect(skipButton.first()).toBeHidden();
   }
-  await expect(page.getByPlaceholder('Type a message...')).toBeVisible();
+  await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible();
 }
 
 async function installGetUserMediaError(page: Page, name: string): Promise<void> {
@@ -61,7 +61,7 @@ async function restoreGetUserMedia(page: Page): Promise<void> {
 
 async function switchChatIntoMicComposer(page: Page): Promise<void> {
   await dismissWalkthroughIfPresent(page);
-  await page.getByRole('button', { name: 'Start recording' }).click({ force: true });
+  await page.getByRole('button', { name: 'Voice mode' }).click({ force: true });
   await expect(page.getByText(/Tap and speak|Waiting for agent/i)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Switch to text' })).toBeVisible();
 }
@@ -77,7 +77,7 @@ test.describe('Voice mode integration', () => {
     await switchChatIntoMicComposer(page);
 
     await page.getByRole('button', { name: 'Switch to text' }).click();
-    await expect(page.getByPlaceholder('Type a message...')).toBeVisible();
+    await expect(page.getByPlaceholder('How can I help you today?')).toBeVisible();
     await expect(page.getByTestId('send-message-button')).toBeVisible();
   });
 

@@ -233,7 +233,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Polecenie',
   'nav.routines': 'Routines',
   'chat.newThread': 'Nowy wątek',
-  'chat.typeMessage': 'Napisz wiadomość...',
+  'chat.typeMessage': 'Jak mogę ci dziś pomóc?',
   'chat.send': 'Wyślij wiadomość',
   'chat.thinking': 'Myślę...',
   'chat.noMessages': 'Brak wiadomości',
@@ -443,6 +443,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} godz. temu',
   'memoryTree.status.dayAgo': '1 dzień temu',
   'memoryTree.status.daysAgo': '{count} dni temu',
+  'memoryTree.status.integrationsTitle': 'Stan poszczególnych integracji',
+  'memoryTree.status.integrationsEmpty': 'Brak podłączonych integracji',
+  'memoryTree.status.integrationActive': 'Aktywna',
+  'memoryTree.status.integrationStale': 'Nieaktualna',
+  'memoryTree.status.integrationChunks': 'Liczba fragmentów: {count}',
   'alerts.title': 'Alerty',
   'alerts.empty': 'Brak alertów',
   'alerts.markAllRead': 'Oznacz wszystkie jako przeczytane',
@@ -2285,6 +2290,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Wczesny dostęp do nowych funkcji',
   'app.openhumanLink.discord.perk3': 'Wymiana skryptów i przepisów',
   'app.openhumanLink.discord.perk4': 'Możliwość wpływu na priorytety',
+  'app.openhumanLink.discordReport.intro':
+    'Przepraszamy — coś poszło nie tak po naszej stronie. Staramy się rejestrować takie błędy automatycznie, ale udostępnienie szczegółów na Discord pomaga nam szybciej je naprawić.',
+  'app.openhumanLink.discordReport.openDiscord': 'Otwórz Discord',
   'app.openhumanLink.done': 'Gotowe',
   'app.openhumanLink.loadingChannelSetup': 'Wczytywanie konfiguracji kanału',
   'app.openhumanLink.maybeLater': 'Może później',
@@ -2306,6 +2314,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Podłącz swoje aplikacje',
   'app.openhumanLink.title.billing': 'Rozliczenia i kredyty',
   'app.openhumanLink.title.discord': 'Dołącz do społeczności',
+  'app.openhumanLink.title.discordReport': 'Zgłoś ten błąd',
   'app.openhumanLink.title.messaging': 'Podłącz kanał komunikacji',
   'app.openhumanLink.title.notifications': 'Zezwól na powiadomienia',
   'app.persistRehydration.body':
@@ -4556,7 +4565,25 @@ const messages: TranslationMap = {
     'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
   'memory.health.remediation.transient':
     'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Tworzenie {kind}…',
+  'chat.artifact.ready': 'Gotowe',
+  'chat.artifact.failed': 'Tworzenie nie powiodło się',
+  'chat.artifact.download': 'Pobierz',
+  'chat.artifact.downloading': 'Pobieranie…',
+  'chat.artifact.downloaded': 'Zapisano w {path}',
+  'chat.artifact.download_failed': 'Pobieranie nie powiodło się: {reason}',
+  'chat.artifact.retry': 'Spróbuj ponownie',
+  'chat.artifact.reveal': 'Pokaż w folderze',
+  'chat.artifact.show_more': 'Pokaż więcej',
+  'chat.artifact.show_less': 'Pokaż mniej',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Dołącz plik',
+  'composer.modelSelector': 'Model',
+  'composer.voiceMode': 'Tryb głosowy',
+  'composer.qualityHigh': 'Wysoka',
   // Agent activity level
   'activityLevel.title': 'Poziom aktywności agenta',
   'activityLevel.description':

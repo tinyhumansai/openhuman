@@ -366,6 +366,60 @@ async fn upsert_document_writes_vector_chunks_for_chunked_content() {
     );
 }
 
+/// Embedder that records how many times `embed` is invoked and returns one
+/// fixed-dimension vector per input text. Used to prove `upsert_document`
+/// embeds all chunks in a SINGLE batch call rather than one call per chunk.
+struct CountingEmbedder {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::openhuman::embeddings::EmbeddingProvider for CountingEmbedder {
+    fn name(&self) -> &str {
+        "counting"
+    }
+
+    fn model_id(&self) -> &str {
+        "counting-test"
+    }
+
+    fn dimensions(&self) -> usize {
+        3
+    }
+
+    async fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
+    }
+}
+
+#[tokio::test]
+async fn upsert_document_batch_embeds_all_chunks_in_one_call() {
+    let tmp = TempDir::new().unwrap();
+    let embedder = Arc::new(CountingEmbedder {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let memory = UnifiedMemory::new(tmp.path(), embedder.clone(), None).unwrap();
+
+    // Long enough to chunk into several pieces (chunk size is 225 chars).
+    let long_body = "alpha ".repeat(400);
+    let document_id = memory
+        .upsert_document(make_doc_input("test:batch", "doc-a", "Doc A", &long_body))
+        .await
+        .unwrap();
+
+    let chunk_count = count_vector_chunks(&memory, "test:batch", &document_id);
+    assert!(
+        chunk_count >= 3,
+        "test body should chunk into >=3 pieces, got {chunk_count}"
+    );
+    assert_eq!(
+        embedder.calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "all chunks must be embedded in a single batch call, not one call per chunk"
+    );
+}
+
 #[tokio::test]
 async fn upsert_document_reuses_document_id_preserves_created_at_and_replaces_vector_chunks() {
     let tmp = TempDir::new().unwrap();

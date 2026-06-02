@@ -238,7 +238,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Kommandant',
   'nav.routines': 'Routines',
   'chat.newThread': 'Neuer Thread',
-  'chat.typeMessage': 'Gib eine Nachricht ein...',
+  'chat.typeMessage': 'Wie kann ich dir heute helfen?',
   'chat.send': 'Nachricht senden',
   'chat.thinking': 'Denken...',
   'chat.noMessages': 'Noch keine Nachrichten',
@@ -451,6 +451,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': 'Vor {count} Std.',
   'memoryTree.status.dayAgo': 'Vor 1 Tag',
   'memoryTree.status.daysAgo': '{count} vor Tagen',
+  'memoryTree.status.integrationsTitle': 'Integrationsstatus',
+  'memoryTree.status.integrationsEmpty': 'Keine Integrationen verbunden',
+  'memoryTree.status.integrationActive': 'Aktiv',
+  'memoryTree.status.integrationStale': 'Veraltet',
+  'memoryTree.status.integrationChunks': 'Chunks: {count}',
   'alerts.title': 'Warnungen',
   'alerts.empty': 'Noch keine Benachrichtigungen',
   'alerts.markAllRead': 'Alle als gelesen markieren',
@@ -2313,6 +2318,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Vorteil2',
   'app.openhumanLink.discord.perk3': 'Vorteil3',
   'app.openhumanLink.discord.perk4': 'Vorteil4',
+  'app.openhumanLink.discordReport.intro':
+    'Entschuldigung — bei uns ist etwas schiefgelaufen. Wir versuchen, solche Fehler automatisch zu protokollieren, aber wenn du die Details auf Discord teilst, können wir sie schneller beheben.',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord öffnen',
   'app.openhumanLink.done': 'Fertig',
   'app.openhumanLink.loadingChannelSetup': 'Kanal-Setup wird geladen',
   'app.openhumanLink.maybeLater': 'Vielleicht später',
@@ -2333,6 +2341,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Verbinde deine Apps',
   'app.openhumanLink.title.billing': 'Abrechnung und Gutschriften',
   'app.openhumanLink.title.discord': 'Tritt der Community bei',
+  'app.openhumanLink.title.discordReport': 'Diesen Fehler melden',
   'app.openhumanLink.title.messaging': 'Verbinde einen Chat-Kanal',
   'app.openhumanLink.title.notifications': 'Benachrichtigungen zulassen',
   'app.persistRehydration.body': 'Körper',
@@ -4597,10 +4606,28 @@ const messages: TranslationMap = {
   'memory.health.remediation.extraction_timeout':
     'Das Modell zur Speicherextraktion überschreitet die Zeit, daher hat das Wiki wenig Struktur. Wechsle das Modell für die Speicherextraktion unter Einstellungen → KI zu einem schnelleren.',
   'memory.health.remediation.summarizer_unavailable':
-    'Für „Zusammenfassungsbäume erstellen“ ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
+    'Für „Zusammenfassungsbäume erstellen” ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
   'memory.health.remediation.transient':
     'Ein vorübergehender Fehler hat die Speicherverarbeitung unterbrochen. Es wird automatisch erneut versucht.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Erstelle {kind}…',
+  'chat.artifact.ready': 'Bereit',
+  'chat.artifact.failed': 'Erstellung fehlgeschlagen',
+  'chat.artifact.download': 'Herunterladen',
+  'chat.artifact.downloading': 'Wird heruntergeladen…',
+  'chat.artifact.downloaded': 'Gespeichert unter {path}',
+  'chat.artifact.download_failed': 'Download fehlgeschlagen: {reason}',
+  'chat.artifact.retry': 'Erneut versuchen',
+  'chat.artifact.reveal': 'Im Ordner anzeigen',
+  'chat.artifact.show_more': 'Mehr anzeigen',
+  'chat.artifact.show_less': 'Weniger anzeigen',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Datei anhängen',
+  'composer.modelSelector': 'Modell',
+  'composer.voiceMode': 'Sprachmodus',
+  'composer.qualityHigh': 'Hoch',
   // Agent activity level
   'activityLevel.title': 'Agent-Aktivitätsstufe',
   'activityLevel.description':

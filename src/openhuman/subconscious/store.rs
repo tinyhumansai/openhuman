@@ -81,6 +81,18 @@ fn open_and_initialize(db_path: &Path) -> Result<Connection> {
     conn.busy_timeout(BUSY_TIMEOUT)
         .context("configure subconscious busy_timeout")?;
 
+    // Choose a journal mode this filesystem can actually back *before* running
+    // the table DDL. WAL is preferred for read/write concurrency, but it
+    // eagerly opens an mmap-backed `-shm` shared-memory segment; on network
+    // mounts, FUSE, and some sandboxed/synced macOS paths that mmap fails with
+    // SQLITE_IOERR_SHMMAP (4618) or SQLITE_CANTOPEN (14). Previously the
+    // `PRAGMA journal_mode = WAL` lived inside `SCHEMA_DDL`, so such a failure
+    // aborted the whole schema-init batch and hung the Intelligence tab
+    // (issue #3231 / TAURI-RUST-8WM). WAL is a performance optimization, not a
+    // correctness requirement, so degrade to a rollback journal that needs no
+    // shared memory rather than failing init.
+    apply_journal_mode(&conn);
+
     conn.execute_batch(SCHEMA_DDL)
         .context("failed to run subconscious schema DDL")?;
 
@@ -89,6 +101,66 @@ fn open_and_initialize(db_path: &Path) -> Result<Connection> {
     super::reflection_store::migrate_add_thread_id_column(&conn);
 
     Ok(conn)
+}
+
+/// Set the SQLite journal mode for the subconscious DB, preferring WAL but
+/// gracefully degrading to a rollback journal when the filesystem can't back
+/// WAL's shared-memory segment.
+///
+/// `PRAGMA journal_mode = WAL` opens (and mmaps) the `-shm` file eagerly, so a
+/// filesystem that can't support shared memory surfaces the failure here as
+/// `SQLITE_IOERR_SHMMAP` / `SQLITE_CANTOPEN` rather than at first write. We try
+/// WAL, and on any error — or if the engine silently refuses to switch (e.g.
+/// in-memory DBs report `memory`) — fall back to `TRUNCATE`, which uses an
+/// ordinary rollback journal and needs no shared memory. Failures are logged,
+/// never propagated: a working rollback journal is strictly better than a
+/// failed schema init, and the caller's DDL/queries work identically either
+/// way.
+///
+/// Logs use a stable `db = "subconscious.db"` identifier rather than the
+/// absolute path — the workspace path embeds the user's home dir / username, so
+/// emitting it would leak PII into the breadcrumb stream.
+fn apply_journal_mode(conn: &Connection) {
+    match query_journal_mode(conn, "WAL") {
+        Ok(mode) if mode.eq_ignore_ascii_case("wal") => return,
+        Ok(mode) => {
+            tracing::warn!(
+                target: "openhuman::subconscious::store",
+                db = "subconscious.db",
+                requested = "wal",
+                effective = %mode,
+                "[subconscious::store] WAL journal mode not honoured; falling back to TRUNCATE"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "openhuman::subconscious::store",
+                db = "subconscious.db",
+                error = %format!("{e}"),
+                "[subconscious::store] WAL journal mode failed (filesystem can't back -shm); falling back to TRUNCATE"
+            );
+        }
+    }
+
+    if let Err(e) = query_journal_mode(conn, "TRUNCATE") {
+        tracing::warn!(
+            target: "openhuman::subconscious::store",
+            db = "subconscious.db",
+            error = %format!("{e}"),
+            "[subconscious::store] TRUNCATE journal fallback also failed; continuing with engine default"
+        );
+    }
+}
+
+/// Run `PRAGMA journal_mode = <mode>` and return the resulting mode string.
+///
+/// `mode` is a fixed internal SQLite keyword (`WAL`, `TRUNCATE`, …), never user
+/// input. PRAGMA statements don't accept bound parameters, so inlining the
+/// keyword in the statement text is the only option and is safe here.
+fn query_journal_mode(conn: &Connection, mode: &str) -> rusqlite::Result<String> {
+    conn.query_row(&format!("PRAGMA journal_mode = {mode}"), [], |row| {
+        row.get::<_, String>(0)
+    })
 }
 
 fn is_sqlite_busy(err: &anyhow::Error) -> bool {
@@ -104,9 +176,12 @@ fn is_sqlite_busy(err: &anyhow::Error) -> bool {
     msg.contains("database is locked") || msg.contains("database table is locked")
 }
 
+// NOTE: `PRAGMA journal_mode` is intentionally *not* part of this batch — it is
+// applied separately via `apply_journal_mode` so a filesystem that can't back
+// WAL's `-shm` segment degrades to a rollback journal instead of aborting the
+// whole schema init (issue #3231). Keep journal-mode selection out of here.
 const SCHEMA_DDL: &str = "
     PRAGMA foreign_keys = ON;
-    PRAGMA journal_mode = WAL;
 
     -- Legacy tables retained for backward compatibility with existing DBs.
     -- No longer written to or read from.
