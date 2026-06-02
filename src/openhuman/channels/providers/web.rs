@@ -473,8 +473,18 @@ pub async fn start_chat(
             thread_id: thread_id_task.clone(),
             client_id: client_id_task.clone(),
         };
-        let result = crate::openhuman::approval::APPROVAL_CHAT_CONTEXT
-            .scope(
+        // Scope the matching `AgentTurnOrigin::WebChat` alongside the chat
+        // context so the approval gate's origin-aware decision tree sees a
+        // web-routable turn. Both task-locals must wrap the same future —
+        // tokio task-locals do not cross `tokio::spawn`, and `intercept`
+        // runs inline within this task.
+        let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::WebChat {
+            thread_id: thread_id_task.clone(),
+            client_id: client_id_task.clone(),
+        };
+        let result = crate::openhuman::agent::turn_origin::with_origin(
+            origin,
+            crate::openhuman::approval::APPROVAL_CHAT_CONTEXT.scope(
                 approval_ctx,
                 run_chat_task(
                     &client_id_task,
@@ -486,8 +496,9 @@ pub async fn start_chat(
                     profile_id,
                     locale,
                 ),
-            )
-            .await;
+            ),
+        )
+        .await;
 
         match result {
             Ok(chat_result) => {
