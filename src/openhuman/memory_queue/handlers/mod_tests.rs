@@ -237,6 +237,11 @@ async fn reembed_backfill_skips_when_no_provider() {
 
     // Default test config leaves embeddings unconfigured (no endpoint/model,
     // provider unset) — the no-provider path build_write_embedder guards.
+    //
+    // Hold the shared health test-guard: the no-provider path marks the
+    // process-global semantic-recall degraded flag, so the guard resets it on
+    // entry and keeps the signal from leaking into parallel status tests.
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
     let (_tmp, cfg) = test_config();
     let ts = chrono::Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
     let chunk = Chunk {

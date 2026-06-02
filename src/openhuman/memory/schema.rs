@@ -939,9 +939,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
                 FieldSchema {
                     name: "first_blocking_cause",
-                    ty: TypeSchema::Json,
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
                     comment: "Typed { code, class, remediation_key, detail? } of the first \
-                              non-ok stage; null when healthy.",
+                              non-ok stage; null when healthy. Mirrors \
+                              pipeline_status.first_blocking_cause as an explicit Option.",
                     required: false,
                 },
                 FieldSchema {

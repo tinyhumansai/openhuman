@@ -196,7 +196,7 @@ async fn extract_soft_fallback_on_provider_failure() {
     // #002: this path now sets the process-global "structure degraded" flag.
     // Hold the shared health test-guard so the flag is reset on entry and the
     // signal doesn't leak into parallel status tests.
-    let _g = crate::openhuman::memory_tree::health::test_guard();
+    let _health_guard = crate::openhuman::memory_tree::health::test_guard();
     use crate::openhuman::memory::chat::{ChatPrompt, ChatProvider};
     use async_trait::async_trait;
     use std::sync::Arc;

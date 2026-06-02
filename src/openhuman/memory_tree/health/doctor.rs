@@ -120,7 +120,16 @@ pub fn run_doctor(config: &Config) -> DoctorReport {
         .map(|_| "ollama-override".to_string())
         .or_else(|| config.embeddings_provider.clone())
         .filter(|s| !s.trim().is_empty());
-    stages.push(match &embeddings_provider {
+    stages.push(match embeddings_provider.as_deref() {
+        // Explicit `none` opt-out: semantic recall is off by the user's choice,
+        // not a fault. Reported `ok` (consistent with a `scheduler_gate=off`
+        // pause and the write-path opt-out treatment) but with an honest note,
+        // so the prior "provider configured: none" can't read as a working
+        // embeddings provider. (CodeRabbit on doctor.rs)
+        Some("none") => StageHealth::ok(
+            "embeddings",
+            "embeddings disabled by you (provider = none) — semantic recall is intentionally off",
+        ),
         Some(p) => StageHealth::ok("embeddings", format!("provider configured: {p}")),
         None => StageHealth::bad(
             "embeddings",
@@ -295,6 +304,35 @@ mod tests {
             report.stages.iter().all(|s| s.ok),
             "stages: {:?}",
             report.stages
+        );
+    }
+
+    #[test]
+    fn embeddings_none_opt_out_is_ok_but_note_is_honest() {
+        // `embeddings_provider = "none"` is a deliberate opt-out: the stage stays
+        // ok (a configured choice, like a paused scheduler gate) but the note must
+        // not read as a working provider ("provider configured: none"). (CodeRabbit)
+        let _g = super::super::test_guard();
+        let (_tmp, mut cfg) = test_config();
+        cfg.embeddings_provider = Some("none".into());
+        cfg.local_ai.runtime_enabled = true;
+
+        let report = run_doctor(&cfg);
+        let embed = report
+            .stages
+            .iter()
+            .find(|s| s.stage == "embeddings")
+            .unwrap();
+        assert!(embed.ok, "opt-out is a choice, not a fault");
+        assert!(
+            embed.note.contains("disabled") && embed.note.contains("intentionally off"),
+            "note must name the intentional opt-out, got: {}",
+            embed.note
+        );
+        assert!(
+            !embed.note.contains("provider configured"),
+            "must not read as a working provider, got: {}",
+            embed.note
         );
     }
 
