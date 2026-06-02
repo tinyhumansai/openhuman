@@ -4,6 +4,7 @@ import type { ChatSendError } from '../../chat/chatSendError';
 import type { Attachment } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
 import AttachmentPreview from './AttachmentPreview';
+import TokenUsagePill from './TokenUsagePill';
 
 /** Max composer height ≈ 4 lines of text-sm + padding. */
 const COMPOSER_MAX_HEIGHT = 96;
@@ -122,23 +123,26 @@ export default function ChatComposer({
 
       {/* Row 2: Toolbar */}
       <div className="flex items-center justify-between px-3 pb-2.5 pt-0.5">
-        {/* Left: attachment + button */}
-        <button
-          type="button"
-          aria-label={t('composer.attachFile')}
-          title={t('composer.attachFile')}
-          onClick={() => fileInputRef.current?.click()}
-          disabled={composerInteractionBlocked || isSending || attachments.length >= maxAttachments}
-          className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.8}
-              d="M12 5v14m-7-7h14"
-            />
-          </svg>
-        </button>
+        {/* Left: attachment + button, then usage pill */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label={t('composer.attachFile')}
+            title={t('composer.attachFile')}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={composerInteractionBlocked || isSending || attachments.length >= maxAttachments}
+            className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.8}
+                d="M12 5v14m-7-7h14"
+              />
+            </svg>
+          </button>
+          <TokenUsagePill />
+        </div>
 
         {/* Right: voice mode + send */}
         <div className="flex items-center gap-2">

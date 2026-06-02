@@ -7,7 +7,6 @@ import { type ChatSendError, chatSendError } from '../chat/chatSendError';
 import { checkPromptInjection, promptGuardMessage } from '../chat/promptInjectionGuard';
 import ApprovalRequestCard from '../components/chat/ApprovalRequestCard';
 import ChatComposer from '../components/chat/ChatComposer';
-import TokenUsagePill from '../components/chat/TokenUsagePill';
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
 import PillTabBar from '../components/PillTabBar';
 import UpsellBanner from '../components/upsell/UpsellBanner';
@@ -1516,7 +1515,6 @@ const Conversations = ({
                   +
                 </button>
               </div>
-              <TokenUsagePill />
               <button
                 data-testid="new-thread-button"
                 onClick={() => void handleCreateNewThread()}
