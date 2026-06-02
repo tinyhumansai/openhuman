@@ -4583,13 +4583,13 @@ const messages: TranslationMap = {
   'memoryTree.status.extractionCoverage':
     'Extraktionsabdeckung: {pct}% der Abschnitte haben Struktur',
   'memory.health.remediation.budget_exhausted':
-    'Die Speicher-Embeddings haben das verwaltete Budget erreicht. Richte lokale Ollama-Embeddings ein (Einstellungen → KI → Embeddings) oder füge deinen eigenen Embeddings-API-Schlüssel hinzu, um den Speicher weiter aufzubauen.',
+    'Die Speicher-Embeddings haben das verwaltete Budget erreicht. Richte lokale Ollama-Embeddings ein (Einstellungen → KI → Einbettungen) oder füge deinen eigenen Embeddings-API-Schlüssel hinzu, um den Speicher weiter aufzubauen.',
   'memory.health.remediation.auth_missing':
-    'Keine Embeddings-Anmeldedaten gefunden. Melde dich bei OpenHuman an oder richte lokale Ollama-Embeddings unter Einstellungen → KI → Embeddings ein.',
+    'Keine Embeddings-Anmeldedaten gefunden. Melde dich bei OpenHuman an oder richte lokale Ollama-Embeddings unter Einstellungen → KI → Einbettungen ein.',
   'memory.health.remediation.auth_invalid':
-    'Deine Embeddings-Anmeldedaten wurden abgelehnt. Authentifiziere dich erneut oder wechsle unter Einstellungen → KI → Embeddings zu lokalen Ollama-Embeddings.',
+    'Deine Embeddings-Anmeldedaten wurden abgelehnt. Authentifiziere dich erneut oder wechsle unter Einstellungen → KI → Einbettungen zu lokalen Ollama-Embeddings.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Es ist kein Embeddings-Anbieter konfiguriert, daher ist die semantische Suche deaktiviert. Richte lokale Ollama-Embeddings ein (empfohlen) oder füge unter Einstellungen → KI → Embeddings einen Embeddings-Schlüssel hinzu.',
+    'Es ist kein Embeddings-Anbieter konfiguriert, daher ist die semantische Suche deaktiviert. Richte lokale Ollama-Embeddings ein (empfohlen) oder füge unter Einstellungen → KI → Einbettungen einen Embeddings-Schlüssel hinzu.',
   'memory.health.remediation.embedding_dim_mismatch':
     'Das Embedding-Modell liefert die falsche Vektorgröße (der Speicher erwartet 1024 Dimensionen). Wähle ein Modell mit 1024 Dimensionen oder fordere 1024 Dimensionen von deinem Anbieter an.',
   'memory.health.remediation.local_model_unavailable':

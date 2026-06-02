@@ -4541,13 +4541,13 @@ const messages: TranslationMap = {
   'memoryTree.status.extractionCoverage':
     'Copertura di estrazione: {pct}% dei frammenti ha una struttura',
   'memory.health.remediation.budget_exhausted':
-    'Gli embedding della memoria hanno raggiunto il budget gestito. Configura embedding Ollama locali (Impostazioni → IA → Embeddings) o aggiungi la tua chiave API per gli embedding per continuare a costruire la memoria.',
+    'Gli embedding della memoria hanno raggiunto il budget gestito. Configura embedding Ollama locali (Impostazioni → IA → Incorporamenti) o aggiungi la tua chiave API per gli embedding per continuare a costruire la memoria.',
   'memory.health.remediation.auth_missing':
-    'Nessuna credenziale per gli embedding trovata. Accedi a OpenHuman o configura embedding Ollama locali in Impostazioni → IA → Embeddings.',
+    'Nessuna credenziale per gli embedding trovata. Accedi a OpenHuman o configura embedding Ollama locali in Impostazioni → IA → Incorporamenti.',
   'memory.health.remediation.auth_invalid':
-    'Le tue credenziali per gli embedding sono state rifiutate. Autenticati di nuovo o passa agli embedding Ollama locali in Impostazioni → IA → Embeddings.',
+    'Le tue credenziali per gli embedding sono state rifiutate. Autenticati di nuovo o passa agli embedding Ollama locali in Impostazioni → IA → Incorporamenti.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Nessun provider di embedding è configurato, quindi il richiamo semantico è disattivato. Configura embedding Ollama locali (consigliato) o aggiungi una chiave per gli embedding in Impostazioni → IA → Embeddings.',
+    'Nessun provider di embedding è configurato, quindi il richiamo semantico è disattivato. Configura embedding Ollama locali (consigliato) o aggiungi una chiave per gli embedding in Impostazioni → IA → Incorporamenti.',
   'memory.health.remediation.embedding_dim_mismatch':
     'Il modello di embedding restituisce una dimensione del vettore errata (la memoria prevede 1024 dimensioni). Scegli un modello a 1024 dimensioni o richiedi 1024 dimensioni al tuo provider.',
   'memory.health.remediation.local_model_unavailable':

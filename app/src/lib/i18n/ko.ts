@@ -4429,13 +4429,13 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': '위키 구조 불완전',
   'memoryTree.status.extractionCoverage': '추출 범위: 청크의 {pct}%에 구조가 있음',
   'memory.health.remediation.budget_exhausted':
-    '메모리 임베딩이 관리형 예산에 도달했습니다. 로컬 Ollama 임베딩을 설정하거나(설정 → AI → Embeddings) 메모리를 계속 구축하려면 자체 임베딩 API 키를 추가하세요.',
+    '메모리 임베딩이 관리형 예산에 도달했습니다. 로컬 Ollama 임베딩을 설정하거나(설정 → AI → 임베딩) 메모리를 계속 구축하려면 자체 임베딩 API 키를 추가하세요.',
   'memory.health.remediation.auth_missing':
-    '임베딩 자격 증명을 찾을 수 없습니다. OpenHuman에 로그인하거나 설정 → AI → Embeddings에서 로컬 Ollama 임베딩을 설정하세요.',
+    '임베딩 자격 증명을 찾을 수 없습니다. OpenHuman에 로그인하거나 설정 → AI → 임베딩에서 로컬 Ollama 임베딩을 설정하세요.',
   'memory.health.remediation.auth_invalid':
-    '임베딩 자격 증명이 거부되었습니다. 다시 인증하거나 설정 → AI → Embeddings에서 로컬 Ollama 임베딩으로 전환하세요.',
+    '임베딩 자격 증명이 거부되었습니다. 다시 인증하거나 설정 → AI → 임베딩에서 로컬 Ollama 임베딩으로 전환하세요.',
   'memory.health.remediation.embeddings_unconfigured':
-    '구성된 임베딩 제공자가 없어 의미 기반 검색이 꺼져 있습니다. 로컬 Ollama 임베딩을 설정하거나(권장) 설정 → AI → Embeddings에서 임베딩 키를 추가하세요.',
+    '구성된 임베딩 제공자가 없어 의미 기반 검색이 꺼져 있습니다. 로컬 Ollama 임베딩을 설정하거나(권장) 설정 → AI → 임베딩에서 임베딩 키를 추가하세요.',
   'memory.health.remediation.embedding_dim_mismatch':
     '임베딩 모델이 잘못된 벡터 크기를 반환합니다(메모리는 1024차원을 예상함). 1024차원 모델을 선택하거나 제공자에게 1024차원을 요청하세요.',
   'memory.health.remediation.local_model_unavailable':

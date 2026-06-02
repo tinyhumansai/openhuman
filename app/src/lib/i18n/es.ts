@@ -4549,13 +4549,13 @@ const messages: TranslationMap = {
   'memoryTree.status.extractionCoverage':
     'Cobertura de extracción: {pct}% de los fragmentos tienen estructura',
   'memory.health.remediation.budget_exhausted':
-    'Los embeddings de memoria agotaron el presupuesto gestionado. Configura embeddings locales de Ollama (Configuración → IA → Embeddings) o añade tu propia clave de API de embeddings para seguir construyendo la memoria.',
+    'Los embeddings de memoria agotaron el presupuesto gestionado. Configura embeddings locales de Ollama (Configuración → IA → Incrustaciones) o añade tu propia clave de API de embeddings para seguir construyendo la memoria.',
   'memory.health.remediation.auth_missing':
-    'No se encontraron credenciales de embeddings. Inicia sesión en OpenHuman o configura embeddings locales de Ollama en Configuración → IA → Embeddings.',
+    'No se encontraron credenciales de embeddings. Inicia sesión en OpenHuman o configura embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
   'memory.health.remediation.auth_invalid':
-    'Tus credenciales de embeddings fueron rechazadas. Vuelve a autenticarte o cambia a embeddings locales de Ollama en Configuración → IA → Embeddings.',
+    'Tus credenciales de embeddings fueron rechazadas. Vuelve a autenticarte o cambia a embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
   'memory.health.remediation.embeddings_unconfigured':
-    'No hay ningún proveedor de embeddings configurado, por lo que la recuperación semántica está desactivada. Configura embeddings locales de Ollama (recomendado) o añade una clave de embeddings en Configuración → IA → Embeddings.',
+    'No hay ningún proveedor de embeddings configurado, por lo que la recuperación semántica está desactivada. Configura embeddings locales de Ollama (recomendado) o añade una clave de embeddings en Configuración → IA → Incrustaciones.',
   'memory.health.remediation.embedding_dim_mismatch':
     'El modelo de embeddings devuelve un tamaño de vector incorrecto (la memoria espera 1024 dimensiones). Elige un modelo de 1024 dimensiones o solicita 1024 dimensiones a tu proveedor.',
   'memory.health.remediation.local_model_unavailable':

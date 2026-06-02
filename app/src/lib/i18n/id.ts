@@ -4482,13 +4482,13 @@ const messages: TranslationMap = {
   'memoryTree.status.degradedStructure': 'Struktur wiki tidak lengkap',
   'memoryTree.status.extractionCoverage': 'Cakupan ekstraksi: {pct}% bagian memiliki struktur',
   'memory.health.remediation.budget_exhausted':
-    'Embedding memori mencapai batas anggaran terkelola. Siapkan embedding Ollama lokal (Pengaturan → AI → Embeddings) atau tambahkan kunci API embedding Anda sendiri untuk terus membangun memori.',
+    'Embedding memori mencapai batas anggaran terkelola. Siapkan embedding Ollama lokal (Pengaturan → AI → Sematan) atau tambahkan kunci API embedding Anda sendiri untuk terus membangun memori.',
   'memory.health.remediation.auth_missing':
-    'Kredensial embedding tidak ditemukan. Masuk ke OpenHuman, atau siapkan embedding Ollama lokal di Pengaturan → AI → Embeddings.',
+    'Kredensial embedding tidak ditemukan. Masuk ke OpenHuman, atau siapkan embedding Ollama lokal di Pengaturan → AI → Sematan.',
   'memory.health.remediation.auth_invalid':
-    'Kredensial embedding Anda ditolak. Autentikasi ulang, atau beralih ke embedding Ollama lokal di Pengaturan → AI → Embeddings.',
+    'Kredensial embedding Anda ditolak. Autentikasi ulang, atau beralih ke embedding Ollama lokal di Pengaturan → AI → Sematan.',
   'memory.health.remediation.embeddings_unconfigured':
-    'Tidak ada penyedia embedding yang dikonfigurasi, sehingga recall semantik nonaktif. Siapkan embedding Ollama lokal (disarankan) atau tambahkan kunci embedding di Pengaturan → AI → Embeddings.',
+    'Tidak ada penyedia embedding yang dikonfigurasi, sehingga recall semantik nonaktif. Siapkan embedding Ollama lokal (disarankan) atau tambahkan kunci embedding di Pengaturan → AI → Sematan.',
   'memory.health.remediation.embedding_dim_mismatch':
     'Model embedding mengembalikan ukuran vektor yang salah (memori mengharapkan 1024 dimensi). Pilih model 1024 dimensi, atau minta 1024 dimensi dari penyedia Anda.',
   'memory.health.remediation.local_model_unavailable':
