@@ -13,7 +13,11 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MemoryTreePipelineStatus } from '../../utils/tauriCommands';
-import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
+import {
+  MemoryTreeStatusPanel,
+  classifyIntegration,
+  providerIconChar,
+} from './MemoryTreeStatusPanel';
 
 const mockPipelineStatus = vi.fn();
 const mockSetEnabled = vi.fn();
@@ -200,6 +204,32 @@ describe('<MemoryTreeStatusPanel />', () => {
       expect(onToast).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'error', message: 'disk write failed' })
       );
+    });
+  });
+});
+
+describe('integration health helpers', () => {
+  describe('classifyIntegration', () => {
+    it('maps active freshness to active', () => {
+      expect(classifyIntegration('active')).toBe('active');
+    });
+    it('maps recent freshness to stale', () => {
+      expect(classifyIntegration('recent')).toBe('stale');
+    });
+    it('maps idle freshness to stale', () => {
+      expect(classifyIntegration('idle')).toBe('stale');
+    });
+  });
+
+  describe('providerIconChar', () => {
+    it('returns a known glyph for slack', () => {
+      expect(providerIconChar('slack')).toBe('💬');
+    });
+    it('returns a known glyph for gmail', () => {
+      expect(providerIconChar('gmail')).toBe('📧');
+    });
+    it('falls back to the plug glyph for unknown providers', () => {
+      expect(providerIconChar('definitely-not-a-real-provider')).toBe('🔌');
     });
   });
 });

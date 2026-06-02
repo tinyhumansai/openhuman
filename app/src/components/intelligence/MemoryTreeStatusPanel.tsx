@@ -194,6 +194,50 @@ function statusDotClass(kind: MemoryTreePipelineStatus['status']): string {
 }
 
 /**
+ * UI health classification for a single provider row in the integration
+ * health strip (#2763). The wire shape's three-state `freshness` collapses
+ * to two states here — `Active` (currently producing chunks) vs `Stale`
+ * (anything older). An `Error` state is intentionally NOT derived from the
+ * current data; per-provider failure attribution needs new core work and
+ * is filed as a follow-up to issue #2763.
+ */
+export type IntegrationHealth = 'active' | 'stale';
+
+/** Map the wire `freshness` enum to the two-state UI classification. */
+export function classifyIntegration(freshness: MemorySyncStatusRow['freshness']): IntegrationHealth {
+  return freshness === 'active' ? 'active' : 'stale';
+}
+
+/**
+ * Built-in glyph for each known provider key from `memory_sync_status_list`.
+ * Source: `MemorySyncStatus.provider` in `src/openhuman/memory_sync/sync_status/types.rs`
+ * — that file's doc comment enumerates the providers ("slack", "gmail",
+ * "discord", "telegram", "whatsapp", "notion", "meeting_notes",
+ * "drive_docs", etc.). Anything not in this map falls back to a generic
+ * plug glyph so unknown providers still render cleanly.
+ *
+ * Kept inline (rather than re-using `SOURCE_KIND_ICONS` from
+ * `memorySourcesService`) because that map is keyed by `SourceKind`
+ * (`composio` / `folder` / `github_repo` / …) — a different taxonomy.
+ */
+const PROVIDER_ICONS: Record<string, string> = {
+  slack: '💬',
+  gmail: '📧',
+  discord: '🎮',
+  telegram: '✈️',
+  whatsapp: '🟢',
+  notion: '📝',
+  meeting_notes: '🎙️',
+  drive_docs: '📄',
+  github: '🐙',
+};
+
+/** Look up a provider glyph; fall back to a generic plug for unknowns. */
+export function providerIconChar(provider: string): string {
+  return PROVIDER_ICONS[provider] ?? '🔌';
+}
+
+/**
  * Memory Tree status panel — render the four-tile dashboard plus the
  * auto-sync toggle. Designed to mount above `<MemorySources>` in
  * `MemoryWorkspace` so it surfaces in both the Intelligence page and
