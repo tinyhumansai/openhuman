@@ -1274,12 +1274,15 @@ fn dangerous_env_var_prefix_blocked() {
     // Case-insensitive: should also catch mixed-case names.
     assert!(!p.is_command_allowed("Ld_PrElOaD=/tmp/x.so git status"));
 
-    // Benign env prefixes still pass: TZ, LANG, LC_ALL, custom names that
-    // don't trigger downstream subprocess execution.
-    assert!(p.is_command_allowed("TZ=UTC git log"));
-    assert!(p.is_command_allowed("LANG=en_US.UTF-8 git log"));
-    assert!(p.is_command_allowed("LC_ALL=C git status"));
-    assert!(p.is_command_allowed("FOO=bar git status"));
+    // All leading env-var assignments are now rejected — including
+    // previously-benign-looking ones (TZ, LANG, LC_ALL, custom names).
+    // The allowlist already names every command we want to permit, and
+    // none need an operator-set env var at invoke time, so the broader
+    // gate has no false-positive surface on the approved path.
+    assert!(!p.is_command_allowed("TZ=UTC git log"));
+    assert!(!p.is_command_allowed("LANG=en_US.UTF-8 git log"));
+    assert!(!p.is_command_allowed("LC_ALL=C git status"));
+    assert!(!p.is_command_allowed("FOO=bar git status"));
     // No env prefix at all — unchanged.
     assert!(p.is_command_allowed("git status"));
 }
@@ -1351,13 +1354,31 @@ fn command_injection_process_substitution_blocked() {
 }
 
 #[test]
-fn command_env_var_prefix_with_allowed_cmd() {
+fn command_env_var_prefix_is_always_rejected() {
     let p = default_policy();
-    // env assignment + allowed command — OK
-    assert!(p.is_command_allowed("FOO=bar ls"));
-    assert!(p.is_command_allowed("LANG=C grep pattern file"));
-    // env assignment + disallowed command — blocked
+    // ANY env assignment is rejected — including in front of an
+    // otherwise-allowed command. Helper-style exec primitives
+    // (GIT_SSH=, SSH_ASKPASS=, LD_PRELOAD=) and benign-looking
+    // overrides (FOO=, LANG=) both go through the same gate so the
+    // policy doesn't have to enumerate every shape of every
+    // downstream tool's hook surface.
+    assert!(!p.is_command_allowed("FOO=bar ls"));
+    assert!(!p.is_command_allowed("LANG=C grep pattern file"));
     assert!(!p.is_command_allowed("FOO=bar rm -rf /"));
+}
+
+#[test]
+fn validate_command_rejects_leading_env_var_assignment() {
+    let p = default_policy();
+    // Helper-style exec primitives that mutate which binary the
+    // approved command actually runs as: rejected.
+    assert!(!p.is_command_allowed("GIT_SSH=./wrapper.sh git ls-remote ssh://x"));
+    assert!(!p.is_command_allowed("SSH_ASKPASS=./y ssh user@host"));
+    assert!(!p.is_command_allowed("LD_PRELOAD=./libx.so ls"));
+    // Negative: same command without the env prefix passes the
+    // structural guard (it may still fail later on its own merits,
+    // but the env-prefix gate doesn't fire).
+    assert!(p.is_command_allowed("git ls-remote ssh://example.com"));
 }
 
 // -- Edge cases: path traversal -----------------------------------
