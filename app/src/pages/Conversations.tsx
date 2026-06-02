@@ -76,7 +76,6 @@ import {
 import { formatTimelineEntry } from '../utils/toolTimelineFormatting';
 import { AgentMessageBubble, BubbleMarkdown } from './conversations/components/AgentMessageBubble';
 import { CitationChips, type MessageCitation } from './conversations/components/CitationChips';
-import { LimitPill } from './conversations/components/LimitPill';
 import { SubagentDrawer } from './conversations/components/SubagentDrawer';
 import { TaskKanbanBoard } from './conversations/components/TaskKanbanBoard';
 import { ToolTimelineBlock } from './conversations/components/ToolTimelineBlock';
@@ -248,7 +247,6 @@ const Conversations = ({
 
   const {
     teamUsage,
-    isLoading: isLoadingBudget,
     isAtLimit,
     isNearLimit,
     isFreeTier,
@@ -2020,45 +2018,7 @@ const Conversations = ({
               </div>
             )}
 
-            {/* Cycle usage pill. Backend PR #790 dropped rate-limit gating —
-                  only budget-based pressure is surfaced here now. */}
-            <div className="flex items-center justify-end gap-2 mb-2">
-              {(isLoadingBudget || teamUsage) && (
-                <div className="relative group">
-                  {teamUsage ? (
-                    <LimitPill label={t('chat.cycle')} usedPct={usagePct} />
-                  ) : (
-                    <span className="text-[10px] text-stone-400 dark:text-neutral-500 animate-pulse">
-                      {t('common.loading')}
-                    </span>
-                  )}
-                  {teamUsage && (
-                    <div className="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50">
-                      <div className="bg-stone-900 text-white text-[10px] rounded-lg px-3 py-2 shadow-lg whitespace-nowrap space-y-1.5">
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">{t('chat.cycleSpent')}</span>
-                          <span>
-                            ${(teamUsage.cycleSpentUsd ?? 0).toFixed(2)} / $
-                            {(teamUsage.cycleBudgetUsd ?? 0).toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="text-stone-400">{t('chat.cycleRemaining')}</span>
-                          <span>
-                            ${(teamUsage.remainingUsd ?? 0).toFixed(2)} {t('chat.left')}
-                            {teamUsage.cycleEndsAt && (
-                              <span className="text-stone-400 dark:text-neutral-500 ml-1">
-                                — {t('chat.resets')} {formatResetTime(teamUsage.cycleEndsAt)}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+            {/* Cycle usage pill moved into ChatComposer toolbar */}
           </>
 
           {sendAdvisory && (

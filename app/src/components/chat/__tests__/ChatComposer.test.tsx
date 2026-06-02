@@ -6,7 +6,7 @@ import type { Attachment } from '../../../lib/attachments';
 import ChatComposer, { type ChatComposerProps } from '../ChatComposer';
 
 vi.mock('../../../lib/i18n/I18nContext', () => ({ useT: () => ({ t: (k: string) => k }) }));
-vi.mock('../TokenUsagePill', () => ({ default: () => <div data-testid="token-usage-pill" /> }));
+vi.mock('../CycleUsagePill', () => ({ default: () => <div data-testid="cycle-usage-pill" /> }));
 
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   const blob = new Blob([new Uint8Array(256)], { type: 'image/png' });
