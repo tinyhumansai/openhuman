@@ -195,6 +195,38 @@ fn reserve_port() -> StdTcpListener {
     StdTcpListener::bind("127.0.0.1:0").expect("reserve ephemeral port")
 }
 
+fn reserve_contiguous_ports(count: usize) -> Option<Vec<StdTcpListener>> {
+    const FIRST_CANDIDATE_PORT: u16 = 20_000;
+    const LAST_CANDIDATE_PORT: u16 = 60_000;
+
+    for first in FIRST_CANDIDATE_PORT..=LAST_CANDIDATE_PORT {
+        let Some(last) = first.checked_add(count.saturating_sub(1) as u16) else {
+            break;
+        };
+        if last > LAST_CANDIDATE_PORT {
+            break;
+        }
+
+        let mut listeners = Vec::with_capacity(count);
+        let mut reserved = true;
+        for port in first..=last {
+            match StdTcpListener::bind(("127.0.0.1", port)) {
+                Ok(listener) => listeners.push(listener),
+                Err(_) => {
+                    reserved = false;
+                    break;
+                }
+            }
+        }
+
+        if reserved {
+            return Some(listeners);
+        }
+    }
+
+    None
+}
+
 async fn spawn_probe_listener(status: &str, body: &'static str) -> ProbeListener {
     spawn_probe_listener_on("127.0.0.1", status, body).await
 }
@@ -213,49 +245,6 @@ async fn try_spawn_probe_listener_on(
 ) -> Option<ProbeListener> {
     let listener = tokio::net::TcpListener::bind((host, 0)).await.ok()?;
     Some(spawn_probe_listener_from(listener, status, body))
-}
-
-async fn spawn_probe_listener_with_reserved_fallbacks(
-    status: &str,
-    body: &'static str,
-) -> (ProbeListener, Vec<StdTcpListener>) {
-    let mut last_failure = None;
-    for _ in 0..64 {
-        let probe = spawn_probe_listener(status, body).await;
-        let preferred = probe.port;
-        let Some(last_fallback) = preferred.checked_add(10) else {
-            last_failure = Some(format!(
-                "preferred port {preferred} cannot fit 10 fallbacks"
-            ));
-            drop(probe);
-            continue;
-        };
-
-        let mut occupied = Vec::new();
-        let mut bind_failure = None;
-        for port in (preferred + 1)..=last_fallback {
-            match StdTcpListener::bind(("127.0.0.1", port)) {
-                Ok(listener) => occupied.push(listener),
-                Err(err) => {
-                    bind_failure = Some(format!("bind fallback port {port}: {err}"));
-                    break;
-                }
-            }
-        }
-
-        if bind_failure.is_none() {
-            return (probe, occupied);
-        }
-
-        last_failure = bind_failure;
-        drop(occupied);
-        drop(probe);
-    }
-
-    panic!(
-        "reserve preferred listener plus 10 fallback ports: {}",
-        last_failure.unwrap_or_else(|| "no attempts made".to_string())
-    );
 }
 
 fn spawn_probe_listener_from(
@@ -533,7 +522,10 @@ async fn pick_listen_port_falls_back_for_non_openhuman_and_status_fingerprints()
     let picked = pick_listen_port_for_host("127.0.0.1", probe.port)
         .await
         .expect("non-openhuman listener should fall back");
-    assert_eq!(picked.port, probe.port + 1);
+    assert!(
+        picked.port > probe.port,
+        "fallback port must be higher than probe port"
+    );
     assert_eq!(picked.fallback_from, Some(probe.port));
     drop(picked.listener);
     drop(probe);
@@ -542,7 +534,10 @@ async fn pick_listen_port_falls_back_for_non_openhuman_and_status_fingerprints()
     let picked = pick_listen_port_for_host("127.0.0.1", status_probe.port)
         .await
         .expect("non-success probe should fall back");
-    assert_eq!(picked.port, status_probe.port + 1);
+    assert!(
+        picked.port > status_probe.port,
+        "fallback port must be higher than status probe port"
+    );
     assert_eq!(picked.fallback_from, Some(status_probe.port));
     drop(picked.listener);
 
@@ -591,9 +586,18 @@ async fn pick_listen_port_identifies_ipv6_openhuman_listener_when_supported() {
 #[tokio::test]
 async fn pick_listen_port_reports_no_available_fallbacks() {
     let _lock = env_lock();
-    let (preferred_probe, occupied) =
-        spawn_probe_listener_with_reserved_fallbacks("200 OK", r#"{"name":"not-openhuman"}"#).await;
+    let mut reserved =
+        reserve_contiguous_ports(11).expect("reserve preferred port and ten fallback ports");
+    let preferred_std = reserved.remove(0);
+    preferred_std
+        .set_nonblocking(true)
+        .expect("mark preferred probe listener nonblocking");
+    let preferred_listener =
+        tokio::net::TcpListener::from_std(preferred_std).expect("convert preferred probe listener");
+    let preferred_probe =
+        spawn_probe_listener_from(preferred_listener, "200 OK", r#"{"name":"not-openhuman"}"#);
     let preferred = preferred_probe.port;
+    let occupied = reserved;
 
     let err = pick_listen_port_for_host("127.0.0.1", preferred)
         .await

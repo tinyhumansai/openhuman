@@ -69,6 +69,72 @@ pub(crate) fn insert_tree_conn(conn: &Connection, tree: &Tree) -> Result<()> {
     Ok(())
 }
 
+/// Hard-delete one tree and every dependent row, within an existing tx.
+///
+/// Cascade order mirrors [`crate::openhuman::memory_store::chunks::store`]'s
+/// global/topic purge: summary sidecars (`summary_embeddings` /
+/// `summary_reembed_skipped`, keyed by `summary_id`) first, then
+/// `entity_index` + `buffers` (keyed by `tree_id`), then the `summaries`,
+/// then the tree row. Used by the chunk-delete path when a source's last
+/// chunk is removed, so the now-contentless summary tree (and its unsealed
+/// buffer) doesn't outlive the data it summarised. Returns the number of
+/// summary rows removed.
+pub(crate) fn delete_tree_cascade_tx(
+    tx: &Transaction<'_>,
+    tree_id: &str,
+) -> Result<TreeCascadeDeletion> {
+    // Collect the on-disk content-file paths BEFORE deleting the summary rows
+    // — sealed summaries stage their body to `content_path` under the memory
+    // tree content root (see `bucket_seal::seal_one_level` → `stage_summary`).
+    // The caller removes these files after the tx commits (mirroring
+    // `remove_chunk_content_files`), so a `clear_memory` delete doesn't leave
+    // the summarised text orphaned on disk.
+    let content_paths: Vec<String> = {
+        let mut stmt = tx.prepare(
+            "SELECT content_path FROM mem_tree_summaries \
+              WHERE tree_id = ?1 AND content_path IS NOT NULL AND content_path <> ''",
+        )?;
+        let rows = stmt.query_map(params![tree_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect summary content paths for tree cascade delete")?
+    };
+
+    tx.execute(
+        "DELETE FROM mem_tree_summary_embeddings WHERE summary_id IN \
+         (SELECT id FROM mem_tree_summaries WHERE tree_id = ?1)",
+        params![tree_id],
+    )?;
+    tx.execute(
+        "DELETE FROM mem_tree_summary_reembed_skipped WHERE summary_id IN \
+         (SELECT id FROM mem_tree_summaries WHERE tree_id = ?1)",
+        params![tree_id],
+    )?;
+    tx.execute(
+        "DELETE FROM mem_tree_entity_index WHERE tree_id = ?1",
+        params![tree_id],
+    )?;
+    let removed_summaries = tx.execute(
+        "DELETE FROM mem_tree_summaries WHERE tree_id = ?1",
+        params![tree_id],
+    )?;
+    tx.execute(
+        "DELETE FROM mem_tree_buffers WHERE tree_id = ?1",
+        params![tree_id],
+    )?;
+    tx.execute("DELETE FROM mem_tree_trees WHERE id = ?1", params![tree_id])?;
+    Ok(TreeCascadeDeletion {
+        removed_summaries,
+        content_paths,
+    })
+}
+
+/// Outcome of [`delete_tree_cascade_tx`]: how many summary rows were removed
+/// and the on-disk content-file paths the caller must delete post-commit.
+pub(crate) struct TreeCascadeDeletion {
+    pub removed_summaries: usize,
+    pub content_paths: Vec<String>,
+}
+
 /// Fetch a tree by `(kind, scope)`. Returns `None` if no such tree exists.
 pub fn get_tree_by_scope(config: &Config, kind: TreeKind, scope: &str) -> Result<Option<Tree>> {
     with_connection(config, |conn| get_tree_by_scope_conn(conn, kind, scope))

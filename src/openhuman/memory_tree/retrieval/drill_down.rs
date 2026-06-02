@@ -18,18 +18,27 @@
 //! - Leaves have no children; drilling into a leaf id returns empty.
 //! - `limit` is optional; when set, it truncates the final (reranked) output.
 
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
 use anyhow::Result;
 
 use crate::openhuman::config::Config;
-use crate::openhuman::memory_store::chunks::store::{get_chunk, get_chunk_embedding};
+use crate::openhuman::memory_store::chunks::store::{
+    get_chunk, get_chunk_embeddings_batch, get_chunks_batch,
+};
 use crate::openhuman::memory_store::content::read as content_read;
+use crate::openhuman::memory_store::trees::store::{get_summaries_batch, get_trees_batch};
 use crate::openhuman::memory_tree::retrieval::types::{
     hit_from_chunk, hit_from_summary, RetrievalHit,
 };
 use crate::openhuman::memory_tree::score::embed::{build_embedder_from_config, cosine_similarity};
 use crate::openhuman::memory_tree::tree::store;
+
+/// Upper-bound estimate of how many children a summary node fans out to,
+/// used only to pre-size the next-level BFS frontier. Over-estimating wastes
+/// a little transient capacity; under-estimating costs a realloc — neither is
+/// load-bearing for correctness.
+const EXPECTED_CHILD_FANOUT: usize = 10;
 
 /// Walk the summary hierarchy down one step (or more if `max_depth > 1`)
 /// and return the hydrated child hits. Children at level 1 are raw chunks;
@@ -157,6 +166,17 @@ async fn rerank_by_semantic_similarity(
 /// Blocking walker. BFS-style expansion up to `max_depth` levels. Returns
 /// each hit paired with its stored embedding (if any), so the async rerank
 /// pass doesn't have to round-trip through the DB again.
+///
+/// **Batched per BFS depth.** For each level we issue at most four SQLite
+/// round-trips (one each for summaries / trees / chunks / chunk
+/// embeddings) covering every node at that depth, then walk the level's
+/// id slice in BFS order to populate `out` + collect the next-depth
+/// frontier. The per-node `get_summary` / `get_tree` / `get_chunk` /
+/// `get_chunk_embedding` loop (one round-trip per node × 4 tables) is
+/// replaced by `O(depth)` round-trips instead of `O(nodes × 4)`. File
+/// I/O via `read_summary_body` / `read_chunk_body` stays per-id — each
+/// body lives in its own on-disk file, so batching would mean concurrent
+/// opens, not a single round-trip; left untouched.
 fn walk_with_embeddings(
     config: &Config,
     start_id: &str,
@@ -188,68 +208,136 @@ fn walk_with_embeddings(
         }
     };
 
-    // BFS frontier: (child_id, depth_from_start). `VecDeque` with
-    // `pop_front` + `push_back` is FIFO; using `Vec::pop` would give DFS
-    // (flagged on PR #831 CodeRabbit review).
-    let mut frontier: VecDeque<(String, u32)> =
-        start_children.into_iter().map(|id| (id, 1u32)).collect();
+    // BFS-by-level. `current_level` holds every node id at the current
+    // depth, walked in FIFO (BFS) order — siblings are always returned
+    // before any descendant at a deeper depth (regression for PR #831's
+    // CodeRabbit fix away from `Vec::pop` DFS). Batched fetches for the
+    // whole level happen up-front so the per-id walk only does HashMap
+    // lookups + the unavoidable per-file body read.
+    let mut current_level: Vec<String> = start_children;
+    let mut depth: u32 = 1;
 
-    while let Some((id, depth)) = frontier.pop_front() {
-        if depth > max_depth {
-            continue;
-        }
-        // Is it a summary?
-        if let Some(mut summary) = store::get_summary(config, &id)? {
-            let scope = store::get_tree(config, &summary.tree_id)?
-                .map(|t| t.scope)
-                .unwrap_or_else(|| root_tree_scope.clone());
-            // Hydrate the full body from disk — `summary.content` is a
-            // ≤500-char preview after the MD-on-disk migration.
-            // Non-fatal fallback for pre-MD-migration rows.
-            match content_read::read_summary_body(config, &id) {
-                Ok(body) => summary.content = body,
-                Err(e) => {
-                    log::warn!(
-                        "[retrieval::drill_down] read_summary_body failed — serving preview: {e:#}"
-                    );
+    while !current_level.is_empty() && depth <= max_depth {
+        log::trace!(
+            "[retrieval::drill_down] level depth={} ids={}",
+            depth,
+            current_level.len()
+        );
+
+        // 1) Batched summary fetch covers every id on this level. Missing
+        //    ids stay silently absent from the map (same `Ok(None)`
+        //    contract as the per-row `get_summary`); those ids are then
+        //    tried as chunks below.
+        let mut summary_by_id = get_summaries_batch(config, &current_level)?;
+
+        // 2) Distinct tree_ids referenced by this level's summaries —
+        //    dedup is purely to avoid redundant DB params (the per-id
+        //    walk below routes each summary to its own scope via the
+        //    map). Insertion-order preserving for deterministic logs.
+        let distinct_tree_ids: Vec<String> = {
+            // `seen` borrows the tree_id slices straight out of
+            // `summary_by_id` (which outlives this block) — dedup costs no
+            // allocation; only the surviving distinct ids are cloned into
+            // `out` for `get_trees_batch`.
+            let mut seen: HashSet<&str> = HashSet::new();
+            let mut out: Vec<String> = Vec::new();
+            for id in &current_level {
+                if let Some(s) = summary_by_id.get(id) {
+                    if seen.insert(s.tree_id.as_str()) {
+                        out.push(s.tree_id.clone());
+                    }
                 }
             }
-            // Summary embeddings live on the struct directly (Phase 4 amend).
-            embeddings.push(summary.embedding.clone());
-            let child_ids = summary.child_ids.clone();
-            out.push(hit_from_summary(&summary, &scope));
-            if depth < max_depth {
-                for next in child_ids {
-                    frontier.push_back((next, depth + 1));
+            out
+        };
+        let tree_by_id = get_trees_batch(config, &distinct_tree_ids)?;
+
+        // 3) Ids on this level that AREN'T summaries are candidate
+        //    chunk leaves; batch-fetch both the chunk rows and their
+        //    embeddings. Missing ids are silently absent — the warn
+        //    path at the end of the per-id walk catches "points at
+        //    nothing" cases (preserving the existing contract).
+        let chunk_ids: Vec<String> = current_level
+            .iter()
+            .filter(|id| !summary_by_id.contains_key(*id))
+            .cloned()
+            .collect();
+        let mut chunk_by_id = get_chunks_batch(config, &chunk_ids)?;
+        // `get_chunk_embeddings_batch` returns only present ids
+        // (mirroring per-row `get_chunk_embedding` returning
+        // `Ok(None)` for legacy rows without an embedding row);
+        // `.get(id).cloned()` yields the equivalent `Option<Vec<f32>>`.
+        let emb_by_id = get_chunk_embeddings_batch(config, &chunk_ids)?;
+
+        // 4) Walk this level in BFS order, populate hits, collect next
+        //    level. Per-id HashMap lookups (keyed by id, not by
+        //    enumerate() position over the input slice — otherwise a
+        //    sibling could shadow another's scope or chunk body).
+        // Pre-size against expected fan-out so the per-level child
+        // accumulation avoids repeated reallocs. Only the non-final depths
+        // extend `next_level` (see the `depth < max_depth` guard below), so
+        // skip the reservation at the last depth where it would stay empty.
+        let mut next_level: Vec<String> = if depth < max_depth {
+            Vec::with_capacity(current_level.len() * EXPECTED_CHILD_FANOUT)
+        } else {
+            Vec::new()
+        };
+        for id in &current_level {
+            if let Some(mut summary) = summary_by_id.remove(id) {
+                let scope = tree_by_id
+                    .get(&summary.tree_id)
+                    .map(|t| t.scope.clone())
+                    .unwrap_or_else(|| root_tree_scope.clone());
+                // Hydrate the full body from disk — `summary.content` is
+                // a ≤500-char preview after the MD-on-disk migration.
+                // Non-fatal fallback for pre-MD-migration rows.
+                match content_read::read_summary_body(config, id) {
+                    Ok(body) => summary.content = body,
+                    Err(e) => {
+                        log::warn!(
+                            "[retrieval::drill_down] read_summary_body failed — serving preview: {e:#}"
+                        );
+                    }
                 }
-            }
-            continue;
-        }
-        // Else try as a chunk (leaf). Chunk embeddings live in a separate
-        // blob column — fetch via the existing accessor.
-        if let Some(mut chunk) = get_chunk(config, &id)? {
-            // Propagate DB errors rather than silently treating them as
-            // "no embedding" — the caller should know if the store is broken.
-            let emb = get_chunk_embedding(config, &chunk.id)?;
-            embeddings.push(emb);
-            // Hydrate the full body from disk — `chunk.content` is a
-            // ≤500-char preview after the MD-on-disk migration.
-            match content_read::read_chunk_body(config, &id) {
-                Ok(body) => chunk.content = body,
-                Err(e) => {
-                    log::warn!(
-                        "[retrieval::drill_down] read_chunk_body failed — serving preview: {e:#}"
-                    );
+                // Summary embeddings live on the struct directly
+                // (Phase 4 amend).
+                embeddings.push(summary.embedding.clone());
+                let child_ids = summary.child_ids.clone();
+                out.push(hit_from_summary(&summary, &scope));
+                if depth < max_depth {
+                    next_level.extend(child_ids);
                 }
+                continue;
             }
-            // Score unknown here; 0.0 neutral placeholder.
-            out.push(hit_from_chunk(&chunk, "", &chunk.metadata.source_id, 0.0));
-            continue;
+            if let Some(mut chunk) = chunk_by_id.remove(id) {
+                // Missing embedding → None (legacy row); identical to
+                // the per-row `get_chunk_embedding(...) Ok(None)` arm.
+                let emb = emb_by_id.get(id).cloned();
+                embeddings.push(emb);
+                // Hydrate the full body from disk — `chunk.content` is
+                // a ≤500-char preview after the MD-on-disk migration.
+                match content_read::read_chunk_body(config, id) {
+                    Ok(body) => chunk.content = body,
+                    Err(e) => {
+                        log::warn!(
+                            "[retrieval::drill_down] read_chunk_body failed — serving preview: {e:#}"
+                        );
+                    }
+                }
+                // Score unknown here; 0.0 neutral placeholder.
+                out.push(hit_from_chunk(&chunk, "", &chunk.metadata.source_id, 0.0));
+                continue;
+            }
+            // Redact the child id — may contain source scope (e.g.
+            // `chat:slack:#<channel>:seq`). Log the kind prefix only.
+            let kind_prefix = id.split_once(':').map(|(k, _)| k).unwrap_or("unknown");
+            log::warn!(
+                "[retrieval::drill_down] child kind={kind_prefix} points at nothing — skipping"
+            );
         }
-        // Redact the child id — may contain source scope (e.g.
-        // `chat:slack:#<channel>:seq`). Log the kind prefix only.
-        let kind_prefix = id.split_once(':').map(|(k, _)| k).unwrap_or("unknown");
-        log::warn!("[retrieval::drill_down] child kind={kind_prefix} points at nothing — skipping");
+
+        current_level = next_level;
+        depth += 1;
     }
     Ok((out, embeddings))
 }
@@ -419,9 +507,9 @@ mod tests {
 
     // ── Regression: BFS (not DFS) traversal ──────────────────────────
     //
-    // `walk_with_embeddings` uses a `VecDeque` frontier with `pop_front` +
-    // `push_back` (FIFO) — flagged on PR #831 CodeRabbit review after the
-    // original `Vec::pop()` implementation was DFS.
+    // `walk_with_embeddings` walks level-by-level (all nodes at depth N
+    // before any at depth N+1) — originally flagged on PR #831 CodeRabbit
+    // review after the initial `Vec::pop()` implementation was DFS.
     //
     // A single-level tree can't distinguish the two (both produce the same
     // output). We need a 2-level tree where BFS yields
@@ -589,5 +677,118 @@ mod tests {
             last_l1 < first_leaf,
             "BFS must return both L1 summaries before any leaf; got ordered={ordered:?}"
         );
+    }
+
+    // ── Regression: per-depth batching keys HashMap by id, not position ──
+    //
+    // The per-depth batch refactor replaces the `for id in frontier` loop
+    // (one `get_summary` + one `get_tree` + (chunk: + one `get_chunk` +
+    // one `get_chunk_embedding`) per node) with one batched fetch per
+    // table, per level. The per-id walk that follows MUST look up by id
+    // — a refactor that mistakenly switches to `enumerate()` position
+    // over the input slice would silently shadow sibling A's `Tree`
+    // (and therefore `scope`) with sibling B's. This test seeds two L1
+    // summaries belonging to **distinct trees** with **distinct scopes**
+    // and asserts each summary's emitted hit carries its own tree scope
+    // — proving the HashMap-keyed-by-id contract.
+    async fn seed_two_l1s_in_distinct_trees(cfg: &Config) -> (String, String, String) {
+        let ts = Utc::now();
+        // Root sits in tree_a; its child L1s live in DIFFERENT trees so
+        // the per-depth `get_trees_batch` actually has 2 distinct ids to
+        // resolve and the HashMap lookup is non-trivial.
+        let tree_a = Tree {
+            id: "test:tree-a".into(),
+            kind: TreeKind::Source,
+            scope: "slack:#eng".into(),
+            root_id: Some("s:L2:root-a".into()),
+            max_level: 2,
+            status: TreeStatus::Active,
+            created_at: ts,
+            last_sealed_at: Some(ts),
+        };
+        let tree_b = Tree {
+            id: "test:tree-b".into(),
+            scope: "slack:#design".into(),
+            root_id: None,
+            ..tree_a.clone()
+        };
+
+        let l1_a = SummaryNode {
+            id: "s:L1:a".into(),
+            tree_id: tree_a.id.clone(),
+            tree_kind: TreeKind::Source,
+            level: 1,
+            parent_id: Some("s:L2:root-a".into()),
+            child_ids: vec![],
+            content: "L1 from tree-a".into(),
+            token_count: 50,
+            entities: vec![],
+            topics: vec![],
+            time_range_start: ts,
+            time_range_end: ts,
+            score: 0.5,
+            sealed_at: ts,
+            deleted: false,
+            embedding: None,
+        };
+        let l1_b = SummaryNode {
+            id: "s:L1:b".into(),
+            tree_id: tree_b.id.clone(),
+            content: "L1 from tree-b".into(),
+            ..l1_a.clone()
+        };
+        let root_a = SummaryNode {
+            id: "s:L2:root-a".into(),
+            level: 2,
+            parent_id: None,
+            child_ids: vec![l1_a.id.clone(), l1_b.id.clone()],
+            content: "L2 root in tree-a referencing L1s from two trees".into(),
+            ..l1_a.clone()
+        };
+
+        with_connection(cfg, |conn| {
+            let tx = conn.unchecked_transaction()?;
+            tree_store::insert_tree_conn(&tx, &tree_a)?;
+            tree_store::insert_tree_conn(&tx, &tree_b)?;
+            tree_store::insert_summary_tx(&tx, &l1_a, None, "test")?;
+            tree_store::insert_summary_tx(&tx, &l1_b, None, "test")?;
+            tree_store::insert_summary_tx(&tx, &root_a, None, "test")?;
+            tx.commit()?;
+            Ok(())
+        })
+        .unwrap();
+
+        (root_a.id, l1_a.id, l1_b.id)
+    }
+
+    #[tokio::test]
+    async fn per_depth_batch_keys_hit_scope_by_tree_id_not_position() {
+        let (_tmp, cfg) = test_config();
+        let (root_id, l1_a_id, l1_b_id) = seed_two_l1s_in_distinct_trees(&cfg).await;
+
+        let out = drill_down(&cfg, &root_id, 1, None, None).await.unwrap();
+        assert_eq!(out.len(), 2, "two L1 children expected");
+
+        // Find each hit by id and assert its scope came from its own
+        // tree row — not the other sibling's tree (which would happen
+        // if the per-id lookup used `enumerate()` position).
+        let hit_a = out
+            .iter()
+            .find(|h| h.node_id == l1_a_id)
+            .expect("hit for L1 in tree-a missing");
+        let hit_b = out
+            .iter()
+            .find(|h| h.node_id == l1_b_id)
+            .expect("hit for L1 in tree-b missing");
+        assert_eq!(
+            hit_a.tree_scope, "slack:#eng",
+            "L1 from tree-a must carry tree-a's scope"
+        );
+        assert_eq!(
+            hit_b.tree_scope, "slack:#design",
+            "L1 from tree-b must carry tree-b's scope (NOT tree-a's)"
+        );
+        assert_eq!(hit_a.tree_id, "test:tree-a");
+        assert_eq!(hit_b.tree_id, "test:tree-b");
     }
 }

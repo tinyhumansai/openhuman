@@ -730,16 +730,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Отправляется в',
   'privacy.leavesDevice': 'Покидает устройство',
   'privacy.staysLocal': 'Остаётся локально',
-  'privacy.anonymizedAnalytics': 'Анонимная аналитика',
-  'privacy.shareAnonymizedData': 'Делиться анонимными данными об использовании',
+  'privacy.anonymizedAnalytics': 'Аналитика продукта',
+  'privacy.shareAnonymizedData': 'Отправлять аналитику продукта и диагностику',
   'privacy.shareAnonymizedDataDesc':
-    'Помоги улучшить OpenHuman, отправляя анонимные отчёты об ошибках и данные об использовании. Все данные полностью анонимизированы — личные данные, сообщения, ключи кошелька и информация о сессии никогда не собираются.',
+    'Помоги улучшить OpenHuman, отправляя ограниченные по приватности отчёты о сбоях и события использования, включая стабильный ID аккаунта и метаданные версии приложения. Сообщения, ключи кошелька, API-ключи и токены сессии никогда не собираются.',
   'privacy.meetingFollowUps': 'Действия после встреч',
   'privacy.autoHandoffMeet': 'Автоматически передавать транскрипты Google Meet оркестратору',
   'privacy.autoHandoffMeetDesc':
     'Когда звонок в Google Meet заканчивается, оркестратор OpenHuman может прочитать транскрипт и выполнить действия: составить сообщения, запланировать задачи или опубликовать итоги в Slack. По умолчанию выключено.',
   'privacy.analyticsDisclaimer':
-    'Вся аналитика и отчёты об ошибках полностью анонимизированы. При включении мы собираем только информацию об ошибках, тип устройства и расположение файлов с ошибками. Мы никогда не получаем доступ к твоим сообщениям, данным сессии, ключам кошелька, API-ключам или любой личной информации. Ты можешь изменить этот параметр в любое время.',
+    'При включении аналитика продукта и диагностика могут включать ограниченные по приватности отчёты о сбоях и события использования, стабильный ID аккаунта и метаданные версии приложения. Сообщения, ключи кошелька, API-ключи и токены сессии никогда не собираются. Этот параметр можно изменить в любое время.',
   'settings.about.version': 'Версия',
   'settings.about.updateAvailable': 'доступна',
   'settings.about.softwareUpdates': 'Обновления ПО',
@@ -3655,6 +3655,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Добавлять',
   'settings.agentAccess.saving': 'Сохранение…',
   'settings.agentAccess.changesApply': 'Изменения вступят в силу в следующем сообщении.',
+  'settings.agentAccess.directories': 'Каталоги',
+  'settings.agentAccess.actionSandbox': 'Песочница действий',
+  'settings.agentAccess.readWriteAccess': 'чтение + запись',
+  'settings.agentAccess.actionSandboxDesc':
+    'Рабочий каталог по умолчанию для инструментов оболочки, файлов и git.',
+  'settings.agentAccess.internalState': 'Внутреннее состояние',
+  'settings.agentAccess.agentBlocked': 'заблокировано для агента',
+  'settings.agentAccess.internalStateDesc':
+    'Базы данных памяти, сеансы, токены и другие основные данные. Недоступно для инструментов агента.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

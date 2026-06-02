@@ -393,18 +393,19 @@ async fn inference_provider_success_paths_use_mock_models_and_chat() {
         "mock model should round-trip through provider /models: {models}"
     );
 
-    let unsupported = rpc(
+    // PR #2959 reverted the list_models 404 suppression: a 404 from /models
+    // now surfaces as a JSON-RPC error instead of a synthetic `unsupported:
+    // true` success, so the failure fires to Sentry for a root-cause fix.
+    let models_404 = rpc(
         &harness.rpc_base,
         102,
         "openhuman.inference_list_models",
         json!({ "provider_id": "mock-404" }),
     )
     .await;
-    assert_eq!(
-        payload(&unsupported, "inference_list_models 404")
-            .get("unsupported")
-            .and_then(Value::as_bool),
-        Some(true)
+    assert!(
+        error_message(&models_404, "inference_list_models 404").contains("provider returned 404"),
+        "404 list_models should surface as an error: {models_404}"
     );
 
     let reply = rpc(
@@ -580,7 +581,7 @@ async fn approval_gate_rpc_decision_resumes_parked_tool_and_records_execution() 
     let config = Config::load_or_init()
         .await
         .expect("load config for approval gate");
-    let gate = ApprovalGate::init_global(config, "session-00000000-0000-4000-8000-0000000000b0");
+    let gate = ApprovalGate::init_global(config, format!("session-{}", uuid::Uuid::new_v4()));
     let gate_for_task = gate.clone();
 
     let approval_task = tokio::spawn(async move {

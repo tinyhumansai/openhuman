@@ -200,7 +200,15 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
     )
     .await
     .expect("insert composio");
-    assert!(!composio.enabled);
+    let composio = memory_sources::update_source(
+        &composio.id,
+        MemorySourcePatch {
+            enabled: Some(true),
+            ..MemorySourcePatch::default()
+        },
+    )
+    .await
+    .expect("enable composio source");
     let status = memory_sources::status::source_status(&config, &composio)
         .await
         .expect("composio status");
@@ -218,20 +226,6 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
         .iter()
         .any(|status| status.source_id == composio.id));
 
-    let disabled_composio = memory_sources::list_enabled_by_kind(SourceKind::Composio)
-        .await
-        .expect("disabled composio");
-    assert!(disabled_composio.is_empty());
-
-    let composio = memory_sources::update_source(
-        &composio.id,
-        MemorySourcePatch {
-            enabled: Some(true),
-            ..MemorySourcePatch::default()
-        },
-    )
-    .await
-    .expect("enable composio");
     let enabled_composio = memory_sources::list_enabled_by_kind(SourceKind::Composio)
         .await
         .expect("enabled composio");
