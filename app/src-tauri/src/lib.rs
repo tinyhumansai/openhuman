@@ -1821,21 +1821,27 @@ pub fn run() {
     // burns through the same 2 MB. In `crahs.log` (2026-05-17, build
     // 0.53.49) that tower plus the serde-monomorphised `Config` Visitor
     // frames pushed past the guard page and aborted with
-    // `SIGBUS / KERN_PROTECTION_FAILURE`. The structural fix
-    // (`spawn_blocking` for the TOML parse + cache in
-    // `src/openhuman/config/{schema/load.rs, ops.rs}`) moves the
-    // largest contributor off the worker; bumping the worker stack
-    // itself gives the rest of the tower comfortable headroom so future
-    // additions don't immediately re-tip the same scale. 8 MiB matches
-    // the OS-default pthread main-thread stack on macOS, so we can
-    // assume "as much room as the main thread" everywhere.
+    // `SIGBUS / KERN_PROTECTION_FAILURE`.
+    //
+    // The structural fix (`spawn_blocking` for the TOML parse + cache in
+    // `src/openhuman/config/{schema/load.rs, ops.rs}`) moves the largest
+    // contributor off the worker. An initial 8 MiB bump shipped here was
+    // enough for that single tower, but sub-agent delegation (issue #3159
+    // / PR #3155) re-tipped the scale: the standalone `openhuman-core`
+    // CLI server still aborted with `Abort trap: 6 / fatal runtime error:
+    // stack overflow` once an orchestrator delegated. PR #3155 raised the
+    // standalone server to 16 MiB; the desktop Tauri host is the *same*
+    // tower running on a *different* runtime and needs the same headroom.
+    // Share the constant with the rest of `src/core/*` via
+    // [`openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES`] so all
+    // multi-thread runtimes that may host an agent turn stay in sync.
     //
     // Must happen before any `tauri::async_runtime::*` call, otherwise
     // `set(...)` panics with "runtime already initialized".
     {
         let custom_runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .thread_stack_size(8 * 1024 * 1024)
+            .thread_stack_size(openhuman_core::core::runtime::AGENT_WORKER_STACK_BYTES)
             .build()
             .expect("build custom tokio runtime for tauri async surface");
         let handle = custom_runtime.handle().clone();
