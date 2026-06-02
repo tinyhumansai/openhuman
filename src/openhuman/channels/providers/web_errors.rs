@@ -305,7 +305,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     // before the generic provider-429 branch — otherwise users see
     // a confusing "your AI provider is rate-limiting you" message
     // for limits OpenHuman itself enforced (issue #2364).
-    if is_action_budget_exhausted(&lower) {
+    let classified = if is_action_budget_exhausted(&lower) {
         ClassifiedError {
             error_type: "action_budget_exceeded",
             message: with_provider_detail(
@@ -576,7 +576,22 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             provider,
             fallback_available,
         }
-    }
+    };
+
+    // Verbose diagnostics on the classification flow (per CLAUDE.md). Stable
+    // grep-friendly prefix + low-cardinality fields only — the raw `err` (which
+    // may carry provider payload / PII) is intentionally NOT logged here; the
+    // caller (`web.rs::run_chat_task`) already records it at warn level and
+    // routes it through `report_error_or_expected`.
+    log::debug!(
+        "[chat-error][classify] error_type={} source={} retryable={} provider={:?}",
+        classified.error_type,
+        classified.source,
+        classified.retryable,
+        classified.provider,
+    );
+
+    classified
 }
 
 /// String-flat mirror of
@@ -607,11 +622,21 @@ pub(crate) fn is_empty_provider_response_text(lower: &str) -> bool {
 ///
 /// Caller passes the already-lowercased error string.
 pub(crate) fn is_provider_request_rejected_text(lower: &str) -> bool {
-    lower.contains("400")
-        || lower.contains("bad request")
-        || lower.contains("404")
-        || lower.contains("422")
-        || lower.contains("unprocessable")
+    // Match only when the 4xx status appears inside a provider error envelope
+    // (`<provider> API error (4xx …)`, emitted by
+    // `inference::provider::ops::api_error`). Matching a bare "400"/"404"
+    // anywhere would misclassify unrelated errors that merely contain those
+    // digits (token counts, byte offsets, timestamps). Per CodeRabbit review
+    // on PR #3199.
+    const PROVIDER_4XX_MARKERS: &[&str] = &[
+        "api error (400",
+        "api error (404",
+        "api error (409",
+        "api error (422",
+    ];
+    PROVIDER_4XX_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 /// String-flat mirror of
