@@ -4512,6 +4512,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'কার্যকলাপ',
+  'onboarding.custom.stepperVault': 'ভল্ট',
   'onboarding.custom.activity.title': 'এজেন্টের কার্যকলাপ',
   'onboarding.custom.activity.subtitle':
     'আপনার এজেন্ট পটভূমিতে কতটা সক্রিয়ভাবে পর্যবেক্ষণ ও কাজ করে।',
@@ -4519,6 +4520,61 @@ const messages: TranslationMap = {
     'মাঝারি কার্যকলাপ — প্রতি ঘণ্টায় সিঙ্ক, দৈনিক সারসংক্ষেপ।',
   'onboarding.custom.activity.configureDesc':
     'নিজের কার্যকলাপের স্তর বেছে নিন। সেটিংস › এজেন্ট কার্যকলাপ স্তরে কনফিগার করুন।',
+  'onboarding.custom.vault.title': 'মেমোরি ও ভল্ট সেটআপ',
+  'onboarding.custom.vault.subtitle':
+    'নিশ্চিত করুন মেমোরি নোট কোথায় লেখা হয়, উৎস ডেটা কীভাবে পড়া হয় এবং আপনার ভল্ট পাইপলাইন সুস্থ কিনা।',
+  'onboarding.custom.vault.defaultDesc':
+    'OpenHuman-পরিচালিত মেমোরির ডিফল্ট ব্যবহার করুন। ভল্ট পাথ এবং সিঙ্ক স্বাস্থ্য পরে পর্যালোচনা করা যাবে।',
+  'onboarding.custom.vault.configureDesc':
+    'ভল্টের মালিকানা পর্যালোচনা করুন, স্বাস্থ্য পরীক্ষা চালান এবং এখনই মেমোরি নিয়ন্ত্রণ সামঞ্জস্য করুন।',
+  'onboarding.custom.vault.localDisabledReason':
+    'পরিচালিত সেটআপের জন্য OpenHuman সাইন-ইন প্রয়োজন এবং লোকাল মোডে উপলব্ধ নয়।',
+  'onboarding.custom.vault.exitError': 'অনবোর্ডিং শেষ করা যায়নি। আবার চেষ্টা করুন।',
+  'vaultHealth.title': 'ভল্ট স্বাস্থ্য চেকলিস্ট',
+  'vaultHealth.setupTitle': 'ভল্ট সেটআপ স্বাস্থ্য',
+  'vaultHealth.workspaceVault': 'ওয়ার্কস্পেস ভল্ট:',
+  'vaultHealth.refresh': 'রিফ্রেশ',
+  'vaultHealth.refreshing': 'রিফ্রেশ হচ্ছে…',
+  'vaultHealth.revealFolder': 'ফোল্ডার দেখান',
+  'vaultHealth.openInObsidian': 'Obsidian-এ খুলুন',
+  'vaultHealth.installObsidian': 'Obsidian ইনস্টল করুন',
+  'vaultHealth.openObsidianError': 'Obsidian খোলা যায়নি',
+  'vaultHealth.revealError': 'ভল্ট ফোল্ডার দেখানো যায়নি',
+  'vaultHealth.downloadError': 'Obsidian ডাউনলোড পৃষ্ঠা খোলা যায়নি',
+  'vaultHealth.loadError': 'ভল্ট স্বাস্থ্য লোড করা যায়নি:',
+  'vaultHealth.lastSync': 'শেষ সিঙ্ক:',
+  'vaultHealth.passed': 'পাস হয়েছে',
+  'vaultHealth.needsAttention': 'মনোযোগ প্রয়োজন',
+  'vaultHealth.existsLabel': 'ওয়ার্কস্পেস ভল্ট পাথ বিদ্যমান',
+  'vaultHealth.existsRecovery':
+    'ভল্ট ফোল্ডার নেই। একটি সিঙ্ক শুরু করুন বা এই ফোল্ডারটি তৈরি করুন, তারপর এই চেকলিস্ট রিফ্রেশ করুন।',
+  'vaultHealth.writableLabel': 'ভল্ট OpenHuman দ্বারা লিখনযোগ্য',
+  'vaultHealth.writableRecovery':
+    'OpenHuman এখনও এই ভল্টে লিখতে পারছে না। লেখার অনুমতি দিন এবং রিফ্রেশ করুন।',
+  'vaultHealth.obsidianLabel': 'ভল্ট Obsidian-এ নিবন্ধিত',
+  'vaultHealth.obsidianRecovery':
+    'Obsidian-এ এই পাথটির জন্য "ফোল্ডার ভল্ট হিসেবে খুলুন" বেছে নিন, তারপর এই চেকলিস্ট রিফ্রেশ করুন।',
+  'vaultHealth.pipelineLabel': 'মেমোরি পাইপলাইন সুস্থ',
+  'vaultHealth.pipelineRecovery':
+    'মেমোরি পাইপলাইন বিরতিতে আছে বা ত্রুটিতে আছে। মেমোরি ট্রি স্ট্যাটাসে অটো-সিঙ্ক পুনরায় সক্ষম করুন এবং পুনরায় চেষ্টা করুন।',
+  'vaultHealth.timeNever': 'কখনো না',
+  'vaultHealth.timeJustNow': 'এইমাত্র',
+  'vaultHealth.timeMinAgo': '{n} মিনিট আগে',
+  'vaultHealth.timeHrAgo': '{n} ঘণ্টা আগে',
+  'vaultHealth.timeDayAgo': '{n} দিন আগে',
+  'vaultHealth.timeDaysAgo': '{n} দিন আগে',
+  'memoryData.howItWorks': 'মেমোরি স্টোরেজ কীভাবে কাজ করে',
+  'memoryData.workspaceVault': 'ওয়ার্কস্পেস ভল্ট · লেখা',
+  'memoryData.workspaceVaultDesc': 'OpenHuman তৈরি মেমোরি নোট memory_tree/content-এ লেখে।',
+  'memoryData.connectedSources': 'সংযুক্ত উৎস · পড়া',
+  'memoryData.connectedSourcesDesc':
+    'ফোল্ডার, মেইলবক্স, চ্যাট এবং রেপো মেমোরি ইন্ডেক্সিংয়ের জন্য আমদানি করা হয় — তাদের মূল ফাইল কখনো পুনরায় লেখা হয় না।',
+  'memoryData.internalFiles': 'অভ্যন্তরীণ মেমোরি-ট্রি ফাইল',
+  'memoryData.internalFilesDesc':
+    'ইন্ডেক্স, কিউ স্টেট এবং সারসংক্ষেপ OpenHuman দ্বারা পরিচালিত হয় যাতে রিকল ও সিঙ্ক সুস্থ থাকে।',
+  'memoryData.windowError': 'মেমোরি উইন্ডো',
+  'memoryData.windowUpdated': 'মেমোরি উইন্ডো আপডেট হয়েছে',
+  'memoryData.windowUpdatedMsg': '{window}-এ সেট করা হয়েছে।',
 };
 
 export default messages;

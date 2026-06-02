@@ -4530,6 +4530,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Aktivitas',
+  'onboarding.custom.stepperVault': 'Vault',
   'onboarding.custom.activity.title': 'Aktivitas agen',
   'onboarding.custom.activity.subtitle':
     'Seberapa proaktif agen Anda memantau dan bertindak di latar belakang.',
@@ -4537,6 +4538,62 @@ const messages: TranslationMap = {
     'Aktivitas sedang — sinkronisasi per jam, ringkasan harian.',
   'onboarding.custom.activity.configureDesc':
     'Pilih tingkat aktivitas Anda sendiri. Konfigurasi di Pengaturan › Tingkat aktivitas agen.',
+  'onboarding.custom.vault.title': 'Pengaturan Memori & Vault',
+  'onboarding.custom.vault.subtitle':
+    'Konfirmasi di mana catatan memori ditulis, bagaimana data sumber dibaca, dan apakah pipeline vault Anda sehat.',
+  'onboarding.custom.vault.defaultDesc':
+    'Gunakan default memori yang dikelola OpenHuman. Jalur vault dan kondisi sinkronisasi tetap dapat ditinjau nanti.',
+  'onboarding.custom.vault.configureDesc':
+    'Tinjau kepemilikan vault, jalankan pemeriksaan kesehatan, dan sesuaikan kontrol memori sekarang.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Pengaturan terkelola memerlukan masuk OpenHuman dan tidak tersedia dalam mode lokal.',
+  'onboarding.custom.vault.exitError': 'Tidak dapat menyelesaikan orientasi. Silakan coba lagi.',
+  'vaultHealth.title': 'Daftar Periksa Kesehatan Vault',
+  'vaultHealth.setupTitle': 'Kesehatan pengaturan vault',
+  'vaultHealth.workspaceVault': 'Vault ruang kerja:',
+  'vaultHealth.refresh': 'Segarkan',
+  'vaultHealth.refreshing': 'Menyegarkan…',
+  'vaultHealth.revealFolder': 'Tampilkan Folder',
+  'vaultHealth.openInObsidian': 'Buka di Obsidian',
+  'vaultHealth.installObsidian': 'Pasang Obsidian',
+  'vaultHealth.openObsidianError': 'Tidak dapat membuka Obsidian',
+  'vaultHealth.revealError': 'Tidak dapat menampilkan folder vault',
+  'vaultHealth.downloadError': 'Tidak dapat membuka halaman unduhan Obsidian',
+  'vaultHealth.loadError': 'Tidak dapat memuat kesehatan vault:',
+  'vaultHealth.lastSync': 'Sinkronisasi terakhir:',
+  'vaultHealth.passed': 'Lulus',
+  'vaultHealth.needsAttention': 'Perlu perhatian',
+  'vaultHealth.existsLabel': 'Jalur vault ruang kerja ada',
+  'vaultHealth.existsRecovery':
+    'Folder vault tidak ditemukan. Mulai sinkronisasi atau buat folder ini, lalu segarkan daftar periksa ini.',
+  'vaultHealth.writableLabel': 'Vault dapat ditulis oleh OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman belum dapat menulis ke vault ini. Berikan izin tulis dan segarkan.',
+  'vaultHealth.obsidianLabel': 'Vault terdaftar di Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'Di Obsidian, pilih "Buka folder sebagai vault" untuk jalur ini, lalu segarkan daftar periksa ini.',
+  'vaultHealth.pipelineLabel': 'Pipeline memori sehat',
+  'vaultHealth.pipelineRecovery':
+    'Pipeline memori dijeda atau mengalami kesalahan. Aktifkan kembali Sinkronisasi Otomatis di status Pohon Memori dan coba lagi.',
+  'vaultHealth.timeNever': 'Tidak pernah',
+  'vaultHealth.timeJustNow': 'baru saja',
+  'vaultHealth.timeMinAgo': '{n} menit lalu',
+  'vaultHealth.timeHrAgo': '{n} jam lalu',
+  'vaultHealth.timeDayAgo': '{n} hari lalu',
+  'vaultHealth.timeDaysAgo': '{n} hari lalu',
+  'memoryData.howItWorks': 'Cara kerja penyimpanan memori',
+  'memoryData.workspaceVault': 'Vault ruang kerja · tulis',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman menulis catatan memori yang dihasilkan ke memory_tree/content.',
+  'memoryData.connectedSources': 'Sumber terhubung · baca',
+  'memoryData.connectedSourcesDesc':
+    'Folder, kotak surat, obrolan, dan repositori diimpor untuk pengindeksan memori — file aslinya tidak pernah ditulis ulang.',
+  'memoryData.internalFiles': 'File pohon memori internal',
+  'memoryData.internalFilesDesc':
+    'Indeks, status antrean, dan ringkasan dikelola oleh OpenHuman agar pemanggilan dan sinkronisasi tetap sehat.',
+  'memoryData.windowError': 'Jendela memori',
+  'memoryData.windowUpdated': 'Jendela memori diperbarui',
+  'memoryData.windowUpdatedMsg': 'Diatur ke {window}.',
 };
 
 export default messages;

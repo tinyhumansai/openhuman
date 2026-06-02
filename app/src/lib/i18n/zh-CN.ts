@@ -4293,11 +4293,69 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': '活动',
+  'onboarding.custom.stepperVault': '保险库',
   'onboarding.custom.activity.title': '智能体活动',
   'onboarding.custom.activity.subtitle': '您的智能体在后台监控和行动的主动程度。',
   'onboarding.custom.activity.defaultDesc': '适中活动——每小时同步，每日摘要。',
   'onboarding.custom.activity.configureDesc':
     '选择您自己的活动级别。在设置 › 智能体活动级别中配置。',
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': '记忆与保险库设置',
+  'onboarding.custom.vault.subtitle':
+    '确认记忆笔记的写入位置、源数据的读取方式，以及保险库管道是否正常运行。',
+  'onboarding.custom.vault.defaultDesc':
+    '使用 OpenHuman 托管的记忆默认设置。保险库路径和同步健康状态仍可稍后查看。',
+  'onboarding.custom.vault.configureDesc': '立即查看保险库所有权、运行健康检查并调整记忆控制。',
+  'onboarding.custom.vault.localDisabledReason': '托管设置需要登录 OpenHuman，在本地模式下不可用。',
+  'onboarding.custom.vault.exitError': '无法完成引导流程，请重试。',
+
+  // Vault Health
+  'vaultHealth.title': '保险库健康检查清单',
+  'vaultHealth.setupTitle': '保险库设置健康状态',
+  'vaultHealth.workspaceVault': '工作区保险库：',
+  'vaultHealth.refresh': '刷新',
+  'vaultHealth.refreshing': '刷新中…',
+  'vaultHealth.revealFolder': '显示文件夹',
+  'vaultHealth.openInObsidian': '在 Obsidian 中打开',
+  'vaultHealth.installObsidian': '安装 Obsidian',
+  'vaultHealth.openObsidianError': '无法打开 Obsidian',
+  'vaultHealth.revealError': '无法显示保险库文件夹',
+  'vaultHealth.downloadError': '无法打开 Obsidian 下载页面',
+  'vaultHealth.loadError': '无法加载保险库健康状态：',
+  'vaultHealth.lastSync': '上次同步：',
+  'vaultHealth.passed': '通过',
+  'vaultHealth.needsAttention': '需要关注',
+  'vaultHealth.existsLabel': '工作区保险库路径存在',
+  'vaultHealth.existsRecovery': '保险库文件夹缺失。请启动同步或创建该文件夹，然后刷新此检查清单。',
+  'vaultHealth.writableLabel': 'OpenHuman 可写入保险库',
+  'vaultHealth.writableRecovery': 'OpenHuman 暂时无法写入此保险库。请授予写入权限后刷新。',
+  'vaultHealth.obsidianLabel': '保险库已在 Obsidian 中注册',
+  'vaultHealth.obsidianRecovery':
+    '请在 Obsidian 中选择"将文件夹作为保险库打开"，然后刷新此检查清单。',
+  'vaultHealth.pipelineLabel': '记忆管道运行正常',
+  'vaultHealth.pipelineRecovery':
+    '记忆管道已暂停或出现错误。请在记忆树状态中重新启用自动同步并重试。',
+  'vaultHealth.timeNever': '从未',
+  'vaultHealth.timeJustNow': '刚刚',
+  'vaultHealth.timeMinAgo': '{n} 分钟前',
+  'vaultHealth.timeHrAgo': '{n} 小时前',
+  'vaultHealth.timeDayAgo': '{n} 天前',
+  'vaultHealth.timeDaysAgo': '{n} 天前',
+
+  // Memory Data
+  'memoryData.howItWorks': '记忆存储原理',
+  'memoryData.workspaceVault': '工作区保险库 · 写入',
+  'memoryData.workspaceVaultDesc': 'OpenHuman 将生成的记忆笔记写入 memory_tree/content。',
+  'memoryData.connectedSources': '已连接来源 · 读取',
+  'memoryData.connectedSourcesDesc':
+    '文件夹、邮箱、聊天记录和代码仓库会导入用于记忆索引——其原始文件不会被改写。',
+  'memoryData.internalFiles': '内部记忆树文件',
+  'memoryData.internalFilesDesc':
+    '索引、队列状态和摘要由 OpenHuman 管理，以保持召回和同步的正常运行。',
+  'memoryData.windowError': '记忆时间窗口',
+  'memoryData.windowUpdated': '记忆时间窗口已更新',
+  'memoryData.windowUpdatedMsg': '已设置为 {window}。',
 };
 
 export default messages;

@@ -4592,6 +4592,70 @@ const messages: TranslationMap = {
     'Atividade moderada — sincronização por hora, resumo diário.',
   'onboarding.custom.activity.configureDesc':
     'Escolha seu próprio nível de atividade. Configurar em Configurações › Nível de atividade do agente.',
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.vault.title': 'Configuração de Memória e Vault',
+  'onboarding.custom.vault.subtitle':
+    'Confirme onde as notas de memória são gravadas, como os dados de origem são lidos e se o pipeline do vault está saudável.',
+  'onboarding.custom.vault.defaultDesc':
+    'Use os padrões de memória gerenciados pelo OpenHuman. O caminho do vault e a integridade da sincronização ainda podem ser revisados depois.',
+  'onboarding.custom.vault.configureDesc':
+    'Revise a propriedade do vault, execute verificações de integridade e ajuste os controles de memória agora.',
+  'onboarding.custom.vault.localDisabledReason':
+    'A configuração gerenciada requer login no OpenHuman e não está disponível no modo local.',
+  'onboarding.custom.vault.exitError':
+    'Não foi possível concluir o processo de integração. Por favor, tente novamente.',
+
+  // Vault Health
+  'vaultHealth.title': 'Checklist de integridade do vault',
+  'vaultHealth.setupTitle': 'Integridade da configuração do vault',
+  'vaultHealth.workspaceVault': 'Vault do espaço de trabalho:',
+  'vaultHealth.refresh': 'Atualizar',
+  'vaultHealth.refreshing': 'Atualizando…',
+  'vaultHealth.revealFolder': 'Revelar pasta',
+  'vaultHealth.openInObsidian': 'Abrir no Obsidian',
+  'vaultHealth.installObsidian': 'Instalar Obsidian',
+  'vaultHealth.openObsidianError': 'Não foi possível abrir o Obsidian',
+  'vaultHealth.revealError': 'Não foi possível revelar a pasta do vault',
+  'vaultHealth.downloadError': 'Não foi possível abrir a página de download do Obsidian',
+  'vaultHealth.loadError': 'Não foi possível carregar a integridade do vault:',
+  'vaultHealth.lastSync': 'Última sincronização:',
+  'vaultHealth.passed': 'Aprovado',
+  'vaultHealth.needsAttention': 'Requer atenção',
+  'vaultHealth.existsLabel': 'O caminho do vault do espaço de trabalho existe',
+  'vaultHealth.existsRecovery':
+    'A pasta do vault está ausente. Inicie uma sincronização ou crie esta pasta e atualize este checklist.',
+  'vaultHealth.writableLabel': 'O vault pode ser gravado pelo OpenHuman',
+  'vaultHealth.writableRecovery':
+    'O OpenHuman ainda não consegue gravar neste vault. Conceda permissões de escrita e atualize.',
+  'vaultHealth.obsidianLabel': 'O vault está registrado no Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'No Obsidian, escolha "Abrir pasta como vault" para este caminho e atualize este checklist.',
+  'vaultHealth.pipelineLabel': 'O pipeline de memória está saudável',
+  'vaultHealth.pipelineRecovery':
+    'O pipeline de memória está pausado ou com erro. Reative a Sincronização automática no status da Árvore de Memória e tente novamente.',
+  'vaultHealth.timeNever': 'Nunca',
+  'vaultHealth.timeJustNow': 'agora mesmo',
+  'vaultHealth.timeMinAgo': 'há {n} min',
+  'vaultHealth.timeHrAgo': 'há {n} h',
+  'vaultHealth.timeDayAgo': 'há {n} dia',
+  'vaultHealth.timeDaysAgo': 'há {n} dias',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Como o armazenamento de memória funciona',
+  'memoryData.workspaceVault': 'Vault do espaço de trabalho · gravação',
+  'memoryData.workspaceVaultDesc':
+    'O OpenHuman grava as notas de memória geradas em memory_tree/content.',
+  'memoryData.connectedSources': 'Fontes conectadas · leitura',
+  'memoryData.connectedSourcesDesc':
+    'Pastas, caixas de correio, chats e repositórios são importados para indexação de memória — seus arquivos originais nunca são reescritos.',
+  'memoryData.internalFiles': 'Arquivos internos da árvore de memória',
+  'memoryData.internalFilesDesc':
+    'Índices, estado da fila e resumos são gerenciados pelo OpenHuman para manter a recuperação e a sincronização saudáveis.',
+  'memoryData.windowError': 'Janela de memória',
+  'memoryData.windowUpdated': 'Janela de memória atualizada',
+  'memoryData.windowUpdatedMsg': 'Definida para {window}.',
 };
 
 export default messages;

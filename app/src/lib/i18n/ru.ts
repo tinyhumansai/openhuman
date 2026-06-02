@@ -4556,6 +4556,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Активность',
+  'onboarding.custom.stepperVault': 'Хранилище',
   'onboarding.custom.activity.title': 'Активность агента',
   'onboarding.custom.activity.subtitle':
     'Насколько проактивно агент отслеживает события и действует в фоне.',
@@ -4563,6 +4564,63 @@ const messages: TranslationMap = {
     'Умеренная активность — синхронизация каждый час, ежедневная сводка.',
   'onboarding.custom.activity.configureDesc':
     'Выберите свой уровень активности. Настройка в Параметры › Уровень активности агента.',
+  'onboarding.custom.vault.title': 'Настройка памяти и хранилища',
+  'onboarding.custom.vault.subtitle':
+    'Подтвердите, куда записываются заметки памяти, как считываются исходные данные и исправно ли работает конвейер хранилища.',
+  'onboarding.custom.vault.defaultDesc':
+    'Использовать настройки памяти по умолчанию, управляемые OpenHuman. Путь к хранилищу и состояние синхронизации можно проверить позже.',
+  'onboarding.custom.vault.configureDesc':
+    'Проверьте владельца хранилища, выполните проверки состояния и настройте параметры памяти прямо сейчас.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Управляемая настройка требует входа в OpenHuman и недоступна в локальном режиме.',
+  'onboarding.custom.vault.exitError':
+    'Не удалось завершить настройку. Пожалуйста, попробуйте ещё раз.',
+  'vaultHealth.title': 'Контрольный список состояния хранилища',
+  'vaultHealth.setupTitle': 'Состояние настройки хранилища',
+  'vaultHealth.workspaceVault': 'Хранилище рабочего пространства:',
+  'vaultHealth.refresh': 'Обновить',
+  'vaultHealth.refreshing': 'Обновление…',
+  'vaultHealth.revealFolder': 'Показать папку',
+  'vaultHealth.openInObsidian': 'Открыть в Obsidian',
+  'vaultHealth.installObsidian': 'Установить Obsidian',
+  'vaultHealth.openObsidianError': 'Не удалось открыть Obsidian',
+  'vaultHealth.revealError': 'Не удалось показать папку хранилища',
+  'vaultHealth.downloadError': 'Не удалось открыть страницу загрузки Obsidian',
+  'vaultHealth.loadError': 'Не удалось загрузить состояние хранилища:',
+  'vaultHealth.lastSync': 'Последняя синхронизация:',
+  'vaultHealth.passed': 'Пройдено',
+  'vaultHealth.needsAttention': 'Требует внимания',
+  'vaultHealth.existsLabel': 'Путь к хранилищу рабочего пространства существует',
+  'vaultHealth.existsRecovery':
+    'Папка хранилища отсутствует. Запустите синхронизацию или создайте эту папку, затем обновите контрольный список.',
+  'vaultHealth.writableLabel': 'Хранилище доступно для записи OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman пока не может записывать в это хранилище. Предоставьте права на запись и обновите страницу.',
+  'vaultHealth.obsidianLabel': 'Хранилище зарегистрировано в Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'В Obsidian выберите «Открыть папку как хранилище» для этого пути, затем обновите контрольный список.',
+  'vaultHealth.pipelineLabel': 'Конвейер памяти работает исправно',
+  'vaultHealth.pipelineRecovery':
+    'Конвейер памяти приостановлен или находится в состоянии ошибки. Повторно включите автосинхронизацию в статусе дерева памяти и повторите попытку.',
+  'vaultHealth.timeNever': 'Никогда',
+  'vaultHealth.timeJustNow': 'только что',
+  'vaultHealth.timeMinAgo': '{n} мин назад',
+  'vaultHealth.timeHrAgo': '{n} ч назад',
+  'vaultHealth.timeDayAgo': '{n} день назад',
+  'vaultHealth.timeDaysAgo': '{n} дн назад',
+  'memoryData.howItWorks': 'Как работает хранение памяти',
+  'memoryData.workspaceVault': 'Хранилище рабочего пространства · запись',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman записывает сгенерированные заметки памяти в memory_tree/content.',
+  'memoryData.connectedSources': 'Подключённые источники · чтение',
+  'memoryData.connectedSourcesDesc':
+    'Папки, почтовые ящики, чаты и репозитории импортируются для индексирования памяти — исходные файлы никогда не перезаписываются.',
+  'memoryData.internalFiles': 'Внутренние файлы дерева памяти',
+  'memoryData.internalFilesDesc':
+    'Индексы, состояние очереди и сводки управляются OpenHuman для поддержания исправного восстановления и синхронизации.',
+  'memoryData.windowError': 'Окно памяти',
+  'memoryData.windowUpdated': 'Окно памяти обновлено',
+  'memoryData.windowUpdatedMsg': 'Установлено значение {window}.',
 };
 
 export default messages;

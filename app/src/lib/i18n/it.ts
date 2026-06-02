@@ -4590,6 +4590,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Attività',
+  'onboarding.custom.stepperVault': 'Vault',
   'onboarding.custom.activity.title': "Attività dell'agente",
   'onboarding.custom.activity.subtitle':
     'Quanto proattivamente il tuo agente monitora e agisce in background.',
@@ -4597,6 +4598,68 @@ const messages: TranslationMap = {
     'Attività moderata — sincronizzazione oraria, riepilogo giornaliero.',
   'onboarding.custom.activity.configureDesc':
     "Scegli il tuo livello di attività. Configura in Impostazioni › Livello di attività dell'agente.",
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Configurazione memoria e Vault',
+  'onboarding.custom.vault.subtitle':
+    'Conferma dove vengono scritte le note di memoria, come vengono letti i dati sorgente e se la pipeline del vault è integra.',
+  'onboarding.custom.vault.defaultDesc':
+    'Usa le impostazioni di memoria predefinite gestite da OpenHuman. Il percorso del vault e la salute della sincronizzazione possono essere verificati in seguito.',
+  'onboarding.custom.vault.configureDesc':
+    'Verifica la proprietà del vault, esegui controlli di integrità e ottimizza i controlli della memoria ora.',
+  'onboarding.custom.vault.localDisabledReason':
+    'La configurazione gestita richiede il login a OpenHuman e non è disponibile in modalità locale.',
+  'onboarding.custom.vault.exitError': "Impossibile completare l'onboarding. Riprova.",
+
+  // Vault Health
+  'vaultHealth.title': 'Checklist integrità vault',
+  'vaultHealth.setupTitle': 'Integrità configurazione vault',
+  'vaultHealth.workspaceVault': 'Vault workspace:',
+  'vaultHealth.refresh': 'Aggiorna',
+  'vaultHealth.refreshing': 'Aggiornamento in corso…',
+  'vaultHealth.revealFolder': 'Mostra cartella',
+  'vaultHealth.openInObsidian': 'Apri in Obsidian',
+  'vaultHealth.installObsidian': 'Installa Obsidian',
+  'vaultHealth.openObsidianError': 'Impossibile aprire Obsidian',
+  'vaultHealth.revealError': 'Impossibile mostrare la cartella del vault',
+  'vaultHealth.downloadError': 'Impossibile aprire la pagina di download di Obsidian',
+  'vaultHealth.loadError': "Impossibile caricare l'integrità del vault:",
+  'vaultHealth.lastSync': 'Ultima sincronizzazione:',
+  'vaultHealth.passed': 'Superato',
+  'vaultHealth.needsAttention': 'Richiede attenzione',
+  'vaultHealth.existsLabel': 'Il percorso del vault workspace esiste',
+  'vaultHealth.existsRecovery':
+    'La cartella del vault è assente. Avvia una sincronizzazione o crea questa cartella, poi aggiorna la checklist.',
+  'vaultHealth.writableLabel': 'Il vault è scrivibile da OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman non riesce ancora a scrivere in questo vault. Concedi i permessi di scrittura e aggiorna.',
+  'vaultHealth.obsidianLabel': 'Il vault è registrato in Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'In Obsidian, scegli "Apri cartella come vault" per questo percorso, poi aggiorna la checklist.',
+  'vaultHealth.pipelineLabel': 'La pipeline di memoria è integra',
+  'vaultHealth.pipelineRecovery':
+    'La pipeline di memoria è in pausa o in errore. Riattiva la sincronizzazione automatica nello stato del Memory Tree e riprova.',
+  'vaultHealth.timeNever': 'Mai',
+  'vaultHealth.timeJustNow': 'poco fa',
+  'vaultHealth.timeMinAgo': '{n} min fa',
+  'vaultHealth.timeHrAgo': '{n} ora fa',
+  'vaultHealth.timeDayAgo': '{n} giorno fa',
+  'vaultHealth.timeDaysAgo': '{n} giorni fa',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Come funziona la memorizzazione',
+  'memoryData.workspaceVault': 'Vault workspace · scrittura',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman scrive le note di memoria generate in memory_tree/content.',
+  'memoryData.connectedSources': 'Fonti collegate · lettura',
+  'memoryData.connectedSourcesDesc':
+    "Cartelle, caselle di posta, chat e repository vengono importati per l'indicizzazione della memoria — i file originali non vengono mai riscritti.",
+  'memoryData.internalFiles': 'File interni del memory-tree',
+  'memoryData.internalFilesDesc':
+    'Indici, stato della coda e riepiloghi sono gestiti da OpenHuman per mantenere efficiente il richiamo e la sincronizzazione.',
+  'memoryData.windowError': 'Finestra di memoria',
+  'memoryData.windowUpdated': 'Finestra di memoria aggiornata',
+  'memoryData.windowUpdatedMsg': 'Impostata su {window}.',
 };
 
 export default messages;

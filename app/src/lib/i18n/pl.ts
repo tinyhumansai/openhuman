@@ -4587,12 +4587,69 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Aktywność',
+  'onboarding.custom.stepperVault': 'Skarbiec',
   'onboarding.custom.activity.title': 'Aktywność agenta',
   'onboarding.custom.activity.subtitle': 'Jak proaktywnie Twój agent monitoruje i działa w tle.',
   'onboarding.custom.activity.defaultDesc':
     'Umiarkowana aktywność — synchronizacja co godzinę, codzienny skrót.',
   'onboarding.custom.activity.configureDesc':
     'Wybierz własny poziom aktywności. Skonfiguruj w Ustawieniach › Poziom aktywności agenta.',
+  'onboarding.custom.vault.title': 'Konfiguracja pamięci i skarbca',
+  'onboarding.custom.vault.subtitle':
+    'Potwierdź, gdzie zapisywane są notatki pamięci, jak odczytywane są dane źródłowe i czy potok skarbca działa poprawnie.',
+  'onboarding.custom.vault.defaultDesc':
+    'Użyj domyślnych ustawień pamięci zarządzanej przez OpenHuman. Ścieżkę skarbca i stan synchronizacji można sprawdzić później.',
+  'onboarding.custom.vault.configureDesc':
+    'Sprawdź właściciela skarbca, uruchom kontrole stanu i dostosuj teraz ustawienia pamięci.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Konfiguracja zarządzana wymaga logowania do OpenHuman i jest niedostępna w trybie lokalnym.',
+  'onboarding.custom.vault.exitError': 'Nie udało się zakończyć wdrożenia. Spróbuj ponownie.',
+  'vaultHealth.title': 'Lista kontrolna stanu skarbca',
+  'vaultHealth.setupTitle': 'Stan konfiguracji skarbca',
+  'vaultHealth.workspaceVault': 'Skarbiec obszaru roboczego:',
+  'vaultHealth.refresh': 'Odśwież',
+  'vaultHealth.refreshing': 'Odświeżanie…',
+  'vaultHealth.revealFolder': 'Pokaż folder',
+  'vaultHealth.openInObsidian': 'Otwórz w Obsidian',
+  'vaultHealth.installObsidian': 'Zainstaluj Obsidian',
+  'vaultHealth.openObsidianError': 'Nie można otworzyć Obsidian',
+  'vaultHealth.revealError': 'Nie można wyświetlić folderu skarbca',
+  'vaultHealth.downloadError': 'Nie można otworzyć strony pobierania Obsidian',
+  'vaultHealth.loadError': 'Nie można załadować stanu skarbca:',
+  'vaultHealth.lastSync': 'Ostatnia synchronizacja:',
+  'vaultHealth.passed': 'Zaliczone',
+  'vaultHealth.needsAttention': 'Wymaga uwagi',
+  'vaultHealth.existsLabel': 'Ścieżka skarbca obszaru roboczego istnieje',
+  'vaultHealth.existsRecovery':
+    'Folder skarbca jest niedostępny. Rozpocznij synchronizację lub utwórz ten folder, a następnie odśwież listę kontrolną.',
+  'vaultHealth.writableLabel': 'Skarbiec jest zapisywalny przez OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman nie może jeszcze zapisywać do tego skarbca. Nadaj uprawnienia do zapisu i odśwież.',
+  'vaultHealth.obsidianLabel': 'Skarbiec jest zarejestrowany w Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'W Obsidian wybierz „Otwórz folder jako skarbiec" dla tej ścieżki, a następnie odśwież listę kontrolną.',
+  'vaultHealth.pipelineLabel': 'Potok pamięci działa poprawnie',
+  'vaultHealth.pipelineRecovery':
+    'Potok pamięci jest wstrzymany lub w stanie błędu. Włącz ponownie automatyczną synchronizację w statusie drzewa pamięci i spróbuj ponownie.',
+  'vaultHealth.timeNever': 'Nigdy',
+  'vaultHealth.timeJustNow': 'przed chwilą',
+  'vaultHealth.timeMinAgo': '{n} min temu',
+  'vaultHealth.timeHrAgo': '{n} godz. temu',
+  'vaultHealth.timeDayAgo': '{n} dzień temu',
+  'vaultHealth.timeDaysAgo': '{n} dni temu',
+  'memoryData.howItWorks': 'Jak działa przechowywanie pamięci',
+  'memoryData.workspaceVault': 'Skarbiec obszaru roboczego · zapis',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman zapisuje wygenerowane notatki pamięci do memory_tree/content.',
+  'memoryData.connectedSources': 'Połączone źródła · odczyt',
+  'memoryData.connectedSourcesDesc':
+    'Foldery, skrzynki pocztowe, czaty i repozytoria są importowane do indeksowania pamięci — ich oryginalne pliki nigdy nie są nadpisywane.',
+  'memoryData.internalFiles': 'Wewnętrzne pliki drzewa pamięci',
+  'memoryData.internalFilesDesc':
+    'Indeksy, stan kolejki i podsumowania są zarządzane przez OpenHuman, aby utrzymać poprawne działanie przywołania i synchronizacji.',
+  'memoryData.windowError': 'Okno pamięci',
+  'memoryData.windowUpdated': 'Okno pamięci zaktualizowane',
+  'memoryData.windowUpdatedMsg': 'Ustawiono na {window}.',
 };
 
 export default messages;

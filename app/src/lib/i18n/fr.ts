@@ -4613,6 +4613,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Activité',
+  'onboarding.custom.stepperVault': 'Coffre',
   'onboarding.custom.activity.title': "Activité de l'agent",
   'onboarding.custom.activity.subtitle':
     'À quel point votre agent surveille et agit en arrière-plan.',
@@ -4620,6 +4621,68 @@ const messages: TranslationMap = {
     'Activité modérée — synchronisation horaire, résumé quotidien.',
   'onboarding.custom.activity.configureDesc':
     "Choisissez votre propre niveau d'activité. Configurer dans Paramètres › Niveau d'activité de l'agent.",
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Configuration de la mémoire et du coffre',
+  'onboarding.custom.vault.subtitle':
+    'Confirmez où les notes de mémoire sont écrites, comment les données sources sont lues et si votre pipeline de coffre est en bon état.',
+  'onboarding.custom.vault.defaultDesc':
+    "Utiliser les paramètres de mémoire gérés par OpenHuman. Le chemin du coffre et l'état de synchronisation peuvent encore être consultés ultérieurement.",
+  'onboarding.custom.vault.configureDesc':
+    'Vérifiez la propriété du coffre, exécutez des contrôles de santé et affinez les contrôles de mémoire maintenant.',
+  'onboarding.custom.vault.localDisabledReason':
+    "La configuration gérée nécessite une connexion à OpenHuman et n'est pas disponible en mode local.",
+  'onboarding.custom.vault.exitError': "Impossible de terminer l'intégration. Veuillez réessayer.",
+
+  // Vault Health
+  'vaultHealth.title': 'Liste de contrôle de santé du coffre',
+  'vaultHealth.setupTitle': 'Santé de la configuration du coffre',
+  'vaultHealth.workspaceVault': "Coffre de l'espace de travail :",
+  'vaultHealth.refresh': 'Actualiser',
+  'vaultHealth.refreshing': 'Actualisation…',
+  'vaultHealth.revealFolder': 'Afficher le dossier',
+  'vaultHealth.openInObsidian': 'Ouvrir dans Obsidian',
+  'vaultHealth.installObsidian': 'Installer Obsidian',
+  'vaultHealth.openObsidianError': "Impossible d'ouvrir Obsidian",
+  'vaultHealth.revealError': "Impossible d'afficher le dossier du coffre",
+  'vaultHealth.downloadError': "Impossible d'ouvrir la page de téléchargement d'Obsidian",
+  'vaultHealth.loadError': 'Impossible de charger la santé du coffre :',
+  'vaultHealth.lastSync': 'Dernière synchronisation :',
+  'vaultHealth.passed': 'Réussi',
+  'vaultHealth.needsAttention': 'Attention requise',
+  'vaultHealth.existsLabel': "Le chemin du coffre de l'espace de travail existe",
+  'vaultHealth.existsRecovery':
+    'Le dossier du coffre est manquant. Lancez une synchronisation ou créez ce dossier, puis actualisez cette liste de contrôle.',
+  'vaultHealth.writableLabel': 'Le coffre est accessible en écriture par OpenHuman',
+  'vaultHealth.writableRecovery':
+    "OpenHuman ne peut pas encore écrire dans ce coffre. Accordez les autorisations d'écriture et actualisez.",
+  'vaultHealth.obsidianLabel': 'Le coffre est enregistré dans Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'Dans Obsidian, choisissez « Ouvrir le dossier comme coffre » pour ce chemin, puis actualisez cette liste de contrôle.',
+  'vaultHealth.pipelineLabel': 'Le pipeline de mémoire est en bon état',
+  'vaultHealth.pipelineRecovery':
+    "Le pipeline de mémoire est en pause ou en erreur. Réactivez la synchronisation automatique dans le statut de l'arbre de mémoire et réessayez.",
+  'vaultHealth.timeNever': 'Jamais',
+  'vaultHealth.timeJustNow': "à l'instant",
+  'vaultHealth.timeMinAgo': 'il y a {n} min',
+  'vaultHealth.timeHrAgo': 'il y a {n} h',
+  'vaultHealth.timeDayAgo': 'il y a {n} jour',
+  'vaultHealth.timeDaysAgo': 'il y a {n} jours',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Fonctionnement du stockage de la mémoire',
+  'memoryData.workspaceVault': "Coffre de l'espace de travail · écriture",
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman écrit les notes de mémoire générées dans memory_tree/content.',
+  'memoryData.connectedSources': 'Sources connectées · lecture',
+  'memoryData.connectedSourcesDesc':
+    "Les dossiers, boîtes mail, conversations et dépôts sont importés pour l'indexation de la mémoire — leurs fichiers originaux ne sont jamais réécrits.",
+  'memoryData.internalFiles': "Fichiers internes de l'arbre de mémoire",
+  'memoryData.internalFilesDesc':
+    "Les index, l'état de la file d'attente et les résumés sont gérés par OpenHuman pour maintenir la mémoire et la synchronisation en bon état.",
+  'memoryData.windowError': 'Fenêtre de mémoire',
+  'memoryData.windowUpdated': 'Fenêtre de mémoire mise à jour',
+  'memoryData.windowUpdatedMsg': 'Définie sur {window}.',
 };
 
 export default messages;

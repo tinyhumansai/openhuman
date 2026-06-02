@@ -4639,6 +4639,70 @@ const messages: TranslationMap = {
     'Moderate Aktivität – stündliche Synchronisierung, tägliche Zusammenfassung.',
   'onboarding.custom.activity.configureDesc':
     'Eigene Aktivitätsstufe wählen. Konfigurieren in Einstellungen › Agent-Aktivitätsstufe.',
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.vault.title': 'Speicher & Vault-Einrichtung',
+  'onboarding.custom.vault.subtitle':
+    'Bestätigen Sie, wohin Speichernotizen geschrieben werden, wie Quelldaten gelesen werden und ob Ihre Vault-Pipeline fehlerfrei ist.',
+  'onboarding.custom.vault.defaultDesc':
+    'Von OpenHuman verwaltete Standardspeichereinstellungen verwenden. Vault-Pfad und Synchronisierungsstatus können später eingesehen werden.',
+  'onboarding.custom.vault.configureDesc':
+    'Vault-Eigentümerschaft prüfen, Integritätsprüfungen durchführen und Speicherkontrollen jetzt anpassen.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Die verwaltete Einrichtung erfordert eine OpenHuman-Anmeldung und ist im lokalen Modus nicht verfügbar.',
+  'onboarding.custom.vault.exitError':
+    'Onboarding konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.',
+
+  // Vault Health
+  'vaultHealth.title': 'Vault-Integritätsprüfliste',
+  'vaultHealth.setupTitle': 'Vault-Einrichtungsstatus',
+  'vaultHealth.workspaceVault': 'Arbeitsbereich-Vault:',
+  'vaultHealth.refresh': 'Aktualisieren',
+  'vaultHealth.refreshing': 'Wird aktualisiert…',
+  'vaultHealth.revealFolder': 'Ordner anzeigen',
+  'vaultHealth.openInObsidian': 'In Obsidian öffnen',
+  'vaultHealth.installObsidian': 'Obsidian installieren',
+  'vaultHealth.openObsidianError': 'Obsidian konnte nicht geöffnet werden',
+  'vaultHealth.revealError': 'Vault-Ordner konnte nicht angezeigt werden',
+  'vaultHealth.downloadError': 'Obsidian-Downloadseite konnte nicht geöffnet werden',
+  'vaultHealth.loadError': 'Vault-Status konnte nicht geladen werden:',
+  'vaultHealth.lastSync': 'Letzte Synchronisierung:',
+  'vaultHealth.passed': 'Bestanden',
+  'vaultHealth.needsAttention': 'Aufmerksamkeit erforderlich',
+  'vaultHealth.existsLabel': 'Arbeitsbereich-Vault-Pfad vorhanden',
+  'vaultHealth.existsRecovery':
+    'Vault-Ordner fehlt. Starten Sie eine Synchronisierung oder erstellen Sie diesen Ordner und aktualisieren Sie dann diese Prüfliste.',
+  'vaultHealth.writableLabel': 'Vault ist durch OpenHuman beschreibbar',
+  'vaultHealth.writableRecovery':
+    'OpenHuman kann noch nicht in diesen Vault schreiben. Schreibberechtigungen erteilen und aktualisieren.',
+  'vaultHealth.obsidianLabel': 'Vault ist in Obsidian registriert',
+  'vaultHealth.obsidianRecovery':
+    'Wählen Sie in Obsidian „Ordner als Vault öffnen" für diesen Pfad und aktualisieren Sie dann diese Prüfliste.',
+  'vaultHealth.pipelineLabel': 'Speicher-Pipeline ist fehlerfrei',
+  'vaultHealth.pipelineRecovery':
+    'Speicher-Pipeline ist pausiert oder fehlerhaft. Auto-Synchronisierung im Memory-Tree-Status wieder aktivieren und erneut versuchen.',
+  'vaultHealth.timeNever': 'Nie',
+  'vaultHealth.timeJustNow': 'gerade eben',
+  'vaultHealth.timeMinAgo': 'vor {n} Min.',
+  'vaultHealth.timeHrAgo': 'vor {n} Std.',
+  'vaultHealth.timeDayAgo': 'vor {n} Tag',
+  'vaultHealth.timeDaysAgo': 'vor {n} Tagen',
+
+  // Memory Data
+  'memoryData.howItWorks': 'So funktioniert die Speicherablage',
+  'memoryData.workspaceVault': 'Arbeitsbereich-Vault · Schreiben',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman schreibt generierte Speichernotizen nach memory_tree/content.',
+  'memoryData.connectedSources': 'Verbundene Quellen · Lesen',
+  'memoryData.connectedSourcesDesc':
+    'Ordner, Postfächer, Chats und Repositories werden für die Speicherindizierung importiert – die Originaldateien werden dabei nie überschrieben.',
+  'memoryData.internalFiles': 'Interne Memory-Tree-Dateien',
+  'memoryData.internalFilesDesc':
+    'Indizes, Warteschlangenstatus und Zusammenfassungen werden von OpenHuman verwaltet, um Erinnerung und Synchronisierung fehlerfrei zu halten.',
+  'memoryData.windowError': 'Speicherfenster',
+  'memoryData.windowUpdated': 'Speicherfenster aktualisiert',
+  'memoryData.windowUpdatedMsg': 'Auf {window} gesetzt.',
 };
 
 export default messages;

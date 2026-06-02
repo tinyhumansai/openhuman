@@ -4517,12 +4517,69 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'गतिविधि',
+  'onboarding.custom.stepperVault': 'वॉल्ट',
   'onboarding.custom.activity.title': 'एजेंट गतिविधि',
   'onboarding.custom.activity.subtitle':
     'आपका एजेंट पृष्ठभूमि में कितनी सक्रियता से निगरानी और कार्य करता है।',
   'onboarding.custom.activity.defaultDesc': 'मध्यम गतिविधि — प्रति घंटे सिंक, दैनिक सारांश।',
   'onboarding.custom.activity.configureDesc':
     'अपना गतिविधि स्तर चुनें। सेटिंग्स › एजेंट गतिविधि स्तर में कॉन्फ़िगर करें।',
+  'onboarding.custom.vault.title': 'मेमोरी और वॉल्ट सेटअप',
+  'onboarding.custom.vault.subtitle':
+    'पुष्टि करें कि मेमोरी नोट्स कहाँ लिखे जाते हैं, स्रोत डेटा कैसे पढ़ा जाता है, और आपका वॉल्ट पाइपलाइन स्वस्थ है या नहीं।',
+  'onboarding.custom.vault.defaultDesc':
+    'OpenHuman-प्रबंधित मेमोरी डिफ़ॉल्ट का उपयोग करें। वॉल्ट पाथ और सिंक स्वास्थ्य बाद में भी देखे जा सकते हैं।',
+  'onboarding.custom.vault.configureDesc':
+    'वॉल्ट स्वामित्व की समीक्षा करें, स्वास्थ्य जाँच चलाएँ और अभी मेमोरी नियंत्रण ठीक करें।',
+  'onboarding.custom.vault.localDisabledReason':
+    'प्रबंधित सेटअप के लिए OpenHuman साइन-इन आवश्यक है और लोकल मोड में उपलब्ध नहीं है।',
+  'onboarding.custom.vault.exitError': 'ऑनबोर्डिंग पूरी नहीं हो सकी। कृपया पुनः प्रयास करें।',
+  'vaultHealth.title': 'वॉल्ट स्वास्थ्य चेकलिस्ट',
+  'vaultHealth.setupTitle': 'वॉल्ट सेटअप स्वास्थ्य',
+  'vaultHealth.workspaceVault': 'वर्कस्पेस वॉल्ट:',
+  'vaultHealth.refresh': 'रिफ्रेश',
+  'vaultHealth.refreshing': 'रिफ्रेश हो रहा है…',
+  'vaultHealth.revealFolder': 'फ़ोल्डर दिखाएँ',
+  'vaultHealth.openInObsidian': 'Obsidian में खोलें',
+  'vaultHealth.installObsidian': 'Obsidian इंस्टॉल करें',
+  'vaultHealth.openObsidianError': 'Obsidian नहीं खोला जा सका',
+  'vaultHealth.revealError': 'वॉल्ट फ़ोल्डर नहीं दिखाया जा सका',
+  'vaultHealth.downloadError': 'Obsidian डाउनलोड पृष्ठ नहीं खोला जा सका',
+  'vaultHealth.loadError': 'वॉल्ट स्वास्थ्य लोड नहीं हो सका:',
+  'vaultHealth.lastSync': 'अंतिम सिंक:',
+  'vaultHealth.passed': 'पास',
+  'vaultHealth.needsAttention': 'ध्यान आवश्यक',
+  'vaultHealth.existsLabel': 'वर्कस्पेस वॉल्ट पाथ मौजूद है',
+  'vaultHealth.existsRecovery':
+    'वॉल्ट फ़ोल्डर गायब है। एक सिंक शुरू करें या यह फ़ोल्डर बनाएँ, फिर इस चेकलिस्ट को रिफ्रेश करें।',
+  'vaultHealth.writableLabel': 'वॉल्ट OpenHuman द्वारा लिखने योग्य है',
+  'vaultHealth.writableRecovery':
+    'OpenHuman अभी इस वॉल्ट में नहीं लिख सकता। लिखने की अनुमति दें और रिफ्रेश करें।',
+  'vaultHealth.obsidianLabel': 'वॉल्ट Obsidian में पंजीकृत है',
+  'vaultHealth.obsidianRecovery':
+    'Obsidian में इस पाथ के लिए "फ़ोल्डर को वॉल्ट के रूप में खोलें" चुनें, फिर इस चेकलिस्ट को रिफ्रेश करें।',
+  'vaultHealth.pipelineLabel': 'मेमोरी पाइपलाइन स्वस्थ है',
+  'vaultHealth.pipelineRecovery':
+    'मेमोरी पाइपलाइन रुकी हुई है या त्रुटि में है। मेमोरी ट्री स्थिति में ऑटो-सिंक पुनः सक्षम करें और पुनः प्रयास करें।',
+  'vaultHealth.timeNever': 'कभी नहीं',
+  'vaultHealth.timeJustNow': 'अभी-अभी',
+  'vaultHealth.timeMinAgo': '{n} मिनट पहले',
+  'vaultHealth.timeHrAgo': '{n} घंटे पहले',
+  'vaultHealth.timeDayAgo': '{n} दिन पहले',
+  'vaultHealth.timeDaysAgo': '{n} दिन पहले',
+  'memoryData.howItWorks': 'मेमोरी स्टोरेज कैसे काम करता है',
+  'memoryData.workspaceVault': 'वर्कस्पेस वॉल्ट · लिखना',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman जनरेट किए गए मेमोरी नोट्स को memory_tree/content में लिखता है।',
+  'memoryData.connectedSources': 'कनेक्टेड स्रोत · पढ़ना',
+  'memoryData.connectedSourcesDesc':
+    'फ़ोल्डर, मेलबॉक्स, चैट और रेपो मेमोरी इंडेक्सिंग के लिए आयात किए जाते हैं — उनकी मूल फ़ाइलें कभी नहीं बदली जातीं।',
+  'memoryData.internalFiles': 'आंतरिक मेमोरी-ट्रि फ़ाइलें',
+  'memoryData.internalFilesDesc':
+    'इंडेक्स, क्यू स्थिति और सारांश OpenHuman द्वारा प्रबंधित किए जाते हैं ताकि रिकॉल और सिंक स्वस्थ रहे।',
+  'memoryData.windowError': 'मेमोरी विंडो',
+  'memoryData.windowUpdated': 'मेमोरी विंडो अपडेट हुई',
+  'memoryData.windowUpdatedMsg': '{window} पर सेट किया गया।',
 };
 
 export default messages;

@@ -4473,12 +4473,69 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': '활동',
+  'onboarding.custom.stepperVault': '볼트',
   'onboarding.custom.activity.title': '에이전트 활동',
   'onboarding.custom.activity.subtitle':
     '에이전트가 백그라운드에서 얼마나 능동적으로 모니터링하고 행동하는지.',
   'onboarding.custom.activity.defaultDesc': '보통 활동 — 매시간 동기화, 일일 요약.',
   'onboarding.custom.activity.configureDesc':
     '자신만의 활동 수준을 선택하세요. 설정 › 에이전트 활동 수준에서 구성하세요.',
+  'onboarding.custom.vault.title': '메모리 및 볼트 설정',
+  'onboarding.custom.vault.subtitle':
+    '메모리 노트가 기록되는 위치, 소스 데이터를 읽는 방법, 볼트 파이프라인이 정상인지 확인하세요.',
+  'onboarding.custom.vault.defaultDesc':
+    'OpenHuman 관리형 메모리 기본값을 사용합니다. 볼트 경로와 동기화 상태는 나중에 검토할 수 있습니다.',
+  'onboarding.custom.vault.configureDesc':
+    '볼트 소유권을 검토하고 상태 검사를 실행하며 메모리 컨트롤을 지금 조정하세요.',
+  'onboarding.custom.vault.localDisabledReason':
+    '관리형 설정은 OpenHuman 로그인이 필요하며 로컬 모드에서는 사용할 수 없습니다.',
+  'onboarding.custom.vault.exitError': '온보딩을 완료할 수 없습니다. 다시 시도해 주세요.',
+  'vaultHealth.title': '볼트 상태 체크리스트',
+  'vaultHealth.setupTitle': '볼트 설정 상태',
+  'vaultHealth.workspaceVault': '워크스페이스 볼트:',
+  'vaultHealth.refresh': '새로 고침',
+  'vaultHealth.refreshing': '새로 고침 중…',
+  'vaultHealth.revealFolder': '폴더 표시',
+  'vaultHealth.openInObsidian': 'Obsidian에서 열기',
+  'vaultHealth.installObsidian': 'Obsidian 설치',
+  'vaultHealth.openObsidianError': 'Obsidian을 열 수 없습니다',
+  'vaultHealth.revealError': '볼트 폴더를 표시할 수 없습니다',
+  'vaultHealth.downloadError': 'Obsidian 다운로드 페이지를 열 수 없습니다',
+  'vaultHealth.loadError': '볼트 상태를 불러올 수 없습니다:',
+  'vaultHealth.lastSync': '마지막 동기화:',
+  'vaultHealth.passed': '통과',
+  'vaultHealth.needsAttention': '주의 필요',
+  'vaultHealth.existsLabel': '워크스페이스 볼트 경로가 존재합니다',
+  'vaultHealth.existsRecovery':
+    '볼트 폴더가 없습니다. 동기화를 시작하거나 이 폴더를 만든 후 체크리스트를 새로 고침하세요.',
+  'vaultHealth.writableLabel': 'OpenHuman이 볼트에 쓸 수 있습니다',
+  'vaultHealth.writableRecovery':
+    'OpenHuman이 아직 이 볼트에 쓸 수 없습니다. 쓰기 권한을 부여하고 새로 고침하세요.',
+  'vaultHealth.obsidianLabel': '볼트가 Obsidian에 등록되어 있습니다',
+  'vaultHealth.obsidianRecovery':
+    'Obsidian에서 이 경로에 대해 "폴더를 볼트로 열기"를 선택한 후 체크리스트를 새로 고침하세요.',
+  'vaultHealth.pipelineLabel': '메모리 파이프라인이 정상입니다',
+  'vaultHealth.pipelineRecovery':
+    '메모리 파이프라인이 일시 중지되었거나 오류 상태입니다. 메모리 트리 상태에서 자동 동기화를 다시 활성화하고 재시도하세요.',
+  'vaultHealth.timeNever': '없음',
+  'vaultHealth.timeJustNow': '방금 전',
+  'vaultHealth.timeMinAgo': '{n}분 전',
+  'vaultHealth.timeHrAgo': '{n}시간 전',
+  'vaultHealth.timeDayAgo': '{n}일 전',
+  'vaultHealth.timeDaysAgo': '{n}일 전',
+  'memoryData.howItWorks': '메모리 저장 방식',
+  'memoryData.workspaceVault': '워크스페이스 볼트 · 쓰기',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman이 생성된 메모리 노트를 memory_tree/content에 기록합니다.',
+  'memoryData.connectedSources': '연결된 소스 · 읽기',
+  'memoryData.connectedSourcesDesc':
+    '폴더, 사서함, 채팅, 저장소가 메모리 인덱싱을 위해 가져와집니다 — 원본 파일은 절대 수정되지 않습니다.',
+  'memoryData.internalFiles': '내부 메모리 트리 파일',
+  'memoryData.internalFilesDesc':
+    '인덱스, 큐 상태, 요약은 OpenHuman이 관리하여 회상과 동기화를 정상 상태로 유지합니다.',
+  'memoryData.windowError': '메모리 창',
+  'memoryData.windowUpdated': '메모리 창 업데이트됨',
+  'memoryData.windowUpdatedMsg': '{window}(으)로 설정되었습니다.',
 };
 
 export default messages;

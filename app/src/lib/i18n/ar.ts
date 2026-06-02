@@ -4431,11 +4431,68 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'النشاط',
+  'onboarding.custom.stepperVault': 'الخزينة',
   'onboarding.custom.activity.title': 'نشاط الوكيل',
   'onboarding.custom.activity.subtitle': 'مدى استباقية وكيلك في المراقبة والتصرف في الخلفية.',
   'onboarding.custom.activity.defaultDesc': 'نشاط متوسط — مزامنة كل ساعة، ملخص يومي.',
   'onboarding.custom.activity.configureDesc':
     'اختر مستوى نشاطك الخاص. الإعداد في الإعدادات › مستوى نشاط الوكيل.',
+  'onboarding.custom.vault.title': 'إعداد الذاكرة والخزينة',
+  'onboarding.custom.vault.subtitle':
+    'تأكيد موضع كتابة ملاحظات الذاكرة، وكيفية قراءة البيانات المصدر، وسلامة مسار الخزينة.',
+  'onboarding.custom.vault.defaultDesc':
+    'استخدم الإعدادات الافتراضية لذاكرة OpenHuman المُدارة. يمكن مراجعة مسار الخزينة وصحة المزامنة لاحقًا.',
+  'onboarding.custom.vault.configureDesc':
+    'راجع ملكية الخزينة، وشغّل فحوصات الصحة، واضبط عناصر التحكم في الذاكرة الآن.',
+  'onboarding.custom.vault.localDisabledReason':
+    'يتطلب الإعداد المُدار تسجيل الدخول إلى OpenHuman وغير متاح في الوضع المحلي.',
+  'onboarding.custom.vault.exitError': 'تعذّر إتمام الإعداد. يُرجى المحاولة مجددًا.',
+  'vaultHealth.title': 'قائمة فحص صحة الخزينة',
+  'vaultHealth.setupTitle': 'صحة إعداد الخزينة',
+  'vaultHealth.workspaceVault': 'خزينة مساحة العمل:',
+  'vaultHealth.refresh': 'تحديث',
+  'vaultHealth.refreshing': 'جارٍ التحديث…',
+  'vaultHealth.revealFolder': 'إظهار المجلد',
+  'vaultHealth.openInObsidian': 'فتح في Obsidian',
+  'vaultHealth.installObsidian': 'تثبيت Obsidian',
+  'vaultHealth.openObsidianError': 'تعذّر فتح Obsidian',
+  'vaultHealth.revealError': 'تعذّر إظهار مجلد الخزينة',
+  'vaultHealth.downloadError': 'تعذّر فتح صفحة تنزيل Obsidian',
+  'vaultHealth.loadError': 'تعذّر تحميل صحة الخزينة:',
+  'vaultHealth.lastSync': 'آخر مزامنة:',
+  'vaultHealth.passed': 'ناجح',
+  'vaultHealth.needsAttention': 'يحتاج إلى انتباه',
+  'vaultHealth.existsLabel': 'مسار خزينة مساحة العمل موجود',
+  'vaultHealth.existsRecovery':
+    'مجلد الخزينة مفقود. ابدأ مزامنة أو أنشئ هذا المجلد، ثم حدّث هذه القائمة.',
+  'vaultHealth.writableLabel': 'الخزينة قابلة للكتابة بواسطة OpenHuman',
+  'vaultHealth.writableRecovery':
+    'لا يستطيع OpenHuman الكتابة في هذه الخزينة بعد. امنح أذونات الكتابة ثم حدّث.',
+  'vaultHealth.obsidianLabel': 'الخزينة مسجّلة في Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'في Obsidian، اختر "فتح المجلد كخزينة" لهذا المسار، ثم حدّث هذه القائمة.',
+  'vaultHealth.pipelineLabel': 'مسار الذاكرة سليم',
+  'vaultHealth.pipelineRecovery':
+    'مسار الذاكرة متوقف أو في حالة خطأ. أعد تفعيل المزامنة التلقائية في حالة شجرة الذاكرة وأعد المحاولة.',
+  'vaultHealth.timeNever': 'قط',
+  'vaultHealth.timeJustNow': 'الآن',
+  'vaultHealth.timeMinAgo': 'منذ {n} دقيقة',
+  'vaultHealth.timeHrAgo': 'منذ {n} ساعة',
+  'vaultHealth.timeDayAgo': 'منذ {n} يوم',
+  'vaultHealth.timeDaysAgo': 'منذ {n} أيام',
+  'memoryData.howItWorks': 'كيف يعمل تخزين الذاكرة',
+  'memoryData.workspaceVault': 'خزينة مساحة العمل · كتابة',
+  'memoryData.workspaceVaultDesc':
+    'يكتب OpenHuman ملاحظات الذاكرة المُولَّدة إلى memory_tree/content.',
+  'memoryData.connectedSources': 'المصادر المتصلة · قراءة',
+  'memoryData.connectedSourcesDesc':
+    'تُستورد المجلدات وصناديق البريد والمحادثات والمستودعات لفهرسة الذاكرة — ولا تُعاد كتابة ملفاتها الأصلية أبدًا.',
+  'memoryData.internalFiles': 'ملفات شجرة الذاكرة الداخلية',
+  'memoryData.internalFilesDesc':
+    'تُدار الفهارس وحالة قائمة الانتظار والملخصات بواسطة OpenHuman للحفاظ على سلامة الاسترجاع والمزامنة.',
+  'memoryData.windowError': 'نافذة الذاكرة',
+  'memoryData.windowUpdated': 'تم تحديث نافذة الذاكرة',
+  'memoryData.windowUpdatedMsg': 'تم الضبط على {window}.',
 };
 
 export default messages;

@@ -4596,6 +4596,7 @@ const messages: TranslationMap = {
 
   // Onboarding: Custom > Activity
   'onboarding.custom.stepperActivity': 'Actividad',
+  'onboarding.custom.stepperVault': 'Bóveda',
   'onboarding.custom.activity.title': 'Actividad del agente',
   'onboarding.custom.activity.subtitle':
     'Qué tan proactivamente monitorea y actúa tu agente en segundo plano.',
@@ -4603,6 +4604,69 @@ const messages: TranslationMap = {
     'Actividad moderada — sincronización por hora, resumen diario.',
   'onboarding.custom.activity.configureDesc':
     'Elige tu propio nivel de actividad. Configurar en Ajustes › Nivel de actividad del agente.',
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Configuración de memoria y bóveda',
+  'onboarding.custom.vault.subtitle':
+    'Confirma dónde se escriben las notas de memoria, cómo se leen los datos de origen y si el flujo de bóveda está en buen estado.',
+  'onboarding.custom.vault.defaultDesc':
+    'Usa los valores predeterminados de memoria administrada por OpenHuman. La ruta de la bóveda y el estado de sincronización se pueden revisar más adelante.',
+  'onboarding.custom.vault.configureDesc':
+    'Revisa la propiedad de la bóveda, ejecuta comprobaciones de estado y ajusta los controles de memoria ahora.',
+  'onboarding.custom.vault.localDisabledReason':
+    'La configuración administrada requiere inicio de sesión en OpenHuman y no está disponible en modo local.',
+  'onboarding.custom.vault.exitError':
+    'No se pudo completar el proceso de incorporación. Por favor, inténtalo de nuevo.',
+
+  // Vault Health
+  'vaultHealth.title': 'Lista de verificación de salud de la bóveda',
+  'vaultHealth.setupTitle': 'Estado de configuración de la bóveda',
+  'vaultHealth.workspaceVault': 'Bóveda del espacio de trabajo:',
+  'vaultHealth.refresh': 'Actualizar',
+  'vaultHealth.refreshing': 'Actualizando…',
+  'vaultHealth.revealFolder': 'Mostrar carpeta',
+  'vaultHealth.openInObsidian': 'Abrir en Obsidian',
+  'vaultHealth.installObsidian': 'Instalar Obsidian',
+  'vaultHealth.openObsidianError': 'No se pudo abrir Obsidian',
+  'vaultHealth.revealError': 'No se pudo mostrar la carpeta de la bóveda',
+  'vaultHealth.downloadError': 'No se pudo abrir la página de descarga de Obsidian',
+  'vaultHealth.loadError': 'No se pudo cargar el estado de la bóveda:',
+  'vaultHealth.lastSync': 'Última sincronización:',
+  'vaultHealth.passed': 'Superado',
+  'vaultHealth.needsAttention': 'Requiere atención',
+  'vaultHealth.existsLabel': 'La ruta de la bóveda del espacio de trabajo existe',
+  'vaultHealth.existsRecovery':
+    'La carpeta de la bóveda no existe. Inicia una sincronización o crea esta carpeta y luego actualiza esta lista.',
+  'vaultHealth.writableLabel': 'OpenHuman puede escribir en la bóveda',
+  'vaultHealth.writableRecovery':
+    'OpenHuman aún no puede escribir en esta bóveda. Concede permisos de escritura y actualiza.',
+  'vaultHealth.obsidianLabel': 'La bóveda está registrada en Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'En Obsidian, elige "Abrir carpeta como bóveda" para esta ruta y luego actualiza esta lista.',
+  'vaultHealth.pipelineLabel': 'El flujo de memoria está en buen estado',
+  'vaultHealth.pipelineRecovery':
+    'El flujo de memoria está pausado o en error. Vuelve a habilitar la sincronización automática en el estado del árbol de memoria y reintenta.',
+  'vaultHealth.timeNever': 'Nunca',
+  'vaultHealth.timeJustNow': 'ahora mismo',
+  'vaultHealth.timeMinAgo': 'hace {n} min',
+  'vaultHealth.timeHrAgo': 'hace {n} h',
+  'vaultHealth.timeDayAgo': 'hace {n} día',
+  'vaultHealth.timeDaysAgo': 'hace {n} días',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Cómo funciona el almacenamiento de memoria',
+  'memoryData.workspaceVault': 'Bóveda del espacio de trabajo · escritura',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman escribe las notas de memoria generadas en memory_tree/content.',
+  'memoryData.connectedSources': 'Fuentes conectadas · lectura',
+  'memoryData.connectedSourcesDesc':
+    'Carpetas, buzones, chats y repositorios se importan para la indexación de memoria; sus archivos originales nunca se reescriben.',
+  'memoryData.internalFiles': 'Archivos internos del árbol de memoria',
+  'memoryData.internalFilesDesc':
+    'Los índices, el estado de la cola y los resúmenes son administrados por OpenHuman para mantener en buen estado la recuperación y la sincronización.',
+  'memoryData.windowError': 'Ventana de memoria',
+  'memoryData.windowUpdated': 'Ventana de memoria actualizada',
+  'memoryData.windowUpdatedMsg': 'Establecida en {window}.',
 };
 
 export default messages;
