@@ -253,16 +253,16 @@ async fn sync_composio(
         Some(format!("delegating to composio sync for {connection_id}")),
     );
 
-    let (outcome, usage) = composio::run_connection_sync(config, connection_id, SyncReason::Manual)
-        .await
-        .map_err(|e| format!("composio sync failed: {e}"))?;
-
-    // Surface the billable-action tally to the dispatcher so it lands in the
-    // sync audit entry (#3111). Only written on the success path; a failed
-    // `run_connection_sync` leaves `usage_out` at its caller-provided default.
-    *usage_out = usage;
-
-    Ok(outcome.items_ingested)
+    match composio::run_connection_sync(config, connection_id, SyncReason::Manual).await {
+        Ok((outcome, usage)) => {
+            *usage_out = usage;
+            Ok(outcome.items_ingested)
+        }
+        Err((e, usage)) => {
+            *usage_out = usage;
+            Err(format!("composio sync failed: {e}"))
+        }
+    }
 }
 
 /// Per-item sync path for Folder/RSS/WebPage sources.

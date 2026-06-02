@@ -128,22 +128,27 @@ pub async fn run_connection_sync(
     config: Config,
     connection_id: &str,
     reason: SyncReason,
-) -> Result<(SyncOutcome, ComposioUsage), String> {
+) -> Result<(SyncOutcome, ComposioUsage), (String, ComposioUsage)> {
     init_default_composio_sync_providers();
 
+    let no_usage = |e: String| (e, ComposioUsage::default());
+
     let target = list_sync_targets(&config)
-        .await?
+        .await
+        .map_err(no_usage)?
         .into_iter()
         .find(|target| target.connection_id == connection_id)
         .ok_or_else(|| {
-            format!("no provider-backed active sync target for connection_id={connection_id}")
+            no_usage(format!(
+                "no provider-backed active sync target for connection_id={connection_id}",
+            ))
         })?;
 
     let provider = get_composio_sync_provider(&target.toolkit).ok_or_else(|| {
-        format!(
+        no_usage(format!(
             "no native memory sync provider registered for toolkit '{}'",
-            target.toolkit
-        )
+            target.toolkit,
+        ))
     })?;
 
     let ctx = ProviderContext {
@@ -153,14 +158,17 @@ pub async fn run_connection_sync(
         usage: Default::default(),
     };
 
-    let outcome = provider.sync(&ctx, reason).await?;
+    let sync_result = provider.sync(&ctx, reason).await;
 
-    // Read back the Composio billable-action tally accumulated at the
-    // `execute` chokepoint during this sync (#3111). A poisoned lock is
-    // treated as "no usage recorded" rather than failing the whole sync —
-    // the audit cost line is best-effort telemetry, not load-bearing.
+    // Read the Composio billable-action tally *before* propagating errors.
+    // A sync that errors partway may still have fired billable actions;
+    // reading here ensures the dispatcher audit sees partial cost (#3111).
     let usage = ctx.usage.lock().map(|u| u.clone()).unwrap_or_default();
-    Ok((outcome, usage))
+
+    match sync_result {
+        Ok(outcome) => Ok((outcome, usage)),
+        Err(e) => Err((e, usage)),
+    }
 }
 
 fn connection_to_sync_target(connection: ComposioConnection) -> Option<SyncTarget> {

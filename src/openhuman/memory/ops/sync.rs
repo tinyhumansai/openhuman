@@ -185,7 +185,7 @@ async fn spawn_manual_sync(requested_connection: Option<String>) -> Result<(), S
                         )),
                     );
                 }
-                Err(error) => {
+                Err((error, _usage)) => {
                     emit_sync_stage(
                         MemorySyncTrigger::Manual,
                         MemorySyncStage::Failed,
