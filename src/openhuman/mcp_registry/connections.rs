@@ -151,7 +151,10 @@ pub async fn connect(config: &Config, server: &InstalledServer) -> anyhow::Resul
     let remote_tools = client.list_tools().await?;
     let safe_remote_tools =
         crate::openhuman::mcp_client::apply_safety_filter(&server.server_id, remote_tools);
-    let tools: Vec<McpTool> = safe_remote_tools.into_iter().map(into_registry_tool).collect();
+    let tools: Vec<McpTool> = safe_remote_tools
+        .into_iter()
+        .map(into_registry_tool)
+        .collect();
 
     let conn = Arc::new(Connection {
         client,

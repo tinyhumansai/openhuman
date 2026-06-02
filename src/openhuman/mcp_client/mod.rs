@@ -44,6 +44,6 @@ pub use client::{
     McpHttpClient, McpInitializeResult, McpRemoteTool, McpServerToolResult, McpSseEvent,
     ProtectedResourceMetadata,
 };
-pub use registry::{McpRegistrySource, McpServerDefinition, McpServerRegistry, McpTransportClient};
 pub(crate) use registry::apply_safety_filter;
+pub use registry::{McpRegistrySource, McpServerDefinition, McpServerRegistry, McpTransportClient};
 pub use stdio::McpStdioClient;
