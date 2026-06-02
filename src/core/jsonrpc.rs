@@ -1684,18 +1684,9 @@ async fn run_server_inner(
                 });
 
                 // Check if a user is already logged in from a previous session.
-                // Resolving the id also warms the Sentry scope on boot-restore
-                // (via `warm_sentry_user_from_active_session`) so background-loop
-                // errors — e.g. the periodic Composio sync tick — carry the user
-                // id. `store_session` only fires on a fresh login, so without
-                // this a restored session would report `user = None`.
                 let already_logged_in = crate::openhuman::config::default_root_openhuman_dir()
                     .ok()
-                    .and_then(|root| {
-                        crate::openhuman::credentials::ops::warm_sentry_user_from_active_session(
-                            &root,
-                        )
-                    })
+                    .and_then(|root| crate::openhuman::config::read_active_user_id(&root))
                     .is_some();
 
                 if already_logged_in {

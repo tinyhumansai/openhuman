@@ -279,17 +279,6 @@ pub async fn store_session(
 
     logs.push("session stored".to_string());
 
-    // Bind the signed-in user's id to the Sentry scope only AFTER the session
-    // is persisted above — a failed `store_provider_token` must not leave the
-    // global scope pointing at a user whose login never completed. Covers
-    // fresh login and account switch (both route through here) so background
-    // -loop errors carry `user.id` even before the frontend `app_state_snapshot`
-    // RPC warms the identity cache. Only the id is sent — never email/name/IP.
-    // See `set_sentry_user_id`.
-    if let Some(ref uid) = resolved_user_id {
-        crate::core::observability::set_sentry_user_id(uid);
-    }
-
     match crate::openhuman::memory::global::init(effective_config.workspace_dir.clone()) {
         Ok(_) => logs.push(format!(
             "memory client bound to workspace {}",
@@ -384,10 +373,6 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
         }
     }
 
-    // Drop the Sentry scope user so post-logout events aren't misattributed to
-    // the account that just signed out. The next `store_session` re-binds it.
-    crate::core::observability::clear_sentry_user();
-
     // Stop all login-gated services (voice, autocomplete, screen
     // intelligence, local AI) so they don't run as orphan processes after
     // logout, consuming RAM/CPU with no user context to operate against.
@@ -408,25 +393,6 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
         json!({ "removed": removed }),
         "session cleared",
     ))
-}
-
-/// Warm the Sentry scope from the on-disk active session at boot.
-///
-/// `store_session` binds the Sentry user only on a fresh login / account
-/// switch. A restored session (the app reopened while already signed in) never
-/// routes through `store_session`, so without this its background-loop errors
-/// (e.g. the periodic Composio sync tick) report with `user = None`. Called
-/// from the boot path once an existing session is detected. Returns the active
-/// user id when one is found. Only the id reaches Sentry — never email/name/IP.
-///
-/// Note: this does double duty — it returns the active user id *and* binds the
-/// Sentry scope as a side effect, since the boot path needs both together. If a
-/// future caller only wants the id without touching observability, read
-/// `read_active_user_id` directly instead.
-pub fn warm_sentry_user_from_active_session(root_dir: &std::path::Path) -> Option<String> {
-    let uid = read_active_user_id(root_dir)?;
-    crate::core::observability::set_sentry_user_id(&uid);
-    Some(uid)
 }
 
 pub async fn auth_get_state(

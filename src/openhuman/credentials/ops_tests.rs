@@ -737,26 +737,3 @@ async fn each_account_workspace_holds_its_own_credential_data() {
     assert_eq!(result_a.value[0].provider, "anthropic");
     assert_eq!(result_b.value[0].provider, "anthropic");
 }
-
-// ── warm_sentry_user_from_active_session (boot-restore) ────────
-
-/// Boot-restore path: when `active_user.toml` holds an id, the warmer returns
-/// it (and binds the Sentry scope) so background-loop errors carry `user.id`
-/// without a fresh `store_session`.
-#[test]
-fn warm_sentry_user_from_active_session_returns_active_id() {
-    let tmp = TempDir::new().unwrap();
-    let root = tmp.path();
-    write_active_user_id(root, "507f1f77bcf86cd799439011").unwrap();
-
-    let id = warm_sentry_user_from_active_session(root);
-    assert_eq!(id.as_deref(), Some("507f1f77bcf86cd799439011"));
-}
-
-/// No on-disk session (signed out / fresh install): the warmer is a no-op and
-/// returns `None` so the boot path defers service startup until login.
-#[test]
-fn warm_sentry_user_from_active_session_returns_none_without_active_user() {
-    let tmp = TempDir::new().unwrap();
-    assert_eq!(warm_sentry_user_from_active_session(tmp.path()), None);
-}
