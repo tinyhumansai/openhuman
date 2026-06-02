@@ -368,6 +368,14 @@ pub enum DomainEvent {
         kind: String,
         /// Human-readable title (also the on-disk filename stem).
         title: String,
+        /// Absolute workspace root the artifact belongs to (matches
+        /// the `workspace_dir` parameter passed to
+        /// `finalize_artifact`). Bound to the event so a subscriber
+        /// firing AFTER the user switched workspaces can detect the
+        /// mismatch and drop the surface — `path` is workspace-
+        /// relative and would otherwise resolve into the wrong
+        /// `<workspace>/artifacts/` tree.
+        workspace_dir: String,
         /// Relative path under `<workspace>/artifacts/`, e.g.
         /// `"<uuid>/deck.pptx"`. The absolute path is reachable via
         /// `ai_get_artifact` so the renderer never needs the
@@ -391,6 +399,9 @@ pub enum DomainEvent {
         artifact_id: String,
         kind: String,
         title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
         /// Producer-supplied failure reason. Already truncated by the
         /// producer (e.g. `PresentationError::truncate_stderr`).
         error: String,

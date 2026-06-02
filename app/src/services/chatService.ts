@@ -157,6 +157,13 @@ export interface ArtifactReadyEvent {
   kind: ArtifactKind;
   /** Human-readable title; also the on-disk filename stem. */
   title: string;
+  /**
+   * Absolute workspace root the artifact belongs to. Subscribers must compare
+   * this to their own workspace binding and silently drop events that don't
+   * match — `path` is workspace-relative and would otherwise resolve into the
+   * wrong `<workspace>/artifacts/` tree after a workspace switch.
+   */
+  workspace_dir: string;
   /** Relative path under `<workspace>/artifacts/`, e.g. `<uuid>/deck.pptx`. */
   path: string;
   /** Final on-disk size in bytes. */
@@ -174,6 +181,8 @@ export interface ArtifactFailedEvent {
   artifact_id: string;
   kind: ArtifactKind;
   title: string;
+  /** Absolute workspace root — see {@link ArtifactReadyEvent.workspace_dir}. */
+  workspace_dir: string;
   /** Producer-supplied failure reason, already truncated. */
   error: string;
 }
@@ -800,6 +809,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         !isNonEmptyString(args.artifact_id) ||
         !isValidArtifactKind(args.kind) ||
         !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.workspace_dir) ||
         !isNonEmptyString(args.path) ||
         !isFiniteNumber(args.size_bytes)
       ) {
@@ -816,6 +826,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         artifact_id: args.artifact_id,
         kind: args.kind,
         title: args.title,
+        workspace_dir: args.workspace_dir,
         path: args.path,
         size_bytes: args.size_bytes,
       };
@@ -845,6 +856,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         !isNonEmptyString(args.artifact_id) ||
         !isValidArtifactKind(args.kind) ||
         !isNonEmptyString(args.title) ||
+        !isNonEmptyString(args.workspace_dir) ||
         !isNonEmptyString(args.error)
       ) {
         chatLog(
@@ -860,6 +872,7 @@ export function subscribeChatEvents(listeners: ChatEventListeners): () => void {
         artifact_id: args.artifact_id,
         kind: args.kind,
         title: args.title,
+        workspace_dir: args.workspace_dir,
         error: args.error,
       };
       // Defence-in-depth: producer is expected to pre-truncate, but

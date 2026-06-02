@@ -222,6 +222,7 @@ describe('chatService.subscribeChatEvents', () => {
         artifact_id: 'a1',
         kind: 'presentation',
         title: 42, // ← non-string
+        workspace_dir: '/workspace',
         path: '/some/path.pptx',
         size_bytes: 1024,
       },
@@ -235,6 +236,7 @@ describe('chatService.subscribeChatEvents', () => {
         artifact_id: 'a1',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         path: '/some/path.pptx',
         size_bytes: 'lots', // ← non-number
       },
@@ -249,6 +251,7 @@ describe('chatService.subscribeChatEvents', () => {
         artifact_id: 'a1',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         error: { reason: 'object instead of string' }, // ← non-string
       },
     });
@@ -260,19 +263,36 @@ describe('chatService.subscribeChatEvents', () => {
         artifact_id: 'a1',
         kind: 'presentation',
         title: 'Deck',
+        workspace_dir: '/workspace',
         path: '/some/path.pptx',
         size_bytes: 1024,
       },
     });
     expect(onArtifactReady).not.toHaveBeenCalled();
 
-    // 5. Sanity — a well-formed payload still flows through.
+    // 5. Missing workspace_dir — without it, a subscriber can't detect a
+    //    cross-workspace event after a workspace switch (V5 binding).
     socket.emit('artifact_ready', {
       thread_id: 't1',
       args: {
         artifact_id: 'a1',
         kind: 'presentation',
         title: 'Deck',
+        // workspace_dir omitted
+        path: '/some/path.pptx',
+        size_bytes: 1024,
+      },
+    });
+    expect(onArtifactReady).not.toHaveBeenCalled();
+
+    // 6. Sanity — a well-formed payload (incl. workspace_dir) flows through.
+    socket.emit('artifact_ready', {
+      thread_id: 't1',
+      args: {
+        artifact_id: 'a1',
+        kind: 'presentation',
+        title: 'Deck',
+        workspace_dir: '/workspace',
         path: '/some/path.pptx',
         size_bytes: 1024,
       },
@@ -283,6 +303,7 @@ describe('chatService.subscribeChatEvents', () => {
       artifact_id: 'a1',
       kind: 'presentation',
       title: 'Deck',
+      workspace_dir: '/workspace',
       path: '/some/path.pptx',
       size_bytes: 1024,
     });
