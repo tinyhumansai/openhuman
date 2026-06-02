@@ -456,9 +456,13 @@ pub fn scan_tool_definition(field: &str, text: &str) -> Option<ToolDefinitionSca
     if matches!(verdict, PromptInjectionVerdict::Allow) {
         return None;
     }
-    // Pick the highest-confidence reason for the audit code; fall back
-    // to a generic `tool_definition.flagged` if (somehow) the verdict
-    // is non-allow with no concrete reason attached.
+    // Pick the first accumulated reason for the audit code (the
+    // `reasons` vec is appended to in heuristics-then-regex order in
+    // `analyze_prompt`, with no score sort). The aggregate confidence
+    // is captured in `score` on the returned hit; this code field is
+    // a representative rule tag, not the maximum-scoring one. Fall
+    // back to a generic `tool_definition.flagged` if (somehow) the
+    // verdict is non-allow with no concrete reason attached.
     let top = reasons.into_iter().next().unwrap_or(PromptInjectionReason {
         code: "tool_definition.flagged".to_string(),
         message: "Remote tool definition tripped the prompt-injection scan.".to_string(),
