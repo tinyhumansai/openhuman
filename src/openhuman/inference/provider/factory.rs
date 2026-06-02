@@ -731,16 +731,24 @@ fn make_ollama_provider(
     // Ollama does not expose the Responses API (/v1/responses) — passing
     // `false` prevents a guaranteed-404 fallback attempt and the Sentry
     // noise it would generate (TAURI-RUST-59Y).
-    let p = make_openai_compatible_provider_with_config(
+    //
+    // Ollama also rejects the OpenAI-style `tools` parameter for many models
+    // (HTTP 400 "unsupported parameter: tools"), so we disable
+    // `native_tool_calling` on the provider directly. The agent harness
+    // then embeds tool specs in the system prompt and parses tool calls
+    // out of the response text — a format any chat model can follow.
+    // Skills that depend on tool invocations now work over Ollama
+    // (sub-issue 3 of #3098).
+    let provider = OpenAiCompatibleProvider::new_no_responses_fallback(
         "ollama",
         &endpoint,
-        "",
+        None,
         CompatAuthStyle::None,
-        &config.temperature_unsupported_models,
-        temperature_override,
-        false,
-    )?;
-    Ok((p, model.to_string()))
+    )
+    .with_temperature_unsupported_models(config.temperature_unsupported_models.clone())
+    .with_temperature_override(temperature_override)
+    .with_native_tool_calling(false);
+    Ok((Box::new(provider), model.to_string()))
 }
 
 /// Build an LM Studio local provider.

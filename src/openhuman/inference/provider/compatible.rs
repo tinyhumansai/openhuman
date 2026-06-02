@@ -80,6 +80,14 @@ pub struct OpenAiCompatibleProvider {
     /// carries an `@<temp>` suffix (e.g. `"openai:gpt-4o@0.2"`). The
     /// `temperature_unsupported_models` glob filter still applies after.
     pub(crate) temperature_override: Option<f64>,
+    /// Value reported by `capabilities().native_tool_calling`. Defaults to
+    /// `true` because most OpenAI-compatible providers (OpenAI, Anthropic
+    /// adapters, GLM, Groq, Mistral, OpenHuman backend, …) implement the
+    /// `tools` parameter correctly. The factory flips this to `false` for
+    /// Ollama (sub-issue 3 of #3098), whose OpenAI-compat endpoint returns
+    /// HTTP 400 on `tools` for many models — making prompt-guided text
+    /// tool specs the only path that works across the Ollama model zoo.
+    native_tool_calling: bool,
 }
 
 /// How the provider expects the API key to be sent.
@@ -195,7 +203,18 @@ impl OpenAiCompatibleProvider {
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
             temperature_override: None,
+            native_tool_calling: true,
         }
+    }
+
+    /// Toggle whether this provider advertises native (OpenAI-style) tool
+    /// calling to the agent harness. The default is `true`; set to `false`
+    /// for providers whose `/v1/chat/completions` endpoint rejects the
+    /// `tools` parameter — the harness will then embed tool specs in the
+    /// system prompt and parse calls out of the response text instead.
+    pub fn with_native_tool_calling(mut self, enabled: bool) -> Self {
+        self.native_tool_calling = enabled;
+        self
     }
 
     /// Set the list of model glob patterns for which temperature must be
@@ -1248,7 +1267,7 @@ impl OpenAiCompatibleProvider {
 impl Provider for OpenAiCompatibleProvider {
     fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
         crate::openhuman::inference::provider::traits::ProviderCapabilities {
-            native_tool_calling: true,
+            native_tool_calling: self.native_tool_calling,
             vision: false,
         }
     }

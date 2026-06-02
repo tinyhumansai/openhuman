@@ -211,6 +211,48 @@ fn ollama_prefix() {
 }
 
 #[test]
+fn ollama_provider_opts_out_of_native_tool_calling() {
+    // Sub-issue 3 of #3098: Ollama's OpenAI-compat endpoint returns HTTP 400
+    // for many models when a `tools` array is sent (the existing detection
+    // path matches "unsupported parameter: tools"). The retry logic strips
+    // tools entirely, which silently breaks any skill or workflow that
+    // depends on tool calls. The factory must build the Ollama provider
+    // with native tool calling disabled so the agent harness uses the
+    // prompt-guided text format from the first request.
+    let config = Config::default();
+    let (provider, _model) = create_chat_provider_from_string("chat", "ollama:llama3.2", &config)
+        .expect("ollama:<model> must build");
+    let caps = provider.capabilities();
+    assert!(
+        !caps.native_tool_calling,
+        "ollama provider must report native_tool_calling=false so the agent harness emits prompt-guided tool specs instead of an OpenAI-style `tools` array"
+    );
+}
+
+#[test]
+fn lmstudio_provider_keeps_native_tool_calling_enabled() {
+    // LM Studio's OpenAI-compat endpoint supports the `tools` parameter for
+    // models that expose function calling. Only Ollama gets opted out by
+    // default — the LM Studio path stays on the native schema.
+    let mut config = Config::default();
+    config.local_ai.base_url = Some("http://127.0.0.1:1234".to_string());
+    let (provider, _model) =
+        create_chat_provider_from_string("chat", "lmstudio:google/gemma-4-e4b", &config)
+            .expect("lmstudio:<model> must build");
+    assert!(
+        provider.capabilities().native_tool_calling,
+        "lmstudio provider must keep native_tool_calling=true; only the ollama branch opts out"
+    );
+}
+
+// Note: a BYOK-cloud regression test (e.g. `openai:gpt-4o` keeps
+// native_tool_calling=true) would need an `AuthService` with the slug's API
+// key seeded. The unit test
+// `with_native_tool_calling_true_preserves_default` in compatible_tests.rs
+// already pins that the builder leaves the default in place when not
+// called, which is what every non-Ollama factory path relies on.
+
+#[test]
 fn lmstudio_prefix() {
     let mut config = Config::default();
     config.local_ai.base_url = Some("http://127.0.0.1:1234".to_string());

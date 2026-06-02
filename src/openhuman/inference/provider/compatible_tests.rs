@@ -1303,6 +1303,39 @@ fn capabilities_reports_native_tool_calling() {
     assert!(caps.native_tool_calling);
 }
 
+// Sub-issue 3 of #3098: Ollama's OpenAI-compat endpoint silently rejects the
+// `tools` parameter for many models, so we must let the factory opt the
+// Ollama provider out of native tool calling. The agent harness then falls
+// back to prompt-guided tool specs (embedded in the system prompt) which
+// any chat model can follow. The builder defaults to enabled so cloud
+// providers (OpenAI, BYOK slugs, OpenHuman backend) are unaffected.
+
+#[test]
+fn with_native_tool_calling_false_disables_capability() {
+    let p = make_provider("test", "https://example.com", None).with_native_tool_calling(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(
+        !caps.native_tool_calling,
+        "capabilities() must mirror the builder override; this is the gate the agent harness uses to decide between native vs prompt-guided tool specs"
+    );
+}
+
+#[test]
+fn with_native_tool_calling_true_preserves_default() {
+    let p = make_provider("test", "https://example.com", None).with_native_tool_calling(true);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(caps.native_tool_calling);
+}
+
+#[test]
+fn with_native_tool_calling_is_idempotent() {
+    let p = make_provider("test", "https://example.com", None)
+        .with_native_tool_calling(false)
+        .with_native_tool_calling(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(!caps.native_tool_calling);
+}
+
 #[test]
 fn tool_specs_convert_to_openai_format() {
     let specs = vec![crate::openhuman::tools::ToolSpec {
