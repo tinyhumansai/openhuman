@@ -4,7 +4,6 @@ import type { ChatSendError } from '../../chat/chatSendError';
 import type { Attachment } from '../../lib/attachments';
 import { useT } from '../../lib/i18n/I18nContext';
 import AttachmentPreview from './AttachmentPreview';
-import ModelQualityPill from './ModelQualityPill';
 
 /** Max composer height ≈ 4 lines of text-sm + padding. */
 const COMPOSER_MAX_HEIGHT = 96;
@@ -141,15 +140,13 @@ export default function ChatComposer({
           </svg>
         </button>
 
-        {/* Right: model pill + mic + voice/send */}
+        {/* Right: voice mode + send */}
         <div className="flex items-center gap-2">
-          <ModelQualityPill />
-
-          {/* Mic button — switches to mic-cloud mode */}
+          {/* Voice mode — switches to mic-cloud mode */}
           <button
             type="button"
-            aria-label={t('mic.startRecording')}
-            title={t('mic.startRecording')}
+            aria-label={t('composer.voiceMode')}
+            title={t('composer.voiceMode')}
             onClick={onSwitchToMicCloud}
             disabled={composerInteractionBlocked || isSending}
             className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
@@ -169,69 +166,44 @@ export default function ChatComposer({
             </svg>
           </button>
 
-          {/* Send button (when content present) or equalizer/voice icon (when empty) */}
-          {hasContent ? (
-            <button
-              type="button"
-              data-testid="send-message-button"
-              aria-label={t('chat.send')}
-              title={t('chat.send')}
-              onClick={() => {
-                void onSend();
-              }}
-              disabled={composerInteractionBlocked || isSending}
-              className="flex items-center justify-center w-7 h-7 rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-              {isSending ? (
-                <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-              ) : (
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2.5}
-                    d="M9 5l7 7-7 7"
-                  />
-                </svg>
-              )}
-            </button>
-          ) : (
-            <button
-              type="button"
-              aria-label={t('composer.voiceMode')}
-              title={t('composer.voiceMode')}
-              onClick={onSwitchToMicCloud}
-              disabled={composerInteractionBlocked || isSending}
-              className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 12h2m4 0h2m4 0h2m4 0h2"
+          {/* Send button — always visible */}
+          <button
+            type="button"
+            data-testid="send-message-button"
+            aria-label={t('chat.send')}
+            title={t('chat.send')}
+            onClick={() => {
+              void onSend();
+            }}
+            disabled={!hasContent || composerInteractionBlocked || isSending}
+            className="flex items-center justify-center w-7 h-7 rounded-full bg-primary-500 hover:bg-primary-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            {isSending ? (
+              <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
                 />
                 <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 8v8m4-10v12m4-8v4m4-10v12"
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
                 />
               </svg>
-            </button>
-          )}
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2.5}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            )}
+          </button>
         </div>
       </div>
     </div>

@@ -60,24 +60,29 @@ describe('ChatComposer', () => {
     expect(screen.getByRole('button', { name: 'composer.attachFile' })).toBeInTheDocument();
   });
 
-  it('renders mic button in toolbar', () => {
+  it('renders voice mode button in toolbar', () => {
     renderComposer();
-    expect(screen.getByRole('button', { name: 'mic.startRecording' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'composer.voiceMode' })).toBeInTheDocument();
   });
 
-  it('send button appears when inputValue has content', () => {
-    renderComposer({ inputValue: 'hello' });
-    expect(screen.getByTestId('send-message-button')).toBeInTheDocument();
-  });
-
-  it('send button is hidden when inputValue is empty and no attachments', () => {
+  it('send button is always visible', () => {
     renderComposer({ inputValue: '' });
-    expect(screen.queryByTestId('send-message-button')).not.toBeInTheDocument();
+    expect(screen.getByTestId('send-message-button')).toBeInTheDocument();
   });
 
-  it('send button appears when attachments are present even without text', () => {
+  it('send button is disabled when inputValue is empty and no attachments', () => {
+    renderComposer({ inputValue: '' });
+    expect(screen.getByTestId('send-message-button')).toBeDisabled();
+  });
+
+  it('send button is enabled when inputValue has content', () => {
+    renderComposer({ inputValue: 'hello' });
+    expect(screen.getByTestId('send-message-button')).not.toBeDisabled();
+  });
+
+  it('send button is enabled when attachments are present even without text', () => {
     renderComposer({ inputValue: '', attachments: [makeAttachment()] });
-    expect(screen.getByTestId('send-message-button')).toBeInTheDocument();
+    expect(screen.getByTestId('send-message-button')).not.toBeDisabled();
   });
 
   it('attachment button triggers file input click', () => {
@@ -116,21 +121,10 @@ describe('ChatComposer', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
-  it('calls onSwitchToMicCloud when mic button is clicked', () => {
+  it('calls onSwitchToMicCloud when voice mode button is clicked', () => {
     const onSwitchToMicCloud = vi.fn();
     renderComposer({ onSwitchToMicCloud });
-    fireEvent.click(screen.getByRole('button', { name: 'mic.startRecording' }));
+    fireEvent.click(screen.getByRole('button', { name: 'composer.voiceMode' }));
     expect(onSwitchToMicCloud).toHaveBeenCalledTimes(1);
-  });
-
-  it('has the model quality pill', () => {
-    renderComposer();
-    // ModelQualityPill renders a button with aria-label 'composer.modelSelector'
-    expect(screen.getByRole('button', { name: 'composer.modelSelector' })).toBeInTheDocument();
-  });
-
-  it('shows equalizer/voice icon button when input is empty', () => {
-    renderComposer({ inputValue: '' });
-    expect(screen.getByRole('button', { name: 'composer.voiceMode' })).toBeInTheDocument();
   });
 });
