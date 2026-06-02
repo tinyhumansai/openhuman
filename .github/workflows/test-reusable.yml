@@ -1,7 +1,6 @@
 ---
 # Reusable test workflow — frontend unit tests, Rust core tests, Rust Tauri
-# shell tests. Same job graph used by both PR/push (`test.yml`) and the
-# release pretest gate (`release-staging.yml`, `release-production.yml`).
+# shell tests. Used by PR/push (`test.yml`).
 #
 # Caching: pnpm store, Swatinem rust-cache, CEF runtime, and sccache backed
 # by the GitHub Actions cache. Cache keys mirror what the release build

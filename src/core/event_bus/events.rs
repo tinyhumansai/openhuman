@@ -352,6 +352,52 @@ pub enum DomainEvent {
         decision: String,
     },
 
+    // ── Artifacts ───────────────────────────────────────────────────────
+    /// An artifact transitioned to [`ArtifactStatus::Ready`] — file
+    /// is on disk and ready to be downloaded. Published by
+    /// [`crate::openhuman::artifacts::store::finalize_artifact`].
+    /// Bridged to the web channel as an `artifact_ready` socket event
+    /// when the publishing turn carries an `APPROVAL_CHAT_CONTEXT`
+    /// (see [`crate::openhuman::approval::ApprovalChatContext`]).
+    /// Sub-task #2779 of #1535.
+    ArtifactReady {
+        /// UUID of the artifact record.
+        artifact_id: String,
+        /// Lowercase variant of `ArtifactKind` (`presentation`,
+        /// `document`, `image`, `other`).
+        kind: String,
+        /// Human-readable title (also the on-disk filename stem).
+        title: String,
+        /// Relative path under `<workspace>/artifacts/`, e.g.
+        /// `"<uuid>/deck.pptx"`. The absolute path is reachable via
+        /// `ai_get_artifact` so the renderer never needs the
+        /// workspace root.
+        path: String,
+        /// Final on-disk file size in bytes.
+        size_bytes: u64,
+        /// Chat thread the artifact belongs to, when the producing
+        /// turn carried an `APPROVAL_CHAT_CONTEXT`. `None` for CLI /
+        /// cron / sub-agent paths — no client to fan out to.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the card to, when
+        /// known. `None` for non-chat callers.
+        client_id: Option<String>,
+    },
+    /// An artifact transitioned to [`ArtifactStatus::Failed`] — the
+    /// producer surfaced a reason and the UI should render a
+    /// retry-hint card instead of a download. Bridged the same way
+    /// as [`Self::ArtifactReady`]. Sub-task #2779 of #1535.
+    ArtifactFailed {
+        artifact_id: String,
+        kind: String,
+        title: String,
+        /// Producer-supplied failure reason. Already truncated by the
+        /// producer (e.g. `PresentationError::truncate_stderr`).
+        error: String,
+        thread_id: Option<String>,
+        client_id: Option<String>,
+    },
+
     // ── Webhooks ────────────────────────────────────────────────────────
     /// An incoming webhook request from the transport layer, ready for routing.
     WebhookIncomingRequest {
@@ -846,6 +892,8 @@ impl DomainEvent {
 
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
 
+            Self::ArtifactReady { .. } | Self::ArtifactFailed { .. } => "artifact",
+
             Self::McpServerInstalled { .. }
             | Self::McpServerConnected { .. }
             | Self::McpServerDisconnected { .. }
@@ -934,6 +982,8 @@ impl DomainEvent {
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::ArtifactReady { .. } => "ArtifactReady",
+            Self::ArtifactFailed { .. } => "ArtifactFailed",
             Self::McpServerInstalled { .. } => "McpServerInstalled",
             Self::McpServerConnected { .. } => "McpServerConnected",
             Self::McpServerDisconnected { .. } => "McpServerDisconnected",

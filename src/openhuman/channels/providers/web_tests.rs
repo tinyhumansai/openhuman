@@ -134,6 +134,16 @@ fn detects_backend_budget_exhaustion_error() {
     assert!(is_inference_budget_exceeded_error(
         "provider error: budget exceeded, please add credits"
     ));
+    // Issue #3088: the OpenHuman managed backend reports no-credits as a
+    // 400 carrying these canonical phrases (see `billing_error.rs`). They
+    // were previously NOT recognised here, so the error fell through to the
+    // generic "Something went wrong" branch. They must now match.
+    assert!(is_inference_budget_exceeded_error(
+        "openhuman API error (400 Bad Request): Insufficient budget"
+    ));
+    assert!(is_inference_budget_exceeded_error(
+        "openhuman API error (400 Bad Request): Insufficient balance"
+    ));
     assert!(!is_inference_budget_exceeded_error(
         "OpenHuman API error (500): Internal server error"
     ));
@@ -144,6 +154,36 @@ fn budget_exceeded_copy_mentions_top_up() {
     let message = inference_budget_exceeded_user_message();
     assert!(message.contains("top up"));
     assert!(message.contains("credits"));
+    // Issue #3088: the copy must guide the user to the self-service fix —
+    // switching routing to their own local model — so an Ollama user with
+    // no credits can self-diagnose. We guide, never auto-switch.
+    assert!(message.contains("Use Your Own Models"));
+    assert!(message.contains("Settings"));
+}
+
+#[test]
+fn classify_inference_error_managed_insufficient_budget_400_is_budget_exhausted() {
+    // Issue #3088: a managed (OpenHuman backend) no-credits failure arrives
+    // as a 400 with "Insufficient budget" — NOT a 402. It previously fell
+    // through to the generic `inference` branch ("Something went wrong"),
+    // leaving the user unable to self-diagnose. It must now classify as
+    // budget_exhausted with actionable, non-retryable copy.
+    let raw = "openhuman API error (400 Bad Request): Insufficient budget";
+    let classified = classify_inference_error(raw);
+    assert_eq!(classified.error_type, "budget_exhausted");
+    assert_eq!(
+        classified.source, "openhuman_billing",
+        "the OpenHuman backend's own credit system is the origin"
+    );
+    assert!(
+        !classified.retryable,
+        "out of credits — retrying the same prompt won't help"
+    );
+    assert!(
+        classified.message.contains("Use Your Own Models"),
+        "must guide the user to switch routing: {}",
+        classified.message
+    );
 }
 
 #[test]
@@ -849,8 +889,128 @@ fn generic_error_copy_is_sanitized_and_has_discord_report_action() {
     let message = generic_inference_error_user_message();
     assert!(message.contains("Something went wrong. Please try again."));
     assert!(message.contains("This error has been reported."));
-    assert!(message
-        .contains("<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"));
+    assert!(message.contains(
+        "<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>"
+    ));
+}
+
+#[test]
+fn classify_inference_error_empty_response_is_actionable_and_retryable() {
+    // #3092 / #3119: the dominant chat-error cause (Sentry TAURI-RUST-4JW,
+    // 986+ events). An empty provider completion must get an actionable,
+    // retryable message — NOT the generic "Something went wrong" dead-end.
+    let raw = "run_chat_task failed client_id=abc thread_id=t-1 request_id=r-1 \
+               error=The model returned an empty response. Please try again.";
+    let classified = classify_inference_error(raw);
+    assert_eq!(classified.error_type, "empty_response");
+    assert_ne!(
+        classified.error_type, "inference",
+        "empty response must NOT fall through to the generic catch-all"
+    );
+    assert!(
+        classified.retryable,
+        "empty response is transiently retryable"
+    );
+    assert_eq!(classified.source, "agent_loop");
+    assert!(
+        classified.message.contains("Settings → AI → LLM"),
+        "must give the actionable model-switch remedy: {}",
+        classified.message
+    );
+    assert!(
+        !classified.message.contains("Something went wrong"),
+        "must not be the generic apology: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_vision_capability_is_non_retryable() {
+    // A multimodal turn sent an image to a text-only model. Retrying the
+    // same image+model can't help, so non-retryable with a switch-model hint.
+    let raw = "provider_capability_error provider=web_channel capability=vision \
+               message=received 1 image marker(s), but this provider does not support vision input";
+    let classified = classify_inference_error(raw);
+    assert_eq!(classified.error_type, "capability_unsupported");
+    assert!(
+        !classified.retryable,
+        "same image + text-only model always fails"
+    );
+    assert!(
+        classified.message.contains("vision-capable model"),
+        "must point the user at a vision model: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_generic_4xx_surfaces_provider_detail() {
+    // A provider 400 none of the specific arms claimed: the real reason must
+    // be quoted (via with_provider_detail) under a friendly, non-retryable
+    // summary instead of the generic dead-end.
+    let raw = r#"cloud API error (400 Bad Request): {"error":{"message":"tool_calls.id and tool_calls.type are required","type":"input_invalid"}}"#;
+    let classified = classify_inference_error(raw);
+    assert_eq!(classified.error_type, "provider_request_rejected");
+    assert!(
+        !classified.retryable,
+        "4xx request rejection is not retryable"
+    );
+    assert!(
+        classified.message.contains("Try a different model"),
+        "friendly summary present: {}",
+        classified.message
+    );
+    assert!(
+        classified.message.contains("tool_calls.id"),
+        "must quote the real provider reason: {}",
+        classified.message
+    );
+}
+
+#[test]
+fn classify_inference_error_deepseek_reasoning_400_stays_config_rejection() {
+    // ORDERING LOCK: the DeepSeek / Moonshot thinking-mode reasoning_content
+    // round-trip 400 is ALREADY claimed by the provider-config-rejection arm
+    // (the "thinking mode must be passed back" phrase, Sentry TAURI-RUST-2G /
+    // -2F), which is ordered BEFORE the generic 4xx arm. So it must keep its
+    // specific, actionable `model_unavailable` + Settings → LLM verdict and
+    // NOT be downgraded to the generic provider_request_rejected copy. The
+    // deeper round-trip fix (so the turn actually succeeds) is tracked in
+    // #3197; this only asserts the user-facing classification stays specific.
+    let raw = r#"cloud API error (400 Bad Request): {"error":{"message":"The reasoning_content in the thinking mode must be passed back","type":"invalid_request_error"}}"#;
+    let classified = classify_inference_error(raw);
+    assert_eq!(
+        classified.error_type, "model_unavailable",
+        "DeepSeek reasoning_content 400 must stay config-rejection, not generic 4xx"
+    );
+    assert_ne!(classified.error_type, "inference");
+}
+
+#[test]
+fn classify_inference_error_invalid_temperature_400_stays_config_rejection() {
+    // ORDERING LOCK: a 400 carrying the #2076 "invalid temperature" body must
+    // keep its specific provider-config-rejection verdict (model_unavailable +
+    // Settings → LLM remediation) and NOT be stolen by the generic 4xx arm,
+    // which is ordered after it.
+    let raw = r#"custom_openai API error (400 Bad Request): {"error":{"message":"invalid temperature: only 1 is allowed for this model","type":"invalid_request_error"}}"#;
+    let classified = classify_inference_error(raw);
+    assert_eq!(
+        classified.error_type, "model_unavailable",
+        "invalid-temperature 400 must stay config-rejection, not generic 4xx"
+    );
+    assert!(classified.message.contains("Settings → LLM"));
+}
+
+#[test]
+fn classify_inference_error_model_not_found_404_stays_model_unavailable() {
+    // ORDERING LOCK: a 404 "model does not exist" must keep its specific
+    // model_unavailable verdict and NOT be stolen by the generic 4xx arm.
+    let raw = r#"custom_openai API error (404 Not Found): {"error":{"message":"The model `gpt-5.5` does not exist or you do not have access to it.","code":"model_not_found"}}"#;
+    let classified = classify_inference_error(raw);
+    assert_eq!(
+        classified.error_type, "model_unavailable",
+        "model-not-found 404 must stay model_unavailable, not generic 4xx"
+    );
 }
 
 // ── Schema catalog ────────────────────────────────────────────

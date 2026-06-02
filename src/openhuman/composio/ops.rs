@@ -84,6 +84,40 @@ fn resolve_client(config: &Config) -> OpResult<ComposioClient> {
     })
 }
 
+/// True when the user has selected Composio **direct** mode but has not yet
+/// configured an API key (neither in the keychain nor `config.toml`).
+///
+/// This is a valid, user-controlled *setup* state — the user just flipped to
+/// direct mode and is about to paste their key — NOT an operation failure.
+/// Callers short-circuit to an empty result instead of letting the
+/// mode-aware factory bail with "composio direct mode selected but no api key
+/// is configured", which the desktop UI's 5 s poll would otherwise funnel to
+/// Sentry on every tick (TAURI-RUST-R4).
+///
+/// Key presence MUST mirror the factory's own resolution in
+/// [`create_composio_client`] (`client.rs`): a key counts if it is in the
+/// keychain (`credentials::get_composio_api_key`) **or** in `config.toml`
+/// (`config.composio.api_key`). Checking only the keychain would wrongly
+/// short-circuit to an empty list for a user who configured their key via
+/// `config.toml`, hiding their real connections.
+fn direct_mode_without_key(config: &Config) -> OpResult<bool> {
+    if config.composio.mode.trim() != crate::openhuman::config::schema::COMPOSIO_MODE_DIRECT {
+        return Ok(false);
+    }
+    let has_key = crate::openhuman::credentials::get_composio_api_key(config)
+        .map_err(|e| format!("[composio] get_composio_api_key failed: {e}"))?
+        .or_else(|| {
+            config
+                .composio
+                .api_key
+                .as_ref()
+                .map(|k| k.trim().to_string())
+                .filter(|k| !k.is_empty())
+        })
+        .is_some();
+    Ok(!has_key)
+}
+
 /// Defense-in-depth Sentry funnel for composio op-layer errors.
 ///
 /// The shared [`crate::openhuman::integrations::IntegrationClient`]
@@ -266,6 +300,30 @@ pub async fn composio_list_connections(
     config: &Config,
 ) -> OpResult<RpcOutcome<ComposioConnectionsResponse>> {
     tracing::debug!("[composio] rpc list_connections");
+    // [Sentry TAURI-RUST-R4] Direct mode with no API key yet is a valid,
+    // user-controlled *setup* state — not an operation failure. The desktop
+    // UI polls this RPC every 5 s; without this guard the mode-aware factory
+    // bails ("composio direct mode selected but no api key is configured") on
+    // every tick and the error funnels to Sentry until the user pastes a key
+    // (~3.2 k events, single user, release 0.57.5). Mirror `periodic.rs`'s
+    // graceful skip and return the truthful empty list (no key → no tenant →
+    // no connections). The Settings → Composio panel drives the "enter your
+    // key" prompt off the separate `api_key_set` status, so the user is still
+    // told what to do. We return BEFORE `create_composio_client` and
+    // `sync_cache_with_connections`, so no error is constructed and the
+    // integrations cache is left untouched.
+    if direct_mode_without_key(config)? {
+        tracing::debug!(
+            "[composio] list_connections: direct mode selected, no api key configured yet \
+             — returning empty connection list (valid setup state, not an error)"
+        );
+        return Ok(RpcOutcome::new(
+            ComposioConnectionsResponse {
+                connections: Vec::new(),
+            },
+            vec!["composio: direct mode — no api key configured yet, 0 connection(s)".to_string()],
+        ));
+    }
     // Route through the mode-aware factory so direct-mode users do NOT
     // accidentally see the tinyhumans-tenant connections from the
     // backend-proxied path. Mixing the two tenants is the bug behind the
@@ -496,6 +554,30 @@ pub async fn composio_delete_connection(
                 "[composio] PROFILE.md bullet removal failed (non-fatal)"
             );
         }
+    }
+    // Prune the local memory_sources registry entry for this connection.
+    // The registry keys composio sources by `connection_id` and the
+    // reconciler only ever upserts, so a deleted connection's
+    // `[[memory_sources]]` entry is otherwise orphaned forever (and on
+    // reconnect the backend mints a fresh `connection_id`, leaving the stale
+    // one stranded). Best-effort: the backend connection is already gone, so
+    // a config-save failure must not fail the whole delete — log and move on.
+    match crate::openhuman::memory_sources::registry::remove_composio_source_by_connection_id(
+        connection_id,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(removed) => tracing::debug!(
+            connection_id = %connection_id,
+            removed,
+            "[composio] pruned memory_sources entry after connection deletion"
+        ),
+        Err(e) => tracing::warn!(
+            connection_id = %connection_id,
+            error = %e,
+            "[composio] failed to prune memory_sources entry after connection deletion (non-fatal)"
+        ),
     }
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::ComposioConnectionDeleted {
@@ -1181,6 +1263,7 @@ pub async fn composio_get_user_profile(
         config: Arc::new(config.clone()),
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
+        usage: Default::default(),
     };
 
     let profile = provider.fetch_user_profile(&ctx).await.map_err(|e| {
@@ -1252,6 +1335,7 @@ pub async fn composio_refresh_all_identities(
             config: Arc::new(config.clone()),
             toolkit: toolkit.clone(),
             connection_id: Some(connection_id.clone()),
+            usage: Default::default(),
         };
 
         match provider.fetch_user_profile(&ctx).await {
@@ -1348,6 +1432,7 @@ pub async fn composio_sync(
         config: Arc::new(config.clone()),
         toolkit: toolkit.clone(),
         connection_id: Some(connection_id.to_string()),
+        usage: Default::default(),
     };
     let started_at_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

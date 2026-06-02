@@ -41,9 +41,9 @@ describe('memoryGraphLayout', () => {
     expect(nodeColor(contact())).toBe(CONTACT_COLOR);
   });
 
-  it('nodeRadius grows with summary level and is fixed for chunk/contact', () => {
+  it('nodeRadius grows with level and is fixed for chunk/contact', () => {
     expect(nodeRadius(summary({ level: 0 }))).toBe(5);
-    expect(nodeRadius(summary({ level: 3 }))).toBeCloseTo(12.5);
+    expect(nodeRadius(summary({ level: 3 }))).toBe(12.5);
     expect(nodeRadius(summary({ level: 99 }))).toBe(252.5);
     expect(nodeRadius(contact())).toBe(9);
     expect(nodeRadius(chunk())).toBe(3);

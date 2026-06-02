@@ -74,6 +74,9 @@ fn source_entry(id: &str, kind: SourceKind) -> MemorySourceEntry {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     }
 }
 
@@ -175,26 +178,12 @@ async fn round21_rss_reader_covers_http_body_guards_and_invalid_utf8() {
 #[tokio::test]
 async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     let _lock = env_lock();
-    // This test requires a fake `gh` on PATH. If the real `gh` is not
-    // installed (CI containers), gh_available() returns false and the reader
-    // falls through to the real GitHub API which rate-limits. Skip gracefully.
-    if std::process::Command::new("gh")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| !s.success())
-        .unwrap_or(true)
-    {
-        eprintln!("skipping: gh CLI not available");
-        return;
-    }
     let tmp = tempdir();
     let config = config(&tmp);
     let bin = tmp.path().join("bin");
     std::fs::create_dir_all(&bin).expect("bin dir");
-    let script = bin.join("gh");
-    write_fake_gh(&script);
+    write_fake_gh(&bin.join("gh"));
+    write_fake_git(&bin.join("git"));
     let old_path = std::env::var("PATH").unwrap_or_default();
     let _path = EnvGuard::set_path("PATH", Path::new(&format!("{}:{old_path}", bin.display())));
 
@@ -222,9 +211,9 @@ async fn round21_github_reader_covers_commit_issue_comments_and_error_paths() {
     let issue = reader
         .read_item(&entry, "issue:42", &config)
         .await
-        .expect("read issue");
-    assert!(issue.body.contains("## Description"));
-    assert!(issue.body.contains("Issue body"));
+        .expect("read issue with comments");
+    assert!(issue.body.contains("## Comments"));
+    assert!(issue.body.contains("Looks good from the fixture"));
     assert_eq!(
         issue
             .metadata
@@ -286,7 +275,7 @@ JSON
 JSON
     ;;
   *)
-    echo "unexpected gh api path: $arg (stripped: $stripped)" >&2
+    echo "unexpected gh api path: $arg" >&2
     exit 3
     ;;
 esac
@@ -298,5 +287,21 @@ esac
         let mut perms = std::fs::metadata(path).expect("metadata").permissions();
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).expect("chmod fake gh");
+    }
+}
+
+fn write_fake_git(path: &PathBuf) {
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+echo "git disabled for github reader fixture" >&2
+exit 42
+"#;
+    std::fs::write(path, script).expect("write fake git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).expect("chmod fake git");
     }
 }

@@ -171,6 +171,14 @@ fn classify_failure_reason(backend_name: &str) -> KeyringFailureReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn cache_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("keyring consent cache test lock")
+    }
 
     #[test]
     fn classify_failure_linux() {
@@ -202,6 +210,7 @@ mod tests {
 
     #[test]
     fn record_consent_updates_cache() {
+        let _lock = cache_test_lock();
         let pref = record_consent("local_encrypted");
         assert_eq!(pref.storage_mode, "local_encrypted");
         assert!(pref.consented_at_ms.is_some());
@@ -213,6 +222,7 @@ mod tests {
 
     #[test]
     fn initialize_populates_cache() {
+        let _lock = cache_test_lock();
         let pref = ConsentPreference {
             storage_mode: "declined".to_string(),
             consented_at_ms: Some(12345),

@@ -447,20 +447,13 @@ pub fn all_tools_with_runtime(
         Box::new(WorkspaceInitTool),
     ];
 
-    // Presentation generation (#2778). Gated on
-    // `runtime_python.enabled` because the tool calls into a managed
-    // Python venv (python-pptx). When the runtime is disabled the
-    // tool is hidden from the agent so the LLM never even suggests it.
-    if root_config.runtime_python.enabled {
-        tools.push(Box::new(PresentationTool::new(
-            Arc::clone(&config),
-            root_config.workspace_dir.clone(),
-        )));
-    } else {
-        tracing::debug!(
-            "[tools::ops] runtime_python disabled — generate_presentation tool not registered"
-        );
-    }
+    // Presentation generation (#2778). Native-Rust engine (ppt-rs
+    // backed) as of the #2780-follow-up rust-engine refactor — no
+    // managed Python venv, no first-call install latency. Always
+    // registered.
+    tools.push(Box::new(PresentationTool::new(
+        root_config.workspace_dir.clone(),
+    )));
 
     if browser_config.enabled {
         // Unified web-access allowlist (merge fetch + browser firewalls): the

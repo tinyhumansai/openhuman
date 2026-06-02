@@ -225,6 +225,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Noch nicht ausgeführt',
   'routines.runNow': 'Ausführung starten',
   'routines.running': 'Läuft…',
+  'routines.runNowTimedOut': 'Ausführung abgebrochen – bitte Seite neu laden und erneut versuchen.',
   'routines.viewHistory': 'Verlauf ansehen',
   'routines.loadingHistory': 'Laden…',
   'routines.noHistory': 'Noch kein Verlauf',
@@ -237,7 +238,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Kommandant',
   'nav.routines': 'Routines',
   'chat.newThread': 'Neuer Thread',
-  'chat.typeMessage': 'Gib eine Nachricht ein...',
+  'chat.typeMessage': 'Wie kann ich dir heute helfen?',
   'chat.send': 'Nachricht senden',
   'chat.thinking': 'Denken...',
   'chat.noMessages': 'Noch keine Nachrichten',
@@ -744,16 +745,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Gesendet an',
   'privacy.leavesDevice': 'Verlässt das Gerät',
   'privacy.staysLocal': 'Bleibt lokal',
-  'privacy.anonymizedAnalytics': 'Anonymisierte Analysen',
-  'privacy.shareAnonymizedData': 'Teile anonymisierte Nutzungsdaten',
+  'privacy.anonymizedAnalytics': 'Produktanalysen',
+  'privacy.shareAnonymizedData': 'Produktanalysen und Diagnosen teilen',
   'privacy.shareAnonymizedDataDesc':
-    'Hilf mit, OpenHuman zu verbessern, indem du anonyme Absturzberichte und Nutzungsanalysen teilst. Alle Daten sind vollständig anonymisiert – es werden niemals persönliche Daten, Nachrichten, Wallet-Schlüssel oder Sitzungsinformationen erfasst.',
+    'Hilf mit, OpenHuman zu verbessern, indem du datensparsame Absturzberichte und Nutzungsereignisse teilst, einschließlich einer stabilen Konto-ID und App-Versionsmetadaten. Nachrichten, Wallet-Schlüssel, API-Schlüssel und Sitzungstokens werden nie erfasst.',
   'privacy.meetingFollowUps': 'Nachbereitung von Besprechungen',
   'privacy.autoHandoffMeet': 'Automatische Übergabe Google Meet-Transkripte an den Orchestrator',
   'privacy.autoHandoffMeetDesc':
     'Wenn ein Google Meet-Anruf endet, kann der Orchestrator von OpenHuman das Transkript lesen und Maßnahmen wie das Verfassen von Nachrichten, das Planen von Folgemaßnahmen oder das Veröffentlichen von Zusammenfassungen in deinem verbundenen Slack-Arbeitsbereich ergreifen. Standardmäßig deaktiviert.',
   'privacy.analyticsDisclaimer':
-    'Alle Analysen und Fehlerberichte sind vollständig anonymisiert. Wenn diese Option aktiviert ist, erfassen wir nur Absturzinformationen, den Gerätetyp und den Dateispeicherort von Fehlern. Wir greifen niemals auf deine Nachrichten, Sitzungsdaten, Wallet-Schlüssel, API-Schlüssel oder andere persönlich identifizierbare Informationen zu. Du kannst diese Einstellung jederzeit ändern.',
+    'Wenn diese Option aktiviert ist, können Produktanalysen und Diagnosen datensparsame Absturzberichte und Nutzungsereignisse, eine stabile Konto-ID und App-Versionsmetadaten enthalten. Nachrichten, Wallet-Schlüssel, API-Schlüssel und Sitzungstokens werden nie erfasst. Du kannst diese Einstellung jederzeit ändern.',
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'ist vorhanden',
   'settings.about.softwareUpdates': 'Software-Updates',
@@ -1967,6 +1968,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Vorgeschlagene Aktion',
   'reflections.act': 'Handeln',
   'reflections.dismiss': 'Entlassen',
+  'reflections.viewConversation': 'Ansehen',
+  'subconscious.mode.label': 'Unterbewusstsein-Modus',
+  'subconscious.mode.off.title': 'Aus',
+  'subconscious.mode.off.desc': 'Unterbewusstsein ist deaktiviert.',
+  'subconscious.mode.simple.title': 'Einfach',
+  'subconscious.mode.simple.desc': 'Nur-Lese-Beobachtung. Nur Speicher- und Dateizugriff.',
+  'subconscious.mode.aggressive.title': 'Aggressiv',
+  'subconscious.mode.aggressive.desc':
+    'Voller Werkzeugzugriff. Kann schreiben, Agenten starten und Aufgaben delegieren.',
+  'subconscious.mode.aggressiveWarning':
+    'Aggressiver Modus gewährt dem Unterbewusstsein vollen Werkzeugzugriff einschließlich Schreiben und Sub-Agenten-Erstellung.',
+  'subconscious.interval.label': 'Häufigkeit',
+  'subconscious.interval.minutes': '{n} Min',
+  'subconscious.interval.hours': '{n} Std',
+  'subconscious.interval.oneHour': '1 Stunde',
+  'subconscious.interval.oneDay': '24 Stunden',
   'whatsapp.chatsSynced': 'Chats synchronisiert',
   'whatsapp.chatSynced': 'Chat synchronisiert',
   'sync.active': 'Aktiv',
@@ -2296,6 +2313,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Vorteil2',
   'app.openhumanLink.discord.perk3': 'Vorteil3',
   'app.openhumanLink.discord.perk4': 'Vorteil4',
+  'app.openhumanLink.discordReport.intro':
+    'Entschuldigung — bei uns ist etwas schiefgelaufen. Wir versuchen, solche Fehler automatisch zu protokollieren, aber wenn du die Details auf Discord teilst, können wir sie schneller beheben.',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord öffnen',
   'app.openhumanLink.done': 'Fertig',
   'app.openhumanLink.loadingChannelSetup': 'Kanal-Setup wird geladen',
   'app.openhumanLink.maybeLater': 'Vielleicht später',
@@ -2316,6 +2336,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Verbinde deine Apps',
   'app.openhumanLink.title.billing': 'Abrechnung und Gutschriften',
   'app.openhumanLink.title.discord': 'Tritt der Community bei',
+  'app.openhumanLink.title.discordReport': 'Diesen Fehler melden',
   'app.openhumanLink.title.messaging': 'Verbinde einen Chat-Kanal',
   'app.openhumanLink.title.notifications': 'Benachrichtigungen zulassen',
   'app.persistRehydration.body': 'Körper',
@@ -2873,7 +2894,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Workload-Gruppenchat',
   'settings.ai.disconnectProvider': 'Trennen {label}',
   'settings.ai.connectProviderLabel': 'Verbinden {label}',
+  'settings.ai.editProviderEndpoint': 'Endpunkt für {label} bearbeiten',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Endpunkt bearbeiten',
   'settings.ai.endpointUrlLabel': 'Endpunkt URL',
   'settings.ai.localRuntimeHelper':
     'Wo {label} erreichbar ist. Die Standardeinstellung ist localhost. Richten Sie dies auf einen Remote-Host (z. B. http://10.0.0.4:11434/v1), um eine freigegebene Instanz zu verwenden.',
@@ -4240,14 +4263,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'Nach Quelle filtern',
   'calls.comingSoonDescription': 'KI-unterstützte Anrufe folgen in Kürze. Bleiben Sie dran.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 Min.',
-  'subconscious.interval.tenMinutes': '10 Min.',
-  'subconscious.interval.fifteenMinutes': '15 Min.',
-  'subconscious.interval.thirtyMinutes': '30 Min.',
-  'subconscious.interval.oneHour': '1 Stunde',
-  'subconscious.interval.sixHours': '6 Stunden',
-  'subconscious.interval.twelveHours': '12 Stunden',
-  'subconscious.interval.oneDay': '1 Tag',
   'subconscious.priority.critical': 'kritisch',
   'subconscious.priority.important': 'wichtig',
   'subconscious.priority.normal': 'normal',
@@ -4565,6 +4580,151 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Erstelle {kind}…',
+  'chat.artifact.ready': 'Bereit',
+  'chat.artifact.failed': 'Erstellung fehlgeschlagen',
+  'chat.artifact.download': 'Herunterladen',
+  'chat.artifact.downloading': 'Wird heruntergeladen…',
+  'chat.artifact.downloaded': 'Gespeichert unter {path}',
+  'chat.artifact.download_failed': 'Download fehlgeschlagen: {reason}',
+  'chat.artifact.retry': 'Erneut versuchen',
+  'chat.artifact.reveal': 'Im Ordner anzeigen',
+  'chat.artifact.show_more': 'Mehr anzeigen',
+  'chat.artifact.show_less': 'Weniger anzeigen',
+
+  // Chat composer toolbar
+  'composer.attachFile': 'Datei anhängen',
+  'composer.modelSelector': 'Modell',
+  'composer.voiceMode': 'Sprachmodus',
+  'composer.qualityHigh': 'Hoch',
+  // Agent activity level
+  'activityLevel.title': 'Agent-Aktivitätsstufe',
+  'activityLevel.description':
+    'Steuern Sie, wie proaktiv Ihr Agent ist. Höhere Stufen verbrauchen mehr Tokens.',
+  'activityLevel.off': 'Aus',
+  'activityLevel.offDesc': 'Keine Hintergrundverarbeitung. Synchronisiert nur auf Knopfdruck.',
+  'activityLevel.minimal': 'Minimal',
+  'activityLevel.minimalDesc':
+    'Quellen einmal täglich synchronisieren. Keine proaktiven Nachrichten.',
+  'activityLevel.moderate': 'Moderat',
+  'activityLevel.moderateDesc':
+    'Stündliche Synchronisierung. Tägliche Zusammenfassung. Schlägt Aktionen vor.',
+  'activityLevel.active': 'Aktiv',
+  'activityLevel.activeDesc':
+    'Alle 10 Minuten synchronisieren. Überwacht Kanäle, priorisiert und entwirft Antworten.',
+  'activityLevel.alwaysOn': 'Immer aktiv',
+  'activityLevel.alwaysOnDesc':
+    'Echtzeit-Synchronisierung. Volle Autonomie innerhalb von Leitplanken.',
+  'activityLevel.currentMonth': 'Dieser Monat: ${amount}',
+  'activityLevel.saved': 'Aktivitätsstufe aktualisiert.',
+  'activityLevel.default': 'Standard',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/Monat',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Synchronisierungsbudget',
+  'syncBudget.maxTokens': 'Max. Tokens pro Synchronisierung',
+  'syncBudget.maxTokensHelp':
+    'Synchronisierung stoppen, sobald diese Anzahl von Tokens verbraucht wurde.',
+  'syncBudget.maxCost': 'Max. Kosten pro Synchronisierung (USD)',
+  'syncBudget.maxCostHelp': 'Absolutes Kostenlimit pro Synchronisierungslauf.',
+  'syncBudget.syncDepth': 'Synchronisierungstiefe',
+  'syncBudget.syncDepthHelp': 'Nur Elemente aus diesem Zeitfenster abrufen.',
+  'syncBudget.days7': 'Letzte 7 Tage',
+  'syncBudget.days30': 'Letzte 30 Tage',
+  'syncBudget.days90': 'Letzte 90 Tage',
+  'syncBudget.allTime': 'Gesamte Zeit',
+  'syncBudget.unlimited': 'Unbegrenzt',
+  'syncBudget.saved': 'Budget gespeichert.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Synchronisierung bestätigen',
+  'syncConfirm.message':
+    'Diese Synchronisierung verarbeitet ~{items} Elemente (~{tokens} Tokens, ca. ${cost}).',
+  'syncConfirm.budgetNote': 'Budgetlimit: ${max}',
+  'syncConfirm.proceed': 'Fortfahren',
+  'syncConfirm.cancel': 'Abbrechen',
+  'syncConfirm.estimating': 'Kosten werden geschätzt...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} diesen Monat',
+  'monthlyCost.noData': 'Keine Synchronisierungen diesen Monat',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Aktivität',
+  'onboarding.custom.activity.title': 'Agent-Aktivität',
+  'onboarding.custom.activity.subtitle':
+    'Wie proaktiv Ihr Agent im Hintergrund überwacht und handelt.',
+  'onboarding.custom.activity.defaultDesc':
+    'Moderate Aktivität – stündliche Synchronisierung, tägliche Zusammenfassung.',
+  'onboarding.custom.activity.configureDesc':
+    'Eigene Aktivitätsstufe wählen. Konfigurieren in Einstellungen › Agent-Aktivitätsstufe.',
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.vault.title': 'Speicher & Vault-Einrichtung',
+  'onboarding.custom.vault.subtitle':
+    'Bestätigen Sie, wohin Speichernotizen geschrieben werden, wie Quelldaten gelesen werden und ob Ihre Vault-Pipeline fehlerfrei ist.',
+  'onboarding.custom.vault.defaultDesc':
+    'Von OpenHuman verwaltete Standardspeichereinstellungen verwenden. Vault-Pfad und Synchronisierungsstatus können später eingesehen werden.',
+  'onboarding.custom.vault.configureDesc':
+    'Vault-Eigentümerschaft prüfen, Integritätsprüfungen durchführen und Speicherkontrollen jetzt anpassen.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Die verwaltete Einrichtung erfordert eine OpenHuman-Anmeldung und ist im lokalen Modus nicht verfügbar.',
+  'onboarding.custom.vault.exitError':
+    'Onboarding konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.',
+
+  // Vault Health
+  'vaultHealth.title': 'Vault-Integritätsprüfliste',
+  'vaultHealth.setupTitle': 'Vault-Einrichtungsstatus',
+  'vaultHealth.workspaceVault': 'Arbeitsbereich-Vault:',
+  'vaultHealth.refresh': 'Aktualisieren',
+  'vaultHealth.refreshing': 'Wird aktualisiert…',
+  'vaultHealth.revealFolder': 'Ordner anzeigen',
+  'vaultHealth.openInObsidian': 'In Obsidian öffnen',
+  'vaultHealth.installObsidian': 'Obsidian installieren',
+  'vaultHealth.openObsidianError': 'Obsidian konnte nicht geöffnet werden',
+  'vaultHealth.revealError': 'Vault-Ordner konnte nicht angezeigt werden',
+  'vaultHealth.downloadError': 'Obsidian-Downloadseite konnte nicht geöffnet werden',
+  'vaultHealth.loadError': 'Vault-Status konnte nicht geladen werden:',
+  'vaultHealth.lastSync': 'Letzte Synchronisierung:',
+  'vaultHealth.passed': 'Bestanden',
+  'vaultHealth.needsAttention': 'Aufmerksamkeit erforderlich',
+  'vaultHealth.existsLabel': 'Arbeitsbereich-Vault-Pfad vorhanden',
+  'vaultHealth.existsRecovery':
+    'Vault-Ordner fehlt. Starten Sie eine Synchronisierung oder erstellen Sie diesen Ordner und aktualisieren Sie dann diese Prüfliste.',
+  'vaultHealth.writableLabel': 'Vault ist durch OpenHuman beschreibbar',
+  'vaultHealth.writableRecovery':
+    'OpenHuman kann noch nicht in diesen Vault schreiben. Schreibberechtigungen erteilen und aktualisieren.',
+  'vaultHealth.obsidianLabel': 'Vault ist in Obsidian registriert',
+  'vaultHealth.obsidianRecovery':
+    'Wählen Sie in Obsidian „Ordner als Vault öffnen" für diesen Pfad und aktualisieren Sie dann diese Prüfliste.',
+  'vaultHealth.pipelineLabel': 'Speicher-Pipeline ist fehlerfrei',
+  'vaultHealth.pipelineRecovery':
+    'Speicher-Pipeline ist pausiert oder fehlerhaft. Auto-Synchronisierung im Memory-Tree-Status wieder aktivieren und erneut versuchen.',
+  'vaultHealth.timeNever': 'Nie',
+  'vaultHealth.timeJustNow': 'gerade eben',
+  'vaultHealth.timeMinAgo': 'vor {n} Min.',
+  'vaultHealth.timeHrAgo': 'vor {n} Std.',
+  'vaultHealth.timeDayAgo': 'vor {n} Tag',
+  'vaultHealth.timeDaysAgo': 'vor {n} Tagen',
+
+  // Memory Data
+  'memoryData.howItWorks': 'So funktioniert die Speicherablage',
+  'memoryData.workspaceVault': 'Arbeitsbereich-Vault · Schreiben',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman schreibt generierte Speichernotizen nach memory_tree/content.',
+  'memoryData.connectedSources': 'Verbundene Quellen · Lesen',
+  'memoryData.connectedSourcesDesc':
+    'Ordner, Postfächer, Chats und Repositories werden für die Speicherindizierung importiert – die Originaldateien werden dabei nie überschrieben.',
+  'memoryData.internalFiles': 'Interne Memory-Tree-Dateien',
+  'memoryData.internalFilesDesc':
+    'Indizes, Warteschlangenstatus und Zusammenfassungen werden von OpenHuman verwaltet, um Erinnerung und Synchronisierung fehlerfrei zu halten.',
+  'memoryData.windowError': 'Speicherfenster',
+  'memoryData.windowUpdated': 'Speicherfenster aktualisiert',
+  'memoryData.windowUpdatedMsg': 'Auf {window} gesetzt.',
 };
 
 export default messages;

@@ -82,7 +82,8 @@ describe('Settings - Feature Preferences', () => {
   });
 
   it('persists the default messaging channel through redux state', async () => {
-    await navigateViaHash('/settings/messaging');
+    // Default Messaging Channel moved from /settings/messaging to /skills (channels tab).
+    await navigateViaHash('/skills?tab=channels');
 
     await waitForText('Default Messaging Channel', 15_000);
     await clickText('Discord', 10_000);

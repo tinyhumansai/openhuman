@@ -54,6 +54,10 @@ pub struct Reflection {
     pub acted_on_at: Option<f64>,
     /// Epoch seconds when the user dismissed the card.
     pub dismissed_at: Option<f64>,
+    /// Thread ID of the agent conversation that produced this reflection.
+    /// Clicking the thought in the UI navigates to this thread.
+    #[serde(default)]
+    pub thread_id: Option<String>,
 }
 
 /// Categorisation of the underlying signal. Start narrow; we can grow
@@ -132,6 +136,7 @@ pub fn hydrate_draft(
     id: String,
     now: f64,
     source_chunks: Vec<SourceChunk>,
+    thread_id: Option<String>,
 ) -> Reflection {
     Reflection {
         id,
@@ -143,6 +148,7 @@ pub fn hydrate_draft(
         created_at: now,
         acted_on_at: None,
         dismissed_at: None,
+        thread_id,
     }
 }
 

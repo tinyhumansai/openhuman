@@ -418,3 +418,59 @@ async fn cron_runs_returns_empty_history_for_new_job() {
     assert!(out.value.is_empty());
     assert!(out.logs.iter().any(|l| l.contains("cron run history")));
 }
+
+// ── cron_run ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn cron_run_rejects_empty_job_id() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let err = cron_run(&config, "").await.unwrap_err();
+    assert!(err.contains("Missing 'job_id'"));
+}
+
+#[tokio::test]
+async fn cron_run_rejects_whitespace_job_id() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let err = cron_run(&config, "   ").await.unwrap_err();
+    assert!(err.contains("Missing 'job_id'"));
+}
+
+#[tokio::test]
+async fn cron_run_errors_when_cron_disabled() {
+    let tmp = TempDir::new().unwrap();
+    let config = disabled_cron_config(&tmp);
+    let err = cron_run(&config, "some-id").await.unwrap_err();
+    assert!(err.contains("cron is disabled"));
+}
+
+#[tokio::test]
+async fn cron_run_returns_queued_immediately_for_valid_job() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let job = make_job(&config, "*/5 * * * *", None, "echo hello");
+
+    let out = cron_run(&config, &job.id).await.unwrap();
+    assert_eq!(out.value["job_id"], json!(job.id));
+    assert_eq!(out.value["status"], json!("queued"));
+    assert!(out.logs.iter().any(|l| l.contains("enqueued")));
+}
+
+#[tokio::test]
+async fn cron_run_rejects_duplicate_concurrent_execution() {
+    let tmp = TempDir::new().unwrap();
+    let config = test_config(&tmp);
+    let job = make_job(&config, "*/5 * * * *", None, "echo hello");
+
+    // Seed ACTIVE_RUNS directly to simulate an in-flight execution without
+    // spawning a real long-running subprocess (deterministic, no timing dependency).
+    ACTIVE_RUNS.lock().unwrap().insert(job.id.clone());
+    let err = cron_run(&config, &job.id).await.unwrap_err();
+    ACTIVE_RUNS.lock().unwrap().remove(&job.id);
+
+    assert!(
+        err.contains("already running"),
+        "expected 'already running', got: {err}"
+    );
+}

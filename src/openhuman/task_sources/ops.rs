@@ -152,6 +152,7 @@ pub async fn preview_filter(
         config: Arc::new(config.clone()),
         toolkit: provider.as_str().to_string(),
         connection_id: connection_id.filter(|s| !s.trim().is_empty()),
+        usage: Default::default(),
     };
     let max = max.unwrap_or(config.task_sources.max_tasks_per_fetch);
     let fetch_filter = filter::to_fetch_filter(&filter_spec, max);

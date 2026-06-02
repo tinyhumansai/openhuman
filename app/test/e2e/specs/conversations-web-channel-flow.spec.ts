@@ -74,7 +74,7 @@ suiteRunner('Conversations web channel flow', () => {
     // 'Message OpenHuman' button was removed from Home in a redesign — navigate directly.
     await navigateToConversations();
     // If navigating to /chat doesn't show threads, retry via direct hash.
-    const hasInput = await textExists('Type a message...');
+    const hasInput = await textExists('How can I help you today?');
     if (!hasInput) {
       await navigateViaHash('/chat');
       await browser.pause(2_000);

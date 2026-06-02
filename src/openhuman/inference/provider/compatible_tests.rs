@@ -1,7 +1,7 @@
 use super::*;
 use sentry::test::TestTransport;
 use std::sync::Arc;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn make_provider(name: &str, url: &str, key: Option<&str>) -> OpenAiCompatibleProvider {
@@ -354,6 +354,15 @@ async fn responses_api_primary_posts_directly_to_responses() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/backend-api/codex/responses"))
+        .and(body_json(serde_json::json!({
+            "model": "gpt-5.5",
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": "hello"}]
+            }],
+            "stream": false,
+            "store": false
+        })))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "output_text": "hello from responses",
             "output": []

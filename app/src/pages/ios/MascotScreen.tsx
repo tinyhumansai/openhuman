@@ -205,7 +205,7 @@ export const MascotScreen: FC = () => {
   // without a stale closure over the pttActive state variable.
   const pttActiveRef = useRef(false);
 
-  const { face } = useHumanMascot({ listening: pttActive });
+  const { face, visemeCode } = useHumanMascot({ listening: pttActive });
 
   // Derive label from stored profile.
   const pairedLabel = (() => {
@@ -431,7 +431,7 @@ export const MascotScreen: FC = () => {
       {/* Mascot canvas */}
       <div className="flex-1 flex items-center justify-center overflow-hidden min-h-0 py-4">
         <div className="w-full max-w-xs aspect-square">
-          <RiveMascot face={face} />
+          <RiveMascot face={face} visemeCode={visemeCode} />
         </div>
       </div>
 

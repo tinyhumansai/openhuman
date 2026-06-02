@@ -160,18 +160,13 @@ named = [
     # Both are routed through the same security/approval gate as `shell`.
     "workflow_load",
     "workflow_phase",
-    # Presentation generation (#2778 tool, #2780 orchestrator wiring).
-    # Synthesises a .pptx from a structured slide spec via a bundled
-    # python-pptx helper. Output lands in the workspace artifacts
-    # directory and the tool returns the artifact id + absolute path so
-    # the orchestrator can quote it in the reply. The companion
-    # grounding rule — agent MUST call memory_tree / research /
-    # query_memory before generate_presentation on a topical or factual
-    # deck unless the user supplied source material — lives in
-    # orchestrator/prompt.md under "## Presentation generation" and is
-    # pinned by `prompt::tests::build_requires_grounding_before_generate_presentation`.
-    # The tool is intentionally NOT registered on code_executor: pptx
-    # generation is not a code-exec task; it has its own python venv
-    # via `runtime_python`.
+    # structured slide spec via a native Rust engine (`ppt-rs`) running
+    # in-process — no Python subprocess, no managed venv. Output lands
+    # in the workspace artifacts directory and the tool returns the
+    # artifact id + absolute path so the orchestrator can quote it in
+    # the reply. Full agent-definition wiring + per-tier tool_filter
+    # policy lands in #2780; this entry exists so the orchestrator can
+    # drive the tool today (matches the user-facing "create slides"
+    # routing case the parent issue #1535 asks for).
     "generate_presentation",
 ]

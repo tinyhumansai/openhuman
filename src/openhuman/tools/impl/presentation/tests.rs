@@ -1,86 +1,21 @@
 //! Unit tests for the `generate_presentation` tool.
 //!
-//! Production end-to-end behaviour (real `python3` + `pip install python-pptx`)
-//! is covered separately by `tests/presentation_tool.rs`, which is gated on the
-//! host actually having Python available. The mock-driven cases here exist so
-//! the validation / error-mapping branches stay covered on every CI machine,
-//! regardless of Python availability.
+//! The engine layer (`engine.rs`) ships its own focused tests covering
+//! the `SlideSpec` → `ppt-rs` mapping, OOXML round-trip, and timeout
+//! handling. The tests here cover the tool-level concerns: input
+//! validation rejection branches, the parameters schema contract, the
+//! `description` router rules, the artifact-pipeline glue, and the
+//! happy-path output shape (artifact id + path + slide count + size).
+//!
+//! No mocks or interpreters — the real engine runs every test, so the
+//! happy-path assertion doubles as a contract check that the engine
+//! swap continues to produce a valid `.pptx` from this tool's
+//! perspective.
 
-use super::invoker::{InvocationOutcome, PythonInvoker};
-use super::types::{MAX_BULLETS_PER_SLIDE, MAX_SLIDES, MAX_TEXT_CHARS};
+use super::types::{PresentationError, MAX_BULLETS_PER_SLIDE, MAX_SLIDES, MAX_TEXT_CHARS};
 use super::*;
 
-use async_trait::async_trait;
-use serde_json::json;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-
-/// Captures the last `run` call so tests can assert against the rendered argv
-/// / stdin payload without going through a real Python interpreter.
-#[derive(Default)]
-struct MockPythonInvokerInner {
-    last_script: Option<PathBuf>,
-    last_stdin: Option<Vec<u8>>,
-    last_output: Option<PathBuf>,
-    last_deadline: Option<Duration>,
-}
-
-struct MockPythonInvoker {
-    inner: Mutex<MockPythonInvokerInner>,
-    outcome: Mutex<Option<InvocationOutcome>>,
-    /// When set, the mock writes this byte payload to `output_path`
-    /// before returning — emulates `python-pptx` having actually
-    /// produced a file the tool can stat for size.
-    output_bytes: Option<Vec<u8>>,
-}
-
-impl MockPythonInvoker {
-    fn new(outcome: InvocationOutcome) -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(MockPythonInvokerInner::default()),
-            outcome: Mutex::new(Some(outcome)),
-            output_bytes: None,
-        })
-    }
-
-    fn new_writing(outcome: InvocationOutcome, payload: Vec<u8>) -> Arc<Self> {
-        Arc::new(Self {
-            inner: Mutex::new(MockPythonInvokerInner::default()),
-            outcome: Mutex::new(Some(outcome)),
-            output_bytes: Some(payload),
-        })
-    }
-}
-
-#[async_trait]
-impl PythonInvoker for MockPythonInvoker {
-    async fn run(
-        &self,
-        script_path: &Path,
-        stdin_payload: Vec<u8>,
-        output_path: &Path,
-        deadline: Duration,
-    ) -> anyhow::Result<InvocationOutcome> {
-        {
-            let mut guard = self.inner.lock().unwrap();
-            guard.last_script = Some(script_path.to_path_buf());
-            guard.last_stdin = Some(stdin_payload);
-            guard.last_output = Some(output_path.to_path_buf());
-            guard.last_deadline = Some(deadline);
-        }
-        if let Some(payload) = self.output_bytes.as_ref() {
-            tokio::fs::write(output_path, payload).await?;
-        }
-        let outcome = self
-            .outcome
-            .lock()
-            .unwrap()
-            .take()
-            .expect("mock invoker called more than once");
-        Ok(outcome)
-    }
-}
+use std::path::PathBuf;
 
 fn workspace() -> tempfile::TempDir {
     tempfile::tempdir().expect("create temp workspace")
@@ -88,22 +23,16 @@ fn workspace() -> tempfile::TempDir {
 
 fn minimal_input_json() -> serde_json::Value {
     json!({
-        "title": "Test Deck",
+        "title": "Quarterly Review",
         "slides": [
-            { "title": "Intro", "body": "hello" }
+            { "title": "Highlights", "bullets": ["Up and to the right"] }
         ]
     })
 }
 
 #[test]
 fn parameters_schema_shape_matches_contract() {
-    let tool = PresentationTool::with_invoker(
-        PathBuf::from("/tmp/never-read"),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
+    let tool = PresentationTool::new(PathBuf::from("/tmp/never-read"));
     let schema = tool.parameters_schema();
     assert_eq!(schema["type"], "object");
     let required = schema["required"].as_array().expect("required is array");
@@ -124,25 +53,13 @@ fn parameters_schema_shape_matches_contract() {
 
 #[test]
 fn permission_level_is_write() {
-    let tool = PresentationTool::with_invoker(
-        PathBuf::from("/tmp/never-read"),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
+    let tool = PresentationTool::new(PathBuf::from("/tmp/never-read"));
     assert_eq!(tool.permission_level(), PermissionLevel::Write);
 }
 
 #[test]
 fn description_includes_router_rules() {
-    let tool = PresentationTool::with_invoker(
-        PathBuf::from("/tmp/never-read"),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
+    let tool = PresentationTool::new(PathBuf::from("/tmp/never-read"));
     let desc = tool.description();
     assert!(desc.contains("USE THIS"));
     assert!(desc.contains("NOT for"));
@@ -152,17 +69,9 @@ fn description_includes_router_rules() {
 #[tokio::test]
 async fn execute_rejects_empty_title() {
     let ws = workspace();
-    let tool = PresentationTool::with_invoker(
-        ws.path().to_path_buf(),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
-    let result = tool
-        .execute(json!({ "title": "  ", "slides": [{ "title": "x" }] }))
-        .await
-        .expect("execute returns Ok with is_error=true");
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({ "title": "", "slides": [{ "title": "x", "bullets": ["y"] }] });
+    let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
     assert!(result.text().contains("title"));
 }
@@ -170,17 +79,9 @@ async fn execute_rejects_empty_title() {
 #[tokio::test]
 async fn execute_rejects_empty_slides_array() {
     let ws = workspace();
-    let tool = PresentationTool::with_invoker(
-        ws.path().to_path_buf(),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
-    let result = tool
-        .execute(json!({ "title": "Deck", "slides": [] }))
-        .await
-        .expect("execute returns Ok");
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({ "title": "Deck", "slides": [] });
+    let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
     assert!(result.text().contains("slides"));
 }
@@ -188,216 +89,109 @@ async fn execute_rejects_empty_slides_array() {
 #[tokio::test]
 async fn execute_rejects_slide_with_no_content() {
     let ws = workspace();
-    let tool = PresentationTool::with_invoker(
-        ws.path().to_path_buf(),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
-    let result = tool
-        .execute(json!({
-            "title": "Deck",
-            "slides": [{ "title": "", "body": "", "bullets": [] }],
-        }))
-        .await
-        .expect("execute returns Ok");
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let args = json!({
+        "title": "Deck",
+        "slides": [{ "title": "", "body": "", "bullets": [], "speaker_notes": "" }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
-    assert!(result.text().contains("title / body / bullets"));
 }
 
 #[tokio::test]
 async fn execute_rejects_oversize_body() {
     let ws = workspace();
-    let tool = PresentationTool::with_invoker(
-        ws.path().to_path_buf(),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
-    let huge = "x".repeat(MAX_TEXT_CHARS + 1);
-    let result = tool
-        .execute(json!({
-            "title": "Deck",
-            "slides": [{ "title": "t", "body": huge }],
-        }))
-        .await
-        .expect("execute returns Ok");
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let big = "x".repeat(MAX_TEXT_CHARS + 1);
+    let args = json!({
+        "title": "Deck",
+        "slides": [{ "title": "ok", "body": big }]
+    });
+    let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
-    assert!(result.text().contains("body"));
 }
 
 #[tokio::test]
 async fn execute_rejects_too_many_slides() {
     let ws = workspace();
-    let tool = PresentationTool::with_invoker(
-        ws.path().to_path_buf(),
-        MockPythonInvoker::new(InvocationOutcome::Success {
-            stdout: String::new(),
-            stderr: String::new(),
-        }),
-    );
-    let slides = (0..(MAX_SLIDES + 1))
-        .map(|i| json!({ "title": format!("s{i}") }))
-        .collect::<Vec<_>>();
-    let result = tool
-        .execute(json!({ "title": "Deck", "slides": slides }))
-        .await
-        .expect("execute returns Ok");
+    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let slides: Vec<_> = (0..(MAX_SLIDES + 1))
+        .map(|i| json!({ "title": format!("Slide {i}"), "bullets": ["x"] }))
+        .collect();
+    let args = json!({ "title": "Big deck", "slides": slides });
+    let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
-    assert!(result.text().contains("slides"));
+    assert!(result.text().contains(&MAX_SLIDES.to_string()));
 }
 
 #[tokio::test]
 async fn execute_happy_path_returns_artifact_metadata() {
+    // End-to-end: drives the real ppt-rs engine and the artifact
+    // pipeline. Asserts the tool's success contract — `slide_count`
+    // excludes the synthetic title slide, the artifact is finalised
+    // on disk, and the markdown reply quotes the path + size.
     let ws = workspace();
-    // Produce a small payload so the finalize step sees a non-zero size.
-    let bogus_pptx = b"PK\x03\x04mock-pptx-bytes".to_vec();
-    let invoker = MockPythonInvoker::new_writing(
-        InvocationOutcome::Success {
-            stdout: r#"{"ok":true,"slide_count":1}"#.to_string(),
-            stderr: String::new(),
-        },
-        bogus_pptx.clone(),
-    );
-    let tool = PresentationTool::with_invoker(ws.path().to_path_buf(), invoker);
-
+    let tool = PresentationTool::new(ws.path().to_path_buf());
     let result = tool
         .execute(minimal_input_json())
         .await
         .expect("execute returns Ok");
-    assert!(!result.is_error, "expected success, got {}", result.text());
 
-    // Parse the structured payload off the json content block.
-    let json_val = result
-        .content
-        .iter()
-        .find_map(|c| match c {
-            crate::openhuman::skills::types::ToolContent::Json { data } => Some(data.clone()),
-            _ => None,
-        })
-        .expect("expected a json content block");
-    assert!(json_val["artifact_id"].is_string());
-    assert_eq!(json_val["slide_count"], 1);
-    assert_eq!(json_val["size_bytes"], bogus_pptx.len() as u64);
-
-    // Artifact file should exist on disk under the workspace.
-    let artifact_path = PathBuf::from(json_val["artifact_path"].as_str().unwrap());
-    assert!(artifact_path.exists(), "artifact not at {artifact_path:?}");
-    let written = tokio::fs::read(&artifact_path).await.unwrap();
-    assert_eq!(written, bogus_pptx);
-}
-
-#[tokio::test]
-async fn execute_surfaces_generation_failed_with_truncated_stderr() {
-    let ws = workspace();
-    let long_stderr = "x".repeat(2000); // beyond 500-char cap
-    let invoker = MockPythonInvoker::new(InvocationOutcome::NonZeroExit {
-        exit_code: 3,
-        stdout: String::new(),
-        stderr: long_stderr.clone(),
-    });
-    let tool = PresentationTool::with_invoker(ws.path().to_path_buf(), invoker);
-
-    let result = tool
-        .execute(minimal_input_json())
-        .await
-        .expect("execute returns Ok");
-    assert!(result.is_error);
-    assert!(result.text().contains("python-pptx generation failed"));
-    assert!(result.text().contains("exit=3"));
     assert!(
-        result.text().contains("[…truncated]"),
-        "stderr should be truncated"
+        !result.is_error,
+        "happy path should not be flagged as error"
     );
-    // The message length should be bounded by the truncation budget plus the
-    // surrounding error format — well below the original 2000-char dump.
-    assert!(result.text().len() < 1000);
-}
 
-#[tokio::test]
-async fn execute_surfaces_generation_timeout() {
-    let ws = workspace();
-    let invoker = MockPythonInvoker::new(InvocationOutcome::Timeout { timeout_secs: 60 });
-    let tool = PresentationTool::with_invoker(ws.path().to_path_buf(), invoker);
+    let payload = match result.content.first().expect("at least one content block") {
+        crate::openhuman::skills::types::ToolContent::Json { data } => data.clone(),
+        other => panic!("expected Json content block, got {other:?}"),
+    };
+    assert_eq!(payload["slide_count"].as_u64(), Some(1));
+    let artifact_path = payload["artifact_path"]
+        .as_str()
+        .expect("artifact_path is a string");
+    let artifact_id = payload["artifact_id"]
+        .as_str()
+        .expect("artifact_id is a string");
+    let size_bytes = payload["size_bytes"]
+        .as_u64()
+        .expect("size_bytes is an integer");
 
-    let result = tool
-        .execute(minimal_input_json())
-        .await
-        .expect("execute returns Ok");
-    assert!(result.is_error);
-    assert!(result.text().contains("exceeded 60s timeout"));
-}
+    assert!(
+        std::path::Path::new(artifact_path).exists(),
+        "artifact file must exist at {artifact_path}"
+    );
+    assert!(
+        size_bytes > 1000,
+        "deck unexpectedly small ({size_bytes} bytes)"
+    );
 
-#[tokio::test]
-async fn execute_surfaces_missing_runtime() {
-    let ws = workspace();
-    let invoker = MockPythonInvoker::new(InvocationOutcome::MissingRuntime {
-        reason: "no python on PATH".to_string(),
-    });
-    let tool = PresentationTool::with_invoker(ws.path().to_path_buf(), invoker);
-
-    let result = tool
-        .execute(minimal_input_json())
-        .await
-        .expect("execute returns Ok");
-    assert!(result.is_error);
-    assert!(result.text().contains("python runtime is not available"));
-    assert!(result.text().contains("no python on PATH"));
-}
-
-#[tokio::test]
-async fn execute_surfaces_missing_package() {
-    let ws = workspace();
-    let invoker = MockPythonInvoker::new(InvocationOutcome::PackageInstallFailed {
-        reason: "pip install failed (exit=1): network unreachable".to_string(),
-    });
-    let tool = PresentationTool::with_invoker(ws.path().to_path_buf(), invoker);
-
-    let result = tool
-        .execute(minimal_input_json())
-        .await
-        .expect("execute returns Ok");
-    assert!(result.is_error);
-    assert!(result.text().contains("python-pptx"));
-    assert!(result.text().contains("first-call venv setup failed"));
-}
-
-#[tokio::test]
-async fn execute_marks_artifact_failed_when_script_drops_file() {
-    let ws = workspace();
-    // Success outcome but mock does NOT write any file to output_path.
-    let invoker = MockPythonInvoker::new(InvocationOutcome::Success {
-        stdout: String::new(),
-        stderr: String::new(),
-    });
-    let tool = PresentationTool::with_invoker(ws.path().to_path_buf(), invoker);
-
-    let result = tool
-        .execute(minimal_input_json())
-        .await
-        .expect("execute returns Ok");
-    assert!(result.is_error);
-    assert!(result.text().contains("no output file"));
+    let md = result
+        .markdown_formatted
+        .as_deref()
+        .expect("success_with_markdown sets markdown_formatted");
+    assert!(md.contains(artifact_id));
+    assert!(md.contains(artifact_path));
+    assert!(md.contains("1-slide"));
 }
 
 #[test]
 fn truncate_stderr_caps_payload_with_suffix() {
     let raw = "y".repeat(2000);
-    let out = types::PresentationError::truncate_stderr(&raw);
+    let out = PresentationError::truncate_stderr(&raw);
     assert!(out.chars().count() <= 500);
     assert!(out.ends_with("[…truncated]"));
     let short = "tiny stderr";
-    assert_eq!(types::PresentationError::truncate_stderr(short), short);
+    assert_eq!(PresentationError::truncate_stderr(short), short);
 }
 
 #[test]
 fn unsupported_file_type_display_includes_extension_and_supported() {
-    // Reserved-for-future variant: confirms the Display impl renders
-    // both the rejected extension and the supported set so a downstream
-    // mapper can surface a user-correctable message verbatim.
-    let err = types::PresentationError::UnsupportedFileType {
+    // Reserved-for-future variant (#2780): confirms the Display impl
+    // renders both the rejected extension and the supported set so a
+    // downstream mapper can surface a user-correctable message verbatim
+    // once a `format` selector lands.
+    let err = PresentationError::UnsupportedFileType {
         extension: "key".to_string(),
         supported: "pptx".to_string(),
     };
