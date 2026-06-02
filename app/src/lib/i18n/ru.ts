@@ -2274,6 +2274,13 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Преимущество 2',
   'app.openhumanLink.discord.perk3': 'Преимущество 3',
   'app.openhumanLink.discord.perk4': 'Преимущество 4',
+  'app.openhumanLink.discordReport.copied': 'Скопировано в буфер обмена',
+  'app.openhumanLink.discordReport.copyDetails': 'Копировать сведения об ошибке',
+  'app.openhumanLink.discordReport.fallbackDetails':
+    'Ошибка агента OpenHuman (дополнительная информация недоступна).',
+  'app.openhumanLink.discordReport.intro':
+    'Приносим извинения — что-то пошло не так с нашей стороны. Эта ошибка была автоматически отправлена в службу поддержки. Вы также можете поделиться подробностями с нами в Discord, чтобы мы могли разобраться быстрее.',
+  'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',
   'app.openhumanLink.done': 'Готово',
   'app.openhumanLink.loadingChannelSetup': 'Загрузка настроек канала',
   'app.openhumanLink.maybeLater': 'Может, потом',
@@ -2294,6 +2301,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Подключи свои приложения',
   'app.openhumanLink.title.billing': 'Оплата и кредиты',
   'app.openhumanLink.title.discord': 'Вступи в сообщество',
+  'app.openhumanLink.title.discordReport': 'Сообщить об ошибке',
   'app.openhumanLink.title.messaging': 'Подключи канал связи',
   'app.openhumanLink.title.notifications': 'Разрешить уведомления',
   'app.persistRehydration.body': 'Текст',

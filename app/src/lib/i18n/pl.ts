@@ -2285,6 +2285,13 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Wczesny dostęp do nowych funkcji',
   'app.openhumanLink.discord.perk3': 'Wymiana skryptów i przepisów',
   'app.openhumanLink.discord.perk4': 'Możliwość wpływu na priorytety',
+  'app.openhumanLink.discordReport.copied': 'Skopiowano do schowka',
+  'app.openhumanLink.discordReport.copyDetails': 'Kopiuj szczegóły błędu',
+  'app.openhumanLink.discordReport.fallbackDetails':
+    'Błąd agenta OpenHuman (brak dodatkowych szczegółów).',
+  'app.openhumanLink.discordReport.intro':
+    'Przepraszamy — coś poszło nie tak po naszej stronie. Ten błąd został automatycznie zgłoszony. Możesz też udostępnić nam szczegóły na Discord, abyśmy mogli szybciej to zbadać.',
+  'app.openhumanLink.discordReport.openDiscord': 'Otwórz Discord',
   'app.openhumanLink.done': 'Gotowe',
   'app.openhumanLink.loadingChannelSetup': 'Wczytywanie konfiguracji kanału',
   'app.openhumanLink.maybeLater': 'Może później',
@@ -2306,6 +2313,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Podłącz swoje aplikacje',
   'app.openhumanLink.title.billing': 'Rozliczenia i kredyty',
   'app.openhumanLink.title.discord': 'Dołącz do społeczności',
+  'app.openhumanLink.title.discordReport': 'Zgłoś ten błąd',
   'app.openhumanLink.title.messaging': 'Podłącz kanał komunikacji',
   'app.openhumanLink.title.notifications': 'Zezwól na powiadomienia',
   'app.persistRehydration.body':

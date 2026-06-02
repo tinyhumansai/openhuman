@@ -890,7 +890,7 @@ fn generic_error_copy_is_sanitized_and_has_discord_report_action() {
     assert!(message.contains("Something went wrong. Please try again."));
     assert!(message.contains("This error has been reported."));
     assert!(message
-        .contains("<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"));
+        .contains("<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>"));
 }
 
 // ── Schema catalog ────────────────────────────────────────────

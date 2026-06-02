@@ -2303,6 +2303,13 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Ventaja 2',
   'app.openhumanLink.discord.perk3': 'Ventaja 3',
   'app.openhumanLink.discord.perk4': 'Ventaja 4',
+  'app.openhumanLink.discordReport.copied': 'Copiado al portapapeles',
+  'app.openhumanLink.discordReport.copyDetails': 'Copiar detalles del error',
+  'app.openhumanLink.discordReport.fallbackDetails':
+    'Error del agente OpenHuman (no hay detalles adicionales disponibles).',
+  'app.openhumanLink.discordReport.intro':
+    'Lo sentimos — algo falló de nuestra parte. Este error fue reportado automáticamente. También puedes compartir los detalles con nosotros en Discord para que podamos investigar más rápido.',
+  'app.openhumanLink.discordReport.openDiscord': 'Abrir Discord',
   'app.openhumanLink.done': 'Listo',
   'app.openhumanLink.loadingChannelSetup': 'Cargando configuración de canal',
   'app.openhumanLink.maybeLater': 'Quizás después',
@@ -2323,6 +2330,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Conecta tus apps',
   'app.openhumanLink.title.billing': 'Facturación y créditos',
   'app.openhumanLink.title.discord': 'Únete a la comunidad',
+  'app.openhumanLink.title.discordReport': 'Reportar este error',
   'app.openhumanLink.title.messaging': 'Conecta un canal de chat',
   'app.openhumanLink.title.notifications': 'Permitir notificaciones',
   'app.persistRehydration.body': 'Cuerpo',

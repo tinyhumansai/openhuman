@@ -2263,6 +2263,13 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Keuntungan 2',
   'app.openhumanLink.discord.perk3': 'Keuntungan 3',
   'app.openhumanLink.discord.perk4': 'Keuntungan 4',
+  'app.openhumanLink.discordReport.copied': 'Disalin ke clipboard',
+  'app.openhumanLink.discordReport.copyDetails': 'Salin detail error',
+  'app.openhumanLink.discordReport.fallbackDetails':
+    'Error agen OpenHuman (tidak ada detail tambahan yang tersedia).',
+  'app.openhumanLink.discordReport.intro':
+    'Mohon maaf — terjadi kesalahan di pihak kami. Error ini telah dilaporkan secara otomatis. Anda juga dapat berbagi detailnya dengan kami di Discord agar kami dapat menyelidiki lebih cepat.',
+  'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',
   'app.openhumanLink.done': 'Selesai',
   'app.openhumanLink.loadingChannelSetup': 'Memuat pengaturan kanal',
   'app.openhumanLink.maybeLater': 'Mungkin nanti',
@@ -2283,6 +2290,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Hubungkan aplikasi Anda',
   'app.openhumanLink.title.billing': 'Tagihan & kredit',
   'app.openhumanLink.title.discord': 'Bergabung ke komunitas',
+  'app.openhumanLink.title.discordReport': 'Laporkan error ini',
   'app.openhumanLink.title.messaging': 'Hubungkan kanal chat',
   'app.openhumanLink.title.notifications': 'Izinkan notifikasi',
   'app.persistRehydration.body': 'Isi',

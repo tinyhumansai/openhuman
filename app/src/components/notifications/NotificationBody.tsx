@@ -25,7 +25,15 @@
 import { parseBubbleSegments } from '../../pages/conversations/utils/format';
 import { OPENHUMAN_LINK_EVENT } from '../OpenhumanLinkModal';
 
-function NotificationLinkPill({ path, label }: { path: string; label: string }) {
+function NotificationLinkPill({
+  path,
+  label,
+  context,
+}: {
+  path: string;
+  label: string;
+  context?: string;
+}) {
   return (
     <button
       type="button"
@@ -33,7 +41,7 @@ function NotificationLinkPill({ path, label }: { path: string; label: string }) 
         // Don't trigger the surrounding card / row click — the pill is its
         // own action.
         e.stopPropagation();
-        window.dispatchEvent(new CustomEvent(OPENHUMAN_LINK_EVENT, { detail: { path } }));
+        window.dispatchEvent(new CustomEvent(OPENHUMAN_LINK_EVENT, { detail: { path, context } }));
       }}
       className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-2 py-0.5 text-[11px] font-medium text-primary-700 transition-colors hover:bg-primary-100">
       {label}
@@ -55,7 +63,7 @@ export default function NotificationBody({ body }: { body: string }) {
     <>
       {segments.map((seg, i) =>
         seg.kind === 'link' ? (
-          <NotificationLinkPill key={i} path={seg.path} label={seg.label} />
+          <NotificationLinkPill key={i} path={seg.path} label={seg.label} context={body} />
         ) : (
           // React auto-escapes text content, so any other markup in the body
           // (e.g. `<script>…</script>`) renders as literal text.

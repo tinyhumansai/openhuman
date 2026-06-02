@@ -2603,6 +2603,13 @@ const en: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Connect with other OpenHuman users',
   'app.openhumanLink.discord.perk3': 'Share feedback directly with the team',
   'app.openhumanLink.discord.perk4': 'Community help and support',
+  'app.openhumanLink.discordReport.copied': 'Copied to clipboard',
+  'app.openhumanLink.discordReport.copyDetails': 'Copy error details',
+  'app.openhumanLink.discordReport.fallbackDetails':
+    'OpenHuman agent error (no additional details were available).',
+  'app.openhumanLink.discordReport.intro':
+    'Sorry — something broke on our end. This error was reported automatically. You can also share the details with us on Discord so we can dig in faster.',
+  'app.openhumanLink.discordReport.openDiscord': 'Open Discord',
   'app.openhumanLink.done': 'Done',
   'app.openhumanLink.loadingChannelSetup': 'Loading channel setup',
   'app.openhumanLink.maybeLater': 'Maybe later',
@@ -2623,6 +2630,7 @@ const en: TranslationMap = {
   'app.openhumanLink.title.accounts': 'Connect your apps',
   'app.openhumanLink.title.billing': 'Billing & credits',
   'app.openhumanLink.title.discord': 'Join the community',
+  'app.openhumanLink.title.discordReport': 'Report this error',
   'app.openhumanLink.title.messaging': 'Connect a chat channel',
   'app.openhumanLink.title.notifications': 'Allow notifications',
   'app.persistRehydration.body': 'Loading your saved settings…',
