@@ -1182,7 +1182,9 @@ fn probe_directory_writable(dir: &std::path::Path) -> bool {
     {
         Ok(mut file) => {
             let write_ok = file.write_all(b"ok").is_ok();
-            let _ = std::fs::remove_file(&probe);
+            if let Err(e) = std::fs::remove_file(&probe) {
+                log::debug!("[memory] vault write-probe cleanup failed: {e}");
+            }
             write_ok
         }
         Err(_) => false,
