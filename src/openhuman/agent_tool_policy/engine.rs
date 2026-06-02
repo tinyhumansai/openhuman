@@ -106,12 +106,19 @@ fn permission_for_channel(
     channel: &str,
 ) -> PermissionLevel {
     if channel_permissions.is_empty() {
+        // Empty map historically meant "preserve legacy unrestricted
+        // surface" — that left a non-web channel inheriting Dangerous
+        // and made the per-channel cap a no-op for the default config.
+        // Fail closed to ReadOnly. The config migration in
+        // `config::schema::agent::migrate_channel_permissions` seeds
+        // sensible per-channel defaults for existing installs so they
+        // don't regress.
         log::debug!(
             target: "openhuman::agent_tool_policy",
-            "[tool-policy] channel permissions empty; preserving legacy unrestricted surface channel={}",
+            "[tool-policy] channel permissions empty; failing closed to read-only channel={}",
             channel
         );
-        return PermissionLevel::Dangerous;
+        return PermissionLevel::ReadOnly;
     }
 
     match channel_permissions.get(channel) {
@@ -242,7 +249,13 @@ mod tests {
     }
 
     #[test]
-    fn empty_channel_config_preserves_legacy_full_tool_surface() {
+    fn empty_channel_config_fails_closed_to_read_only() {
+        // Empty channel_permissions used to preserve the legacy
+        // unrestricted tool surface. That made the per-channel cap a
+        // no-op for the default config — a non-web channel inheriting
+        // Dangerous bypassed the policy. We now fail closed to ReadOnly
+        // and rely on the agent-config migration to seed per-channel
+        // defaults for existing installs.
         let session = ToolPolicyEngine::build_session(
             "orchestrator",
             "web",
@@ -254,12 +267,11 @@ mod tests {
 
         assert_eq!(
             session.profile.allowed_permission,
-            PermissionLevel::Dangerous
+            PermissionLevel::ReadOnly
         );
         assert!(session.is_allowed("read_notes"));
-        assert!(session.is_allowed("write_notes"));
-        assert!(session.is_allowed("run_script"));
-        assert!(!session.has_restrictions());
+        assert!(!session.is_allowed("write_notes"));
+        assert!(!session.is_allowed("run_script"));
     }
 
     #[test]
