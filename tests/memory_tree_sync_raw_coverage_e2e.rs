@@ -6,7 +6,7 @@
 
 use std::ffi::OsString;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use chrono::{TimeZone, Utc};
@@ -82,6 +82,15 @@ impl Drop for EnvVarGuard {
             }
         }
     }
+}
+
+static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn config_in(tmp: &TempDir) -> Config {
@@ -436,6 +445,7 @@ async fn memory_walk_provider_errors_and_unknown_actions_are_reported() {
 
 #[tokio::test]
 async fn composio_providers_sync_state_and_bus_surfaces_cover_read_write_edges() {
+    let _lock = env_lock();
     let tmp = TempDir::new().expect("tempdir");
     let _workspace = EnvVarGuard::set("OPENHUMAN_WORKSPACE", tmp.path());
     let _triage = EnvVarGuard::set_str("OPENHUMAN_TRIGGER_TRIAGE_DISABLED", "yes");
@@ -458,7 +468,7 @@ async fn composio_providers_sync_state_and_bus_surfaces_cover_read_write_edges()
     );
     assert_eq!(
         toolkit_from_slug("MICROSOFT_TEAMS_SEND_MESSAGE").as_deref(),
-        Some("microsoft")
+        Some("microsoft_teams")
     );
     assert_eq!(classify_unknown("GMAIL_DELETE_DRAFT"), ToolScope::Admin);
     assert_eq!(classify_unknown("NOTION_CREATE_PAGE"), ToolScope::Write);

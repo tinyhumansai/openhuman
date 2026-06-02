@@ -157,6 +157,7 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
                                 estimated_cost_usd: 0.0,
                                 composio_actions_called: composio_usage.actions_called,
                                 composio_cost_usd: composio_usage.cost_usd,
+                                actual_charged_usd: None,
                                 duration_ms,
                                 success: true,
                                 error: None,
@@ -189,12 +190,9 @@ pub async fn sync_source(source: MemorySourceEntry, config: Config) -> Result<()
                             input_tokens: 0,
                             output_tokens: 0,
                             estimated_cost_usd: 0.0,
-                            // A sync that failed partway may still have fired
-                            // (billable) Composio actions before erroring;
-                            // record what we accumulated so cost isn't
-                            // under-reported on failures.
                             composio_actions_called: composio_usage.actions_called,
                             composio_cost_usd: composio_usage.cost_usd,
+                            actual_charged_usd: None,
                             duration_ms,
                             success: false,
                             error: Some(error.clone()),
@@ -401,7 +399,11 @@ async fn check_and_rebuild_tree(source: &MemorySourceEntry, config: &Config) {
                     scope = %scope,
                     files = outcome.files_read,
                     batches = outcome.batches,
-                    cost = %format!("${:.4}", outcome.estimated_cost_usd),
+                    cost = %format!(
+                        "${:.4}",
+                        outcome.actual_charged_usd.unwrap_or(outcome.estimated_cost_usd)
+                    ),
+                    cost_is_actual = outcome.actual_charged_usd.is_some(),
                     "[memory_sources:sync] rebuild complete"
                 );
             }

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useT } from '../lib/i18n/I18nContext';
 import { useCoreState } from '../providers/CoreStateProvider';
+import { trackEvent } from '../services/analytics';
 import { selectCompanionSessionActive } from '../store/companionSlice';
 import { useAppSelector } from '../store/hooks';
 import { selectUnreadCount } from '../store/notificationSlice';
@@ -174,6 +175,20 @@ const BottomTabBar = () => {
     return location.pathname === path;
   };
 
+  const activeTab = tabs.find(tab => isActive(tab.path));
+
+  const handleTabClick = (tab: (typeof tabs)[number], active: boolean) => {
+    if (!active) {
+      trackEvent('tab_bar_change', {
+        from_tab: activeTab?.id ?? 'unknown',
+        to_tab: tab.id,
+        from_path: location.pathname,
+        to_path: tab.path,
+      });
+    }
+    navigate(tab.path);
+  };
+
   return (
     // pointer-events-none on the full-width shell so transparent areas (e.g.
     // beside the centered nav pill) do not steal clicks from sticky footers
@@ -214,7 +229,7 @@ const BottomTabBar = () => {
               <button
                 key={tab.id}
                 data-walkthrough={walkthroughAttr[tab.id]}
-                onClick={() => navigate(tab.path)}
+                onClick={() => handleTabClick(tab, active)}
                 className={`group relative flex items-center px-2 py-2 rounded-sm text-sm transition-colors duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] cursor-pointer ${
                   active
                     ? 'bg-white dark:bg-neutral-800 text-stone-900 dark:text-neutral-100 font-semibold shadow-sm'

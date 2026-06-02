@@ -723,16 +723,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'পাঠানো হয়েছে',
   'privacy.leavesDevice': 'ডিভাইস ছেড়ে যায়',
   'privacy.staysLocal': 'লোকালে থাকে',
-  'privacy.anonymizedAnalytics': 'অ্যানোনিমাইজড অ্যানালিটিক্স',
-  'privacy.shareAnonymizedData': 'অ্যানোনিমাইজড ব্যবহার ডেটা শেয়ার করুন',
+  'privacy.anonymizedAnalytics': 'প্রোডাক্ট অ্যানালিটিক্স',
+  'privacy.shareAnonymizedData': 'প্রোডাক্ট অ্যানালিটিক্স ও ডায়াগনস্টিকস শেয়ার করুন',
   'privacy.shareAnonymizedDataDesc':
-    'বেনামী ক্র্যাশ রিপোর্ট ও ব্যবহার অ্যানালিটিক্স শেয়ার করে OpenHuman উন্নত করতে সাহায্য করুন। সব ডেটা সম্পূর্ণ বেনামী — কোনো ব্যক্তিগত তথ্য, বার্তা, ওয়ালেট কী বা সেশন তথ্য কখনো সংগ্রহ করা হয় না।',
+    'গোপনীয়তা-সীমিত ক্র্যাশ রিপোর্ট ও ব্যবহার ইভেন্ট শেয়ার করে OpenHuman উন্নত করতে সাহায্য করুন, যার মধ্যে স্থিতিশীল অ্যাকাউন্ট ID ও অ্যাপ সংস্করণ মেটাডেটা থাকে। বার্তা, ওয়ালেট কী, API কী বা সেশন টোকেন কখনো সংগ্রহ করা হয় না।',
   'privacy.meetingFollowUps': 'মিটিং ফলো-আপ',
   'privacy.autoHandoffMeet': 'Google Meet ট্রান্সক্রিপ্ট স্বয়ংক্রিয়ভাবে অর্কেস্ট্রেটরে পাঠান',
   'privacy.autoHandoffMeetDesc':
     'Google Meet কল শেষ হলে, OpenHuman-এর অর্কেস্ট্রেটর ট্রান্সক্রিপ্ট পড়তে এবং বার্তা ড্রাফট করা, ফলো-আপ নির্ধারণ করা বা সংযুক্ত Slack ওয়ার্কস্পেসে সারসংক্ষেপ পোস্ট করার মতো কাজ করতে পারে। ডিফল্টে বন্ধ।',
   'privacy.analyticsDisclaimer':
-    'সব অ্যানালিটিক্স ও বাগ রিপোর্ট সম্পূর্ণ বেনামী। সক্রিয় থাকলে, আমরা শুধু ক্র্যাশ তথ্য, ডিভাইসের ধরন এবং ত্রুটির ফাইল লোকেশন সংগ্রহ করি। আমরা কখনো আপনার বার্তা, সেশন ডেটা, ওয়ালেট কী, API কী বা ব্যক্তিগত তথ্য অ্যাক্সেস করি না। যেকোনো সময় এই সেটিং পরিবর্তন করা যাবে।',
+    'সক্রিয় থাকলে, প্রোডাক্ট অ্যানালিটিক্স ও ডায়াগনস্টিকসে গোপনীয়তা-সীমিত ক্র্যাশ রিপোর্ট ও ব্যবহার ইভেন্ট, স্থিতিশীল অ্যাকাউন্ট ID এবং অ্যাপ সংস্করণ মেটাডেটা থাকতে পারে। বার্তা, ওয়ালেট কী, API কী বা সেশন টোকেন কখনো সংগ্রহ করা হয় না। যেকোনো সময় এই সেটিং পরিবর্তন করা যাবে।',
   'settings.about.version': 'ভার্সন',
   'settings.about.updateAvailable': 'পাওয়া গেছে',
   'settings.about.softwareUpdates': 'সফটওয়্যার আপডেট',
@@ -3625,6 +3625,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'যোগ করুন',
   'settings.agentAccess.saving': 'ইনস্টল করা হয়েছে...',
   'settings.agentAccess.changesApply': 'পরবর্তী বার্তায় পরিবর্তন প্রয়োগ করা হবে।',
+  'settings.agentAccess.directories': 'ডিরেক্টরি',
+  'settings.agentAccess.actionSandbox': 'অ্যাকশন স্যান্ডবক্স',
+  'settings.agentAccess.readWriteAccess': 'পড়া + লেখা',
+  'settings.agentAccess.actionSandboxDesc':
+    'শেল, ফাইল এবং git টুলের জন্য ডিফল্ট কার্যকরী ডিরেক্টরি।',
+  'settings.agentAccess.internalState': 'অভ্যন্তরীণ অবস্থা',
+  'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
+  'settings.agentAccess.internalStateDesc':
+    'মেমরি ডেটাবেস, সেশন, টোকেন এবং অন্যান্য মূল ডেটা। এজেন্ট টুলের কাছে অ্যাক্সেসযোগ্য নয়।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

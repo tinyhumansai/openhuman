@@ -53,6 +53,7 @@ import {
 import { ConfirmationModal } from '../../intelligence/ConfirmationModal';
 import SettingsHeader from '../components/SettingsHeader';
 import { useSettingsNavigation } from '../hooks/useSettingsNavigation';
+import { routingWithProviderRemoved } from './aiRouting';
 import {
   authStyleForBuiltinCloudProvider,
   BUILTIN_CLOUD_PROVIDER_META,
@@ -67,7 +68,7 @@ import { useReembedBackfillModal } from './useReembedBackfillModal';
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-type CloudProvider = {
+export type CloudProvider = {
   id: string;
   slug: string;
   label: string;
@@ -92,7 +93,7 @@ type WorkloadId =
 
 type WorkloadGroup = 'chat' | 'background';
 
-type ProviderRef =
+export type ProviderRef =
   | { kind: 'openhuman' }
   | { kind: 'default' }
   | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
@@ -100,7 +101,7 @@ type ProviderRef =
 
 type Workload = { id: WorkloadId; group: WorkloadGroup; label: string; description: string };
 
-type RoutingMap = Record<WorkloadId, ProviderRef>;
+export type RoutingMap = Record<WorkloadId, ProviderRef>;
 type RoutingMode = 'managed' | 'own' | 'custom';
 const ROUTING_WORKLOAD_IDS: WorkloadId[] = [
   'chat',
@@ -625,6 +626,15 @@ const ProviderKeyDialog = ({
       return;
     }
     setError(null);
+
+    // A provider credential is being saved. This adds/updates a `cloudProviders`
+    // entry only — it does NOT change the workload routing map, so routing is
+    // unchanged afterwards (see inferRoutingMode). Logged for routing diagnostics.
+    console.debug('[ai-settings][routing] saving provider credential', {
+      slug,
+      local_runtime: isLocalRuntime,
+      kind: isLocalRuntime ? 'endpoint' : 'apiKey',
+    });
 
     setPhase('saving');
     try {
@@ -2724,7 +2734,26 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
 
   const chatRows = WORKLOADS.filter(w => w.group === 'chat');
   const bgRows = WORKLOADS.filter(w => w.group === 'background');
-  const inferredRoutingMode = useMemo(() => inferRoutingMode(draft.routing), [draft.routing]);
+  const inferredRoutingMode = useMemo(() => {
+    const mode = inferRoutingMode(draft.routing);
+    // Routing mode is derived purely from the workload routing map, not from the
+    // set of configured providers: saving a provider key only adds a
+    // `cloudProviders` entry, it does not rewrite `routing`. So "managed while a
+    // provider key is configured" is an expected state — the user must pick a
+    // route to actually use their provider. Surfaced for support diagnostics
+    // (the recurring "my key is added but not used" question).
+    const configuredWithKey = draft.cloudProviders.filter(p => p.maskedKey.startsWith('••••'));
+    console.debug('[ai-settings][routing] inferred mode', {
+      mode,
+      routing: ROUTING_WORKLOAD_IDS.map(id => `${id}:${draft.routing[id]?.kind}`),
+      configured_providers: draft.cloudProviders.map(p => p.slug),
+      configured_with_key: configuredWithKey.map(p => p.slug),
+      // A provider key is configured but routing is still managed → the provider
+      // is not used until the user selects a custom route.
+      configured_but_managed: mode === 'managed' && configuredWithKey.length > 0,
+    });
+    return mode;
+  }, [draft.routing, draft.cloudProviders]);
   const effectiveRoutingMode: RoutingMode =
     routingEditorMode === 'own'
       ? 'own'
@@ -2800,14 +2829,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                         // Toggle OFF: remove the provider + scrub any
                         // routing entries that pin to it.
                         const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                        const nextRouting = Object.fromEntries(
-                          Object.entries(draft.routing).map(([wid, ref]) => [
-                            wid,
-                            ref.kind === 'cloud' && ref.providerSlug === existing.slug
-                              ? ({ kind: 'default' } as const)
-                              : ref,
-                          ])
-                        ) as typeof draft.routing;
+                        const nextRouting = routingWithProviderRemoved(
+                          draft.routing,
+                          { slug: existing.slug, isLocalRuntime: false },
+                          remaining
+                        );
                         await persist({
                           ...draft,
                           cloudProviders: remaining,
@@ -2834,14 +2860,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                     busy={busyAction === `toggle-${existing.slug}`}
                     onToggle={async () => {
                       const remaining = draft.cloudProviders.filter(cp => cp.id !== existing.id);
-                      const nextRouting = Object.fromEntries(
-                        Object.entries(draft.routing).map(([wid, ref]) => [
-                          wid,
-                          ref.kind === 'cloud' && ref.providerSlug === existing.slug
-                            ? ({ kind: 'default' } as const)
-                            : ref,
-                        ])
-                      ) as typeof draft.routing;
+                      const nextRouting = routingWithProviderRemoved(
+                        draft.routing,
+                        { slug: existing.slug, isLocalRuntime: false },
+                        remaining
+                      );
                       await persist({ ...draft, cloudProviders: remaining, routing: nextRouting });
                     }}
                   />
@@ -2872,14 +2895,11 @@ const AIPanel = ({ embedded = false }: AIPanelProps = {}) => {
                           const remaining = draft.cloudProviders.filter(
                             cp => cp.id !== existing.id
                           );
-                          const nextRouting = Object.fromEntries(
-                            Object.entries(draft.routing).map(([wid, ref]) => [
-                              wid,
-                              ref.kind === 'cloud' && ref.providerSlug === localKind
-                                ? ({ kind: 'default' } as const)
-                                : ref,
-                            ])
-                          ) as typeof draft.routing;
+                          const nextRouting = routingWithProviderRemoved(
+                            draft.routing,
+                            { slug: localKind, isLocalRuntime: true },
+                            remaining
+                          );
                           await persist({
                             ...draft,
                             cloudProviders: remaining,

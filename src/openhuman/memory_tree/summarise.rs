@@ -61,7 +61,7 @@ pub struct SummaryContext<'a> {
 }
 
 /// Output of a summarise call.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SummaryOutput {
     pub content: String,
     pub token_count: u32,
@@ -71,6 +71,20 @@ pub struct SummaryOutput {
     /// design note).
     pub entities: Vec<String>,
     pub topics: Vec<String>,
+    /// Provider-reported prompt token count for this summarise call, when
+    /// the backend returned usage. `0` when usage was unavailable (e.g.
+    /// the [`fallback_summary`] path, or a provider that doesn't report
+    /// usage) — callers should fall back to their own estimate in that
+    /// case. Threaded into the sync audit log (issue #3110).
+    pub input_tokens: u64,
+    /// Provider-reported completion token count for this summarise call.
+    /// `0` when usage was unavailable (see [`Self::input_tokens`]).
+    pub output_tokens: u64,
+    /// Amount billed for this summarise call in USD, from the backend's
+    /// `openhuman.billing.charged_amount_usd`. `None` when the provider
+    /// did not report a charge — callers fall back to the hardcoded
+    /// pricing estimate (issue #3110).
+    pub charged_amount_usd: Option<f64>,
 }
 
 /// Fold `inputs` into a single summary by making one chat-provider call.
@@ -95,12 +109,7 @@ pub async fn summarise(
 
     let body = build_user_prompt(inputs, per_input_cap);
     if body.trim().is_empty() {
-        return Ok(SummaryOutput {
-            content: String::new(),
-            token_count: 0,
-            entities: Vec::new(),
-            topics: Vec::new(),
-        });
+        return Ok(SummaryOutput::default());
     }
 
     let provider =
@@ -122,18 +131,35 @@ pub async fn summarise(
         ctx.token_budget,
     );
 
-    let raw = provider
-        .chat_for_text(&prompt)
+    let (raw, usage) = provider
+        .chat_for_text_with_usage(&prompt)
         .await
         .with_context(|| format!("memory_tree::summarise: provider={}", provider.name()))?;
 
     let (content, token_count) = clamp_to_budget(raw.trim(), effective_budget);
+
+    // Prefer provider-reported usage (real token counts + charged amount)
+    // over our `body.len() / 4` estimate. `None`/zero means the backend
+    // didn't surface usage; downstream callers fall back to estimates.
+    let input_tokens = usage.as_ref().map(|u| u.input_tokens).unwrap_or(0);
+    let output_tokens = usage.as_ref().map(|u| u.output_tokens).unwrap_or(0);
+    let charged_amount_usd = usage.as_ref().and_then(|u| {
+        if u.charged_amount_usd > 0.0 {
+            Some(u.charged_amount_usd)
+        } else {
+            None
+        }
+    });
+
     log::debug!(
-        "[memory_tree::summarise] sealed tree_id={} level={} inputs={} tokens={}",
+        "[memory_tree::summarise] sealed tree_id={} level={} inputs={} tokens={} usage_input={} usage_output={} charged_usd={:?}",
         ctx.tree_id,
         ctx.target_level,
         inputs.len(),
         token_count,
+        input_tokens,
+        output_tokens,
+        charged_amount_usd,
     );
 
     Ok(SummaryOutput {
@@ -141,6 +167,9 @@ pub async fn summarise(
         token_count,
         entities: Vec::new(),
         topics: Vec::new(),
+        input_tokens,
+        output_tokens,
+        charged_amount_usd,
     })
 }
 
@@ -160,11 +189,17 @@ pub fn fallback_summary(inputs: &[SummaryInput], budget: u32) -> SummaryOutput {
     }
     let joined = parts.join("\n\n");
     let (content, token_count) = clamp_to_budget(&joined, budget);
+    // No provider call happened on the fallback path, so there is no
+    // real usage to report — leave token counts at 0 and charge at None
+    // so callers fall back to their estimate.
     SummaryOutput {
         content,
         token_count,
         entities: Vec::new(),
         topics: Vec::new(),
+        input_tokens: 0,
+        output_tokens: 0,
+        charged_amount_usd: None,
     }
 }
 
@@ -263,5 +298,140 @@ mod tests {
         let out = fallback_summary(&inputs, 10_000);
         assert!(out.content.contains("kept"));
         assert_eq!(out.content.matches("— ").count(), 1);
+    }
+
+    #[test]
+    fn fallback_reports_no_provider_usage() {
+        // The fallback path makes no provider call, so it must report
+        // zero/None usage — github/rebuild then fall back to the estimate.
+        let inputs = vec![sample_input("a", "hello")];
+        let out = fallback_summary(&inputs, 10_000);
+        assert_eq!(out.input_tokens, 0);
+        assert_eq!(out.output_tokens, 0);
+        assert_eq!(out.charged_amount_usd, None);
+    }
+
+    /// Test `ChatProvider` that reports provider usage (real token counts
+    /// + a backend charge) so we can prove `summarise` threads it into
+    /// `SummaryOutput`.
+    struct UsageReportingProvider {
+        response: String,
+        usage: Option<crate::openhuman::inference::provider::UsageInfo>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::openhuman::memory::chat::ChatProvider for UsageReportingProvider {
+        fn name(&self) -> &str {
+            "test:usage-reporting"
+        }
+
+        async fn chat_for_json(&self, _prompt: &ChatPrompt) -> Result<String> {
+            Ok(self.response.clone())
+        }
+
+        async fn chat_for_text_with_usage(
+            &self,
+            _prompt: &ChatPrompt,
+        ) -> Result<(
+            String,
+            Option<crate::openhuman::inference::provider::UsageInfo>,
+        )> {
+            Ok((self.response.clone(), self.usage.clone()))
+        }
+    }
+
+    fn summary_ctx<'a>(tree_id: &'a str) -> SummaryContext<'a> {
+        SummaryContext {
+            tree_id,
+            tree_kind: TreeKind::Source,
+            target_level: 1,
+            token_budget: 5_000,
+        }
+    }
+
+    #[tokio::test]
+    async fn summarise_threads_provider_usage_into_output() {
+        use crate::openhuman::inference::provider::UsageInfo;
+        use crate::openhuman::memory::chat::test_override;
+
+        let provider = std::sync::Arc::new(UsageReportingProvider {
+            response: "a folded summary".to_string(),
+            usage: Some(UsageInfo {
+                input_tokens: 1_234,
+                output_tokens: 56,
+                charged_amount_usd: 0.0078,
+                ..Default::default()
+            }),
+        });
+
+        let cfg = Config::default();
+        let inputs = vec![sample_input("a", "raw content to fold")];
+        let ctx = summary_ctx("tree:test");
+
+        let out =
+            test_override::with_provider(provider, async { summarise(&cfg, &inputs, &ctx).await })
+                .await
+                .unwrap();
+
+        assert_eq!(out.input_tokens, 1_234);
+        assert_eq!(out.output_tokens, 56);
+        assert_eq!(out.charged_amount_usd, Some(0.0078));
+        assert!(out.content.contains("folded summary"));
+    }
+
+    #[tokio::test]
+    async fn summarise_leaves_usage_empty_when_provider_reports_none() {
+        use crate::openhuman::memory::chat::test_override;
+
+        let provider = std::sync::Arc::new(UsageReportingProvider {
+            response: "a folded summary".to_string(),
+            usage: None,
+        });
+
+        let cfg = Config::default();
+        let inputs = vec![sample_input("a", "raw content to fold")];
+        let ctx = summary_ctx("tree:test");
+
+        let out =
+            test_override::with_provider(provider, async { summarise(&cfg, &inputs, &ctx).await })
+                .await
+                .unwrap();
+
+        // No usage → callers must fall back to their estimate.
+        assert_eq!(out.input_tokens, 0);
+        assert_eq!(out.output_tokens, 0);
+        assert_eq!(out.charged_amount_usd, None);
+    }
+
+    #[tokio::test]
+    async fn summarise_treats_zero_charge_as_absent() {
+        use crate::openhuman::inference::provider::UsageInfo;
+        use crate::openhuman::memory::chat::test_override;
+
+        // A provider that reports token counts but a zero charge (backend
+        // didn't surface billing) — token counts flow through, but the
+        // charge must be `None` so callers fall back to the estimate.
+        let provider = std::sync::Arc::new(UsageReportingProvider {
+            response: "a folded summary".to_string(),
+            usage: Some(UsageInfo {
+                input_tokens: 100,
+                output_tokens: 10,
+                charged_amount_usd: 0.0,
+                ..Default::default()
+            }),
+        });
+
+        let cfg = Config::default();
+        let inputs = vec![sample_input("a", "raw content to fold")];
+        let ctx = summary_ctx("tree:test");
+
+        let out =
+            test_override::with_provider(provider, async { summarise(&cfg, &inputs, &ctx).await })
+                .await
+                .unwrap();
+
+        assert_eq!(out.input_tokens, 100);
+        assert_eq!(out.output_tokens, 10);
+        assert_eq!(out.charged_amount_usd, None);
     }
 }

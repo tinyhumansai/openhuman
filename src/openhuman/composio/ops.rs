@@ -497,6 +497,30 @@ pub async fn composio_delete_connection(
             );
         }
     }
+    // Prune the local memory_sources registry entry for this connection.
+    // The registry keys composio sources by `connection_id` and the
+    // reconciler only ever upserts, so a deleted connection's
+    // `[[memory_sources]]` entry is otherwise orphaned forever (and on
+    // reconnect the backend mints a fresh `connection_id`, leaving the stale
+    // one stranded). Best-effort: the backend connection is already gone, so
+    // a config-save failure must not fail the whole delete — log and move on.
+    match crate::openhuman::memory_sources::registry::remove_composio_source_by_connection_id(
+        connection_id,
+    )
+    .await
+    {
+        Ok(0) => {}
+        Ok(removed) => tracing::debug!(
+            connection_id = %connection_id,
+            removed,
+            "[composio] pruned memory_sources entry after connection deletion"
+        ),
+        Err(e) => tracing::warn!(
+            connection_id = %connection_id,
+            error = %e,
+            "[composio] failed to prune memory_sources entry after connection deletion (non-fatal)"
+        ),
+    }
     crate::core::event_bus::publish_global(
         crate::core::event_bus::DomainEvent::ComposioConnectionDeleted {
             toolkit: toolkit.unwrap_or_else(|| "unknown".to_string()),

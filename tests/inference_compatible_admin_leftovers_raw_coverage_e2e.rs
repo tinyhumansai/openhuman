@@ -340,11 +340,17 @@ async fn provider_ops_leftovers_cover_model_listing_error_shapes_and_auth_styles
         .expect_err("unknown provider id");
     assert!(unknown.contains("no cloud provider"));
 
-    let unsupported = list_configured_models("not-found")
+    // PR #2959 reverted the list_models 404 suppression: a 404 from the
+    // /models endpoint no longer returns a synthetic `{models: [], unsupported:
+    // true}` success — it surfaces as a real error so the failure fires to
+    // Sentry and gets a root-cause fix (e.g. a wrong base URL).
+    let not_found_err = list_configured_models("not-found")
         .await
-        .expect("404 models unsupported");
-    assert_eq!(unsupported.value["models"].as_array().unwrap().len(), 0);
-    assert_eq!(unsupported.value["unsupported"], true);
+        .expect_err("404 list_models now surfaces as an error");
+    assert!(
+        not_found_err.contains("provider returned 404"),
+        "404 list_models error should surface the status: {not_found_err:?}"
+    );
 
     let missing_data = list_configured_models("missing-data")
         .await

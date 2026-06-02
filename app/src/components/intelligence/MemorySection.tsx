@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
+import { IS_DEV } from '../../utils/config';
 import PillTabBar from '../PillTabBar';
 import ConnectionPathTab from './ConnectionPathTab';
 import DiagramViewerTab from './DiagramViewerTab';
@@ -39,17 +40,18 @@ export default function MemorySection({ onToast }: MemorySectionProps) {
   const { t } = useT();
   const [activeSubTab, setActiveSubTab] = useState<MemorySubTab>('memoryTree');
 
-  const subTabs: { id: MemorySubTab; label: string }[] = [
+  const allSubTabs: { id: MemorySubTab; label: string; devOnly?: boolean }[] = [
     { id: 'memoryTree', label: t('memory.tab.memoryTree') },
-    { id: 'diagram', label: t('memory.tab.diagram') },
-    { id: 'centrality', label: t('memory.tab.centrality') },
-    { id: 'cohesion', label: t('memory.tab.cohesion') },
-    { id: 'associations', label: t('memory.tab.associations') },
-    { id: 'freshness', label: t('memory.tab.freshness') },
-    { id: 'timeline', label: t('memory.tab.timeline') },
-    { id: 'paths', label: t('memory.tab.path') },
-    { id: 'namespaces', label: t('memory.tab.namespaces') },
+    { id: 'diagram', label: t('memory.tab.diagram'), devOnly: true },
+    { id: 'centrality', label: t('memory.tab.centrality'), devOnly: true },
+    { id: 'cohesion', label: t('memory.tab.cohesion'), devOnly: true },
+    { id: 'associations', label: t('memory.tab.associations'), devOnly: true },
+    { id: 'freshness', label: t('memory.tab.freshness'), devOnly: true },
+    { id: 'timeline', label: t('memory.tab.timeline'), devOnly: true },
+    { id: 'paths', label: t('memory.tab.path'), devOnly: true },
+    { id: 'namespaces', label: t('memory.tab.namespaces'), devOnly: true },
   ];
+  const subTabs = allSubTabs.filter(tab => !tab.devOnly || IS_DEV);
 
   return (
     <div className="space-y-4">
