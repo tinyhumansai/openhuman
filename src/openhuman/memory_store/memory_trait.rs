@@ -15,7 +15,7 @@ use rusqlite::{params, OptionalExtension};
 use serde_json::json;
 
 use crate::openhuman::memory::traits::{
-    Memory, MemoryCategory, MemoryEntry, NamespaceSummary, RecallOpts,
+    Memory, MemoryCategory, MemoryEntry, MemoryTaint, NamespaceSummary, RecallOpts,
 };
 use crate::openhuman::memory_store::types::{NamespaceDocumentInput, GLOBAL_NAMESPACE};
 use crate::openhuman::memory_store::unified::fts5;
@@ -68,6 +68,28 @@ impl Memory for UnifiedMemory {
         category: MemoryCategory,
         session_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        // The default `store` entry point is user-driven; ingest paths
+        // come in via `store_with_taint`.
+        self.store_with_taint(
+            namespace,
+            key,
+            content,
+            category,
+            session_id,
+            MemoryTaint::Internal,
+        )
+        .await
+    }
+
+    async fn store_with_taint(
+        &self,
+        namespace: &str,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+        taint: MemoryTaint,
+    ) -> anyhow::Result<()> {
         let ns = if namespace.trim().is_empty() {
             GLOBAL_NAMESPACE.to_string()
         } else {
@@ -85,10 +107,7 @@ impl Memory for UnifiedMemory {
             category: category.to_string(),
             session_id: session_id.map(str::to_string),
             document_id: None,
-            // `store` is the user-driven entry point on the `Memory`
-            // trait; sync-ingest paths use the dedicated
-            // `store_with_taint` override added below.
-            taint: crate::openhuman::memory::MemoryTaint::Internal,
+            taint,
         })
         .await
         .map(|_| ())
@@ -122,12 +141,11 @@ impl Memory for UnifiedMemory {
                 timestamp: Utc::now().to_rfc3339(),
                 session_id: None,
                 score: Some(r.score),
-                // Persistence layer doesn't carry the taint column yet —
-                // legacy rows default to Internal (safe for the gate's
-                // tainted-subconscious escalation). Composio ingest paths
-                // surface taint via a separate API surface (see Step 6
-                // memory_sync wiring).
-                taint: crate::openhuman::memory::MemoryTaint::Internal,
+                // Surface the real taint persisted on `memory_docs` so the
+                // subconscious gate can decide whether to escalate the
+                // turn origin to `SubconsciousTainted` when this entry
+                // lands in a tick's context window.
+                taint: r.taint,
             })
             .collect();
 

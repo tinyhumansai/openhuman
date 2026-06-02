@@ -177,6 +177,32 @@ pub trait Memory: Send + Sync {
         session_id: Option<&str>,
     ) -> anyhow::Result<()>;
 
+    /// Store an entry with explicit provenance taint.
+    ///
+    /// Sync paths that ingest text from third-party services (Gmail / Slack /
+    /// Notion / Composio / etc.) MUST go through this entry point with
+    /// [`MemoryTaint::ExternalSync`] so the subconscious gate can refuse
+    /// external_effect tools when the resulting chunks reach a tick's
+    /// context window.
+    ///
+    /// The default implementation degrades to [`Self::store`] for backends
+    /// that do not yet persist taint (e.g. mock / in-memory stores used in
+    /// tests); the `UnifiedMemory` backend overrides this with a real
+    /// taint-carrying upsert.
+    async fn store_with_taint(
+        &self,
+        namespace: &str,
+        key: &str,
+        content: &str,
+        category: MemoryCategory,
+        session_id: Option<&str>,
+        taint: MemoryTaint,
+    ) -> anyhow::Result<()> {
+        let _ = taint;
+        self.store(namespace, key, content, category, session_id)
+            .await
+    }
+
     /// Recalls memories matching a query string using keyword or semantic search.
     ///
     /// Namespace is passed via `opts.namespace`; `None` uses the backend's
