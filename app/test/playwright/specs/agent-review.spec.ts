@@ -35,7 +35,7 @@ test.describe('Agent review - canonical onboarding + privacy flow', () => {
 
     await expect(page.getByTestId('settings-privacy-panel')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Anonymized Analytics' })).toBeVisible();
-    await expect(page.getByText('Share Anonymized Usage Data')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Product Analytics' })).toBeVisible();
+    await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
   });
 });

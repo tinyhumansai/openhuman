@@ -279,26 +279,16 @@ fn run_server_command(args: &[String]) -> Result<()> {
 
     // Initialize the Tokio multi-threaded runtime.
     //
-    // Worker stack size is bumped from tokio's 2 MiB default to 8 MiB
-    // because the agent harness's polling future tree
-    // (`run_turn_engine` -> tool exec -> `dispatch_subagent` ->
-    // `run_subagent` -> `run_typed_mode` -> `run_inner_loop` -> child
-    // `run_turn_engine`) generates very large generator state machines
-    // even with every recursion boundary `Box::pin`'d, and in debug
-    // builds the compiler constructs each generator on the stack before
-    // the heap move can elide it. The result was a hard
-    // `thread 'tokio-rt-worker' has overflowed its stack, fatal runtime
-    // error: stack overflow, aborting` whenever the orchestrator
-    // delegated to a sub-agent (see the `chat-harness-subagent`
-    // Playwright lane crash + identical signature reproduced inside
-    // `[subagent_runner] dispatching agent_id=researcher ...`). 8 MiB
-    // is the Linux process default and gives plenty of headroom; the
-    // memory cost on a desktop with ~12 worker threads is ~72 MiB
-    // additional address space (commit-on-touch, so the resident set
-    // grows only as the stack is actually used).
+    // A single agent turn is a very large async state machine (system prompt +
+    // hundreds of tool specs + the nested provider/tool loop), and delegating
+    // to a sub-agent runs another full turn one level down. Even with the inner
+    // sub-agent future boxed (`subagent_runner::ops`), that nesting overflows
+    // tokio's default 2 MiB worker-thread stack and aborts the whole process
+    // (SIGABRT: "thread 'tokio-rt-worker' has overflowed its stack"), taking
+    // the JSON-RPC server down mid-request. Give workers a roomier stack.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
+        .thread_stack_size(16 * 1024 * 1024)
         .build()?;
     rt.block_on(async {
         crate::core::jsonrpc::run_server(host.as_deref(), port, socketio_enabled).await

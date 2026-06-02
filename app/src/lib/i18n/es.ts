@@ -741,17 +741,17 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Enviado a',
   'privacy.leavesDevice': 'Sale del dispositivo',
   'privacy.staysLocal': 'Se queda local',
-  'privacy.anonymizedAnalytics': 'Análisis anonimizado',
-  'privacy.shareAnonymizedData': 'Compartir datos de uso anonimizados',
+  'privacy.anonymizedAnalytics': 'Analítica del producto',
+  'privacy.shareAnonymizedData': 'Compartir analítica del producto y diagnósticos',
   'privacy.shareAnonymizedDataDesc':
-    'Ayuda a mejorar OpenHuman compartiendo informes de errores anónimos y análisis de uso. Todos los datos son completamente anonimizados — nunca se recopilan datos personales, mensajes, claves de billetera ni información de sesión.',
+    'Ayuda a mejorar OpenHuman compartiendo informes de fallos y eventos de uso con privacidad limitada, incluido un ID de cuenta estable y metadatos de la versión de la app. Nunca se recopilan mensajes, claves de billetera, claves API ni tokens de sesión.',
   'privacy.meetingFollowUps': 'Seguimientos de reuniones',
   'privacy.autoHandoffMeet':
     'Transferencia automática de transcripciones de Google Meet al orquestador',
   'privacy.autoHandoffMeetDesc':
     'Cuando termina una llamada de Google Meet, el orquestador de OpenHuman puede leer la transcripción y tomar acciones como redactar mensajes, programar seguimientos o publicar resúmenes en tu espacio de Slack conectado. Desactivado por defecto.',
   'privacy.analyticsDisclaimer':
-    'Todos los análisis e informes de errores son completamente anonimizados. Cuando está activado, recopilamos solo información de errores, tipo de dispositivo y la ubicación del archivo de los errores. Nunca accedemos a tus mensajes, datos de sesión, claves de billetera, claves API ni ninguna información de identificación personal. Puedes cambiar esta configuración en cualquier momento.',
+    'Cuando está activado, la analítica del producto y los diagnósticos pueden incluir informes de fallos y eventos de uso con privacidad limitada, un ID de cuenta estable y metadatos de la versión de la app. Nunca se recopilan mensajes, claves de billetera, claves API ni tokens de sesión. Puedes cambiar esta configuración en cualquier momento.',
   'settings.about.version': 'Versión',
   'settings.about.updateAvailable': 'está disponible',
   'settings.about.softwareUpdates': 'Actualizaciones de software',

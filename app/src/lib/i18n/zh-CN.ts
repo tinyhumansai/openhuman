@@ -688,16 +688,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': '发送至',
   'privacy.leavesDevice': '离开设备',
   'privacy.staysLocal': '留在本地',
-  'privacy.anonymizedAnalytics': '匿名分析',
-  'privacy.shareAnonymizedData': '分享匿名使用数据',
+  'privacy.anonymizedAnalytics': '产品分析',
+  'privacy.shareAnonymizedData': '分享产品分析和诊断数据',
   'privacy.shareAnonymizedDataDesc':
-    '通过分享匿名崩溃报告和使用分析来帮助改进 OpenHuman。所有数据完全匿名——不会收集任何个人数据、消息、钱包密钥或会话信息。',
+    '通过分享受隐私限制的崩溃报告和使用事件来帮助改进 OpenHuman，其中包括稳定的账号 ID 和应用版本元数据。我们绝不会收集消息、钱包密钥、API 密钥或会话令牌。',
   'privacy.meetingFollowUps': '会议跟进',
   'privacy.autoHandoffMeet': '自动将 Google Meet 转录交给编排器',
   'privacy.autoHandoffMeetDesc':
     '当 Google Meet 通话结束时，OpenHuman 的编排器可以阅读转录内容，并可能执行起草消息、安排跟进、或将摘要发布到已连接的 Slack 工作区等操作。默认关闭。',
   'privacy.analyticsDisclaimer':
-    '所有分析和错误报告完全匿名。启用后，我们仅收集崩溃信息、设备类型和错误的文件位置。我们永远不会访问你的消息、会话数据、钱包密钥、API 密钥或任何个人可识别信息。你可以随时更改此设置。',
+    '启用后，产品分析和诊断可能包括受隐私限制的崩溃报告和使用事件、稳定的账号 ID，以及应用版本元数据。我们绝不会收集消息、钱包密钥、API 密钥或会话令牌。你可以随时更改此设置。',
   'settings.about.version': '版本',
   'settings.about.updateAvailable': '可用',
   'settings.about.softwareUpdates': '软件更新',

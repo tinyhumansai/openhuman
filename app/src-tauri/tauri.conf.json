@@ -23,20 +23,13 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' data: blob: https: wss: ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; img-src 'self' data: blob: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* http: ws://127.0.0.1:* ws://localhost:* ws: https: wss: data: blob:; frame-src 'self' https: data: blob:"
+      "csp": "default-src 'self' 'unsafe-inline' data: blob: https: wss: ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://www.googletagmanager.com; img-src 'self' data: blob: https:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:* http: ws://127.0.0.1:* ws://localhost:* ws: https: wss: data: blob: https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com; frame-src 'self' https: data: blob:"
     },
     "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
-    "targets": [
-      "app",
-      "dmg",
-      "deb",
-      "nsis",
-      "msi",
-      "appimage"
-    ],
+    "targets": ["app", "dmg", "deb", "nsis", "msi", "appimage"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -44,10 +37,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../../src/openhuman/agent/prompts",
-      "recipes/**/*"
-    ],
+    "resources": ["../../src/openhuman/agent/prompts", "recipes/**/*"],
     "linux": {
       "deb": {
         "depends": [
@@ -66,9 +56,7 @@
       "minimumSystemVersion": "10.15",
       "entitlements": "entitlements.sidecar.plist",
       "infoPlist": "Info.plist",
-      "dmg": {
-        "background": "./images/background-dmg.png"
-      }
+      "dmg": { "background": "./images/background-dmg.png" }
     }
   },
   "plugins": {
@@ -79,12 +67,6 @@
         "https://github.com/tinyhumansai/openhuman/releases/latest/download/latest.json"
       ]
     },
-    "deep-link": {
-      "desktop": {
-        "schemes": [
-          "openhuman"
-        ]
-      }
-    }
+    "deep-link": { "desktop": { "schemes": ["openhuman"] } }
   }
 }

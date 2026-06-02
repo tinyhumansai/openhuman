@@ -740,17 +740,17 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Envoyé à',
   'privacy.leavesDevice': "Quitte l'appareil",
   'privacy.staysLocal': 'Reste local',
-  'privacy.anonymizedAnalytics': 'Analyses anonymisées',
-  'privacy.shareAnonymizedData': "Partager les données d'utilisation anonymisées",
+  'privacy.anonymizedAnalytics': 'Analyses produit',
+  'privacy.shareAnonymizedData': 'Partager les analyses produit et les diagnostics',
   'privacy.shareAnonymizedDataDesc':
-    "Aide à améliorer OpenHuman en partageant des rapports de plantage et des analyses d'utilisation anonymes. Toutes les données sont entièrement anonymisées — aucune donnée personnelle, message, clé de portefeuille ou information de session n'est jamais collectée.",
+    "Aide à améliorer OpenHuman en partageant des rapports de plantage et des événements d'utilisation limités pour la confidentialité, incluant un ID de compte stable et les métadonnées de version de l'app. Les messages, clés de portefeuille, clés API et jetons de session ne sont jamais collectés.",
   'privacy.meetingFollowUps': 'Suivis de réunion',
   'privacy.autoHandoffMeet':
     "Transmettre automatiquement les transcriptions Google Meet à l'orchestrateur",
   'privacy.autoHandoffMeetDesc':
     "Quand un appel Google Meet se termine, l'orchestrateur d'OpenHuman peut lire la transcription et effectuer des actions comme rédiger des messages, planifier des suivis ou publier des résumés sur ton espace Slack connecté. Désactivé par défaut.",
   'privacy.analyticsDisclaimer':
-    "Toutes les analyses et rapports de bugs sont entièrement anonymisés. Quand activé, on collecte uniquement les informations de plantage, le type d'appareil et l'emplacement des erreurs. On n'accède jamais à tes messages, données de session, clés de portefeuille, clés API ou toute information personnelle identifiable. Tu peux modifier ce paramètre à tout moment.",
+    "Quand elles sont activées, les analyses produit et les diagnostics peuvent inclure des rapports de plantage et des événements d'utilisation limités pour la confidentialité, un ID de compte stable et les métadonnées de version de l'app. Les messages, clés de portefeuille, clés API et jetons de session ne sont jamais collectés. Tu peux modifier ce paramètre à tout moment.",
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'disponible',
   'settings.about.softwareUpdates': 'Mises à jour logicielles',

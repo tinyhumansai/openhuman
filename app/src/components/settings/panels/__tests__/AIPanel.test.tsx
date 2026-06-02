@@ -583,6 +583,58 @@ describe('AIPanel', () => {
     expect(nextSettings.routing.coding).toEqual({ kind: 'openhuman' });
   });
 
+  // ─── chip toggle: local runtime toggle OFF scrubs orphaned local routing ─────
+
+  it('toggling OFF a local runtime resets workloads routed to it back to default', async () => {
+    const settingsWithOllama = {
+      cloudProviders: [
+        {
+          id: 'p_ollama_1',
+          slug: 'ollama',
+          label: 'Ollama',
+          endpoint: 'http://localhost:11434/v1',
+          auth_style: 'bearer' as const,
+          has_api_key: false,
+        },
+      ],
+      routing: {
+        chat: { kind: 'local' as const, model: 'llama3' },
+        reasoning: { kind: 'local' as const, model: 'llama3' },
+        agentic: { kind: 'openhuman' as const },
+        coding: { kind: 'openhuman' as const },
+        memory: { kind: 'openhuman' as const },
+        embeddings: { kind: 'openhuman' as const },
+        heartbeat: { kind: 'openhuman' as const },
+        learning: { kind: 'openhuman' as const },
+        subconscious: { kind: 'openhuman' as const },
+      },
+    };
+    vi.mocked(loadAISettings).mockResolvedValue(settingsWithOllama);
+    vi.mocked(saveAISettings).mockResolvedValue(undefined);
+
+    renderWithProviders(<AIPanel />);
+
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: /Disconnect Ollama/i })).toBeInTheDocument()
+    );
+
+    // Toggle Ollama OFF — no other local runtime remains, so its routed
+    // workloads are orphaned and must reset to the user default route.
+    fireEvent.click(screen.getByRole('switch', { name: /Disconnect Ollama/i }));
+
+    await waitFor(() => expect(vi.mocked(saveAISettings)).toHaveBeenCalled());
+    const [, nextSettings] = vi.mocked(saveAISettings).mock.calls[0];
+
+    expect(
+      nextSettings.cloudProviders.find((p: { slug: string }) => p.slug === 'ollama')
+    ).toBeUndefined();
+    // Local-routed workloads reset to default (the fix — previously left orphaned).
+    expect(nextSettings.routing.chat).toEqual({ kind: 'default' });
+    expect(nextSettings.routing.reasoning).toEqual({ kind: 'default' });
+    // Already-managed entries unchanged.
+    expect(nextSettings.routing.agentic).toEqual({ kind: 'openhuman' });
+  });
+
   // ─── API-key dialog: failed setCloudProviderKey does not add provider ────────
 
   it('when setCloudProviderKey throws, the provider is NOT added to the draft', async () => {

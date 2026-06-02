@@ -869,7 +869,7 @@ async fn read_issue(
     let labels: Vec<&str> = issue.labels.iter().map(|l| l.name.as_str()).collect();
     let issue_body = issue.body.as_deref().unwrap_or("");
 
-    let body = format!(
+    let mut body = format!(
         "# Issue #{number}: {title}\n\n\
          **State:** {state}\n\
          **Author:** @{author}\n\
@@ -888,6 +888,18 @@ async fn read_issue(
         created = issue.created_at.as_deref().unwrap_or("unknown"),
         updated = issue.updated_at.as_deref().unwrap_or("unknown"),
     );
+    let comments = fetch_issue_comments(owner, repo, number, use_gh).await;
+    if !comments.is_empty() {
+        body.push_str("\n\n## Comments\n");
+        for comment in comments {
+            body.push_str(&format!(
+                "\n### @{user} at {created_at}\n\n{body}\n",
+                user = comment.user,
+                created_at = comment.created_at,
+                body = comment.body,
+            ));
+        }
+    }
 
     Ok(SourceContent {
         id: format!("issue:{number}"),

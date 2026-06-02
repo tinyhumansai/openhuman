@@ -740,17 +740,17 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Enviado para',
   'privacy.leavesDevice': 'Sai do dispositivo',
   'privacy.staysLocal': 'Fica local',
-  'privacy.anonymizedAnalytics': 'Análises Anonimizadas',
-  'privacy.shareAnonymizedData': 'Compartilhar Dados de Uso Anonimizados',
+  'privacy.anonymizedAnalytics': 'Análises do Produto',
+  'privacy.shareAnonymizedData': 'Compartilhar análises do produto e diagnósticos',
   'privacy.shareAnonymizedDataDesc':
-    'Ajude a melhorar o OpenHuman compartilhando relatórios de falhas e análises de uso anônimas. Todos os dados são totalmente anonimizados — nenhum dado pessoal, mensagem, chave de carteira ou informação de sessão é coletado.',
+    'Ajude a melhorar o OpenHuman compartilhando relatórios de falhas e eventos de uso com privacidade limitada, incluindo um ID de conta estável e metadados da versão do app. Mensagens, chaves de carteira, chaves de API e tokens de sessão nunca são coletados.',
   'privacy.meetingFollowUps': 'Acompanhamentos de reuniões',
   'privacy.autoHandoffMeet':
     'Transferência automática de transcrições do Google Meet para o orquestrador',
   'privacy.autoHandoffMeetDesc':
     'Quando uma chamada do Google Meet termina, o orquestrador do OpenHuman pode ler a transcrição e pode realizar ações como redigir mensagens, agendar acompanhamentos ou postar resumos no seu espaço de trabalho Slack conectado. Desativado por padrão.',
   'privacy.analyticsDisclaimer':
-    'Todas as análises e relatórios de bugs são totalmente anonimizados. Quando ativado, coletamos apenas informações de falhas, tipo de dispositivo e localização do arquivo de erros. Nunca acessamos suas mensagens, dados de sessão, chaves de carteira, chaves de API ou qualquer informação de identificação pessoal. Você pode alterar essa configuração a qualquer momento.',
+    'Quando ativados, as análises do produto e os diagnósticos podem incluir relatórios de falhas e eventos de uso com privacidade limitada, um ID de conta estável e metadados da versão do app. Mensagens, chaves de carteira, chaves de API e tokens de sessão nunca são coletados. Você pode alterar essa configuração a qualquer momento.',
   'settings.about.version': 'Versão',
   'settings.about.updateAvailable': 'está disponível',
   'settings.about.softwareUpdates': 'Atualizações de software',

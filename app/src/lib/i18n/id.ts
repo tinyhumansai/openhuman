@@ -725,16 +725,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Dikirim ke',
   'privacy.leavesDevice': 'Keluar dari perangkat',
   'privacy.staysLocal': 'Tetap lokal',
-  'privacy.anonymizedAnalytics': 'Analitik Anonim',
-  'privacy.shareAnonymizedData': 'Bagikan Data Penggunaan Anonim',
+  'privacy.anonymizedAnalytics': 'Analitik Produk',
+  'privacy.shareAnonymizedData': 'Bagikan Analitik Produk dan Diagnostik',
   'privacy.shareAnonymizedDataDesc':
-    'Bantu meningkatkan OpenHuman dengan membagikan laporan crash dan analitik penggunaan anonim. Semua data sepenuhnya anonim; tidak ada data pribadi, pesan, kunci dompet, atau informasi sesi yang dikumpulkan.',
+    'Bantu meningkatkan OpenHuman dengan membagikan laporan crash dan peristiwa penggunaan yang dibatasi privasi, termasuk ID akun stabil dan metadata versi aplikasi. Pesan, kunci dompet, kunci API, dan token sesi tidak pernah dikumpulkan.',
   'privacy.meetingFollowUps': 'Tindak lanjut rapat',
   'privacy.autoHandoffMeet': 'Serahkan transkrip Google Meet otomatis ke orchestrator',
   'privacy.autoHandoffMeetDesc':
     'Saat panggilan Google Meet berakhir, orchestrator OpenHuman dapat membaca transkrip dan mengambil tindakan seperti menyusun pesan, menjadwalkan tindak lanjut, atau memposting ringkasan ke workspace Slack yang terhubung. Nonaktif secara default.',
   'privacy.analyticsDisclaimer':
-    'Semua analitik dan laporan bug sepenuhnya anonim. Saat aktif, kami hanya mengumpulkan informasi crash, jenis perangkat, dan lokasi file error. Kami tidak pernah mengakses pesan, data sesi, kunci dompet, API key, atau informasi pribadi Anda. Pengaturan ini bisa diubah kapan saja.',
+    'Saat aktif, Analitik Produk dan Diagnostik dapat menyertakan laporan crash dan peristiwa penggunaan yang dibatasi privasi, ID akun stabil, dan metadata versi aplikasi. Pesan, kunci dompet, kunci API, dan token sesi tidak pernah dikumpulkan. Pengaturan ini bisa diubah kapan saja.',
   'settings.about.version': 'Versi',
   'settings.about.updateAvailable': 'tersedia',
   'settings.about.softwareUpdates': 'Pembaruan perangkat lunak',

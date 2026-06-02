@@ -134,6 +134,16 @@ fn detects_backend_budget_exhaustion_error() {
     assert!(is_inference_budget_exceeded_error(
         "provider error: budget exceeded, please add credits"
     ));
+    // Issue #3088: the OpenHuman managed backend reports no-credits as a
+    // 400 carrying these canonical phrases (see `billing_error.rs`). They
+    // were previously NOT recognised here, so the error fell through to the
+    // generic "Something went wrong" branch. They must now match.
+    assert!(is_inference_budget_exceeded_error(
+        "openhuman API error (400 Bad Request): Insufficient budget"
+    ));
+    assert!(is_inference_budget_exceeded_error(
+        "openhuman API error (400 Bad Request): Insufficient balance"
+    ));
     assert!(!is_inference_budget_exceeded_error(
         "OpenHuman API error (500): Internal server error"
     ));
@@ -144,6 +154,36 @@ fn budget_exceeded_copy_mentions_top_up() {
     let message = inference_budget_exceeded_user_message();
     assert!(message.contains("top up"));
     assert!(message.contains("credits"));
+    // Issue #3088: the copy must guide the user to the self-service fix —
+    // switching routing to their own local model — so an Ollama user with
+    // no credits can self-diagnose. We guide, never auto-switch.
+    assert!(message.contains("Use Your Own Models"));
+    assert!(message.contains("Settings"));
+}
+
+#[test]
+fn classify_inference_error_managed_insufficient_budget_400_is_budget_exhausted() {
+    // Issue #3088: a managed (OpenHuman backend) no-credits failure arrives
+    // as a 400 with "Insufficient budget" — NOT a 402. It previously fell
+    // through to the generic `inference` branch ("Something went wrong"),
+    // leaving the user unable to self-diagnose. It must now classify as
+    // budget_exhausted with actionable, non-retryable copy.
+    let raw = "openhuman API error (400 Bad Request): Insufficient budget";
+    let classified = classify_inference_error(raw);
+    assert_eq!(classified.error_type, "budget_exhausted");
+    assert_eq!(
+        classified.source, "openhuman_billing",
+        "the OpenHuman backend's own credit system is the origin"
+    );
+    assert!(
+        !classified.retryable,
+        "out of credits — retrying the same prompt won't help"
+    );
+    assert!(
+        classified.message.contains("Use Your Own Models"),
+        "must guide the user to switch routing: {}",
+        classified.message
+    );
 }
 
 #[test]

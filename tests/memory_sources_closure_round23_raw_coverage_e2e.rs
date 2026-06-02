@@ -200,6 +200,15 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
     )
     .await
     .expect("insert composio");
+    let composio = memory_sources::update_source(
+        &composio.id,
+        MemorySourcePatch {
+            enabled: Some(true),
+            ..MemorySourcePatch::default()
+        },
+    )
+    .await
+    .expect("enable composio source");
     let status = memory_sources::status::source_status(&config, &composio)
         .await
         .expect("composio status");
@@ -220,9 +229,8 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
     let enabled_composio = memory_sources::list_enabled_by_kind(SourceKind::Composio)
         .await
         .expect("enabled composio");
-    // upsert_composio_source creates entries with enabled=false by default;
-    // list_enabled_by_kind correctly returns 0 until the user enables it.
-    assert_eq!(enabled_composio.len(), 0);
+    assert_eq!(enabled_composio.len(), 1);
+    assert_eq!(enabled_composio[0].id, composio.id);
 
     let composio_reader =
         openhuman_core::openhuman::memory_sources::readers::composio::ComposioReader;

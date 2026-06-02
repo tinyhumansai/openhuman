@@ -736,16 +736,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Wysłano do',
   'privacy.leavesDevice': 'Opuszcza urządzenie',
   'privacy.staysLocal': 'Zostaje lokalnie',
-  'privacy.anonymizedAnalytics': 'Anonimowa analityka',
-  'privacy.shareAnonymizedData': 'Udostępniaj anonimowe dane o użytkowaniu',
+  'privacy.anonymizedAnalytics': 'Analityka produktu',
+  'privacy.shareAnonymizedData': 'Udostępniaj analitykę produktu i diagnostykę',
   'privacy.shareAnonymizedDataDesc':
-    'Pomóż ulepszać OpenHuman, udostępniając anonimowe raporty awarii i analitykę użytkowania. Wszystkie dane są w pełni anonimowe — nigdy nie zbieramy danych osobowych, wiadomości, kluczy portfela ani informacji o sesji.',
+    'Pomóż ulepszać OpenHuman, udostępniając raporty awarii i zdarzenia użycia o ograniczonej prywatności, w tym stabilny identyfikator konta i metadane wersji aplikacji. Wiadomości, klucze portfela, klucze API i tokeny sesji nigdy nie są zbierane.',
   'privacy.meetingFollowUps': 'Działania po spotkaniach',
   'privacy.autoHandoffMeet': 'Automatycznie przekazuj transkrypcje Google Meet do orchestratora',
   'privacy.autoHandoffMeetDesc':
     'Gdy spotkanie Google Meet się kończy, orchestrator OpenHuman może odczytać transkrypcję i wykonać akcje, np. przygotować wiadomości, zaplanować działania lub opublikować podsumowanie w podłączonym workspace Slack. Domyślnie wyłączone.',
   'privacy.analyticsDisclaimer':
-    'Wszystkie raporty analityczne i błędów są w pełni anonimowe. Po włączeniu zbieramy informacje o awariach i typie urządzenia (Sentry) oraz anonimową analitykę (Google Analytics — odsłony, używane funkcje). Nigdy nie uzyskujemy dostępu do Twoich wiadomości, danych sesji, kluczy portfela, kluczy API ani danych osobowych. Możesz zmienić to ustawienie w dowolnym momencie.',
+    'Po włączeniu analityka produktu i diagnostyka mogą obejmować raporty awarii i zdarzenia użycia o ograniczonej prywatności, stabilny identyfikator konta oraz metadane wersji aplikacji. Wiadomości, klucze portfela, klucze API i tokeny sesji nigdy nie są zbierane. Możesz zmienić to ustawienie w dowolnym momencie.',
   'settings.about.version': 'Wersja',
   'settings.about.updateAvailable': 'jest dostępna',
   'settings.about.softwareUpdates': 'Aktualizacje oprogramowania',

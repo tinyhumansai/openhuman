@@ -32,15 +32,6 @@
 //!   from a user OAuth/scope gap)
 //! - `"not_found_error"` (J2 / J5 / J4 — litellm-compatible envelope
 //!   `type` field carrying "model 'X' not found")
-//! - `"does not support tools"` / `"function calling is not supported"` /
-//!   `"unknown parameter: tools"` / `"unrecognized field \`tools\`"` /
-//!   `"unsupported parameter: tools"` (TAURI-RUST-4K7 — Ollama models such
-//!   as `gemma3:1b-it-qat` and `huihui_ai/deepseek-r1-abliterated:8b`
-//!   reject tool-enabled requests with HTTP 400. The compatible provider
-//!   already retries without tools, so the initial 400 is not a
-//!   bug — it's expected discovery of the model's capability boundary.
-//!   Sentry noise suppressed here; the retry path in `compatible.rs` runs
-//!   unchanged.)
 //!
 //! These are **deterministic user-configuration state**, not bugs the
 //! maintainers can act on: the user pointed OpenHuman at a custom
@@ -171,54 +162,33 @@ pub fn is_provider_config_rejection_message(body: &str) -> bool {
         // this is the `type` field used by litellm/Anthropic-style
         // envelopes for the same class of user-state error.
         "not_found_error",
-        // TAURI-RUST-4NM — nvidia-nim (and some other providers) return
-        // `{"error":{"message":"model field is required","type":"invalid_request_error","code":"missing_required_field"}}`
-        // when the `model` key is absent or empty in the request body.
-        // This is a user-configuration error (provider string has no model
-        // component, e.g. `nvidia-nim:` with empty model), not a product
-        // regression. Demote from Sentry; the factory now validates this
-        // up-front so in practice this phrase should no longer appear.
-        "model field is required",
-        // TAURI-RUST-4XK — Ollama 403 when the requested model requires a
-        // paid Ollama subscription. Body carries the upgrade URL. User must
-        // switch to a free model or upgrade their Ollama account.
-        "requires a subscription",
-        // TAURI-RUST-2G / TAURI-RUST-2F — DeepSeek / compatible providers
-        // that use extended thinking reject tool-call turns when the
-        // `reasoning_content` block from a prior assistant turn is not
-        // threaded back. This is user-config state (model requires the
-        // caller to replay the thinking block; the frontend replay logic in
-        // `turn.rs` handles it for subsequent turns, so the first-turn 400
-        // is expected capability-discovery, not a regression).
-        "in the thinking mode must be passed back",
-        // TAURI-RUST-35 / TAURI-RUST-4K7 / TAURI-RUST-4Z0 — Ollama models
-        // (e.g. gemma3, phi3, deepseek-r1) that do not support function
-        // calling return HTTP 400 with this phrase. The compatible provider
-        // retries without tools on 400, so the initial rejection is expected
-        // capability-discovery. Sentry noise suppressed here.
-        "does not support tools",
-        // TAURI-RUST-4K7-d — alternative phrasing used by some Ollama model
-        // versions for the same tool-unsupported condition.
-        "function calling is not supported",
-        // TAURI-RUST-4K7-e — litellm / OpenAI-compatible proxies reject the
-        // `tools` key in the request body when the backing model does not
-        // support tool use (e.g. local Ollama via LiteLLM gateway).
-        "unknown parameter: tools",
-        // TAURI-RUST-4K7-f — Ollama native API surface rejects the field
-        // outright when the model has no function-calling capability.
-        "unrecognized field `tools`",
-        // TAURI-RUST-4K7-g — another litellm / proxy variant of the same
-        // tool-unsupported condition.
-        "unsupported parameter: tools",
         // TAURI-RUST-4NM — nvidia-nim (and compatible providers) return
         // `{"error":{"message":"model field is required","code":"missing_required_field"}}`
         // when the request body contains an empty `"model":""` field.
         "model field is required",
         // TAURI-RUST-2G (~2684 events) / TAURI-RUST-2F (~950 events) —
-        // thinking-mode model rejects a follow-up turn that doesn't echo
-        // the prior assistant's `reasoning_content` field.
+        // thinking-mode model (DeepSeek-R1 / Moonshot K2-thinking on
+        // `provider=cloud` custom_openai) rejects a follow-up turn that
+        // doesn't echo the prior assistant's `reasoning_content` field.
+        // Body shape (backtick-quoted JSON literal in the upstream body):
+        // `{"error":{"message":"The `reasoning_content` in the thinking
+        // mode must be passed back to the API.",...}}`. The
+        // provider-contract gap is on our side, but until the thinking-
+        // mode round-tripping ships in the inference layer, every affected
+        // turn fires a fresh Sentry event — and the UI already surfaces
+        // the actionable error to the user. Anchor on the unique
+        // `thinking mode must be passed back` substring so the match
+        // doesn't depend on the upstream's backtick-quoting around
+        // `reasoning_content` (some provider versions ship without them).
         "thinking mode must be passed back",
         // TAURI-RUST-4XK (~649 events) — Ollama Cloud subscription gate.
+        // Body: `{"error":"this model requires a subscription, upgrade for
+        // access: https://ollama.com/upgrade (ref: <uuid>)"}` on a 403
+        // Forbidden from `compatible::OpenAiCompatibleProvider` with
+        // `name = "ollama"`. User-state: the model picked in Settings is
+        // a paid-tier Ollama Cloud model the user's account doesn't
+        // cover. The UI surfaces an actionable upgrade link in the
+        // remediation message itself.
         "requires a subscription, upgrade for access",
         // TAURI-RUST-1V / OPENHUMAN-TAURI-4JS —
         // `reliable.rs::format_failure_aggregate` (no-configured-fallbacks
@@ -426,103 +396,6 @@ mod tests {
         }
     }
 
-    /// TAURI-RUST-35 family — model picked by the user doesn't implement
-    /// tool calling. The agent harness tries to send a tool spec and the
-    /// upstream (Ollama / cloud Ollama relay / hosted OpenAI-compatible)
-    /// rejects with `{"error":{"message":"<model> does not support tools",
-    /// "type":"invalid_request_error",...}}`. Pure user-config — the user
-    /// has to pick a tool-capable model (or run a non-agent flow). No
-    /// remediation path through Sentry, and the long tail is large: each
-    /// distinct model id + provider prefix combo creates a new Sentry
-    /// fingerprint, so the same root cause is currently split across at
-    /// least 10 unresolved Sentry issues (458 events total as of
-    /// 2026-05-28):
-    ///
-    /// | shortId | events | provider prefix |
-    /// |---|---|---|
-    /// | TAURI-RUST-35  | 307 | cloud |
-    /// | TAURI-RUST-DF  | 83  | cloud |
-    /// | TAURI-RUST-123 | 25  | cloud |
-    /// | TAURI-RUST-4K7 | 19  | ollama |
-    /// | TAURI-RUST-4FS | 10  | cloud |
-    /// | TAURI-RUST-4F6 | 5   | cloud |
-    /// | TAURI-RUST-2YA | 4   | cloud |
-    /// | TAURI-RUST-4KR | 3   | ollama |
-    /// | TAURI-RUST-4KH | 1   | cloud |
-    /// | TAURI-RUST-4KY | 1   | ollama |
-    ///
-    /// Anchored on the exact `"does not support tools"` substring (the
-    /// message body's stable token — the model id varies per user). The
-    /// `streaming API error` / `API error` wrappers and the
-    /// `cloud` / `ollama` / `custom_openai` provider prefixes all share
-    /// this body, so a single phrase covers every variant.
-    #[test]
-    fn detects_does_not_support_tools_family() {
-        for (sentry_id, body) in [
-            // TAURI-RUST-35 — verbatim from latest issue 168 event
-            // (model=`gemma3:1b-it-qat`, provider=cloud).
-            (
-                "35",
-                r#"cloud streaming API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/gemma3:1b-it-qat does not support tools","type":"invalid_request_error","param":null,"code":null}}"#,
-            ),
-            // TAURI-RUST-4K7 — ollama prefix, different upstream wrapper.
-            (
-                "4K7",
-                r#"ollama streaming API error (400 Bad Request): {"error":{"message":"some-local-model does not support tools","type":"invalid_request_error","param":null,"code":null}}"#,
-            ),
-            // Non-streaming sibling — `API error` (no `streaming` token)
-            // for hosted providers that aren't using the streaming endpoint.
-            (
-                "non-streaming",
-                r#"cloud API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/qwen2.5:0.5b does not support tools","type":"invalid_request_error"}}"#,
-            ),
-            // Bare body (no wrapper) — what `expected_error_kind` would
-            // see if the body got extracted from the envelope upstream.
-            (
-                "bare",
-                r#"{"error":{"message":"phi3.5:mini does not support tools","type":"invalid_request_error"}}"#,
-            ),
-            // TAURI-RUST-4Z0 — verbatim from issue 5664 (model=`deepseek-r1:8b`,
-            // provider=ollama). The envelope carries `"type":"api_error"`
-            // rather than `"invalid_request_error"` — pin it so the matcher
-            // can never be narrowed to require a specific `type` token; the
-            // `"does not support tools"` body substring is the only anchor.
-            (
-                "4Z0",
-                r#"ollama streaming API error (400 Bad Request): {"error":{"message":"registry.ollama.ai/library/deepseek-r1:8b does not support tools","type":"api_error","param":null,"code":null}}"#,
-            ),
-        ] {
-            assert!(
-                is_provider_config_rejection_message(body),
-                "TAURI-RUST-{sentry_id} body must classify as provider config-rejection: {body:?}"
-            );
-        }
-    }
-
-    /// Polarity guard for the does-not-support-tools arm. The phrase is
-    /// scoped enough that no real bug-class body should accidentally
-    /// match — but pin a few near-miss shapes so a future loosening of
-    /// the matcher can't silently re-classify them.
-    #[test]
-    fn does_not_classify_unrelated_tools_phrases_as_config_rejection() {
-        for body in [
-            // Tool-call dispatch failure (real bug) — must reach Sentry.
-            "tool execution failed: shell returned exit 1",
-            // Generic "tools" mention without the does-not-support phrase.
-            "agent ran with 0 tools available",
-            // Reversed phrasing — provider says they DO support tools but
-            // the call shape is wrong. Still actionable for triage.
-            "supports tools but received malformed tool_calls array",
-            // Empty body.
-            "",
-        ] {
-            assert!(
-                !is_provider_config_rejection_message(body),
-                "{body:?} must NOT classify as a provider config-rejection"
-            );
-        }
-    }
-
     #[test]
     fn detects_reliable_aggregate_no_fallbacks_envelope() {
         // OPENHUMAN-TAURI-4JS — `reliable::format_failure_aggregate`
@@ -721,66 +594,6 @@ mod tests {
             assert!(
                 !is_openai_compatible_unknown_model_message(body),
                 "{body:?} must NOT match the narrow openai-compatible-unknown-model helper"
-            );
-        }
-    }
-
-    /// TAURI-RUST-4K7 — Ollama models that don't support tool calling
-    /// (e.g. `gemma3:1b-it-qat`, `huihui_ai/deepseek-r1-abliterated:8b`)
-    /// return HTTP 400 with one of several tool-rejection phrases.
-    /// The compatible provider retries without tools, so the 400 is expected
-    /// capability-discovery rather than a product bug. These phrases must be
-    /// classified as config-rejections so Sentry is not flooded on every turn.
-    #[test]
-    fn detects_ollama_tool_unsupported_bodies() {
-        for (sentry_id, body) in [
-            (
-                "4K7-a",
-                r#"{"error":"gemma3:1b-it-qat does not support tools"}"#,
-            ),
-            (
-                "4K7-b",
-                r#"{"error":"huihui_ai/deepseek-r1-abliterated:8b does not support tools"}"#,
-            ),
-            (
-                "4K7-c",
-                r#"ollama streaming API error (400 Bad Request): {"error":"phi3:mini does not support tools"}"#,
-            ),
-            (
-                "4K7-d",
-                r#"{"error":"function calling is not supported by this model"}"#,
-            ),
-            (
-                "4K7-e",
-                r#"{"error":{"message":"unknown parameter: tools","type":"invalid_request_error"}}"#,
-            ),
-            (
-                "4K7-f",
-                r#"{"error":"unrecognized field `tools` in request body"}"#,
-            ),
-            (
-                "4K7-g",
-                r#"{"error":{"message":"unsupported parameter: tools","type":"invalid_request_error"}}"#,
-            ),
-        ] {
-            assert!(
-                is_provider_config_rejection_message(body),
-                "TAURI-RUST-{sentry_id} body must classify as provider config-rejection (tool-unsupported): {body:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn detects_ollama_tool_unsupported_bodies_case_insensitive() {
-        // Ollama error messages should match regardless of casing.
-        for body in [
-            "Model 'gemma3:1b-it-qat' DOES NOT SUPPORT TOOLS",
-            "Function Calling Is Not Supported By This Model",
-            "Unknown Parameter: Tools",
-        ] {
-            assert!(
-                is_provider_config_rejection_message(body),
-                "{body:?} must classify as config-rejection regardless of case"
             );
         }
     }

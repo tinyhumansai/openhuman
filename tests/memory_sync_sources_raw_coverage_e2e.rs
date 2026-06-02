@@ -21,8 +21,9 @@ use openhuman_core::openhuman::credentials::{
 };
 use openhuman_core::openhuman::memory_sources::readers::SourceReader;
 use openhuman_core::openhuman::memory_sources::{
-    add_source, get_source, list_enabled_by_kind, list_sources, remove_source, update_source,
-    upsert_composio_source, MemorySourceEntry, MemorySourcePatch, SourceKind,
+    add_source, get_source, list_enabled_by_kind, list_sources,
+    remove_composio_source_by_connection_id, remove_source, update_source, upsert_composio_source,
+    MemorySourceEntry, MemorySourcePatch, SourceKind,
 };
 use openhuman_core::openhuman::memory_sync::composio::bus::{
     ComposioConfigChangedSubscriber, ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
@@ -200,6 +201,80 @@ async fn memory_sources_registry_persists_crud_and_composio_upserts() {
     let all = list_sources().await.expect("list sources");
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].id, first.id);
+}
+
+#[tokio::test]
+async fn remove_composio_source_by_connection_id_prunes_on_disconnect_and_survives_reconnect() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in(&tmp);
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+    persist_config(&config).await;
+
+    // Two live composio connections plus an unrelated folder source.
+    let gmail_old = upsert_composio_source("gmail", "conn-old", "Gmail · conn-old")
+        .await
+        .expect("insert gmail");
+    upsert_composio_source("slack", "conn-slack", "Slack")
+        .await
+        .expect("insert slack");
+    let mut folder = source(SourceKind::Folder, "src_folder_disc");
+    folder.path = Some(tmp.path().join("notes").to_string_lossy().into_owned());
+    folder.glob = Some("**/*.md".to_string());
+    add_source(folder.clone()).await.expect("add folder");
+
+    // No-match is a no-op (returns 0, removes nothing).
+    assert_eq!(
+        remove_composio_source_by_connection_id("conn-does-not-exist")
+            .await
+            .expect("no-match remove"),
+        0
+    );
+    assert_eq!(list_sources().await.expect("list").len(), 3);
+
+    // Disconnect: prune ONLY the matching composio source, by connection_id.
+    assert_eq!(
+        remove_composio_source_by_connection_id("conn-old")
+            .await
+            .expect("prune on disconnect"),
+        1
+    );
+    let after_disconnect = list_sources().await.expect("list after disconnect");
+    assert_eq!(after_disconnect.len(), 2);
+    assert!(
+        after_disconnect.iter().all(|s| s.id != gmail_old.id),
+        "old gmail entry must be gone"
+    );
+    assert!(
+        after_disconnect
+            .iter()
+            .any(|s| s.connection_id.as_deref() == Some("conn-slack")),
+        "the other composio connection must be untouched"
+    );
+    assert!(
+        after_disconnect.iter().any(|s| s.id == folder.id),
+        "non-composio folder source must be untouched"
+    );
+
+    // Reconnect: backend mints a NEW connection_id for the same Gmail account.
+    // upsert inserts a fresh entry; no stale duplicate is left behind.
+    let gmail_new = upsert_composio_source("gmail", "conn-new", "Gmail · conn-new")
+        .await
+        .expect("reconnect gmail");
+    assert_ne!(gmail_new.id, gmail_old.id);
+    let final_sources = list_sources().await.expect("final list");
+    let gmail_entries: Vec<_> = final_sources
+        .iter()
+        .filter(|s| s.toolkit.as_deref() == Some("gmail"))
+        .collect();
+    assert_eq!(
+        gmail_entries.len(),
+        1,
+        "exactly one gmail source after reconnect — no orphan"
+    );
+    assert_eq!(gmail_entries[0].connection_id.as_deref(), Some("conn-new"));
 }
 
 #[tokio::test]

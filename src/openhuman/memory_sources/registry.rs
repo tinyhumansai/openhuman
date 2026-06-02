@@ -137,6 +137,35 @@ pub async fn remove_source(id: &str) -> Result<bool, String> {
     Ok(removed)
 }
 
+/// Remove every composio source bound to `connection_id` — the disconnect path.
+///
+/// Mirrors [`upsert_composio_source`], which keys composio sources on
+/// `connection_id`. [`remove_source`] keys on the `src_*` id, which the
+/// connection-delete flow doesn't have, so this is the connection-keyed
+/// counterpart. Returns the number of entries removed (0 if none matched).
+pub async fn remove_composio_source_by_connection_id(connection_id: &str) -> Result<usize, String> {
+    let mut config = config_rpc::load_config_with_timeout().await?;
+    let before = config.memory_sources.len();
+    config.memory_sources.retain(|s| {
+        !(s.kind == SourceKind::Composio && s.connection_id.as_deref() == Some(connection_id))
+    });
+    let removed = before - config.memory_sources.len();
+
+    if removed > 0 {
+        tracing::info!(
+            connection_id = %connection_id,
+            removed,
+            "[memory_sources] removed composio source(s) on connection disconnect"
+        );
+        config
+            .save()
+            .await
+            .map_err(|e| format!("failed to save config: {e:#}"))?;
+    }
+
+    Ok(removed)
+}
+
 /// Upsert a composio source — used by the auto-registration path.
 /// If a source with the same `connection_id` already exists, updates
 /// the label; otherwise inserts a new entry.

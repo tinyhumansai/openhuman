@@ -848,16 +848,16 @@ const en: TranslationMap = {
   'privacy.sentTo': 'Sent to',
   'privacy.leavesDevice': 'Leaves device',
   'privacy.staysLocal': 'Stays local',
-  'privacy.anonymizedAnalytics': 'Anonymized Analytics',
-  'privacy.shareAnonymizedData': 'Share Anonymized Usage Data',
+  'privacy.anonymizedAnalytics': 'Product Analytics',
+  'privacy.shareAnonymizedData': 'Share Product Analytics and Diagnostics',
   'privacy.shareAnonymizedDataDesc':
-    'Help improve OpenHuman by sharing anonymous crash reports and usage analytics. All data is fully anonymized — no personal data, messages, wallet keys, or session information is ever collected.',
+    'Help improve OpenHuman by sharing privacy-limited crash reports and usage events, including a stable account ID and app version metadata. Messages, wallet keys, API keys, and session tokens are never collected.',
   'privacy.meetingFollowUps': 'Meeting follow-ups',
   'privacy.autoHandoffMeet': 'Auto-handoff Google Meet transcripts to the orchestrator',
   'privacy.autoHandoffMeetDesc':
     "When a Google Meet call ends, OpenHuman's orchestrator can read the transcript and may take actions like drafting messages, scheduling follow-ups, or posting summaries to your connected Slack workspace. Off by default.",
   'privacy.analyticsDisclaimer':
-    'All analytics and bug reports are fully anonymized. When enabled, we collect only crash information, device type, and the file location of errors. We never access your messages, session data, wallet keys, API keys, or any personally identifiable information. You can change this setting at any time.',
+    'When enabled, Product Analytics and Diagnostics may include privacy-limited crash reports and usage events, a stable account ID, and app version metadata. Messages, wallet keys, API keys, and session tokens are never collected. You can change this setting at any time.',
 
   // Settings: About
   'settings.about.version': 'Version',
