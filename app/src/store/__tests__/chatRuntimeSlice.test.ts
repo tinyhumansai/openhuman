@@ -538,4 +538,59 @@ describe('chatRuntimeSlice', () => {
       expect(next.artifactsByThread).toEqual({});
     });
   });
+
+  // Pins the cross-reducer contract: clearRuntimeForThread is a soft reset
+  // (drops in-flight turn state, pending approvals, tool timelines, task
+  // board) but *preserves* artifact ledgers so the Files panel + chat
+  // ArtifactCard surfaces don't lose ready deck rows on a routine
+  // turn-clear. clearAllChatRuntime is a hard reset (signout / workspace
+  // switch) and *does* drop artifacts. Per graycyrus on PR #3026: the
+  // kind of contract that silently regresses on a refactor without a
+  // pinning test — also a CodeRabbit nit. (#3024)
+  describe('clear-semantics: artifacts preserved vs cleared (#3024)', () => {
+    it('clearRuntimeForThread preserves ready artifacts on the same thread', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      const cleared = reducer(seeded, clearRuntimeForThread({ threadId: 't1' }));
+      expect(cleared.artifactsByThread['t1']).toHaveLength(1);
+      expect(cleared.artifactsByThread['t1'][0].artifactId).toBe('a');
+      expect(cleared.artifactsByThread['t1'][0].status).toBe('ready');
+    });
+
+    it('clearAllChatRuntime drops every thread bucket', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't2',
+          artifactId: 'b',
+          kind: 'document',
+          title: 'B',
+          path: 'artifacts/b.pdf',
+          sizeBytes: 200,
+        })
+      );
+      const cleared = reducer(state, clearAllChatRuntime());
+      expect(cleared.artifactsByThread).toEqual({});
+    });
+  });
 });
