@@ -859,7 +859,7 @@ export interface MemoryTreePipelineStatus {
    * `[0.0, 1.0]`. Near 0 with `total_chunks > 0` ⇒ extraction is producing no
    * structure ("empty-but-built wiki"). Optional for back-compat.
    */
-  extraction_coverage?: number;
+  extraction_coverage?: number | null;
 }
 
 /**
