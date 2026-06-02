@@ -11,6 +11,7 @@
 
 pub mod audio_capture;
 pub mod bus;
+pub use bus::publish_ptt_transcript_committed;
 pub(crate) mod cli;
 pub mod dictation_listener;
 pub mod factory;
