@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as openUrlModule from '../../utils/openUrl';
@@ -50,16 +50,20 @@ describe('OpenhumanLinkModal discord-report flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open Discord' }));
 
-    expect(openUrlSpy).toHaveBeenCalledWith('https://discord.tinyhumans.ai/');
+    expect(openUrlSpy).toHaveBeenCalledWith('https://discord.tinyhumans.ai');
   });
 
-  it('clicking "Open Discord" closes the modal', () => {
+  it('clicking "Open Discord" closes the modal', async () => {
     render(<OpenhumanLinkModal />);
     openReportModal();
 
     expect(screen.getByText('Report this error')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open Discord' }));
 
-    expect(screen.queryByText('Report this error')).not.toBeInTheDocument();
+    // The handler awaits openUrl before closing, so the close runs on a
+    // microtask — wait for the modal to leave the DOM.
+    await waitFor(() => {
+      expect(screen.queryByText('Report this error')).not.toBeInTheDocument();
+    });
   });
 });

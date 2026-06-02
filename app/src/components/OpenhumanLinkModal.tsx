@@ -30,7 +30,7 @@ import {
   type AccountStatus,
   PROVIDERS,
 } from '../types/accounts';
-import { BILLING_DASHBOARD_URL } from '../utils/links';
+import { BILLING_DASHBOARD_URL, DISCORD_INVITE_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import { ProviderIcon } from './accounts/providerIcons';
 import ChannelSetupModal from './channels/ChannelSetupModal';
@@ -337,8 +337,6 @@ const BillingBody = ({ close }: { close: () => void }) => {
 
 // ── Discord ──────────────────────────────────────────────────────────────
 
-const DISCORD_INVITE_URL = 'https://discord.tinyhumans.ai/';
-
 const DiscordBody = ({ close }: { close: () => void }) => {
   const { t } = useT();
   return (
@@ -364,8 +362,12 @@ const DiscordBody = ({ close }: { close: () => void }) => {
       </ul>
       <button
         type="button"
-        onClick={() => {
-          void openUrl(DISCORD_INVITE_URL).catch(() => {});
+        onClick={async () => {
+          try {
+            await openUrl(DISCORD_INVITE_URL);
+          } catch {
+            // Ignore launcher errors from OS URL handler failures.
+          }
         }}
         className="w-full rounded-xl bg-primary-500 text-white text-sm font-medium py-2.5 hover:bg-primary-600 transition-colors">
         {t('app.openhumanLink.discord.openInvite')}
@@ -391,9 +393,12 @@ const DiscordReportBody = ({ close }: { close: () => void }) => {
       <p>{t('app.openhumanLink.discordReport.intro')}</p>
       <button
         type="button"
-        onClick={() => {
-          void openUrl(DISCORD_INVITE_URL).catch(() => {});
-          close();
+        onClick={async () => {
+          try {
+            await openUrl(DISCORD_INVITE_URL);
+          } finally {
+            close();
+          }
         }}
         className="w-full rounded-xl bg-primary-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
         {t('app.openhumanLink.discordReport.openDiscord')}
