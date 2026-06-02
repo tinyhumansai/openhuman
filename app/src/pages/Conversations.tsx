@@ -2106,15 +2106,25 @@ const Conversations = ({
             return (
               <div className="mb-2 flex flex-col gap-2">
                 {artifacts.map(artifact => (
-                  // NOTE: `onRetry` intentionally omitted — `ArtifactCard`
-                  // declares the prop as optional and renders a Retry
-                  // button only when it's wired. Real retry (either
-                  // `removeArtifact(thread, id)` to let the user re-prompt,
-                  // or full `re-dispatch the producing tool call`) is out
-                  // of scope for #2779 / this PR and is tracked in
-                  // follow-up issue #3162. The failed-card UI still shows
-                  // the truncated error reason; the button just stays
-                  // hidden until that issue lands.
+                  // NOTE: two intentionally-deferred surface gaps live here,
+                  // both tracked in follow-up issue #3162:
+                  //
+                  // 1. `onRetry` is intentionally omitted — `ArtifactCard`
+                  //    declares the prop as optional and renders a Retry
+                  //    button only when it's wired. Real retry (either
+                  //    `removeArtifact(thread, id)` to let the user
+                  //    re-prompt, or full re-dispatch of the producing
+                  //    tool call) is out of scope for #2779. The
+                  //    failed-card UI still surfaces the truncated error
+                  //    reason; the button just stays hidden until #3162.
+                  //
+                  // 2. The card's in-progress / "generating…" state is
+                  //    unreachable from this call site today — we only
+                  //    push an `ArtifactSnapshot` into `artifactsByThread`
+                  //    on `ArtifactReady` / `ArtifactFailed`, not on the
+                  //    earlier `ChatToolCallEvent` that fires when the
+                  //    agent dispatches `generate_presentation`. Wiring
+                  //    that event through is the other half of #3162.
                   <ArtifactCard key={artifact.artifactId} artifact={artifact} />
                 ))}
               </div>
