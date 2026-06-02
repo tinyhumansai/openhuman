@@ -201,7 +201,12 @@ impl ShellTool {
     /// Run the command through the security policy and runtime. Returns
     /// `(allowed, result)` where `allowed=false` means the policy or rate
     /// limiter blocked execution before the command was launched.
-    async fn run_with_security(&self, command: &str) -> (bool, ToolResult) {
+    ///
+    /// Exposed as `pub(crate)` so workflow phase scripts can reuse the
+    /// same gated execution path as the `shell` tool — all security
+    /// checks (rate limits, path guards, approval gate routing) apply
+    /// identically to workflow-triggered commands.
+    pub(crate) async fn run_with_security(&self, command: &str) -> (bool, ToolResult) {
         // Read-only `Block` + the Option-2 structural guard. Approval for
         // Write / Network / Destructive already happened at the harness
         // `ApprovalGate` (see `external_effect_with_args`) before `execute()`
@@ -229,7 +234,7 @@ impl ShellTool {
         // (CWE-200), then re-add only safe, functional variables.
         let mut cmd = match self
             .runtime
-            .build_shell_command(command, &self.security.workspace_dir)
+            .build_shell_command(command, &self.security.action_dir)
         {
             Ok(cmd) => cmd,
             Err(e) => {
@@ -324,6 +329,7 @@ mod tests {
         Arc::new(SecurityPolicy {
             autonomy,
             workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
             ..SecurityPolicy::default()
         })
     }
@@ -530,6 +536,7 @@ mod tests {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
             workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
             allowed_commands: vec!["echo".into(), "mkdir".into()],
             ..SecurityPolicy::default()
         })
@@ -695,6 +702,7 @@ mod tests {
             autonomy: AutonomyLevel::Supervised,
             max_actions_per_hour: 0,
             workspace_dir: std::env::temp_dir(),
+            action_dir: std::env::temp_dir(),
             ..SecurityPolicy::default()
         });
         let tool = ShellTool::new(security, test_runtime(), test_audit());

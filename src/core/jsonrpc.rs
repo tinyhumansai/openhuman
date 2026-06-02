@@ -1492,6 +1492,22 @@ async fn run_server_inner(
                 // ship with the system — discoverable (skills_list) and runnable
                 // — without a manual drop. Idempotent; never clobbers user edits.
                 crate::openhuman::skills::registry::seed_default_skills(&cfg.workspace_dir);
+                // Boot-time Sentry user binding — issue #3135. If the user is
+                // already signed in (typical desktop restart), the auth-profile
+                // store has their `user_id` *now*, before any background loop
+                // (Composio sync tick, heartbeat, etc.) fires its first event.
+                // Reading from the store here means subsequent events carry
+                // `user.id` even when no `app_state_snapshot` RPC has run yet.
+                match crate::openhuman::credentials::session_support::build_session_state(&cfg) {
+                    Ok(state) => {
+                        if let Some(uid) = state.user_id.as_deref() {
+                            crate::openhuman::credentials::sentry_scope::bind(uid);
+                        }
+                    }
+                    Err(e) => log::debug!(
+                        "[boot] sentry scope user bind skipped — build_session_state failed: {e}"
+                    ),
+                }
             }
             Err(e) => {
                 log::error!(
@@ -1843,6 +1859,18 @@ fn register_domain_subscribers(
         }
         crate::openhuman::composio::register_composio_trigger_subscriber();
         crate::openhuman::composio::start_periodic_sync();
+        // Task-sources proactive ingestion: connection-created hook + poll.
+        crate::openhuman::task_sources::bus::register_task_sources_subscriber();
+        crate::openhuman::task_sources::start_periodic_poll();
+        // Board poller: dispatch the highest-urgency `todo` card on the
+        // task-sources board (catch-all for cards without a proactive trigger).
+        crate::openhuman::agent::task_dispatcher::start_board_poller();
+        // Seed memory_sources with active Composio connections so the
+        // user sees their connected integrations as memory sources by
+        // default. Best-effort: failure is logged but does not block startup.
+        tokio::spawn(async {
+            crate::openhuman::memory_sources::reconcile::ensure_composio_sources().await;
+        });
         // Initialise the scheduler gate before any background AI workers
         // start so they observe a real policy on their first iteration
         // (otherwise they fall back to `Policy::Normal` and miss the
@@ -1914,8 +1942,15 @@ fn register_domain_subscribers(
         // calls instead of importing `run_tool_call_loop` directly.
         crate::openhuman::agent::bus::register_agent_handlers();
 
+        // MCP clients lifecycle subscriber: logs McpServer{Installed,Connected,
+        // Disconnected} + McpClientToolExecuted for observability. The boot-time
+        // spawn of installed servers (boot::spawn_installed_servers) runs later
+        // in bootstrap_core_runtime; this subscriber must be live before then so
+        // those connect events are observed (issue #3039 gap A1).
+        crate::openhuman::mcp_registry::bus::init();
+
         log::info!(
-            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent, session_expired)"
+            "[event_bus] domain subscribers registered (webhook, channel, health, conversation, composio, restart, proactive, agent, session_expired, mcp_client)"
         );
     });
 }
@@ -1991,12 +2026,15 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
     // injects the default projects root, so this matches what `start_channels`
     // installs; idempotent — a later `start_channels` re-installs an equivalent
     // policy.
+    let action_dir = cfg.action_dir.clone();
     crate::openhuman::security::live_policy::install(
         std::sync::Arc::new(crate::openhuman::security::SecurityPolicy::from_config(
             &cfg.autonomy,
             &workspace_dir,
+            &action_dir,
         )),
         workspace_dir.clone(),
+        action_dir,
     );
 
     // --- Approval gate (#1339) ---
@@ -2015,36 +2053,19 @@ pub async fn bootstrap_core_runtime(embedded_core: bool) {
         })
         .unwrap_or(true)
     {
-        // Read the active bearer from the in-memory auth subsystem instead of
-        // OPENHUMAN_CORE_TOKEN — same value (init_rpc_token / init_rpc_token_with_value
-        // both populate the OnceLock that get_rpc_token reads), no env crossing.
-        // Init ordering: run_server_inner seeds the auth subsystem above
-        // (line ~1340) before bootstrap_core_runtime runs, so the bearer is
-        // always present here when supplied.
-        let (session_id, ephemeral) = match crate::core::auth::get_rpc_token() {
-            Some(token) => (token.to_string(), false),
-            None => (format!("session-{}", uuid::Uuid::new_v4()), true),
-        };
-        if ephemeral {
-            log::debug!(
-                "[runtime] auth bearer uninitialized; generated ephemeral session_id={session_id} \
-                 for approval gate — `approval_list_pending` is session-agnostic so pending rows \
-                 from prior launches will still be visible, but per-session audit grouping will not \
-                 correlate across restarts"
-            );
-        }
+        // Per-launch correlation token for the approval gate. This is
+        // a fresh UUID every boot — it is NOT derived from the
+        // JSON-RPC bearer (`OPENHUMAN_CORE_TOKEN` / the in-memory
+        // auth subsystem) and carries no credential material, so it
+        // is safe to log, persist, and surface in audit events.
+        // `approval_list_pending` is session-agnostic so pending rows
+        // from prior launches remain visible after restart; only the
+        // per-session audit grouping changes across launches.
+        let session_id = format!("session-{}", uuid::Uuid::new_v4());
         let _ =
             crate::openhuman::approval::ApprovalGate::init_global(cfg.clone(), session_id.clone());
-        // Never log a token-derived session_id: when OPENHUMAN_CORE_TOKEN is set,
-        // session_id IS that secret. Only the generated ephemeral UUID is safe to
-        // print.
-        let session_label = if ephemeral {
-            session_id.as_str()
-        } else {
-            "<redacted>"
-        };
         log::info!(
-            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_label}) — \
+            "[runtime] approval gate installed (on by default; set OPENHUMAN_APPROVAL_GATE=0 to disable, session_id={session_id}) — \
              Prompt-class external-effect tool calls park for approval in interactive chat turns"
         );
         // Bridge ApprovalRequested → `approval_request` web socket event. This MUST

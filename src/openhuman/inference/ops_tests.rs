@@ -9,6 +9,7 @@ fn disabled_config() -> (Config, tempfile::TempDir) {
     let tmp = tempdir().expect("tempdir");
     let mut config = Config {
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         config_path: tmp.path().join("config.toml"),
         ..Config::default()
     };

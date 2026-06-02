@@ -3,8 +3,10 @@
 //! `append_leaf` pushes a persisted chunk into the L0 buffer of a tree.
 //! Seal gates differ by level:
 //!
-//! - **L0 (leaves → L1)**: seal when `token_sum >= INPUT_TOKEN_BUDGET`. Bounds
-//!   the summariser's raw input.
+//! - **L0 (leaves → L1)**: seal when `token_sum >= INPUT_TOKEN_BUDGET`.
+//!   Token-only gating lets small-token items (e.g. commit messages at
+//!   ~20-50 tokens each) accumulate into large batches so summaries
+//!   cover meaningful spans of activity.
 //! - **L≥1 (summaries → next level)**: seal when `item_ids.len() >=
 //!   SUMMARY_FANOUT`. Per-summary token size depends on summariser
 //!   quality, so a token-based gate collapses to a 1:1:1 chain when the
@@ -204,7 +206,7 @@ pub fn append_leaf_deferred(config: &Config, tree: &Tree, leaf: &LeafRef) -> Res
 }
 
 /// Transactionally append a single item to `(tree_id, level)`'s buffer.
-fn append_to_buffer(
+pub fn append_to_buffer(
     config: &Config,
     tree_id: &str,
     level: u32,
@@ -324,7 +326,7 @@ pub(crate) fn should_seal(buf: &Buffer) -> bool {
         return false;
     }
     if buf.level == 0 {
-        buf.token_sum >= INPUT_TOKEN_BUDGET as i64 || (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
+        buf.token_sum >= INPUT_TOKEN_BUDGET as i64
     } else {
         (buf.item_ids.len() as u32) >= SUMMARY_FANOUT
     }
@@ -387,7 +389,17 @@ pub(crate) async fn seal_one_level(
         .fold(f32::NEG_INFINITY, f32::max)
         .max(0.0);
 
-    // Run summariser — async, OUTSIDE any DB transaction.
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::MemoryTreeBuildProgress {
+            phase: "seal".to_string(),
+            step: "summarising".to_string(),
+            tree_scope: Some(tree.scope.clone()),
+            level: Some(level),
+            item_count: Some(inputs.len() as u32),
+            detail: Some(format!("{} inputs → L{}", inputs.len(), level + 1)),
+        },
+    );
+
     let ctx = SummaryContext {
         tree_id: &tree.id,
         tree_kind: tree.kind,
@@ -423,31 +435,52 @@ pub(crate) async fn seal_one_level(
     // we still truncate the input passed to `embed()` to leave
     // headroom for tokenizer drift (the persisted summary content
     // stays full; only the embedding's "view" of it is clamped).
-    let embedder = build_embedder_from_config(config).context("build embedder during seal")?;
-    // Conservative cap. Slack-style chat content (URLs, mentions,
-    // emoji) tokenizes 2-4× higher than the 4-chars/token heuristic.
-    // 1000 approx-tokens (~4000 chars) is comfortably under 8192
-    // even at 4× tokenizer ratio.
-    let embed_input = truncate_for_embed(&output.content, 1_000);
-    log::info!(
-        "[tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
-        output.content.len(),
-        embed_input.len()
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::MemoryTreeBuildProgress {
+            phase: "seal".to_string(),
+            step: "embedding".to_string(),
+            tree_scope: Some(tree.scope.clone()),
+            level: Some(level),
+            item_count: None,
+            detail: None,
+        },
     );
-    let embedding = embedder.embed(&embed_input).await.with_context(|| {
-        format!(
-            "embed summary during seal tree_id={} level={}",
-            tree.id, level
-        )
-    })?;
-    log::debug!(
-        "[tree::bucket_seal] embedded summary tree_id={} level={}→{} bytes={} provider={}",
-        tree.id,
-        level,
-        target_level,
-        output.content.len(),
-        embedder.name()
-    );
+
+    let embedding: Option<Vec<f32>> = match build_embedder_from_config(config) {
+        Ok(embedder) => {
+            let embed_input = truncate_for_embed(&output.content, 1_000);
+            log::info!(
+                "[tree::bucket_seal] embed input: original_chars={} truncated_chars={}",
+                output.content.len(),
+                embed_input.len()
+            );
+            match embedder.embed(&embed_input).await {
+                Ok(vector) => {
+                    log::debug!(
+                        "[tree::bucket_seal] embedded summary tree_id={} level={}→{} provider={}",
+                        tree.id,
+                        level,
+                        target_level,
+                        embedder.name()
+                    );
+                    Some(vector)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "[tree::bucket_seal] embed failed during seal tree_id={} level={}: {e:#} — sealing without embedding",
+                        tree.id, level
+                    );
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "[tree::bucket_seal] build embedder failed during seal: {e:#} — sealing without embedding"
+            );
+            None
+        }
+    };
 
     // Build the new summary node.
     let now = Utc::now();
@@ -472,8 +505,23 @@ pub(crate) async fn seal_one_level(
         score,
         sealed_at: now,
         deleted: false,
-        embedding: Some(embedding),
+        embedding,
     };
+
+    crate::core::event_bus::publish_global(
+        crate::core::event_bus::DomainEvent::MemoryTreeBuildProgress {
+            phase: "seal".to_string(),
+            step: "persisting".to_string(),
+            tree_scope: Some(tree.scope.clone()),
+            level: Some(target_level),
+            item_count: None,
+            detail: Some(format!(
+                "summary {} ({} tokens)",
+                &summary_id[..summary_id.len().min(16)],
+                output.token_count
+            )),
+        },
+    );
 
     // Phase MD-content: stage the summary .md file BEFORE opening the write
     // tx. A staging failure aborts the seal cleanly — nothing is persisted
@@ -576,13 +624,12 @@ pub(crate) async fn seal_one_level(
              continuing seal without vault defaults"
         );
     }
-    let staged =
-        stage_summary(&content_root, &compose_input, &scope_slug, None).with_context(|| {
-            format!(
-                "stage_summary failed for {}; seal aborted, buffer stays unsealed for retry",
-                node.id
-            )
-        })?;
+    let staged = stage_summary(&content_root, &compose_input, &scope_slug).with_context(|| {
+        format!(
+            "stage_summary failed for {}; seal aborted, buffer stays unsealed for retry",
+            node.id
+        )
+    })?;
     log::debug!(
         "[tree::bucket_seal] staged summary {} → {}",
         node.id,
@@ -685,19 +732,9 @@ pub(crate) async fn seal_one_level(
                 };
                 enqueue_job_tx(&tx, &NewJob::seal(&parent_seal)?)?;
             }
-            // Source-tree summary routing: feed the new summary's
-            // entities back into the topic-tree spawn pipeline. Topic
-            // and global trees are sinks — no fan-out from their seals.
-            if matches!(tree_kind, TreeKind::Source) {
-                use crate::openhuman::memory_queue::store::enqueue_tx as enqueue_job_tx;
-                use crate::openhuman::memory_queue::types::{NewJob, NodeRef, TopicRoutePayload};
-                let route = TopicRoutePayload {
-                    node: NodeRef::Summary {
-                        summary_id: summary_id_for_closure.clone(),
-                    },
-                };
-                enqueue_job_tx(&tx, &NewJob::topic_route(&route)?)?;
-            }
+            // (Topic-tree routing removed: the topic/global trees were
+            // deleted — source trees plus the entity index are the
+            // substrate, so a source seal no longer fans out anywhere.)
         }
 
         // Update tree root / max_level if we just climbed.
@@ -821,17 +858,25 @@ fn hydrate_leaf_inputs(config: &Config, chunk_ids: &[String]) -> Result<Vec<Summ
 
 fn hydrate_summary_inputs(config: &Config, summary_ids: &[String]) -> Result<Vec<SummaryInput>> {
     use crate::openhuman::memory_store::content::read as content_read;
+    use crate::openhuman::memory_store::trees::store::get_summaries_batch;
+
+    // One batched `SELECT … WHERE id IN (?,?,…)` instead of N per-id
+    // `get_summary` round-trips. Body reads stay per-id because each
+    // summary's full markdown lives in its own on-disk file — batching
+    // there would mean concurrent file opens, not a single round-trip.
+    // Walking the caller's `summary_ids` slice (not the map) preserves
+    // input order, matching the previous per-id loop's semantics; the
+    // map lookup keys by id so the order of `HashMap`'s iteration is
+    // irrelevant.
+    let node_by_id = get_summaries_batch(config, summary_ids)?;
 
     let mut out: Vec<SummaryInput> = Vec::with_capacity(summary_ids.len());
     for id in summary_ids {
-        let node = match store::get_summary(config, id)? {
-            Some(n) => n,
-            None => {
-                log::warn!(
-                    "[tree::bucket_seal] hydrate_summary_inputs: missing summary {id} — skipping"
-                );
-                continue;
-            }
+        let Some(node) = node_by_id.get(id) else {
+            log::warn!(
+                "[tree::bucket_seal] hydrate_summary_inputs: missing summary {id} — skipping"
+            );
+            continue;
         };
         // Read the full body from disk — `node.content` is a ≤500-char preview
         // after the MD-on-disk migration. Higher-level seals (L2+) summarise

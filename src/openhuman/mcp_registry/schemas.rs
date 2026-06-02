@@ -20,12 +20,15 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("registry_get"),
         schemas("installed_list"),
         schemas("install"),
+        schemas("update_env"),
         schemas("uninstall"),
         schemas("connect"),
         schemas("disconnect"),
         schemas("status"),
         schemas("tool_call"),
         schemas("config_assist"),
+        schemas("registry_settings_get"),
+        schemas("registry_settings_set"),
         // Setup-agent surface (mcp_setup namespace, lives in setup_ops.rs).
         setup_schemas("search"),
         setup_schemas("get"),
@@ -55,6 +58,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_install,
         },
         RegisteredController {
+            schema: schemas("update_env"),
+            handler: handle_update_env,
+        },
+        RegisteredController {
             schema: schemas("uninstall"),
             handler: handle_uninstall,
         },
@@ -77,6 +84,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("config_assist"),
             handler: handle_config_assist,
+        },
+        RegisteredController {
+            schema: schemas("registry_settings_get"),
+            handler: handle_registry_settings_get,
+        },
+        RegisteredController {
+            schema: schemas("registry_settings_set"),
+            handler: handle_registry_settings_set,
         },
         RegisteredController {
             schema: setup_schemas("search"),
@@ -214,6 +229,54 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 comment: "The newly installed server record.",
                 required: true,
             }],
+        },
+
+        "update_env" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "update_env",
+            description: "Replace the stored env values for an installed server and reconnect so the new credentials take effect (reconfigure / rotate keys without reinstalling).",
+            inputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "UUID of the installed server to reconfigure.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "env",
+                    ty: TypeSchema::Map(Box::new(TypeSchema::String)),
+                    comment: "Replacement environment variable values. Stored encrypted and never returned.",
+                    required: true,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "The reconfigured server id.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "status",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["connected", "disconnected"],
+                    },
+                    comment: "`connected` if the reconnect succeeded, `disconnected` if env was saved but reconnect failed.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "env_keys",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Env key names after the update (values omitted).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "tools",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("McpTool"))),
+                    comment: "Tools exposed after reconnect (present only when status=connected).",
+                    required: false,
+                },
+            ],
         },
 
         "uninstall" => ControllerSchema {
@@ -399,6 +462,79 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        "registry_settings_get" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "registry_settings_get",
+            description: "Report which registry credentials are configured (Smithery key, official-registry base/token). Never returns secret values — only `*_set` booleans plus the non-secret base URL override.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "smithery_api_key_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a Smithery API key is set (config or env).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_token_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when an official-registry bearer token is set (config or env).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_base",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "User-configured official-registry base URL override (non-secret).",
+                    required: false,
+                },
+            ],
+        },
+
+        "registry_settings_set" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "registry_settings_set",
+            description: "Persist registry credentials. Per field: omit to leave unchanged, empty string to clear, value to set. Secrets are write-only; the response is the same non-secret snapshot as registry_settings_get.",
+            inputs: vec![
+                FieldSchema {
+                    name: "smithery_api_key",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New Smithery API key (empty string clears).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "mcp_official_base",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New official-registry base URL override (empty string clears).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "mcp_official_token",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New official-registry bearer token (empty string clears).",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "smithery_api_key_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a Smithery API key is set after the update.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_token_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when an official-registry token is set after the update.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_base",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Official-registry base URL override after the update.",
+                    required: false,
+                },
+            ],
+        },
+
         // Handled by setup_schemas() — surface a clearer error rather than
         // falling through to the generic unknown sink.
         "setup_search"
@@ -482,6 +618,18 @@ fn handle_install(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_update_env(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = read_required::<String>(&params, "server_id")?;
+        let env = read_required::<std::collections::HashMap<String, String>>(&params, "env")?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_update_env(&config, server_id, env)
+                .await?,
+        )
+    })
+}
+
 fn handle_uninstall(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -546,6 +694,34 @@ fn handle_config_assist(params: Map<String, Value>) -> ControllerFuture {
                 qualified_name,
                 user_message,
                 history,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_registry_settings_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let _ = params;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_registry_settings_get(&config).await?,
+        )
+    })
+}
+
+fn handle_registry_settings_set(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let smithery_api_key = read_optional::<String>(&params, "smithery_api_key")?;
+        let mcp_official_base = read_optional::<String>(&params, "mcp_official_base")?;
+        let mcp_official_token = read_optional::<String>(&params, "mcp_official_token")?;
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_registry_settings_set(
+                &mut config,
+                smithery_api_key,
+                mcp_official_base,
+                mcp_official_token,
             )
             .await?,
         )
@@ -941,153 +1117,5 @@ fn type_name(value: &Value) -> &'static str {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    // ── schemas() coverage ────────────────────────────────────────────────────
-
-    #[test]
-    fn schemas_registry_search_has_no_required_inputs() {
-        let s = schemas("registry_search");
-        assert_eq!(s.namespace, "mcp_clients");
-        assert!(s.inputs.iter().all(|f| !f.required));
-    }
-
-    #[test]
-    fn schemas_registry_get_requires_qualified_name() {
-        let s = schemas("registry_get");
-        let qn = s
-            .inputs
-            .iter()
-            .find(|f| f.name == "qualified_name")
-            .unwrap();
-        assert!(qn.required);
-    }
-
-    #[test]
-    fn schemas_install_requires_qualified_name_and_env() {
-        let s = schemas("install");
-        let names: Vec<_> = s
-            .inputs
-            .iter()
-            .filter(|f| f.required)
-            .map(|f| f.name)
-            .collect();
-        assert!(names.contains(&"qualified_name"));
-        assert!(names.contains(&"env"));
-    }
-
-    #[test]
-    fn schemas_connect_requires_server_id() {
-        let s = schemas("connect");
-        let si = s.inputs.iter().find(|f| f.name == "server_id").unwrap();
-        assert!(si.required);
-    }
-
-    #[test]
-    fn schemas_tool_call_requires_three_fields() {
-        let s = schemas("tool_call");
-        let required: Vec<_> = s.inputs.iter().filter(|f| f.required).collect();
-        assert_eq!(required.len(), 3);
-    }
-
-    #[test]
-    fn schemas_config_assist_history_is_optional() {
-        let s = schemas("config_assist");
-        let history = s.inputs.iter().find(|f| f.name == "history").unwrap();
-        assert!(!history.required);
-    }
-
-    #[test]
-    fn schemas_unknown_function_returns_placeholder() {
-        let s = schemas("not-a-real-function");
-        assert_eq!(s.function, "unknown");
-        assert_eq!(s.outputs[0].name, "error");
-    }
-
-    // ── all_controller_schemas / all_registered_controllers ────────────────────
-
-    #[test]
-    fn all_controller_schemas_covers_expected_methods() {
-        let schemas = all_controller_schemas();
-        // 10 mcp_clients + 6 mcp_setup
-        assert_eq!(schemas.len(), 16);
-        let mcp_clients_count = schemas
-            .iter()
-            .filter(|s| s.namespace == "mcp_clients")
-            .count();
-        let mcp_setup_count = schemas
-            .iter()
-            .filter(|s| s.namespace == "mcp_setup")
-            .count();
-        assert_eq!(mcp_clients_count, 10);
-        assert_eq!(mcp_setup_count, 6);
-    }
-
-    #[test]
-    fn all_registered_controllers_has_handler_per_schema() {
-        let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 16);
-    }
-
-    #[test]
-    fn all_registered_controllers_use_expected_namespaces() {
-        for c in all_registered_controllers() {
-            assert!(
-                matches!(c.schema.namespace, "mcp_clients" | "mcp_setup"),
-                "unexpected namespace {}",
-                c.schema.namespace
-            );
-        }
-    }
-
-    // ── read_required ─────────────────────────────────────────────────────────
-
-    #[test]
-    fn read_required_returns_value_for_present_key() {
-        let mut params = Map::new();
-        params.insert("server_id".into(), json!("srv-1"));
-        let got: String = read_required(&params, "server_id").unwrap();
-        assert_eq!(got, "srv-1");
-    }
-
-    #[test]
-    fn read_required_errors_on_missing_key() {
-        let err = read_required::<String>(&Map::new(), "server_id").unwrap_err();
-        assert!(err.contains("missing required param 'server_id'"));
-    }
-
-    // ── read_optional_u32 ─────────────────────────────────────────────────────
-
-    #[test]
-    fn read_optional_u32_absent_is_none() {
-        assert_eq!(read_optional_u32(&Map::new(), "page").unwrap(), None);
-    }
-
-    #[test]
-    fn read_optional_u32_valid_number() {
-        let mut p = Map::new();
-        p.insert("page".into(), json!(2));
-        assert_eq!(read_optional_u32(&p, "page").unwrap(), Some(2));
-    }
-
-    #[test]
-    fn read_optional_u32_rejects_negative() {
-        let mut p = Map::new();
-        p.insert("page".into(), json!(-1));
-        assert!(read_optional_u32(&p, "page").is_err());
-    }
-
-    // ── type_name ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn type_name_covers_all_variants() {
-        assert_eq!(type_name(&Value::Null), "null");
-        assert_eq!(type_name(&json!(true)), "bool");
-        assert_eq!(type_name(&json!(1)), "number");
-        assert_eq!(type_name(&json!("s")), "string");
-        assert_eq!(type_name(&json!([])), "array");
-        assert_eq!(type_name(&json!({})), "object");
-    }
-}
+#[path = "schemas_tests.rs"]
+mod tests;

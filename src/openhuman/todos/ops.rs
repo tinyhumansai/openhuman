@@ -9,7 +9,7 @@
 
 use crate::openhuman::agent::progress::AgentProgress;
 use crate::openhuman::agent::task_board::{
-    normalise_board, TaskBoard, TaskBoardCard, TaskBoardStore, TaskCardStatus,
+    normalise_board, TaskApprovalMode, TaskBoard, TaskBoardCard, TaskBoardStore, TaskCardStatus,
 };
 use chrono::Utc;
 use parking_lot::{Mutex, MutexGuard};
@@ -36,11 +36,14 @@ fn maybe_scratch_lock(location: &BoardLocation) -> Option<MutexGuard<'static, ()
 pub fn parse_status(raw: &str) -> Result<TaskCardStatus, String> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "todo" | "pending" => Ok(TaskCardStatus::Todo),
+        "awaiting_approval" | "awaiting-approval" => Ok(TaskCardStatus::AwaitingApproval),
+        "ready" | "approved" => Ok(TaskCardStatus::Ready),
         "in_progress" | "in-progress" | "inprogress" | "started" => Ok(TaskCardStatus::InProgress),
         "blocked" => Ok(TaskCardStatus::Blocked),
         "done" | "completed" | "complete" => Ok(TaskCardStatus::Done),
+        "rejected" | "denied" => Ok(TaskCardStatus::Rejected),
         other => Err(format!(
-            "invalid status '{other}' (expected todo|in_progress|blocked|done)"
+            "invalid status '{other}' (expected todo|awaiting_approval|ready|in_progress|blocked|done|rejected)"
         )),
     }
 }
@@ -59,8 +62,18 @@ pub struct TodosSnapshot {
 pub struct CardPatch {
     pub content: Option<String>,
     pub status: Option<TaskCardStatus>,
+    pub objective: Option<String>,
+    pub plan: Option<Vec<String>>,
+    pub assigned_agent: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub approval_mode: Option<Option<TaskApprovalMode>>,
+    pub acceptance_criteria: Option<Vec<String>>,
+    pub evidence: Option<Vec<String>>,
     pub notes: Option<String>,
     pub blocker: Option<String>,
+    /// Provider/source identifiers for a task-source-ingested card. `Some`
+    /// sets the card's `source_metadata`; `None` leaves it untouched.
+    pub source_metadata: Option<serde_json::Value>,
 }
 
 /// Where to load/save the working set of cards.
@@ -151,10 +164,12 @@ pub fn render_markdown(cards: &[TaskBoardCard]) -> String {
     let mut out = String::new();
     for card in cards {
         let marker = match card.status {
-            TaskCardStatus::Todo => "[ ]",
+            TaskCardStatus::Todo | TaskCardStatus::Ready => "[ ]",
+            TaskCardStatus::AwaitingApproval => "[?]",
             TaskCardStatus::InProgress => "[~]",
             TaskCardStatus::Blocked => "[!]",
             TaskCardStatus::Done => "[x]",
+            TaskCardStatus::Rejected => "[-]",
         };
         out.push_str("- ");
         out.push_str(marker);
@@ -162,6 +177,51 @@ pub fn render_markdown(cards: &[TaskBoardCard]) -> String {
         out.push_str(&card.title);
         out.push_str(&format!("  `({})`", card.id));
         out.push('\n');
+
+        if let Some(objective) = card.objective.as_deref() {
+            out.push_str("  - objective: ");
+            out.push_str(objective);
+            out.push('\n');
+        }
+        if let Some(agent) = card.assigned_agent.as_deref() {
+            out.push_str("  - agent: ");
+            out.push_str(agent);
+            out.push('\n');
+        }
+        if !card.allowed_tools.is_empty() {
+            out.push_str("  - tools: ");
+            out.push_str(&card.allowed_tools.join(", "));
+            out.push('\n');
+        }
+        if let Some(mode) = card.approval_mode.as_ref() {
+            out.push_str("  - approval: ");
+            out.push_str(mode.as_str());
+            out.push('\n');
+        }
+        if !card.plan.is_empty() {
+            out.push_str("  - plan:\n");
+            for step in &card.plan {
+                out.push_str("    - ");
+                out.push_str(step);
+                out.push('\n');
+            }
+        }
+        if !card.acceptance_criteria.is_empty() {
+            out.push_str("  - acceptance criteria:\n");
+            for criterion in &card.acceptance_criteria {
+                out.push_str("    - ");
+                out.push_str(criterion);
+                out.push('\n');
+            }
+        }
+        if !card.evidence.is_empty() {
+            out.push_str("  - evidence:\n");
+            for item in &card.evidence {
+                out.push_str("    - ");
+                out.push_str(item);
+                out.push('\n');
+            }
+        }
 
         if matches!(card.status, TaskCardStatus::Blocked) {
             if let Some(reason) = card.blocker.as_deref().or(card.notes.as_deref()) {
@@ -200,8 +260,16 @@ pub fn add(
         id: format!("task-{}", Uuid::new_v4()),
         title: content.to_string(),
         status: patch.status.unwrap_or(TaskCardStatus::Todo),
+        objective: patch.objective.and_then(non_empty),
+        plan: patch.plan.unwrap_or_default(),
+        assigned_agent: patch.assigned_agent.and_then(non_empty),
+        allowed_tools: patch.allowed_tools.unwrap_or_default(),
+        approval_mode: patch.approval_mode.flatten(),
+        acceptance_criteria: patch.acceptance_criteria.unwrap_or_default(),
+        evidence: patch.evidence.unwrap_or_default(),
         notes: patch.notes.and_then(non_empty),
         blocker: patch.blocker.and_then(non_empty),
+        source_metadata: patch.source_metadata,
         order: cards.len() as u32,
         updated_at: Utc::now().to_rfc3339(),
     };
@@ -236,11 +304,35 @@ pub fn edit(location: &BoardLocation, id: &str, patch: CardPatch) -> Result<Todo
     if let Some(status) = patch.status {
         card.status = status;
     }
+    if let Some(objective) = patch.objective {
+        card.objective = non_empty(objective);
+    }
+    if let Some(plan) = patch.plan {
+        card.plan = plan;
+    }
+    if let Some(assigned_agent) = patch.assigned_agent {
+        card.assigned_agent = non_empty(assigned_agent);
+    }
+    if let Some(allowed_tools) = patch.allowed_tools {
+        card.allowed_tools = allowed_tools;
+    }
+    if let Some(approval_mode) = patch.approval_mode {
+        card.approval_mode = approval_mode;
+    }
+    if let Some(acceptance_criteria) = patch.acceptance_criteria {
+        card.acceptance_criteria = acceptance_criteria;
+    }
+    if let Some(evidence) = patch.evidence {
+        card.evidence = evidence;
+    }
     if let Some(notes) = patch.notes {
         card.notes = non_empty(notes);
     }
     if let Some(blocker) = patch.blocker {
         card.blocker = non_empty(blocker);
+    }
+    if let Some(source_metadata) = patch.source_metadata {
+        card.source_metadata = Some(source_metadata);
     }
     card.updated_at = Utc::now().to_rfc3339();
     enforce_single_in_progress(&cards)?;
@@ -255,6 +347,31 @@ pub fn update_status(
     id: &str,
     status: TaskCardStatus,
 ) -> Result<TodosSnapshot, String> {
+    // [workflows][phase] auto-detection hook — emit a debug marker when a card
+    // transitions to a lifecycle status that a workflow phase could react to.
+    //
+    // TODO(v2): wire a full `workflow_phase` tool call here once the session
+    // handle is injectable at this layer. For now the log acts as the trigger
+    // anchor so operators can grep `[workflows][phase]` and see status events
+    // in context alongside any agent-tool–initiated phase runs.
+    match status {
+        TaskCardStatus::InProgress => {
+            log::debug!(
+                "[workflows][phase] auto-detected on_pick_up_task: \
+                 task id={id} transitioned to InProgress — \
+                 agent should call workflow_phase(id, \"on_pick_up_task\") if a workflow is active"
+            );
+        }
+        TaskCardStatus::Done => {
+            log::debug!(
+                "[workflows][phase] auto-detected on_close_task: \
+                 task id={id} transitioned to Done — \
+                 agent should call workflow_phase(id, \"on_close_task\") if a workflow is active"
+            );
+        }
+        _ => {}
+    }
+
     edit(
         location,
         id,
@@ -263,6 +380,34 @@ pub fn update_status(
             ..Default::default()
         },
     )
+}
+
+/// Resolve a plan-approval decision: approve (→`Ready`, so the dispatcher runs
+/// it) or reject (→`Rejected`). Errors unless the card is currently
+/// `AwaitingApproval`, so a stale/duplicate decision can't resurrect a card
+/// that already moved on.
+pub fn decide_plan(
+    location: &BoardLocation,
+    id: &str,
+    approve: bool,
+) -> Result<TodosSnapshot, String> {
+    let cards = load_cards(location)?;
+    let current = cards
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| format!("todo id '{id}' not found"))?;
+    if current.status != TaskCardStatus::AwaitingApproval {
+        return Err(format!(
+            "card '{id}' is not awaiting approval (status: {})",
+            current.status.as_str()
+        ));
+    }
+    let new_status = if approve {
+        TaskCardStatus::Ready
+    } else {
+        TaskCardStatus::Rejected
+    };
+    update_status(location, id, new_status)
 }
 
 /// Remove a card by id. Errors if `id` is unknown.
@@ -364,7 +509,7 @@ fn emit_progress(location: &BoardLocation, cards: &[TaskBoardCard]) {
 }
 
 /// Process-global lock that test code (here and in
-/// `tools::impl::agent::todo`) uses to serialize access to the shared
+/// `agent::tools::todo`) uses to serialize access to the shared
 /// scratch store under `cargo test`'s parallel runner.
 #[cfg(test)]
 pub(crate) fn scratch_test_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -398,6 +543,13 @@ mod tests {
         );
         assert_eq!(parse_status("blocked").unwrap(), TaskCardStatus::Blocked);
         assert_eq!(parse_status("done").unwrap(), TaskCardStatus::Done);
+        assert_eq!(
+            parse_status("awaiting_approval").unwrap(),
+            TaskCardStatus::AwaitingApproval
+        );
+        assert_eq!(parse_status("ready").unwrap(), TaskCardStatus::Ready);
+        assert_eq!(parse_status("approved").unwrap(), TaskCardStatus::Ready);
+        assert_eq!(parse_status("rejected").unwrap(), TaskCardStatus::Rejected);
         assert!(parse_status("nope").is_err());
     }
 
@@ -405,9 +557,33 @@ mod tests {
     fn add_appends_and_returns_markdown() {
         let dir = tempdir().unwrap();
         let loc = thread_loc(dir.path(), "t1");
-        let snap = add(&loc, "First task", CardPatch::default()).unwrap();
+        let snap = add(
+            &loc,
+            "First task",
+            CardPatch {
+                objective: Some("Ship a richer handoff".into()),
+                plan: Some(vec![
+                    "Inspect existing board".into(),
+                    "Update schema".into(),
+                ]),
+                assigned_agent: Some("planner".into()),
+                allowed_tools: Some(vec!["todo".into(), "spawn_subagent".into()]),
+                approval_mode: Some(Some(TaskApprovalMode::Required)),
+                acceptance_criteria: Some(vec!["Tests pass".into()]),
+                evidence: Some(vec!["cargo test".into()]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(snap.cards.len(), 1);
         assert!(snap.markdown.contains("[ ] First task"));
+        assert!(snap.markdown.contains("objective: Ship a richer handoff"));
+        assert!(snap.markdown.contains("agent: planner"));
+        assert!(snap.markdown.contains("tools: todo, spawn_subagent"));
+        assert!(snap.markdown.contains("approval: required"));
+        assert!(snap.markdown.contains("Inspect existing board"));
+        assert!(snap.markdown.contains("Tests pass"));
+        assert!(snap.markdown.contains("cargo test"));
         assert!(snap.markdown.contains(&snap.cards[0].id));
     }
 
@@ -427,6 +603,111 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snap.cards[0].title, "Refined plan");
+    }
+
+    #[test]
+    fn source_metadata_round_trips_through_add_and_edit() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "t1");
+        let added = add(
+            &loc,
+            "ingested task",
+            CardPatch {
+                source_metadata: Some(serde_json::json!({
+                    "provider": "github",
+                    "external_id": "7",
+                })),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let id = added.cards[0].id.clone();
+        assert_eq!(
+            added.cards[0].source_metadata.as_ref().unwrap()["external_id"],
+            serde_json::json!("7")
+        );
+
+        // A subsequent edit with `Some(..)` replaces the stamped metadata.
+        let snap = edit(
+            &loc,
+            &id,
+            CardPatch {
+                source_metadata: Some(serde_json::json!({
+                    "provider": "github",
+                    "external_id": "8",
+                })),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            snap.cards[0].source_metadata.as_ref().unwrap()["external_id"],
+            serde_json::json!("8")
+        );
+
+        // An edit that leaves `source_metadata: None` preserves the value.
+        let snap2 = edit(
+            &loc,
+            &id,
+            CardPatch {
+                notes: Some("touch".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            snap2.cards[0].source_metadata.as_ref().unwrap()["external_id"],
+            serde_json::json!("8")
+        );
+    }
+
+    #[test]
+    fn decide_plan_approves_and_rejects_only_when_awaiting() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "t1");
+        let added = add(&loc, "task", CardPatch::default()).unwrap();
+        let id = added.cards[0].id.clone();
+
+        // A todo card isn't awaiting approval yet → decision rejected.
+        assert!(decide_plan(&loc, &id, true).is_err());
+
+        // Park it, then approve → Ready.
+        update_status(&loc, &id, TaskCardStatus::AwaitingApproval).unwrap();
+        let approved = decide_plan(&loc, &id, true).unwrap();
+        assert_eq!(approved.cards[0].status, TaskCardStatus::Ready);
+
+        // Re-park, then reject → Rejected.
+        update_status(&loc, &id, TaskCardStatus::AwaitingApproval).unwrap();
+        let rejected = decide_plan(&loc, &id, false).unwrap();
+        assert_eq!(rejected.cards[0].status, TaskCardStatus::Rejected);
+    }
+
+    #[test]
+    fn edit_can_clear_approval_mode() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "t1");
+        let added = add(
+            &loc,
+            "Draft plan",
+            CardPatch {
+                approval_mode: Some(Some(TaskApprovalMode::Required)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let id = added.cards[0].id.clone();
+
+        let snap = edit(
+            &loc,
+            &id,
+            CardPatch {
+                approval_mode: Some(None),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(snap.cards[0].approval_mode, None);
     }
 
     #[test]
@@ -468,8 +749,16 @@ mod tests {
                 id: "a".into(),
                 title: "A".into(),
                 status: TaskCardStatus::InProgress,
+                objective: None,
+                plan: Vec::new(),
+                assigned_agent: None,
+                allowed_tools: Vec::new(),
+                approval_mode: None,
+                acceptance_criteria: Vec::new(),
+                evidence: Vec::new(),
                 notes: None,
                 blocker: None,
+                source_metadata: None,
                 order: 0,
                 updated_at: String::new(),
             },
@@ -477,8 +766,16 @@ mod tests {
                 id: "b".into(),
                 title: "B".into(),
                 status: TaskCardStatus::InProgress,
+                objective: None,
+                plan: Vec::new(),
+                assigned_agent: None,
+                allowed_tools: Vec::new(),
+                approval_mode: None,
+                acceptance_criteria: Vec::new(),
+                evidence: Vec::new(),
                 notes: None,
                 blocker: None,
+                source_metadata: None,
                 order: 1,
                 updated_at: String::new(),
             },

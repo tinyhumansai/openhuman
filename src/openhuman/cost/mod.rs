@@ -1,6 +1,7 @@
 mod global;
 mod rpc;
 mod schemas;
+pub mod tools;
 pub mod tracker;
 pub mod types;
 

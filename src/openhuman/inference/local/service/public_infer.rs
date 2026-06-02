@@ -37,10 +37,29 @@ impl LocalAiService {
         }
         let system = "You summarize internal assistant context. Keep concise bullet points.";
         let prompt = format!(
-            "Summarize this text in concise bullet points. Preserve decisions and commitments.\\n\\n{}",
+            "Summarize this text in concise bullet points. Preserve decisions and commitments.\n\n{}",
             text
         );
         self.inference(config, system, &prompt, max_tokens.or(Some(128)), true)
+            .await
+    }
+
+    pub async fn summarize_interactive(
+        &self,
+        config: &Config,
+        text: &str,
+        max_tokens: Option<u32>,
+    ) -> Result<String, String> {
+        log::trace!("[local_ai] summarize_interactive bypasses scheduler_gate permit");
+        if !config.local_ai.runtime_enabled {
+            return Err("local ai is disabled".to_string());
+        }
+        let system = "You summarize internal assistant context. Keep concise bullet points.";
+        let prompt = format!(
+            "Summarize this text in concise bullet points. Preserve decisions and commitments.\n\n{}",
+            text
+        );
+        self.inference_interactive(config, system, &prompt, max_tokens.or(Some(128)), true)
             .await
     }
 
@@ -114,7 +133,8 @@ impl LocalAiService {
     /// turn against it than show stale or empty completions for the
     /// duration of the backfill.
     ///
-    /// Along with [`Self::prompt_interactive`] and
+    /// Along with [`Self::prompt_interactive`],
+    /// [`Self::summarize_interactive`], and
     /// [`Self::chat_with_history_interactive`], this is one of the paths
     /// inside [`LocalAiService`] that opts out of the gate. Every other
     /// entry point (`inference`, `prompt`, `summarize`,
@@ -397,13 +417,15 @@ impl LocalAiService {
     /// the scheduler gate's LLM permit**.
     ///
     /// Used by user-arrival paths where the user is staring at the
-    /// output (push-to-talk dictation cleanup, in particular). If we
+    /// output (push-to-talk dictation cleanup and debug summary tests, in
+    /// particular). If we
     /// queue these behind a long-running memory backfill, the user
     /// experiences a frozen UI; better to race the call against
     /// background work and accept the contention than to silently
     /// degrade interactivity.
     ///
-    /// Sibling to [`Self::inline_complete_interactive`] for autocomplete.
+    /// Sibling to [`Self::inline_complete_interactive`] for autocomplete and
+    /// [`Self::summarize_interactive`] for explicit debug summary requests.
     /// Every other entry point (`inference`, `prompt`, `summarize`,
     /// `inline_complete`, `vision_prompt`, `embed`, `chat_with_history`)
     /// remains gated.

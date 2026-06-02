@@ -40,6 +40,17 @@ pub const DEFAULT_DEFINITE_KEEP: f32 = 0.85;
 /// without consulting the LLM extractor. Catches obvious noise cheaply.
 pub const DEFAULT_DEFINITE_DROP: f32 = 0.15;
 
+/// Metadata tag marking a chunk as high-priority source material. The
+/// ingest path stamps this on GitHub commit messages and closed/merged
+/// issues & PRs (see `memory_sources::sync`), which are higher-signal than
+/// ambient activity and should be preferred when building the memory tree.
+pub const PRIORITY_TAG: &str = "priority_high";
+
+/// Additive score nudge applied to chunks carrying [`PRIORITY_TAG`]. Pushes
+/// them above the drop threshold and higher in retrieval / summary ordering
+/// without fully overriding the content signals. Clamped to `1.0`.
+pub const PRIORITY_BOOST: f32 = 0.25;
+
 /// Whole outcome of [`score_chunk`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScoreResult {
@@ -236,17 +247,38 @@ pub async fn score_chunk(chunk: &Chunk, cfg: &ScoringConfig) -> Result<ScoreResu
     // dragging the total down. Fall back to `combine_cheap_only` which
     // excludes that term from both numerator and denominator, so the cheap
     // signals alone produce the total.
-    let total = if llm_consulted {
+    let mut total = if llm_consulted {
         self::signals::combine(&signals, &cfg.weights)
     } else {
         self::signals::combine_cheap_only(&signals, &cfg.weights)
     };
 
+    // 4b. Priority boost. Chunks tagged PRIORITY_TAG at ingest (GitHub
+    // commit messages, closed/merged issues & PRs) are higher-signal than
+    // ambient activity. Nudge their total up (clamped) so they clear the
+    // admission gate more readily and rank higher when the memory tree is
+    // built from chunk scores.
+    let priority = chunk.metadata.tags.iter().any(|t| t == PRIORITY_TAG);
+    if priority {
+        let boosted = (total + PRIORITY_BOOST).min(1.0);
+        if boosted > total {
+            log::debug!(
+                "[memory::score] priority boost chunk_id={} {:.3} -> {:.3}",
+                chunk.id,
+                total,
+                boosted
+            );
+            total = boosted;
+        }
+    }
+
     // 5. Admission gate. Source and interaction priors are deliberately
     // non-zero, so guard against very short entity-free chatter being kept by
-    // metadata alone.
-    let tiny_entity_free =
-        scoring_token_count < self::signals::token_count::TOKEN_MIN && extracted.is_empty();
+    // metadata alone. Priority-tagged chunks bypass the tiny/entity-free
+    // drop since the tag itself is a strong relevance signal.
+    let tiny_entity_free = !priority
+        && scoring_token_count < self::signals::token_count::TOKEN_MIN
+        && extracted.is_empty();
     let kept = !tiny_entity_free && total >= cfg.drop_threshold;
     let drop_reason = if kept {
         None

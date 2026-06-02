@@ -18,7 +18,10 @@ import { threadApi } from '../../services/api/threadApi';
 import { chatSend } from '../../services/chatService';
 import { CoreRpcError } from '../../services/coreRpcClient';
 import agentProfileReducer from '../../store/agentProfileSlice';
-import chatRuntimeReducer from '../../store/chatRuntimeSlice';
+import chatRuntimeReducer, {
+  setInferenceStatusForThread,
+  setToolTimelineForThread,
+} from '../../store/chatRuntimeSlice';
 import socketReducer from '../../store/socketSlice';
 import threadReducer, { setSelectedThread } from '../../store/threadSlice';
 import type { Thread } from '../../types/thread';
@@ -802,6 +805,124 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     }
   });
 
+  it('rearms the silence timer on sub-agent tool-timeline updates', async () => {
+    // Regression: when a delegated sub-agent (`Research`, `Tools Agent`,
+    // …) is running, the parent thread's `inferenceStatusByThread` and
+    // `streamingAssistantByThread` references can stay put while
+    // `toolTimelineByThread` and `taskBoardByThread` tick. The rearm
+    // effect must watch all four — otherwise a long sub-agent loop
+    // trips the 120s safety timer even though the user can see tools
+    // firing in the timeline.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store, thread } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'kick off a sub-agent loop' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Two-thirds of the way through the safety window, the parent
+      // status is already in `subagent` phase and a delegated tool
+      // posts a timeline update. After the fix this re-arms the timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: thread.id,
+            status: { phase: 'subagent', iteration: 1, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: thread.id,
+            entries: [{ id: 'tl-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Advance another 80s (total elapsed 160s, well past the 120s
+      // window). The tool-timeline dispatch should have re-armed the
+      // timer at the 80s mark, so the silence timer is now at 80s of
+      // its fresh 120s budget and has NOT fired. The pending guard
+      // therefore still holds and Send stays disabled — proof the
+      // rearm effect ran on a toolTimelineByThread change.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'still typing while sub-agent runs' } });
+      });
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT rearm the silence timer on an unrelated thread’s updates', async () => {
+    // Regression for the per-thread dependency scoping: the rearm effect must
+    // react only to the SENDING thread's slices. A different thread churning
+    // (background triage, another conversation) must not keep the foreground
+    // turn's 120s timer alive — otherwise a truly hung send never fails fast.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { textarea, store } = await renderSelectedConversation();
+
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'send on the foreground thread' } });
+      });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      });
+      await waitFor(() => {
+        expect(chatSend).toHaveBeenCalledTimes(1);
+      });
+
+      // Churn an UNRELATED thread the whole time the foreground send is open.
+      // None of these dispatches target the sending thread ('send-thread'),
+      // so they must not rearm its timer.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(80_000);
+      });
+      await act(async () => {
+        store!.dispatch(
+          setInferenceStatusForThread({
+            threadId: 'some-other-thread',
+            status: { phase: 'subagent', iteration: 3, maxIterations: 8 },
+          })
+        );
+        store!.dispatch(
+          setToolTimelineForThread({
+            threadId: 'some-other-thread',
+            entries: [{ id: 'other-1', name: 'web_fetch', round: 1, status: 'running' }],
+          })
+        );
+      });
+
+      // Cross the original 120s deadline (80s + 50s = 130s). Because the
+      // unrelated-thread churn did NOT rearm, the safety timer fires: the
+      // pending guard is released and Send re-enables once the user types.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50_000);
+      });
+      await act(async () => {
+        fireEvent.change(textarea, { target: { value: 'retry after timeout' } });
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Send message' })).not.toBeDisabled();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('releases the pending-send lock when chatSend rejects', async () => {
     vi.mocked(chatSend).mockRejectedValueOnce(new Error('emit failed'));
     const { textarea } = await renderSelectedConversation();
@@ -933,11 +1054,72 @@ describe('Conversations — smoke render (#1123 welcome-lock removal)', () => {
     fireEvent.click(screen.getByLabelText('Move right'));
 
     await waitFor(() => {
-      expect(screen.getByText('Could not move task; changes were not saved.')).toBeInTheDocument();
+      expect(
+        screen.getByText('Could not update task; changes were not saved.')
+      ).toBeInTheDocument();
     });
     expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
       'board-thread',
       expect.arrayContaining([expect.objectContaining({ id: 'task-1', status: 'in_progress' })])
+    );
+  });
+
+  it('rolls back and shows feedback when task board edit persistence fails', async () => {
+    const thread = makeThread({ id: 'edit-board-thread', title: 'Edit Board Thread' });
+    const board = {
+      threadId: 'edit-board-thread',
+      updatedAt: '2026-05-04T10:00:00Z',
+      cards: [
+        {
+          id: 'task-1',
+          title: 'Plan rollout',
+          status: 'todo' as const,
+          objective: 'Draft the launch task brief',
+          assignedAgent: 'planner',
+          approvalMode: 'required' as const,
+          plan: ['Read docs'],
+          allowedTools: ['todo'],
+          acceptanceCriteria: ['Saved board round-trips'],
+          evidence: [],
+          order: 0,
+          updatedAt: '2026-05-04T10:00:00Z',
+        },
+      ],
+    };
+    mockGetThreads.mockResolvedValue({ threads: [thread], count: 1 });
+    mockGetThreadMessages.mockResolvedValue({ messages: [], count: 0 });
+    vi.mocked(threadApi.getTaskBoard).mockResolvedValueOnce(board);
+    vi.mocked(threadApi.putTaskBoard).mockRejectedValueOnce(new Error('write failed'));
+
+    await act(async () => {
+      await renderConversations({
+        thread: selectedThreadState(thread),
+        socket: socketState('connected'),
+      });
+    });
+
+    expect(await screen.findByText('Plan rollout')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('Task brief'));
+    fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Updated rollout' } });
+    fireEvent.change(screen.getByLabelText('Assigned agent'), {
+      target: { value: 'code_executor' },
+    });
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Could not update task; changes were not saved.')
+      ).toBeInTheDocument();
+    });
+    expect(threadApi.putTaskBoard).toHaveBeenCalledWith(
+      'edit-board-thread',
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'task-1',
+          title: 'Updated rollout',
+          assignedAgent: 'code_executor',
+        }),
+      ])
     );
   });
 

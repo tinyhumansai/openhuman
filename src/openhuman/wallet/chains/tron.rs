@@ -16,7 +16,10 @@ use sha2::{Digest, Sha256, Sha512};
 use crate::openhuman::config::rpc as config_rpc;
 
 use super::super::defaults::{explorer_tx_url, rpc_url_for_chain};
-use super::super::execution::{ExecutionResult, PreparedKind, PreparedStatus, PreparedTransaction};
+use super::super::execution::{
+    ExecutionResult, PreparedKind, PreparedStatus, PreparedTransaction, TxLookupInfo,
+    TxReceiptInfo, TxState, TxStatusInfo,
+};
 use super::super::ops::{secret_material, WalletChain};
 use super::super::rpc::rest_post_json;
 
@@ -280,11 +283,6 @@ pub async fn execute_tron_quote(mut quote: PreparedTransaction) -> Result<Execut
             let parameter = encode_trc20_transfer_param(&to_hex, amount)?;
             trigger_trc20_transfer(&owner_hex, &contract_hex, &parameter).await?
         }
-        other => {
-            return Err(format!(
-                "Tron execution only supports native + TRC20 transfers; got {other:?}"
-            ));
-        }
     };
 
     // Tron signs sha256(raw_data_hex bytes).
@@ -351,6 +349,117 @@ pub async fn execute_tron_quote(mut quote: PreparedTransaction) -> Result<Execut
         transaction_hash: txid,
         explorer_url,
         transaction: quote,
+    })
+}
+
+async fn tron_post(path: &str, body: Value) -> Result<Value, String> {
+    let base = rpc_url_for_chain(WalletChain::Tron);
+    let url = format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        path.trim_start_matches('/')
+    );
+    rest_post_json(&url, &body).await
+}
+
+/// TronGrid `/wallet/gettransactioninfobyid` → normalized status.
+pub async fn tx_status(hash: &str) -> Result<TxStatusInfo, String> {
+    let info = tron_post("wallet/gettransactioninfobyid", json!({ "value": hash })).await?;
+    let block_number = info.get("blockNumber").and_then(Value::as_u64);
+    let (state, block_number) = match block_number {
+        None => {
+            // The info endpoint only has a row once the tx is mined. A freshly
+            // broadcast tx is still pending — disambiguate via gettransactionbyid.
+            let tx = tron_post("wallet/gettransactionbyid", json!({ "value": hash })).await?;
+            let seen = tx.get("txID").is_some() || tx.get("raw_data").is_some();
+            (
+                if seen {
+                    TxState::Pending
+                } else {
+                    TxState::NotFound
+                },
+                None,
+            )
+        }
+        Some(bn) => {
+            // `receipt.result` carries SUCCESS / REVERT / FAILED for contract txs;
+            // a bare TRX transfer omits it but is successful once mined.
+            let result = info
+                .get("receipt")
+                .and_then(|r| r.get("result"))
+                .and_then(Value::as_str);
+            let state = match result {
+                Some("SUCCESS") | None => TxState::Confirmed,
+                Some(_) => TxState::Failed,
+            };
+            (state, Some(bn))
+        }
+    };
+    Ok(TxStatusInfo {
+        chain: WalletChain::Tron,
+        evm_network: None,
+        hash: hash.to_string(),
+        state,
+        confirmations: None,
+        block_number,
+    })
+}
+
+/// TronGrid `/wallet/gettransactioninfobyid` → normalized receipt.
+pub async fn tx_receipt(hash: &str) -> Result<TxReceiptInfo, String> {
+    let info = tron_post("wallet/gettransactioninfobyid", json!({ "value": hash })).await?;
+    let block_number = info.get("blockNumber").and_then(Value::as_u64);
+    if block_number.is_none() {
+        return Ok(TxReceiptInfo {
+            chain: WalletChain::Tron,
+            evm_network: None,
+            hash: hash.to_string(),
+            found: false,
+            success: None,
+            block_number: None,
+            gas_used: None,
+            fee_raw: None,
+            raw: serde_json::Value::Null,
+        });
+    }
+    let result = info
+        .get("receipt")
+        .and_then(|r| r.get("result"))
+        .and_then(Value::as_str);
+    let success = Some(matches!(result, Some("SUCCESS") | None));
+    let fee_raw = info
+        .get("fee")
+        .and_then(Value::as_u64)
+        .map(|f| f.to_string());
+    let gas_used = info
+        .get("receipt")
+        .and_then(|r| r.get("energy_usage_total"))
+        .and_then(Value::as_u64)
+        .map(|g| g.to_string());
+    Ok(TxReceiptInfo {
+        chain: WalletChain::Tron,
+        evm_network: None,
+        hash: hash.to_string(),
+        found: true,
+        success,
+        block_number,
+        gas_used,
+        fee_raw,
+        raw: info,
+    })
+}
+
+/// TronGrid `/wallet/gettransactionbyid` → raw transaction passthrough.
+pub async fn lookup_tx(hash: &str) -> Result<TxLookupInfo, String> {
+    let tx = tron_post("wallet/gettransactionbyid", json!({ "value": hash })).await?;
+    // TronGrid returns `{}` for an unknown id.
+    let found = tx.get("txID").is_some() || tx.get("raw_data").is_some();
+    Ok(TxLookupInfo {
+        chain: WalletChain::Tron,
+        evm_network: None,
+        hash: hash.to_string(),
+        found,
+        raw: tx,
     })
 }
 
@@ -659,5 +768,62 @@ mod tests {
         assert_eq!(p.len(), 32);
         assert_eq!(&p[..29], &[0u8; 29]);
         assert_eq!(&p[29..], &[1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn tx_status_confirmed_from_info() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let app = Router::new().route(
+            "/wallet/gettransactioninfobyid",
+            post(|| async {
+                axum::Json(json!({
+                    "id": "ab".repeat(32),
+                    "blockNumber": 555u64,
+                    "receipt": {"result": "SUCCESS"},
+                    "fee": 1100u64
+                }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
+        let info = tx_status("ab").await.unwrap();
+        assert_eq!(info.state, TxState::Confirmed);
+        assert_eq!(info.block_number, Some(555));
+        let receipt = tx_receipt("ab").await.unwrap();
+        assert!(receipt.found);
+        assert_eq!(receipt.success, Some(true));
+        assert_eq!(receipt.fee_raw.as_deref(), Some("1100"));
+    }
+
+    #[tokio::test]
+    async fn tx_status_not_found_on_empty_info() {
+        let _guard = TEST_LOCK.lock();
+        let _env_guard = crate::openhuman::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let app = Router::new()
+            .route(
+                "/wallet/gettransactioninfobyid",
+                post(|| async { axum::Json(json!({})) }),
+            )
+            .route(
+                "/wallet/gettransactionbyid",
+                post(|| async { axum::Json(json!({})) }),
+            );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        std::env::set_var("OPENHUMAN_WALLET_RPC_TRON", format!("http://{addr}"));
+        let info = tx_status("missing").await.unwrap();
+        assert_eq!(info.state, TxState::NotFound);
     }
 }

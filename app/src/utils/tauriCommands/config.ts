@@ -318,6 +318,8 @@ export interface AutonomySettings {
   max_actions_per_hour: number;
   /** "Always allow" allowlist — tool names the agent runs without a prompt. */
   auto_approve: string[];
+  /** Require approval before an agent executes a task-board plan. */
+  require_task_plan_approval?: boolean;
 }
 
 /** Partial update — omitted fields are left unchanged. */
@@ -331,6 +333,7 @@ export interface AutonomySettingsUpdate {
   max_actions_per_hour?: number;
   /** Replaces the "Always allow" allowlist wholesale. */
   auto_approve?: string[];
+  require_task_plan_approval?: boolean;
 }
 
 export async function openhumanGetAutonomySettings(): Promise<CommandResponse<AutonomySettings>> {
@@ -350,6 +353,48 @@ export async function openhumanUpdateAutonomySettings(
   }
   return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
     method: CORE_RPC_METHODS.configUpdateAutonomySettings,
+    params: update,
+  });
+}
+
+// ── Agent execution settings (action/tool timeout) ──────────────────────────
+
+/** Agent execution settings as returned by config_get_agent_settings. */
+export interface AgentSettings {
+  /** Configured wall-clock timeout for a single tool/action, in seconds. */
+  agent_timeout_secs: number;
+  /** Runtime-effective timeout (may differ from configured when env-overridden). */
+  effective_timeout_secs: number;
+  /** True when OPENHUMAN_TOOL_TIMEOUT_SECS overrides the configured value. */
+  env_override: boolean;
+  /** Lowest accepted timeout (seconds). */
+  min_timeout_secs: number;
+  /** Highest accepted timeout (seconds). */
+  max_timeout_secs: number;
+}
+
+/** Partial update — omitted fields are left unchanged. */
+export interface AgentSettingsUpdate {
+  agent_timeout_secs?: number;
+}
+
+export async function openhumanGetAgentSettings(): Promise<CommandResponse<AgentSettings>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AgentSettings>>({
+    method: CORE_RPC_METHODS.configGetAgentSettings,
+  });
+}
+
+export async function openhumanUpdateAgentSettings(
+  update: AgentSettingsUpdate
+): Promise<CommandResponse<ConfigSnapshot>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<ConfigSnapshot>>({
+    method: CORE_RPC_METHODS.configUpdateAgentSettings,
     params: update,
   });
 }
@@ -412,7 +457,7 @@ export async function openhumanGetMeetSettings(): Promise<
   });
 }
 
-export type SearchEngineId = 'managed' | 'parallel' | 'brave' | 'querit';
+export type SearchEngineId = 'disabled' | 'managed' | 'parallel' | 'brave' | 'querit';
 
 export interface SearchSettingsUpdate {
   engine?: SearchEngineId;

@@ -25,7 +25,7 @@ mod ops;
 pub mod wechat_ingest;
 
 #[cfg(test)]
-#[path = "wechat_ingest_test.rs"]
+#[path = "wechat_ingest_tests.rs"]
 mod tests;
 
 pub use ops::detect_webview_logins;

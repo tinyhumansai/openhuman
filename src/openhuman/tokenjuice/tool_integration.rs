@@ -93,6 +93,10 @@ pub fn compact_tool_output(
     }
 
     let (command, argv) = extract_command_argv(arguments);
+    // Whether this execution looks like a shell command (vs. a domain tool that
+    // returns structured/large data, e.g. a Composio action). Domain tools carry
+    // no `command`/`argv` in their arguments.
+    let has_command = command.is_some() || argv.as_ref().is_some_and(|a| !a.is_empty());
 
     let input = ToolExecutionInput {
         tool_name: tool_name.to_owned(),
@@ -117,7 +121,19 @@ pub fn compact_tool_output(
         compacted_bytes as f64 / original_bytes as f64
     };
 
-    let applied = ratio <= MIN_COMPACT_RATIO && compacted_bytes < original_bytes;
+    // The `generic/fallback` reducer is a line-oriented head/tail summariser
+    // meant for *command* output tokenjuice has no specific rule for. It must
+    // NOT compact domain-tool output (no command/argv): those payloads are
+    // structured and are handled downstream by the sub-agent progressive
+    // -disclosure handoff / payload summariser, not by blind head/tail
+    // truncation. Letting the generic fallback fire here clamps every large
+    // tool result to ~1.2k chars and silently preempts the handoff. Specific,
+    // tool/argv-matched rules still apply to domain tools as before.
+    let generic_fallback_on_domain_tool = rule_id == "generic/fallback" && !has_command;
+
+    let applied = !generic_fallback_on_domain_tool
+        && ratio <= MIN_COMPACT_RATIO
+        && compacted_bytes < original_bytes;
 
     if applied {
         log::info!(

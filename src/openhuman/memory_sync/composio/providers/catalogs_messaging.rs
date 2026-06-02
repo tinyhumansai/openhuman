@@ -145,6 +145,22 @@ pub const DISCORD_CURATED: &[CuratedTool] = &[
         slug: "DISCORD_LIST_MY_CONNECTIONS",
         scope: ToolScope::Read,
     },
+    CuratedTool {
+        slug: "DISCORD_LIST_GUILD_CHANNELS",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "DISCORD_GET_CHANNEL",
+        scope: ToolScope::Read,
+    },
+    CuratedTool {
+        slug: "DISCORD_SEND_MESSAGE",
+        scope: ToolScope::Write,
+    },
+    CuratedTool {
+        slug: "DISCORD_CREATE_MESSAGE",
+        scope: ToolScope::Write,
+    },
 ];
 
 // ── telegram ────────────────────────────────────────────────────────

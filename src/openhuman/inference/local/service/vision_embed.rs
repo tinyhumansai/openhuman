@@ -36,7 +36,7 @@ impl LocalAiService {
         }
         self.bootstrap(config).await;
         let vision_model = model_ids::effective_vision_model_id(config);
-        self.ensure_ollama_model_available(&vision_model, "vision")
+        self.ensure_ollama_model_available(config, &vision_model, "vision")
             .await?;
 
         let images: Vec<String> = image_refs
@@ -148,7 +148,7 @@ impl LocalAiService {
         }
         self.bootstrap(config).await;
         let embedding_model = model_ids::effective_embedding_model_id(config);
-        self.ensure_ollama_model_available(&embedding_model, "embedding")
+        self.ensure_ollama_model_available(config, &embedding_model, "embedding")
             .await?;
 
         // Embeds are bge-m3 calls (8K context, ~1.3 GB resident) — the

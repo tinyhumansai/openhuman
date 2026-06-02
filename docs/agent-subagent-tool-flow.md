@@ -17,7 +17,7 @@ The code path is split across several layers:
 - built-in agent definitions in `src/openhuman/agent/agents/`
 - harness data + task-local plumbing in `src/openhuman/agent/harness/`
 - main session lifecycle in `src/openhuman/agent/harness/session/`
-- delegation tools in `src/openhuman/tools/impl/agent/`
+- delegation tools in `src/openhuman/agent/tools/`
 - synthesised `delegate_*` tools in `src/openhuman/tools/orchestrator_tools.rs`
 
 If you only read one file, the system looks simpler than it is. The actual runtime path crosses all of them.
@@ -42,7 +42,7 @@ If you only read one file, the system looks simpler than it is. The actual runti
 
 ### Subagent path
 
-- `src/openhuman/tools/impl/agent/spawn_subagent.rs`
+- `src/openhuman/agent/tools/spawn_subagent.rs`
   Runtime tool entrypoint for explicit subagent spawns.
 - `src/openhuman/agent/harness/fork_context.rs`
   Task-local parent and fork context.
@@ -330,7 +330,7 @@ That history format is what the next iteration reasons from.
 
 ## Where `spawn_subagent` Enters
 
-The explicit delegation tool lives in `src/openhuman/tools/impl/agent/spawn_subagent.rs`.
+The explicit delegation tool lives in `src/openhuman/agent/tools/spawn_subagent.rs`.
 
 Its flow is:
 

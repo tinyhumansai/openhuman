@@ -394,6 +394,18 @@ pub fn record_run(
     })
 }
 
+/// Remove all "queued" placeholder records for a given job so that only the
+/// real (ok/error) result row remains in the run history.
+pub fn delete_queued_runs(config: &Config, job_id: &str) -> Result<usize> {
+    with_connection(config, |conn| {
+        let deleted = conn.execute(
+            "DELETE FROM cron_runs WHERE job_id = ?1 AND status = 'queued'",
+            params![job_id],
+        )?;
+        Ok(deleted)
+    })
+}
+
 fn truncate_cron_output(output: &str) -> String {
     if output.len() <= MAX_CRON_OUTPUT_BYTES {
         return output.to_string();

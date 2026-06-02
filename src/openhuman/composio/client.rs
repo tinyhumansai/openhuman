@@ -689,7 +689,7 @@ const MODE_DIRECT_PAT: &str = COMPOSIO_MODE_DIRECT;
 /// (calls `api.tinyhumans.ai/agent-integrations/composio/*`).
 ///
 /// `Direct` wraps the existing direct-mode HTTP wrapper from
-/// `tools/impl/network/composio.rs` that calls
+/// `composio/tools/direct.rs` that calls
 /// `https://backend.composio.dev/api/v{2,3}` with `x-api-key`. The
 /// direct client does not currently cover every endpoint the
 /// backend-proxied path exposes (no per-toolkit allowlist, no
@@ -779,6 +779,30 @@ pub fn create_composio_client(
             // the `Tool` surface re-acquire the live policy from their own
             // context.
             let security = Arc::new(crate::openhuman::security::SecurityPolicy::default());
+            #[cfg(debug_assertions)]
+            let tool = match (
+                std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V2").ok(),
+                std::env::var("OPENHUMAN_COMPOSIO_DIRECT_BASE_V3").ok(),
+            ) {
+                (Some(base_v2), Some(base_v3)) => {
+                    crate::openhuman::tools::ComposioTool::new_with_base_urls_for_loopback(
+                        &api_key,
+                        Some(config.composio.entity_id.as_str()),
+                        security,
+                        base_v2,
+                        base_v3,
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!("invalid debug composio direct loopback base override: {e}")
+                    })?
+                }
+                _ => crate::openhuman::tools::ComposioTool::new(
+                    &api_key,
+                    Some(config.composio.entity_id.as_str()),
+                    security,
+                ),
+            };
+            #[cfg(not(debug_assertions))]
             let tool = crate::openhuman::tools::ComposioTool::new(
                 &api_key,
                 Some(config.composio.entity_id.as_str()),
@@ -801,7 +825,7 @@ pub fn create_composio_client(
 
 // ── Direct-mode response reshapers ──────────────────────────────────
 //
-// The direct-mode `ComposioTool` (in `tools/impl/network/composio.rs`)
+// The direct-mode `ComposioTool` (in `composio/tools/direct.rs`)
 // speaks `backend.composio.dev/api/v3/*` natively. The helpers below
 // reshape those v3 responses into the same envelopes the
 // backend-proxied [`ComposioClient`] returns, so callers in `ops.rs` /

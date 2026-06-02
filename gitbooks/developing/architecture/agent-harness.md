@@ -92,6 +92,8 @@ loop {
 
 Every iteration emits a real-time `AgentProgress` event so the UI can render token-by-token streaming, "calling tool X" status, and per-iteration cost updates.
 
+**One engine, three entry points.** This loop lives in one place — `engine::run_turn_engine` (`harness/engine/`) — and every caller drives it: `Agent::turn` (web/desktop chat), `run_tool_call_loop` (the `agent.run_turn` bus handler for other channels + triage), and `run_subagent` (spawned sub-agents). What varies per caller is supplied through small seams the engine calls into: a `ToolSource` (which tools are advertised + how a call executes), a `ProgressReporter` (top-level `Turn*` events with streaming vs. nested `Subagent*` events), a `TurnObserver` (context management, transcript persistence, history shape), a `CheckpointStrategy` (error vs. summarize when the iteration cap is hit), and a `ResponseParser` (the `ToolDispatcher` dialect). The per-call executor (`run_one_tool`), the repeated-failure circuit breaker, and the `ProviderDelta → AgentProgress` stream forwarder are shared across all three, so they can't drift.
+
 ### Tool dispatch and tool-call dialects
 
 Different LLMs speak different tool-calling dialects. The harness abstracts that with a `ToolDispatcher` trait, which has three concrete implementations:

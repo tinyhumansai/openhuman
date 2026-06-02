@@ -7,6 +7,20 @@ import { parseMatrix, validateAgainstCatalog } from './lib/coverage-matrix-parse
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..');
 
+function usage() {
+  return 'Usage: node scripts/check-coverage-matrix.mjs';
+}
+
+for (const arg of process.argv.slice(2)) {
+  if (arg === '--help' || arg === '-h') {
+    console.log(usage());
+    process.exit(0);
+  }
+  console.error(`check-coverage-matrix: unknown argument: ${arg}`);
+  console.error(usage());
+  process.exit(2);
+}
+
 let matrixMd;
 let catalog;
 try {

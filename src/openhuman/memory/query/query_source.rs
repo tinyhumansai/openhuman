@@ -69,9 +69,8 @@ impl Tool for MemoryTreeQuerySourceTool {
         };
         let resp = match req.source_id.as_deref() {
             Some(source_id) => {
-                backend::query_profile(
+                backend::query_source_scope(
                     &cfg,
-                    crate::openhuman::memory_tree::tree::TreeProfile::Source,
                     Some(source_id),
                     req.time_window_days,
                     req.query.as_deref(),

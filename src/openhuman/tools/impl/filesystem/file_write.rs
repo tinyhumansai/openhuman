@@ -69,7 +69,7 @@ impl Tool for FileWriteTool {
         let target = if std::path::Path::new(path).is_absolute() {
             std::path::PathBuf::from(path)
         } else {
-            self.security.workspace_dir.join(path)
+            self.security.action_dir.join(path)
         };
         // Sync `stat` — intentionally blocking, since the `Tool` trait makes
         // this method sync. Fast for local paths; would only need
@@ -147,7 +147,8 @@ mod tests {
     fn test_security(workspace: std::path::PathBuf) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             ..SecurityPolicy::default()
         })
     }
@@ -159,7 +160,8 @@ mod tests {
     ) -> Arc<SecurityPolicy> {
         Arc::new(SecurityPolicy {
             autonomy,
-            workspace_dir: workspace,
+            workspace_dir: workspace.clone(),
+            action_dir: workspace,
             max_actions_per_hour,
             ..SecurityPolicy::default()
         })

@@ -22,13 +22,12 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use super::ingest::ingest_issue_into_memory_tree;
 use super::sync;
-use crate::openhuman::memory_sync::composio::providers::sync_state::{
-    persist_single_item, SyncState,
-};
+use crate::openhuman::memory_sync::composio::providers::sync_state::SyncState;
 use crate::openhuman::memory_sync::composio::providers::{
-    pick_str, ComposioProvider, CuratedTool, ProviderContext, ProviderUserProfile, SyncOutcome,
-    SyncReason,
+    merge_extra, pick_str, ComposioProvider, CuratedTool, NormalizedTask, ProviderContext,
+    ProviderUserProfile, SyncOutcome, SyncReason, TaskFetchFilter,
 };
 
 pub(crate) const ACTION_GET_AUTHENTICATED_USER: &str = "GITHUB_GET_THE_AUTHENTICATED_USER";
@@ -202,6 +201,14 @@ impl ComposioProvider for GitHubProvider {
         let mut total_fetched: usize = 0;
         let mut total_persisted: usize = 0;
         let mut newest_updated: Option<String> = None;
+        // Track whether any per-item ingest failed this pass. If so, we hold
+        // the persistent cursor — `updated:>{cursor}` on the next search
+        // would otherwise exclude the failed item, and because the new
+        // memory-tree pipeline (#2885) is delete-first, an *edited* issue
+        // that failed to re-ingest is left with neither old nor new chunks
+        // until its next edit. Already-synced items are skipped cheaply via
+        // `is_synced` on the re-fetch, so the cost of holding is minimal.
+        let mut had_ingest_failures = false;
 
         'pages: for page_num in 1..=MAX_PAGES {
             if state.budget_exhausted() {
@@ -302,28 +309,34 @@ impl ComposioProvider for GitHubProvider {
 
                 let title_text = sync::extract_issue_title(issue)
                     .unwrap_or_else(|| format!("GitHub issue {issue_id}"));
-                let doc_id = format!("composio-github-issue-{issue_id}");
 
-                match persist_single_item(
-                    &memory,
-                    "github",
-                    &doc_id,
+                // Route into the memory-tree pipeline (#2885). The prior
+                // implementation called `persist_single_item` →
+                // `MemoryClient::store_skill_sync` → UnifiedMemory
+                // `memory_docs`, which the modern retrieval surfaces
+                // (`memory.search`, `tree.read_chunk`, `tree.browse`,
+                // summary trees, MCP tools) don't read from — the data
+                // was invisible to every agent recall path.
+                match ingest_issue_into_memory_tree(
+                    &ctx.config,
+                    &connection_id,
+                    &issue_id,
                     &title_text,
+                    updated.as_deref(),
                     issue,
-                    "github",
-                    ctx.connection_id.as_deref(),
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(_chunks_written) => {
                         state.mark_synced(&sync_key);
                         total_persisted += 1;
                     }
                     Err(e) => {
+                        had_ingest_failures = true;
                         tracing::warn!(
                             issue_id = %issue_id,
                             error = %e,
-                            "[composio:github] failed to persist issue (continuing)"
+                            "[composio:github] failed to ingest issue into memory_tree (continuing)"
                         );
                     }
                 }
@@ -342,8 +355,22 @@ impl ComposioProvider for GitHubProvider {
         }
 
         // ── Step 5: advance cursor and save state ────────────────────
-        if let Some(new_cursor) = newest_updated {
-            state.advance_cursor(&new_cursor);
+        //
+        // Hold the cursor when any item failed to ingest this pass. See the
+        // `had_ingest_failures` declaration above for why this matters under
+        // the delete-first memory-tree pipeline (#2885). `set_last_sync_at_ms`
+        // still advances — that's just a heartbeat, not a fetch-window
+        // boundary, so it's safe to record that we did attempt a sync.
+        if !had_ingest_failures {
+            if let Some(new_cursor) = newest_updated {
+                state.advance_cursor(&new_cursor);
+            }
+        } else {
+            tracing::warn!(
+                connection_id = %connection_id,
+                "[composio:github] holding cursor — ingest failures this pass; next sync will \
+                 re-fetch the failed range"
+            );
         }
         state.set_last_sync_at_ms(sync::now_ms());
         state.save(&memory).await?;
@@ -380,6 +407,133 @@ impl ComposioProvider for GitHubProvider {
                 "synced_ids_total": state.synced_ids.len(),
             }),
         })
+    }
+
+    async fn fetch_tasks(
+        &self,
+        ctx: &ProviderContext,
+        filter: &TaskFetchFilter,
+    ) -> Result<Vec<NormalizedTask>, String> {
+        let max = filter.effective_max();
+        let query = build_fetch_query(filter);
+        tracing::debug!(
+            connection_id = ?ctx.connection_id,
+            max,
+            query = %query,
+            "[composio:github] fetch_tasks"
+        );
+
+        let mut args = json!({
+            "q": query,
+            "sort": "updated",
+            "order": "desc",
+            "per_page": max.min(100) as u32,
+            "page": 1,
+        });
+        merge_extra(&mut args, &filter.extra);
+
+        let resp = ctx
+            .execute(ACTION_SEARCH_ISSUES, Some(args))
+            .await
+            .map_err(|e| format!("[composio:github] {ACTION_SEARCH_ISSUES}: {e:#}"))?;
+        if !resp.successful {
+            return Err(format!(
+                "[composio:github] {ACTION_SEARCH_ISSUES}: {}",
+                resp.error.unwrap_or_else(|| "provider failure".into())
+            ));
+        }
+
+        let mut out: Vec<NormalizedTask> = Vec::new();
+        for issue in sync::extract_issues(&resp.data) {
+            if out.len() >= max {
+                break;
+            }
+            if let Some(nt) = normalize_github_issue(&issue) {
+                out.push(nt);
+            }
+        }
+        tracing::debug!(count = out.len(), "[composio:github] fetch_tasks complete");
+        Ok(out)
+    }
+}
+
+/// Build a GitHub Search-Issues query from a [`TaskFetchFilter`].
+///
+/// Combines repo / label / state / assignee qualifiers. When the filter
+/// carries no constraints at all we fall back to `involves:@me` so a
+/// task source never accidentally pulls the entire public issue
+/// universe.
+pub(super) fn build_fetch_query(filter: &TaskFetchFilter) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(repo) = filter
+        .repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        parts.push(format!("repo:{repo}"));
+    }
+    for label in filter
+        .labels
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+    {
+        parts.push(format!("label:\"{label}\""));
+    }
+    if let Some(state) = filter
+        .state
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        parts.push(format!("state:{state}"));
+    }
+    if filter.assignee_is_me {
+        parts.push("assignee:@me".to_string());
+    }
+    if parts.is_empty() {
+        return "involves:@me".to_string();
+    }
+    parts.join(" ")
+}
+
+/// Map a raw GitHub issue/PR payload into a [`NormalizedTask`].
+fn normalize_github_issue(issue: &serde_json::Value) -> Option<NormalizedTask> {
+    let external_id = sync::extract_issue_id(issue)?;
+    let title =
+        sync::extract_issue_title(issue).unwrap_or_else(|| format!("GitHub issue {external_id}"));
+    Some(NormalizedTask {
+        external_id,
+        source_id: String::new(),
+        provider: "github".to_string(),
+        title,
+        body: pick_str(issue, &["body", "data.body"]),
+        url: pick_str(issue, &["html_url", "data.html_url"]),
+        status: pick_str(issue, &["state", "data.state"]),
+        assignee: pick_str(issue, &["assignee.login", "data.assignee.login"]),
+        due: None,
+        labels: extract_github_labels(issue),
+        priority: None,
+        updated_at: sync::extract_issue_updated_at(issue),
+        raw: issue.clone(),
+    })
+}
+
+/// Extract label names from a GitHub issue payload (`labels` is an array
+/// of `{ name }` objects). Tolerant of the Composio `data` wrapper.
+fn extract_github_labels(issue: &serde_json::Value) -> Vec<String> {
+    let arr = issue
+        .get("labels")
+        .or_else(|| issue.get("data").and_then(|d| d.get("labels")))
+        .and_then(|v| v.as_array());
+    match arr {
+        Some(items) => items
+            .iter()
+            .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
+            .map(|s| s.to_string())
+            .collect(),
+        None => Vec::new(),
     }
 }
 

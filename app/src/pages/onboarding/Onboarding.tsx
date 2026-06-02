@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import OnboardingLayout from './OnboardingLayout';
+import CustomActivityPage from './pages/CustomActivityPage';
 import CustomEmbeddingsPage from './pages/CustomEmbeddingsPage';
 import CustomInferencePage from './pages/CustomInferencePage';
 // Memory step is hidden from the flow for now (file kept on disk;
@@ -39,6 +40,7 @@ const Onboarding = () => {
         <Route path="custom/oauth" element={<CustomOAuthPage />} />
         <Route path="custom/search" element={<CustomSearchPage />} />
         <Route path="custom/embeddings" element={<CustomEmbeddingsPage />} />
+        <Route path="custom/activity" element={<CustomActivityPage />} />
         {/* <Route path="custom/memory" element={<CustomMemoryPage />} /> */}
         <Route path="*" element={<Navigate to="welcome" replace />} />
       </Route>

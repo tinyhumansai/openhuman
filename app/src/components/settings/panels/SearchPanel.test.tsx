@@ -77,6 +77,29 @@ describe('SearchPanel — unified web-access modes', () => {
     expect(radio(ALLOW_ALL)).toHaveAttribute('aria-checked', 'false');
   });
 
+  test('selecting Disabled persists the disabled engine', async () => {
+    renderWithProviders(<SearchPanel embedded />);
+    const disabled = await screen.findByTestId('search-engine-disabled');
+
+    fireEvent.click(disabled);
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ engine: 'disabled' })
+    );
+  });
+
+  test('disabled settings start with Disabled selected and no needs-key badge', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({
+      result: settings({ engine: 'disabled', effective_engine: 'disabled' }),
+    });
+    renderWithProviders(<SearchPanel embedded />);
+
+    const disabled = await screen.findByTestId('search-engine-disabled');
+
+    expect(disabled).toHaveAttribute('aria-checked', 'true');
+    expect(within(disabled).queryByText('settings.search.statusNeedsKey')).toBeNull();
+  });
+
   test('selecting "Allow all" persists allow_all: true and hides the editor', async () => {
     renderWithProviders(<SearchPanel embedded />);
     await screen.findByPlaceholderText(PLACEHOLDER);
@@ -202,6 +225,42 @@ describe('SearchPanel — unified web-access modes', () => {
       expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ brave_api_key: 'brave-test-key' })
     );
     expect(braveInput.value).toBe('');
+  });
+
+  test('Parallel and Brave key editors can reveal and clear stored keys', async () => {
+    hoisted.getSearchSettings.mockResolvedValue({
+      result: settings({ parallel_configured: true, brave_configured: true }),
+    });
+    renderWithProviders(<SearchPanel embedded />);
+    await screen.findAllByPlaceholderText('settings.search.placeholderStored');
+
+    const parallel = keyEditor('settings.search.parallelKeyLabel');
+    const parallelInput = parallel.getByPlaceholderText(
+      'settings.search.placeholderStored'
+    ) as HTMLInputElement;
+    expect(parallelInput.type).toBe('password');
+
+    fireEvent.click(parallel.getByText('settings.search.show'));
+    expect(parallelInput.type).toBe('text');
+    fireEvent.click(parallel.getByText('settings.search.clear'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ parallel_api_key: '' })
+    );
+
+    const brave = keyEditor('settings.search.braveKeyLabel');
+    const braveInput = brave.getByPlaceholderText(
+      'settings.search.placeholderStored'
+    ) as HTMLInputElement;
+    expect(braveInput.type).toBe('password');
+
+    fireEvent.click(brave.getByText('settings.search.show'));
+    expect(braveInput.type).toBe('text');
+    fireEvent.click(brave.getByText('settings.search.clear'));
+
+    await waitFor(() =>
+      expect(hoisted.updateSearchSettings).toHaveBeenCalledWith({ brave_api_key: '' })
+    );
   });
 
   test('Querit key editor can reveal, save, and clear the stored API key', async () => {

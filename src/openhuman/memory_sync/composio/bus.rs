@@ -20,7 +20,7 @@
 //!   published as `TriggerEvaluated` / `TriggerEscalated` events on
 //!   the bus.
 //!
-//! [trigger_triage]: crate::openhuman::agent::agents
+//! [trigger_triage]: crate::openhuman::agent_registry::agents
 //!
 //! ## Feature flag
 //!
@@ -530,10 +530,23 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                     // incident triage.
                     match ops::fetch_connected_integrations_status(ctx.config.as_ref()).await {
                         FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+                            let mut toolkits: Vec<String> = entries
+                                .iter()
+                                .filter(|entry| entry.connected)
+                                .map(|entry| entry.toolkit.clone())
+                                .collect();
+                            toolkits.sort();
+                            toolkits.dedup();
+                            crate::core::event_bus::publish_global(
+                                DomainEvent::ComposioIntegrationsChanged {
+                                    toolkits: toolkits.clone(),
+                                },
+                            );
                             tracing::debug!(
                                 toolkit = %toolkit,
                                 connection_id = %connection_id,
                                 cached_entries = entries.len(),
+                                active_toolkits = ?toolkits,
                                 "[composio:bus] eagerly warmed integrations cache after connection became active"
                             );
                         }
@@ -591,6 +604,24 @@ impl EventHandler for ComposioConnectionCreatedSubscriber {
                 // timestamp so the periodic scheduler doesn't
                 // immediately re-fire for this connection.
                 super::periodic::record_sync_success(&toolkit, &connection_id);
+            }
+
+            // Auto-register this connection in the memory_sources
+            // registry so it appears in the unified sources list.
+            let label = format!("{toolkit} connection");
+            if let Err(e) = crate::openhuman::memory_sources::upsert_composio_source(
+                &toolkit,
+                &connection_id,
+                &label,
+            )
+            .await
+            {
+                tracing::warn!(
+                    toolkit = %toolkit,
+                    connection_id = %connection_id,
+                    error = %e,
+                    "[composio:bus] memory_sources auto-register failed (non-fatal)"
+                );
             }
         });
     }
@@ -682,11 +713,13 @@ async fn wait_for_connection_active(
 /// (#1710).
 ///
 /// The subscriber is intentionally tiny: it only clears the cache,
-/// which guarantees the very next `fetch_connected_integrations` /
-/// `cached_active_integrations` read hits the new client. We don't
-/// eagerly warm the cache here because we don't have a config handle
-/// in the event payload and `load_config_with_timeout` would race the
-/// concurrent `cfg_mut.save()` call that produced this event.
+/// then attempts a best-effort eager warm + `ComposioIntegrationsChanged`
+/// publish in a detached task so active sessions can refresh their
+/// delegation schema without waiting for the next turn boundary.
+///
+/// The warm/publish step is intentionally opportunistic: if config load
+/// or backend access fails we leave the cache cold and rely on the
+/// existing 5 s UI poll / next-turn fallback path.
 pub struct ComposioConfigChangedSubscriber;
 
 impl ComposioConfigChangedSubscriber {
@@ -722,6 +755,45 @@ impl EventHandler for ComposioConfigChangedSubscriber {
             "[composio-cache] config changed — invalidating integrations cache"
         );
         ops::invalidate_connected_integrations_cache();
+
+        tokio::spawn(async move {
+            let config = match config_rpc::load_config_with_timeout().await {
+                Ok(config) => config,
+                Err(error) => {
+                    tracing::debug!(
+                        error = %error,
+                        "[composio-cache] config changed eager warm skipped: config load failed"
+                    );
+                    return;
+                }
+            };
+
+            match ops::fetch_connected_integrations_status(&config).await {
+                FetchConnectedIntegrationsStatus::Authoritative(entries) => {
+                    let mut toolkits: Vec<String> = entries
+                        .iter()
+                        .filter(|entry| entry.connected)
+                        .map(|entry| entry.toolkit.clone())
+                        .collect();
+                    toolkits.sort();
+                    toolkits.dedup();
+                    crate::core::event_bus::publish_global(
+                        DomainEvent::ComposioIntegrationsChanged {
+                            toolkits: toolkits.clone(),
+                        },
+                    );
+                    tracing::debug!(
+                        active_toolkits = ?toolkits,
+                        "[composio-cache] config changed eager warm complete; published integrations changed"
+                    );
+                }
+                FetchConnectedIntegrationsStatus::Unavailable => {
+                    tracing::debug!(
+                        "[composio-cache] config changed eager warm skipped: backend unavailable"
+                    );
+                }
+            }
+        });
     }
 }
 

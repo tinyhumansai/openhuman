@@ -541,7 +541,7 @@ impl LocalAiService {
         config: &Config,
     ) -> Result<(), String> {
         let chat_model = model_ids::effective_chat_model_id(config);
-        self.ensure_ollama_model_available(&chat_model, "chat")
+        self.ensure_ollama_model_available(config, &chat_model, "chat")
             .await?;
 
         match presets::vision_mode_for_config(&config.local_ai) {
@@ -553,7 +553,7 @@ impl LocalAiService {
             }
             VisionMode::Bundled => {
                 let vision_model = model_ids::effective_vision_model_id(config);
-                self.ensure_ollama_model_available(&vision_model, "vision")
+                self.ensure_ollama_model_available(config, &vision_model, "vision")
                     .await?;
                 self.status.lock().vision_state = "ready".to_string();
             }
@@ -561,7 +561,7 @@ impl LocalAiService {
 
         let embedding_model = model_ids::effective_embedding_model_id(config);
         if config.local_ai.preload_embedding_model {
-            self.ensure_ollama_model_available(&embedding_model, "embedding")
+            self.ensure_ollama_model_available(config, &embedding_model, "embedding")
                 .await?;
             self.status.lock().embedding_state = "ready".to_string();
         }
@@ -579,10 +579,12 @@ impl LocalAiService {
 
     pub(in crate::openhuman::inference::local::service) async fn ensure_ollama_model_available(
         &self,
+        config: &Config,
         model_id: &str,
         label: &str,
     ) -> Result<(), String> {
-        if self.has_model(model_id).await? {
+        let base_url = ollama_base_url_from_config(config);
+        if self.has_model_at(&base_url, model_id).await? {
             return Ok(());
         }
 
@@ -635,7 +637,7 @@ impl LocalAiService {
 
             let response = match self
                 .http
-                .post(format!("{}/api/pull", ollama_base_url()))
+                .post(format!("{base_url}/api/pull"))
                 .json(&OllamaPullRequest {
                     name: model_id.to_string(),
                     stream: true,
@@ -735,6 +737,7 @@ impl LocalAiService {
                 last_error = Some(err.clone());
                 let resumed = self
                     .wait_for_model_after_pull_interruption(
+                        &base_url,
                         model_id,
                         attempt,
                         MAX_PULL_RETRIES,
@@ -751,7 +754,7 @@ impl LocalAiService {
                 return Err(format!("{err} after {MAX_PULL_RETRIES} attempts"));
             }
 
-            if self.has_model(model_id).await? {
+            if self.has_model_at(&base_url, model_id).await? {
                 break;
             }
 
@@ -761,6 +764,7 @@ impl LocalAiService {
             ));
             let resumed = self
                 .wait_for_model_after_pull_interruption(
+                    &base_url,
                     model_id,
                     attempt,
                     MAX_PULL_RETRIES,
@@ -776,7 +780,7 @@ impl LocalAiService {
             }
         }
 
-        if !self.has_model(model_id).await? {
+        if !self.has_model_at(&base_url, model_id).await? {
             return Err(last_error.unwrap_or_else(|| {
                 format!(
                     "ollama pull finished but model `{}` was not found",
@@ -796,6 +800,7 @@ impl LocalAiService {
 
     async fn wait_for_model_after_pull_interruption(
         &self,
+        base_url: &str,
         model_id: &str,
         attempt: usize,
         max_attempts: usize,
@@ -826,7 +831,7 @@ impl LocalAiService {
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
         while std::time::Instant::now() < deadline {
-            if self.has_model(model_id).await? {
+            if self.has_model_at(base_url, model_id).await? {
                 log::info!(
                     "[local_ai] model `{}` became available after interrupted pull stream",
                     model_id
@@ -848,6 +853,11 @@ impl LocalAiService {
 
         let base_url = ollama_base_url_from_config(config);
         let healthy = self.ollama_healthy_at(&base_url).await;
+        let runner_ok = if healthy {
+            self.ollama_runner_ok_at(&base_url).await
+        } else {
+            false
+        };
 
         log::debug!(
             "[local_ai] diagnostics: entry base_url={} healthy={}",
@@ -884,11 +894,15 @@ impl LocalAiService {
         // `/api/show` is one bounded round-trip per installed model,
         // fetched concurrently and only on this diagnostics path.
         let model_eligibilities: Vec<ContextEligibility> = if healthy {
-            futures_util::future::join_all(models.iter().map(|m| self.fetch_model_context(&m.name)))
-                .await
-                .into_iter()
-                .map(evaluate_context)
-                .collect()
+            futures_util::future::join_all(
+                models
+                    .iter()
+                    .map(|m| self.fetch_model_context_at(&base_url, &m.name)),
+            )
+            .await
+            .into_iter()
+            .map(evaluate_context)
+            .collect()
         } else {
             Vec::new()
         };
@@ -940,6 +954,12 @@ impl LocalAiService {
                 "Ollama server is not running or not reachable at {}",
                 base_url
             ));
+        }
+        if healthy && !runner_ok {
+            issues.push(
+                "Configured Ollama runtime is reachable but cannot execute models. Restart the external runtime and retry."
+                    .to_string(),
+            );
         }
         if healthy && !chat_found {
             issues.push(format!("Chat model `{}` is not installed", expected_chat));
@@ -1002,6 +1022,7 @@ impl LocalAiService {
 
         Ok(serde_json::json!({
             "ollama_running": healthy,
+            "ollama_runner_ok": runner_ok,
             "ollama_base_url": base_url,
             "ollama_binary_path": binary_path,
             "installed_models": installed_models,
@@ -1112,8 +1133,8 @@ impl LocalAiService {
     /// the metadata key is absent) — the caller maps that to an `Unknown`
     /// eligibility verdict rather than a hard rejection. One bounded HTTP
     /// round-trip per model; only ever invoked from the diagnostics path.
-    async fn fetch_model_context(&self, model: &str) -> Option<u64> {
-        let url = format!("{}/api/show", ollama_base_url());
+    async fn fetch_model_context_at(&self, base_url: &str, model: &str) -> Option<u64> {
+        let url = format!("{}/api/show", base_url.trim_end_matches('/'));
         let resp = self
             .http
             .post(&url)
@@ -1389,6 +1410,15 @@ impl LocalAiService {
         model: &str,
     ) -> Result<bool, String> {
         self.has_model_at(&ollama_base_url(), model).await
+    }
+
+    pub(in crate::openhuman::inference::local::service) async fn has_model_for_config(
+        &self,
+        config: &Config,
+        model: &str,
+    ) -> Result<bool, String> {
+        self.has_model_at(&ollama_base_url_from_config(config), model)
+            .await
     }
 
     async fn has_model_at(&self, base_url: &str, model: &str) -> Result<bool, String> {

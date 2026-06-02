@@ -62,18 +62,6 @@ const UPDATER_TRANSIENT_HTTP_STATUSES: &[u16] = &[403, 500, 502, 503, 504];
 /// Keep these updater-specific so unrelated GitHub or generic transport
 /// failures still reach Sentry.
 ///
-/// The last entry is `tauri-plugin-updater`'s own non-success log line
-/// (`updater.rs`: `log::error!("update endpoint did not respond with a
-/// successful status code")`). The plugin emits it on *any* non-2xx
-/// response and **discards the status code**, so the Sentry event carries
-/// no `domain`/`status` tag and no actionable detail — it can only be
-/// matched by this message string. It is distinctive to the updater
-/// (literally names "update endpoint"), so matching it domain-agnostically
-/// is safe. A genuinely-broken update manifest still surfaces with full
-/// structured context (status + url) through the core's `domain=update`
-/// `check_releases` path, which keeps non-transient statuses visible — see
-/// `UPDATER_TRANSIENT_HTTP_STATUSES` (404 deliberately omitted there).
-/// Drops TAURI-RUST-CD (~151 events / 9 days, Windows background checks).
 const UPDATER_TRANSIENT_MESSAGE_PHRASES: &[&str] = &[
     "failed to check for updates: error sending request",
     "github api error: 403",
@@ -140,39 +128,8 @@ pub enum ExpectedErrorKind {
     ///   demoted breadcrumb can stay sparse (debug level, metadata-only
     ///   fields) instead of warn-level with the full body included.
     ///
-    /// Drops OPENHUMAN-TAURI-R5 (~2.5k events) and OPENHUMAN-TAURI-R6
-    /// (~2.5k events) — both are the same `127.0.0.1:18474` connect-refused
-    /// shape, one at the `integrations.get` emit site and one re-wrapped by
-    /// `rpc.invoke_method`. See [`is_loopback_unavailable`] for the exact
-    /// body shapes matched.
     LoopbackUnavailable,
-    /// A user prompt was rejected by the in-process prompt-injection guard
-    /// before it reached the model. Both enforcement actions that produce a
-    /// user-visible error — `Blocked` (score ≥ 0.70) and `ReviewBlocked`
-    /// (score ≥ 0.55) — are expected, user-input conditions: the detector
-    /// fired on the user's own message and the UI already surfaces an
-    /// actionable "please rephrase" message. Sentry has no remediation path
-    /// and the volume is high (OPENHUMAN-TAURI-140: ~1 480 events in 2 days,
-    /// ~56 events/hour, all from `openhuman.agent_chat` via
-    /// `local_ai.ops.agent_chat`).
     PromptInjectionBlocked,
-    /// The request exceeded the model's context window — the
-    /// conversation/prompt is too long for the configured model. A
-    /// deterministic user-state / usage condition; the remediation is
-    /// "start a new chat, trim the conversation, or pick a larger-context
-    /// model", which the UI surfaces. Sentry has no signal to act on.
-    ///
-    /// The provider HTTP layer (`providers::ops::api_error`) suppresses its
-    /// own per-attempt event for this condition, and
-    /// `providers::reliable` marks it non-retryable. This arm catches the
-    /// **re-report** when the same error is raised again by
-    /// `agent.run_single` / `web_channel.run_chat_task` under a different
-    /// `domain` tag (same two-emit-site shape as the empty-response and
-    /// session-expired fixes). Delegates to the single-source matcher
-    /// [`crate::openhuman::inference::provider::is_context_window_exceeded_message`]
-    /// so the retry classifier, the api_error cascade, and this arm can't
-    /// drift. Drops Sentry TAURI-RUST-501
-    /// (`Context size has been exceeded`, custom-provider 500).
     ContextWindowExceeded,
     /// The memory-store chunk DB's per-path circuit breaker is currently open
     /// because too many consecutive SQLite init attempts failed. This is the
@@ -183,6 +140,17 @@ pub enum ExpectedErrorKind {
     /// reset window elapses and a subsequent init succeeds.
     ///
     MemoryStoreBreakerOpen,
+    /// WhatsApp structured-ingest write hit a transient SQLite file lock
+    /// (`SQLITE_BUSY` / `SQLITE_LOCKED`) after exhausting the local retry
+    /// budget. This is an expected local-contention condition (typically on
+    /// Windows when another process briefly holds a file lock) and the
+    /// scanner retries on the next tick, so Sentry has no immediate
+    /// remediation path.
+    ///
+    /// Anchored narrowly to the whatsapp ingest failure envelope plus the
+    /// SQLite lock text, so unrelated DB lock errors in other domains still
+    /// reach Sentry.
+    WhatsAppDataSqliteBusy,
     /// Host disk is full — the filesystem returned `ENOSPC` to a write,
     /// `mkdir`, or `open` syscall. The user cannot recover from this without
     /// freeing space on their machine, and Sentry has no remediation path
@@ -213,26 +181,6 @@ pub enum ExpectedErrorKind {
     /// deliberately not matched because that's an `rm -rf` invariant
     /// violation, not user input.
     FilesystemUserPathInvalid,
-    /// A memory-store write (document upsert or KV set) was rejected because
-    /// the namespace or key contained what the PII guard classified as a
-    /// personal identifier (national ID, phone number, formatted credential,
-    /// etc.). The guard fires *before* the write reaches SQLite so no data
-    /// is persisted, and the LLM or caller that triggered the write already
-    /// receives the error string. Sentry has no remediation path — the fix
-    /// is either a less aggressive namespace/key choice from the caller or a
-    /// PII-guard allowlist update — and the volume is high from a single user
-    /// (TAURI-RUST-54T: 915 events, escalating), indicating that the guard
-    /// is flagging false positives on valid channel names or usernames used
-    /// as namespace/key identifiers. Demote to `warn` so the breadcrumb
-    /// survives for local diagnosis but Sentry sees no error event.
-    ///
-    /// Canonical wire shapes (from `memory_store/unified/documents.rs` and
-    /// `memory_store/kv.rs`):
-    ///
-    /// - `"document namespace/key cannot contain personal identifiers"`
-    /// - `"kv key cannot contain personal identifiers"`
-    /// - `"kv namespace/key cannot contain personal identifiers"`
-    MemoryStorePiiRejection,
     /// The provider/model completed a turn with a completely empty body
     /// (`text_chars=0 thinking_chars=0 tool_calls=0`), so the agent harness
     /// bailed with the user-facing `"The model returned an empty response.
@@ -277,6 +225,7 @@ pub enum ExpectedErrorKind {
     /// (~815 events Chinese-Windows variant) where the English-only
     /// `is_network_unreachable_message` anchors miss the inner OS message.
     ChannelSupervisorRestart,
+    ConfigLoadTimedOut,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -284,10 +233,7 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
-    if lower.contains("api key not set")
-        || lower.contains("missing api key")
-        || lower.contains("_api_key is not configured")
-    {
+    if lower.contains("api key not set") || lower.contains("missing api key") {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -385,11 +331,14 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_memory_store_breaker_open(&lower) {
         return Some(ExpectedErrorKind::MemoryStoreBreakerOpen);
     }
+    if is_whatsapp_data_sqlite_busy_message(&lower) {
+        return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
+    }
     if is_disk_full_message(&lower) {
         return Some(ExpectedErrorKind::DiskFull);
     }
-    if is_memory_store_pii_rejection(&lower) {
-        return Some(ExpectedErrorKind::MemoryStorePiiRejection);
+    if is_config_load_timed_out_message(&lower) {
+        return Some(ExpectedErrorKind::ConfigLoadTimedOut);
     }
     // Empty-provider-response re-report from the web-channel layer. Runs
     // last so an earlier, more specific matcher always wins. See the
@@ -423,6 +372,31 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
 ///   The text anchor already covers it.
 fn is_disk_full_message(lower: &str) -> bool {
     lower.contains("no space left on device") || lower.contains("not enough space on the disk")
+}
+
+/// Detect the literal `"Config loading timed out"` string produced by
+/// [`crate::openhuman::config::ops::load_config_with_timeout`] /
+/// [`crate::openhuman::config::ops::reload_config_snapshot_with_timeout`]
+/// when `tokio::time::timeout` elapses around `Config::load_or_init` /
+/// `Config::load_from_config_path`.
+fn is_config_load_timed_out_message(lower: &str) -> bool {
+    lower.contains("config loading timed out")
+}
+
+/// Match whatsapp structured-ingest failures caused by transient SQLite lock
+/// contention. Keep this matcher scoped to the whatsapp ingest envelope so we
+/// don't demote unrelated database failures in other domains.
+fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
+    if !lower.contains("[whatsapp_data] ingest failed:") {
+        return false;
+    }
+    if !lower.contains("upsert wa_message") {
+        return false;
+    }
+    lower.contains("database is locked")
+        || lower.contains("database table is locked")
+        || lower.contains("database file is locked")
+        || lower.contains("error code 5")
 }
 
 fn is_embedding_backend_auth_failure(lower: &str) -> bool {
@@ -509,6 +483,8 @@ pub fn is_session_expired_message(msg: &str) -> bool {
         || lower.contains("no backend session token")
         || lower.contains("session jwt required")
         || msg.contains("SESSION_EXPIRED")
+        || (msg.contains("OpenHuman API error (401") && msg.contains("\"error\":\"Invalid token\""))
+        || (msg.contains("Embedding API error (401") && msg.contains("\"error\":\"Invalid token\""))
         // OPENHUMAN-TAURI-4P0 — OpenHuman backend's "Invalid token" 401
         // envelope. Both anchors must be present: the OpenHuman-scoped
         // `"OpenHuman API error (401"` prefix (so a third-party provider's
@@ -1106,9 +1082,10 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
 /// boundary when a user typed/picked a path that doesn't resolve to an
 /// existing directory:
 ///
-/// - `"root_path is not a directory: <path>"` —
-///   [`crate::openhuman::vault::ops::vault_create`] when the chosen vault
-///   folder doesn't exist or points at a file (Sentry TAURI-RUST-4QH).
+/// - `"root_path is not a directory: <path>"` — historically emitted by the
+///   now-removed knowledge-vault `vault_create` path when the chosen folder
+///   didn't exist or pointed at a file (Sentry TAURI-RUST-4QH). Kept as a
+///   classifier fixture since the wire shape may recur from other callers.
 /// - `"hosted path is not a directory: <path>"` —
 ///   [`crate::openhuman::http_host::path_utils`] when an HTTP host config
 ///   references a missing directory. Not yet observed in Sentry but
@@ -1136,31 +1113,6 @@ fn is_prompt_injection_blocked_message(lower: &str) -> bool {
 fn is_filesystem_user_path_invalid_message(lower: &str) -> bool {
     lower.contains("root_path is not a directory:")
         || lower.contains("hosted path is not a directory:")
-}
-
-/// Detect memory-store writes rejected because the namespace or key contained
-/// a personal identifier detected by the PII guard.
-///
-/// The three canonical wire shapes are emitted by
-/// `memory_store/unified/documents.rs` and `memory_store/kv.rs`:
-///
-/// - `"document namespace/key cannot contain personal identifiers"` —
-///   `upsert_document` / `upsert_document_metadata_only`
-/// - `"kv key cannot contain personal identifiers"` — `kv_set_global`
-/// - `"kv namespace/key cannot contain personal identifiers"` — `kv_set_namespace`
-///
-/// These are expected user-content conditions: the PII guard classifies a
-/// channel name, username, or LLM-generated key as a personal identifier and
-/// rejects the write. The LLM or caller already receives the error message;
-/// Sentry has no remediation path. Drops TAURI-RUST-54T (~915 events,
-/// escalating — all from a single user hitting false positives on valid
-/// namespace/key identifiers).
-///
-/// Anchor on `"cannot contain personal identifiers"` — the exact string
-/// shared by all three sites — so typos or future rewordings that drop the
-/// anchor still reach Sentry until explicitly classified.
-fn is_memory_store_pii_rejection(lower: &str) -> bool {
-    lower.contains("cannot contain personal identifiers")
 }
 
 /// Detect the agent harness's empty-provider-response bail.
@@ -1453,6 +1405,14 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected memory-store circuit-breaker-open error"
             );
         }
+        ExpectedErrorKind::WhatsAppDataSqliteBusy => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "whatsapp_data_sqlite_busy",
+                "[observability] {domain}.{operation} skipped expected whatsapp_data sqlite busy/locked error"
+            );
+        }
         ExpectedErrorKind::FilesystemUserPathInvalid => {
             // User-input validation failure surfaced at the RPC
             // boundary — e.g. `openhuman.vault_create` called with a
@@ -1482,20 +1442,6 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 operation = operation,
                 kind = "filesystem_user_path_invalid",
                 "[observability] {domain}.{operation} skipped expected filesystem path validation error"
-            );
-        }
-        ExpectedErrorKind::MemoryStorePiiRejection => {
-            // PII guard rejected a memory-store write because the namespace or
-            // key was classified as containing a personal identifier. The guard
-            // already logs a `[memory:safety]` warn at the write site; this
-            // match arm keeps the diagnostic breadcrumb at warn level (not
-            // error) so local log files retain the context without spawning a
-            // Sentry error event. TAURI-RUST-54T (~915 events from one user).
-            tracing::warn!(
-                domain = domain,
-                operation = operation,
-                kind = "memory_store_pii_rejection",
-                "[observability] {domain}.{operation} skipped expected memory-store PII rejection"
             );
         }
         ExpectedErrorKind::EmptyProviderResponse => {
@@ -1536,6 +1482,15 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 kind = "channel_supervisor_restart",
                 error = %message,
                 "[observability] {domain}.{operation} skipped expected channel-supervisor restart: {message}"
+            );
+        }
+        ExpectedErrorKind::ConfigLoadTimedOut => {
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "config_load_timed_out",
+                error = %message,
+                "[observability] {domain}.{operation} skipped expected config-load timeout: {message}"
             );
         }
     }
@@ -2002,27 +1957,52 @@ mod tests {
         );
     }
 
+    /// Task B (issue #2898): prove the canonical 429 error message produced by
+    /// the embedding clients is already classified as `TransientUpstreamHttp`
+    /// so Sentry events are suppressed even without backoff.
+    ///
+    /// The `is_transient_upstream_http_message` matcher checks for
+    /// `"api error (429 "` (case-insensitive), which is present in both the
+    /// OpenAI and Cohere canonical error shapes.
     #[test]
-    fn classifies_backend_env_api_key_not_configured() {
-        for raw in [
-            r#"Embedding API error (400 Bad Request): {"success":false,"error":"VOYAGE_API_KEY is not configured"}"#,
-            r#"Embedding API error 400 Bad Request: {"success":false,"error":"VOYAGE_API_KEY is not configured"}"#,
-            // Future-proof: same shape for any other backend-managed embedder.
-            r#"Embedding API error (400 Bad Request): {"success":false,"error":"COHERE_API_KEY is not configured"}"#,
-        ] {
-            assert_eq!(
-                expected_error_kind(raw),
-                Some(ExpectedErrorKind::ApiKeyMissing),
-                "should classify backend env api-key missing: {raw}"
-            );
-        }
+    fn embedding_429_classifies_as_transient_upstream_http() {
+        // OpenAI/Voyage canonical shape (openai.rs emit site).
+        let msg = "Embedding API error (429 Too Many Requests): Rate limit exceeded.";
+        assert_eq!(
+            expected_error_kind(msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "OpenAI 429 must classify as TransientUpstreamHttp: {msg}"
+        );
+
+        // Cohere canonical shape (cohere.rs emit site).
+        let cohere_msg = "Cohere embed API error (429 Too Many Requests): rate limit exceeded.";
+        assert_eq!(
+            expected_error_kind(cohere_msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "Cohere 429 must classify as TransientUpstreamHttp: {cohere_msg}"
+        );
+
+        // After-cap bail shape from the retry loop (openai.rs).
+        let cap_msg =
+            "Embedding API error (429 Too Many Requests): rate limit exceeded after 3 retries";
+        assert_eq!(
+            expected_error_kind(cap_msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "retry-cap bail message must classify as TransientUpstreamHttp: {cap_msg}"
+        );
+
+        // After-cap bail shape from the retry loop (cohere.rs).
+        let cohere_cap_msg =
+            "Cohere embed API error (429 Too Many Requests): rate limit exceeded after 3 retries";
+        assert_eq!(
+            expected_error_kind(cohere_cap_msg),
+            Some(ExpectedErrorKind::TransientUpstreamHttp),
+            "Cohere retry-cap bail message must classify as TransientUpstreamHttp: {cohere_cap_msg}"
+        );
     }
 
     #[test]
     fn does_not_classify_unrelated_is_not_configured_messages() {
-        // The `_api_key` anchor must keep prose that merely says "is not
-        // configured" from being silenced — only env-var-style key names
-        // should match.
         assert_eq!(
             expected_error_kind("workspace path is not configured for this user"),
             None
@@ -2401,36 +2381,6 @@ mod tests {
     }
 
     #[test]
-    fn classifies_memory_store_pii_rejection_errors() {
-        // TAURI-RUST-54T: ~915 events from one user where the PII guard
-        // rejected memory-store writes on namespace/key values that look like
-        // personal identifiers. All three canonical wire shapes — from
-        // `documents.rs` (upsert_document / upsert_document_metadata_only)
-        // and `kv.rs` (kv_set_global / kv_set_namespace) — must classify as
-        // expected so they stop reaching Sentry.
-        for raw in [
-            "document namespace/key cannot contain personal identifiers",
-            "kv key cannot contain personal identifiers",
-            "kv namespace/key cannot contain personal identifiers",
-        ] {
-            assert_eq!(
-                expected_error_kind(raw),
-                Some(ExpectedErrorKind::MemoryStorePiiRejection),
-                "should classify as memory-store PII rejection: {raw}"
-            );
-        }
-
-        // Wrapped by the RPC dispatch layer — substring match must survive the
-        // `rpc.invoke_method failed: ` prefix that `jsonrpc.rs` prepends.
-        assert_eq!(
-            expected_error_kind(
-                "rpc.invoke_method failed: document namespace/key cannot contain personal identifiers"
-            ),
-            Some(ExpectedErrorKind::MemoryStorePiiRejection)
-        );
-    }
-
-    #[test]
     fn classifies_memory_store_breaker_open() {
         // TAURI-RUST-52X (~455 events on self-hosted Sentry): the chunk-store
         // per-path circuit breaker tripped after consecutive SQLite init
@@ -2490,21 +2440,70 @@ mod tests {
     }
 
     #[test]
-    fn does_not_classify_unrelated_messages_as_memory_pii_rejection() {
-        // A generic "personal identifiers" mention without the "cannot contain"
-        // anchor must not be silenced.
+    fn classifies_config_load_timed_out() {
+        // Canonical wire string emitted by `load_config_with_timeout` and
+        // `reload_config_snapshot_with_timeout` in
+        // `src/openhuman/config/ops.rs`. Drops TAURI-RUST-5X.
         assert_eq!(
-            expected_error_kind("processing personal identifiers"),
-            None,
-            "must not match a bare 'personal identifiers' mention"
+            expected_error_kind("Config loading timed out"),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
         );
-        // The secret-rejection variant uses different wording and must not be
-        // swallowed by the PII classifier.
+        // Same shape after the RPC dispatch wraps it for display — the
+        // matcher is substring-anchored, so a context prefix does not
+        // break it.
         assert_eq!(
-            expected_error_kind("document namespace/key cannot contain secrets"),
-            None,
-            "secret rejection must remain unclassified"
+            expected_error_kind("rpc.invoke_method failed: Config loading timed out"),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
         );
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_timeouts_as_config_load_timed_out() {
+        // Network / HTTP timeouts go to `NetworkUnreachable` /
+        // `TransientUpstreamHttp`, not the config-load bucket. The
+        // anchor is the full literal phrase, so a bare "timed out" or
+        // "operation timed out" body cannot trip this matcher.
+        assert_ne!(
+            expected_error_kind(
+                "Channel discord error: IO error: Operation timed out (os error 60); restarting"
+            ),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
+        );
+        assert_ne!(
+            expected_error_kind("OpenHuman API error (504 Gateway Timeout): error code: 504"),
+            Some(ExpectedErrorKind::ConfigLoadTimedOut),
+        );
+        // Bare "timed out" without the config-load phrase must not match.
+        assert_eq!(expected_error_kind("cron job timed out after 30s"), None,);
+    }
+
+    #[test]
+    fn classifies_whatsapp_data_sqlite_busy_errors() {
+        for raw in [
+            r#"[whatsapp_data] ingest failed: upsert wa_message chat=120363402402350155@g.us msg=false_120363402402350155@g.us_3A357F28AE74548B1507_207897942335683@lid: database is locked: Error code 5: The database file is locked"#,
+            r#"rpc.invoke_method failed: [whatsapp_data] ingest failed: upsert wa_message [email] msg=false_120363402402350155@g.us_3A357F28AE74548B1507_207897942335683@lid: database is locked: Error code 5: The database file is locked"#,
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
+                "should classify whatsapp_data sqlite busy/locked: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_unrelated_sqlite_lock_messages_as_whatsapp_busy() {
+        for raw in [
+            "failed to run subconscious schema DDL: database is locked",
+            "memory queue write failed: database table is locked",
+            "[whatsapp_data] list_messages failed: database is locked",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
+                "must not classify as whatsapp_data sqlite busy: {raw}"
+            );
+        }
     }
 
     #[test]

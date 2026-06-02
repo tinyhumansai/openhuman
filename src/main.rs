@@ -118,14 +118,25 @@ fn main() {
             // Attach the cached account uid so Sentry can count unique users
             // affected by an issue. We only carry `id` — never email, name,
             // or IP — so this stays consistent with `send_default_pii: false`.
-            // Empty/missing on early-startup events (cache populates after
-            // the first `auth_get_me` RPC); that's expected.
-            event.user = openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
-                .and_then(|identity| identity.id)
-                .map(|id| sentry::User {
-                    id: Some(id),
-                    ..Default::default()
-                });
+            //
+            // Issue #3135: the primary source for `event.user` is now the
+            // Sentry scope, bound proactively at session boundaries
+            // (credentials::store_session / clear_session) and at server boot
+            // (run_server_inner). The `app_state_snapshot` cache is kept as a
+            // fallback so any pre-boot / pre-login event that still rides
+            // the legacy path retains its previous attribution behaviour —
+            // but we only consult it when the scope hasn't already bound a
+            // user, otherwise we'd silently clobber the scope binding when
+            // the cache is empty (root cause of the original userCount=0).
+            if event.user.is_none() {
+                event.user =
+                    openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                        .and_then(|identity| identity.id)
+                        .map(|id| sentry::User {
+                            id: Some(id),
+                            ..Default::default()
+                        });
+            }
             // Scrub secrets from exception values and top-level message.
             for exc in &mut event.exception.values {
                 if let Some(ref value) = exc.value {

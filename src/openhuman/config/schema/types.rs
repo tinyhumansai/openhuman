@@ -51,6 +51,12 @@ pub struct ModelRegistryEntry {
 pub struct Config {
     #[serde(skip)]
     pub workspace_dir: PathBuf,
+    /// Agent action sandbox root — the default cwd for shell/file/git tools.
+    /// Kept separate from `workspace_dir` (which holds internal state like
+    /// memory DBs, sessions, tokens). Defaults to `~/OpenHuman/projects`
+    /// (`default_action_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+    #[serde(skip)]
+    pub action_dir: PathBuf,
     #[serde(skip)]
     pub config_path: PathBuf,
     /// Workspace data-schema version. Bumped each time a one-shot data
@@ -117,6 +123,12 @@ pub struct Config {
     #[serde(default)]
     pub scheduler_gate: SchedulerGateConfig,
 
+    /// User-facing activity-level knob (0–4) controlling how proactive
+    /// background AI work is. Maps into scheduler_gate mode, periodic sync
+    /// cadence, heartbeat/subconscious toggles. See issue #3117.
+    #[serde(default)]
+    pub agent_activity_level: AgentActivityLevel,
+
     #[serde(default)]
     pub agent: AgentConfig,
 
@@ -151,6 +163,12 @@ pub struct Config {
 
     #[serde(default)]
     pub cron: CronConfig,
+
+    /// Task-sources domain defaults — master switch + new-source
+    /// defaults. Per-source records live in the domain's SQLite store.
+    /// See [`crate::openhuman::task_sources`].
+    #[serde(default)]
+    pub task_sources: TaskSourcesConfig,
 
     #[serde(default)]
     pub channels_config: ChannelsConfig,
@@ -198,6 +216,9 @@ pub struct Config {
     pub multimodal: MultimodalConfig,
 
     #[serde(default)]
+    pub multimodal_files: MultimodalFileConfig,
+
+    #[serde(default)]
     pub seltz: SeltzConfig,
 
     #[serde(default)]
@@ -216,6 +237,17 @@ pub struct Config {
 
     #[serde(default)]
     pub cost: CostConfig,
+
+    /// User-configured memory sources — each `[[memory_sources]]` entry
+    /// describes a data connector (Composio OAuth, local folder, GitHub
+    /// repo, RSS feed, Twitter query, web page) that feeds memory.
+    #[serde(default)]
+    pub memory_sources: Vec<crate::openhuman::memory_sources::types::MemorySourceEntry>,
+
+    /// User-facing agent registry — shipped default agents plus user-authored
+    /// custom agents and persisted enable/disable/tool-policy overrides.
+    #[serde(default)]
+    pub agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig,
 
     #[serde(default)]
     pub computer_control: ComputerControlConfig,
@@ -608,6 +640,7 @@ impl Default for Config {
 
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
+            action_dir: crate::openhuman::config::default_action_dir(),
             config_path: openhuman_dir.join("config.toml"),
             schema_version: 0,
             api_url: None,
@@ -626,6 +659,7 @@ impl Default for Config {
             reliability: ReliabilityConfig::default(),
             scheduler: SchedulerConfig::default(),
             scheduler_gate: SchedulerGateConfig::default(),
+            agent_activity_level: AgentActivityLevel::default(),
             agent: AgentConfig::default(),
             orchestrator: OrchestratorModelConfig::default(),
             teams: HashMap::new(),
@@ -634,6 +668,7 @@ impl Default for Config {
             embedding_routes: Vec::new(),
             heartbeat: HeartbeatConfig::default(),
             cron: CronConfig::default(),
+            task_sources: TaskSourcesConfig::default(),
             channels_config: ChannelsConfig::default(),
             memory: MemoryConfig::default(),
             memory_tree: MemoryTreeConfig::default(),
@@ -647,12 +682,15 @@ impl Default for Config {
             mcp_client: McpClientConfig::default(),
             capability_providers: Vec::new(),
             multimodal: MultimodalConfig::default(),
+            multimodal_files: MultimodalFileConfig::default(),
             seltz: SeltzConfig::default(),
             searxng: SearxngConfig::default(),
             web_search: WebSearchConfig::default(),
             search: SearchConfig::default(),
             proxy: ProxyConfig::default(),
             cost: CostConfig::default(),
+            memory_sources: Vec::new(),
+            agent_registry: crate::openhuman::agent_registry::types::AgentRegistryConfig::default(),
             computer_control: ComputerControlConfig::default(),
             agents: HashMap::new(),
             local_ai: LocalAiConfig::default(),

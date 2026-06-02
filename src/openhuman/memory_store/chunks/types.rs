@@ -190,6 +190,10 @@ pub struct Metadata {
     pub tags: Vec<String>,
     /// Opaque pointer back to the raw source record for drill-down / citation.
     pub source_ref: Option<SourceRef>,
+    /// When set, overrides `source_id` for the chunk file path so multiple
+    /// items share one directory. `source_id` remains the dedup key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_scope: Option<String>,
 }
 
 impl Metadata {
@@ -209,6 +213,7 @@ impl Metadata {
             time_range: (timestamp, timestamp),
             tags: Vec::new(),
             source_ref: None,
+            path_scope: None,
         }
     }
 }

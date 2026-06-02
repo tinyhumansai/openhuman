@@ -1,6 +1,6 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
-import { formatTimelineEntry } from '../../../utils/toolTimelineFormatting';
+import { formatTimelineEntry, formatToolName } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
 
@@ -35,15 +35,30 @@ function workerStatusFromEntry(
  * present on the entry, which is true for any row produced by the
  * `subagent_*` socket events from a current core.
  */
-export function SubagentActivityBlock({ subagent }: { subagent: SubagentActivity }) {
+/** Chars of streamed subagent text/thinking shown in the inline card tail. */
+const SUBAGENT_PREVIEW_CHARS = 140;
+
+export function SubagentActivityBlock({
+  subagent,
+  onView,
+}: {
+  subagent: SubagentActivity;
+  /** Opens the full-transcript drawer for this subagent. Omitted in
+   * read-only contexts (e.g. a completed snapshot with no live driver). */
+  onView?: () => void;
+}) {
   const { t } = useT();
   const headerBits: string[] = [];
   if (subagent.mode) headerBits.push(subagent.mode);
   if (subagent.dedicatedThread) headerBits.push(t('conversations.toolTimeline.workerThread'));
-  if (subagent.childIteration != null && subagent.childMaxIterations != null) {
-    headerBits.push(
-      `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
-    );
+  if (subagent.childIteration != null) {
+    if (subagent.childMaxIterations != null) {
+      headerBits.push(
+        `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
+      );
+    } else {
+      headerBits.push(`${t('conversations.toolTimeline.step')} ${subagent.childIteration}`);
+    }
   } else if (subagent.iterations != null) {
     headerBits.push(
       subagent.iterations === 1
@@ -58,6 +73,22 @@ export function SubagentActivityBlock({ subagent }: { subagent: SubagentActivity
         : `${subagent.elapsedMs}ms`
     );
   }
+
+  // Live one-line preview of the subagent's streamed processing, derived
+  // from the ordered transcript: prefer the latest visible-output tail, then
+  // fall back to the latest reasoning tail while the child is still thinking
+  // and hasn't emitted visible text yet. Drives the at-a-glance "what is it
+  // doing right now" affordance on the card.
+  const transcript = subagent.transcript ?? [];
+  const lastTextItem = [...transcript].reverse().find(i => i.kind === 'text');
+  const lastThinkingItem = [...transcript].reverse().find(i => i.kind === 'thinking');
+  const previewItem = lastTextItem ?? lastThinkingItem;
+  const previewIcon = previewItem?.kind === 'text' ? '📝' : '💭';
+  const preview =
+    previewItem && 'text' in previewItem
+      ? previewItem.text.replace(/\s+/g, ' ').trim().slice(-SUBAGENT_PREVIEW_CHARS)
+      : '';
+
   return (
     <div
       className="mt-1 space-y-0.5 text-[10px] text-stone-500 dark:text-neutral-400"
@@ -88,8 +119,8 @@ export function SubagentActivityBlock({ subagent }: { subagent: SubagentActivity
                 className="flex items-center gap-1.5"
                 data-testid="subagent-tool-call">
                 <span className={`text-[9px] ${tone}`}>•</span>
-                <span className="font-mono text-[10px] text-stone-700 dark:text-neutral-200">
-                  {call.toolName}
+                <span className="text-[10px] text-stone-700 dark:text-neutral-200">
+                  {formatToolName(call.toolName)}
                 </span>
                 {call.iteration != null ? (
                   <span className="text-[9px] text-stone-400 dark:text-neutral-500">
@@ -109,11 +140,37 @@ export function SubagentActivityBlock({ subagent }: { subagent: SubagentActivity
           })}
         </ul>
       ) : null}
+      {preview ? (
+        <div
+          className="flex items-start gap-1 text-[10px] text-stone-500 dark:text-neutral-400"
+          data-testid="subagent-preview">
+          <span aria-hidden>{previewIcon}</span>
+          <span className="line-clamp-2 break-words italic">{preview}</span>
+        </div>
+      ) : null}
+      {onView ? (
+        <button
+          type="button"
+          onClick={onView}
+          data-testid="subagent-view-processing"
+          className="mt-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium text-primary-600 hover:bg-primary-50 dark:text-primary-300 dark:hover:bg-primary-500/15">
+          {t('conversations.subagent.viewProcessing')} →
+        </button>
+      ) : null}
     </div>
   );
 }
 
-export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] }) {
+export function ToolTimelineBlock({
+  entries,
+  onViewSubagent,
+}: {
+  entries: ToolTimelineEntry[];
+  /** Opens the full-transcript drawer for a subagent row. When omitted,
+   * subagent cards render without the "view full processing" affordance
+   * (e.g. interrupted-snapshot rendering with no live driver). */
+  onViewSubagent?: (subagent: SubagentActivity) => void;
+}) {
   const latestRunningEntryId = [...entries].reverse().find(entry => entry.status === 'running')?.id;
 
   const normalizeToolBody = (value?: string): string | undefined => {
@@ -199,7 +256,12 @@ export function ToolTimelineBlock({ entries }: { entries: ToolTimelineEntry[] })
                     {detailContent}
                   </pre>
                 ) : null}
-                {subagent ? <SubagentActivityBlock subagent={subagent} /> : null}
+                {subagent ? (
+                  <SubagentActivityBlock
+                    subagent={subagent}
+                    onView={onViewSubagent ? () => onViewSubagent(subagent) : undefined}
+                  />
+                ) : null}
               </details>
             ) : (
               <div className="ml-1 flex items-center gap-2">

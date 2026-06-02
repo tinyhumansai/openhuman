@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
-import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
-import { GameplayReviewWorkspace } from '../components/intelligence/GameplayReviewWorkspace';
-import IntelligenceCallsTab from '../components/intelligence/IntelligenceCallsTab';
-import IntelligenceDreamsTab from '../components/intelligence/IntelligenceDreamsTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
-import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
+import MemorySection from '../components/intelligence/MemorySection';
+import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
 import {
@@ -20,15 +17,10 @@ import type {
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
+import { IS_DEV } from '../utils/config';
+import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab =
-  | 'memory'
-  | 'gameplay'
-  | 'subconscious'
-  | 'calls'
-  | 'dreams'
-  | 'tasks'
-  | 'diagram';
+type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'council';
 
 export default function Intelligence() {
   const { t } = useT();
@@ -50,21 +42,15 @@ export default function Intelligence() {
 
   // Subconscious engine data
   const {
-    tasks: subconsciousTasks,
-    escalations,
-    logEntries,
     status: subconsciousEngineStatus,
-    loading: subconsciousLoading,
+    mode: subconsciousMode,
+    intervalMinutes: subconsciousInterval,
     triggering: subconsciousTriggering,
+    settingMode: subconsciousSettingMode,
     triggerTick,
-    addTask: addSubconsciousTask,
-    removeTask: removeSubconsciousTask,
-    toggleTask: toggleSubconsciousTask,
-    approveEscalation,
-    dismissEscalation,
+    setMode: setSubconsciousMode,
+    setIntervalMinutes: setSubconsciousInterval,
   } = useSubconscious();
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
 
   // Socket integration
   const socketManager = useIntelligenceSocketManager();
@@ -96,15 +82,31 @@ export default function Intelligence() {
     }
   }, [socketConnected, socketManager]);
 
-  const tabs: { id: IntelligenceTab; label: string; comingSoon?: boolean }[] = [
+  const allTabs: {
+    id: IntelligenceTab;
+    label: string;
+    description?: string;
+    comingSoon?: boolean;
+    devOnly?: boolean;
+  }[] = [
+    {
+      id: 'tasks',
+      label: t('memory.tab.tasks'),
+      description: t('memory.tab.tasksDescription'),
+      devOnly: true,
+    },
     { id: 'memory', label: t('memory.tab.memory') },
-    { id: 'gameplay', label: t('memory.tab.gameplay') },
     { id: 'subconscious', label: t('memory.tab.subconscious') },
-    { id: 'tasks', label: 'Tasks' },
-    { id: 'diagram', label: t('memory.tab.diagram') },
-    { id: 'calls', label: t('memory.tab.calls') },
-    { id: 'dreams', label: t('memory.tab.dreams') },
+    {
+      id: 'workflows',
+      label: t('memory.tab.workflows'),
+      description: t('memory.tab.workflowsDescription'),
+      devOnly: true,
+    },
+    { id: 'council', label: t('memory.tab.council'), devOnly: true },
   ];
+  const tabs = allTabs.filter(tab => !tab.devOnly || IS_DEV);
+  const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
   return (
     <div className="min-h-full p-4 pt-6">
@@ -136,14 +138,21 @@ export default function Intelligence() {
 
         <div className="bg-white dark:bg-neutral-900 rounded-2xl shadow-soft border border-stone-200 dark:border-neutral-800 p-6">
           <div>
-            {/* Header */}
+            {/* Header — reflects the active tab so the panel title matches
+                what's shown below it (e.g. "Agent Tasks" on the Tasks tab),
+                rather than a static "Memory". */}
             <div className="flex items-center justify-between mb-6">
-              <div className="flex items-center gap-3">
+              <div className="min-w-0">
                 <h1
                   className="text-xl font-bold text-stone-900 dark:text-neutral-100"
                   data-walkthrough="intelligence-header">
-                  {t('memory.title')}
+                  {activeTabDef?.label ?? t('memory.title')}
                 </h1>
+                {activeTabDef?.description && (
+                  <p className="mt-1 text-sm text-stone-500 dark:text-neutral-400">
+                    {activeTabDef.description}
+                  </p>
+                )}
                 {/* Header count badge was sourced from `stats.total` which
                     in turn came from the legacy actionable-items pipeline
                     (`filterItems(items, ...)`). The Memory tab now mounts
@@ -156,38 +165,26 @@ export default function Intelligence() {
             </div>
 
             {/* Tab content */}
-            {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
-
-            {activeTab === 'gameplay' && <GameplayReviewWorkspace onToast={addToast} />}
+            {activeTab === 'memory' && <MemorySection onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
-                addSubconsciousTask={addSubconsciousTask}
-                approveEscalation={approveEscalation}
-                dismissEscalation={dismissEscalation}
-                escalations={escalations}
-                expandedLogIds={expandedLogIds}
-                loading={subconsciousLoading}
-                logEntries={logEntries}
-                newTaskTitle={newTaskTitle}
-                removeSubconsciousTask={removeSubconsciousTask}
-                setExpandedLogIds={setExpandedLogIds}
-                setNewTaskTitle={setNewTaskTitle}
                 status={subconsciousEngineStatus}
-                tasks={subconsciousTasks}
-                toggleSubconsciousTask={toggleSubconsciousTask}
+                mode={subconsciousMode}
+                intervalMinutes={subconsciousInterval}
                 triggerTick={triggerTick}
                 triggering={subconsciousTriggering}
+                settingMode={subconsciousSettingMode}
+                setMode={setSubconsciousMode}
+                setIntervalMinutes={setSubconsciousInterval}
               />
             )}
 
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
 
-            {activeTab === 'diagram' && <DiagramViewerTab />}
+            {activeTab === 'workflows' && <AgentWorkflows />}
 
-            {activeTab === 'calls' && <IntelligenceCallsTab onToast={addToast} />}
-
-            {activeTab === 'dreams' && <IntelligenceDreamsTab />}
+            {activeTab === 'council' && <ModelCouncilTab />}
           </div>
         </div>
       </div>

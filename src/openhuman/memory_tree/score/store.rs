@@ -8,7 +8,9 @@
 //! Schema is declared in `memory/tree/store.rs::SCHEMA`; this file only
 //! owns the CRUD operations.
 
-use anyhow::Result;
+use std::collections::HashMap;
+
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
@@ -166,6 +168,66 @@ pub fn get_score(config: &Config, chunk_id: &str) -> Result<Option<ScoreRow>> {
         )
         .optional()
         .map_err(anyhow::Error::from)
+    })
+}
+
+/// Defensive cap for batched `IN (?,?,…)` reads.
+///
+/// See identical rationale on [`crate::openhuman::memory_store::chunks::store`]'s
+/// `MAX_FETCH_BATCH`: SQLite's `SQLITE_MAX_VARIABLE_NUMBER` has been
+/// 32 766 since 3.32, so 500 leaves a ~65× safety margin. The
+/// `fetch_leaves` call-site is capped at 20 ids so the chunked loop
+/// runs exactly once today — the window exists purely so future
+/// call-sites passing larger id lists do not blow up against a host
+/// with a lower compile-time SQLite cap.
+const MAX_FETCH_BATCH: usize = 500;
+
+/// Batched read of just the `total` field for many chunk ids.
+///
+/// Narrow on purpose — `fetch_leaves` only needs the float, not the
+/// full [`ScoreRow`] with all signals. The returned map contains only
+/// `chunk_id`s that have a score row; missing ids are silently absent,
+/// matching the per-row [`get_score`] contract (callers then fall back
+/// to the documented 0.0 neutral).
+pub fn get_scores_batch(config: &Config, chunk_ids: &[String]) -> Result<HashMap<String, f32>> {
+    if chunk_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    log::debug!(
+        "[memory_tree::score] get_scores_batch: n={} windows={}",
+        chunk_ids.len(),
+        chunk_ids.len().div_ceil(MAX_FETCH_BATCH)
+    );
+    with_connection(config, |conn| {
+        let mut out: HashMap<String, f32> = HashMap::with_capacity(chunk_ids.len());
+        for window in chunk_ids.chunks(MAX_FETCH_BATCH) {
+            let placeholders = (1..=window.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!(
+                "SELECT chunk_id, total FROM mem_tree_score
+                  WHERE chunk_id IN ({placeholders})"
+            );
+            let mut stmt = conn.prepare(&sql).context("prepare get_scores_batch")?;
+            let params: Vec<&dyn rusqlite::ToSql> =
+                window.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+            let rows = stmt
+                .query_map(params.as_slice(), |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, f32>(1)?))
+                })
+                .context("query get_scores_batch")?;
+            for row in rows {
+                let (chunk_id, total) = row.context("decode get_scores_batch row")?;
+                out.insert(chunk_id, total);
+            }
+        }
+        log::debug!(
+            "[memory_tree::score] get_scores_batch: matched {}/{} ids",
+            out.len(),
+            chunk_ids.len()
+        );
+        Ok(out)
     })
 }
 

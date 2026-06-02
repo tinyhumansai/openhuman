@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
 import { useT } from '../../lib/i18n/I18nContext';
+import { SCHEDULE_PRESETS } from '../../lib/cron/schedulePresets';
 import {
   type RunLogSlice,
   type ScannedRun,
@@ -97,16 +98,6 @@ interface RunState {
   result?: SkillRunStarted;
 }
 
-// Cron schedule presets. The exact cron expressions match
-// DevWorkflowPanel's set so users see the same options across the two
-// panels. Custom expressions land in a future revision.
-const SCHEDULE_PRESETS: { labelKey: string; value: string }[] = [
-  { labelKey: 'settings.skillsRunner.schedule.every30min', value: '*/30 * * * *' },
-  { labelKey: 'settings.skillsRunner.schedule.everyHour', value: '0 * * * *' },
-  { labelKey: 'settings.skillsRunner.schedule.every2hours', value: '0 */2 * * *' },
-  { labelKey: 'settings.skillsRunner.schedule.every6hours', value: '0 */6 * * *' },
-  { labelKey: 'settings.skillsRunner.schedule.onceDaily', value: '0 9 * * *' },
-];
 
 /** Name prefix used to identify cron jobs owned by this panel (per-skill). */
 const CRON_NAME_PREFIX = 'skill-run-';
@@ -1064,9 +1055,9 @@ export const SkillsRunnerBody = ({ headerText, className }: SkillsRunnerBodyProp
                 </div>
 
                 {/* Schedule (cron-driven recurring) */}
-                <div className="pt-4 border-t border-stone-200 dark:border-stone-700 space-y-3">
+                <div className="pt-4 border-t border-stone-200 dark:border-stone-700">
                   <div>
-                    <h3 className="text-sm font-semibold text-stone-700 dark:text-stone-300">
+                    <h3 className="text-sm font-semibold text-stone-800 dark:text-stone-200">
                       {t('settings.skillsRunner.schedule.heading')}
                     </h3>
                     <p className="text-xs text-stone-500 dark:text-stone-400 mt-1">
@@ -1074,62 +1065,64 @@ export const SkillsRunnerBody = ({ headerText, className }: SkillsRunnerBodyProp
                     </p>
                   </div>
 
-                  <div className="flex items-end gap-2">
-                    <div className="flex-1">
-                      <label
-                        htmlFor="skills-runner-schedule"
-                        className="block text-sm font-medium text-stone-700 dark:text-stone-300 mb-1"
+                  <div className="mt-3 rounded-2xl border border-stone-200/90 dark:border-stone-700/80 bg-gradient-to-br from-stone-50 via-white to-stone-100 dark:from-stone-900 dark:via-stone-900 dark:to-stone-800/80 px-3 py-3 shadow-soft">
+                    <div className="flex flex-col sm:flex-row sm:items-end gap-2">
+                      <div className="flex-1">
+                        <label
+                          htmlFor="skills-runner-schedule"
+                          className="block text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-300 mb-1.5"
+                        >
+                          {t('settings.skillsRunner.schedule.frequency')}
+                        </label>
+                        <select
+                          id="skills-runner-schedule"
+                          value={schedule}
+                          onChange={(e) => setSchedule(e.target.value)}
+                          className="w-full rounded-xl border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500/40 focus:border-primary-500"
+                        >
+                          {SCHEDULE_PRESETS.map((p) => (
+                            <option key={p.value} value={p.value}>
+                              {t(p.labelKey)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleSaveSchedule()}
+                        disabled={savingSchedule || missingRequired.length > 0}
+                        className="rounded-xl border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 disabled:bg-stone-300 disabled:border-stone-300 dark:disabled:bg-stone-700 dark:disabled:border-stone-700 disabled:text-stone-600 dark:disabled:text-stone-300 px-4 py-2 text-sm font-semibold text-white shadow-soft transition-colors"
                       >
-                        {t('settings.skillsRunner.schedule.frequency')}
-                      </label>
-                      <select
-                        id="skills-runner-schedule"
-                        value={schedule}
-                        onChange={(e) => setSchedule(e.target.value)}
-                        className="w-full rounded border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-800 px-3 py-2 text-sm text-stone-900 dark:text-stone-100"
-                      >
-                        {SCHEDULE_PRESETS.map((p) => (
-                          <option key={p.value} value={p.value}>
-                            {t(p.labelKey)}
-                          </option>
-                        ))}
-                      </select>
+                        {savingSchedule
+                          ? t('settings.skillsRunner.schedule.saving')
+                          : t('settings.skillsRunner.schedule.save')}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => void handleSaveSchedule()}
-                      disabled={savingSchedule || missingRequired.length > 0}
-                      className="rounded bg-stone-200 hover:bg-stone-300 dark:bg-stone-700 dark:hover:bg-stone-600 disabled:opacity-50 px-4 py-2 text-sm font-medium text-stone-900 dark:text-stone-100"
-                    >
-                      {savingSchedule
-                        ? t('settings.skillsRunner.schedule.saving')
-                        : t('settings.skillsRunner.schedule.save')}
-                    </button>
                   </div>
 
                   {scheduleSaved && (
-                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                    <p className="mt-2 inline-flex items-center rounded-full border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-900/40 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                       {t('settings.skillsRunner.schedule.saved')}
                     </p>
                   )}
                   {scheduleError && (
-                    <p className="text-xs text-red-600 dark:text-red-400">
+                    <p className="mt-2 inline-flex items-center rounded-full border border-red-300 dark:border-red-700 bg-red-50 dark:bg-red-900/40 px-2.5 py-1 text-xs font-medium text-red-700 dark:text-red-300">
                       {t('settings.skillsRunner.schedule.error')} {scheduleError}
                     </p>
                   )}
 
                   {/* Existing scheduled jobs for this skill */}
                   {scheduledJobsLoading ? (
-                    <p className="text-xs text-stone-500 dark:text-stone-400">
+                    <p className="mt-3 text-xs text-stone-500 dark:text-stone-400">
                       {t('settings.skillsRunner.schedule.loadingJobs')}
                     </p>
                   ) : scheduledJobs.length === 0 ? (
-                    <p className="text-xs italic text-stone-500 dark:text-stone-400">
+                    <p className="mt-3 text-xs italic text-stone-500 dark:text-stone-400">
                       {t('settings.skillsRunner.schedule.noJobs')}
                     </p>
                   ) : (
-                    <div className="space-y-2">
-                      <div className="text-xs font-medium text-stone-600 dark:text-stone-400">
+                    <div className="mt-3 space-y-2 rounded-2xl border border-stone-200/80 dark:border-stone-800 bg-stone-50/70 dark:bg-stone-900/40 p-2.5">
+                      <div className="text-xs font-semibold uppercase tracking-wide text-stone-600 dark:text-stone-400 px-1">
                         {t('settings.skillsRunner.schedule.existing')}
                       </div>
                       {/* Per-skill saved-schedule list — uses the shared
@@ -1159,14 +1152,14 @@ export const SkillsRunnerBody = ({ headerText, className }: SkillsRunnerBodyProp
                                 <button
                                   type="button"
                                   onClick={() => void handleRunJobNow(job.id)}
-                                  className="rounded bg-primary-600 hover:bg-primary-700 px-2 py-1 text-xs font-medium text-white"
+                                  className="rounded-lg border border-primary-700/30 bg-primary-600 hover:bg-primary-700 active:bg-primary-800 px-2.5 py-1 text-xs font-semibold text-white transition-colors"
                                 >
                                   {t('settings.skillsRunner.schedule.runNow')}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => void handleRemoveJob(job.id)}
-                                  className="rounded bg-red-600 hover:bg-red-700 px-2 py-1 text-xs font-medium text-white"
+                                  className="rounded-lg border border-red-700/40 bg-red-600 hover:bg-red-700 active:bg-red-800 px-2.5 py-1 text-xs font-semibold text-white transition-colors"
                                 >
                                   {t('settings.skillsRunner.schedule.remove')}
                                 </button>

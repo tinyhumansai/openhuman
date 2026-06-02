@@ -473,6 +473,17 @@ async fn try_arm(
         silent: true,
         channel_name: "triage".to_string(),
         multimodal: MultimodalConfig::default(),
+        // Triage receives untrusted text from third-party channel
+        // payloads (Slack/Telegram/Discord/WhatsApp). Disable
+        // file-marker resolution outright so an attacker can't smuggle
+        // `[FILE:/etc/passwd]` (or any other local-path marker) into
+        // an inbound message and have triage exfiltrate the contents
+        // into an LLM call. The hardened constructor sets max_files=0,
+        // which `prepare_messages_for_provider` short-circuits before
+        // any disk read happens. The same constructor is used at the
+        // main channel-dispatch site in `channels::runtime::dispatch`.
+        multimodal_files:
+            crate::openhuman::config::MultimodalFileConfig::for_untrusted_channel_input(),
         max_tool_iterations: 1,
         on_delta: None,
         target_agent_id: Some("trigger_triage".to_string()),
@@ -720,6 +731,10 @@ fn extract_inline_prompt(def: &AgentDefinition) -> Option<String> {
                 include_memory_md: false,
                 curated_snapshot: None,
                 user_identity: None,
+                personality_soul_md: None,
+                personality_memory_md: None,
+                personality_roster: vec![],
+                workflows: &[],
             };
             match build(&ctx) {
                 Ok(body) if !body.is_empty() => Some(body),

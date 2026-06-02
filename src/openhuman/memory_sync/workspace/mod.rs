@@ -5,13 +5,13 @@
 //!
 //! | Submodule | Source | Notes |
 //! | --- | --- | --- |
-//! | `vault`     | Files dropped into the Obsidian vault by the user      | Watch + diff |
+//! | `folder`    | Files under a user-added folder memory source          | Watch + diff |
 //! | `harness`   | Agent harness turns (memory_archivist's caller side)   | Push-based |
 //! | `dictation` | Local audio capture transcripts                        | Push-based |
 //!
 //! ## Status
 //!
-//! Scaffold only. Today the vault watch lives in `vault/sync.rs`,
-//! harness capture in `agent_experience/`, and dictation in
-//! `dictation_hotkeys/`. Each will land here as a [`SyncPipeline`] impl
-//! in a follow-up.
+//! Scaffold only. Today folder ingestion lives in
+//! `memory_sources/readers/folder.rs`, harness capture in
+//! `agent_experience/`, and dictation in `dictation_hotkeys/`. Each will
+//! land here as a [`SyncPipeline`] impl in a follow-up.

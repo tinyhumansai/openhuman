@@ -94,6 +94,7 @@ impl AgentBuilder {
             temperature: None,
             workspace_dir: None,
             skills: None,
+            workflows: None,
             auto_save: None,
             post_turn_hooks: Vec::new(),
             learning_enabled: false,
@@ -202,6 +203,20 @@ impl AgentBuilder {
     /// Sets the skills available to the agent.
     pub fn skills(mut self, skills: Vec<crate::openhuman::skills::Skill>) -> Self {
         self.skills = Some(skills);
+        self
+    }
+
+    /// Sets the agent workflows available to the agent.
+    ///
+    /// Populated at session start via
+    /// [`crate::openhuman::agent_workflows::load_workflows`]; defaults to empty
+    /// when not set so callers that do not participate in the workflow system
+    /// do not need to change.
+    pub fn workflows(
+        mut self,
+        workflows: Vec<crate::openhuman::agent_workflows::Workflow>,
+    ) -> Self {
+        self.workflows = Some(workflows);
         self
     }
 
@@ -531,9 +546,10 @@ impl AgentBuilder {
             memory: self
                 .memory
                 .ok_or_else(|| anyhow::anyhow!("memory is required"))?,
-            tool_dispatcher: self
-                .tool_dispatcher
-                .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
+            tool_dispatcher: std::sync::Arc::from(
+                self.tool_dispatcher
+                    .ok_or_else(|| anyhow::anyhow!("tool_dispatcher is required"))?,
+            ),
             memory_loader: self
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),
@@ -544,11 +560,11 @@ impl AgentBuilder {
                 .workspace_dir
                 .unwrap_or_else(|| std::path::PathBuf::from(".")),
             skills: self.skills.unwrap_or_default(),
+            workflows: self.workflows.unwrap_or_default(),
             auto_save: self.auto_save.unwrap_or(false),
             last_memory_context: None,
             last_turn_citations: Vec::new(),
             history: Vec::new(),
-            last_tree_prefetch_at: None,
             post_turn_hooks: self.post_turn_hooks,
             learning_enabled: self.learning_enabled,
             explicit_preferences_enabled: self.explicit_preferences_enabled,
@@ -596,8 +612,12 @@ impl AgentBuilder {
                 Arc::new(crate::openhuman::agent::tool_policy::AllowAllToolPolicy)
             }),
             last_seen_integrations_hash: 0,
+            composio_integrations_rx: None,
+            announced_integrations: std::collections::HashSet::new(),
+            pending_integration_announcement: Vec::new(),
             archivist_hook: self.archivist_hook,
             synthesized_tool_names: std::collections::HashSet::new(),
+            pending_synthesized_tools_mask: std::collections::HashSet::new(),
         })
     }
 }
@@ -821,6 +841,7 @@ impl Agent {
         let security = Arc::new(SecurityPolicy::from_config(
             &config.autonomy,
             &config.workspace_dir,
+            &config.action_dir,
         ));
         // Phase 1 of #1401: see comment in channels/runtime/startup.rs.
         let audit = crate::openhuman::security::get_or_create_workspace_audit_logger(
@@ -845,7 +866,7 @@ impl Agent {
             memory.clone(),
             &config.browser,
             &config.http_request,
-            &config.workspace_dir,
+            &config.action_dir,
             &config.agents,
             config,
         );
@@ -1546,6 +1567,15 @@ impl Agent {
             .temperature(effective_temperature)
             .workspace_dir(config.workspace_dir.clone())
             .skills(crate::openhuman::skills::load_skills(&config.workspace_dir))
+            .workflows({
+                let wf = crate::openhuman::agent_workflows::load_workflows(&config.workspace_dir);
+                log::debug!(
+                    "[workflows][phase] loaded {} workflow(s) from workspace={}",
+                    wf.len(),
+                    config.workspace_dir.display()
+                );
+                wf
+            })
             .auto_save(config.memory.auto_save)
             .post_turn_hooks(post_turn_hooks)
             .learning_enabled(config.learning.enabled)

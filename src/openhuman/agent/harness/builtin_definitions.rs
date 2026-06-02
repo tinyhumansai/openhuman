@@ -1,7 +1,7 @@
 //! Built-in [`AgentDefinition`]s.
 //!
 //! The authoritative list of built-in agents lives in
-//! [`crate::openhuman::agent::agents`] — each agent is a subfolder
+//! [`crate::openhuman::agent_registry::agents`] — each agent is a subfolder
 //! containing `agent.toml` + `prompt.md`. This module is a thin
 //! wrapper that loads that set.
 //!
@@ -17,8 +17,8 @@ use super::definition::DefinitionSource;
 /// Panics if the baked-in built-in TOML fails to parse. `include_str!`
 /// guarantees at compile time that each file exists, but the actual
 /// TOML parse happens at runtime; the unit tests in
-/// [`crate::openhuman::agent::agents`] verify in CI that every entry in
-/// [`crate::openhuman::agent::agents::BUILTINS`] still parses cleanly.
+/// [`crate::openhuman::agent_registry::agents`] verify in CI that every entry in
+/// [`crate::openhuman::agent_registry::agents::BUILTINS`] still parses cleanly.
 ///
 /// In `#[cfg(test)]` builds the list additionally contains
 /// [`test_inherit_echo_def`] — a sub-agent with `ModelSpec::Inherit`
@@ -29,7 +29,7 @@ use super::definition::DefinitionSource;
 /// test's `MockProvider`). It is never compiled into release builds.
 pub fn all() -> Vec<AgentDefinition> {
     #[allow(unused_mut)]
-    let mut defs = crate::openhuman::agent::agents::load_builtins()
+    let mut defs = crate::openhuman::agent_registry::agents::load_builtins()
         .expect("built-in agent TOML must always parse (see agents/*/agent.toml)");
     #[cfg(test)]
     {
@@ -67,6 +67,7 @@ pub(crate) fn test_inherit_echo_def() -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 3,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
@@ -102,6 +103,7 @@ pub(crate) fn test_inherit_parallel_worker_def() -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 6,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
@@ -123,7 +125,7 @@ mod tests {
         // +2 for the cfg(test) inherit-based test defs appended by all().
         assert_eq!(
             defs.len(),
-            crate::openhuman::agent::agents::BUILTINS.len() + 2
+            crate::openhuman::agent_registry::agents::BUILTINS.len() + 2
         );
     }
 

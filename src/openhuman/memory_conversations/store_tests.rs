@@ -23,6 +23,7 @@ fn store_roundtrips_threads_and_messages() {
             title: "Conversation".to_string(),
             created_at: created_at.clone(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
     assert_eq!(thread.message_count, 0);
@@ -61,6 +62,7 @@ fn get_messages_for_new_empty_thread_returns_empty_list() {
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
 
@@ -78,6 +80,7 @@ fn store_updates_message_metadata() {
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
     store
@@ -119,6 +122,7 @@ fn purge_removes_threads_and_messages() {
             title: "Conversation".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .expect("ensure thread");
     store
@@ -150,6 +154,7 @@ fn ensure_thread_is_idempotent() {
         title: "Thread".to_string(),
         created_at: "2026-04-10T12:00:00Z".to_string(),
         labels: None,
+        personality_id: None,
     };
     store.ensure_thread(req.clone()).unwrap();
     store.ensure_thread(req).unwrap();
@@ -167,6 +172,7 @@ fn delete_thread_removes_thread_and_messages() {
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -206,6 +212,7 @@ fn get_messages_empty_thread() {
             title: "Empty".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     let messages = store.get_messages("t1").unwrap();
@@ -230,6 +237,7 @@ fn multiple_threads_and_messages() {
                 title: format!("Thread {i}"),
                 created_at: format!("2026-04-10T12:0{i}:00Z"),
                 labels: None,
+                personality_id: None,
             })
             .unwrap();
         store
@@ -268,6 +276,7 @@ fn update_message_nonexistent_returns_error() {
             title: "Thread".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     let result = store.update_message(
@@ -290,6 +299,7 @@ fn update_thread_title_persists_latest_title() {
             title: "Chat Apr 10 12:00 PM".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -315,6 +325,7 @@ fn store_handles_labels_and_inference() {
             title: "Thread 1".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: Some(vec!["custom".to_string()]),
+            personality_id: None,
         })
         .unwrap();
 
@@ -326,6 +337,7 @@ fn store_handles_labels_and_inference() {
             title: "Morning Briefing".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -337,6 +349,7 @@ fn store_handles_labels_and_inference() {
             title: "System Notification".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -348,6 +361,7 @@ fn store_handles_labels_and_inference() {
             title: "User Chat".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
 
@@ -422,6 +436,7 @@ fn list_threads_does_not_read_per_thread_files_after_first_call() {
             title: "T1".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     for i in 0..3 {
@@ -555,6 +570,7 @@ fn delete_thread_clears_stats_from_index() {
             title: "Doomed".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -590,6 +606,7 @@ fn search_cross_thread_messages_finds_hits_outside_excluded_thread() {
             title: "Chat A".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -616,6 +633,7 @@ fn search_cross_thread_messages_finds_hits_outside_excluded_thread() {
             title: "Chat B".to_string(),
             created_at: "2026-04-10T13:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -656,6 +674,7 @@ fn search_cross_thread_messages_excludes_active_thread() {
             title: "Only".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -697,6 +716,7 @@ fn search_cross_thread_messages_skips_short_terms_and_empty_queries() {
             title: "T".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -735,6 +755,7 @@ fn search_cross_thread_messages_finds_polish_substring_without_diacritics() {
             title: "PL".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -773,6 +794,7 @@ fn search_cross_thread_messages_finds_japanese_bigram_match() {
             title: "JP".to_string(),
             created_at: "2026-04-10T12:00:00Z".to_string(),
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -812,6 +834,7 @@ fn search_cross_thread_messages_rebuilds_index_from_jsonl_after_reopen() {
                 title: "X".to_string(),
                 created_at: "2026-04-10T12:00:00Z".to_string(),
                 labels: None,
+                personality_id: None,
             })
             .unwrap();
         store
@@ -860,6 +883,7 @@ fn cold_search_does_not_serialize_on_outer_lock() {
             created_at: "2026-01-01T00:00:00Z".to_string(),
             parent_thread_id: None,
             labels: None,
+            personality_id: None,
         })
         .unwrap();
     store
@@ -932,4 +956,307 @@ fn read_jsonl_skips_invalid_lines_but_keeps_valid_ones() {
     assert_eq!(messages.len(), 2);
     assert_eq!(messages[0].id, "m1");
     assert_eq!(messages[1].id, "m2");
+}
+
+// ── concurrency: search cold rebuild must not block concurrent append ────────
+
+/// Regression test for issue #2849.
+///
+/// Before the fix, `search_cross_thread_messages` held `CONVERSATION_STORE_LOCK`
+/// for the entire cold index rebuild, stalling every concurrent
+/// `append_message` call for as long as the rebuild took.  The fix
+/// moves the rebuild outside the outer lock (`prime_index_if_cold`), so
+/// an append in flight during a cold rebuild acquires the outer lock
+/// independently and completes promptly.
+///
+/// The test seeds a fresh workspace (cold cache), races a search against
+/// an append using a barrier, and asserts the append finishes within a
+/// generous timeout that would be violated if the two operations were
+/// serialised through the outer lock.
+#[test]
+fn search_cold_rebuild_does_not_block_concurrent_append() {
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::thread;
+    use std::time::Duration;
+
+    let ts = "2026-04-10T12:00:00Z".to_string();
+
+    // Fresh TempDir → path never seen by the process-level cache → cold.
+    // Note: append_message only updates an *existing* cache entry; it never
+    // inserts one, so the cache stays cold until the first search call.
+    let temp = TempDir::new().unwrap();
+    let store = ConversationStore::new(temp.path().to_path_buf());
+
+    store
+        .ensure_thread(CreateConversationThread {
+            parent_thread_id: None,
+            id: "t1".to_string(),
+            title: "Rebuild thread".to_string(),
+            created_at: ts.clone(),
+            labels: None,
+            personality_id: None,
+        })
+        .unwrap();
+
+    // Seed enough messages to give the rebuild real work.
+    for i in 0..200_usize {
+        store
+            .append_message(
+                "t1",
+                ConversationMessage {
+                    id: format!("seed-{i}"),
+                    content: format!("seed message {i} for cold rebuild test"),
+                    message_type: "text".to_string(),
+                    extra_metadata: serde_json::json!({}),
+                    sender: "user".to_string(),
+                    created_at: ts.clone(),
+                },
+            )
+            .unwrap();
+    }
+
+    let store_search = store.clone();
+    let store_append = store.clone();
+
+    // Both threads start at the same time.
+    let barrier = Arc::new(Barrier::new(2));
+    let b_search = Arc::clone(&barrier);
+    let b_append = Arc::clone(&barrier);
+
+    let search_handle = thread::spawn(move || {
+        b_search.wait();
+        store_search.search_cross_thread_messages("seed message", 5, None)
+    });
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        b_append.wait();
+        let result = store_append.append_message(
+            "t1",
+            ConversationMessage {
+                id: "concurrent-append".to_string(),
+                content: "written during cold rebuild".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: serde_json::json!({}),
+                sender: "user".to_string(),
+                created_at: ts,
+            },
+        );
+        let _ = tx.send(result);
+    });
+
+    // append_message must complete even if the rebuild is in progress. On the
+    // old code this blocked for the full rebuild duration; on fixed code the
+    // two operations proceed concurrently. The 30 s budget tolerates a slow CI
+    // runner — a genuine deadlock never completes, so a regression still fails.
+    let append_result = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("append_message did not complete within 30 s — likely blocked by cold rebuild");
+    assert!(
+        append_result.is_ok(),
+        "append failed: {:?}",
+        append_result.err()
+    );
+
+    let search_result = search_handle.join().expect("search thread panicked");
+    assert!(
+        search_result.is_ok(),
+        "search failed: {:?}",
+        search_result.err()
+    );
+}
+
+// ── legacy workspace (pre-Stats backfill path) ───────────────────────────────
+
+/// Regression test for issue #2849 (backfill path).
+///
+/// A workspace where `threads.jsonl` contains only `Upsert` entries with no
+/// `MessageAppended` / `Stats` history is a "pre-Stats" workspace — common for
+/// data written before the Stats log was introduced.  When
+/// `list_threads_unlocked` encounters such threads it calls
+/// `measure_messages_unlocked` per thread and appends a `Stats` entry to
+/// `threads.jsonl`, all while holding `CONVERSATION_STORE_LOCK`.
+///
+/// `prime_index_if_cold` must NOT call `list_threads_unlocked`.  It uses
+/// `thread_index_unlocked` (header-only, no per-thread I/O) to snapshot
+/// thread IDs under the lock, then reads per-thread JSONL content outside
+/// the lock.  This test verifies that a cold search on such a workspace
+/// still finds the correct messages, and that the former blocking code path
+/// is no longer reachable from `prime_index_if_cold`.
+#[test]
+fn prime_index_cold_build_works_on_legacy_workspace_without_stats() {
+    let temp = TempDir::new().unwrap();
+    let store = ConversationStore::new(temp.path().to_path_buf());
+    let ts = "2023-06-01T00:00:00Z".to_string();
+
+    // Bootstrap a legacy workspace by writing directly to the JSONL files —
+    // bypassing ensure_thread / append_message so no MessageAppended or Stats
+    // entries end up in threads.jsonl.  This is exactly the shape produced by
+    // versions of the code predating the Stats log.
+    let root = store.root_dir();
+    std::fs::create_dir_all(root.join(THREAD_MESSAGES_DIR)).unwrap();
+
+    // Write an Upsert-only threads.jsonl (no MessageAppended / Stats entries).
+    append_jsonl(
+        &root.join(THREADS_FILENAME),
+        &ThreadLogEntry::Upsert {
+            thread_id: "legacy-t1".to_string(),
+            title: "Legacy Thread".to_string(),
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+        },
+    )
+    .unwrap();
+
+    // Write messages directly to the per-thread JSONL file, bypassing
+    // append_message so message_count stays None in the index.
+    let msg_path = store.thread_messages_path("legacy-t1");
+    for i in 0..3_usize {
+        append_jsonl(
+            &msg_path,
+            &ConversationMessage {
+                id: format!("lm{i}"),
+                content: format!("legacy kitten message {i}"),
+                message_type: "text".to_string(),
+                extra_metadata: serde_json::json!({}),
+                sender: "user".to_string(),
+                created_at: ts.clone(),
+            },
+        )
+        .unwrap();
+    }
+
+    // Cold build on a pre-Stats workspace must index all messages without
+    // triggering measure_messages_unlocked under CONVERSATION_STORE_LOCK.
+    let hits = store
+        .search_cross_thread_messages("kitten", 10, None)
+        .expect("search on legacy workspace");
+    assert_eq!(
+        hits.len(),
+        3,
+        "all three legacy messages must be found via cold build"
+    );
+    assert!(
+        hits.iter().any(|h| h.message_id == "lm0"),
+        "lm0 must be in results"
+    );
+}
+
+/// Extends the concurrent-append test to the legacy (no-Stats) workspace shape.
+///
+/// Before the fix, `prime_index_if_cold` called `list_threads_unlocked` under
+/// the outer lock; for pre-Stats workspaces this triggered a slow
+/// `measure_messages_unlocked` + `Stats` append per thread — stalling any
+/// concurrent `append_message`.  After the fix, `thread_index_unlocked` is
+/// used instead (header-only) so the append proceeds concurrently.
+#[test]
+fn legacy_workspace_cold_rebuild_does_not_block_concurrent_append() {
+    use std::sync::{mpsc, Arc, Barrier};
+    use std::thread;
+    use std::time::Duration;
+
+    let temp = TempDir::new().unwrap();
+    let store = ConversationStore::new(temp.path().to_path_buf());
+    let ts = "2023-06-01T00:00:00Z".to_string();
+
+    // Build a pre-Stats workspace with many threads to make the rebuild
+    // measurable (each thread has a per-thread JSONL file but no Stats entry).
+    let root = store.root_dir();
+    std::fs::create_dir_all(root.join(THREAD_MESSAGES_DIR)).unwrap();
+
+    for t in 0..20_usize {
+        let tid = format!("legacy-t{t}");
+        append_jsonl(
+            &root.join(THREADS_FILENAME),
+            &ThreadLogEntry::Upsert {
+                thread_id: tid.clone(),
+                title: format!("Legacy {t}"),
+                created_at: ts.clone(),
+                updated_at: ts.clone(),
+                parent_thread_id: None,
+                labels: None,
+                personality_id: None,
+            },
+        )
+        .unwrap();
+        let msg_path = store.thread_messages_path(&tid);
+        for m in 0..50_usize {
+            append_jsonl(
+                &msg_path,
+                &ConversationMessage {
+                    id: format!("lm-{t}-{m}"),
+                    content: format!("legacy content thread {t} message {m}"),
+                    message_type: "text".to_string(),
+                    extra_metadata: serde_json::json!({}),
+                    sender: "user".to_string(),
+                    created_at: ts.clone(),
+                },
+            )
+            .unwrap();
+        }
+    }
+
+    // Also need a thread that append_message can target — create it properly
+    // so it exists in threads.jsonl (still Upsert-only, no Stats).
+    append_jsonl(
+        &root.join(THREADS_FILENAME),
+        &ThreadLogEntry::Upsert {
+            thread_id: "append-target".to_string(),
+            title: "Append Target".to_string(),
+            created_at: ts.clone(),
+            updated_at: ts.clone(),
+            parent_thread_id: None,
+            labels: None,
+            personality_id: None,
+        },
+    )
+    .unwrap();
+
+    let store_search = store.clone();
+    let store_append = store.clone();
+
+    let barrier = Arc::new(Barrier::new(2));
+    let b_search = Arc::clone(&barrier);
+    let b_append = Arc::clone(&barrier);
+
+    let search_handle = thread::spawn(move || {
+        b_search.wait();
+        store_search.search_cross_thread_messages("legacy content", 5, None)
+    });
+
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        b_append.wait();
+        let result = store_append.append_message(
+            "append-target",
+            ConversationMessage {
+                id: "concurrent-legacy-append".to_string(),
+                content: "written during legacy cold rebuild".to_string(),
+                message_type: "text".to_string(),
+                extra_metadata: serde_json::json!({}),
+                sender: "user".to_string(),
+                created_at: ts,
+            },
+        );
+        let _ = tx.send(result);
+    });
+
+    let append_result = rx
+        .recv_timeout(Duration::from_secs(30))
+        .expect("append_message blocked — legacy workspace cold rebuild held STORE_LOCK too long");
+    assert!(
+        append_result.is_ok(),
+        "append failed: {:?}",
+        append_result.err()
+    );
+
+    let search_result = search_handle.join().expect("search thread panicked");
+    assert!(
+        search_result.is_ok(),
+        "search failed: {:?}",
+        search_result.err()
+    );
 }

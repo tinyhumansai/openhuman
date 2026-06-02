@@ -112,6 +112,27 @@ impl Tool for EchoTool {
     }
 }
 
+struct CronAddProbeTool;
+
+#[async_trait]
+impl Tool for CronAddProbeTool {
+    fn name(&self) -> &str {
+        "cron_add"
+    }
+
+    fn description(&self) -> &str {
+        "cron add probe"
+    }
+
+    fn parameters_schema(&self) -> serde_json::Value {
+        serde_json::json!({"type":"object"})
+    }
+
+    async fn execute(&self, args: serde_json::Value) -> Result<ToolResult> {
+        Ok(ToolResult::success(format!("cron_add_args={args}")))
+    }
+}
+
 struct CountingTool {
     calls: Arc<AtomicUsize>,
 }
@@ -391,6 +412,7 @@ fn trim_history_snaps_past_orphaned_tool_results() {
                 name: "shell".into(),
                 arguments: "{}".into(),
             }],
+            reasoning_content: None,
         },
         // ...orphaning this result at the head of the kept window.
         ConversationMessage::ToolResults(vec![ToolResultMessage {
@@ -443,6 +465,49 @@ fn build_parent_context_and_sanitize_helpers_cover_snapshot_paths() {
     let long = "x".repeat(500);
     assert_eq!(sanitize_learned_entry(&long).chars().count(), 200);
     assert!(collect_tree_root_summaries(agent.workspace_dir(), 8_000, 32_000).is_empty());
+}
+
+#[test]
+fn collect_tree_root_summaries_maps_namespace_body_and_timestamp() {
+    // #2944: the wrapper must carry the root node's `updated_at` from the
+    // store tuple into the `NamespaceSummary` the prompt renderer stamps.
+    use crate::openhuman::config::Config;
+    use crate::openhuman::memory_tree::tree_runtime::store::write_node;
+    use crate::openhuman::memory_tree::tree_runtime::types::{
+        derive_parent_id, estimate_tokens, level_from_node_id, TreeNode,
+    };
+
+    let tmp = tempfile::TempDir::new().unwrap();
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let config = Config {
+        workspace_dir: workspace.clone(),
+        ..Config::default()
+    };
+
+    let updated_at = chrono::DateTime::parse_from_rfc3339("2026-05-25T09:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let summary = "Distilled activities summary.";
+    let node = TreeNode {
+        node_id: "root".to_string(),
+        namespace: "activities".to_string(),
+        level: level_from_node_id("root"),
+        parent_id: derive_parent_id("root"),
+        summary: summary.to_string(),
+        token_count: estimate_tokens(summary),
+        child_count: 0,
+        created_at: updated_at,
+        updated_at,
+        metadata: None,
+    };
+    write_node(&config, &node).unwrap();
+
+    let summaries = collect_tree_root_summaries(&workspace, 8_000, 32_000);
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(summaries[0].namespace, "activities");
+    assert_eq!(summaries[0].body, summary);
+    assert_eq!(summaries[0].updated_at, updated_at);
 }
 
 #[tokio::test]
@@ -560,6 +625,40 @@ async fn execute_tool_call_reports_unknown_tool() {
     assert!(result.output.contains("Unknown tool: missing"));
     assert_eq!(record.name, "missing");
     assert!(!record.success);
+}
+
+#[tokio::test]
+async fn execute_tool_call_rewrites_legacy_run_skill_for_builtin_cron_tools() {
+    let provider: Arc<dyn Provider> = Arc::new(DummyProvider);
+    let agent = make_agent_with_builder(
+        provider,
+        vec![Box::new(CronAddProbeTool)],
+        Box::new(FixedMemoryLoader {
+            context: String::new(),
+        }),
+        vec![],
+        crate::openhuman::config::AgentConfig::default(),
+        crate::openhuman::config::ContextConfig::default(),
+    );
+    let call = ParsedToolCall {
+        name: "run_skill".into(),
+        arguments: serde_json::json!({
+            "skill_id": "cron_add",
+            "inputs": {
+              "name": "water-reminder",
+              "schedule": { "kind": "every", "every_ms": 60000 },
+              "job_type": "agent",
+              "prompt": "remind me to drink water"
+            }
+        }),
+        tool_call_id: Some("tc-run-skill-1".into()),
+    };
+
+    let (result, record) = agent.execute_tool_call(&call, 0).await;
+    assert!(result.success, "{}", result.output);
+    assert_eq!(result.name, "cron_add");
+    assert_eq!(record.name, "cron_add");
+    assert!(result.output.contains("\"every_ms\":60000"));
 }
 
 #[tokio::test]
@@ -799,7 +898,9 @@ async fn turn_runs_full_tool_cycle_with_context_and_hooks() {
     assert!(agent.last_memory_context.as_deref() == Some("[Injected]\n"));
     assert!(agent.history.iter().any(|message| matches!(
         message,
-        ConversationMessage::AssistantToolCalls { text, tool_calls }
+        ConversationMessage::AssistantToolCalls {
+            text, tool_calls, ..
+        }
             if text.as_deref().is_some_and(|value| value.contains("preface")) && tool_calls.len() == 1
     )));
     assert!(agent.history.iter().any(|message| matches!(
@@ -1509,5 +1610,87 @@ fn bound_cached_transcript_messages_strips_multiple_trailing_envelopes() {
     assert!(
         !any_envelope,
         "all trailing tool_calls envelopes must be stripped"
+    );
+}
+
+#[test]
+fn integration_announcement_fires_once_for_new_toolkit() {
+    // Seed the announced set with the startup-connected toolkit, mirroring the
+    // turn-1 seed in `run_turn`.
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("gmail".to_string());
+
+    // A mid-session connect adds `slack`: it should be announced, and recorded
+    // so it never re-announces.
+    let connected = vec!["gmail".to_string(), "slack".to_string()];
+    let newly = newly_connected_slugs(&connected, &mut announced);
+    assert_eq!(newly, vec!["slack".to_string()]);
+    let note = integration_announcement_note(&newly)
+        .expect("a newly-connected toolkit must produce an announcement");
+    assert!(
+        note.contains("slack"),
+        "announcement must name the new toolkit slug, got: {note}"
+    );
+    assert!(
+        !note.contains("gmail"),
+        "already-announced toolkit must not be re-announced, got: {note}"
+    );
+    assert!(
+        announced.contains("slack"),
+        "the new slug must be recorded as announced"
+    );
+
+    // A second refresh with the identical connected set parks nothing — every
+    // slug is now in `announced`.
+    let second = newly_connected_slugs(&connected, &mut announced);
+    assert!(
+        second.is_empty(),
+        "an unchanged connected set must not re-surface a slug, got: {second:?}"
+    );
+    assert!(integration_announcement_note(&second).is_none());
+}
+
+#[test]
+fn integration_announcement_accumulates_two_connects_in_one_note() {
+    // Two mid-session connects between consecutive user turns must BOTH be
+    // announced — the second must not overwrite the first (#3044 regression:
+    // the old `Option<String>` field dropped the earlier note).
+    let mut announced: HashSet<String> = HashSet::new();
+    announced.insert("gmail".to_string());
+    let mut pending: Vec<String> = Vec::new();
+
+    // First connect: notion.
+    for slug in newly_connected_slugs(&["gmail".to_string(), "notion".to_string()], &mut announced)
+    {
+        if !pending.contains(&slug) {
+            pending.push(slug);
+        }
+    }
+    // Second connect before the user turn: slack.
+    for slug in newly_connected_slugs(
+        &[
+            "gmail".to_string(),
+            "notion".to_string(),
+            "slack".to_string(),
+        ],
+        &mut announced,
+    ) {
+        if !pending.contains(&slug) {
+            pending.push(slug);
+        }
+    }
+
+    let note = integration_announcement_note(&pending).expect("two connects must produce a note");
+    assert!(
+        note.contains("notion"),
+        "first connect must survive: {note}"
+    );
+    assert!(
+        note.contains("slack"),
+        "second connect must be present: {note}"
+    );
+    assert!(
+        !note.contains("gmail"),
+        "startup slug must not re-announce: {note}"
     );
 }
