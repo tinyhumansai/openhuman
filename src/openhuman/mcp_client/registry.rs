@@ -99,7 +99,7 @@ fn emit_rejection(server: &str, tool: &str, reason: &str) {
         reason = reason,
         "remote MCP tool dropped by input-validation scan"
     );
-    let _ = publish_global(DomainEvent::McpToolRejected {
+    publish_global(DomainEvent::McpToolRejected {
         server: server.to_string(),
         tool: tool.to_string(),
         reason: reason.to_string(),
