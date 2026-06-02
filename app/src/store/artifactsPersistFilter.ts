@@ -7,7 +7,7 @@
  *    boot even though no producer task is alive — a misleading
  *    forever-spinner state.
  *  - `failed` carries a producer-supplied error message that may
- *    reference a session-bound run (timeout, missing python-pptx),
+ *    reference a session-bound run (timeout, engine internal error),
  *    which is irrelevant after a restart. Letting the failed card
  *    persist would suggest a permanent failure rather than a
  *    transient one.

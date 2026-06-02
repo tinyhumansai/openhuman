@@ -466,13 +466,13 @@ describe('chatRuntimeSlice', () => {
           artifactId: 'a',
           kind: 'presentation',
           title: 'Bad Deck',
-          error: 'python-pptx not installed',
+          error: 'engine failed: validation rejected slides[0]',
         })
       );
       expect(next.artifactsByThread['t1']).toHaveLength(1);
       const entry = next.artifactsByThread['t1'][0];
       expect(entry.status).toBe('failed');
-      expect(entry.error).toBe('python-pptx not installed');
+      expect(entry.error).toBe('engine failed: validation rejected slides[0]');
       expect(entry.title).toBe('Bad Deck');
       expect(entry.kind).toBe('presentation');
     });

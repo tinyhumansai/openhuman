@@ -42,6 +42,7 @@ function renderComposer(overrides: Partial<ChatComposerProps> = {}) {
     isComposingTextRef,
     maxAttachments: 5,
     allowedMimeTypes: ['image/png', 'image/jpeg'],
+    attachmentsEnabled: true,
     ...overrides,
   };
 
@@ -59,6 +60,12 @@ describe('ChatComposer', () => {
   it('renders attachment + button in toolbar', () => {
     renderComposer();
     expect(screen.getByRole('button', { name: 'composer.attachFile' })).toBeInTheDocument();
+  });
+
+  it('hides the attach button and file input when attachmentsEnabled is false', () => {
+    const { container } = renderComposer({ attachmentsEnabled: false });
+    expect(screen.queryByRole('button', { name: 'composer.attachFile' })).not.toBeInTheDocument();
+    expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
   it('renders voice mode button in toolbar', () => {

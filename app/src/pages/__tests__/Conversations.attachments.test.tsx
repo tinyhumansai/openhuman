@@ -91,6 +91,14 @@ vi.mock('../../services/api/agentProfilesApi', () => ({
 
 vi.mock('../../hooks/useUsageState', () => ({ useUsageState: mockUseUsageState }));
 
+// Attachments are gated off by default (CHAT_ATTACHMENTS_ENABLED, #3205); force
+// the flag on so these tests still exercise the underlying attachment pipeline
+// (validation, preview, attachment-only send) that ships behind the flag.
+vi.mock('../../utils/config', async importActual => ({
+  ...(await importActual<typeof import('../../utils/config')>()),
+  CHAT_ATTACHMENTS_ENABLED: true,
+}));
+
 vi.mock('../../store/socketSelectors', () => ({
   selectSocketStatus: (state: { socket?: { byUser?: Record<string, { status: string }> } }) =>
     state.socket?.byUser?.__pending__?.status ?? 'disconnected',

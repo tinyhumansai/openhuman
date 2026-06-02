@@ -2260,6 +2260,9 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'लाभ 2',
   'app.openhumanLink.discord.perk3': 'लाभ 3',
   'app.openhumanLink.discord.perk4': 'लाभ 4',
+  'app.openhumanLink.discordReport.intro':
+    'माफ करें — हमारी तरफ से कुछ गड़बड़ हुई। हम इन्हें स्वचालित रूप से लॉग करने की कोशिश करते हैं, लेकिन Discord पर विवरण साझा करने से हमें इसे जल्दी ठीक करने में मदद मिलती है।',
+  'app.openhumanLink.discordReport.openDiscord': 'Discord खोलें',
   'app.openhumanLink.done': 'हो गया',
   'app.openhumanLink.loadingChannelSetup': 'चैनल सेटअप लोड हो रहा है',
   'app.openhumanLink.maybeLater': 'शायद बाद में',
@@ -2280,6 +2283,7 @@ const messages: TranslationMap = {
   'app.openhumanLink.title.accounts': 'अपने ऐप्स कनेक्ट करें',
   'app.openhumanLink.title.billing': 'बिलिंग और क्रेडिट',
   'app.openhumanLink.title.discord': 'कम्युनिटी जॉइन करें',
+  'app.openhumanLink.title.discordReport': 'इस त्रुटि की रिपोर्ट करें',
   'app.openhumanLink.title.messaging': 'चैट चैनल कनेक्ट करें',
   'app.openhumanLink.title.notifications': 'नोटिफिकेशन की अनुमति दें',
   'app.persistRehydration.body': 'विवरण',
@@ -4498,6 +4502,7 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'स्थानीय भंडारण अस्वीकार करें',
   'pages.settings.account.security': 'सुरक्षा',
   'pages.settings.account.securityDesc': 'रहस्य भंडारण मोड और कीचेन स्थिति',
+  // Chat — agent-generated artifacts (#2779)
 
   // Chat composer toolbar
   'composer.attachFile': 'फ़ाइल संलग्न करें',

@@ -119,7 +119,13 @@ test.describe('Chat Tool Error Recovery', () => {
     const threadId = await createNewThread(page);
     await sendMessage(page, 'Tell me something important.');
 
-    await expect(page.getByText('Starting to answer')).toBeVisible({ timeout: 20_000 });
+    // Two elements briefly carry the streamed text: the live-streaming
+    // preview block (`font-mono` console-style render in Conversations.tsx)
+    // and the persisted message bubble that takes over once the segment
+    // commits. Playwright strict-mode trips when both are simultaneously
+    // visible during the transition. `.first()` keeps the assertion robust
+    // — we just care that the streamed substring rendered somewhere.
+    await expect(page.getByText('Starting to answer').first()).toBeVisible({ timeout: 20_000 });
 
     await expect
       .poll(async () => {

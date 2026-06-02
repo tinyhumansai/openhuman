@@ -47,7 +47,7 @@ pub(crate) fn inference_budget_exceeded_user_message() -> &'static str {
 }
 
 pub(crate) fn generic_inference_error_user_message() -> &'static str {
-    "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord\">Report on Discord</openhuman-link>"
+    "Something went wrong. Please try again.\nThis error has been reported. You can also report it on Discord.\n<openhuman-link path=\"community/discord-report\">Report on Discord</openhuman-link>"
 }
 
 /// Pull the structured provider error message out of a raw error string.

@@ -65,6 +65,7 @@ import type { ConfirmationModal as ConfirmationModalType } from '../types/intell
 import type { ThreadMessage } from '../types/thread';
 import type { TaskBoardCard, TaskBoardCardStatus } from '../types/turnState';
 import { splitAgentMessageIntoBubbles } from '../utils/agentMessageBubbles';
+import { CHAT_ATTACHMENTS_ENABLED } from '../utils/config';
 import { BILLING_DASHBOARD_URL } from '../utils/links';
 import { openUrl } from '../utils/openUrl';
 import {
@@ -2107,6 +2108,13 @@ const Conversations = ({
             // delegated to the header ChatFilesChip panel (#3024) so the
             // chat scroll area isn't permanently occupied — restored decks
             // are listable from the chip on demand.
+            //
+            // NOTE: `onRetry` is intentionally omitted on `ArtifactCard`
+            // below — real retry (either `removeArtifact(thread, id)` to
+            // let the user re-prompt, or full re-dispatch of the producing
+            // tool call) is tracked in follow-up issue #3162. The
+            // failed-card UI still surfaces the truncated error reason;
+            // the button just stays hidden until #3162 lands.
             const artifactThreadId = selectedThreadId ?? activeThreadId;
             const all = artifactThreadId ? (artifactsByThread[artifactThreadId] ?? []) : [];
             const live = all.filter(a => a.status !== 'ready');
@@ -2152,6 +2160,7 @@ const Conversations = ({
               isComposingTextRef={isComposingTextRef}
               maxAttachments={ATTACHMENT_MAX_IMAGES}
               allowedMimeTypes={ALLOWED_IMAGE_MIME_TYPES}
+              attachmentsEnabled={CHAT_ATTACHMENTS_ENABLED}
             />
           ) : (
             <div className="flex items-center gap-2">

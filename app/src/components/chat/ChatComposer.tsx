@@ -27,6 +27,13 @@ export interface ChatComposerProps {
   isComposingTextRef: React.MutableRefObject<boolean>;
   maxAttachments: number;
   allowedMimeTypes: readonly string[];
+  /**
+   * Whether chat image attachments are available. When `false`, the attach
+   * button, hidden file input, and preview strip are not rendered, so the
+   * (currently backend-unsupported) attachment flow can't be triggered.
+   * Gated by `CHAT_ATTACHMENTS_ENABLED` at the call site (issue #3205).
+   */
+  attachmentsEnabled: boolean;
 }
 
 /**
@@ -54,6 +61,7 @@ export default function ChatComposer({
   isComposingTextRef,
   maxAttachments,
   allowedMimeTypes,
+  attachmentsEnabled,
 }: ChatComposerProps) {
   const { t } = useT();
 
@@ -70,21 +78,23 @@ export default function ChatComposer({
 
   return (
     <div className="relative flex flex-col rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 transition-all focus-within:border-primary-500/50 focus-within:ring-1 focus-within:ring-primary-500/50">
-      {/* Hidden file input for attachment */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={allowedMimeTypes.join(',')}
-        multiple
-        className="hidden"
-        onChange={e => {
-          void onAttachFiles(e.target.files);
-          e.target.value = '';
-        }}
-      />
+      {/* Hidden file input for attachment (gated — see attachmentsEnabled). */}
+      {attachmentsEnabled && (
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={allowedMimeTypes.join(',')}
+          multiple
+          className="hidden"
+          onChange={e => {
+            void onAttachFiles(e.target.files);
+            e.target.value = '';
+          }}
+        />
+      )}
 
       {/* Attachment preview strip */}
-      {attachments.length > 0 && (
+      {attachmentsEnabled && attachments.length > 0 && (
         <div className="px-3 pt-2.5">
           <AttachmentPreview
             attachments={attachments}
@@ -125,24 +135,26 @@ export default function ChatComposer({
       <div className="flex items-center justify-between px-3 pb-2.5 pt-0.5">
         {/* Left: attachment + button, then usage pill */}
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-label={t('composer.attachFile')}
-            title={t('composer.attachFile')}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={
-              composerInteractionBlocked || isSending || attachments.length >= maxAttachments
-            }
-            className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.8}
-                d="M12 5v14m-7-7h14"
-              />
-            </svg>
-          </button>
+          {attachmentsEnabled && (
+            <button
+              type="button"
+              aria-label={t('composer.attachFile')}
+              title={t('composer.attachFile')}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={
+                composerInteractionBlocked || isSending || attachments.length >= maxAttachments
+              }
+              className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.8}
+                  d="M12 5v14m-7-7h14"
+                />
+              </svg>
+            </button>
+          )}
           <CycleUsagePill />
         </div>
 
