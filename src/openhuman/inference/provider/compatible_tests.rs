@@ -2166,3 +2166,66 @@ fn completion_only_message_names_model_and_remediation() {
         "states the remediation: {msg}"
     );
 }
+
+#[test]
+fn completion_only_404_guard_fires_only_on_signature() {
+    let p = make_provider("openhuman", "https://api.example.com/v1", Some("k"));
+    // Matches → Some(actionable error).
+    let hit = p.completion_only_404_guard(
+        reqwest::StatusCode::NOT_FOUND,
+        "This is not a chat model. Did you mean to use v1/completions?",
+        "davinci-002",
+    );
+    let err = hit.expect("guard should fire on the completion-only signature");
+    assert!(err.to_string().contains("davinci-002"));
+    // Ordinary not-found → None (normal fallback/enrich path is preserved).
+    assert!(p
+        .completion_only_404_guard(
+            reqwest::StatusCode::NOT_FOUND,
+            "The model `gpt-9o` does not exist.",
+            "gpt-9o"
+        )
+        .is_none());
+}
+
+#[tokio::test]
+async fn completion_only_404_fails_fast_without_responses_fallback() {
+    // End-to-end over the wire: a completion-only 404 must short-circuit with
+    // the actionable message and NOT attempt /v1/responses (not mounted here —
+    // if the guard regressed, the error would instead read "responses fallback
+    // failed"). Provider has the fallback ENABLED (default `new`), proving the
+    // guard pre-empts it. #3193.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "message": "This is not a chat model and thus not supported in the \
+                            v1/chat/completions endpoint. Did you mean to use v1/completions?",
+                "type": "invalid_request_error"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openhuman",
+        &format!("{}/v1", server.uri()),
+        Some("key"),
+        AuthStyle::Bearer,
+    );
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("write a file")], "davinci-002", 0.0)
+        .await
+        .expect_err("completion-only model must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("davinci-002") && msg.contains("chat-capable model"),
+        "expected actionable completion-only message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("responses fallback failed"),
+        "guard must pre-empt the responses fallback, got: {msg}"
+    );
+}

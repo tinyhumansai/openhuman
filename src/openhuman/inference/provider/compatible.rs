@@ -146,6 +146,26 @@ impl OpenAiCompatibleProvider {
         )
     }
 
+    /// Guard shared by every chat-completions 404 handler: if the body shows a
+    /// completion-only model, return the actionable error so the caller can
+    /// fail fast instead of attempting the futile `/v1/responses` fallback.
+    /// `None` means "not this case — proceed with normal fallback/enrich".
+    /// See issue #3193.
+    fn completion_only_404_guard(
+        &self,
+        status: reqwest::StatusCode,
+        sanitized: &str,
+        model: &str,
+    ) -> Option<anyhow::Error> {
+        if Self::is_completion_only_model_404(status, sanitized) {
+            Some(anyhow::anyhow!(
+                self.completion_only_model_message(model, sanitized)
+            ))
+        } else {
+            None
+        }
+    }
+
     /// Create a provider with a custom User-Agent header.
     ///
     /// Some providers (for example Kimi Code) require a specific User-Agent
@@ -1380,10 +1400,8 @@ impl Provider for OpenAiCompatibleProvider {
 
             // A completion-only model 404s here and the /v1/responses fallback
             // cannot rescue it — fail fast with actionable guidance (#3193).
-            if Self::is_completion_only_model_404(status, &sanitized) {
-                return Err(anyhow::anyhow!(
-                    self.completion_only_model_message(model, &sanitized)
-                ));
+            if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
             }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
@@ -1553,18 +1571,38 @@ impl Provider for OpenAiCompatibleProvider {
         if !response.status().is_success() {
             let status = response.status();
 
-            // Mirror chat_with_system: 404 may mean this provider uses the Responses API
-            if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
-                return self
-                    .chat_via_responses(credential, &effective_messages, model)
-                    .await
-                    .map_err(|responses_err| {
-                        let fb = super::format_anyhow_chain(&responses_err);
-                        anyhow::anyhow!(
-                            "{} API error (chat completions unavailable; responses fallback failed: {fb})",
-                            self.name
-                        )
-                    });
+            // A 404 may mean this provider uses the Responses API, OR that the
+            // model is completion-only. Read the body once so we can tell the
+            // two apart (#3193) — only the 404 branch needs it; the response is
+            // not used again here, so `api_error` below still owns the rest.
+            if status == reqwest::StatusCode::NOT_FOUND {
+                let error = response.text().await?;
+                let sanitized = super::sanitize_api_error(&error);
+
+                // Completion-only model: the responses fallback can't help —
+                // fail fast with actionable guidance.
+                if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                    return Err(err);
+                }
+
+                if self.supports_responses_fallback {
+                    return self
+                        .chat_via_responses(credential, &effective_messages, model)
+                        .await
+                        .map_err(|responses_err| {
+                            let fb = super::format_anyhow_chain(&responses_err);
+                            anyhow::anyhow!(
+                                "{} API error ({status}): {sanitized} (chat completions unavailable; responses fallback failed: {fb})",
+                                self.name
+                            )
+                        });
+                }
+
+                let enriched = self.enrich_404_message(
+                    format!("{} API error ({status}): {sanitized}", self.name),
+                    status,
+                );
+                return Err(anyhow::anyhow!("{enriched}"));
             }
 
             let err = super::api_error(&self.name, response).await;
@@ -1904,10 +1942,8 @@ impl Provider for OpenAiCompatibleProvider {
 
             // A completion-only model 404s here and the /v1/responses fallback
             // cannot rescue it — fail fast with actionable guidance (#3193).
-            if Self::is_completion_only_model_404(status, &sanitized) {
-                return Err(anyhow::anyhow!(
-                    self.completion_only_model_message(model, &sanitized)
-                ));
+            if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
             }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
