@@ -366,12 +366,30 @@ mod tests {
              delegate_name override is `research`"
         );
         assert!(body.contains("`query_memory`"));
-        // The waiver list must keep the "user pasted source material"
-        // escape hatch — without it the rule blocks legitimate
-        // structural-deck and quoted-source requests.
+        // All four waiver escape hatches must reach the assembled body
+        // verbatim — without each one the rule blocks a legitimate
+        // dispatch case. Per graycyrus on #3029: pinning only one waiver
+        // lets a future prompt edit silently drop or expand the list and
+        // the safety-critical guardrail decays unnoticed.
+        // (1) user pasted source material in the same turn.
         assert!(
             body.contains("user pasted source material"),
             "waiver clause for pasted-source decks missing"
+        );
+        // (2) prior turn in same thread already established source material.
+        assert!(
+            body.contains("prior turn in this same thread"),
+            "waiver clause for prior-turn established material missing"
+        );
+        // (3) structural / content-free deck (blank template, layout-only).
+        assert!(
+            body.contains("content-free or structural"),
+            "waiver clause for structural / content-free decks missing"
+        );
+        // (4) explicit user waiver ("don't research, just generate…").
+        assert!(
+            body.contains("explicitly waived grounding"),
+            "waiver clause for explicit user waiver missing"
         );
     }
 
