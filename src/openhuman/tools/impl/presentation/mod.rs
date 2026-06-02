@@ -195,15 +195,17 @@ impl Tool for PresentationTool {
         };
 
         if let Err(err) = tokio::fs::write(&output_path, &bytes).await {
-            let reason = format!(
-                "failed to write generated deck to {}: {err}",
-                output_path.display()
-            );
+            let filename = output_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let reason = format!("failed to write generated deck ({filename}): {err}");
             let _ = fail_artifact(&self.workspace_dir, &meta.id, &reason).await;
             tracing::warn!(
                 target: "presentation",
                 err = %err,
-                path = %output_path.display(),
+                artifact_id = %meta.id,
+                filename = %filename,
                 "[presentation] artifact file write failed"
             );
             return Ok(ToolResult::error(reason));

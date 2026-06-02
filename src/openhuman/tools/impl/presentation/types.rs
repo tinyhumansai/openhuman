@@ -180,7 +180,10 @@ pub(super) fn validate_input(input: &GeneratePresentationInput) -> Result<(), Pr
             .as_deref()
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false);
-        let has_bullets = !slide.bullets.is_empty();
+        // Reject whitespace-only bullets too: build_slides() trims and drops
+        // empty entries, so a slide with only ["   "] would render blank
+        // despite passing this "at least one of title/body/bullets" gate.
+        let has_bullets = slide.bullets.iter().any(|b| !b.trim().is_empty());
         if !has_title && !has_body && !has_bullets {
             return Err(PresentationError::InvalidInput {
                 field: format!("slides[{i}]"),
