@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import { openUrl, revealPath } from '../../utils/openUrl';
 import { memoryTreeVaultHealthCheck, type VaultHealthCheck } from '../../utils/tauriCommands';
@@ -11,18 +12,21 @@ interface VaultHealthChecklistProps {
   title?: string;
 }
 
-function formatRelativeTime(ms: number): string {
-  if (!ms || ms <= 0) return 'Never';
+function formatRelativeTime(ms: number, t: (key: string, fallback?: string) => string): string {
+  if (!ms || ms <= 0) return t('vaultHealth.timeNever');
   const diff = Date.now() - ms;
-  if (diff < 0) return 'Never';
+  if (diff < 0) return t('vaultHealth.timeNever');
   const sec = Math.floor(diff / 1000);
-  if (sec < 45) return 'just now';
+  if (sec < 45) return t('vaultHealth.timeJustNow');
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} min ago`;
+  if (min < 60) return t('vaultHealth.timeMinAgo').replace('{n}', String(min));
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} hr ago`;
+  if (hr < 24) return t('vaultHealth.timeHrAgo').replace('{n}', String(hr));
   const day = Math.floor(hr / 24);
-  return `${day} day${day === 1 ? '' : 's'} ago`;
+  return (day === 1 ? t('vaultHealth.timeDayAgo') : t('vaultHealth.timeDaysAgo')).replace(
+    '{n}',
+    String(day)
+  );
 }
 
 function dirname(path: string): string {
@@ -32,10 +36,9 @@ function dirname(path: string): string {
   return normalized.slice(0, slash);
 }
 
-export function VaultHealthChecklist({
-  onToast,
-  title = 'Vault Health Checklist',
-}: VaultHealthChecklistProps) {
+export function VaultHealthChecklist({ onToast, title }: VaultHealthChecklistProps) {
+  const { t } = useT();
+  const resolvedTitle = title ?? t('vaultHealth.title');
   const [health, setHealth] = useState<VaultHealthCheck | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -72,10 +75,10 @@ export function VaultHealthChecklist({
         await openUrl(`obsidian://open?path=${encodeURIComponent(health.content_root_abs)}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        onToast?.({ type: 'error', title: 'Could not open Obsidian', message });
+        onToast?.({ type: 'error', title: t('vaultHealth.openObsidianError'), message });
       }
     })();
-  }, [health, onToast]);
+  }, [health, onToast, t]);
 
   const revealVault = useCallback(() => {
     if (!revealTarget) return;
@@ -84,10 +87,10 @@ export function VaultHealthChecklist({
         await revealPath(revealTarget);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        onToast?.({ type: 'error', title: 'Could not reveal vault folder', message });
+        onToast?.({ type: 'error', title: t('vaultHealth.revealError'), message });
       }
     })();
-  }, [onToast, revealTarget]);
+  }, [onToast, revealTarget, t]);
 
   const installObsidian = useCallback(() => {
     void (async () => {
@@ -95,40 +98,36 @@ export function VaultHealthChecklist({
         await openUrl(OBSIDIAN_DOWNLOAD_URL);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        onToast?.({ type: 'error', title: 'Could not open Obsidian download page', message });
+        onToast?.({ type: 'error', title: t('vaultHealth.downloadError'), message });
       }
     })();
-  }, [onToast]);
+  }, [onToast, t]);
 
   const checklist = health
     ? [
         {
           key: 'exists',
-          label: 'Workspace vault path exists',
+          label: t('vaultHealth.existsLabel'),
           ok: health.exists,
-          recovery:
-            'Vault folder is missing. Start a sync or create this folder, then refresh this checklist.',
+          recovery: t('vaultHealth.existsRecovery'),
         },
         {
           key: 'writable',
-          label: 'Vault is writable by OpenHuman',
+          label: t('vaultHealth.writableLabel'),
           ok: health.writable,
-          recovery:
-            'OpenHuman cannot write to this vault yet. Grant write permissions and refresh.',
+          recovery: t('vaultHealth.writableRecovery'),
         },
         {
           key: 'obsidian',
-          label: 'Vault is registered in Obsidian',
+          label: t('vaultHealth.obsidianLabel'),
           ok: health.obsidian_registered,
-          recovery:
-            'In Obsidian, choose "Open folder as vault" for this path, then refresh this checklist.',
+          recovery: t('vaultHealth.obsidianRecovery'),
         },
         {
           key: 'pipeline',
-          label: 'Memory pipeline is healthy',
+          label: t('vaultHealth.pipelineLabel'),
           ok: health.pipeline_healthy,
-          recovery:
-            'Memory pipeline is paused or in error. Re-enable Auto-sync in Memory Tree status and retry.',
+          recovery: t('vaultHealth.pipelineRecovery'),
         },
       ]
     : [];
@@ -139,9 +138,11 @@ export function VaultHealthChecklist({
       data-testid="vault-health-checklist">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">{title}</h3>
+          <h3 className="text-sm font-semibold text-stone-900 dark:text-neutral-100">
+            {resolvedTitle}
+          </h3>
           <p className="mt-1 text-xs text-stone-600 dark:text-neutral-300">
-            Workspace vault: <code className="font-mono">memory_tree/content</code>
+            {t('vaultHealth.workspaceVault')} <code className="font-mono">memory_tree/content</code>
           </p>
         </div>
         <button
@@ -152,7 +153,7 @@ export function VaultHealthChecklist({
           disabled={refreshing}
           className="rounded-md border border-stone-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-2.5 py-1 text-xs font-medium text-stone-700 dark:text-neutral-200 disabled:opacity-60"
           data-testid="vault-health-refresh">
-          {refreshing ? 'Refreshing…' : 'Refresh'}
+          {refreshing ? t('vaultHealth.refreshing') : t('vaultHealth.refresh')}
         </button>
       </div>
 
@@ -171,7 +172,7 @@ export function VaultHealthChecklist({
           disabled={!health?.content_root_abs}
           className="rounded-md border border-stone-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-neutral-200 disabled:opacity-50"
           data-testid="vault-health-reveal">
-          Reveal Folder
+          {t('vaultHealth.revealFolder')}
         </button>
         <button
           type="button"
@@ -179,14 +180,14 @@ export function VaultHealthChecklist({
           disabled={!health?.content_root_abs}
           className="rounded-md border border-violet-300 dark:border-violet-500/40 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-violet-700 dark:text-violet-300 disabled:opacity-50"
           data-testid="vault-health-open-obsidian">
-          Open in Obsidian
+          {t('vaultHealth.openInObsidian')}
         </button>
         <button
           type="button"
           onClick={installObsidian}
           className="rounded-md border border-stone-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-stone-700 dark:text-neutral-200"
           data-testid="vault-health-install-obsidian">
-          Install Obsidian
+          {t('vaultHealth.installObsidian')}
         </button>
       </div>
 
@@ -196,7 +197,7 @@ export function VaultHealthChecklist({
         <div
           className="rounded-md border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-3 py-2 text-xs text-coral-700 dark:text-coral-300"
           data-testid="vault-health-error">
-          Could not load vault health: {error}
+          {t('vaultHealth.loadError')} {error}
         </div>
       ) : (
         <div className="space-y-2">
@@ -210,7 +211,7 @@ export function VaultHealthChecklist({
                   : 'border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-200'
               }`}>
               <div className="font-semibold">
-                {item.ok ? 'Passed' : 'Needs attention'} · {item.label}
+                {item.ok ? t('vaultHealth.passed') : t('vaultHealth.needsAttention')} · {item.label}
               </div>
               {!item.ok ? <p className="mt-1 leading-relaxed">{item.recovery}</p> : null}
             </div>
@@ -218,7 +219,7 @@ export function VaultHealthChecklist({
           <p
             className="text-[11px] text-stone-600 dark:text-neutral-300"
             data-testid="vault-health-last-sync">
-            Last sync: {formatRelativeTime(health?.last_sync_ms ?? 0)}
+            {t('vaultHealth.lastSync')} {formatRelativeTime(health?.last_sync_ms ?? 0, t)}
           </p>
         </div>
       )}

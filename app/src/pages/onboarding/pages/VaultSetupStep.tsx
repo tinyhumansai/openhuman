@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import MemoryDataPanel from '../../../components/settings/panels/MemoryDataPanel';
@@ -11,8 +11,6 @@ import { type CustomStepChoice, useOnboardingContext } from '../OnboardingContex
 import CustomWizardStep from '../steps/CustomWizardStep';
 
 const STEP_KEY = 'vault' as const;
-const LOCAL_DEFAULT_DISABLED_REASON =
-  'Managed setup requires OpenHuman sign-in and is unavailable in local mode.';
 
 export default function VaultSetupStep() {
   const { t } = useT();
@@ -22,54 +20,74 @@ export default function VaultSetupStep() {
   const stepIndex = CUSTOM_WIZARD_STEPS.indexOf(STEP_KEY);
   const isLocalSession = isLocalSessionToken(snapshot.sessionToken);
 
-  const [choice, setChoice] = useState<CustomStepChoice | null>(
-    draft.customChoices?.[STEP_KEY] ?? (isLocalSession ? 'configure' : null)
-  );
+  const appliedLocalRef = useRef(false);
+  const initialChoice = isLocalSession ? 'configure' : (draft.customChoices?.[STEP_KEY] ?? null);
+  const [choice, setChoice] = useState<CustomStepChoice | null>(initialChoice);
+  const [exitError, setExitError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!isLocalSession) return;
-    setChoice('configure');
+  if (isLocalSession && !appliedLocalRef.current) {
+    appliedLocalRef.current = true;
+    if (choice !== 'configure') {
+      setChoice('configure');
+    }
     setDraft(prev => ({
       ...prev,
       customChoices: { ...prev.customChoices, [STEP_KEY]: 'configure' },
     }));
-  }, [isLocalSession, setDraft]);
+  }
 
-  const persistChoice = (next: CustomStepChoice) => {
-    setChoice(next);
-    setDraft(prev => ({ ...prev, customChoices: { ...prev.customChoices, [STEP_KEY]: next } }));
-  };
+  const persistChoice = useCallback(
+    (next: CustomStepChoice) => {
+      setChoice(next);
+      setDraft(prev => ({ ...prev, customChoices: { ...prev.customChoices, [STEP_KEY]: next } }));
+    },
+    [setDraft]
+  );
 
   const configureContent = useMemo(() => <MemoryDataPanel embedded />, []);
 
   return (
-    <CustomWizardStep
-      testId="onboarding-custom-vault-step"
-      stepIndex={stepIndex}
-      stepCount={CUSTOM_WIZARD_STEPS.length}
-      title="Memory & Vault Setup"
-      subtitle="Confirm where memory notes are written, how source data is read, and whether your vault pipeline is healthy."
-      defaultDescription="Use OpenHuman-managed memory defaults. Vault path and sync health can still be reviewed later."
-      configureDescription="Review vault ownership, run health checks, and tune memory controls now."
-      configureContent={configureContent}
-      defaultDisabled={isLocalSession}
-      defaultDisabledReason={isLocalSession ? LOCAL_DEFAULT_DISABLED_REASON : undefined}
-      hideChoiceCards={isLocalSession}
-      choice={choice}
-      onChoiceChange={persistChoice}
-      onBack={() => navigate(CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex - 1]])}
-      onContinue={async () => {
-        trackEvent('onboarding_step_complete', {
-          step_name: 'custom_vault',
-          choice: choice ?? 'default',
-        });
-        try {
-          await completeAndExit();
-        } catch (err) {
-          console.error('[onboarding:custom-vault] completeAndExit failed', err);
+    <>
+      <CustomWizardStep
+        testId="onboarding-custom-vault-step"
+        stepIndex={stepIndex}
+        stepCount={CUSTOM_WIZARD_STEPS.length}
+        title={t('onboarding.custom.vault.title')}
+        subtitle={t('onboarding.custom.vault.subtitle')}
+        defaultDescription={t('onboarding.custom.vault.defaultDesc')}
+        configureDescription={t('onboarding.custom.vault.configureDesc')}
+        configureContent={configureContent}
+        defaultDisabled={isLocalSession}
+        defaultDisabledReason={
+          isLocalSession ? t('onboarding.custom.vault.localDisabledReason') : undefined
         }
-      }}
-      continueLabel={t('onboarding.custom.finish')}
-    />
+        hideChoiceCards={isLocalSession}
+        choice={choice}
+        onChoiceChange={persistChoice}
+        onBack={() => navigate(CUSTOM_WIZARD_ROUTES[CUSTOM_WIZARD_STEPS[stepIndex - 1]])}
+        onContinue={async () => {
+          setExitError(null);
+          trackEvent('onboarding_step_complete', {
+            step_name: 'custom_vault',
+            choice: choice ?? 'default',
+          });
+          try {
+            await completeAndExit();
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error('[onboarding:custom-vault] completeAndExit failed', err);
+            setExitError(message);
+          }
+        }}
+        continueLabel={t('onboarding.custom.finish')}
+      />
+      {exitError ? (
+        <div
+          className="mt-3 rounded-xl border border-coral-200 dark:border-coral-500/30 bg-coral-50 dark:bg-coral-500/10 px-4 py-3 text-sm text-coral-700 dark:text-coral-300"
+          data-testid="onboarding-vault-exit-error">
+          {t('onboarding.custom.vault.exitError')}
+        </div>
+      ) : null}
+    </>
   );
 }
