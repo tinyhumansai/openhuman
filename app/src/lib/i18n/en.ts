@@ -525,7 +525,7 @@ const en: TranslationMap = {
   'memoryTree.status.integrationsEmpty': 'No integrations connected',
   'memoryTree.status.integrationActive': 'Active',
   'memoryTree.status.integrationStale': 'Stale',
-  'memoryTree.status.integrationChunks': '{count} chunks',
+  'memoryTree.status.integrationChunks': 'Chunks: {count}',
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',

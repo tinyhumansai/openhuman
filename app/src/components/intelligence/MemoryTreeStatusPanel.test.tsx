@@ -223,12 +223,50 @@ describe('<MemoryTreeStatusPanel />', () => {
 
     const slackRow = screen.getByTestId('memory-tree-integration-row-slack');
     expect(slackRow).toHaveTextContent(/slack/i);
-    expect(slackRow).toHaveTextContent(/5,231 chunks/);
+    expect(slackRow).toHaveTextContent(/Chunks: 5,231/);
     expect(slackRow).toHaveTextContent(/Active/);
 
     const gmailRow = screen.getByTestId('memory-tree-integration-row-gmail');
     expect(gmailRow).toHaveTextContent(/gmail/i);
     expect(gmailRow).toHaveTextContent(/Stale/);
+  });
+
+  it('falls back to the never label when last_chunk_at_ms is null', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockSyncStatusList.mockResolvedValue([
+      {
+        provider: 'slack',
+        chunks_synced: 0,
+        chunks_pending: 0,
+        batch_total: 0,
+        batch_processed: 0,
+        last_chunk_at_ms: null,
+        freshness: 'idle',
+      },
+    ]);
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-integration-row-slack')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('memory-tree-integration-row-slack')).toHaveTextContent(/Never/);
+  });
+
+  it('renders an empty list and logs a warn when memorySyncStatusList rejects', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockSyncStatusList.mockRejectedValue(new Error('boom'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    render(<MemoryTreeStatusPanel />);
+
+    // Tiles still render (pipeline succeeded) and the strip shows the empty state.
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-status-label')).toBeInTheDocument();
+      expect(screen.getByTestId('memory-tree-integrations-empty')).toBeInTheDocument();
+    });
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('shows the empty state when there are no integrations', async () => {

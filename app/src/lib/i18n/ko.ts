@@ -442,7 +442,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': '연결된 통합이 없습니다',
   'memoryTree.status.integrationActive': '활성',
   'memoryTree.status.integrationStale': '오래됨',
-  'memoryTree.status.integrationChunks': '{count}개 청크',
+  'memoryTree.status.integrationChunks': '청크: {count}개',
   'alerts.title': '알림',
   'alerts.empty': '아직 알림이 없습니다',
   'alerts.markAllRead': '모두 읽음으로 표시',

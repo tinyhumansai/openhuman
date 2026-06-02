@@ -447,7 +447,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': 'Brak podłączonych integracji',
   'memoryTree.status.integrationActive': 'Aktywna',
   'memoryTree.status.integrationStale': 'Nieaktualna',
-  'memoryTree.status.integrationChunks': '{count} fragmentów',
+  'memoryTree.status.integrationChunks': 'Liczba fragmentów: {count}',
   'alerts.title': 'Alerty',
   'alerts.empty': 'Brak alertów',
   'alerts.markAllRead': 'Oznacz wszystkie jako przeczytane',

@@ -19,7 +19,7 @@ Give operators a quick at-a-glance per-integration health view, directly under t
 
 Frontend-only diff. Reuses the existing `openhuman.memory_sync_status_list` RPC (shipped by #1250) as the data source. The 575-line `MemorySourcesRegistry` remains as the canonical configurable-sources view; this strip is a smaller, health-focused readout colocated with the pipeline-status tiles.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │ MemoryTreeStatusPanel                                           │
 │ ┌─Status─┬─LastSync─┬─Chunks─┬─Wiki──┐                          │
@@ -65,7 +65,7 @@ function classifyIntegration(s: MemorySyncStatus): IntegrationHealth {
 
 ## UI details
 
-- One row per `MemorySyncStatus`. Icon from `SOURCE_KIND_ICONS[provider]` (re-exported from `services/memorySourcesService.ts`); fallback to a generic puzzle-piece glyph for unknown providers.
+- One row per `MemorySyncStatus`. Icon from a small built-in `PROVIDER_ICONS` map inside `MemoryTreeStatusPanel.tsx` (keyed by sync-provider name — `slack` / `gmail` / `notion` / …, distinct from `SOURCE_KIND_ICONS` which keys by `SourceKind`); fallback to a generic `🔌` glyph for unknown providers.
 - Provider name: friendly label via `SOURCE_KIND_LABEL_KEYS[provider]` when present, else the raw `provider` string.
 - "5,231 chunks · 3 min ago" — chunk count + relative time, reusing the existing `formatRelativeMs()` helper from `MemoryTreeStatusPanel.tsx`.
 - Status pill: dot color reuses `statusDotClass` semantics — sage-400 for `active`, stone-400 for `stale`.

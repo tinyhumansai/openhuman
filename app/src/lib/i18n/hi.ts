@@ -442,7 +442,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': 'कोई एकीकरण कनेक्ट नहीं है',
   'memoryTree.status.integrationActive': 'सक्रिय',
   'memoryTree.status.integrationStale': 'पुराना',
-  'memoryTree.status.integrationChunks': '{count} खंड',
+  'memoryTree.status.integrationChunks': 'चंक्स: {count}',
   'alerts.title': 'अलर्ट',
   'alerts.empty': 'अभी कोई अलर्ट नहीं',
   'alerts.markAllRead': 'सभी पढ़ा हुआ मार्क करें',

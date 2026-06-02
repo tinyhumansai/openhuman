@@ -436,7 +436,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': 'لا توجد تكاملات متصلة',
   'memoryTree.status.integrationActive': 'نشط',
   'memoryTree.status.integrationStale': 'قديم',
-  'memoryTree.status.integrationChunks': '{count} قطعة',
+  'memoryTree.status.integrationChunks': 'القطع: {count}',
   'alerts.title': 'التنبيهات',
   'alerts.empty': 'لا توجد تنبيهات بعد',
   'alerts.markAllRead': 'تحديد الكل كمقروء',

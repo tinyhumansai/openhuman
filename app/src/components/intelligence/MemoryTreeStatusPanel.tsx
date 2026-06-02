@@ -247,9 +247,11 @@ export function providerIconChar(provider: string): string {
  */
 function IntegrationHealthStrip({
   integrations,
+  loading,
   t,
 }: {
   integrations: MemorySyncStatusRow[];
+  loading: boolean;
   t: TFn;
 }) {
   return (
@@ -257,7 +259,15 @@ function IntegrationHealthStrip({
       <div className="text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400">
         {t('memoryTree.status.integrationsTitle')}
       </div>
-      {integrations.length === 0 ? (
+      {loading && integrations.length === 0 ? (
+        // First-mount: suppress "no integrations" copy until the initial poll
+        // resolves, otherwise the strip falsely implies nothing is connected
+        // before data arrives (CodeRabbit feedback on #2763).
+        <div
+          data-testid="memory-tree-integrations-skeleton"
+          className="h-9 animate-pulse rounded-lg bg-stone-200 dark:bg-neutral-800"
+        />
+      ) : integrations.length === 0 ? (
         <div
           data-testid="memory-tree-integrations-empty"
           className="rounded-lg border border-dashed border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs text-stone-500 dark:text-neutral-400">
@@ -453,7 +463,7 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
         </div>
       </div>
 
-      <IntegrationHealthStrip integrations={integrations} t={t} />
+      <IntegrationHealthStrip integrations={integrations} loading={loading} t={t} />
 
       {/* Auto-sync toggle row — markup mirrors AIPanel's inline ToggleRow */}
       <div

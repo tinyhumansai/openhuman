@@ -445,7 +445,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': 'Tidak ada integrasi tersambung',
   'memoryTree.status.integrationActive': 'Aktif',
   'memoryTree.status.integrationStale': 'Usang',
-  'memoryTree.status.integrationChunks': '{count} potongan',
+  'memoryTree.status.integrationChunks': 'Potongan: {count}',
   'alerts.title': 'Peringatan',
   'alerts.empty': 'Belum ada peringatan',
   'alerts.markAllRead': 'Tandai semua sudah dibaca',

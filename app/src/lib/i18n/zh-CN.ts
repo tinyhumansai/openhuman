@@ -428,7 +428,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': '未连接任何集成',
   'memoryTree.status.integrationActive': '活跃',
   'memoryTree.status.integrationStale': '过期',
-  'memoryTree.status.integrationChunks': '{count} 个块',
+  'memoryTree.status.integrationChunks': '块数: {count}',
   'alerts.title': '通知',
   'alerts.empty': '暂无通知',
   'alerts.markAllRead': '全部标记为已读',
