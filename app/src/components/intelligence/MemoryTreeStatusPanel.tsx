@@ -27,6 +27,8 @@ import {
   memoryTreePipelineStatus,
   type MemoryTreePipelineStatus,
   memoryTreeSetEnabled,
+  memorySyncStatusList,
+  type MemorySyncStatusRow,
 } from '../../utils/tauriCommands';
 
 /** Translator function shape exposed by `useT()`. */
@@ -45,11 +47,13 @@ const DEFAULT_POLL_MS = 4000;
  */
 function useMemoryTreeStatus(): {
   status: MemoryTreePipelineStatus | null;
+  integrations: MemorySyncStatusRow[];
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
 } {
   const [status, setStatus] = useState<MemoryTreePipelineStatus | null>(null);
+  const [integrations, setIntegrations] = useState<MemorySyncStatusRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
@@ -59,14 +63,30 @@ function useMemoryTreeStatus(): {
   const fetchOnce = useCallback(async () => {
     console.debug('[ui-flow][memory-tree-status] fetchOnce: entry');
     try {
-      const next = await memoryTreePipelineStatus();
+      // Fetch pipeline + per-integration health in parallel so the strip
+      // and the tiles share a single 1.5s / 4s adaptive tick (#2763).
+      const [next, rows] = await Promise.all([
+        memoryTreePipelineStatus(),
+        memorySyncStatusList().catch(err => {
+          // Per-integration list is best-effort: surface an empty strip
+          // rather than wiping the panel when only the secondary endpoint
+          // fails. Pipeline failure still flips the panel-wide error.
+          console.warn(
+            '[ui-flow][memory-tree-status] memorySyncStatusList failed: %s',
+            err instanceof Error ? err.message : String(err)
+          );
+          return [] as MemorySyncStatusRow[];
+        }),
+      ]);
       if (cancelledRef.current) return;
       setStatus(next);
+      setIntegrations(rows);
       setError(null);
       console.debug(
-        '[ui-flow][memory-tree-status] fetchOnce: ok status=%s total=%d',
+        '[ui-flow][memory-tree-status] fetchOnce: ok status=%s total=%d integrations=%d',
         next.status,
-        next.total_chunks
+        next.total_chunks,
+        rows.length
       );
     } catch (err) {
       if (cancelledRef.current) return;
@@ -98,7 +118,7 @@ function useMemoryTreeStatus(): {
     };
   }, [fetchOnce]);
 
-  return { status, loading, error, refresh: fetchOnce };
+  return { status, integrations, loading, error, refresh: fetchOnce };
 }
 
 interface MemoryTreeStatusPanelProps {
@@ -181,7 +201,8 @@ function statusDotClass(kind: MemoryTreePipelineStatus['status']): string {
  */
 export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const { t } = useT();
-  const { status, loading, error, refresh } = useMemoryTreeStatus();
+  const { status, integrations, loading, error, refresh } = useMemoryTreeStatus();
+  void integrations; // consumed by Task 5/6; noop prevents unused-var lint
   const [toggleBusy, setToggleBusy] = useState(false);
 
   const handleToggle = useCallback(async () => {

@@ -17,6 +17,7 @@ import { MemoryTreeStatusPanel } from './MemoryTreeStatusPanel';
 
 const mockPipelineStatus = vi.fn();
 const mockSetEnabled = vi.fn();
+const mockSyncStatusList = vi.fn();
 
 vi.mock('../../utils/tauriCommands', async importOriginal => {
   // Inherit everything else (types, sibling wrappers) verbatim so the panel
@@ -27,6 +28,7 @@ vi.mock('../../utils/tauriCommands', async importOriginal => {
     ...actual,
     memoryTreePipelineStatus: (...args: unknown[]) => mockPipelineStatus(...args),
     memoryTreeSetEnabled: (...args: unknown[]) => mockSetEnabled(...args),
+    memorySyncStatusList: (...args: unknown[]) => mockSyncStatusList(...args),
   };
 });
 
@@ -58,6 +60,8 @@ describe('<MemoryTreeStatusPanel />', () => {
     vi.setSystemTime(new Date(FIXED_NOW_MS));
     mockPipelineStatus.mockReset();
     mockSetEnabled.mockReset();
+    mockSyncStatusList.mockReset();
+    mockSyncStatusList.mockResolvedValue([]);  // default: empty, harmless to existing tests
   });
 
   afterEach(() => {
@@ -80,6 +84,28 @@ describe('<MemoryTreeStatusPanel />', () => {
     expect(screen.getByTestId('memory-tree-wiki-size')).toHaveTextContent(/2\.0 MiB/);
     // last_sync_ms ~5 min ago bucketed to "5 min ago".
     expect(screen.getByTestId('memory-tree-last-sync')).toHaveTextContent(/min ago/);
+  });
+
+  it('fetches integration list and pipeline status in parallel on the same tick', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockSyncStatusList.mockResolvedValue([
+      {
+        provider: 'slack',
+        chunks_synced: 5231,
+        chunks_pending: 0,
+        batch_total: 0,
+        batch_processed: 0,
+        last_chunk_at_ms: FIXED_NOW_MS - 3 * 60 * 1000,
+        freshness: 'active',
+      },
+    ]);
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(mockPipelineStatus).toHaveBeenCalledTimes(1);
+      expect(mockSyncStatusList).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('shows skeleton placeholders before the first status payload resolves', async () => {
