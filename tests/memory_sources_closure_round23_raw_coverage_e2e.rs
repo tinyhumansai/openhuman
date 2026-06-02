@@ -131,7 +131,13 @@ fn source_entry(id: &str, kind: SourceKind) -> MemorySourceEntry {
         query: None,
         since_days: None,
         max_items: None,
+        max_commits: None,
+        max_issues: None,
+        max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     }
 }
 
@@ -197,6 +203,15 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
     )
     .await
     .expect("insert composio");
+    let composio = memory_sources::update_source(
+        &composio.id,
+        MemorySourcePatch {
+            enabled: Some(true),
+            ..MemorySourcePatch::default()
+        },
+    )
+    .await
+    .expect("enable composio source");
     let status = memory_sources::status::source_status(&config, &composio)
         .await
         .expect("composio status");
@@ -218,6 +233,7 @@ async fn round23_memory_sources_status_registry_and_readers_cover_remaining_edge
         .await
         .expect("enabled composio");
     assert_eq!(enabled_composio.len(), 1);
+    assert_eq!(enabled_composio[0].id, composio.id);
 
     let composio_reader =
         openhuman_core::openhuman::memory_sources::readers::composio::ComposioReader;

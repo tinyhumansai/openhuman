@@ -368,6 +368,7 @@ mod tests {
                 time_range: (ts, ts),
                 tags: vec![],
                 source_ref: None,
+                path_scope: None,
             },
             token_count: 8,
             seq_in_source: 0,
@@ -690,7 +691,6 @@ mod tests {
                 body: &node.content,
             },
             "slack-eng",
-            None,
         )
         .unwrap();
         with_connection(&cfg, |conn| {

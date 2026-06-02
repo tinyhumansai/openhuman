@@ -274,6 +274,65 @@ describe('mcpClientsApi', () => {
     });
   });
 
+  describe('updateEnv', () => {
+    it('calls update_env and returns reconnect status', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({
+        server_id: 'srv-1',
+        status: 'connected',
+        env_keys: ['API_KEY'],
+        tools: [],
+      });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      const result = await mcpClientsApi.updateEnv({
+        server_id: 'srv-1',
+        env: { API_KEY: 'rotated' },
+      });
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_update_env',
+        params: { server_id: 'srv-1', env: { API_KEY: 'rotated' } },
+      });
+      expect(result.status).toBe('connected');
+      expect(result.env_keys).toEqual(['API_KEY']);
+    });
+  });
+
+  describe('registry settings', () => {
+    it('registrySettingsGet returns the is-set booleans', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({
+        smithery_api_key_set: true,
+        mcp_official_token_set: false,
+        mcp_official_base: null,
+      });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      const result = await mcpClientsApi.registrySettingsGet();
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_registry_settings_get',
+        params: {},
+      });
+      expect(result.smithery_api_key_set).toBe(true);
+      expect(result.mcp_official_token_set).toBe(false);
+    });
+
+    it('registrySettingsSet forwards only the provided fields', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({
+        smithery_api_key_set: true,
+        mcp_official_token_set: false,
+      });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      await mcpClientsApi.registrySettingsSet({ smithery_api_key: 'sk-x' });
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_registry_settings_set',
+        params: { smithery_api_key: 'sk-x' },
+      });
+    });
+  });
+
   describe('configAssist', () => {
     it('calls config_assist and returns reply', async () => {
       mockCallCoreRpc.mockResolvedValueOnce({

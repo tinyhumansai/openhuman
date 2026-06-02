@@ -45,6 +45,7 @@ function refl(overrides: Partial<Reflection> = {}): Reflection {
     created_at: 1,
     acted_on_at: null,
     dismissed_at: null,
+    thread_id: null,
     ...overrides,
   };
 }

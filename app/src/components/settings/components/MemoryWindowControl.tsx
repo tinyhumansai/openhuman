@@ -154,7 +154,9 @@ const MemoryWindowControl = ({ onError, onSaved }: Props) => {
       data-testid="memory-window-control">
       <div className="flex items-baseline justify-between">
         <div>
-          <h3 className="text-base font-semibold">{t('settings.memoryWindow.title')}</h3>
+          <h3 className="text-base font-semibold text-stone-900 dark:text-neutral-100">
+            {t('settings.memoryWindow.title')}
+          </h3>
           <p className="text-sm text-muted-foreground">{t('settings.memoryWindow.description')}</p>
         </div>
       </div>

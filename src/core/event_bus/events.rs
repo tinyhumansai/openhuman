@@ -76,6 +76,15 @@ pub enum DomainEvent {
         agent_id: String,
         error: String,
     },
+    /// A sub-agent called `ask_user_clarification` and paused, waiting
+    /// for the orchestrator to relay the user's answer via
+    /// `continue_subagent`.
+    SubagentAwaitingUser {
+        parent_session: String,
+        task_id: String,
+        agent_id: String,
+        question: String,
+    },
     /// High-level orchestration accepted a child agent for execution.
     AgentOrchestrationSpawned {
         session_id: String,
@@ -403,6 +412,11 @@ pub enum DomainEvent {
         toolkit: String,
         connection_id: String,
     },
+    /// The connected Composio toolkit set changed (connect/revoke/config flip).
+    ///
+    /// `toolkits` is the currently-active, sanitised slug list that should
+    /// drive orchestrator delegation schema rebuilds.
+    ComposioIntegrationsChanged { toolkits: Vec<String> },
     /// A Composio action was executed (success or failure) via the backend.
     ComposioActionExecuted {
         tool: String,
@@ -487,6 +501,23 @@ pub enum DomainEvent {
     },
     /// A full tree rebuild completed.
     TreeSummarizerRebuildCompleted { namespace: String, total_nodes: u64 },
+
+    /// Fine-grained progress during the memory tree build pipeline.
+    /// Emitted at each sub-phase so the frontend can show detailed status.
+    MemoryTreeBuildProgress {
+        /// Which phase: "extract", "append", "seal", "flush", "embed"
+        phase: String,
+        /// Sub-step within the phase (e.g. "loading", "summarising", "persisting")
+        step: String,
+        /// Tree scope when available (e.g. "github:org/repo")
+        tree_scope: Option<String>,
+        /// Tree level being processed (0 = leaves, 1+ = summaries)
+        level: Option<u32>,
+        /// Number of items being processed in this step
+        item_count: Option<u32>,
+        /// Human-readable detail
+        detail: Option<String>,
+    },
 
     // ── Notification ────────────────────────────────────────────────────
     /// An integration notification was ingested from an embedded webview.
@@ -652,6 +683,17 @@ pub enum DomainEvent {
     /// A component restart was observed.
     HealthRestarted { component: String },
 
+    // ── Keyring ─────────────────────────────────────────────────────────
+    /// The OS keyring is unavailable and no user consent for local fallback
+    /// has been recorded. Published once (deduplicated) when a secret
+    /// operation hits the consent gate. The frontend surfaces a consent
+    /// dialog in response.
+    KeyringConsentRequired,
+    /// A secret field failed to decrypt (rotated master key, corrupted
+    /// ciphertext, keychain reset). Published so the frontend can surface
+    /// a recovery prompt instead of silently clearing the field.
+    KeyringDecryptFailed { field_name: String, reason: String },
+
     // ── Auth ────────────────────────────────────────────────────────────
     /// The local app session is no longer valid — typically detected when
     /// the backend returns 401 to an LLM inference call or a JSON-RPC
@@ -712,6 +754,7 @@ impl DomainEvent {
             | Self::SubagentSpawned { .. }
             | Self::SubagentCompleted { .. }
             | Self::SubagentFailed { .. }
+            | Self::SubagentAwaitingUser { .. }
             | Self::AgentOrchestrationSpawned { .. }
             | Self::AgentOrchestrationCompleted { .. }
             | Self::AgentOrchestrationFailed { .. }
@@ -757,6 +800,7 @@ impl DomainEvent {
             Self::ComposioTriggerReceived { .. }
             | Self::ComposioConnectionCreated { .. }
             | Self::ComposioConnectionDeleted { .. }
+            | Self::ComposioIntegrationsChanged { .. }
             | Self::ComposioActionExecuted { .. }
             | Self::ComposioConfigChanged { .. } => "composio",
 
@@ -766,7 +810,8 @@ impl DomainEvent {
 
             Self::TreeSummarizerHourCompleted { .. }
             | Self::TreeSummarizerPropagated { .. }
-            | Self::TreeSummarizerRebuildCompleted { .. } => "tree_summarizer",
+            | Self::TreeSummarizerRebuildCompleted { .. }
+            | Self::MemoryTreeBuildProgress { .. } => "tree_summarizer",
 
             Self::NotificationIngested { .. } | Self::NotificationTriaged { .. } => "notification",
 
@@ -788,6 +833,8 @@ impl DomainEvent {
             | Self::AutonomyConfigChanged
             | Self::HealthChanged { .. }
             | Self::HealthRestarted { .. } => "system",
+
+            Self::KeyringConsentRequired | Self::KeyringDecryptFailed { .. } => "keyring",
 
             Self::SessionExpired { .. } => "auth",
 
@@ -816,6 +863,7 @@ impl DomainEvent {
             Self::SubagentSpawned { .. } => "SubagentSpawned",
             Self::SubagentCompleted { .. } => "SubagentCompleted",
             Self::SubagentFailed { .. } => "SubagentFailed",
+            Self::SubagentAwaitingUser { .. } => "SubagentAwaitingUser",
             Self::AgentOrchestrationSpawned { .. } => "AgentOrchestrationSpawned",
             Self::AgentOrchestrationCompleted { .. } => "AgentOrchestrationCompleted",
             Self::AgentOrchestrationFailed { .. } => "AgentOrchestrationFailed",
@@ -853,6 +901,7 @@ impl DomainEvent {
             Self::ComposioTriggerReceived { .. } => "ComposioTriggerReceived",
             Self::ComposioConnectionCreated { .. } => "ComposioConnectionCreated",
             Self::ComposioConnectionDeleted { .. } => "ComposioConnectionDeleted",
+            Self::ComposioIntegrationsChanged { .. } => "ComposioIntegrationsChanged",
             Self::ComposioActionExecuted { .. } => "ComposioActionExecuted",
             Self::ComposioConfigChanged { .. } => "ComposioConfigChanged",
             Self::TriggerEvaluated { .. } => "TriggerEvaluated",
@@ -861,6 +910,7 @@ impl DomainEvent {
             Self::TreeSummarizerHourCompleted { .. } => "TreeSummarizerHourCompleted",
             Self::TreeSummarizerPropagated { .. } => "TreeSummarizerPropagated",
             Self::TreeSummarizerRebuildCompleted { .. } => "TreeSummarizerRebuildCompleted",
+            Self::MemoryTreeBuildProgress { .. } => "MemoryTreeBuildProgress",
             Self::NotificationIngested { .. } => "NotificationIngested",
             Self::NotificationTriaged { .. } => "NotificationTriaged",
             Self::DevicePaired { .. } => "DevicePaired",
@@ -879,6 +929,8 @@ impl DomainEvent {
             Self::AutonomyConfigChanged => "AutonomyConfigChanged",
             Self::HealthChanged { .. } => "HealthChanged",
             Self::HealthRestarted { .. } => "HealthRestarted",
+            Self::KeyringConsentRequired => "KeyringConsentRequired",
+            Self::KeyringDecryptFailed { .. } => "KeyringDecryptFailed",
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
@@ -904,6 +956,7 @@ impl DomainEvent {
             Self::SubagentSpawned { agent_id, .. }
             | Self::SubagentCompleted { agent_id, .. }
             | Self::SubagentFailed { agent_id, .. }
+            | Self::SubagentAwaitingUser { agent_id, .. }
             | Self::AgentOrchestrationSpawned { agent_id, .. }
             | Self::AgentOrchestrationCompleted { agent_id, .. }
             | Self::AgentOrchestrationFailed { agent_id, .. } => Some(agent_id.as_str()),

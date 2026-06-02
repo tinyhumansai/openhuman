@@ -424,7 +424,7 @@ export async function memoryTreeSetLlm(
  * node (Tree mode); `"chunk"` is a raw memory chunk and `"contact"`
  * is a person entity (Contacts mode).
  */
-export type GraphNodeKind = 'summary' | 'chunk' | 'contact';
+export type GraphNodeKind = 'source' | 'summary' | 'chunk' | 'contact';
 
 /**
  * One node in the graph export. Optional fields are populated only
@@ -564,6 +564,26 @@ export interface FlushNowResponse {
  * Safe to spam — same UTC-day dedupe key as the scheduled flush, so
  * duplicate clicks return `enqueued=false` rather than queuing twice.
  */
+interface FlushSourceResponse {
+  tree_scope: string;
+  seals_fired: number;
+}
+
+export async function memoryTreeFlushSource(sourceScope: string): Promise<FlushSourceResponse> {
+  console.debug('[memory-tree-rpc] memoryTreeFlushSource: entry scope=%s', sourceScope);
+  const resp = await callCoreRpc<FlushSourceResponse | ResultEnvelope<FlushSourceResponse>>({
+    method: 'openhuman.memory_tree_flush_source',
+    params: { source_scope: sourceScope },
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeFlushSource: exit scope=%s seals=%d',
+    out.tree_scope,
+    out.seals_fired
+  );
+  return out;
+}
+
 export async function memoryTreeFlushNow(): Promise<FlushNowResponse> {
   console.debug('[memory-tree-rpc] memoryTreeFlushNow: entry');
   const resp = await callCoreRpc<FlushNowResponse | ResultEnvelope<FlushNowResponse>>({
@@ -647,6 +667,53 @@ export async function memoryTreeObsidianVaultStatus(
     '[memory-tree-rpc] memoryTreeObsidianVaultStatus: exit registered=%s config_found=%s',
     out.registered,
     out.config_found
+  );
+  return out;
+}
+
+/** Response shape for `memory_tree_vault_health_check`. */
+export interface VaultHealthCheck {
+  /** Absolute filesystem path to `<workspace>/memory_tree/content/`. */
+  content_root_abs: string;
+  /** True when the vault directory exists on disk. */
+  exists: boolean;
+  /** True when the vault directory is readable. */
+  readable: boolean;
+  /** True when a temp-file create+delete probe succeeds in the vault. */
+  writable: boolean;
+  /** True when Obsidian has this folder (or an ancestor) registered as a vault. */
+  obsidian_registered: boolean;
+  /** True when pipeline status is not paused and not in error. */
+  pipeline_healthy: boolean;
+  /** Epoch ms of newest chunk timestamp; zero when no chunks exist yet. */
+  last_sync_ms: number;
+}
+
+/**
+ * Consolidated onboarding/settings health snapshot for the workspace memory
+ * vault (`<workspace>/memory_tree/content/`).
+ *
+ * Backed by `openhuman.memory_tree_vault_health_check`.
+ */
+export async function memoryTreeVaultHealthCheck(
+  obsidianConfigDir?: string
+): Promise<VaultHealthCheck> {
+  console.debug(
+    '[memory-tree-rpc] memoryTreeVaultHealthCheck: entry override=%s',
+    obsidianConfigDir ? 'set' : 'none'
+  );
+  const resp = await callCoreRpc<VaultHealthCheck | ResultEnvelope<VaultHealthCheck>>({
+    method: 'openhuman.memory_tree_vault_health_check',
+    params: obsidianConfigDir ? { obsidian_config_dir: obsidianConfigDir } : {},
+  });
+  const out = unwrapResult(resp);
+  console.debug(
+    '[memory-tree-rpc] memoryTreeVaultHealthCheck: exit exists=%s readable=%s writable=%s obsidian_registered=%s pipeline_healthy=%s',
+    out.exists,
+    out.readable,
+    out.writable,
+    out.obsidian_registered,
+    out.pipeline_healthy
   );
   return out;
 }
@@ -793,4 +860,28 @@ export async function memoryTreeSetEnabled(
     out.mode
   );
   return out;
+}
+
+// ── Sync Audit Log ─────────────────────────────────────────────────
+
+export interface SyncAuditEntry {
+  timestamp: string;
+  source_id: string;
+  source_kind: string;
+  scope: string;
+  items_fetched: number;
+  batches: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost_usd: number;
+  duration_ms: number;
+  success: boolean;
+  error?: string;
+}
+
+export async function memorySyncAuditLog(): Promise<SyncAuditEntry[]> {
+  const resp = await callCoreRpc<
+    { entries: SyncAuditEntry[] } | ResultEnvelope<{ entries: SyncAuditEntry[] }>
+  >({ method: 'openhuman.memory_sources_sync_audit_log', params: {} });
+  return unwrapResult(resp).entries ?? [];
 }

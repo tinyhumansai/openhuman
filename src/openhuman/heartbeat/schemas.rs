@@ -81,6 +81,10 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "reminder_lookahead_minutes",
                     "Max lookahead window (minutes) for reminder notifications.",
                 ),
+                optional_string(
+                    "subconscious_mode",
+                    "Subconscious operating mode: off, simple, or aggressive.",
+                ),
             ],
             outputs: vec![FieldSchema {
                 name: "settings",
@@ -157,6 +161,15 @@ fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::String)),
         comment,
         required: false,
     }

@@ -20,12 +20,15 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("registry_get"),
         schemas("installed_list"),
         schemas("install"),
+        schemas("update_env"),
         schemas("uninstall"),
         schemas("connect"),
         schemas("disconnect"),
         schemas("status"),
         schemas("tool_call"),
         schemas("config_assist"),
+        schemas("registry_settings_get"),
+        schemas("registry_settings_set"),
         // Setup-agent surface (mcp_setup namespace, lives in setup_ops.rs).
         setup_schemas("search"),
         setup_schemas("get"),
@@ -55,6 +58,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_install,
         },
         RegisteredController {
+            schema: schemas("update_env"),
+            handler: handle_update_env,
+        },
+        RegisteredController {
             schema: schemas("uninstall"),
             handler: handle_uninstall,
         },
@@ -77,6 +84,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("config_assist"),
             handler: handle_config_assist,
+        },
+        RegisteredController {
+            schema: schemas("registry_settings_get"),
+            handler: handle_registry_settings_get,
+        },
+        RegisteredController {
+            schema: schemas("registry_settings_set"),
+            handler: handle_registry_settings_set,
         },
         RegisteredController {
             schema: setup_schemas("search"),
@@ -214,6 +229,54 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 comment: "The newly installed server record.",
                 required: true,
             }],
+        },
+
+        "update_env" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "update_env",
+            description: "Replace the stored env values for an installed server and reconnect so the new credentials take effect (reconfigure / rotate keys without reinstalling).",
+            inputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "UUID of the installed server to reconfigure.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "env",
+                    ty: TypeSchema::Map(Box::new(TypeSchema::String)),
+                    comment: "Replacement environment variable values. Stored encrypted and never returned.",
+                    required: true,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "server_id",
+                    ty: TypeSchema::String,
+                    comment: "The reconfigured server id.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "status",
+                    ty: TypeSchema::Enum {
+                        variants: vec!["connected", "disconnected"],
+                    },
+                    comment: "`connected` if the reconnect succeeded, `disconnected` if env was saved but reconnect failed.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "env_keys",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::String)),
+                    comment: "Env key names after the update (values omitted).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "tools",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Ref("McpTool"))),
+                    comment: "Tools exposed after reconnect (present only when status=connected).",
+                    required: false,
+                },
+            ],
         },
 
         "uninstall" => ControllerSchema {
@@ -399,6 +462,79 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
         },
 
+        "registry_settings_get" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "registry_settings_get",
+            description: "Report which registry credentials are configured (Smithery key, official-registry base/token). Never returns secret values — only `*_set` booleans plus the non-secret base URL override.",
+            inputs: vec![],
+            outputs: vec![
+                FieldSchema {
+                    name: "smithery_api_key_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a Smithery API key is set (config or env).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_token_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when an official-registry bearer token is set (config or env).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_base",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "User-configured official-registry base URL override (non-secret).",
+                    required: false,
+                },
+            ],
+        },
+
+        "registry_settings_set" => ControllerSchema {
+            namespace: "mcp_clients",
+            function: "registry_settings_set",
+            description: "Persist registry credentials. Per field: omit to leave unchanged, empty string to clear, value to set. Secrets are write-only; the response is the same non-secret snapshot as registry_settings_get.",
+            inputs: vec![
+                FieldSchema {
+                    name: "smithery_api_key",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New Smithery API key (empty string clears).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "mcp_official_base",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New official-registry base URL override (empty string clears).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "mcp_official_token",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "New official-registry bearer token (empty string clears).",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "smithery_api_key_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when a Smithery API key is set after the update.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_token_set",
+                    ty: TypeSchema::Bool,
+                    comment: "True when an official-registry token is set after the update.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "mcp_official_base",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+                    comment: "Official-registry base URL override after the update.",
+                    required: false,
+                },
+            ],
+        },
+
         // Handled by setup_schemas() — surface a clearer error rather than
         // falling through to the generic unknown sink.
         "setup_search"
@@ -482,6 +618,18 @@ fn handle_install(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_update_env(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let config = config_rpc::load_config_with_timeout().await?;
+        let server_id = read_required::<String>(&params, "server_id")?;
+        let env = read_required::<std::collections::HashMap<String, String>>(&params, "env")?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_update_env(&config, server_id, env)
+                .await?,
+        )
+    })
+}
+
 fn handle_uninstall(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -546,6 +694,34 @@ fn handle_config_assist(params: Map<String, Value>) -> ControllerFuture {
                 qualified_name,
                 user_message,
                 history,
+            )
+            .await?,
+        )
+    })
+}
+
+fn handle_registry_settings_get(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let _ = params;
+        let config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_registry_settings_get(&config).await?,
+        )
+    })
+}
+
+fn handle_registry_settings_set(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let smithery_api_key = read_optional::<String>(&params, "smithery_api_key")?;
+        let mcp_official_base = read_optional::<String>(&params, "mcp_official_base")?;
+        let mcp_official_token = read_optional::<String>(&params, "mcp_official_token")?;
+        let mut config = config_rpc::load_config_with_timeout().await?;
+        to_json(
+            crate::openhuman::mcp_registry::ops::mcp_clients_registry_settings_set(
+                &mut config,
+                smithery_api_key,
+                mcp_official_base,
+                mcp_official_token,
             )
             .await?,
         )

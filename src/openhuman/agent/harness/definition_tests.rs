@@ -19,6 +19,7 @@ fn make_def(id: &str) -> AgentDefinition {
         skill_filter: None,
         extra_tools: vec![],
         max_iterations: 8,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,
@@ -177,4 +178,68 @@ fn skills_wildcard_only_star_matches_all() {
         skills: "gmail".into(),
     };
     assert!(!specific.matches_all());
+}
+
+// ── iteration policy ─────────────────────────────────────────────
+
+#[test]
+fn strict_policy_returns_max_iterations_unchanged() {
+    let mut def = make_def("summarizer");
+    def.max_iterations = 2;
+    def.iteration_policy = IterationPolicy::Strict;
+    assert_eq!(def.effective_max_iterations(), 2);
+}
+
+#[test]
+fn extended_policy_raises_cap_to_at_least_extended_constant() {
+    let mut def = make_def("code_executor");
+    def.max_iterations = 10;
+    def.iteration_policy = IterationPolicy::Extended;
+    assert_eq!(
+        def.effective_max_iterations(),
+        super::super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS
+    );
+    assert!(def.effective_max_iterations() > def.max_iterations);
+}
+
+#[test]
+fn extended_policy_preserves_custom_cap_when_higher_than_constant() {
+    let mut def = make_def("custom_agent");
+    def.max_iterations = 100;
+    def.iteration_policy = IterationPolicy::Extended;
+    assert_eq!(def.effective_max_iterations(), 100);
+}
+
+#[test]
+fn iteration_policy_defaults_to_strict() {
+    let def = make_def("test");
+    assert_eq!(def.iteration_policy, IterationPolicy::Strict);
+}
+
+#[test]
+fn iteration_policy_parses_from_toml() {
+    let toml_src = r#"
+id = "code_executor"
+when_to_use = "Runs code"
+max_iterations = 10
+iteration_policy = "extended"
+"#;
+    let def: AgentDefinition = toml::from_str(toml_src).expect("toml parse");
+    assert_eq!(def.iteration_policy, IterationPolicy::Extended);
+    assert_eq!(
+        def.effective_max_iterations(),
+        super::super::tool_loop::EXTENDED_MAX_TOOL_ITERATIONS
+    );
+}
+
+#[test]
+fn iteration_policy_omitted_defaults_strict() {
+    let toml_src = r#"
+id = "summarizer"
+when_to_use = "Summarizes"
+max_iterations = 1
+"#;
+    let def: AgentDefinition = toml::from_str(toml_src).expect("toml parse");
+    assert_eq!(def.iteration_policy, IterationPolicy::Strict);
+    assert_eq!(def.effective_max_iterations(), 1);
 }

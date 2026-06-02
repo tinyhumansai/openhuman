@@ -1,6 +1,7 @@
 import { waitForApp, waitForAppReady } from '../helpers/app-helpers';
 import { triggerAuthDeepLinkBypass } from '../helpers/deep-link-helpers';
 import {
+  clickText,
   textExists,
   waitForText,
   waitForWebView,
@@ -60,9 +61,11 @@ describe('Insights dashboard smoke', () => {
     stepLog('navigating to /intelligence');
     await navigateViaHash('/intelligence');
 
-    // Tabs / page chrome — Memory is the canonical first view.
+    // Wait for tab bar to appear then click the Memory tab to activate it.
     await waitForText('Memory', 15_000);
     expect(await textExists('Memory')).toBe(true);
+    stepLog('clicking Memory tab');
+    await clickText('Memory', 10_000);
   });
 
   it('renders the memory workspace container (11.2.3)', async () => {

@@ -6,7 +6,7 @@ use openhuman_core::openhuman::agent::bus::{
 use openhuman_core::openhuman::agent::debug::{dump_agent_prompt, DumpPromptOptions};
 use openhuman_core::openhuman::agent::dispatcher::XmlToolDispatcher;
 use openhuman_core::openhuman::agent::{Agent, AgentBuilder};
-use openhuman_core::openhuman::config::{AgentConfig, MultimodalConfig};
+use openhuman_core::openhuman::config::{AgentConfig, MultimodalConfig, MultimodalFileConfig};
 use openhuman_core::openhuman::context::prompt::LearnedContextData;
 use openhuman_core::openhuman::inference::provider::traits::ProviderCapabilities;
 use openhuman_core::openhuman::inference::provider::{
@@ -372,6 +372,7 @@ async fn run_bus_turn(
             silent: true,
             channel_name: "round15".to_string(),
             multimodal: MultimodalConfig::default(),
+            multimodal_files: MultimodalFileConfig::default(),
             max_tool_iterations,
             on_delta: None,
             target_agent_id: Some("orchestrator".to_string()),

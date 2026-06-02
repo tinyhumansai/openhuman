@@ -45,7 +45,8 @@ impl LocalAiService {
             LocalAiProvider::Ollama | LocalAiProvider::LmStudio
         );
         let ollama_available = if uses_ollama_assets {
-            let present = self.ollama_healthy().await;
+            let base_url = crate::openhuman::inference::local::ollama_base_url_from_config(config);
+            let present = self.ollama_healthy_at(&base_url).await;
             debug!(
                 target: "local_ai::assets",
                 %correlation_id,
@@ -89,7 +90,7 @@ impl LocalAiService {
                 }
             };
             let embedding_ready = if ollama_available {
-                match self.has_model(&embedding_model).await {
+                match self.has_model_for_config(config, &embedding_model).await {
                     Ok(ready) => {
                         debug!(
                             target: "local_ai::assets",
@@ -131,7 +132,7 @@ impl LocalAiService {
                 branch = "ollama",
                 "[local_ai:assets:provider_routing] selected provider branch"
             );
-            let chat_ready = match self.has_model(&chat_model).await {
+            let chat_ready = match self.has_model_for_config(config, &chat_model).await {
                 Ok(ready) => {
                     debug!(
                         target: "local_ai::assets",
@@ -157,7 +158,7 @@ impl LocalAiService {
                     false
                 }
             };
-            let vision_ready = match self.has_model(&vision_model).await {
+            let vision_ready = match self.has_model_for_config(config, &vision_model).await {
                 Ok(ready) => {
                     debug!(
                         target: "local_ai::assets",
@@ -183,7 +184,7 @@ impl LocalAiService {
                     false
                 }
             };
-            let embedding_ready = match self.has_model(&embedding_model).await {
+            let embedding_ready = match self.has_model_for_config(config, &embedding_model).await {
                 Ok(ready) => {
                     debug!(
                         target: "local_ai::assets",
@@ -533,7 +534,7 @@ impl LocalAiService {
                 }
                 if let Err(err) = async {
                     self.ensure_ollama_server(config).await?;
-                    self.ensure_ollama_model_available(&model_id, "embedding")
+                    self.ensure_ollama_model_available(config, &model_id, "embedding")
                         .await
                 }
                 .await
@@ -625,7 +626,8 @@ impl LocalAiService {
                     _ => {}
                 }
             }
-            self.ensure_ollama_model_available(&model_id, label).await?;
+            self.ensure_ollama_model_available(config, &model_id, label)
+                .await?;
         }
 
         let mut stt_warning = None;
@@ -687,7 +689,8 @@ impl LocalAiService {
             "chat" => {
                 self.ensure_ollama_server(config).await?;
                 let model = model_ids::effective_chat_model_id(config);
-                self.ensure_ollama_model_available(&model, "chat").await?;
+                self.ensure_ollama_model_available(config, &model, "chat")
+                    .await?;
             }
             "vision" => {
                 if matches!(
@@ -701,12 +704,13 @@ impl LocalAiService {
                 }
                 self.ensure_ollama_server(config).await?;
                 let model = model_ids::effective_vision_model_id(config);
-                self.ensure_ollama_model_available(&model, "vision").await?;
+                self.ensure_ollama_model_available(config, &model, "vision")
+                    .await?;
             }
             "embedding" | "embeddings" => {
                 self.ensure_ollama_server(config).await?;
                 let model = model_ids::effective_embedding_model_id(config);
-                self.ensure_ollama_model_available(&model, "embedding")
+                self.ensure_ollama_model_available(config, &model, "embedding")
                     .await?;
             }
             "stt" => {

@@ -20,6 +20,30 @@ use tempfile::tempdir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+struct EnvVarGuard {
+    key: &'static str,
+    previous: Option<std::ffi::OsString>,
+}
+
+impl EnvVarGuard {
+    fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match self.previous.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+}
+
 fn test_config(tmp: &tempfile::TempDir) -> Config {
     Config {
         config_path: tmp.path().join("config.toml"),
@@ -290,6 +314,31 @@ fn persist_openai_oauth_token_stores_oauth_profile_with_metadata() {
 }
 
 #[test]
+fn persist_openai_oauth_token_rejects_blank_access_token() {
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let token = motosan_ai_oauth::Token {
+        access_token: "   ".into(),
+        refresh_token: "refresh-token".into(),
+        id_token: Some("id-token".into()),
+        expires_in: 3600,
+        issued_at: 123,
+    };
+
+    let err = persist_openai_oauth_token(&config, &token).unwrap_err();
+    assert!(
+        err.contains("access_token"),
+        "expected missing access_token error, got: {err}"
+    );
+
+    let data = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    assert!(
+        data.profiles.is_empty(),
+        "blank-access OAuth token should not be persisted"
+    );
+}
+
+#[test]
 fn import_codex_cli_auth_file_stores_oauth_profile_with_account_metadata() {
     let tmp = tempdir().unwrap();
     let config = test_config(&tmp);
@@ -544,6 +593,66 @@ fn lookup_openai_bearer_token_keeps_expired_token_when_refresh_fails_without_run
 
     let token = lookup_openai_bearer_token(&config).unwrap();
     assert_eq!(token.as_deref(), Some("expired-access"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn lookup_openai_bearer_token_does_not_persist_blank_refreshed_access_token() {
+    let _env_lock = crate::openhuman::config::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let tmp = tempdir().unwrap();
+    let config = test_config(&tmp);
+    let store = AuthProfilesStore::new(tmp.path(), false);
+    let original_profile = AuthProfile::new_oauth(
+        OPENAI_PROVIDER_KEY,
+        OPENAI_OAUTH_PROFILE_NAME,
+        TokenSet {
+            access_token: "oauth-access".into(),
+            refresh_token: Some("refresh-token".into()),
+            id_token: None,
+            expires_at: Some(Utc::now() - Duration::minutes(5)),
+            token_type: Some("Bearer".into()),
+            scope: None,
+        },
+    );
+    store.upsert_profile(original_profile, true).unwrap();
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "   ",
+            "refresh_token": "refresh-updated",
+            "id_token": "id-updated",
+            "expires_in": 3600,
+        })))
+        .mount(&server)
+        .await;
+
+    let _env_guard = EnvVarGuard::set(
+        "OPENAI_CODEX_OAUTH_TOKEN_URL",
+        format!("{}/token", server.uri()),
+    );
+
+    let token = lookup_openai_bearer_token(&config).unwrap();
+    assert_eq!(
+        token.as_deref(),
+        Some("oauth-access"),
+        "invalid refresh payload should not replace the last known good access token"
+    );
+
+    let reloaded = AuthProfilesStore::new(tmp.path(), false).load().unwrap();
+    let stored = reloaded
+        .profiles
+        .get(&format!(
+            "{OPENAI_PROVIDER_KEY}:{OPENAI_OAUTH_PROFILE_NAME}"
+        ))
+        .expect("oauth profile should still exist after invalid refresh response");
+    let token_set = stored.token_set.as_ref().expect("oauth token_set");
+    assert_eq!(
+        token_set.access_token, "oauth-access",
+        "invalid refresh payload should not be persisted"
+    );
 }
 
 #[test]

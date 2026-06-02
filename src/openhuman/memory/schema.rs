@@ -1,7 +1,7 @@
 //! Controller schemas for the memory tree.
 //!
 //! Registered JSON-RPC methods include the original Phase 1 surface
-//! (`ingest`, `list_chunks`, `get_chunk`, `trigger_digest`) plus the new
+//! (`ingest`, `list_chunks`, `get_chunk`) plus the new
 //! Memory-tab read RPCs added by the cloud-default backend refactor:
 //! `list_sources`, `search`, `recall`, `entity_index_for`,
 //! `top_entities`, `chunk_score`, `delete_chunk`, and destructive
@@ -29,7 +29,6 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("ingest"),
         schemas("list_chunks"),
         schemas("get_chunk"),
-        schemas("trigger_digest"),
         schemas("memory_backfill_status"),
         schemas("list_sources"),
         schemas("search"),
@@ -41,11 +40,14 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("delete_chunk"),
         schemas("graph_export"),
         schemas("obsidian_vault_status"),
+        schemas("vault_health_check"),
         schemas("flush_now"),
+        schemas("flush_source"),
         schemas("wipe_all"),
         schemas("reset_tree"),
         schemas("pipeline_status"),
         schemas("set_enabled"),
+        schemas("smart_walk"),
     ]
 }
 
@@ -64,10 +66,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_chunk"),
             handler: handle_get_chunk,
-        },
-        RegisteredController {
-            schema: schemas("trigger_digest"),
-            handler: handle_trigger_digest,
         },
         RegisteredController {
             schema: schemas("memory_backfill_status"),
@@ -114,8 +112,16 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_obsidian_vault_status,
         },
         RegisteredController {
+            schema: schemas("vault_health_check"),
+            handler: handle_vault_health_check,
+        },
+        RegisteredController {
             schema: schemas("flush_now"),
             handler: handle_flush_now,
+        },
+        RegisteredController {
+            schema: schemas("flush_source"),
+            handler: handle_flush_source,
         },
         RegisteredController {
             schema: schemas("wipe_all"),
@@ -132,6 +138,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("set_enabled"),
             handler: handle_set_enabled,
+        },
+        RegisteredController {
+            schema: schemas("smart_walk"),
+            handler: handle_smart_walk,
         },
     ]
 }
@@ -555,6 +565,33 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "flush_source" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "flush_source",
+            description: "Immediately seal one source tree's L0 buffer, bypassing the job \
+                          queue. Mutex per source scope so concurrent clicks are serialised. \
+                          Returns the number of seal cascades that fired.",
+            inputs: vec![FieldSchema {
+                name: "source_scope",
+                ty: TypeSchema::String,
+                comment: "Source tree scope (e.g. `github:org/repo`, `slack:#eng`).",
+                required: true,
+            }],
+            outputs: vec![
+                FieldSchema {
+                    name: "tree_scope",
+                    ty: TypeSchema::String,
+                    comment: "Echo of the source scope.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "seals_fired",
+                    ty: TypeSchema::U64,
+                    comment: "Number of seal cascades that fired.",
+                    required: true,
+                },
+            ],
+        },
         "flush_now" => ControllerSchema {
             namespace: NAMESPACE,
             function: "flush_now",
@@ -661,40 +698,62 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
-        "trigger_digest" => ControllerSchema {
+        "vault_health_check" => ControllerSchema {
             namespace: NAMESPACE,
-            function: "trigger_digest",
-            description: "Manually enqueue a daily-digest job for the global \
-                tree. Idempotent — re-running for a day that already has a \
-                digest is a no-op (the handler skips). When no date is \
-                supplied, defaults to yesterday in UTC, matching the \
-                scheduler's autonomous behavior.",
+            function: "vault_health_check",
+            description: "Consolidated workspace-vault health snapshot for onboarding and \
+                          settings. Checks whether <workspace>/memory_tree/content exists, is \
+                          readable, and is writable (via temp-file probe), whether Obsidian has \
+                          the vault registered, and whether the Memory Tree pipeline is healthy.",
             inputs: vec![FieldSchema {
-                name: "date_iso",
+                name: "obsidian_config_dir",
                 ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                comment: "UTC calendar date as `YYYY-MM-DD`. Optional; \
-                    defaults to yesterday when omitted.",
+                comment: "Optional override for Obsidian's config directory (where \
+                          obsidian.json lives). Omitted ⇒ standard per-OS probe.",
                 required: false,
             }],
             outputs: vec![
                 FieldSchema {
-                    name: "enqueued",
-                    ty: TypeSchema::Bool,
-                    comment: "True when a fresh job row was inserted; false \
-                        when an active job for the same date suppressed it.",
+                    name: "content_root_abs",
+                    ty: TypeSchema::String,
+                    comment: "Absolute path to <workspace>/memory_tree/content/.",
                     required: true,
                 },
                 FieldSchema {
-                    name: "job_id",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "ID of the newly enqueued job row, when enqueued.",
-                    required: false,
+                    name: "exists",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the workspace vault directory exists on disk.",
+                    required: true,
                 },
                 FieldSchema {
-                    name: "date_iso",
-                    ty: TypeSchema::String,
-                    comment: "The date the digest will cover, echoed back \
-                        as `YYYY-MM-DD`.",
+                    name: "readable",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the workspace vault directory can be read.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "writable",
+                    ty: TypeSchema::Bool,
+                    comment: "True when the vault accepts a create+delete temp-file probe.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "obsidian_registered",
+                    ty: TypeSchema::Bool,
+                    comment: "True when Obsidian has this folder (or an ancestor) registered \
+                              as a vault.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "pipeline_healthy",
+                    ty: TypeSchema::Bool,
+                    comment: "True when Memory Tree pipeline is not paused and not in error.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "last_sync_ms",
+                    ty: TypeSchema::I64,
+                    comment: "Epoch ms of the newest chunk timestamp; 0 when empty.",
                     required: true,
                 },
             ],
@@ -831,6 +890,78 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 },
             ],
         },
+        "smart_walk" => ControllerSchema {
+            namespace: NAMESPACE,
+            function: "smart_walk",
+            description: "Multi-strategy memory retrieval — combines vector \
+                search, keyword search, entity lookup, and tree browsing to \
+                answer natural-language queries across raw files, wiki \
+                summaries, documents, and episodic memories.",
+            inputs: vec![
+                FieldSchema {
+                    name: "query",
+                    ty: TypeSchema::String,
+                    comment: "Natural-language question to answer.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "namespace",
+                    ty: TypeSchema::String,
+                    comment: "Memory namespace. Default: \"default\".",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "max_turns",
+                    ty: TypeSchema::U64,
+                    comment: "Max LLM turns. Default 12, hard cap 25.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "model",
+                    ty: TypeSchema::String,
+                    comment: "Provider:model override (e.g. 'deepseek:deepseek-chat').",
+                    required: false,
+                },
+            ],
+            outputs: vec![
+                FieldSchema {
+                    name: "answer",
+                    ty: TypeSchema::String,
+                    comment: "Synthesized answer with evidence citations.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "turns_used",
+                    ty: TypeSchema::U64,
+                    comment: "Number of LLM turns consumed.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "evidence_count",
+                    ty: TypeSchema::U64,
+                    comment: "Number of evidence items collected.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "stopped_reason",
+                    ty: TypeSchema::String,
+                    comment: "Why the walk stopped (answered/max_turns/llm_gave_up/error).",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "evidence",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                    comment: "Array of {source_path, snippet, relevance} evidence items.",
+                    required: true,
+                },
+                FieldSchema {
+                    name: "trace",
+                    ty: TypeSchema::Array(Box::new(TypeSchema::Json)),
+                    comment: "Array of {turn, action, args_summary, result_preview} trace steps.",
+                    required: true,
+                },
+            ],
+        },
         _ => ControllerSchema {
             namespace: NAMESPACE,
             function: "unknown",
@@ -864,14 +995,6 @@ fn handle_get_chunk(params: Map<String, Value>) -> ControllerFuture {
         let config = config_rpc::load_config_with_timeout().await?;
         let req = parse_value::<rpc::GetChunkRequest>(Value::Object(params))?;
         to_json(rpc::get_chunk_rpc(&config, req).await?)
-    })
-}
-
-fn handle_trigger_digest(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<rpc::TriggerDigestRequest>(Value::Object(params))?;
-        to_json(rpc::trigger_digest_rpc(&config, req).await?)
     })
 }
 
@@ -1019,6 +1142,31 @@ fn handle_obsidian_vault_status(params: Map<String, Value>) -> ControllerFuture 
     })
 }
 
+fn handle_vault_health_check(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize, Default)]
+        struct Req {
+            #[serde(default)]
+            obsidian_config_dir: Option<String>,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params)).unwrap_or_default();
+        to_json(read_rpc::vault_health_check_rpc(&config, req.obsidian_config_dir).await?)
+    })
+}
+
+fn handle_flush_source(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        #[derive(serde::Deserialize)]
+        struct Req {
+            source_scope: String,
+        }
+        let config = config_rpc::load_config_with_timeout().await?;
+        let req = parse_value::<Req>(Value::Object(params))?;
+        to_json(read_rpc::flush_source_tree_rpc(&config, &req.source_scope).await?)
+    })
+}
+
 fn handle_flush_now(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -1052,6 +1200,119 @@ fn handle_set_enabled(params: Map<String, Value>) -> ControllerFuture {
         let req = parse_value::<rpc::SetEnabledRequest>(Value::Object(params))?;
         let mut config = config_rpc::load_config_with_timeout().await?;
         to_json(rpc::set_enabled_rpc(&mut config, req).await?)
+    })
+}
+
+fn handle_smart_walk(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        use crate::openhuman::memory::chat::build_chat_provider;
+        use crate::openhuman::memory::query::smart_walk::{
+            run_smart_walk, SmartWalkOptions, SmartWalkStopReason,
+        };
+
+        #[derive(serde::Deserialize)]
+        struct Req {
+            query: String,
+            #[serde(default = "default_namespace")]
+            namespace: String,
+            #[serde(default)]
+            max_turns: Option<u64>,
+            #[serde(default)]
+            model: Option<String>,
+        }
+        fn default_namespace() -> String {
+            "default".into()
+        }
+
+        let req = parse_value::<Req>(Value::Object(params))?;
+        let config = config_rpc::load_config_with_timeout().await?;
+
+        let chat_provider = build_chat_provider(&config)
+            .map_err(|e| format!("smart_walk: build chat provider failed: {e}"))?;
+
+        struct Adapter {
+            inner: std::sync::Arc<dyn crate::openhuman::memory::chat::ChatProvider>,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::openhuman::inference::provider::traits::Provider for Adapter {
+            async fn chat_with_system(
+                &self,
+                system: Option<&str>,
+                message: &str,
+                _model: &str,
+                temperature: f64,
+            ) -> anyhow::Result<String> {
+                let prompt = crate::openhuman::memory::chat::ChatPrompt {
+                    system: system.unwrap_or("").to_string(),
+                    user: message.to_string(),
+                    temperature,
+                    kind: "memory_smart_walk_rpc",
+                };
+                self.inner.chat_for_text(&prompt).await
+            }
+
+            async fn chat_with_history(
+                &self,
+                messages: &[crate::openhuman::inference::provider::traits::ChatMessage],
+                model: &str,
+                temperature: f64,
+            ) -> anyhow::Result<String> {
+                let system = messages
+                    .iter()
+                    .find(|m| m.role == "system")
+                    .map(|m| m.content.as_str());
+                let user: String = messages
+                    .iter()
+                    .filter(|m| m.role != "system")
+                    .map(|m| m.content.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.chat_with_system(system, &user, model, temperature)
+                    .await
+            }
+        }
+
+        let adapter = Adapter {
+            inner: chat_provider,
+        };
+
+        let opts = SmartWalkOptions {
+            max_turns: req.max_turns.map(|n| n as usize).unwrap_or(12),
+            namespace: req.namespace,
+            model: req.model,
+            content_root: None,
+        };
+
+        let outcome = run_smart_walk(&config, &adapter, &req.query, opts)
+            .await
+            .map_err(|e| format!("smart_walk error: {e}"))?;
+
+        let stopped = match outcome.stopped_reason {
+            SmartWalkStopReason::Answered => "answered",
+            SmartWalkStopReason::MaxTurnsReached => "max_turns",
+            SmartWalkStopReason::LlmGaveUp => "llm_gave_up",
+            SmartWalkStopReason::Error(_) => "error",
+        };
+
+        let result = serde_json::json!({
+            "answer": outcome.answer,
+            "turns_used": outcome.turns_used,
+            "evidence_count": outcome.evidence.len(),
+            "stopped_reason": stopped,
+            "evidence": outcome.evidence.iter().map(|e| serde_json::json!({
+                "source_path": e.source_path,
+                "snippet": e.snippet,
+                "relevance": e.relevance,
+            })).collect::<Vec<_>>(),
+            "trace": outcome.trace.iter().map(|s| serde_json::json!({
+                "turn": s.turn,
+                "action": s.action,
+                "args_summary": s.args_summary,
+                "result_preview": s.result_preview,
+            })).collect::<Vec<_>>(),
+        });
+        to_json(RpcOutcome::new(result, vec![]))
     })
 }
 

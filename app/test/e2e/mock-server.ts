@@ -54,7 +54,19 @@ export async function injectTelegramUpdate(update) {
  */
 export async function getTelegramSentMessages() {
   const res = await telegramAdminFetch('/__admin/telegram/sent');
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      `[mock-server] /__admin/telegram/sent failed (${res.status}): ${JSON.stringify(data)}`
+    );
+  }
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray((data as { messages?: unknown }).messages)) {
+    return (data as { messages: unknown[] }).messages;
+  }
+  throw new Error(
+    `[mock-server] /__admin/telegram/sent returned unexpected payload: ${JSON.stringify(data)}`
+  );
 }
 
 /**

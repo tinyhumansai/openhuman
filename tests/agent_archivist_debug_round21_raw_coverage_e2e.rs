@@ -248,6 +248,7 @@ fn definition(max_iterations: usize) -> AgentDefinition {
         skill_filter: None,
         extra_tools: Vec::new(),
         max_iterations,
+        iteration_policy: Default::default(),
         max_result_chars: None,
         timeout_secs: None,
         sandbox_mode: SandboxMode::None,

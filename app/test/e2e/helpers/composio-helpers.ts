@@ -64,7 +64,13 @@ export async function assertConnectorCardVisible(name: string, timeout = 15_000)
  * candidates appeared within the timeout (so callers that can tolerate a
  * missing modal don't have to wrap in try/catch).
  */
-export async function openConnectorModal(name: string, timeout = 15_000): Promise<string | null> {
+export async function openConnectorModal(
+  name: string,
+  timeout = 15_000,
+  /** Optional tile-level status text to wait for before clicking (e.g. 'Auth expired').
+   * Ensures connection data has loaded so the modal opens in the correct phase. */
+  waitForTileStatus?: string
+): Promise<string | null> {
   console.log(`${LOG} opening connector modal for "${name}"`);
   const candidates = [
     `Connect ${name}`,
@@ -97,6 +103,20 @@ export async function openConnectorModal(name: string, timeout = 15_000): Promis
   // Click once up front. If the modal appears, stop trying to re-click the
   // underlying card; the backdrop will intercept any later coordinate clicks.
   await waitForText(name, timeout);
+  // If a tile status is expected (e.g. 'Auth expired'), wait for it before
+  // clicking so the modal opens with connection data already loaded.
+  if (waitForTileStatus) {
+    try {
+      const statusDeadline = Date.now() + timeout;
+      while (Date.now() < statusDeadline) {
+        if (await textExists(waitForTileStatus)) break;
+        // @ts-expect-error -- browser global is injected by WDIO at runtime, not typed in this env
+        await browser.pause(300);
+      }
+    } catch {
+      /* proceed even if status text never appears */
+    }
+  }
   await ensureModalOpen();
 
   const deadline = Date.now() + timeout;
@@ -142,7 +162,7 @@ export async function assertModalPhase(
   const phaseMarkers: Record<string, string[]> = {
     idle: [`Connect ${name}`, 'Connect'],
     connected: ['Disconnect', 'is connected'],
-    expired: ['authorization expired', 'Reconnect'],
+    expired: ['authorization expired', 'Reconnect to re-enable', 'Reconnect'],
     error: ['Something went wrong', 'Authorization failed', 'dismissAll'],
   };
 

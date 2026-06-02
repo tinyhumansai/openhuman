@@ -1,19 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { ConfirmationModal } from '../components/intelligence/ConfirmationModal';
-import ConnectionPathTab from '../components/intelligence/ConnectionPathTab';
-import DiagramViewerTab from '../components/intelligence/DiagramViewerTab';
-import EntityAssociationsTab from '../components/intelligence/EntityAssociationsTab';
-import GraphCentralityTab from '../components/intelligence/GraphCentralityTab';
-import GraphCohesionTab from '../components/intelligence/GraphCohesionTab';
-import GraphReachTab from '../components/intelligence/GraphReachTab';
 import IntelligenceSubconsciousTab from '../components/intelligence/IntelligenceSubconsciousTab';
 import IntelligenceTasksTab from '../components/intelligence/IntelligenceTasksTab';
-import MemoryFreshnessTab from '../components/intelligence/MemoryFreshnessTab';
-import MemoryTimelineTab from '../components/intelligence/MemoryTimelineTab';
-import { MemoryWorkspace } from '../components/intelligence/MemoryWorkspace';
+import MemorySection from '../components/intelligence/MemorySection';
 import ModelCouncilTab from '../components/intelligence/ModelCouncilTab';
-import NamespaceOverviewTab from '../components/intelligence/NamespaceOverviewTab';
 import { ToastContainer } from '../components/intelligence/Toast';
 import PillTabBar from '../components/PillTabBar';
 import {
@@ -26,28 +17,15 @@ import type {
   ConfirmationModal as ConfirmationModalType,
   ToastNotification,
 } from '../types/intelligence';
+import { IS_DEV } from '../utils/config';
 import AgentWorkflows from './AgentWorkflows';
 
-type IntelligenceTab =
-  | 'memory'
-  | 'subconscious'
-  | 'tasks'
-  | 'workflows'
-  | 'diagram'
-  | 'centrality'
-  | 'cohesion'
-  | 'reach'
-  | 'associations'
-  | 'freshness'
-  | 'timeline'
-  | 'path'
-  | 'namespaces'
-  | 'council';
+type IntelligenceTab = 'memory' | 'subconscious' | 'tasks' | 'workflows' | 'council';
 
 export default function Intelligence() {
   const { t } = useT();
 
-  const [activeTab, setActiveTab] = useState<IntelligenceTab>('tasks');
+  const [activeTab, setActiveTab] = useState<IntelligenceTab>('memory');
 
   // The legacy header pills (system-status + Ingesting/Queued chips) were
   // sourced from `useConsciousItems` + `useMemoryIngestionStatus`. They are
@@ -64,21 +42,15 @@ export default function Intelligence() {
 
   // Subconscious engine data
   const {
-    tasks: subconsciousTasks,
-    escalations,
-    logEntries,
     status: subconsciousEngineStatus,
-    loading: subconsciousLoading,
+    mode: subconsciousMode,
+    intervalMinutes: subconsciousInterval,
     triggering: subconsciousTriggering,
+    settingMode: subconsciousSettingMode,
     triggerTick,
-    addTask: addSubconsciousTask,
-    removeTask: removeSubconsciousTask,
-    toggleTask: toggleSubconsciousTask,
-    approveEscalation,
-    dismissEscalation,
+    setMode: setSubconsciousMode,
+    setIntervalMinutes: setSubconsciousInterval,
   } = useSubconscious();
-  const [newTaskTitle, setNewTaskTitle] = useState('');
-  const [expandedLogIds, setExpandedLogIds] = useState<Set<string>>(new Set());
 
   // Socket integration
   const socketManager = useIntelligenceSocketManager();
@@ -110,27 +82,30 @@ export default function Intelligence() {
     }
   }, [socketConnected, socketManager]);
 
-  const tabs: { id: IntelligenceTab; label: string; description?: string; comingSoon?: boolean }[] =
-    [
-      { id: 'tasks', label: t('memory.tab.tasks'), description: t('memory.tab.tasksDescription') },
-      { id: 'memory', label: t('memory.tab.memory') },
-      { id: 'subconscious', label: t('memory.tab.subconscious') },
-      {
-        id: 'workflows',
-        label: t('memory.tab.workflows'),
-        description: t('memory.tab.workflowsDescription'),
-      },
-      { id: 'diagram', label: t('memory.tab.diagram') },
-      { id: 'centrality', label: t('memory.tab.centrality') },
-      { id: 'cohesion', label: t('memory.tab.cohesion') },
-      { id: 'reach', label: t('memory.tab.reach') },
-      { id: 'associations', label: t('memory.tab.associations') },
-      { id: 'freshness', label: t('memory.tab.freshness') },
-      { id: 'timeline', label: t('memory.tab.timeline') },
-      { id: 'path', label: t('memory.tab.path') },
-      { id: 'namespaces', label: t('memory.tab.namespaces') },
-      { id: 'council', label: t('memory.tab.council') },
-    ];
+  const allTabs: {
+    id: IntelligenceTab;
+    label: string;
+    description?: string;
+    comingSoon?: boolean;
+    devOnly?: boolean;
+  }[] = [
+    {
+      id: 'tasks',
+      label: t('memory.tab.tasks'),
+      description: t('memory.tab.tasksDescription'),
+      devOnly: true,
+    },
+    { id: 'memory', label: t('memory.tab.memory') },
+    { id: 'subconscious', label: t('memory.tab.subconscious') },
+    {
+      id: 'workflows',
+      label: t('memory.tab.workflows'),
+      description: t('memory.tab.workflowsDescription'),
+      devOnly: true,
+    },
+    { id: 'council', label: t('memory.tab.council'), devOnly: true },
+  ];
+  const tabs = allTabs.filter(tab => !tab.devOnly || IS_DEV);
   const activeTabDef = tabs.find(tab => tab.id === activeTab);
 
   return (
@@ -190,50 +165,24 @@ export default function Intelligence() {
             </div>
 
             {/* Tab content */}
-            {activeTab === 'memory' && <MemoryWorkspace onToast={addToast} />}
+            {activeTab === 'memory' && <MemorySection onToast={addToast} />}
 
             {activeTab === 'subconscious' && (
               <IntelligenceSubconsciousTab
-                addSubconsciousTask={addSubconsciousTask}
-                approveEscalation={approveEscalation}
-                dismissEscalation={dismissEscalation}
-                escalations={escalations}
-                expandedLogIds={expandedLogIds}
-                loading={subconsciousLoading}
-                logEntries={logEntries}
-                newTaskTitle={newTaskTitle}
-                removeSubconsciousTask={removeSubconsciousTask}
-                setExpandedLogIds={setExpandedLogIds}
-                setNewTaskTitle={setNewTaskTitle}
                 status={subconsciousEngineStatus}
-                tasks={subconsciousTasks}
-                toggleSubconsciousTask={toggleSubconsciousTask}
+                mode={subconsciousMode}
+                intervalMinutes={subconsciousInterval}
                 triggerTick={triggerTick}
                 triggering={subconsciousTriggering}
+                settingMode={subconsciousSettingMode}
+                setMode={setSubconsciousMode}
+                setIntervalMinutes={setSubconsciousInterval}
               />
             )}
 
             {activeTab === 'tasks' && <IntelligenceTasksTab />}
 
             {activeTab === 'workflows' && <AgentWorkflows />}
-
-            {activeTab === 'diagram' && <DiagramViewerTab />}
-
-            {activeTab === 'centrality' && <GraphCentralityTab />}
-
-            {activeTab === 'cohesion' && <GraphCohesionTab />}
-
-            {activeTab === 'reach' && <GraphReachTab />}
-
-            {activeTab === 'associations' && <EntityAssociationsTab />}
-
-            {activeTab === 'freshness' && <MemoryFreshnessTab />}
-
-            {activeTab === 'timeline' && <MemoryTimelineTab />}
-
-            {activeTab === 'path' && <ConnectionPathTab />}
-
-            {activeTab === 'namespaces' && <NamespaceOverviewTab />}
 
             {activeTab === 'council' && <ModelCouncilTab />}
           </div>

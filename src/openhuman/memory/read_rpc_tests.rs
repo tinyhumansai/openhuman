@@ -720,6 +720,122 @@ fn clear_composio_sync_state_removes_only_target_namespace() {
     assert_eq!(other_count, 1);
 }
 
+// ── tree-mode graph export (summaries + leaf chunks) ────────────────────
+
+/// Insert a tree row and one summary node under it.
+fn insert_tree_summary(cfg: &Config, tree_id: &str, scope: &str, summary_id: &str, level: i64) {
+    with_connection(cfg, |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO mem_tree_trees (id, kind, scope, created_at_ms)
+             VALUES (?1, 'source', ?2, 0)",
+            params![tree_id, scope],
+        )?;
+        conn.execute(
+            "INSERT INTO mem_tree_summaries (
+                id, tree_id, tree_kind, level, child_ids_json, content, token_count,
+                entities_json, topics_json, time_range_start_ms, time_range_end_ms,
+                score, sealed_at_ms, deleted
+             ) VALUES (?1, ?2, 'source', ?3, '[]', 'summary body', 1, '[]', '[]', 0, 0, 0.0, 0, 0)",
+            params![summary_id, tree_id, level],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// Insert a leaf chunk, optionally linked to a parent summary.
+fn insert_chunk_with_parent(
+    cfg: &Config,
+    id: &str,
+    parent_summary_id: Option<&str>,
+    timestamp_ms: i64,
+    content: &str,
+) {
+    with_connection(cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_chunks (
+                id, source_kind, source_id, source_ref, owner, timestamp_ms,
+                time_range_start_ms, time_range_end_ms, tags_json, content,
+                token_count, seq_in_source, created_at_ms, lifecycle_status,
+                content_path, parent_summary_id
+             ) VALUES (?1, 'chat', 'slack:#eng', NULL, 'tester', ?2, ?2, ?2, '[]', ?3, 1, 0, ?2, 'seeded', NULL, ?4)",
+            params![id, timestamp_ms, content, parent_summary_id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn tree_graph_includes_leaf_chunks_linked_to_their_summary() {
+    let (_tmp, cfg) = test_config();
+    insert_tree_summary(&cfg, "tree-1", "slack:#eng", "summary:1:L1-aaa", 1);
+    insert_chunk_with_parent(
+        &cfg,
+        "chunk-sealed",
+        Some("summary:1:L1-aaa"),
+        1_700_000_000_000,
+        "first line of sealed chunk\nmore body",
+    );
+    insert_chunk_with_parent(
+        &cfg,
+        "chunk-orphan",
+        None,
+        1_700_000_000_001,
+        "orphan chunk body",
+    );
+
+    let resp = graph_export_rpc(&cfg, GraphMode::Tree).await.unwrap().value;
+
+    // 1 source root + 1 summary + 2 leaf chunks = 4 nodes.
+    assert_eq!(
+        resp.nodes.len(),
+        4,
+        "source root + summary + both leaf chunks"
+    );
+
+    let source_root = resp.nodes.iter().find(|n| n.kind == "source").unwrap();
+    assert!(source_root.id.starts_with("source:"));
+
+    let summary = resp.nodes.iter().find(|n| n.kind == "summary").unwrap();
+    assert_eq!(summary.id, "summary:1:L1-aaa");
+    // Orphan summary links to source root.
+    assert_eq!(summary.parent_id.as_deref(), Some(source_root.id.as_str()));
+
+    let sealed = resp.nodes.iter().find(|n| n.id == "chunk-sealed").unwrap();
+    assert_eq!(sealed.kind, "chunk");
+    assert_eq!(sealed.parent_id.as_deref(), Some("summary:1:L1-aaa"));
+    assert_eq!(sealed.label, "first line of sealed chunk");
+
+    let orphan = resp.nodes.iter().find(|n| n.id == "chunk-orphan").unwrap();
+    assert!(
+        orphan.parent_id.is_none(),
+        "unsealed chunk has no parent → renders as an orphan node"
+    );
+
+    assert!(resp.edges.is_empty());
+}
+
+#[tokio::test]
+async fn tree_graph_keeps_summaries_first_then_chunks() {
+    let (_tmp, cfg) = test_config();
+    insert_tree_summary(&cfg, "tree-1", "slack:#eng", "summary:1:L1-aaa", 1);
+    insert_chunk_with_parent(
+        &cfg,
+        "chunk-1",
+        Some("summary:1:L1-aaa"),
+        1_700_000_000_000,
+        "a chunk",
+    );
+
+    let resp = graph_export_rpc(&cfg, GraphMode::Tree).await.unwrap().value;
+    // Source roots are emitted first, then summaries, then chunks — so a
+    // budget truncation drops chunk tails, never the tree skeleton.
+    assert_eq!(resp.nodes[0].kind, "source");
+    assert!(resp.nodes.iter().any(|n| n.kind == "summary"));
+    assert!(resp.nodes.iter().any(|n| n.kind == "chunk"));
+}
+
 #[tokio::test]
 async fn obsidian_status_registered_when_override_config_lists_content_root() {
     let (_tmp, cfg) = test_config();
@@ -782,4 +898,52 @@ async fn obsidian_status_blank_override_is_treated_as_none() {
         .await
         .unwrap();
     assert!(!outcome.value.registered);
+}
+
+#[tokio::test]
+async fn vault_health_check_reports_missing_content_root_for_fresh_workspace() {
+    let (_tmp, cfg) = test_config();
+    let outcome = vault_health_check_rpc(&cfg, None).await.unwrap();
+
+    assert!(!outcome.value.exists);
+    assert!(!outcome.value.readable);
+    assert!(!outcome.value.writable);
+    assert!(!outcome.value.obsidian_registered);
+    assert!(outcome.value.pipeline_healthy);
+    assert_eq!(outcome.value.last_sync_ms, 0);
+}
+
+#[tokio::test]
+async fn vault_health_check_reports_writable_and_obsidian_registered_when_ready() {
+    let (_tmp, cfg) = test_config();
+    seed_chat_chunk(
+        &cfg,
+        "slack:#eng",
+        "Vault health seed chunk so content_root exists and last_sync_ms > 0",
+    )
+    .await;
+
+    let content_root = cfg.memory_tree_content_root();
+    let cfg_dir = TempDir::new().unwrap();
+    let body = format!(
+        "{{ \"vaults\": {{ \"id0\": {{ \"path\": {}, \"open\": true }} }} }}",
+        serde_json::to_string(&content_root.to_string_lossy().to_string()).unwrap()
+    );
+    std::fs::write(cfg_dir.path().join("obsidian.json"), body).unwrap();
+
+    let outcome = vault_health_check_rpc(&cfg, Some(cfg_dir.path().to_string_lossy().to_string()))
+        .await
+        .unwrap();
+
+    assert!(outcome.value.exists);
+    assert!(outcome.value.readable);
+    assert!(outcome.value.writable);
+    assert!(outcome.value.obsidian_registered);
+    assert!(outcome.value.pipeline_healthy);
+    assert!(outcome.value.last_sync_ms > 0);
+    assert!(
+        !outcome.logs[0].contains(content_root.to_str().unwrap()),
+        "log leaked content root: {}",
+        outcome.logs[0]
+    );
 }
