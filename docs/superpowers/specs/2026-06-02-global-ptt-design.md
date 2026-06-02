@@ -54,7 +54,7 @@
        │  dictationListener.transcribe(buf) → text
        │  chatRuntime.sendMessage({ text, speakReply: true, source: "ptt" })
        ▼
-[Core: openhuman.threads_message_append]
+[Core: openhuman.channel_web_chat]
        │  normal agent turn
        │  on assistant final text:
        │      voice::reply_speech.synthesize_and_play(text)   // if speak_reply
@@ -62,7 +62,7 @@
 [User hears reply; OpenHuman window state never changes]
 ```
 
-The bulk of the work is in the **Tauri shell** (hotkey + overlay window) and the **renderer service layer** (state machine + glue). The Rust core gets exactly one additive change: a `speak_reply: bool` flag on `threads.message_append` so TTS reply routing doesn't require the renderer to be focused or even running its normal chat UI.
+The bulk of the work is in the **Tauri shell** (hotkey + overlay window) and the **renderer service layer** (state machine + glue). The Rust core gets exactly one additive change: a `speak_reply: bool` flag on `channel.web_chat` so TTS reply routing doesn't require the renderer to be focused or even running its normal chat UI.
 
 ---
 
@@ -170,10 +170,10 @@ Subscribers will be added in the follow-up screen-capture PR (the screen-intelli
 
 #### Chat-send schema — `speak_reply` flag
 
-The user→agent message ingress RPC is **`openhuman.threads_message_append`** (`src/openhuman/threads/schemas.rs` → `"message_append"` → `handle_message_append` in `src/openhuman/threads/ops.rs`). Three additive optional fields:
+The user→agent ingress RPC is **`openhuman.channel_web_chat`** (web channel provider — `src/openhuman/channels/providers/web.rs`, schema in `schemas("chat")`, handler `channel_web_chat`, dispatch through `start_chat`). The frontend already calls this from `app/src/services/chatService.ts::chatSend`. Three additive optional fields:
 
 ```rust
-// In the message_append input schema
+// In the channel.web_chat input schema (web.rs schemas())
 #[serde(default)]
 pub speak_reply: Option<bool>,
 #[serde(default)]
@@ -182,9 +182,9 @@ pub source: Option<String>,        // "ptt" | "dictation" | "type" | ...
 pub session_id: Option<u64>,       // PTT correlation key
 ```
 
-Non-breaking — all fields `Option`. When `speak_reply == Some(true)`, the agent-turn finalizer (whichever module emits the assistant's final text — confirm exact hook point during the implementation plan, in `src/openhuman/agent/` or `threads/turn_state`) routes the assistant text through `voice::reply_speech::synthesize_and_play(text).await`. This is the **only** Rust-core code path change beyond the schema and the bus event.
+Non-breaking — all fields `Option`. The flags flow through `channel_web_chat → start_chat → spawn_progress_bridge`. The progress bridge buffers `AgentProgress::TextDelta` chunks during the turn; on `AgentProgress::TurnCompleted`, if `speak_reply == Some(true)`, it calls `voice::reply_speech::synthesize_and_play(buffered_text).await`. This is the **only** Rust-core code path change beyond the schema and the bus event.
 
-`source` and `session_id` are stored on the message metadata (so analytics can distinguish PTT vs typed input) and included in the `VoiceEvent::PttTranscriptCommitted` bus event for the screen-capture follow-up PR.
+`source` and `session_id` are persisted on the user message metadata (via the message-record path already used by `start_chat`) and included in the `VoiceEvent::PttTranscriptCommitted` bus event for the screen-capture follow-up PR.
 
 #### `about_app` capability catalog
 
@@ -280,7 +280,7 @@ Borderless 160×56 region: small mic glyph, label ("Listening…"), pulsing red 
 
 #### `ChatRuntimeProvider` — forward `speak_reply`
 
-`sendMessage` accepts `speakReply?: boolean` and forwards it to `openhuman.threads_message_append` as the new optional `speak_reply` field.
+`chatService.chatSend` (already the single call site for `openhuman.channel_web_chat`) accepts `speakReply?: boolean`, `source?: string`, `sessionId?: number` and forwards them as the new optional fields. `ChatRuntimeProvider`'s `sendMessage` plumbs them through from `pttService`.
 
 #### Chimes
 
@@ -348,9 +348,9 @@ Brand-new state. No migration. Existing users on `0.53.45+` see the new `/settin
 | Layer | What | Where |
 | --- | --- | --- |
 | Rust unit | `expand_ptt_shortcuts`: empty, modifier-only, valid combos, `CmdOrCtrl` expansion (dual-variant on macOS, single on Win/Linux) | `app/src-tauri/src/ptt_hotkeys.rs` inline `#[cfg(test)]` |
-| Rust unit | `speak_reply` flag round-trips through `threads.message_append` schema serde; default behavior unchanged when omitted | `src/openhuman/threads/schemas_tests.rs` |
+| Rust unit | `speak_reply` / `source` / `session_id` round-trip through `channel.web_chat` schema serde; default behavior unchanged when all omitted | `src/openhuman/channels/providers/web_tests.rs` |
 | Rust unit | `DomainEvent::Voice::PttTranscriptCommitted` publishes; test subscriber receives it | `src/openhuman/voice/bus.rs` inline tests |
-| Rust E2E | `tests/json_rpc_e2e.rs` — call `threads.message_append` with `speak_reply: true` and assert `reply_speech::synthesize_and_play` is invoked via a test seam | `tests/json_rpc_e2e.rs` extension |
+| Rust E2E | `tests/json_rpc_e2e.rs` — call `channel.web_chat` with `speak_reply: true` and assert `reply_speech::synthesize_and_play` is invoked via a test seam at the progress-bridge's `TurnCompleted` boundary | `tests/json_rpc_e2e.rs` extension |
 | Vitest unit | `pttService` state machine: start→stop happy path, watchdog timeout, empty-audio drop, empty-transcript drop, dictation-preempt, double-press idempotency, mic-permission-denied path | `app/src/services/pttService.test.ts` (new) |
 | Vitest unit | `ptt` redux slice: shortcut set/clear, toggle settings, rehydration | `app/src/store/slices/ptt.test.ts` (new) |
 | Vitest unit | `PttSettingsPanel` — render, hotkey capture, conflict-with-dictation error, mic-denied banner, Wayland banner | `app/src/pages/settings/voice/PttSettingsPanel.test.tsx` (new) |
@@ -359,7 +359,7 @@ Brand-new state. No migration. Existing users on `0.53.45+` see the new `/settin
 | WDIO E2E | Desktop spec: register a hotkey via settings UI, simulate the hotkey via `tauri-driver` key injection, assert overlay window appears, assert chat thread receives a message. STT mocked via the shared mock backend returning a fixed transcript. | `app/test/e2e/specs/ptt-flow.spec.ts` (new) |
 | Manual smoke | Hold-while-game-in-foreground on macOS + Windows; mic permission denied flow; Wayland fallback message | PR body checklist |
 
-**Coverage gate.** Every changed line in the new files + the `threads.message_append` schema delta ships with ≥ 80% diff coverage per the existing merge gate. Untested escape valves (the real `Audio.play()` call, the real `tauri-driver` key injection) are isolated behind thin wrappers that can be mocked.
+**Coverage gate.** Every changed line in the new files + the `channel.web_chat` schema delta ships with ≥ 80% diff coverage per the existing merge gate. Untested escape valves (the real `Audio.play()` call, the real `tauri-driver` key injection) are isolated behind thin wrappers that can be mocked.
 
 ---
 
