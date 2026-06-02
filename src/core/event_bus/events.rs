@@ -25,6 +25,21 @@
 //! - [`DomainEvent::ChannelMessageReceived`]
 //! - [`DomainEvent::ChannelMessageProcessed`]
 
+/// Voice-domain events.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub enum VoiceEvent {
+    /// A PTT session committed a transcript to a thread. Carries only
+    /// length/timing — never the raw text, per the PII-safe logging rule.
+    PttTranscriptCommitted {
+        thread_id: String,
+        session_id: u64,
+        text_len: usize,
+        held_ms: u64,
+        finalized_by_watchdog: bool,
+    },
+}
+
 /// Top-level domain event. Non-exhaustive so new variants can be added
 /// without breaking existing match arms.
 #[non_exhaustive]
@@ -707,6 +722,10 @@ pub enum DomainEvent {
     /// never to Sentry or the UI verbatim.
     SessionExpired { source: String, reason: String },
 
+    // ── Voice ────────────────────────────────────────────────────────────
+    /// A voice domain event (PTT, transcription lifecycle, etc.).
+    Voice(VoiceEvent),
+
     // ── Task sources ─────────────────────────────────────────────────────
     /// A task source completed a fetch pass.
     TaskSourceFetched {
@@ -844,6 +863,8 @@ impl DomainEvent {
 
             Self::TaskPlanAwaitingApproval { .. } => "agent",
 
+            Self::Voice(_) => "voice",
+
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
 
             Self::McpServerInstalled { .. }
@@ -944,6 +965,7 @@ impl DomainEvent {
             Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
             Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
+            Self::Voice(_) => "Voice",
         }
     }
 

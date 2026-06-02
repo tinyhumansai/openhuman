@@ -10,6 +10,7 @@
 //! single domain root.
 
 pub mod audio_capture;
+pub mod bus;
 pub(crate) mod cli;
 pub mod dictation_listener;
 pub mod factory;
