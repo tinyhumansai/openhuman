@@ -25,6 +25,17 @@ const HEADER_METHOD: &str = "Mcp-Method";
 const HEADER_NAME: &str = "Mcp-Name";
 const MCP_HTTP_ACCEPT: &str = "application/json, text/event-stream";
 
+/// A tool advertised by a remote MCP server.
+///
+/// `description` and `title` arrive verbatim from an untrusted remote
+/// peer. Callers in LLM-context code paths MUST read them through
+/// [`McpRemoteTool::display_description`] / [`McpRemoteTool::display_title`]
+/// — never the raw fields directly — so the registry's sanitization
+/// pipeline (`mcp_client::sanitize`) is always applied. The raw fields
+/// stay `pub` (rather than `pub(super)`) because the type is `serde`-
+/// deserialized verbatim from server payloads and constructed by sibling
+/// transport modules; the boundary that matters is the *consumption*
+/// site, not the *storage* site.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct McpRemoteTool {
     pub name: String,
@@ -34,6 +45,37 @@ pub struct McpRemoteTool {
     pub description: Option<String>,
     #[serde(default, rename = "inputSchema")]
     pub input_schema: Value,
+}
+
+impl McpRemoteTool {
+    /// Sanitized description suitable for inclusion in the agent LLM
+    /// tool-use context.
+    ///
+    /// Always returns content that has been run through the
+    /// `mcp_client::sanitize` pipeline (control-char strip, instruction-
+    /// fence strip, length cap) regardless of what the remote server
+    /// sent.
+    pub fn display_description(&self) -> Option<String> {
+        self.description.as_deref().map(|d| {
+            crate::openhuman::mcp_client::sanitize::sanitize_for_llm(
+                d,
+                crate::openhuman::mcp_client::sanitize::MAX_DESCRIPTION_BYTES,
+            )
+        })
+    }
+
+    /// Sanitized title suitable for LLM / UI display.
+    ///
+    /// Same pipeline as [`Self::display_description`], capped at
+    /// [`crate::openhuman::mcp_client::sanitize::MAX_TITLE_BYTES`].
+    pub fn display_title(&self) -> Option<String> {
+        self.title.as_deref().map(|t| {
+            crate::openhuman::mcp_client::sanitize::sanitize_for_llm(
+                t,
+                crate::openhuman::mcp_client::sanitize::MAX_TITLE_BYTES,
+            )
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
