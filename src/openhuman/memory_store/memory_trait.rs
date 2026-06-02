@@ -85,6 +85,10 @@ impl Memory for UnifiedMemory {
             category: category.to_string(),
             session_id: session_id.map(str::to_string),
             document_id: None,
+            // `store` is the user-driven entry point on the `Memory`
+            // trait; sync-ingest paths use the dedicated
+            // `store_with_taint` override added below.
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
         })
         .await
         .map(|_| ())

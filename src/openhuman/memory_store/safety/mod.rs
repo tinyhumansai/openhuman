@@ -269,6 +269,10 @@ pub fn sanitize_document_input(input: NamespaceDocumentInput) -> Sanitized<Names
             category: input.category,
             session_id: input.session_id,
             document_id: input.document_id,
+            // Sanitization is content-cleaning only; provenance must
+            // survive untouched so the gate's taint check sees the
+            // real source signal.
+            taint: input.taint,
         },
         report,
     }

@@ -561,6 +561,7 @@ async fn memory_ingestion_state_and_request_models_report_edges() {
             category: "core".into(),
             session_id: Some("session-1".into()),
             document_id: Some("doc-1".into()),
+            taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
         },
         config: cfg.clone(),
     };

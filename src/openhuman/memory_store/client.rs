@@ -257,6 +257,7 @@ impl MemoryClient {
             category: "core".to_string(),
             session_id: None,
             document_id,
+            taint: crate::openhuman::memory::MemoryTaint::Internal,
         };
 
         let doc_id = self.inner.upsert_document(input.clone()).await?;

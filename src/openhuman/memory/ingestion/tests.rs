@@ -44,6 +44,7 @@ async fn gmail_fixture_ingestion_recovers_required_signals() {
                 category: "core".to_string(),
                 session_id: None,
                 document_id: None,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             },
             config: ci_safe_config(),
         })
@@ -135,6 +136,7 @@ async fn notion_fixture_ingestion_recovers_required_signals() {
                 category: "core".to_string(),
                 session_id: None,
                 document_id: None,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             },
             config: ci_safe_config(),
         })

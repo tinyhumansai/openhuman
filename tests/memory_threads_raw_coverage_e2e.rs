@@ -466,6 +466,7 @@ Kitchen is north of Garden.
                 category: "core".into(),
                 session_id: Some("session-coverage".into()),
                 document_id: Some("doc-memory-raw-ingestion".into()),
+                taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             config: MemoryIngestionConfig::default(),
         })
@@ -535,6 +536,7 @@ Kitchen is north of Garden.
                 category: "core".into(),
                 session_id: None,
                 document_id: Some("doc-memory-raw-ingestion".into()),
+                taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             &MemoryIngestionConfig {
                 extraction_mode: openhuman_core::openhuman::memory::ExtractionMode::Chunk,

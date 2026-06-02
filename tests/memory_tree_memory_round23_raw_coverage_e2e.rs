@@ -133,6 +133,7 @@ Bob Builder will review the memory tree recap.
                 category: "coverage".into(),
                 session_id: Some("round23-session".into()),
                 document_id: None,
+                taint: openhuman_core::openhuman::memory::MemoryTaint::Internal,
             },
             config: MemoryIngestionConfig {
                 model_name: "round23-heuristic".into(),

@@ -376,6 +376,10 @@ impl UnifiedMemory {
                 created_at: row.get(11).map_err(|e| e.to_string())?,
                 updated_at: row.get(12).map_err(|e| e.to_string())?,
                 markdown_rel_path: row.get(13).map_err(|e| e.to_string())?,
+                // Persistence-layer wiring lands in the next commit; for
+                // now the SELECT omits `taint`, so legacy reads default
+                // to `Internal` (safe for the gate's escalation policy).
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             });
         }
         Ok(docs)
