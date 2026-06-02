@@ -112,7 +112,7 @@ describe('Chat harness — send + stream', () => {
           'button[aria-label="Send message"]'
         ) as HTMLButtonElement;
         const ta = document.querySelector(
-          'textarea[placeholder*="Type a message"]'
+          'textarea[placeholder*="How can I help"]'
         ) as HTMLTextAreaElement;
         return {
           btnExists: !!btn,

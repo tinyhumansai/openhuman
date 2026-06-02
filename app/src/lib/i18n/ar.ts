@@ -227,7 +227,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'القيادة',
   'nav.routines': 'Routines',
   'chat.newThread': 'محادثة جديدة',
-  'chat.typeMessage': 'اكتب رسالة...',
+  'chat.typeMessage': 'كيف يمكنني مساعدتك اليوم؟',
   'chat.send': 'إرسال الرسالة',
   'chat.thinking': 'جارٍ التفكير...',
   'chat.noMessages': 'لا توجد رسائل بعد',
@@ -4414,6 +4414,11 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'الأمان',
   'pages.settings.account.securityDesc': 'وضع تخزين الأسرار وحالة سلسلة المفاتيح',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'إرفاق ملف',
+  'composer.modelSelector': 'النموذج',
+  'composer.voiceMode': 'وضع الصوت',
+  'composer.qualityHigh': 'عالٍ',
   // Agent activity level
   'activityLevel.title': 'مستوى نشاط الوكيل',
   'activityLevel.description':

@@ -231,7 +231,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'Perintah',
   'nav.routines': 'Routines',
   'chat.newThread': 'Thread baru',
-  'chat.typeMessage': 'Ketik pesan...',
+  'chat.typeMessage': 'Apa yang bisa saya bantu hari ini?',
   'chat.send': 'Kirim pesan',
   'chat.thinking': 'Berpikir...',
   'chat.noMessages': 'Belum ada pesan',
@@ -4509,6 +4509,11 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'Keamanan',
   'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'Lampirkan file',
+  'composer.modelSelector': 'Model',
+  'composer.voiceMode': 'Mode suara',
+  'composer.qualityHigh': 'Tinggi',
   // Agent activity level
   'activityLevel.title': 'Tingkat aktivitas agen',
   'activityLevel.description':

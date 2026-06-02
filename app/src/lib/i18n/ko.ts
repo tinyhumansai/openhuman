@@ -229,7 +229,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': '명령',
   'nav.routines': 'Routines',
   'chat.newThread': '새 스레드',
-  'chat.typeMessage': '메시지를 입력하세요...',
+  'chat.typeMessage': '오늘 무엇을 도와드릴까요?',
   'chat.send': '메시지 보내기',
   'chat.thinking': '생각 중...',
   'chat.noMessages': '아직 메시지가 없습니다',
@@ -4456,6 +4456,11 @@ const messages: TranslationMap = {
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
 
+  // Chat composer toolbar
+  'composer.attachFile': '파일 첨부',
+  'composer.modelSelector': '모델',
+  'composer.voiceMode': '음성 모드',
+  'composer.qualityHigh': '높음',
   // Agent activity level
   'activityLevel.title': '에이전트 활동 수준',
   'activityLevel.description':

@@ -229,7 +229,7 @@ const messages: TranslationMap = {
   'routines.typeCommand': 'কমান্ড',
   'nav.routines': 'Routines',
   'chat.newThread': 'নতুন থ্রেড',
-  'chat.typeMessage': 'একটি বার্তা টাইপ করুন...',
+  'chat.typeMessage': 'আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
   'chat.send': 'বার্তা পাঠান',
   'chat.thinking': 'ভাবছে...',
   'chat.noMessages': 'এখনো কোনো বার্তা নেই',
@@ -4492,6 +4492,11 @@ const messages: TranslationMap = {
   'pages.settings.account.security': 'নিরাপত্তা',
   'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
 
+  // Chat composer toolbar
+  'composer.attachFile': 'ফাইল সংযুক্ত করুন',
+  'composer.modelSelector': 'মডেল',
+  'composer.voiceMode': 'ভয়েস মোড',
+  'composer.qualityHigh': 'উচ্চ',
   // Agent activity level
   'activityLevel.title': 'এজেন্ট কার্যকলাপের স্তর',
   'activityLevel.description':
