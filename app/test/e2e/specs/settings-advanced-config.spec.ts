@@ -41,9 +41,9 @@ describe('Settings - Advanced Config', () => {
 
     await waitForText('Advanced', 15_000);
     await waitForText('AI Configuration', 15_000);
-    // 'Notification Routing' was removed as a top-level dev option in
-    // PR #2550 — it now lives as a tab inside Settings → Notifications.
-    await waitForText('Composio Routing (Direct Mode)', 15_000);
+    // 'Notification Routing' was removed as a top-level dev option.
+    // 'Composio Routing (Direct Mode)' was renamed to just 'Composio'.
+    await waitForText('Composio', 15_000);
     await waitForText('About', 15_000);
   });
 

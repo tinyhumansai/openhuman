@@ -43,10 +43,11 @@ describe('Skill lifecycle smoke', () => {
     const hash = await browser.execute(() => window.location.hash);
     expect(String(hash)).toContain('/skills');
 
+    // Skills page now shows "Connections" title with Composio/Channels/MCP tabs.
     const visible =
-      (await textExists('Skills')) ||
-      (await textExists('Install')) ||
-      (await textExists('Available'));
+      (await textExists('Connections')) ||
+      (await textExists('Composio')) ||
+      (await textExists('MCP Servers'));
     expect(visible).toBe(true);
 
     // Verify the core RPC route for skills is reachable. The Skills page
