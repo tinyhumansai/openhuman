@@ -233,7 +233,17 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if lower.contains("local ai is disabled") {
         return Some(ExpectedErrorKind::LocalAiDisabled);
     }
-    if lower.contains("api key not set") || lower.contains("missing api key") {
+    // `"no api key is configured"` covers the composio direct-mode factory
+    // bail (`client.rs`: "composio direct mode selected but no api key is
+    // configured"). `composio_list_connections` now short-circuits that
+    // state to an empty list, so the dominant 5 s-poll leak (TAURI-RUST-R4)
+    // no longer reaches here — but other direct-mode ops the user invokes
+    // explicitly (execute / authorize) can still surface it, and it is the
+    // same user-config state with no Sentry-actionable signal.
+    if lower.contains("api key not set")
+        || lower.contains("missing api key")
+        || lower.contains("no api key is configured")
+    {
         return Some(ExpectedErrorKind::ApiKeyMissing);
     }
     // Check `ChannelSupervisorRestart` BEFORE `is_loopback_unavailable` and
@@ -1953,6 +1963,33 @@ mod tests {
         );
         assert_eq!(
             expected_error_kind("ollama embed failed with status 500"),
+            None
+        );
+    }
+
+    /// Sentry TAURI-RUST-R4: the composio direct-mode factory bail must
+    /// classify as `ApiKeyMissing` so any residual emit (explicit
+    /// execute/authorize call with no key) stays out of Sentry. Uses the
+    /// verbatim wire shape from `client.rs`.
+    #[test]
+    fn classifies_composio_direct_no_api_key_as_api_key_missing() {
+        assert_eq!(
+            expected_error_kind(
+                "[composio] list_connections: composio direct mode selected but no api key \
+                 is configured (set via composio.set_api_key RPC or config.composio.api_key)"
+            ),
+            Some(ExpectedErrorKind::ApiKeyMissing)
+        );
+    }
+
+    /// Guard against over-suppression: a genuine BYO-key auth failure
+    /// (wrong/expired key the upstream rejected) is an actionable bug
+    /// shape and MUST still reach Sentry (stay `None`), not get demoted by
+    /// the new "no api key is configured" substring.
+    #[test]
+    fn does_not_classify_invalid_api_key_401_as_missing() {
+        assert_eq!(
+            expected_error_kind("OpenAI API error (401 Unauthorized): invalid_api_key"),
             None
         );
     }
