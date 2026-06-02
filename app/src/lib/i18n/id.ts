@@ -218,6 +218,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Belum pernah dijalankan',
   'routines.runNow': 'Jalankan Sekarang',
   'routines.running': 'Berjalan...',
+  'routines.runNowTimedOut': 'Waktu habis — silakan muat ulang dan coba lagi.',
   'routines.viewHistory': 'Lihat riwayat',
   'routines.loadingHistory': 'Memuat…',
   'routines.noHistory': 'Belum ada riwayat eksekusi.',
@@ -725,16 +726,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Dikirim ke',
   'privacy.leavesDevice': 'Keluar dari perangkat',
   'privacy.staysLocal': 'Tetap lokal',
-  'privacy.anonymizedAnalytics': 'Analitik Anonim',
-  'privacy.shareAnonymizedData': 'Bagikan Data Penggunaan Anonim',
+  'privacy.anonymizedAnalytics': 'Analitik Produk',
+  'privacy.shareAnonymizedData': 'Bagikan Analitik Produk dan Diagnostik',
   'privacy.shareAnonymizedDataDesc':
-    'Bantu meningkatkan OpenHuman dengan membagikan laporan crash dan analitik penggunaan anonim. Semua data sepenuhnya anonim; tidak ada data pribadi, pesan, kunci dompet, atau informasi sesi yang dikumpulkan.',
+    'Bantu meningkatkan OpenHuman dengan membagikan laporan crash dan peristiwa penggunaan yang dibatasi privasi, termasuk ID akun stabil dan metadata versi aplikasi. Pesan, kunci dompet, kunci API, dan token sesi tidak pernah dikumpulkan.',
   'privacy.meetingFollowUps': 'Tindak lanjut rapat',
   'privacy.autoHandoffMeet': 'Serahkan transkrip Google Meet otomatis ke orchestrator',
   'privacy.autoHandoffMeetDesc':
     'Saat panggilan Google Meet berakhir, orchestrator OpenHuman dapat membaca transkrip dan mengambil tindakan seperti menyusun pesan, menjadwalkan tindak lanjut, atau memposting ringkasan ke workspace Slack yang terhubung. Nonaktif secara default.',
   'privacy.analyticsDisclaimer':
-    'Semua analitik dan laporan bug sepenuhnya anonim. Saat aktif, kami hanya mengumpulkan informasi crash, jenis perangkat, dan lokasi file error. Kami tidak pernah mengakses pesan, data sesi, kunci dompet, API key, atau informasi pribadi Anda. Pengaturan ini bisa diubah kapan saja.',
+    'Saat aktif, Analitik Produk dan Diagnostik dapat menyertakan laporan crash dan peristiwa penggunaan yang dibatasi privasi, ID akun stabil, dan metadata versi aplikasi. Pesan, kunci dompet, kunci API, dan token sesi tidak pernah dikumpulkan. Pengaturan ini bisa diubah kapan saja.',
   'settings.about.version': 'Versi',
   'settings.about.updateAvailable': 'tersedia',
   'settings.about.softwareUpdates': 'Pembaruan perangkat lunak',
@@ -1922,6 +1923,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Tindakan yang Diusulkan',
   'reflections.act': 'Tindakan',
   'reflections.dismiss': 'Abaikan',
+  'reflections.viewConversation': 'Lihat',
+  'subconscious.mode.label': 'Mode Alam Bawah Sadar',
+  'subconscious.mode.off.title': 'Mati',
+  'subconscious.mode.off.desc': 'Alam bawah sadar dinonaktifkan.',
+  'subconscious.mode.simple.title': 'Sederhana',
+  'subconscious.mode.simple.desc': 'Pengamatan hanya-baca. Hanya akses memori dan file.',
+  'subconscious.mode.aggressive.title': 'Agresif',
+  'subconscious.mode.aggressive.desc':
+    'Akses alat penuh. Dapat menulis, membuat agen, dan mendelegasikan tugas.',
+  'subconscious.mode.aggressiveWarning':
+    'Mode agresif memberikan alam bawah sadar akses alat penuh termasuk menulis dan membuat sub-agen.',
+  'subconscious.interval.label': 'Frekuensi',
+  'subconscious.interval.minutes': '{n} mnt',
+  'subconscious.interval.hours': '{n} jam',
+  'subconscious.interval.oneHour': '1 jam',
+  'subconscious.interval.oneDay': '24 jam',
   'whatsapp.chatsSynced': 'obrolan disinkronkan',
   'whatsapp.chatSynced': 'obrolan disinkronkan',
   'sync.active': 'Aktif',
@@ -2812,7 +2829,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Grup beban kerja chat',
   'settings.ai.disconnectProvider': 'Putuskan sambungan {label}',
   'settings.ai.connectProviderLabel': 'Sambungkan {label}',
+  'settings.ai.editProviderEndpoint': 'Ubah titik akhir {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Edit titik akhir',
   'settings.ai.endpointUrlLabel': 'Titik Akhir URL',
   'settings.ai.localRuntimeHelper':
     'Dimana {label} bisa dihubungi. Baku adalah localhost; arahkan ini ke host jarak jauh (misalnya, http://10.0.0.4:11434/v1) untuk memakai suatu contoh bersama.',
@@ -4146,14 +4165,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'Filter berdasarkan sumber',
   'calls.comingSoonDescription': 'Panggilan dengan bantuan AI akan segera hadir. Pantau terus.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 menit',
-  'subconscious.interval.tenMinutes': '10 menit',
-  'subconscious.interval.fifteenMinutes': '15 menit',
-  'subconscious.interval.thirtyMinutes': '30 menit',
-  'subconscious.interval.oneHour': '1 jam',
-  'subconscious.interval.sixHours': '6 jam',
-  'subconscious.interval.twelveHours': '12 jam',
-  'subconscious.interval.oneDay': '1 hari',
   'subconscious.priority.critical': 'kritis',
   'subconscious.priority.important': 'penting',
   'subconscious.priority.normal': 'normal',
@@ -4488,6 +4499,124 @@ const messages: TranslationMap = {
     'Tidak ada penyedia ringkasan yang tersedia untuk Buat Pohon Ringkasan. Aktifkan AI lokal (Ollama), atau aktifkan ringkasan cloud di Pengaturan → AI → Memori.',
   'memory.health.remediation.transient':
     'Kesalahan sementara mengganggu pemrosesan memori. Akan dicoba lagi secara otomatis.',
+
+  // Agent activity level
+  'activityLevel.title': 'Tingkat aktivitas agen',
+  'activityLevel.description':
+    'Kendalikan seberapa proaktif agen Anda. Tingkat lebih tinggi menggunakan lebih banyak token.',
+  'activityLevel.off': 'Mati',
+  'activityLevel.offDesc':
+    'Tidak ada pemrosesan latar belakang. Hanya sinkronisasi saat tombol ditekan.',
+  'activityLevel.minimal': 'Minimal',
+  'activityLevel.minimalDesc': 'Sinkronisasi sumber sekali sehari. Tidak ada pesan proaktif.',
+  'activityLevel.moderate': 'Sedang',
+  'activityLevel.moderateDesc': 'Sinkronisasi setiap jam. Ringkasan harian. Menyarankan tindakan.',
+  'activityLevel.active': 'Aktif',
+  'activityLevel.activeDesc':
+    'Sinkronisasi setiap 10 menit. Memantau saluran, mengurutkan, dan menyusun balasan.',
+  'activityLevel.alwaysOn': 'Selalu aktif',
+  'activityLevel.alwaysOnDesc':
+    'Sinkronisasi real-time. Otonomi penuh dalam batas yang ditentukan.',
+  'activityLevel.currentMonth': 'Bulan ini: ${amount}',
+  'activityLevel.saved': 'Tingkat aktivitas diperbarui.',
+  'activityLevel.default': 'bawaan',
+  'activityLevel.costFree': '$0',
+  'activityLevel.costRange': '~${min}–${max}/bln',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Anggaran sinkronisasi',
+  'syncBudget.maxTokens': 'Token maksimum per sinkronisasi',
+  'syncBudget.maxTokensHelp': 'Hentikan sinkronisasi setelah sejumlah token ini dikonsumsi.',
+  'syncBudget.maxCost': 'Biaya maksimum per sinkronisasi (USD)',
+  'syncBudget.maxCostHelp': 'Batas dolar mutlak per jalannya sinkronisasi.',
+  'syncBudget.syncDepth': 'Kedalaman sinkronisasi',
+  'syncBudget.syncDepthHelp': 'Hanya ambil item dari jendela waktu ini.',
+  'syncBudget.days7': '7 hari terakhir',
+  'syncBudget.days30': '30 hari terakhir',
+  'syncBudget.days90': '90 hari terakhir',
+  'syncBudget.allTime': 'Sepanjang waktu',
+  'syncBudget.unlimited': 'Tidak terbatas',
+  'syncBudget.saved': 'Anggaran disimpan.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Konfirmasi sinkronisasi',
+  'syncConfirm.message':
+    'Sinkronisasi ini akan memproses ~{items} item (~{tokens} token, est. ${cost}).',
+  'syncConfirm.budgetNote': 'Batas anggaran: ${max}',
+  'syncConfirm.proceed': 'Lanjutkan',
+  'syncConfirm.cancel': 'Batal',
+  'syncConfirm.estimating': 'Memperkirakan biaya...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} bulan ini',
+  'monthlyCost.noData': 'Tidak ada sinkronisasi bulan ini',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Aktivitas',
+  'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.activity.title': 'Aktivitas agen',
+  'onboarding.custom.activity.subtitle':
+    'Seberapa proaktif agen Anda memantau dan bertindak di latar belakang.',
+  'onboarding.custom.activity.defaultDesc':
+    'Aktivitas sedang — sinkronisasi per jam, ringkasan harian.',
+  'onboarding.custom.activity.configureDesc':
+    'Pilih tingkat aktivitas Anda sendiri. Konfigurasi di Pengaturan › Tingkat aktivitas agen.',
+  'onboarding.custom.vault.title': 'Pengaturan Memori & Vault',
+  'onboarding.custom.vault.subtitle':
+    'Konfirmasi di mana catatan memori ditulis, bagaimana data sumber dibaca, dan apakah pipeline vault Anda sehat.',
+  'onboarding.custom.vault.defaultDesc':
+    'Gunakan default memori yang dikelola OpenHuman. Jalur vault dan kondisi sinkronisasi tetap dapat ditinjau nanti.',
+  'onboarding.custom.vault.configureDesc':
+    'Tinjau kepemilikan vault, jalankan pemeriksaan kesehatan, dan sesuaikan kontrol memori sekarang.',
+  'onboarding.custom.vault.localDisabledReason':
+    'Pengaturan terkelola memerlukan masuk OpenHuman dan tidak tersedia dalam mode lokal.',
+  'onboarding.custom.vault.exitError': 'Tidak dapat menyelesaikan orientasi. Silakan coba lagi.',
+  'vaultHealth.title': 'Daftar Periksa Kesehatan Vault',
+  'vaultHealth.setupTitle': 'Kesehatan pengaturan vault',
+  'vaultHealth.workspaceVault': 'Vault ruang kerja:',
+  'vaultHealth.refresh': 'Segarkan',
+  'vaultHealth.refreshing': 'Menyegarkan…',
+  'vaultHealth.revealFolder': 'Tampilkan Folder',
+  'vaultHealth.openInObsidian': 'Buka di Obsidian',
+  'vaultHealth.installObsidian': 'Pasang Obsidian',
+  'vaultHealth.openObsidianError': 'Tidak dapat membuka Obsidian',
+  'vaultHealth.revealError': 'Tidak dapat menampilkan folder vault',
+  'vaultHealth.downloadError': 'Tidak dapat membuka halaman unduhan Obsidian',
+  'vaultHealth.loadError': 'Tidak dapat memuat kesehatan vault:',
+  'vaultHealth.lastSync': 'Sinkronisasi terakhir:',
+  'vaultHealth.passed': 'Lulus',
+  'vaultHealth.needsAttention': 'Perlu perhatian',
+  'vaultHealth.existsLabel': 'Jalur vault ruang kerja ada',
+  'vaultHealth.existsRecovery':
+    'Folder vault tidak ditemukan. Mulai sinkronisasi atau buat folder ini, lalu segarkan daftar periksa ini.',
+  'vaultHealth.writableLabel': 'Vault dapat ditulis oleh OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman belum dapat menulis ke vault ini. Berikan izin tulis dan segarkan.',
+  'vaultHealth.obsidianLabel': 'Vault terdaftar di Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'Di Obsidian, pilih "Buka folder sebagai vault" untuk jalur ini, lalu segarkan daftar periksa ini.',
+  'vaultHealth.pipelineLabel': 'Pipeline memori sehat',
+  'vaultHealth.pipelineRecovery':
+    'Pipeline memori dijeda atau mengalami kesalahan. Aktifkan kembali Sinkronisasi Otomatis di status Pohon Memori dan coba lagi.',
+  'vaultHealth.timeNever': 'Tidak pernah',
+  'vaultHealth.timeJustNow': 'baru saja',
+  'vaultHealth.timeMinAgo': '{n} menit lalu',
+  'vaultHealth.timeHrAgo': '{n} jam lalu',
+  'vaultHealth.timeDayAgo': '{n} hari lalu',
+  'vaultHealth.timeDaysAgo': '{n} hari lalu',
+  'memoryData.howItWorks': 'Cara kerja penyimpanan memori',
+  'memoryData.workspaceVault': 'Vault ruang kerja · tulis',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman menulis catatan memori yang dihasilkan ke memory_tree/content.',
+  'memoryData.connectedSources': 'Sumber terhubung · baca',
+  'memoryData.connectedSourcesDesc':
+    'Folder, kotak surat, obrolan, dan repositori diimpor untuk pengindeksan memori — file aslinya tidak pernah ditulis ulang.',
+  'memoryData.internalFiles': 'File pohon memori internal',
+  'memoryData.internalFilesDesc':
+    'Indeks, status antrean, dan ringkasan dikelola oleh OpenHuman agar pemanggilan dan sinkronisasi tetap sehat.',
+  'memoryData.windowError': 'Jendela memori',
+  'memoryData.windowUpdated': 'Jendela memori diperbarui',
+  'memoryData.windowUpdatedMsg': 'Diatur ke {window}.',
 };
 
 export default messages;

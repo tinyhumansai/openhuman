@@ -216,6 +216,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'এখনো চালাও নি',
   'routines.runNow': 'এখন সঞ্চালন করুন',
   'routines.running': 'চলমান...',
+  'routines.runNowTimedOut': 'রান টাইমআউট হয়েছে — অনুগ্রহ করে রিফ্রেশ করুন এবং আবার চেষ্টা করুন।',
   'routines.viewHistory': 'পূর্ববর্তী তথ্য প্রদর্শন',
   'routines.loadingHistory': 'লোড করা হচ্ছে...',
   'routines.noHistory': 'এখনো কোন ইতিহাস নেই।',
@@ -723,16 +724,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'পাঠানো হয়েছে',
   'privacy.leavesDevice': 'ডিভাইস ছেড়ে যায়',
   'privacy.staysLocal': 'লোকালে থাকে',
-  'privacy.anonymizedAnalytics': 'অ্যানোনিমাইজড অ্যানালিটিক্স',
-  'privacy.shareAnonymizedData': 'অ্যানোনিমাইজড ব্যবহার ডেটা শেয়ার করুন',
+  'privacy.anonymizedAnalytics': 'প্রোডাক্ট অ্যানালিটিক্স',
+  'privacy.shareAnonymizedData': 'প্রোডাক্ট অ্যানালিটিক্স ও ডায়াগনস্টিকস শেয়ার করুন',
   'privacy.shareAnonymizedDataDesc':
-    'বেনামী ক্র্যাশ রিপোর্ট ও ব্যবহার অ্যানালিটিক্স শেয়ার করে OpenHuman উন্নত করতে সাহায্য করুন। সব ডেটা সম্পূর্ণ বেনামী — কোনো ব্যক্তিগত তথ্য, বার্তা, ওয়ালেট কী বা সেশন তথ্য কখনো সংগ্রহ করা হয় না।',
+    'গোপনীয়তা-সীমিত ক্র্যাশ রিপোর্ট ও ব্যবহার ইভেন্ট শেয়ার করে OpenHuman উন্নত করতে সাহায্য করুন, যার মধ্যে স্থিতিশীল অ্যাকাউন্ট ID ও অ্যাপ সংস্করণ মেটাডেটা থাকে। বার্তা, ওয়ালেট কী, API কী বা সেশন টোকেন কখনো সংগ্রহ করা হয় না।',
   'privacy.meetingFollowUps': 'মিটিং ফলো-আপ',
   'privacy.autoHandoffMeet': 'Google Meet ট্রান্সক্রিপ্ট স্বয়ংক্রিয়ভাবে অর্কেস্ট্রেটরে পাঠান',
   'privacy.autoHandoffMeetDesc':
     'Google Meet কল শেষ হলে, OpenHuman-এর অর্কেস্ট্রেটর ট্রান্সক্রিপ্ট পড়তে এবং বার্তা ড্রাফট করা, ফলো-আপ নির্ধারণ করা বা সংযুক্ত Slack ওয়ার্কস্পেসে সারসংক্ষেপ পোস্ট করার মতো কাজ করতে পারে। ডিফল্টে বন্ধ।',
   'privacy.analyticsDisclaimer':
-    'সব অ্যানালিটিক্স ও বাগ রিপোর্ট সম্পূর্ণ বেনামী। সক্রিয় থাকলে, আমরা শুধু ক্র্যাশ তথ্য, ডিভাইসের ধরন এবং ত্রুটির ফাইল লোকেশন সংগ্রহ করি। আমরা কখনো আপনার বার্তা, সেশন ডেটা, ওয়ালেট কী, API কী বা ব্যক্তিগত তথ্য অ্যাক্সেস করি না। যেকোনো সময় এই সেটিং পরিবর্তন করা যাবে।',
+    'সক্রিয় থাকলে, প্রোডাক্ট অ্যানালিটিক্স ও ডায়াগনস্টিকসে গোপনীয়তা-সীমিত ক্র্যাশ রিপোর্ট ও ব্যবহার ইভেন্ট, স্থিতিশীল অ্যাকাউন্ট ID এবং অ্যাপ সংস্করণ মেটাডেটা থাকতে পারে। বার্তা, ওয়ালেট কী, API কী বা সেশন টোকেন কখনো সংগ্রহ করা হয় না। যেকোনো সময় এই সেটিং পরিবর্তন করা যাবে।',
   'settings.about.version': 'ভার্সন',
   'settings.about.updateAvailable': 'পাওয়া গেছে',
   'settings.about.softwareUpdates': 'সফটওয়্যার আপডেট',
@@ -1919,6 +1920,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'প্রস্তাবিত কাজ',
   'reflections.act': 'কাজ করুন',
   'reflections.dismiss': 'বাদ দিন',
+  'reflections.viewConversation': 'দেখুন',
+  'subconscious.mode.label': 'অবচেতন মোড',
+  'subconscious.mode.off.title': 'বন্ধ',
+  'subconscious.mode.off.desc': 'অবচেতন নিষ্ক্রিয়।',
+  'subconscious.mode.simple.title': 'সরল',
+  'subconscious.mode.simple.desc': 'শুধুমাত্র পঠনযোগ্য পর্যবেক্ষণ। শুধু মেমরি ও ফাইল অ্যাক্সেস।',
+  'subconscious.mode.aggressive.title': 'আক্রমণাত্মক',
+  'subconscious.mode.aggressive.desc':
+    'সম্পূর্ণ টুল অ্যাক্সেস। লিখতে, এজেন্ট তৈরি ও কাজ অর্পণ করতে পারে।',
+  'subconscious.mode.aggressiveWarning':
+    'আক্রমণাত্মক মোড অবচেতনকে লেখা ও সাব-এজেন্ট তৈরিসহ সম্পূর্ণ টুল অ্যাক্সেস দেয়।',
+  'subconscious.interval.label': 'ফ্রিকোয়েন্সি',
+  'subconscious.interval.minutes': '{n} মি',
+  'subconscious.interval.hours': '{n} ঘ',
+  'subconscious.interval.oneHour': '১ ঘণ্টা',
+  'subconscious.interval.oneDay': '২৪ ঘণ্টা',
   'whatsapp.chatsSynced': 'চ্যাট সিঙ্ক হয়েছে',
   'whatsapp.chatSynced': 'চ্যাট সিঙ্ক হয়েছে',
   'sync.active': 'সক্রিয়',
@@ -2803,7 +2820,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'ওয়ার্কলোড গ্রুপ চ্যাট',
   'settings.ai.disconnectProvider': 'সংযোগ বিচ্ছিন্ন করুন {label}',
   'settings.ai.connectProviderLabel': 'সংযোগ {label}',
+  'settings.ai.editProviderEndpoint': '{label} শেষবিন্দু সম্পাদনা করুন',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'শেষবিন্দু সম্পাদনা করুন',
   'settings.ai.endpointUrlLabel': 'শেষবিন্দু URL',
   'settings.ai.localRuntimeHelper':
     'xqxqx সহযোগে সংযোগ ব্যবস্থা করা হবে। ডিফল্ট স্থানীয় হোস্ট; দূরবর্তী হোস্টটিকে এই অবস্থায় দেখা যাবে (যেমন, xq1xqxqx ব্যবহার করা হচ্ছে)।',
@@ -4126,14 +4145,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'উত্স দ্বারা ফিল্টার',
   'calls.comingSoonDescription': 'AI-সহায়তা কলগুলি শীঘ্রই আসছে৷ সাথে থাকুন।',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 মিনিট',
-  'subconscious.interval.tenMinutes': '10 মিনিট',
-  'subconscious.interval.fifteenMinutes': '15 মিনিট',
-  'subconscious.interval.thirtyMinutes': '30 মিনিট',
-  'subconscious.interval.oneHour': '1 ঘন্টা',
-  'subconscious.interval.sixHours': '1 ঘন্টা',
-  'subconscious.interval.twelveHours': '[[I18N_SEP_92731]] 12 ঘন্টা',
-  'subconscious.interval.oneDay': '1 দিন',
   'subconscious.priority.critical': 'গুরুত্বপূর্ণ',
   'subconscious.priority.important': 'গুরুত্বপূর্ণ',
   'subconscious.priority.normal': 'স্বাভাবিক',
@@ -4471,6 +4482,122 @@ const messages: TranslationMap = {
     'সারাংশ ট্রি তৈরির জন্য কোনও সারাংশ প্রদানকারী উপলব্ধ নেই। স্থানীয় AI (Ollama) সক্ষম করুন, অথবা সেটিংস → AI → মেমরিতে ক্লাউড সারাংশ সক্ষম করুন।',
   'memory.health.remediation.transient':
     'একটি অস্থায়ী ত্রুটি মেমরি প্রক্রিয়াকরণে বাধা দিয়েছে। স্বয়ংক্রিয়ভাবে পুনরায় চেষ্টা করা হবে।',
+
+  // Agent activity level
+  'activityLevel.title': 'এজেন্ট কার্যকলাপের স্তর',
+  'activityLevel.description':
+    'আপনার এজেন্ট কতটা সক্রিয় তা নিয়ন্ত্রণ করুন। উচ্চ স্তরে বেশি টোকেন ব্যবহার হয়।',
+  'activityLevel.off': 'বন্ধ',
+  'activityLevel.offDesc': 'পটভূমিতে কোনো প্রক্রিয়াকরণ নেই। শুধুমাত্র বোতাম চাপলে সিঙ্ক করে।',
+  'activityLevel.minimal': 'ন্যূনতম',
+  'activityLevel.minimalDesc': 'প্রতিদিন একবার উৎস সিঙ্ক করে। কোনো সক্রিয় বার্তা নেই।',
+  'activityLevel.moderate': 'মাঝারি',
+  'activityLevel.moderateDesc':
+    'প্রতি ঘণ্টায় সিঙ্ক করে। দৈনিক সারসংক্ষেপ। কর্মপন্থা প্রস্তাব করে।',
+  'activityLevel.active': 'সক্রিয়',
+  'activityLevel.activeDesc':
+    'প্রতি ১০ মিনিটে সিঙ্ক করে। চ্যানেল পর্যবেক্ষণ, বাছাই ও উত্তর খসড়া করে।',
+  'activityLevel.alwaysOn': 'সর্বদা চালু',
+  'activityLevel.alwaysOnDesc': 'রিয়েল-টাইম সিঙ্ক। নির্ধারিত সীমার মধ্যে পূর্ণ স্বায়ত্তশাসন।',
+  'activityLevel.currentMonth': 'এই মাস: ${amount}',
+  'activityLevel.saved': 'কার্যকলাপের স্তর আপডেট হয়েছে।',
+  'activityLevel.default': 'ডিফল্ট',
+  'activityLevel.costFree': '$০',
+  'activityLevel.costRange': '~${min}–${max}/মাস',
+
+  // Sync budget dialog
+  'syncBudget.title': 'সিঙ্ক বাজেট',
+  'syncBudget.maxTokens': 'প্রতি সিঙ্কে সর্বোচ্চ টোকেন',
+  'syncBudget.maxTokensHelp': 'এতটা টোকেন ব্যবহার হলে সিঙ্ক বন্ধ করুন।',
+  'syncBudget.maxCost': 'প্রতি সিঙ্কে সর্বোচ্চ খরচ (USD)',
+  'syncBudget.maxCostHelp': 'প্রতিটি সিঙ্ক রানের জন্য নির্দিষ্ট ডলার সীমা।',
+  'syncBudget.syncDepth': 'সিঙ্ক গভীরতা',
+  'syncBudget.syncDepthHelp': 'কেবল এই সময়সীমার আইটেম আনুন।',
+  'syncBudget.days7': 'গত ৭ দিন',
+  'syncBudget.days30': 'গত ৩০ দিন',
+  'syncBudget.days90': 'গত ৯০ দিন',
+  'syncBudget.allTime': 'সব সময়',
+  'syncBudget.unlimited': 'সীমাহীন',
+  'syncBudget.saved': 'বাজেট সংরক্ষিত হয়েছে।',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'সিঙ্ক নিশ্চিত করুন',
+  'syncConfirm.message':
+    'এই সিঙ্ক ~{items}টি আইটেম (~{tokens} টোকেন, আনুমানিক ${cost}) প্রক্রিয়া করবে।',
+  'syncConfirm.budgetNote': 'বাজেট সীমা: ${max}',
+  'syncConfirm.proceed': 'চালিয়ে যান',
+  'syncConfirm.cancel': 'বাতিল',
+  'syncConfirm.estimating': 'খরচ অনুমান করা হচ্ছে...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': 'এই মাসে ${amount}',
+  'monthlyCost.noData': 'এই মাসে কোনো সিঙ্ক নেই',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'কার্যকলাপ',
+  'onboarding.custom.stepperVault': 'ভল্ট',
+  'onboarding.custom.activity.title': 'এজেন্টের কার্যকলাপ',
+  'onboarding.custom.activity.subtitle':
+    'আপনার এজেন্ট পটভূমিতে কতটা সক্রিয়ভাবে পর্যবেক্ষণ ও কাজ করে।',
+  'onboarding.custom.activity.defaultDesc':
+    'মাঝারি কার্যকলাপ — প্রতি ঘণ্টায় সিঙ্ক, দৈনিক সারসংক্ষেপ।',
+  'onboarding.custom.activity.configureDesc':
+    'নিজের কার্যকলাপের স্তর বেছে নিন। সেটিংস › এজেন্ট কার্যকলাপ স্তরে কনফিগার করুন।',
+  'onboarding.custom.vault.title': 'মেমোরি ও ভল্ট সেটআপ',
+  'onboarding.custom.vault.subtitle':
+    'নিশ্চিত করুন মেমোরি নোট কোথায় লেখা হয়, উৎস ডেটা কীভাবে পড়া হয় এবং আপনার ভল্ট পাইপলাইন সুস্থ কিনা।',
+  'onboarding.custom.vault.defaultDesc':
+    'OpenHuman-পরিচালিত মেমোরির ডিফল্ট ব্যবহার করুন। ভল্ট পাথ এবং সিঙ্ক স্বাস্থ্য পরে পর্যালোচনা করা যাবে।',
+  'onboarding.custom.vault.configureDesc':
+    'ভল্টের মালিকানা পর্যালোচনা করুন, স্বাস্থ্য পরীক্ষা চালান এবং এখনই মেমোরি নিয়ন্ত্রণ সামঞ্জস্য করুন।',
+  'onboarding.custom.vault.localDisabledReason':
+    'পরিচালিত সেটআপের জন্য OpenHuman সাইন-ইন প্রয়োজন এবং লোকাল মোডে উপলব্ধ নয়।',
+  'onboarding.custom.vault.exitError': 'অনবোর্ডিং শেষ করা যায়নি। আবার চেষ্টা করুন।',
+  'vaultHealth.title': 'ভল্ট স্বাস্থ্য চেকলিস্ট',
+  'vaultHealth.setupTitle': 'ভল্ট সেটআপ স্বাস্থ্য',
+  'vaultHealth.workspaceVault': 'ওয়ার্কস্পেস ভল্ট:',
+  'vaultHealth.refresh': 'রিফ্রেশ',
+  'vaultHealth.refreshing': 'রিফ্রেশ হচ্ছে…',
+  'vaultHealth.revealFolder': 'ফোল্ডার দেখান',
+  'vaultHealth.openInObsidian': 'Obsidian-এ খুলুন',
+  'vaultHealth.installObsidian': 'Obsidian ইনস্টল করুন',
+  'vaultHealth.openObsidianError': 'Obsidian খোলা যায়নি',
+  'vaultHealth.revealError': 'ভল্ট ফোল্ডার দেখানো যায়নি',
+  'vaultHealth.downloadError': 'Obsidian ডাউনলোড পৃষ্ঠা খোলা যায়নি',
+  'vaultHealth.loadError': 'ভল্ট স্বাস্থ্য লোড করা যায়নি:',
+  'vaultHealth.lastSync': 'শেষ সিঙ্ক:',
+  'vaultHealth.passed': 'পাস হয়েছে',
+  'vaultHealth.needsAttention': 'মনোযোগ প্রয়োজন',
+  'vaultHealth.existsLabel': 'ওয়ার্কস্পেস ভল্ট পাথ বিদ্যমান',
+  'vaultHealth.existsRecovery':
+    'ভল্ট ফোল্ডার নেই। একটি সিঙ্ক শুরু করুন বা এই ফোল্ডারটি তৈরি করুন, তারপর এই চেকলিস্ট রিফ্রেশ করুন।',
+  'vaultHealth.writableLabel': 'ভল্ট OpenHuman দ্বারা লিখনযোগ্য',
+  'vaultHealth.writableRecovery':
+    'OpenHuman এখনও এই ভল্টে লিখতে পারছে না। লেখার অনুমতি দিন এবং রিফ্রেশ করুন।',
+  'vaultHealth.obsidianLabel': 'ভল্ট Obsidian-এ নিবন্ধিত',
+  'vaultHealth.obsidianRecovery':
+    'Obsidian-এ এই পাথটির জন্য "ফোল্ডার ভল্ট হিসেবে খুলুন" বেছে নিন, তারপর এই চেকলিস্ট রিফ্রেশ করুন।',
+  'vaultHealth.pipelineLabel': 'মেমোরি পাইপলাইন সুস্থ',
+  'vaultHealth.pipelineRecovery':
+    'মেমোরি পাইপলাইন বিরতিতে আছে বা ত্রুটিতে আছে। মেমোরি ট্রি স্ট্যাটাসে অটো-সিঙ্ক পুনরায় সক্ষম করুন এবং পুনরায় চেষ্টা করুন।',
+  'vaultHealth.timeNever': 'কখনো না',
+  'vaultHealth.timeJustNow': 'এইমাত্র',
+  'vaultHealth.timeMinAgo': '{n} মিনিট আগে',
+  'vaultHealth.timeHrAgo': '{n} ঘণ্টা আগে',
+  'vaultHealth.timeDayAgo': '{n} দিন আগে',
+  'vaultHealth.timeDaysAgo': '{n} দিন আগে',
+  'memoryData.howItWorks': 'মেমোরি স্টোরেজ কীভাবে কাজ করে',
+  'memoryData.workspaceVault': 'ওয়ার্কস্পেস ভল্ট · লেখা',
+  'memoryData.workspaceVaultDesc': 'OpenHuman তৈরি মেমোরি নোট memory_tree/content-এ লেখে।',
+  'memoryData.connectedSources': 'সংযুক্ত উৎস · পড়া',
+  'memoryData.connectedSourcesDesc':
+    'ফোল্ডার, মেইলবক্স, চ্যাট এবং রেপো মেমোরি ইন্ডেক্সিংয়ের জন্য আমদানি করা হয় — তাদের মূল ফাইল কখনো পুনরায় লেখা হয় না।',
+  'memoryData.internalFiles': 'অভ্যন্তরীণ মেমোরি-ট্রি ফাইল',
+  'memoryData.internalFilesDesc':
+    'ইন্ডেক্স, কিউ স্টেট এবং সারসংক্ষেপ OpenHuman দ্বারা পরিচালিত হয় যাতে রিকল ও সিঙ্ক সুস্থ থাকে।',
+  'memoryData.windowError': 'মেমোরি উইন্ডো',
+  'memoryData.windowUpdated': 'মেমোরি উইন্ডো আপডেট হয়েছে',
+  'memoryData.windowUpdatedMsg': '{window}-এ সেট করা হয়েছে।',
 };
 
 export default messages;

@@ -297,6 +297,444 @@ fn delete_chunks_by_source_removes_chunks_side_rows_and_ingest_gate() {
     .unwrap();
 }
 
+/// Forget-path (`clear_memory=true`) e2e: deleting the last chunk of a source
+/// must cascade-delete its summary tree (tree row + summaries + sidecars +
+/// entity-index + unsealed buffer), leave a sibling source untouched, and a
+/// queued `Seal` job for the now-gone tree must settle to `Done` (not stick
+/// in pending). Mocked connection (tempdir), chunks, tree/summary/buffer, job.
+#[tokio::test]
+async fn clear_memory_delete_cascades_orphaned_source_tree_and_settles_queued_job() {
+    use crate::openhuman::memory_queue::{store as queue_store, types as queue_types};
+    use crate::openhuman::memory_store::trees::store as tree_store;
+    use crate::openhuman::memory_store::trees::types::{
+        Buffer, SummaryNode, Tree, TreeKind, TreeStatus,
+    };
+
+    let (_tmp, cfg) = test_config();
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+
+    // ---- mocked chunks: gmail:acct (conn-1, disconnecting) + gmail:other (conn-2, survives) ----
+    let mk_email = |source_id: &str, seq: u32, owner: &str, ts_ms: i64| {
+        let mut c = sample_chunk(source_id, seq, ts_ms);
+        c.metadata.source_kind = SourceKind::Email;
+        c.metadata.owner = owner.to_string();
+        c
+    };
+    let a0 = mk_email("gmail:acct", 0, "gmail-sync:conn-1", 1_700_000_000_000);
+    let a1 = mk_email("gmail:acct", 1, "gmail-sync:conn-1", 1_700_000_001_000);
+    let b0 = mk_email("gmail:other", 0, "gmail-sync:conn-2", 1_700_000_002_000);
+    upsert_chunks(&cfg, &[a0.clone(), a1.clone(), b0.clone()]).unwrap();
+
+    // ---- mocked source trees (scope == source_id), each with summary + sidecars + entity-index + buffer ----
+    let mk_tree = |id: &str, scope: &str| Tree {
+        id: id.into(),
+        kind: TreeKind::Source,
+        scope: scope.into(),
+        root_id: None,
+        max_level: 1,
+        status: TreeStatus::Active,
+        created_at: ts,
+        last_sealed_at: Some(ts),
+    };
+    tree_store::insert_tree(&cfg, &mk_tree("tree-acct", "gmail:acct")).unwrap();
+    tree_store::insert_tree(&cfg, &mk_tree("tree-other", "gmail:other")).unwrap();
+
+    let mk_summary = |id: &str, tree_id: &str, children: Vec<String>| SummaryNode {
+        id: id.into(),
+        tree_id: tree_id.into(),
+        tree_kind: TreeKind::Source,
+        level: 1,
+        parent_id: None,
+        child_ids: children,
+        content: format!("summary for {tree_id}"),
+        token_count: 3,
+        entities: vec![],
+        topics: vec![],
+        time_range_start: ts,
+        time_range_end: ts,
+        score: 0.5,
+        sealed_at: ts,
+        deleted: false,
+        embedding: None,
+    };
+
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+
+        tree_store::insert_summary_tx(
+            &tx,
+            &mk_summary("sum-acct", "tree-acct", vec![a0.id.clone(), a1.id.clone()]),
+            None,
+            "test/model@3",
+        )?;
+        tree_store::insert_summary_tx(
+            &tx,
+            &mk_summary("sum-other", "tree-other", vec![b0.id.clone()]),
+            None,
+            "test/model@3",
+        )?;
+
+        // summary sidecars: embeddings for both summaries, reembed-skip only for sum-acct.
+        for sid in ["sum-acct", "sum-other"] {
+            tx.execute(
+                "INSERT INTO mem_tree_summary_embeddings (
+                    summary_id, model_signature, vector, dim, created_at
+                ) VALUES (?1, 'test/model@3', ?2, 3, 1700000000.0)",
+                params![sid, vec![1_u8, 2, 3]],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO mem_tree_summary_reembed_skipped (
+                summary_id, model_signature, reason, skipped_at_ms
+            ) VALUES ('sum-acct', 'test/model@3', 'terminal', 1700000000000)",
+            [],
+        )?;
+
+        // tree-keyed entity-index rows (summary nodes) for each tree.
+        for (sid, tree_id) in [("sum-acct", "tree-acct"), ("sum-other", "tree-other")] {
+            tx.execute(
+                "INSERT INTO mem_tree_entity_index (
+                    entity_id, node_id, node_kind, entity_kind, surface,
+                    score, timestamp_ms, tree_id, is_user
+                ) VALUES (?1, ?2, 'summary', 'person', 'email', 0.9, 1700000000000, ?3, 0)",
+                params![format!("entity:{sid}"), sid, tree_id],
+            )?;
+        }
+
+        // unsealed buffers (the "queue" frontier) referencing the chunk ids.
+        tree_store::upsert_buffer_tx(
+            &tx,
+            &Buffer {
+                tree_id: "tree-acct".into(),
+                level: 0,
+                item_ids: vec![a0.id.clone(), a1.id.clone()],
+                token_sum: 24,
+                oldest_at: Some(ts),
+            },
+        )?;
+        tree_store::upsert_buffer_tx(
+            &tx,
+            &Buffer {
+                tree_id: "tree-other".into(),
+                level: 0,
+                item_ids: vec![b0.id.clone()],
+                token_sum: 12,
+                oldest_at: Some(ts),
+            },
+        )?;
+
+        assert!(claim_source_ingest_tx(
+            &tx,
+            SourceKind::Email,
+            "gmail:acct",
+            1_700_000_000_000
+        )?);
+        assert!(claim_source_ingest_tx(
+            &tx,
+            SourceKind::Email,
+            "gmail:other",
+            1_700_000_000_000
+        )?);
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    // ---- mocked job: a Seal queued for the tree that's about to be deleted ----
+    let seal_payload = queue_types::SealPayload {
+        tree_id: "tree-acct".into(),
+        level: 0,
+        force_now_ms: None,
+    };
+    let job_id = queue_store::enqueue(&cfg, &queue_types::NewJob::seal(&seal_payload).unwrap())
+        .unwrap()
+        .expect("seal job enqueued");
+
+    // ---- act: disconnect conn-1 with clear_memory=true → delete its chunks ----
+    let deleted = delete_chunks_by_owner(&cfg, SourceKind::Email, "gmail-sync:conn-1").unwrap();
+    assert_eq!(deleted, 2);
+
+    // chunks: acct gone, other survives.
+    assert!(get_chunk(&cfg, &a0.id).unwrap().is_none());
+    assert!(get_chunk(&cfg, &a1.id).unwrap().is_none());
+    assert!(get_chunk(&cfg, &b0.id).unwrap().is_some());
+
+    // the orphaned source tree is gone; the sibling tree is untouched.
+    assert!(
+        tree_store::get_tree_by_scope(&cfg, TreeKind::Source, "gmail:acct")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        tree_store::get_tree_by_scope(&cfg, TreeKind::Source, "gmail:other")
+            .unwrap()
+            .is_some()
+    );
+
+    // exactly the tree-acct rows are cascaded away across every dependent table.
+    with_connection(&cfg, |conn| {
+        let count = |sql: &str| -> rusqlite::Result<i64> { conn.query_row(sql, [], |r| r.get(0)) };
+        assert_eq!(count("SELECT COUNT(*) FROM mem_tree_trees")?, 1);
+        assert_eq!(count("SELECT COUNT(*) FROM mem_tree_summaries")?, 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM mem_tree_summary_embeddings")?,
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM mem_tree_summary_reembed_skipped")?,
+            0
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM mem_tree_buffers")?, 1);
+        assert_eq!(count("SELECT COUNT(*) FROM mem_tree_entity_index")?, 1);
+        // and what survives belongs to tree-other.
+        assert_eq!(
+            count("SELECT COUNT(*) FROM mem_tree_summaries WHERE tree_id = 'tree-other'")?,
+            1
+        );
+        Ok(())
+    })
+    .unwrap();
+
+    // ---- the queued Seal job settles to Done (tree missing), not stuck pending ----
+    let claimed = queue_store::claim_next(&cfg, queue_store::DEFAULT_LOCK_DURATION_MS)
+        .unwrap()
+        .expect("seal job claimable");
+    assert_eq!(claimed.kind, queue_types::JobKind::Seal);
+    let outcome = crate::openhuman::memory_queue::handlers::handle_job(&cfg, &claimed)
+        .await
+        .expect("handle_job ok");
+    assert!(
+        matches!(outcome, queue_types::JobOutcome::Done),
+        "seal over a deleted tree must no-op to Done, got {outcome:?}"
+    );
+    queue_store::mark_done(&cfg, &claimed).unwrap();
+    assert_eq!(
+        queue_store::get_job(&cfg, &job_id).unwrap().unwrap().status,
+        queue_types::JobStatus::Done
+    );
+}
+
+/// #1: the cascade must also delete the summary's **on-disk content file**, not
+/// just the row — otherwise a `clear_memory` delete leaves the summarised text
+/// orphaned on disk.
+#[test]
+fn clear_memory_delete_removes_orphaned_summary_content_file() {
+    use crate::openhuman::memory_store::trees::store as tree_store;
+    use crate::openhuman::memory_store::trees::types::{SummaryNode, Tree, TreeKind, TreeStatus};
+
+    let (_tmp, cfg) = test_config();
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+
+    let mut c = sample_chunk("gmail:acct", 0, 1_700_000_000_000);
+    c.metadata.source_kind = SourceKind::Email;
+    c.metadata.owner = "gmail-sync:conn-1".to_string();
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+
+    tree_store::insert_tree(
+        &cfg,
+        &Tree {
+            id: "tree-acct".into(),
+            kind: TreeKind::Source,
+            scope: "gmail:acct".into(),
+            root_id: None,
+            max_level: 1,
+            status: TreeStatus::Active,
+            created_at: ts,
+            last_sealed_at: Some(ts),
+        },
+    )
+    .unwrap();
+
+    // A real on-disk summary content file under the memory tree content root.
+    let rel = "summaries/gmail_acct/L1/sum-acct.md";
+    let abs = cfg.memory_tree_content_root().join(rel);
+    std::fs::create_dir_all(abs.parent().unwrap()).unwrap();
+    std::fs::write(&abs, "summarised email body").unwrap();
+    assert!(abs.exists());
+
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        tree_store::insert_summary_tx(
+            &tx,
+            &SummaryNode {
+                id: "sum-acct".into(),
+                tree_id: "tree-acct".into(),
+                tree_kind: TreeKind::Source,
+                level: 1,
+                parent_id: None,
+                child_ids: vec![c.id.clone()],
+                content: "preview".into(),
+                token_count: 3,
+                entities: vec![],
+                topics: vec![],
+                time_range_start: ts,
+                time_range_end: ts,
+                score: 0.5,
+                sealed_at: ts,
+                deleted: false,
+                embedding: None,
+            },
+            None,
+            "test/model@3",
+        )?;
+        tx.execute(
+            "UPDATE mem_tree_summaries SET content_path = ?1 WHERE id = 'sum-acct'",
+            params![rel],
+        )?;
+        assert!(claim_source_ingest_tx(
+            &tx,
+            SourceKind::Email,
+            "gmail:acct",
+            1_700_000_000_000
+        )?);
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    delete_chunks_by_owner(&cfg, SourceKind::Email, "gmail-sync:conn-1").unwrap();
+
+    assert!(
+        tree_store::get_tree_by_scope(&cfg, TreeKind::Source, "gmail:acct")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !abs.exists(),
+        "orphaned summary content file must be removed from disk"
+    );
+}
+
+/// #2: the safety property — deleting one connection's chunks must NOT delete
+/// the source tree while ANOTHER connection still owns chunks for the same
+/// account (source not yet orphaned).
+#[test]
+fn clear_memory_delete_keeps_tree_when_another_connection_still_owns_chunks() {
+    use crate::openhuman::memory_store::trees::store as tree_store;
+    use crate::openhuman::memory_store::trees::types::{Buffer, Tree, TreeKind, TreeStatus};
+
+    let (_tmp, cfg) = test_config();
+    let ts = Utc.timestamp_millis_opt(1_700_000_000_000).unwrap();
+
+    // Same account `gmail:acct`, two connections (owners).
+    let mut a = sample_chunk("gmail:acct", 0, 1_700_000_000_000);
+    a.metadata.source_kind = SourceKind::Email;
+    a.metadata.owner = "gmail-sync:conn-1".to_string();
+    let mut b = sample_chunk("gmail:acct", 1, 1_700_000_001_000);
+    b.metadata.source_kind = SourceKind::Email;
+    b.metadata.owner = "gmail-sync:conn-2".to_string();
+    upsert_chunks(&cfg, &[a.clone(), b.clone()]).unwrap();
+
+    tree_store::insert_tree(
+        &cfg,
+        &Tree {
+            id: "tree-acct".into(),
+            kind: TreeKind::Source,
+            scope: "gmail:acct".into(),
+            root_id: None,
+            max_level: 1,
+            status: TreeStatus::Active,
+            created_at: ts,
+            last_sealed_at: Some(ts),
+        },
+    )
+    .unwrap();
+    with_connection(&cfg, |conn| {
+        let tx = conn.unchecked_transaction()?;
+        tree_store::upsert_buffer_tx(
+            &tx,
+            &Buffer {
+                tree_id: "tree-acct".into(),
+                level: 0,
+                item_ids: vec![a.id.clone(), b.id.clone()],
+                token_sum: 24,
+                oldest_at: Some(ts),
+            },
+        )?;
+        assert!(claim_source_ingest_tx(
+            &tx,
+            SourceKind::Email,
+            "gmail:acct",
+            1_700_000_000_000
+        )?);
+        tx.commit()?;
+        Ok(())
+    })
+    .unwrap();
+
+    // Disconnect ONLY conn-1.
+    let deleted = delete_chunks_by_owner(&cfg, SourceKind::Email, "gmail-sync:conn-1").unwrap();
+    assert_eq!(deleted, 1);
+
+    // conn-1's chunk is gone, conn-2's remains → source still has chunks →
+    // the tree (and its buffer + ingest gate) MUST survive.
+    assert!(get_chunk(&cfg, &a.id).unwrap().is_none());
+    assert!(get_chunk(&cfg, &b.id).unwrap().is_some());
+    assert!(
+        tree_store::get_tree_by_scope(&cfg, TreeKind::Source, "gmail:acct")
+            .unwrap()
+            .is_some(),
+        "tree must survive while another connection still owns chunks"
+    );
+    assert!(is_source_ingested(&cfg, SourceKind::Email, "gmail:acct").unwrap());
+    with_connection(&cfg, |conn| {
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM mem_tree_buffers", [], |r| r.get(0))?;
+        assert_eq!(n, 1);
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// #3: queued `Extract` / `AppendBuffer` jobs that reference a chunk deleted
+/// out from under them settle to `Done` (warn-and-skip), not stuck pending.
+#[tokio::test]
+async fn queued_jobs_for_deleted_chunk_settle_to_done() {
+    use crate::openhuman::memory_queue::{store as queue_store, types as queue_types};
+
+    let (_tmp, cfg) = test_config();
+    let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    upsert_chunks(&cfg, &[c.clone()]).unwrap();
+    delete_chunks_by_source(&cfg, SourceKind::Chat, "slack:#eng").unwrap();
+    assert!(get_chunk(&cfg, &c.id).unwrap().is_none());
+
+    queue_store::enqueue(
+        &cfg,
+        &queue_types::NewJob::extract_chunk(&queue_types::ExtractChunkPayload {
+            chunk_id: c.id.clone(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    queue_store::enqueue(
+        &cfg,
+        &queue_types::NewJob::append_buffer(&queue_types::AppendBufferPayload {
+            node: queue_types::NodeRef::Leaf {
+                chunk_id: c.id.clone(),
+            },
+            target: queue_types::AppendTarget::Source {
+                source_id: "slack:#eng".into(),
+            },
+        })
+        .unwrap(),
+    )
+    .unwrap();
+
+    for _ in 0..2 {
+        let job = queue_store::claim_next(&cfg, queue_store::DEFAULT_LOCK_DURATION_MS)
+            .unwrap()
+            .expect("job claimable");
+        let outcome = crate::openhuman::memory_queue::handlers::handle_job(&cfg, &job)
+            .await
+            .expect("handle_job ok");
+        assert!(
+            matches!(outcome, queue_types::JobOutcome::Done),
+            "{:?} over a deleted chunk must settle Done, got {outcome:?}",
+            job.kind
+        );
+        queue_store::mark_done(&cfg, &job).unwrap();
+    }
+}
+
 #[test]
 fn delete_chunks_by_owner_preserves_other_owners_for_same_source() {
     let (_tmp, cfg) = test_config();

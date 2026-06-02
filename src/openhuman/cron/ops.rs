@@ -5,7 +5,30 @@ use crate::openhuman::cron::{
 use crate::openhuman::security::SecurityPolicy;
 use crate::rpc::RpcOutcome;
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use serde_json::json;
+use std::collections::HashSet;
+use std::sync::Mutex;
+
+/// Guard against duplicate concurrent "Run Now" executions per job.
+/// Entries are inserted before spawning and removed when the task completes.
+static ACTIVE_RUNS: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
+
+/// RAII guard that removes a job ID from `ACTIVE_RUNS` when dropped.
+///
+/// Ensures cleanup runs on normal completion, panic, or future cancellation —
+/// so a hung or aborted background task can never permanently lock a job_id.
+struct ActiveRunGuard {
+    job_id: String,
+}
+
+impl Drop for ActiveRunGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = ACTIVE_RUNS.lock() {
+            active.remove(&self.job_id);
+        }
+    }
+}
 
 pub fn add_once(config: &Config, delay: &str, command: &str) -> Result<CronJob> {
     let duration = parse_human_delay(delay)?;
@@ -186,43 +209,97 @@ pub async fn cron_run(
     config: &Config,
     job_id: &str,
 ) -> Result<RpcOutcome<serde_json::Value>, String> {
-    if job_id.trim().is_empty() {
+    let job_id = job_id.trim();
+    if job_id.is_empty() {
         return Err("Missing 'job_id' parameter".to_string());
     }
     if !config.cron.enabled {
         return Err("cron is disabled by config (cron.enabled=false)".to_string());
     }
 
-    let job = cron::get_job(config, job_id.trim()).map_err(|e| e.to_string())?;
-    let started_at = chrono::Utc::now();
-    let (success, output) = cron::scheduler::execute_job_now(config, &job).await;
-    let finished_at = chrono::Utc::now();
-    let duration_ms = (finished_at - started_at).num_milliseconds();
-    let status = if success { "ok" } else { "error" };
+    // Guard against duplicate concurrent executions for the same job.
+    {
+        let mut active = ACTIVE_RUNS
+            .lock()
+            .map_err(|_| "ACTIVE_RUNS lock poisoned".to_string())?;
+        if active.contains(job_id) {
+            tracing::debug!(job_id, "[cron_run] rejected duplicate concurrent execution");
+            return Err(format!("cron job '{job_id}' is already running"));
+        }
+        active.insert(job_id.to_string());
+    }
 
-    let _ = cron::record_run(
-        config,
-        &job.id,
-        started_at,
-        finished_at,
-        status,
-        Some(&output),
-        duration_ms,
-    );
-    let _ = cron::record_last_run(config, &job.id, finished_at, success, &output);
+    let job = match cron::get_job(config, job_id) {
+        Ok(j) => j,
+        Err(e) => {
+            if let Ok(mut active) = ACTIVE_RUNS.lock() {
+                active.remove(job_id);
+            }
+            return Err(e.to_string());
+        }
+    };
 
-    // Deliver via the same path as the scheduler loop so proactive
-    // messages and alerts are sent on "Run Now" too.
-    cron::scheduler::deliver_job(config, &job, &output).await;
+    // Insert a "queued" placeholder run record immediately so the frontend
+    // poller can observe the run as soon as the RPC returns — otherwise the
+    // run list stays unchanged until execute_job_now finishes.
+    let queued_at = chrono::Utc::now();
+    let _ = cron::record_run(config, &job.id, queued_at, queued_at, "queued", None, 0);
+
+    let config_owned = config.clone();
+    let job_id_owned = job_id.to_string();
+
+    tracing::debug!(job_id, "[cron_run] enqueuing background execution");
+
+    // Spawn the execution as a background task so the RPC handler returns
+    // immediately instead of blocking for the full job duration.
+    tokio::spawn(async move {
+        // Drop guard ensures job_id is removed from ACTIVE_RUNS even on panic
+        // or future cancellation, not just on the normal completion path.
+        let _guard = ActiveRunGuard {
+            job_id: job_id_owned.clone(),
+        };
+
+        tracing::debug!(job_id = %job_id_owned, "[cron_run] background task started");
+
+        let started_at = chrono::Utc::now();
+        let (success, output) = cron::scheduler::execute_job_now(&config_owned, &job).await;
+        let finished_at = chrono::Utc::now();
+        let duration_ms = (finished_at - started_at).num_milliseconds();
+        let status = if success { "ok" } else { "error" };
+
+        tracing::debug!(
+            job_id = %job_id_owned,
+            status,
+            duration_ms,
+            "[cron_run] background task finished"
+        );
+
+        // Remove the "queued" placeholder before inserting the real result
+        // so we don't leave orphaned rows in the run history.
+        let _ = cron::delete_queued_runs(&config_owned, &job.id);
+
+        let _ = cron::record_run(
+            &config_owned,
+            &job.id,
+            started_at,
+            finished_at,
+            status,
+            Some(&output),
+            duration_ms,
+        );
+        let _ = cron::record_last_run(&config_owned, &job.id, finished_at, success, &output);
+
+        // Deliver via the same path as the scheduler loop so proactive
+        // messages and alerts are sent on "Run Now" too.
+        cron::scheduler::deliver_job(&config_owned, &job, &output).await;
+    });
 
     Ok(RpcOutcome::new(
         json!({
-            "job_id": job.id,
-            "status": status,
-            "duration_ms": duration_ms,
-            "output": output
+            "job_id": job_id,
+            "status": "queued",
         }),
-        vec![format!("cron job run: {}", job_id.trim())],
+        vec![format!("cron job enqueued: {}", job_id)],
     ))
 }
 

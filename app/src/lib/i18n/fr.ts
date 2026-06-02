@@ -224,6 +224,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Pas encore exécuté',
   'routines.runNow': 'Cours maintenant',
   'routines.running': 'Course…',
+  'routines.runNowTimedOut': 'Délai dépassé — veuillez rafraîchir et réessayer.',
   'routines.viewHistory': "Afficher l'historique",
   'routines.loadingHistory': 'Chargement…',
   'routines.noHistory': "Pas encore d'historique d'exécution.",
@@ -740,17 +741,17 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Envoyé à',
   'privacy.leavesDevice': "Quitte l'appareil",
   'privacy.staysLocal': 'Reste local',
-  'privacy.anonymizedAnalytics': 'Analyses anonymisées',
-  'privacy.shareAnonymizedData': "Partager les données d'utilisation anonymisées",
+  'privacy.anonymizedAnalytics': 'Analyses produit',
+  'privacy.shareAnonymizedData': 'Partager les analyses produit et les diagnostics',
   'privacy.shareAnonymizedDataDesc':
-    "Aide à améliorer OpenHuman en partageant des rapports de plantage et des analyses d'utilisation anonymes. Toutes les données sont entièrement anonymisées — aucune donnée personnelle, message, clé de portefeuille ou information de session n'est jamais collectée.",
+    "Aide à améliorer OpenHuman en partageant des rapports de plantage et des événements d'utilisation limités pour la confidentialité, incluant un ID de compte stable et les métadonnées de version de l'app. Les messages, clés de portefeuille, clés API et jetons de session ne sont jamais collectés.",
   'privacy.meetingFollowUps': 'Suivis de réunion',
   'privacy.autoHandoffMeet':
     "Transmettre automatiquement les transcriptions Google Meet à l'orchestrateur",
   'privacy.autoHandoffMeetDesc':
     "Quand un appel Google Meet se termine, l'orchestrateur d'OpenHuman peut lire la transcription et effectuer des actions comme rédiger des messages, planifier des suivis ou publier des résumés sur ton espace Slack connecté. Désactivé par défaut.",
   'privacy.analyticsDisclaimer':
-    "Toutes les analyses et rapports de bugs sont entièrement anonymisés. Quand activé, on collecte uniquement les informations de plantage, le type d'appareil et l'emplacement des erreurs. On n'accède jamais à tes messages, données de session, clés de portefeuille, clés API ou toute information personnelle identifiable. Tu peux modifier ce paramètre à tout moment.",
+    "Quand elles sont activées, les analyses produit et les diagnostics peuvent inclure des rapports de plantage et des événements d'utilisation limités pour la confidentialité, un ID de compte stable et les métadonnées de version de l'app. Les messages, clés de portefeuille, clés API et jetons de session ne sont jamais collectés. Tu peux modifier ce paramètre à tout moment.",
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'disponible',
   'settings.about.softwareUpdates': 'Mises à jour logicielles',
@@ -1965,6 +1966,23 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Action proposée',
   'reflections.act': 'Agir',
   'reflections.dismiss': 'Ignorer',
+  'reflections.viewConversation': 'Voir',
+  'subconscious.mode.label': 'Mode subconscient',
+  'subconscious.mode.off.title': 'Désactivé',
+  'subconscious.mode.off.desc': 'Le subconscient est désactivé.',
+  'subconscious.mode.simple.title': 'Simple',
+  'subconscious.mode.simple.desc':
+    'Observation en lecture seule. Accès mémoire et fichiers uniquement.',
+  'subconscious.mode.aggressive.title': 'Agressif',
+  'subconscious.mode.aggressive.desc':
+    'Accès complet aux outils. Peut écrire, créer des agents et déléguer des tâches.',
+  'subconscious.mode.aggressiveWarning':
+    "Le mode agressif donne au subconscient un accès complet aux outils, y compris l'écriture et la création de sous-agents.",
+  'subconscious.interval.label': 'Fréquence',
+  'subconscious.interval.minutes': '{n} min',
+  'subconscious.interval.hours': '{n}h',
+  'subconscious.interval.oneHour': '1 heure',
+  'subconscious.interval.oneDay': '24 heures',
   'whatsapp.chatsSynced': 'conversations synchronisées',
   'whatsapp.chatSynced': 'conversation synchronisée',
   'sync.active': 'Actif',
@@ -2863,7 +2881,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Groupe de charge chat',
   'settings.ai.disconnectProvider': 'Déconnecter {label}',
   'settings.ai.connectProviderLabel': 'Connecter {label}',
+  'settings.ai.editProviderEndpoint': 'Modifier le point de terminaison {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Modifier le point de terminaison',
   'settings.ai.endpointUrlLabel': 'Point de terminaison URL',
   'settings.ai.localRuntimeHelper':
     "Là où {label} est accessible. Par défaut, c'est localhost; pointez ceci vers un hôte distant (par exemple, http://10.0.0.4:11434/v1) pour utiliser une instance partagée.",
@@ -4221,14 +4241,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'Filtrer par source',
   'calls.comingSoonDescription': "Les appels assistés par IA arrivent bientôt. Restez à l'écoute.",
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 min',
-  'subconscious.interval.tenMinutes': '10 min',
-  'subconscious.interval.fifteenMinutes': '15 min',
-  'subconscious.interval.thirtyMinutes': '30 min',
-  'subconscious.interval.oneHour': '1 heure',
-  'subconscious.interval.sixHours': '6 heures',
-  'subconscious.interval.twelveHours': '12 heures',
-  'subconscious.interval.oneDay': '1 jour',
   'subconscious.priority.critical': 'critique',
   'subconscious.priority.important': 'important',
   'subconscious.priority.normal': 'normal',
@@ -4570,6 +4582,131 @@ const messages: TranslationMap = {
     "Aucun fournisseur de résumé n'est disponible pour Créer des arbres de résumé. Activez l'IA locale (Ollama) ou activez la synthèse cloud dans Paramètres → IA → Mémoire.",
   'memory.health.remediation.transient':
     'Une erreur temporaire a interrompu le traitement de la mémoire. Une nouvelle tentative aura lieu automatiquement.',
+
+  // Agent activity level
+  'activityLevel.title': "Niveau d'activité de l'agent",
+  'activityLevel.description':
+    'Contrôlez le niveau de proactivité de votre agent. Les niveaux élevés consomment plus de tokens.',
+  'activityLevel.off': 'Désactivé',
+  'activityLevel.offDesc':
+    'Aucun traitement en arrière-plan. Synchronise uniquement sur pression du bouton.',
+  'activityLevel.minimal': 'Minimal',
+  'activityLevel.minimalDesc': 'Synchronise les sources une fois par jour. Aucun message proactif.',
+  'activityLevel.moderate': 'Modéré',
+  'activityLevel.moderateDesc':
+    'Synchronise toutes les heures. Résumé quotidien. Suggère des actions.',
+  'activityLevel.active': 'Actif',
+  'activityLevel.activeDesc':
+    'Synchronise toutes les 10 min. Surveille les canaux, trie et rédige des réponses.',
+  'activityLevel.alwaysOn': 'Toujours actif',
+  'activityLevel.alwaysOnDesc':
+    'Synchronisation en temps réel. Pleine autonomie dans les limites définies.',
+  'activityLevel.currentMonth': 'Ce mois-ci : ${amount}',
+  'activityLevel.saved': "Niveau d'activité mis à jour.",
+  'activityLevel.default': 'par défaut',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/mois',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Budget de synchronisation',
+  'syncBudget.maxTokens': 'Tokens max par synchronisation',
+  'syncBudget.maxTokensHelp': 'Arrêter la synchronisation une fois ce nombre de tokens consommé.',
+  'syncBudget.maxCost': 'Coût max par synchronisation (USD)',
+  'syncBudget.maxCostHelp': 'Plafond absolu en dollars par exécution de synchronisation.',
+  'syncBudget.syncDepth': 'Profondeur de synchronisation',
+  'syncBudget.syncDepthHelp': 'Récupérer uniquement les éléments de cette fenêtre temporelle.',
+  'syncBudget.days7': '7 derniers jours',
+  'syncBudget.days30': '30 derniers jours',
+  'syncBudget.days90': '90 derniers jours',
+  'syncBudget.allTime': 'Tout le temps',
+  'syncBudget.unlimited': 'Illimité',
+  'syncBudget.saved': 'Budget enregistré.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Confirmer la synchronisation',
+  'syncConfirm.message':
+    'Cette synchronisation traitera ~{items} éléments (~{tokens} tokens, est. ${cost}).',
+  'syncConfirm.budgetNote': 'Plafond budgétaire : ${max}',
+  'syncConfirm.proceed': 'Procéder',
+  'syncConfirm.cancel': 'Annuler',
+  'syncConfirm.estimating': 'Estimation du coût...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} ce mois-ci',
+  'monthlyCost.noData': 'Aucune synchronisation ce mois-ci',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Activité',
+  'onboarding.custom.stepperVault': 'Coffre',
+  'onboarding.custom.activity.title': "Activité de l'agent",
+  'onboarding.custom.activity.subtitle':
+    'À quel point votre agent surveille et agit en arrière-plan.',
+  'onboarding.custom.activity.defaultDesc':
+    'Activité modérée — synchronisation horaire, résumé quotidien.',
+  'onboarding.custom.activity.configureDesc':
+    "Choisissez votre propre niveau d'activité. Configurer dans Paramètres › Niveau d'activité de l'agent.",
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Configuration de la mémoire et du coffre',
+  'onboarding.custom.vault.subtitle':
+    'Confirmez où les notes de mémoire sont écrites, comment les données sources sont lues et si votre pipeline de coffre est en bon état.',
+  'onboarding.custom.vault.defaultDesc':
+    "Utiliser les paramètres de mémoire gérés par OpenHuman. Le chemin du coffre et l'état de synchronisation peuvent encore être consultés ultérieurement.",
+  'onboarding.custom.vault.configureDesc':
+    'Vérifiez la propriété du coffre, exécutez des contrôles de santé et affinez les contrôles de mémoire maintenant.',
+  'onboarding.custom.vault.localDisabledReason':
+    "La configuration gérée nécessite une connexion à OpenHuman et n'est pas disponible en mode local.",
+  'onboarding.custom.vault.exitError': "Impossible de terminer l'intégration. Veuillez réessayer.",
+
+  // Vault Health
+  'vaultHealth.title': 'Liste de contrôle de santé du coffre',
+  'vaultHealth.setupTitle': 'Santé de la configuration du coffre',
+  'vaultHealth.workspaceVault': "Coffre de l'espace de travail :",
+  'vaultHealth.refresh': 'Actualiser',
+  'vaultHealth.refreshing': 'Actualisation…',
+  'vaultHealth.revealFolder': 'Afficher le dossier',
+  'vaultHealth.openInObsidian': 'Ouvrir dans Obsidian',
+  'vaultHealth.installObsidian': 'Installer Obsidian',
+  'vaultHealth.openObsidianError': "Impossible d'ouvrir Obsidian",
+  'vaultHealth.revealError': "Impossible d'afficher le dossier du coffre",
+  'vaultHealth.downloadError': "Impossible d'ouvrir la page de téléchargement d'Obsidian",
+  'vaultHealth.loadError': 'Impossible de charger la santé du coffre :',
+  'vaultHealth.lastSync': 'Dernière synchronisation :',
+  'vaultHealth.passed': 'Réussi',
+  'vaultHealth.needsAttention': 'Attention requise',
+  'vaultHealth.existsLabel': "Le chemin du coffre de l'espace de travail existe",
+  'vaultHealth.existsRecovery':
+    'Le dossier du coffre est manquant. Lancez une synchronisation ou créez ce dossier, puis actualisez cette liste de contrôle.',
+  'vaultHealth.writableLabel': 'Le coffre est accessible en écriture par OpenHuman',
+  'vaultHealth.writableRecovery':
+    "OpenHuman ne peut pas encore écrire dans ce coffre. Accordez les autorisations d'écriture et actualisez.",
+  'vaultHealth.obsidianLabel': 'Le coffre est enregistré dans Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'Dans Obsidian, choisissez « Ouvrir le dossier comme coffre » pour ce chemin, puis actualisez cette liste de contrôle.',
+  'vaultHealth.pipelineLabel': 'Le pipeline de mémoire est en bon état',
+  'vaultHealth.pipelineRecovery':
+    "Le pipeline de mémoire est en pause ou en erreur. Réactivez la synchronisation automatique dans le statut de l'arbre de mémoire et réessayez.",
+  'vaultHealth.timeNever': 'Jamais',
+  'vaultHealth.timeJustNow': "à l'instant",
+  'vaultHealth.timeMinAgo': 'il y a {n} min',
+  'vaultHealth.timeHrAgo': 'il y a {n} h',
+  'vaultHealth.timeDayAgo': 'il y a {n} jour',
+  'vaultHealth.timeDaysAgo': 'il y a {n} jours',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Fonctionnement du stockage de la mémoire',
+  'memoryData.workspaceVault': "Coffre de l'espace de travail · écriture",
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman écrit les notes de mémoire générées dans memory_tree/content.',
+  'memoryData.connectedSources': 'Sources connectées · lecture',
+  'memoryData.connectedSourcesDesc':
+    "Les dossiers, boîtes mail, conversations et dépôts sont importés pour l'indexation de la mémoire — leurs fichiers originaux ne sont jamais réécrits.",
+  'memoryData.internalFiles': "Fichiers internes de l'arbre de mémoire",
+  'memoryData.internalFilesDesc':
+    "Les index, l'état de la file d'attente et les résumés sont gérés par OpenHuman pour maintenir la mémoire et la synchronisation en bon état.",
+  'memoryData.windowError': 'Fenêtre de mémoire',
+  'memoryData.windowUpdated': 'Fenêtre de mémoire mise à jour',
+  'memoryData.windowUpdatedMsg': 'Définie sur {window}.',
 };
 
 export default messages;

@@ -71,6 +71,9 @@ fn source_entry(kind: SourceKind, id: &str) -> MemorySourceEntry {
         max_issues: None,
         max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     }
 }
 

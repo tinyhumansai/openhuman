@@ -18,6 +18,10 @@ import { loadSpec, validateSpec, SpecError, parseArgs } from "./lib.mjs";
 
 const COMMENT_MARKER = (id) => `<!-- batch:${id} -->`;
 
+function usage() {
+  return "usage: status.mjs <spec.json> [--post] [--fixture <file>]";
+}
+
 function ciCell(rollup) {
   if (rollup === "SUCCESS") return "green";
   if (rollup === "FAILURE") return "failing";
@@ -186,11 +190,13 @@ function postOrUpdateTrackingComment(spec, body) {
 
 function main() {
   const { positional, flags } = parseArgs(process.argv.slice(2));
+  if (flags.help || flags.h || flags["?"]) {
+    process.stdout.write(`${usage()}\n`);
+    process.exit(0);
+  }
   const specPath = positional[0];
   if (!specPath) {
-    process.stderr.write(
-      "usage: status.mjs <spec.json> [--post] [--fixture <file>]\n",
-    );
+    process.stderr.write(`${usage()}\n`);
     process.exit(2);
   }
   let spec;

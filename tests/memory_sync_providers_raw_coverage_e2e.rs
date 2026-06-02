@@ -299,6 +299,7 @@ async fn configured_loopback_context(
         config: Arc::new(config.clone()),
         toolkit: toolkit.to_string(),
         connection_id: Some(connection_id.to_string()),
+        usage: Default::default(),
     };
     (config, ctx, server)
 }
@@ -550,6 +551,7 @@ async fn github_clickup_and_composio_bus_cover_provider_branches() {
         config: github_ctx.config.clone(),
         toolkit: "clickup".to_string(),
         connection_id: Some("conn-clickup-round17".to_string()),
+        usage: Default::default(),
     };
     let clickup = ClickUpProvider::new();
     let click_profile = clickup

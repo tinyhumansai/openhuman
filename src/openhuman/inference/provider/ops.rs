@@ -144,22 +144,6 @@ async fn list_configured_models_from_config(
 
     let status = response.status();
     if !status.is_success() {
-        // A 404 from the /models endpoint means the provider does not support model
-        // listing — this is expected for many OpenAI-compatible providers (e.g. DeepSeek,
-        // Moonshot, Kimi, custom proxies). Return an empty model list so the caller can
-        // proceed normally instead of surfacing a spurious error / Sentry event.
-        // (Sentry issue TAURI-RUST-1Z — 819 events from this path alone.)
-        if status == reqwest::StatusCode::NOT_FOUND {
-            log::debug!(
-                "[providers][list_models] slug={} returned 404 — provider does not support /models listing; returning empty list",
-                entry.slug
-            );
-            return Ok(crate::rpc::RpcOutcome::new(
-                serde_json::json!({ "models": serde_json::Value::Array(vec![]), "unsupported": true }),
-                vec!["provider does not support model listing (404)".to_string()],
-            ));
-        }
-
         let body = response.text().await.unwrap_or_default();
         let sanitized = sanitize_api_error(&body);
         let truncated = crate::openhuman::util::truncate_with_ellipsis(&sanitized, 300);
@@ -985,38 +969,16 @@ pub async fn api_error(provider: &str, response: reqwest::Response) -> anyhow::E
     } else if is_context_window_exceeded {
         log_context_window_exceeded("api_error", provider, None, status);
     } else if should_report_provider_http_failure(status) {
-        // Defense-in-depth: some backends (e.g. OpenHuman) wrap an upstream
-        // provider 429 as an HTTP 500 with a rate-limit phrase in the body
-        // (`"429 rate limit exceeded"`, `"upstream rate limit exceeded"`).
-        // `should_report_provider_http_failure(500)` would otherwise let this
-        // through to Sentry — suppress it here before the report fires so the
-        // noise stays off Sentry (OPENHUMAN-TAURI-S: ~6 984 events).
-        // The `expected_error_kind` classifier in `report_error_or_expected`
-        // catches the same shape at re-report sites (agent / web_channel).
-        let lower_body = body.to_ascii_lowercase();
-        let is_rate_limit_body =
-            crate::core::observability::is_upstream_rate_limit_message(&lower_body);
-        if is_rate_limit_body {
-            tracing::warn!(
-                domain = "llm_provider",
-                operation = "api_error",
-                provider = provider,
-                status = status_str.as_str(),
-                "[llm_provider] api_error: skipping Sentry report — rate-limit body in \
-                 non-429 response ({status})"
-            );
-        } else {
-            crate::core::observability::report_error(
-                message.as_str(),
-                "llm_provider",
-                "api_error",
-                &[
-                    ("provider", provider),
-                    ("status", status_str.as_str()),
-                    ("failure", "non_2xx"),
-                ],
-            );
-        }
+        crate::core::observability::report_error(
+            message.as_str(),
+            "llm_provider",
+            "api_error",
+            &[
+                ("provider", provider),
+                ("status", status_str.as_str()),
+                ("failure", "non_2xx"),
+            ],
+        );
     }
     anyhow::anyhow!(message)
 }
