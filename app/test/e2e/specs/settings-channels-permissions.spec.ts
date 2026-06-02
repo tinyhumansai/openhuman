@@ -30,7 +30,8 @@ describe('Settings - Channels & Permissions', () => {
   });
 
   it('allows switching default messaging channel (13.2.1)', async () => {
-    await navigateViaHash('/settings/messaging');
+    // Default Messaging Channel UI moved from /settings/messaging to /skills (channels tab).
+    await navigateViaHash('/skills?tab=channels');
 
     await waitForText('Default Messaging Channel', 15_000);
     expect(await textExists('Telegram')).toBe(true);

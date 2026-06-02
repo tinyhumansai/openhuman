@@ -322,6 +322,8 @@ pub async fn run_github_sync(
             input_tokens: audit_input_tokens,
             output_tokens: audit_output_tokens,
             estimated_cost_usd: estimated_cost,
+            composio_actions_called: 0,
+            composio_cost_usd: 0.0,
             actual_charged_usd,
             duration_ms,
             success: true,

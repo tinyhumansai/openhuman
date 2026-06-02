@@ -59,6 +59,20 @@ fn inference_prompt_schema_reuses_local_ai_shape_with_new_namespace() {
 }
 
 #[test]
+fn inference_update_local_settings_schema_allows_json_base_url() {
+    let schema = schemas("update_local_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "base_url")
+        .expect("base_url field");
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
+        other => panic!("expected Option<Json>, got {other:?}"),
+    }
+}
+
+#[test]
 fn inference_openai_oauth_schemas_are_registered_with_expected_shapes() {
     let registered: Vec<&str> = all_registered_controllers()
         .into_iter()

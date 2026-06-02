@@ -128,7 +128,7 @@ describe('YouTube Composio connector flow', () => {
     seedComposioConnection(TOOLKIT_SLUG, 'EXPIRED', 'c-youtube-expired');
     await navigateToSkills();
     await waitForText(CONNECTOR_NAME, 10_000);
-    const modal = await openConnectorModal(CONNECTOR_NAME);
+    const modal = await openConnectorModal(CONNECTOR_NAME, 15_000, 'Auth expired');
     expect(modal).toBeTruthy();
     await assertModalPhase('expired', CONNECTOR_NAME);
     await assertSessionNotNuked();

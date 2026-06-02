@@ -7,7 +7,7 @@
  * [#1123] Covers the walkthroughAttr object added for the Joyride walkthrough.
  */
 import { configureStore } from '@reduxjs/toolkit';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -27,6 +27,7 @@ vi.mock('../../utils/config', async importOriginal => {
 });
 
 vi.mock('../../utils/accountsFullscreen', () => ({ isAccountsFullscreen: vi.fn(() => false) }));
+vi.mock('../../services/analytics', () => ({ trackEvent: vi.fn() }));
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -157,5 +158,28 @@ describe('BottomTabBar', () => {
     const shell = container.firstElementChild;
     expect(shell).toHaveClass('pointer-events-none');
     expect(shell?.querySelector('nav')).toHaveClass('pointer-events-auto');
+  });
+
+  it('tracks tab changes when a different tab is clicked', async () => {
+    const { trackEvent } = await import('../../services/analytics');
+    await renderBottomTabBar('/home');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
+
+    expect(trackEvent).toHaveBeenCalledWith('tab_bar_change', {
+      from_tab: 'home',
+      to_tab: 'chat',
+      from_path: '/home',
+      to_path: '/chat',
+    });
+  });
+
+  it('does not track when the active tab is clicked again', async () => {
+    const { trackEvent } = await import('../../services/analytics');
+    await renderBottomTabBar('/home');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+
+    expect(trackEvent).not.toHaveBeenCalled();
   });
 });

@@ -5,6 +5,7 @@ import CostDashboardPanel from '../components/dashboard/CostDashboardPanel';
 import LogoutAndClearActions from '../components/settings/LogoutAndClearActions';
 import AboutPanel from '../components/settings/panels/AboutPanel';
 import AgentAccessPanel from '../components/settings/panels/AgentAccessPanel';
+import AgentActivityPanel from '../components/settings/panels/AgentActivityPanel';
 import AgentChatPanel from '../components/settings/panels/AgentChatPanel';
 import AgentEditorPage from '../components/settings/panels/AgentEditorPage';
 import AgentsPanel from '../components/settings/panels/AgentsPanel';
@@ -457,6 +458,13 @@ const Settings = () => {
       route: 'agent-access',
       icon: AgentAccessIcon,
     },
+    {
+      id: 'activity-level',
+      title: t('activityLevel.title'),
+      description: t('activityLevel.description'),
+      route: 'activity-level',
+      icon: LlmIcon,
+    },
   ];
 
   const composioSettingsItems = [
@@ -587,6 +595,7 @@ const Settings = () => {
         <Route path="persona" element={wrapSettingsPage(<PersonaPanel />)} />
         <Route path="appearance" element={wrapSettingsPage(<AppearancePanel />)} />
         <Route path="agent-access" element={wrapSettingsPage(<AgentAccessPanel />)} />
+        <Route path="activity-level" element={wrapSettingsPage(<AgentActivityPanel />)} />
         <Route path="approval-history" element={wrapSettingsPage(<ApprovalHistoryPanel />)} />
         <Route path="agents" element={wrapSettingsPage(<AgentsPanel />)} />
         <Route path="agents/new" element={wrapSettingsPage(<AgentEditorPage />)} />

@@ -128,8 +128,9 @@ describe('Slack (Composio) connector flow', () => {
     seedComposioConnection(TOOLKIT_SLUG, 'EXPIRED', 'c-slack-expired');
     await navigateToSkills();
     await waitForText(CONNECTOR_NAME, 10_000);
-    const modal = await openConnectorModal(CONNECTOR_NAME);
-    if (modal) await assertModalPhase('expired', CONNECTOR_NAME);
+    const modal = await openConnectorModal(CONNECTOR_NAME, 15_000, 'Auth expired');
+    expect(modal).toBeTruthy();
+    await assertModalPhase('expired', CONNECTOR_NAME);
     await assertSessionNotNuked();
     console.log(`${LOG} PASS: expired auth does not log user out`);
   });

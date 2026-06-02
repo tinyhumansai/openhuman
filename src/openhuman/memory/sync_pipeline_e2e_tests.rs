@@ -229,7 +229,6 @@ async fn single_batch_sync_to_tree() {
 // ── Test 2: high-volume → seal → digest → topic tree ────────────────────
 
 #[tokio::test]
-#[ignore = "pre-existing failure after #3059 refactor — tracked in #3115"]
 async fn multi_batch_volume_builds_full_tree() {
     let (_tmp, cfg) = test_config();
     ensure_event_bus();
@@ -240,8 +239,17 @@ async fn multi_batch_volume_builds_full_tree() {
     let base_ts = Utc::now().timestamp_millis() - 86_400_000;
 
     // Ingest 30 batches with large bodies to cross the 50k token seal threshold.
+    // Each large_body is ~302 tokens. 6 segments = ~1812 tokens per batch.
+    // 30 batches * 1812 tokens = 54,360 tokens (> 50,000 threshold).
+    // We vary each repetition slightly to ensure no content-based deduplication
+    // collapses the volume.
     for i in 0..30u32 {
-        let batch = mk_batch("gmail", "inbox", i, &large_body(i), base_ts);
+        let mut body = String::new();
+        for j in 0..6 {
+            body.push_str(&large_body(i));
+            body.push_str(&format!("\n\nRepeat marker: batch {i} / segment {j}\n\n"));
+        }
+        let batch = mk_batch("gmail", "inbox", i, &body, base_ts);
         let result = ingest_chat(&cfg, source_id, "alice", vec!["gmail".into()], batch)
             .await
             .unwrap();

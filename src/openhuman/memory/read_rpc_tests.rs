@@ -899,3 +899,51 @@ async fn obsidian_status_blank_override_is_treated_as_none() {
         .unwrap();
     assert!(!outcome.value.registered);
 }
+
+#[tokio::test]
+async fn vault_health_check_reports_missing_content_root_for_fresh_workspace() {
+    let (_tmp, cfg) = test_config();
+    let outcome = vault_health_check_rpc(&cfg, None).await.unwrap();
+
+    assert!(!outcome.value.exists);
+    assert!(!outcome.value.readable);
+    assert!(!outcome.value.writable);
+    assert!(!outcome.value.obsidian_registered);
+    assert!(outcome.value.pipeline_healthy);
+    assert_eq!(outcome.value.last_sync_ms, 0);
+}
+
+#[tokio::test]
+async fn vault_health_check_reports_writable_and_obsidian_registered_when_ready() {
+    let (_tmp, cfg) = test_config();
+    seed_chat_chunk(
+        &cfg,
+        "slack:#eng",
+        "Vault health seed chunk so content_root exists and last_sync_ms > 0",
+    )
+    .await;
+
+    let content_root = cfg.memory_tree_content_root();
+    let cfg_dir = TempDir::new().unwrap();
+    let body = format!(
+        "{{ \"vaults\": {{ \"id0\": {{ \"path\": {}, \"open\": true }} }} }}",
+        serde_json::to_string(&content_root.to_string_lossy().to_string()).unwrap()
+    );
+    std::fs::write(cfg_dir.path().join("obsidian.json"), body).unwrap();
+
+    let outcome = vault_health_check_rpc(&cfg, Some(cfg_dir.path().to_string_lossy().to_string()))
+        .await
+        .unwrap();
+
+    assert!(outcome.value.exists);
+    assert!(outcome.value.readable);
+    assert!(outcome.value.writable);
+    assert!(outcome.value.obsidian_registered);
+    assert!(outcome.value.pipeline_healthy);
+    assert!(outcome.value.last_sync_ms > 0);
+    assert!(
+        !outcome.logs[0].contains(content_root.to_str().unwrap()),
+        "log leaked content root: {}",
+        outcome.logs[0]
+    );
+}

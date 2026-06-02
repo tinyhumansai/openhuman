@@ -222,6 +222,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Non ancora eseguito',
   'routines.runNow': 'Corri adesso',
   'routines.running': 'Correndo…',
+  'routines.runNowTimedOut': "Timeout durante l'esecuzione — aggiorna e riprova.",
   'routines.viewHistory': 'Visualizza cronologia',
   'routines.loadingHistory': 'Caricamento…',
   'routines.noHistory': 'Ancora nessuna cronologia delle esecuzioni.',
@@ -736,17 +737,17 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Inviato a',
   'privacy.leavesDevice': 'Esce dal dispositivo',
   'privacy.staysLocal': 'Rimane locale',
-  'privacy.anonymizedAnalytics': 'Analisi anonimizzate',
-  'privacy.shareAnonymizedData': 'Condividi dati di utilizzo anonimizzati',
+  'privacy.anonymizedAnalytics': 'Analisi del prodotto',
+  'privacy.shareAnonymizedData': 'Condividi analisi del prodotto e diagnostica',
   'privacy.shareAnonymizedDataDesc':
-    'Aiuta a migliorare OpenHuman condividendo report di crash anonimi e analisi di utilizzo. Tutti i dati sono completamente anonimizzati — nessun dato personale, messaggio, chiave wallet o informazione di sessione viene mai raccolto.',
+    'Aiuta a migliorare OpenHuman condividendo report di crash ed eventi di utilizzo limitati per la privacy, inclusi un ID account stabile e i metadati della versione dell’app. Messaggi, chiavi wallet, chiavi API e token di sessione non vengono mai raccolti.',
   'privacy.meetingFollowUps': 'Follow-up delle riunioni',
   'privacy.autoHandoffMeet':
     "Trasferimento automatico delle trascrizioni Google Meet all'orchestratore",
   'privacy.autoHandoffMeetDesc':
     "Quando termina una chiamata Google Meet, l'orchestratore di OpenHuman può leggere la trascrizione e svolgere azioni come redigere messaggi, pianificare follow-up o pubblicare riassunti nel tuo workspace Slack connesso. Disattivato di default.",
   'privacy.analyticsDisclaimer':
-    'Tutti i report analitici e bug sono completamente anonimi. Quando abilitati, raccogliamo solo informazioni sui crash, tipo di dispositivo e percorso file degli errori. Non accediamo mai ai tuoi messaggi, dati di sessione, chiavi del wallet, chiavi API o informazioni personali identificabili. Puoi cambiare questa impostazione in qualsiasi momento.',
+    'Quando abilitata, l’analisi del prodotto e la diagnostica possono includere report di crash ed eventi di utilizzo limitati per la privacy, un ID account stabile e metadati della versione dell’app. Messaggi, chiavi wallet, chiavi API e token di sessione non vengono mai raccolti. Puoi cambiare questa impostazione in qualsiasi momento.',
   'settings.about.version': 'Versione',
   'settings.about.updateAvailable': 'è disponibile',
   'settings.about.softwareUpdates': 'Aggiornamenti software',
@@ -1950,6 +1951,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Azione proposta',
   'reflections.act': 'Agisci',
   'reflections.dismiss': 'Ignora',
+  'reflections.viewConversation': 'Visualizza',
+  'subconscious.mode.label': 'Modalità subconscio',
+  'subconscious.mode.off.title': 'Disattivato',
+  'subconscious.mode.off.desc': 'Il subconscio è disattivato.',
+  'subconscious.mode.simple.title': 'Semplice',
+  'subconscious.mode.simple.desc': 'Osservazione in sola lettura. Solo accesso a memoria e file.',
+  'subconscious.mode.aggressive.title': 'Aggressivo',
+  'subconscious.mode.aggressive.desc':
+    'Accesso completo agli strumenti. Può scrivere, creare agenti e delegare compiti.',
+  'subconscious.mode.aggressiveWarning':
+    'La modalità aggressiva concede al subconscio accesso completo agli strumenti, inclusa scrittura e creazione di sotto-agenti.',
+  'subconscious.interval.label': 'Frequenza',
+  'subconscious.interval.minutes': '{n} min',
+  'subconscious.interval.hours': '{n}h',
+  'subconscious.interval.oneHour': '1 ora',
+  'subconscious.interval.oneDay': '24 ore',
   'whatsapp.chatsSynced': 'chat sincronizzate',
   'whatsapp.chatSynced': 'chat sincronizzata',
   'sync.active': 'Attivo',
@@ -2846,7 +2863,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Gruppo carico di lavoro chat',
   'settings.ai.disconnectProvider': 'Disconnetti {label}',
   'settings.ai.connectProviderLabel': 'Connetti {label}',
+  'settings.ai.editProviderEndpoint': 'Modifica punto finale di {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': "Modifica l'endpoint",
   'settings.ai.endpointUrlLabel': "URL dell'endpoint",
   'settings.ai.localRuntimeHelper':
     "Dove {label} è raggiungibile. Il valore predefinito è localhost; punta questo a un host remoto (per esempio, http://10.0.0.4:11434/v1) per utilizzare un'istanza condivisa.",
@@ -4198,14 +4217,6 @@ const messages: TranslationMap = {
   'calls.comingSoonDescription':
     "Le chiamate assistite dall'IA sono in arrivo. Resta sintonizzato.",
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 minuti',
-  'subconscious.interval.tenMinutes': '10 minuti',
-  'subconscious.interval.fifteenMinutes': '15 minuti',
-  'subconscious.interval.thirtyMinutes': '30 minuti',
-  'subconscious.interval.oneHour': '1 ora',
-  'subconscious.interval.sixHours': '6 ore',
-  'subconscious.interval.twelveHours': '12 ore',
-  'subconscious.interval.oneDay': '1 giorno',
   'subconscious.priority.critical': 'critico',
   'subconscious.priority.important': 'importante',
   'subconscious.priority.normal': 'normale',
@@ -4556,6 +4567,132 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rifiuta archiviazione locale',
   'pages.settings.account.security': 'Sicurezza',
   'pages.settings.account.securityDesc': 'Modalità archiviazione segreti e stato del portachiavi',
+
+  // Agent activity level
+  'activityLevel.title': "Livello di attività dell'agente",
+  'activityLevel.description':
+    'Controlla quanto è proattivo il tuo agente. I livelli più alti usano più token.',
+  'activityLevel.off': 'Disattivato',
+  'activityLevel.offDesc':
+    'Nessuna elaborazione in background. Sincronizza solo alla pressione del pulsante.',
+  'activityLevel.minimal': 'Minimo',
+  'activityLevel.minimalDesc':
+    'Sincronizza le sorgenti una volta al giorno. Nessun messaggio proattivo.',
+  'activityLevel.moderate': 'Moderato',
+  'activityLevel.moderateDesc': 'Sincronizza ogni ora. Riepilogo giornaliero. Suggerisce azioni.',
+  'activityLevel.active': 'Attivo',
+  'activityLevel.activeDesc':
+    'Sincronizza ogni 10 min. Monitora i canali, ordina e redige risposte.',
+  'activityLevel.alwaysOn': 'Sempre attivo',
+  'activityLevel.alwaysOnDesc':
+    'Sincronizzazione in tempo reale. Piena autonomia entro i limiti definiti.',
+  'activityLevel.currentMonth': 'Questo mese: ${amount}',
+  'activityLevel.saved': 'Livello di attività aggiornato.',
+  'activityLevel.default': 'predefinito',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/mese',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Budget di sincronizzazione',
+  'syncBudget.maxTokens': 'Token massimi per sincronizzazione',
+  'syncBudget.maxTokensHelp':
+    'Ferma la sincronizzazione dopo aver consumato questo numero di token.',
+  'syncBudget.maxCost': 'Costo massimo per sincronizzazione (USD)',
+  'syncBudget.maxCostHelp': 'Limite assoluto in dollari per ogni esecuzione di sincronizzazione.',
+  'syncBudget.syncDepth': 'Profondità di sincronizzazione',
+  'syncBudget.syncDepthHelp': 'Recupera solo gli elementi di questa finestra temporale.',
+  'syncBudget.days7': 'Ultimi 7 giorni',
+  'syncBudget.days30': 'Ultimi 30 giorni',
+  'syncBudget.days90': 'Ultimi 90 giorni',
+  'syncBudget.allTime': 'Sempre',
+  'syncBudget.unlimited': 'Illimitato',
+  'syncBudget.saved': 'Budget salvato.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Conferma sincronizzazione',
+  'syncConfirm.message':
+    'Questa sincronizzazione elaborerà ~{items} elementi (~{tokens} token, stima ${cost}).',
+  'syncConfirm.budgetNote': 'Limite budget: ${max}',
+  'syncConfirm.proceed': 'Procedi',
+  'syncConfirm.cancel': 'Annulla',
+  'syncConfirm.estimating': 'Stima del costo in corso...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} questo mese',
+  'monthlyCost.noData': 'Nessuna sincronizzazione questo mese',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Attività',
+  'onboarding.custom.stepperVault': 'Vault',
+  'onboarding.custom.activity.title': "Attività dell'agente",
+  'onboarding.custom.activity.subtitle':
+    'Quanto proattivamente il tuo agente monitora e agisce in background.',
+  'onboarding.custom.activity.defaultDesc':
+    'Attività moderata — sincronizzazione oraria, riepilogo giornaliero.',
+  'onboarding.custom.activity.configureDesc':
+    "Scegli il tuo livello di attività. Configura in Impostazioni › Livello di attività dell'agente.",
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Configurazione memoria e Vault',
+  'onboarding.custom.vault.subtitle':
+    'Conferma dove vengono scritte le note di memoria, come vengono letti i dati sorgente e se la pipeline del vault è integra.',
+  'onboarding.custom.vault.defaultDesc':
+    'Usa le impostazioni di memoria predefinite gestite da OpenHuman. Il percorso del vault e la salute della sincronizzazione possono essere verificati in seguito.',
+  'onboarding.custom.vault.configureDesc':
+    'Verifica la proprietà del vault, esegui controlli di integrità e ottimizza i controlli della memoria ora.',
+  'onboarding.custom.vault.localDisabledReason':
+    'La configurazione gestita richiede il login a OpenHuman e non è disponibile in modalità locale.',
+  'onboarding.custom.vault.exitError': "Impossibile completare l'onboarding. Riprova.",
+
+  // Vault Health
+  'vaultHealth.title': 'Checklist integrità vault',
+  'vaultHealth.setupTitle': 'Integrità configurazione vault',
+  'vaultHealth.workspaceVault': 'Vault workspace:',
+  'vaultHealth.refresh': 'Aggiorna',
+  'vaultHealth.refreshing': 'Aggiornamento in corso…',
+  'vaultHealth.revealFolder': 'Mostra cartella',
+  'vaultHealth.openInObsidian': 'Apri in Obsidian',
+  'vaultHealth.installObsidian': 'Installa Obsidian',
+  'vaultHealth.openObsidianError': 'Impossibile aprire Obsidian',
+  'vaultHealth.revealError': 'Impossibile mostrare la cartella del vault',
+  'vaultHealth.downloadError': 'Impossibile aprire la pagina di download di Obsidian',
+  'vaultHealth.loadError': "Impossibile caricare l'integrità del vault:",
+  'vaultHealth.lastSync': 'Ultima sincronizzazione:',
+  'vaultHealth.passed': 'Superato',
+  'vaultHealth.needsAttention': 'Richiede attenzione',
+  'vaultHealth.existsLabel': 'Il percorso del vault workspace esiste',
+  'vaultHealth.existsRecovery':
+    'La cartella del vault è assente. Avvia una sincronizzazione o crea questa cartella, poi aggiorna la checklist.',
+  'vaultHealth.writableLabel': 'Il vault è scrivibile da OpenHuman',
+  'vaultHealth.writableRecovery':
+    'OpenHuman non riesce ancora a scrivere in questo vault. Concedi i permessi di scrittura e aggiorna.',
+  'vaultHealth.obsidianLabel': 'Il vault è registrato in Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'In Obsidian, scegli "Apri cartella come vault" per questo percorso, poi aggiorna la checklist.',
+  'vaultHealth.pipelineLabel': 'La pipeline di memoria è integra',
+  'vaultHealth.pipelineRecovery':
+    'La pipeline di memoria è in pausa o in errore. Riattiva la sincronizzazione automatica nello stato del Memory Tree e riprova.',
+  'vaultHealth.timeNever': 'Mai',
+  'vaultHealth.timeJustNow': 'poco fa',
+  'vaultHealth.timeMinAgo': '{n} min fa',
+  'vaultHealth.timeHrAgo': '{n} ora fa',
+  'vaultHealth.timeDayAgo': '{n} giorno fa',
+  'vaultHealth.timeDaysAgo': '{n} giorni fa',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Come funziona la memorizzazione',
+  'memoryData.workspaceVault': 'Vault workspace · scrittura',
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman scrive le note di memoria generate in memory_tree/content.',
+  'memoryData.connectedSources': 'Fonti collegate · lettura',
+  'memoryData.connectedSourcesDesc':
+    "Cartelle, caselle di posta, chat e repository vengono importati per l'indicizzazione della memoria — i file originali non vengono mai riscritti.",
+  'memoryData.internalFiles': 'File interni del memory-tree',
+  'memoryData.internalFilesDesc':
+    'Indici, stato della coda e riepiloghi sono gestiti da OpenHuman per mantenere efficiente il richiamo e la sincronizzazione.',
+  'memoryData.windowError': 'Finestra di memoria',
+  'memoryData.windowUpdated': 'Finestra di memoria aggiornata',
+  'memoryData.windowUpdatedMsg': 'Impostata su {window}.',
 };
 
 export default messages;

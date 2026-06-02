@@ -25,8 +25,9 @@ pub mod sync;
 pub mod types;
 
 pub use registry::{
-    add_source, get_source, list_enabled_by_kind, list_sources, remove_source, update_source,
-    upsert_composio_source, MemorySourcePatch,
+    add_source, get_source, list_enabled_by_kind, list_sources,
+    remove_composio_source_by_connection_id, remove_source, update_source, upsert_composio_source,
+    MemorySourcePatch,
 };
 pub use schemas::{
     all_controller_schemas as all_memory_sources_controller_schemas,

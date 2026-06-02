@@ -3,6 +3,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = process.cwd();
+
+function usage() {
+  return 'Usage: node scripts/check-domain-e2e-coverage.mjs';
+}
+
+for (const arg of process.argv.slice(2)) {
+  if (arg === '--help' || arg === '-h') {
+    console.log(usage());
+    process.exit(0);
+  }
+  console.error(`check-domain-e2e-coverage: unknown argument: ${arg}`);
+  console.error(usage());
+  process.exit(2);
+}
+
 const rawThreshold = process.env.DOMAIN_E2E_COVERAGE_THRESHOLD ?? '90';
 const THRESHOLD = Number(rawThreshold);
 if (!Number.isFinite(THRESHOLD) || THRESHOLD < 0 || THRESHOLD > 100) {
