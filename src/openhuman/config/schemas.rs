@@ -257,6 +257,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("agent_server_status"),
         schemas("reset_local_data"),
         schemas("get_data_paths"),
+        schemas("get_agent_paths"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
@@ -361,6 +362,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_data_paths"),
             handler: handle_get_data_paths,
+        },
+        RegisteredController {
+            schema: schemas("get_agent_paths"),
+            handler: handle_get_agent_paths,
         },
         RegisteredController {
             schema: schemas("get_onboarding_completed"),
@@ -968,6 +973,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "Resolved data paths: current_openhuman_dir, default_openhuman_dir, active_workspace_marker_path.",
             )],
         },
+        "get_agent_paths" => ControllerSchema {
+            namespace: "config",
+            function: "get_agent_paths",
+            description:
+                "Resolve the agent's filesystem roots (action_dir, workspace_dir, projects_dir) so the UI can render live values instead of hard-coded strings. Read-only.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "paths",
+                "Resolved agent paths: action_dir (acting-tool CWD), workspace_dir (internal state, agent-blocked), projects_dir (default projects home).",
+            )],
+        },
         "get_onboarding_completed" => ControllerSchema {
             namespace: "config",
             function: "get_onboarding_completed",
@@ -1539,6 +1555,22 @@ fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
             }
             Err(err) => {
                 log::warn!("[config][rpc] get_data_paths fail: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_agent_paths enter");
+        match config_rpc::get_agent_paths().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_agent_paths ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_agent_paths fail: {err}");
                 Err(err)
             }
         }

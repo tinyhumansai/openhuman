@@ -1938,6 +1938,44 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
     ))
 }
 
+/// Reports the agent's filesystem roots so the UI can render them live
+/// instead of hard-coding strings that drift away from `Config`.
+///
+/// Returns three string paths:
+///
+/// * `action_dir` — the agent's read/write root (`Config.action_dir`).
+///   Defaults to `default_action_dir()` (`~/OpenHuman/projects` via
+///   `default_projects_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+///   Acting tools (`shell`, `node_exec`, `npm_exec`, `file_write`,
+///   `edit_file`, `apply_patch`, `git_operations`) default their CWD here.
+/// * `workspace_dir` — internal product state (`Config.workspace_dir`,
+///   typically `~/.openhuman/users/<id>/workspace`). Agent-blocked via
+///   [`SecurityPolicy::is_workspace_internal_path`].
+/// * `projects_dir` — the default projects home
+///   (`default_projects_dir()`, `~/OpenHuman/projects`), injected as a
+///   ReadWrite trusted root at startup. Same as `action_dir` when the
+///   user hasn't set `OPENHUMAN_ACTION_DIR`.
+///
+/// Distinct from [`get_data_paths`], which reports the `openhuman_dir`
+/// roots that `reset_local_data` would remove and is consumed only by
+/// the Tauri reset flow.
+pub async fn get_agent_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let projects_dir = crate::openhuman::config::default_projects_dir();
+    Ok(RpcOutcome::new(
+        json!({
+            "action_dir": config.action_dir.display().to_string(),
+            "workspace_dir": config.workspace_dir.display().to_string(),
+            "projects_dir": projects_dir.display().to_string(),
+        }),
+        vec![format!(
+            "agent paths resolved (action={}, workspace={})",
+            config.action_dir.display(),
+            config.workspace_dir.display(),
+        )],
+    ))
+}
+
 #[cfg(test)]
 #[path = "ops_tests.rs"]
 mod tests;

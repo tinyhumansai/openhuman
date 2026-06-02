@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderWithProviders } from '../../../../test/test-utils';
 import {
+  type AgentPaths,
   type AgentSettings,
   type AutonomySettings,
   isTauri,
+  openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
   openhumanUpdateAgentSettings,
@@ -34,6 +36,13 @@ const agentSettings = (overrides: Partial<AgentSettings> = {}): AgentSettings =>
   ...overrides,
 });
 
+const agentPaths = (overrides: Partial<AgentPaths> = {}): AgentPaths => ({
+  action_dir: '/home/test/OpenHuman/projects',
+  workspace_dir: '/home/test/.openhuman/users/u1/workspace',
+  projects_dir: '/home/test/OpenHuman/projects',
+  ...overrides,
+});
+
 vi.mock('../../hooks/useSettingsNavigation', () => ({
   useSettingsNavigation: () => ({
     navigateBack: vi.fn(),
@@ -53,6 +62,7 @@ vi.mock('../../../../utils/tauriCommands', async () => {
     openhumanUpdateAutonomySettings: vi.fn(),
     openhumanGetAgentSettings: vi.fn(),
     openhumanUpdateAgentSettings: vi.fn(),
+    openhumanGetAgentPaths: vi.fn(),
   };
 });
 
@@ -60,6 +70,7 @@ const mockGet = vi.mocked(openhumanGetAutonomySettings);
 const mockUpdate = vi.mocked(openhumanUpdateAutonomySettings);
 const mockGetAgent = vi.mocked(openhumanGetAgentSettings);
 const mockUpdateAgent = vi.mocked(openhumanUpdateAgentSettings);
+const mockGetAgentPaths = vi.mocked(openhumanGetAgentPaths);
 
 describe('AgentAccessPanel', () => {
   beforeEach(() => {
@@ -69,6 +80,7 @@ describe('AgentAccessPanel', () => {
     mockUpdate.mockResolvedValue({ result: {} as never, logs: [] });
     mockGetAgent.mockResolvedValue({ result: agentSettings(), logs: [] });
     mockUpdateAgent.mockResolvedValue({ result: {} as never, logs: [] });
+    mockGetAgentPaths.mockResolvedValue({ result: agentPaths(), logs: [] });
   });
 
   it('loads settings on mount and renders the three access tiers', async () => {
@@ -225,5 +237,57 @@ describe('AgentAccessPanel', () => {
     const input = (await screen.findByLabelText('Action timeout')) as HTMLInputElement;
     expect(input.disabled).toBe(true);
     expect(screen.getByText(/OPENHUMAN_TOOL_TIMEOUT_SECS/)).toBeInTheDocument();
+  });
+
+  // ── Directories section (#3237) ───────────────────────────────────────────
+
+  it('renders the live action_dir and workspace_dir returned by the core', async () => {
+    mockGetAgentPaths.mockResolvedValue({
+      result: agentPaths({
+        action_dir: '/Users/sample/OpenHuman/projects',
+        workspace_dir: '/Users/sample/.openhuman/users/u1/workspace',
+      }),
+      logs: [],
+    });
+    renderWithProviders(<AgentAccessPanel />);
+    await waitFor(() => expect(mockGetAgentPaths).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId('agent-access-action-dir')).toHaveTextContent(
+      '/Users/sample/OpenHuman/projects'
+    );
+    expect(screen.getByTestId('agent-access-workspace-dir')).toHaveTextContent(
+      '/Users/sample/.openhuman/users/u1/workspace'
+    );
+  });
+
+  it('reflects an OPENHUMAN_ACTION_DIR override in the action sandbox row', async () => {
+    // When the operator sets OPENHUMAN_ACTION_DIR, the core's get_agent_paths
+    // returns the override value as `action_dir`. The panel must render that
+    // verbatim instead of the hard-coded `~/OpenHuman/projects` default —
+    // otherwise Settings actively misleads about where the agent writes.
+    mockGetAgentPaths.mockResolvedValue({
+      result: agentPaths({
+        action_dir: '/tmp/custom-actions',
+        projects_dir: '/Users/sample/OpenHuman/projects',
+      }),
+      logs: [],
+    });
+    renderWithProviders(<AgentAccessPanel />);
+    expect(await screen.findByTestId('agent-access-action-dir')).toHaveTextContent(
+      '/tmp/custom-actions'
+    );
+  });
+
+  it('falls back to documented defaults when the agent paths RPC fails', async () => {
+    // Non-fatal failure path: the rest of the panel must still render and
+    // the Directories rows must show the documented default strings so the
+    // section never appears empty.
+    mockGetAgentPaths.mockRejectedValue(new Error('rpc unavailable'));
+    renderWithProviders(<AgentAccessPanel />);
+    expect(await screen.findByTestId('agent-access-action-dir')).toHaveTextContent(
+      '~/OpenHuman/projects'
+    );
+    expect(screen.getByTestId('agent-access-workspace-dir')).toHaveTextContent(
+      '~/.openhuman/workspace'
+    );
   });
 });

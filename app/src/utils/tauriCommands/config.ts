@@ -345,6 +345,33 @@ export async function openhumanGetAutonomySettings(): Promise<CommandResponse<Au
   });
 }
 
+/**
+ * Agent filesystem roots returned by `config_get_agent_paths`. All three are
+ * already-canonicalised path strings; the UI renders them verbatim instead of
+ * hard-coding defaults like `~/OpenHuman/projects`.
+ *
+ * - `action_dir` — agent CWD for `shell` / `node_exec` / `npm_exec` / file
+ *   writes. Defaults to `projects_dir`; overridable via `OPENHUMAN_ACTION_DIR`.
+ * - `workspace_dir` — internal product state (memory / sessions / vault).
+ *   Agent-blocked.
+ * - `projects_dir` — default projects home; matches `action_dir` when no
+ *   override is set.
+ */
+export interface AgentPaths {
+  action_dir: string;
+  workspace_dir: string;
+  projects_dir: string;
+}
+
+export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPaths>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<AgentPaths>>({
+    method: CORE_RPC_METHODS.configGetAgentPaths,
+  });
+}
+
 export async function openhumanUpdateAutonomySettings(
   update: AutonomySettingsUpdate
 ): Promise<CommandResponse<ConfigSnapshot>> {
