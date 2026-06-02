@@ -369,8 +369,10 @@ impl UnifiedMemory {
             // The `taint` column has a NOT NULL DEFAULT 'internal' clause
             // from the migration, so legacy rows that pre-date the column
             // surface as "internal" string and round-trip back to
-            // `MemoryTaint::Internal` (any unknown value also folds to
-            // Internal via `from_db_str`).
+            // `MemoryTaint::Internal`. Unknown / corrupted values fail
+            // closed to `MemoryTaint::ExternalSync` inside `from_db_str`,
+            // so a forward-rolled schema variant or a bad UPDATE can't
+            // silently downgrade a row to user-authored content.
             let taint_str: String = row.get(14).map_err(|e| e.to_string())?;
             let taint = crate::openhuman::memory::MemoryTaint::from_db_str(&taint_str);
             docs.push(StoredMemoryDocument {
