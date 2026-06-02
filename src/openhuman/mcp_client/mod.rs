@@ -36,6 +36,7 @@
 
 mod client;
 mod registry;
+pub mod sanitize;
 mod stdio;
 
 pub use client::{
