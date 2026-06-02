@@ -1,5 +1,5 @@
 const ROW_REGEX =
-  /^\|\s*(\d+(?:\.\d+){2,3})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|$/u;
+  /^\|\s*(\d+(?:\.\d+){2,3})\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*$/u;
 
 const ID_REGEX = /^\d+(?:\.\d+){2,3}$/;
 
@@ -9,7 +9,7 @@ export function parseMatrix(markdown) {
   if (typeof markdown !== "string") {
     return {
       rows: [],
-      errors: ["Input must be a non-empty string"],
+      errors: ["Input must be a string"],
     };
   }
 
