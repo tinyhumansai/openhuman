@@ -102,6 +102,15 @@ pub async fn update_source(
     if let Some(selector) = patch.selector {
         entry.selector = Some(selector);
     }
+    if let Some(v) = patch.max_tokens_per_sync {
+        entry.max_tokens_per_sync = Some(v);
+    }
+    if let Some(v) = patch.max_cost_per_sync_usd {
+        entry.max_cost_per_sync_usd = Some(v);
+    }
+    if let Some(v) = patch.sync_depth_days {
+        entry.sync_depth_days = Some(v);
+    }
 
     entry.validate()?;
     let updated = entry.clone();
@@ -128,6 +137,35 @@ pub async fn remove_source(id: &str) -> Result<bool, String> {
 
     if removed {
         tracing::info!(id = %id, "[memory_sources] removed source");
+        config
+            .save()
+            .await
+            .map_err(|e| format!("failed to save config: {e:#}"))?;
+    }
+
+    Ok(removed)
+}
+
+/// Remove every composio source bound to `connection_id` — the disconnect path.
+///
+/// Mirrors [`upsert_composio_source`], which keys composio sources on
+/// `connection_id`. [`remove_source`] keys on the `src_*` id, which the
+/// connection-delete flow doesn't have, so this is the connection-keyed
+/// counterpart. Returns the number of entries removed (0 if none matched).
+pub async fn remove_composio_source_by_connection_id(connection_id: &str) -> Result<usize, String> {
+    let mut config = config_rpc::load_config_with_timeout().await?;
+    let before = config.memory_sources.len();
+    config.memory_sources.retain(|s| {
+        !(s.kind == SourceKind::Composio && s.connection_id.as_deref() == Some(connection_id))
+    });
+    let removed = before - config.memory_sources.len();
+
+    if removed > 0 {
+        tracing::info!(
+            connection_id = %connection_id,
+            removed,
+            "[memory_sources] removed composio source(s) on connection disconnect"
+        );
         config
             .save()
             .await
@@ -168,7 +206,7 @@ pub async fn upsert_composio_source(
         id: format!("src_{}", uuid::Uuid::new_v4().as_simple()),
         kind: SourceKind::Composio,
         label: label.to_string(),
-        enabled: true,
+        enabled: false,
         toolkit: Some(toolkit.to_string()),
         connection_id: Some(connection_id.to_string()),
         path: None,
@@ -183,6 +221,9 @@ pub async fn upsert_composio_source(
         since_days: None,
         max_items: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     };
     config.memory_sources.push(entry.clone());
     config
@@ -228,6 +269,12 @@ pub struct MemorySourcePatch {
     pub max_items: Option<u32>,
     #[serde(default)]
     pub selector: Option<String>,
+    #[serde(default)]
+    pub max_tokens_per_sync: Option<u64>,
+    #[serde(default)]
+    pub max_cost_per_sync_usd: Option<f64>,
+    #[serde(default)]
+    pub sync_depth_days: Option<u32>,
 }
 
 #[cfg(test)]

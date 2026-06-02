@@ -49,14 +49,14 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: validation runs this integration test with --test-threads=1.
+        // SAFETY: tests that mutate environment variables hold env_lock().
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: validation runs this integration test with --test-threads=1.
+        // SAFETY: tests that mutate environment variables hold env_lock().
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
     }
@@ -66,11 +66,11 @@ impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         match &self.previous {
             Some(value) => {
-                // SAFETY: validation runs this integration test with --test-threads=1.
+                // SAFETY: tests that mutate environment variables hold env_lock().
                 unsafe { std::env::set_var(self.key, value) }
             }
             None => {
-                // SAFETY: validation runs this integration test with --test-threads=1.
+                // SAFETY: tests that mutate environment variables hold env_lock().
                 unsafe { std::env::remove_var(self.key) }
             }
         }

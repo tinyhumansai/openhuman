@@ -68,6 +68,7 @@ mod tests {
             id.into(),
             1.0,
             Vec::new(),
+            None,
         )
     }
 

@@ -100,6 +100,16 @@ pub enum AgentProgress {
         error: String,
     },
 
+    /// A sub-agent paused and is waiting for user input relayed via
+    /// `continue_subagent`. The orchestrator surfaces the question to
+    /// the user and calls `continue_subagent` with the answer.
+    SubagentAwaitingUser {
+        agent_id: String,
+        task_id: String,
+        question: String,
+        worker_thread_id: Option<String>,
+    },
+
     /// A sub-agent's inner LLM iteration is starting. Emitted **only
     /// from inside [`crate::openhuman::agent::harness::subagent_runner`]**
     /// when the parent context carries an `on_progress` sink — the

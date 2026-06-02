@@ -1,4 +1,4 @@
-use serde::de::DeserializeOwned;
+use serde::de::{DeserializeOwned, Deserializer};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -142,7 +142,8 @@ struct LocalAiSettingsUpdate {
     /// having to also apply a tier preset.
     opt_in_confirmed: Option<bool>,
     provider: Option<String>,
-    base_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_present_json")]
+    base_url: Option<Value>,
     model_id: Option<String>,
     chat_model_id: Option<String>,
     usage_embeddings: Option<bool>,
@@ -221,6 +222,18 @@ struct AutonomySettingsUpdate {
     require_task_plan_approval: Option<bool>,
 }
 
+#[derive(Debug, Deserialize)]
+struct AgentSettingsUpdate {
+    /// Tool/action wall-clock timeout in seconds (1–3600). Validated server-side.
+    agent_timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ActivityLevelSettingsUpdate {
+    /// "off" | "minimal" | "moderate" | "active" | "always_on" (or "0"-"4").
+    level: Option<String>,
+}
+
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("get_config"),
@@ -254,8 +267,12 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_composio_trigger_settings"),
         schemas("get_autonomy_settings"),
         schemas("update_autonomy_settings"),
+        schemas("get_agent_settings"),
+        schemas("update_agent_settings"),
         schemas("update_search_settings"),
         schemas("get_search_settings"),
+        schemas("get_activity_level_settings"),
+        schemas("update_activity_level_settings"),
     ]
 }
 
@@ -386,12 +403,28 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_update_autonomy_settings,
         },
         RegisteredController {
+            schema: schemas("get_agent_settings"),
+            handler: handle_get_agent_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_agent_settings"),
+            handler: handle_update_agent_settings,
+        },
+        RegisteredController {
             schema: schemas("update_search_settings"),
             handler: handle_update_search_settings,
         },
         RegisteredController {
             schema: schemas("get_search_settings"),
             handler: handle_get_search_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_activity_level_settings"),
+            handler: handle_get_activity_level_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_activity_level_settings"),
+            handler: handle_update_activity_level_settings,
         },
     ]
 }
@@ -620,6 +653,28 @@ pub fn schemas(function: &str) -> ControllerSchema {
             ],
             outputs: vec![json_output("snapshot", "Updated config snapshot.")],
         },
+        "get_agent_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_agent_settings",
+            description: "Read agent execution settings: the action/tool wall-clock timeout, the runtime-effective value, and whether the OPENHUMAN_TOOL_TIMEOUT_SECS env var overrides it.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "settings",
+                "Agent settings: agent_timeout_secs, effective_timeout_secs, env_override, min_timeout_secs, max_timeout_secs.",
+            )],
+        },
+        "update_agent_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_agent_settings",
+            description: "Update agent execution settings. Currently the action/tool wall-clock timeout (seconds). Applies to the next tool call without a restart; the OPENHUMAN_TOOL_TIMEOUT_SECS env var still overrides it when set.",
+            inputs: vec![FieldSchema {
+                name: "agent_timeout_secs",
+                ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                comment: "Wall-clock timeout for a single tool/action execution, in seconds (1–3600). Extend this when large local models are interrupted before finishing.",
+                required: false,
+            }],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
         "update_browser_settings" => ControllerSchema {
             namespace: "config",
             function: "update_browser_settings",
@@ -647,9 +702,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "provider",
                     "Local provider identifier. Supported values: ollama, lm_studio.",
                 ),
-                optional_string(
+                optional_json(
                     "base_url",
-                    "Provider base URL. For LM Studio this defaults to http://localhost:1234/v1.",
+                    "Provider base URL string, or null to clear. For LM Studio this defaults to http://localhost:1234/v1.",
                 ),
                 optional_string("model_id", "Default local chat model identifier."),
                 optional_string("chat_model_id", "Local chat model identifier."),
@@ -872,6 +927,20 @@ pub fn schemas(function: &str) -> ControllerSchema {
                 "settings",
                 "Engine, effective engine, limits, and per-provider configuration flags.",
             )],
+        },
+        "get_activity_level_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_activity_level_settings",
+            description: "Get the agent activity level (0–4) and its derived settings: sync cadence, heartbeat/subconscious toggles, token budget, estimated monthly cost.",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Activity level settings with cost estimates.")],
+        },
+        "update_activity_level_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_activity_level_settings",
+            description: "Set the agent activity level. Immediately updates the scheduler gate mode and persists the change.",
+            inputs: vec![optional_string("level", "Activity level: off | minimal | moderate | active | always_on (or 0–4).")],
+            outputs: vec![json_output("settings", "Updated activity level settings with cost estimates.")],
         },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
@@ -1252,6 +1321,48 @@ fn handle_update_autonomy_settings(params: Map<String, Value>) -> ControllerFutu
     })
 }
 
+fn handle_get_agent_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_agent_settings enter");
+        match config_rpc::get_agent_settings().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_agent_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_agent_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_update_agent_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] update_agent_settings enter");
+        let update = match deserialize_params::<AgentSettingsUpdate>(params) {
+            Ok(u) => u,
+            Err(err) => {
+                log::warn!("[config][rpc] update_agent_settings invalid params: {err}");
+                return Err(err);
+            }
+        };
+        let patch = config_rpc::AgentSettingsPatch {
+            agent_timeout_secs: update.agent_timeout_secs,
+        };
+        match config_rpc::load_and_apply_agent_settings(patch).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] update_agent_settings ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] update_agent_settings failed: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
 fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<BrowserSettingsUpdate>(params)?;
@@ -1265,11 +1376,17 @@ fn handle_update_browser_settings(params: Map<String, Value>) -> ControllerFutur
 fn handle_update_local_ai_settings(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let update = deserialize_params::<LocalAiSettingsUpdate>(params)?;
+        let base_url = match update.base_url {
+            None => None,
+            Some(Value::Null) => Some(None),
+            Some(Value::String(value)) => Some(Some(value)),
+            Some(_) => return Err("invalid params: base_url must be a string or null".to_string()),
+        };
         let patch = config_rpc::LocalAiSettingsPatch {
             runtime_enabled: update.runtime_enabled,
             opt_in_confirmed: update.opt_in_confirmed,
             provider: update.provider,
-            base_url: update.base_url,
+            base_url,
             model_id: update.model_id,
             chat_model_id: update.chat_model_id,
             usage_embeddings: update.usage_embeddings,
@@ -1570,14 +1687,44 @@ fn handle_get_search_settings(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_get_activity_level_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_activity_level_settings().await?) })
+}
+
+fn handle_update_activity_level_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<ActivityLevelSettingsUpdate>(params)?;
+        let patch = config_rpc::ActivityLevelSettingsPatch {
+            level: update.level,
+        };
+        to_json(config_rpc::load_and_apply_activity_level_settings(patch).await?)
+    })
+}
+
 fn deserialize_params<T: DeserializeOwned>(params: Map<String, Value>) -> Result<T, String> {
     serde_json::from_value(Value::Object(params)).map_err(|e| format!("invalid params: {e}"))
+}
+
+fn deserialize_present_json<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 fn optional_string(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::String)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_json(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Json)),
         comment,
         required: false,
     }

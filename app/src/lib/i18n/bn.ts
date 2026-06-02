@@ -216,6 +216,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'এখনো চালাও নি',
   'routines.runNow': 'এখন সঞ্চালন করুন',
   'routines.running': 'চলমান...',
+  'routines.runNowTimedOut': 'রান টাইমআউট হয়েছে — অনুগ্রহ করে রিফ্রেশ করুন এবং আবার চেষ্টা করুন।',
   'routines.viewHistory': 'পূর্ববর্তী তথ্য প্রদর্শন',
   'routines.loadingHistory': 'লোড করা হচ্ছে...',
   'routines.noHistory': 'এখনো কোন ইতিহাস নেই।',
@@ -723,16 +724,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'পাঠানো হয়েছে',
   'privacy.leavesDevice': 'ডিভাইস ছেড়ে যায়',
   'privacy.staysLocal': 'লোকালে থাকে',
-  'privacy.anonymizedAnalytics': 'অ্যানোনিমাইজড অ্যানালিটিক্স',
-  'privacy.shareAnonymizedData': 'অ্যানোনিমাইজড ব্যবহার ডেটা শেয়ার করুন',
+  'privacy.anonymizedAnalytics': 'প্রোডাক্ট অ্যানালিটিক্স',
+  'privacy.shareAnonymizedData': 'প্রোডাক্ট অ্যানালিটিক্স ও ডায়াগনস্টিকস শেয়ার করুন',
   'privacy.shareAnonymizedDataDesc':
-    'বেনামী ক্র্যাশ রিপোর্ট ও ব্যবহার অ্যানালিটিক্স শেয়ার করে OpenHuman উন্নত করতে সাহায্য করুন। সব ডেটা সম্পূর্ণ বেনামী — কোনো ব্যক্তিগত তথ্য, বার্তা, ওয়ালেট কী বা সেশন তথ্য কখনো সংগ্রহ করা হয় না।',
+    'গোপনীয়তা-সীমিত ক্র্যাশ রিপোর্ট ও ব্যবহার ইভেন্ট শেয়ার করে OpenHuman উন্নত করতে সাহায্য করুন, যার মধ্যে স্থিতিশীল অ্যাকাউন্ট ID ও অ্যাপ সংস্করণ মেটাডেটা থাকে। বার্তা, ওয়ালেট কী, API কী বা সেশন টোকেন কখনো সংগ্রহ করা হয় না।',
   'privacy.meetingFollowUps': 'মিটিং ফলো-আপ',
   'privacy.autoHandoffMeet': 'Google Meet ট্রান্সক্রিপ্ট স্বয়ংক্রিয়ভাবে অর্কেস্ট্রেটরে পাঠান',
   'privacy.autoHandoffMeetDesc':
     'Google Meet কল শেষ হলে, OpenHuman-এর অর্কেস্ট্রেটর ট্রান্সক্রিপ্ট পড়তে এবং বার্তা ড্রাফট করা, ফলো-আপ নির্ধারণ করা বা সংযুক্ত Slack ওয়ার্কস্পেসে সারসংক্ষেপ পোস্ট করার মতো কাজ করতে পারে। ডিফল্টে বন্ধ।',
   'privacy.analyticsDisclaimer':
-    'সব অ্যানালিটিক্স ও বাগ রিপোর্ট সম্পূর্ণ বেনামী। সক্রিয় থাকলে, আমরা শুধু ক্র্যাশ তথ্য, ডিভাইসের ধরন এবং ত্রুটির ফাইল লোকেশন সংগ্রহ করি। আমরা কখনো আপনার বার্তা, সেশন ডেটা, ওয়ালেট কী, API কী বা ব্যক্তিগত তথ্য অ্যাক্সেস করি না। যেকোনো সময় এই সেটিং পরিবর্তন করা যাবে।',
+    'সক্রিয় থাকলে, প্রোডাক্ট অ্যানালিটিক্স ও ডায়াগনস্টিকসে গোপনীয়তা-সীমিত ক্র্যাশ রিপোর্ট ও ব্যবহার ইভেন্ট, স্থিতিশীল অ্যাকাউন্ট ID এবং অ্যাপ সংস্করণ মেটাডেটা থাকতে পারে। বার্তা, ওয়ালেট কী, API কী বা সেশন টোকেন কখনো সংগ্রহ করা হয় না। যেকোনো সময় এই সেটিং পরিবর্তন করা যাবে।',
   'settings.about.version': 'ভার্সন',
   'settings.about.updateAvailable': 'পাওয়া গেছে',
   'settings.about.softwareUpdates': 'সফটওয়্যার আপডেট',
@@ -1138,6 +1139,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'হ্যাঁ, আনইনস্টল করুন',
   'mcp.detail.uninstall': 'আনইনস্টল',
   'mcp.detail.envVars': 'এনভায়রনমেন্ট ভেরিয়েবল',
+  'mcp.detail.reconfigure': 'পুনঃকনফিগার করুন',
+  'mcp.detail.reconfigureHint':
+    'প্রতিটি ভেরিয়েবলের জন্য নতুন মান লিখুন, তারপর পুনরায় সংযোগ করুন। এটি সংরক্ষিত মান প্রতিস্থাপন করে।',
+  'mcp.detail.saveReconnect': 'সংরক্ষণ ও পুনঃসংযোগ',
+  'mcp.detail.reconfigureSaving': 'সংরক্ষণ করা হচ্ছে…',
+  'mcp.detail.reconfigureSuccess': 'এনভায়রনমেন্ট আপডেট ও পুনঃসংযোগ করা হয়েছে।',
+  'mcp.detail.reconfigureReconnectFailed':
+    'সংরক্ষিত হয়েছে, তবে নতুন মান দিয়ে পুনঃসংযোগ ব্যর্থ হয়েছে।',
   'mcp.detail.tools': 'টুলস',
   'onboarding.skipForNow': 'এখনই এড়িয়ে যান',
   'onboarding.localAI.continueWithCloud': 'ক্লাউডের সাথে চালিয়ে যান',
@@ -1911,6 +1920,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'প্রস্তাবিত কাজ',
   'reflections.act': 'কাজ করুন',
   'reflections.dismiss': 'বাদ দিন',
+  'reflections.viewConversation': 'দেখুন',
+  'subconscious.mode.label': 'অবচেতন মোড',
+  'subconscious.mode.off.title': 'বন্ধ',
+  'subconscious.mode.off.desc': 'অবচেতন নিষ্ক্রিয়।',
+  'subconscious.mode.simple.title': 'সরল',
+  'subconscious.mode.simple.desc': 'শুধুমাত্র পঠনযোগ্য পর্যবেক্ষণ। শুধু মেমরি ও ফাইল অ্যাক্সেস।',
+  'subconscious.mode.aggressive.title': 'আক্রমণাত্মক',
+  'subconscious.mode.aggressive.desc':
+    'সম্পূর্ণ টুল অ্যাক্সেস। লিখতে, এজেন্ট তৈরি ও কাজ অর্পণ করতে পারে।',
+  'subconscious.mode.aggressiveWarning':
+    'আক্রমণাত্মক মোড অবচেতনকে লেখা ও সাব-এজেন্ট তৈরিসহ সম্পূর্ণ টুল অ্যাক্সেস দেয়।',
+  'subconscious.interval.label': 'ফ্রিকোয়েন্সি',
+  'subconscious.interval.minutes': '{n} মি',
+  'subconscious.interval.hours': '{n} ঘ',
+  'subconscious.interval.oneHour': '১ ঘণ্টা',
+  'subconscious.interval.oneDay': '২৪ ঘণ্টা',
   'whatsapp.chatsSynced': 'চ্যাট সিঙ্ক হয়েছে',
   'whatsapp.chatSynced': 'চ্যাট সিঙ্ক হয়েছে',
   'sync.active': 'সক্রিয়',
@@ -1982,6 +2007,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'পৃষ্ঠার xqxqx',
   'memorySources.cssSelector': 'xqxqx নির্বাচক',
   'memorySources.searchQuery': 'অনুসন্ধান',
+  'memorySources.build.title': 'তৈরি',
+  'memorySources.build.building': 'তৈরি হচ্ছে…',
+  'memorySources.build.successTitle': 'ট্রি তৈরি হয়েছে',
+  'memorySources.build.failedTitle': 'তৈরি ব্যর্থ',
+  'memorySources.build.sealsMessage': 'সিল সম্পন্ন হয়েছে',
   'backend.aiBackend': 'AI ব্যাকএন্ড',
   'backend.cloud': 'ক্লাউড',
   'backend.recommended': 'প্রস্তাবিত',
@@ -2493,6 +2523,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'চলছে',
   'conversations.subagent.statusCompleted': 'সম্পন্ন',
   'conversations.subagent.statusFailed': 'ব্যর্থ',
+  'conversations.subagent.statusAwaitingUser': 'ব্যবহারকারীর অপেক্ষায়',
   'daemon.serviceBlockingGate.body': 'বডি',
   'daemon.serviceBlockingGate.downloadHint': 'ডাউনলোড হিন্ট',
   'daemon.serviceBlockingGate.downloadLatest': 'সর্বশেষ সংস্করণ ডাউনলোড করুন',
@@ -2789,7 +2820,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'ওয়ার্কলোড গ্রুপ চ্যাট',
   'settings.ai.disconnectProvider': 'সংযোগ বিচ্ছিন্ন করুন {label}',
   'settings.ai.connectProviderLabel': 'সংযোগ {label}',
+  'settings.ai.editProviderEndpoint': '{label} শেষবিন্দু সম্পাদনা করুন',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'শেষবিন্দু সম্পাদনা করুন',
   'settings.ai.endpointUrlLabel': 'শেষবিন্দু URL',
   'settings.ai.localRuntimeHelper':
     'xqxqx সহযোগে সংযোগ ব্যবস্থা করা হবে। ডিফল্ট স্থানীয় হোস্ট; দূরবর্তী হোস্টটিকে এই অবস্থায় দেখা যাবে (যেমন, xq1xqxqx ব্যবহার করা হচ্ছে)।',
@@ -3588,6 +3621,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'কাজের পরিকল্পনা অনুমোদন প্রয়োজন',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'নির্ধারিত কর্মের পূর্বে একটি author-ed কর্মের সঞ্চালনার পূর্বে কর্ম স্থগিত করা হবে।',
+  'settings.agentAccess.timeout.label': 'অ্যাকশন টাইমআউট',
+  'settings.agentAccess.timeout.desc':
+    'একটি একক টুল বা অ্যাকশন বাতিল হওয়ার আগে কতক্ষণ চলতে পারে। বড় লোকাল মডেল উত্তর শেষ করার আগেই থেমে গেলে এটি বাড়ান।',
+  'settings.agentAccess.timeout.unit': 'সেকেন্ড',
+  'settings.agentAccess.timeout.invalid': 'অনুমোদিত পরিসরের মধ্যে সেকেন্ডের একটি পূর্ণসংখ্যা লিখুন',
+  'settings.agentAccess.timeout.envOverride':
+    'OPENHUMAN_TOOL_TIMEOUT_SECS এনভায়রনমেন্ট ভেরিয়েবলটি এই সেটিং ওভাররাইড করছে, তাই এটি আনসেট না করা পর্যন্ত এখানে পরিবর্তনের কোনো প্রভাব পড়বে না।',
   'settings.agentAccess.grantedFolders': 'ফোল্ডার',
   'settings.agentAccess.alwaysAllow': 'সর্বদা অপসারণযোগ্য সরঞ্জাম',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3604,6 +3644,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'যোগ করুন',
   'settings.agentAccess.saving': 'ইনস্টল করা হয়েছে...',
   'settings.agentAccess.changesApply': 'পরবর্তী বার্তায় পরিবর্তন প্রয়োগ করা হবে।',
+  'settings.agentAccess.directories': 'ডিরেক্টরি',
+  'settings.agentAccess.actionSandbox': 'অ্যাকশন স্যান্ডবক্স',
+  'settings.agentAccess.readWriteAccess': 'পড়া + লেখা',
+  'settings.agentAccess.actionSandboxDesc':
+    'শেল, ফাইল এবং git টুলের জন্য ডিফল্ট কার্যকরী ডিরেক্টরি।',
+  'settings.agentAccess.internalState': 'অভ্যন্তরীণ অবস্থা',
+  'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
+  'settings.agentAccess.internalStateDesc':
+    'মেমরি ডেটাবেস, সেশন, টোকেন এবং অন্যান্য মূল ডেটা। এজেন্ট টুলের কাছে অ্যাক্সেসযোগ্য নয়।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4096,14 +4145,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'উত্স দ্বারা ফিল্টার',
   'calls.comingSoonDescription': 'AI-সহায়তা কলগুলি শীঘ্রই আসছে৷ সাথে থাকুন।',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 মিনিট',
-  'subconscious.interval.tenMinutes': '10 মিনিট',
-  'subconscious.interval.fifteenMinutes': '15 মিনিট',
-  'subconscious.interval.thirtyMinutes': '30 মিনিট',
-  'subconscious.interval.oneHour': '1 ঘন্টা',
-  'subconscious.interval.sixHours': '1 ঘন্টা',
-  'subconscious.interval.twelveHours': '[[I18N_SEP_92731]] 12 ঘন্টা',
-  'subconscious.interval.oneDay': '1 দিন',
   'subconscious.priority.critical': 'গুরুত্বপূর্ণ',
   'subconscious.priority.important': 'গুরুত্বপূর্ণ',
   'subconscious.priority.normal': 'স্বাভাবিক',
@@ -4382,6 +4423,102 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'গড় ক্লাস্টারিং {avg} · সংক্রমণতা {transitivity}',
   'graphCohesion.title': 'গ্রাফ সংসক্তি',
   'memory.tab.cohesion': 'Cohesion',
+
+  // Keyring consent & security
+  'keyring.consent.title': 'নিরাপদ সঞ্চয়স্থান অনুপলব্ধ',
+  'keyring.consent.description':
+    'আপনার অপারেটিং সিস্টেমের কিচেন অ্যাক্সেসযোগ্য নয়। OpenHuman-এর পরিবর্তে স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান ব্যবহার করে গোপনীয়তা সংরক্ষণ করতে আপনার অনুমতি প্রয়োজন।',
+  'keyring.consent.reasonPrefix': 'কারণ:',
+  'keyring.consent.showDetails': 'এটার মানে কী?',
+  'keyring.consent.hideDetails': 'বিবরণ লুকান',
+  'keyring.consent.tradeoffTitle': 'নিরাপত্তা বিনিময়',
+  'keyring.consent.tradeoffBody':
+    'স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থানে, আপনার গোপনীয়তা ডিস্কে একটি মাস্টার কী দিয়ে এনক্রিপ্ট করা হয় যা ডেটার পাশাপাশি সংরক্ষিত থাকে। এটি OS কিচেনের চেয়ে কম নিরাপদ, যা হার্ডওয়্যার-সমর্থিত সুরক্ষা ব্যবহার করে। ব্যাকআপ বা ফাইল সিঙ্কিংয়ে এনক্রিপ্টেড ডেটা অন্তর্ভুক্ত হতে পারে।',
+  'keyring.consent.consentButton': 'স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান ব্যবহার করুন',
+  'keyring.consent.retryButton': 'OS Keychain পুনরায় চেষ্টা করুন',
+  'keyring.consent.declineButton': 'প্রত্যাখ্যান করুন',
+  'keyring.consent.retrying': 'পুনরায় চেষ্টা হচ্ছে…',
+  'keyring.consent.error': 'পছন্দ সংরক্ষণ ব্যর্থ। অনুগ্রহ করে আবার চেষ্টা করুন।',
+  'keyring.consent.retryFailed': 'কিচেন এখনও অনুপলব্ধ।',
+  'keyring.settings.title': 'নিরাপত্তা',
+  'keyring.settings.storageMode': 'গোপনীয়তা সঞ্চয়স্থান মোড',
+  'keyring.settings.mode.osKeychain': 'OS কীচেইন',
+  'keyring.settings.mode.encryptedFile': 'স্থানীয় এনক্রিপ্টেড',
+  'keyring.settings.mode.consentPending': 'কনফিগার করা হয়নি',
+  'keyring.settings.mode.declined': 'প্রত্যাখ্যান করা হয়েছে',
+  'keyring.settings.availability': 'কিচেন প্রাপ্যতা',
+  'keyring.settings.available': 'OS কিচেন উপলব্ধ',
+  'keyring.settings.unavailable': 'OS কিচেন অনুপলব্ধ',
+  'keyring.settings.backend': 'ব্যাকএন্ড',
+  'keyring.settings.retryButton': 'কিচেন সনাক্তকরণ পুনরায় চেষ্টা করুন',
+  'keyring.settings.retryFailed': 'পুনরায় চেষ্টা ব্যর্থ। কিচেন এখনও অনুপলব্ধ।',
+  'keyring.settings.consentTitle': 'সঞ্চয়স্থান সম্মতি',
+  'keyring.settings.consentDescription':
+    'OS কিচেন অনুপলব্ধ থাকলে গোপনীয়তা কীভাবে সংরক্ষণ করা হবে তা বেছে নিন।',
+  'keyring.settings.grantConsent': 'স্থানীয় এনক্রিপ্টেড সঞ্চয়স্থান অনুমতি দিন',
+  'keyring.settings.revokeConsent': 'স্থানীয় সঞ্চয়স্থান প্রত্যাখ্যান করুন',
+  'pages.settings.account.security': 'নিরাপত্তা',
+  'pages.settings.account.securityDesc': 'গোপনীয়তা সঞ্চয়স্থান মোড এবং কিচেন অবস্থা',
+
+  // Agent activity level
+  'activityLevel.title': 'এজেন্ট কার্যকলাপের স্তর',
+  'activityLevel.description':
+    'আপনার এজেন্ট কতটা সক্রিয় তা নিয়ন্ত্রণ করুন। উচ্চ স্তরে বেশি টোকেন ব্যবহার হয়।',
+  'activityLevel.off': 'বন্ধ',
+  'activityLevel.offDesc': 'পটভূমিতে কোনো প্রক্রিয়াকরণ নেই। শুধুমাত্র বোতাম চাপলে সিঙ্ক করে।',
+  'activityLevel.minimal': 'ন্যূনতম',
+  'activityLevel.minimalDesc': 'প্রতিদিন একবার উৎস সিঙ্ক করে। কোনো সক্রিয় বার্তা নেই।',
+  'activityLevel.moderate': 'মাঝারি',
+  'activityLevel.moderateDesc':
+    'প্রতি ঘণ্টায় সিঙ্ক করে। দৈনিক সারসংক্ষেপ। কর্মপন্থা প্রস্তাব করে।',
+  'activityLevel.active': 'সক্রিয়',
+  'activityLevel.activeDesc':
+    'প্রতি ১০ মিনিটে সিঙ্ক করে। চ্যানেল পর্যবেক্ষণ, বাছাই ও উত্তর খসড়া করে।',
+  'activityLevel.alwaysOn': 'সর্বদা চালু',
+  'activityLevel.alwaysOnDesc': 'রিয়েল-টাইম সিঙ্ক। নির্ধারিত সীমার মধ্যে পূর্ণ স্বায়ত্তশাসন।',
+  'activityLevel.currentMonth': 'এই মাস: ${amount}',
+  'activityLevel.saved': 'কার্যকলাপের স্তর আপডেট হয়েছে।',
+  'activityLevel.default': 'ডিফল্ট',
+  'activityLevel.costFree': '$০',
+  'activityLevel.costRange': '~${min}–${max}/মাস',
+
+  // Sync budget dialog
+  'syncBudget.title': 'সিঙ্ক বাজেট',
+  'syncBudget.maxTokens': 'প্রতি সিঙ্কে সর্বোচ্চ টোকেন',
+  'syncBudget.maxTokensHelp': 'এতটা টোকেন ব্যবহার হলে সিঙ্ক বন্ধ করুন।',
+  'syncBudget.maxCost': 'প্রতি সিঙ্কে সর্বোচ্চ খরচ (USD)',
+  'syncBudget.maxCostHelp': 'প্রতিটি সিঙ্ক রানের জন্য নির্দিষ্ট ডলার সীমা।',
+  'syncBudget.syncDepth': 'সিঙ্ক গভীরতা',
+  'syncBudget.syncDepthHelp': 'কেবল এই সময়সীমার আইটেম আনুন।',
+  'syncBudget.days7': 'গত ৭ দিন',
+  'syncBudget.days30': 'গত ৩০ দিন',
+  'syncBudget.days90': 'গত ৯০ দিন',
+  'syncBudget.allTime': 'সব সময়',
+  'syncBudget.unlimited': 'সীমাহীন',
+  'syncBudget.saved': 'বাজেট সংরক্ষিত হয়েছে।',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'সিঙ্ক নিশ্চিত করুন',
+  'syncConfirm.message':
+    'এই সিঙ্ক ~{items}টি আইটেম (~{tokens} টোকেন, আনুমানিক ${cost}) প্রক্রিয়া করবে।',
+  'syncConfirm.budgetNote': 'বাজেট সীমা: ${max}',
+  'syncConfirm.proceed': 'চালিয়ে যান',
+  'syncConfirm.cancel': 'বাতিল',
+  'syncConfirm.estimating': 'খরচ অনুমান করা হচ্ছে...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': 'এই মাসে ${amount}',
+  'monthlyCost.noData': 'এই মাসে কোনো সিঙ্ক নেই',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'কার্যকলাপ',
+  'onboarding.custom.activity.title': 'এজেন্টের কার্যকলাপ',
+  'onboarding.custom.activity.subtitle':
+    'আপনার এজেন্ট পটভূমিতে কতটা সক্রিয়ভাবে পর্যবেক্ষণ ও কাজ করে।',
+  'onboarding.custom.activity.defaultDesc':
+    'মাঝারি কার্যকলাপ — প্রতি ঘণ্টায় সিঙ্ক, দৈনিক সারসংক্ষেপ।',
+  'onboarding.custom.activity.configureDesc':
+    'নিজের কার্যকলাপের স্তর বেছে নিন। সেটিংস › এজেন্ট কার্যকলাপ স্তরে কনফিগার করুন।',
 };
 
 export default messages;

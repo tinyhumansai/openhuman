@@ -87,6 +87,19 @@ test.describe('Settings - Feature Preferences', () => {
   });
 
   test('persists tools preferences to the core app-state snapshot', async ({ page }) => {
+    await openAuthenticatedRoute(page, 'pw-settings-tools', '/settings/tools');
+
+    await callCoreRpc('openhuman.app_state_update_local_state', {
+      onboardingTasks: {
+        accessibilityPermissionGranted: false,
+        localModelConsentGiven: false,
+        localModelDownloadStarted: false,
+        enabledTools: ['shell'],
+        connectedSources: [],
+        updatedAtMs: Date.now(),
+      },
+    });
+
     const before = await callCoreRpc<{
       result?: {
         localState?: { onboardingTasks?: { enabledTools?: string[] | null } | null } | null;
@@ -94,13 +107,16 @@ test.describe('Settings - Feature Preferences', () => {
     }>('openhuman.app_state_snapshot', {});
     const enabledBefore = before.result?.localState?.onboardingTasks?.enabledTools ?? [];
 
-    await openAuthenticatedRoute(page, 'pw-settings-tools', '/settings/tools');
+    await reloadAndWait(page);
 
     await expect(page.getByText('Tools', { exact: true })).toBeVisible();
-    await page
+    const shellToggle = page
       .locator('button')
-      .filter({ has: page.getByText('Shell Commands', { exact: true }) })
-      .click();
+      .filter({ has: page.getByText('Shell Commands', { exact: true }) });
+    await expect(shellToggle).toHaveAttribute('aria-checked', 'true');
+    await shellToggle.click();
+    await expect(shellToggle).toHaveAttribute('aria-checked', 'false');
+
     await page.getByRole('button', { name: 'Save Changes', exact: true }).click();
     await expect(page.getByText('Preferences saved')).toBeVisible();
 
@@ -115,6 +131,13 @@ test.describe('Settings - Feature Preferences', () => {
         return JSON.stringify(enabledAfter) !== JSON.stringify(enabledBefore);
       })
       .toBe(true);
+
+    const after = await callCoreRpc<{
+      result?: {
+        localState?: { onboardingTasks?: { enabledTools?: string[] | null } | null } | null;
+      };
+    }>('openhuman.app_state_snapshot', {});
+    expect(after.result?.localState?.onboardingTasks?.enabledTools ?? []).not.toContain('shell');
   });
 
   test('persists notifications DND and category preferences', async ({ page }) => {

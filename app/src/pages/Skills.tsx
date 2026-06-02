@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 import ChannelSetupModal from '../components/channels/ChannelSetupModal';
+import McpServersTab from '../components/channels/mcp/McpServersTab';
 import ComposioConnectModal from '../components/composio/ComposioConnectModal';
 import {
   composioToolkitMeta,
@@ -46,7 +47,7 @@ import type { ChannelConnectionStatus, ChannelDefinition, ChannelType } from '..
 import type { ToastNotification } from '../types/intelligence';
 import { IS_DEV } from '../utils/config';
 import { isLocalSessionToken } from '../utils/localSession';
-import { openhumanComposioGetMode, subconsciousEscalationsDismiss } from '../utils/tauriCommands';
+import { openhumanComposioGetMode } from '../utils/tauriCommands';
 import SkillsDashboard from './SkillsDashboard';
 
 function channelStatusLabel(status: ChannelConnectionStatus, t: (key: string) => string): string {
@@ -276,35 +277,6 @@ function ChannelTile({ def, status, icon, testId, onOpen }: ChannelTileProps) {
   );
 }
 
-function McpComingSoonPanel() {
-  const { t } = useT();
-  return (
-    <EmptyStateCard
-      icon={
-        <svg
-          className="h-7 w-7 text-primary-500"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={1.5}>
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            d="M6.75 7.5h10.5m-10.5 4.5h10.5m-10.5 4.5h6m-9.75 3h13.5A2.25 2.25 0 0 0 19.5 17.25V6.75A2.25 2.25 0 0 0 17.25 4.5H6.75A2.25 2.25 0 0 0 4.5 6.75v10.5A2.25 2.25 0 0 0 6.75 19.5Z"
-          />
-        </svg>
-      }
-      title={t('skills.mcpComingSoon.title')}
-      description={t('skills.mcpComingSoon.description')}
-      footer={
-        <span className="mt-4 inline-flex items-center rounded-full bg-primary-50 dark:bg-primary-500/10 px-3 py-1 text-xs font-medium text-primary-600 dark:text-primary-400">
-          {t('common.comingSoon')}
-        </span>
-      }
-    />
-  );
-}
-
 function ComposioApiKeyEmptyState({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { t } = useT();
   return (
@@ -383,7 +355,8 @@ export default function Skills() {
   const initialTab: ConnectionsTab = (() => {
     const params = new URLSearchParams(location.search);
     const t = params.get('tab');
-    if (t === 'runners' || t === 'composio' || t === 'channels' || t === 'mcp') return t;
+    if (t === 'runners') return IS_DEV ? 'runners' : 'composio';
+    if (t === 'composio' || t === 'channels' || t === 'mcp') return t;
     return 'composio';
   })();
   const [activeTab, setActiveTab] = useState<ConnectionsTab>(initialTab);
@@ -453,43 +426,6 @@ export default function Skills() {
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(toast => toast.id !== id));
   }, []);
-  const pendingEscalationId =
-    location.state &&
-    typeof location.state === 'object' &&
-    'subconsciousEscalationId' in location.state &&
-    typeof location.state.subconsciousEscalationId === 'string'
-      ? location.state.subconsciousEscalationId
-      : null;
-
-  const clearPendingEscalationState = useCallback(() => {
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.pathname, navigate]);
-
-  const dismissPendingEscalationIfResolved = useCallback(
-    async (resolution: string) => {
-      if (!pendingEscalationId) return;
-      console.debug('[skills][subconscious] dismiss escalation:start', {
-        escalationId: pendingEscalationId,
-        resolution,
-      });
-      try {
-        await subconsciousEscalationsDismiss(pendingEscalationId);
-        console.debug('[skills][subconscious] dismiss escalation:success', {
-          escalationId: pendingEscalationId,
-          resolution,
-        });
-      } catch (error) {
-        console.debug('[skills][subconscious] dismiss escalation:error', {
-          escalationId: pendingEscalationId,
-          resolution,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return;
-      }
-      clearPendingEscalationState();
-    },
-    [clearPendingEscalationState, pendingEscalationId]
-  );
 
   // Discover SKILL.md skills via the core RPC. Ignore failures — the rest of
   // the page still works when the sidecar is unreachable or no skills exist.
@@ -687,7 +623,9 @@ export default function Skills() {
     for (const { meta } of composioGridEntries) {
       cats.add(meta.category);
     }
-    return SKILL_CATEGORY_ORDER.filter(c => c !== 'Channels' && cats.has(c));
+    return SKILL_CATEGORY_ORDER.filter(
+      c => c !== 'Channels' && cats.has(c) && (IS_DEV || c !== 'Other')
+    );
   }, [allItems, composioGridEntries]);
 
   const filteredItems = useMemo(() => {
@@ -718,7 +656,7 @@ export default function Skills() {
     return items.length > 0 ? { category: 'Channels' as SkillCategory, items } : undefined;
   }, [allItems]);
   const otherGroups = useMemo(
-    () => groupedItems.filter(g => g.category !== 'Channels'),
+    () => groupedItems.filter(g => g.category !== 'Channels' && (IS_DEV || g.category !== 'Other')),
     [groupedItems]
   );
 
@@ -969,12 +907,12 @@ export default function Skills() {
                 { value: 'composio', label: t('skills.tabs.composio') },
                 { value: 'channels', label: t('skills.tabs.channels') },
                 { value: 'mcp', label: t('skills.tabs.mcp') },
-                { value: 'runners', label: t('skills.tabs.runners') },
+                ...(IS_DEV ? [{ value: 'runners' as const, label: t('skills.tabs.runners') }] : []),
               ]}
             />
             {
               <>
-                {activeTab === 'runners' && (
+                {IS_DEV && activeTab === 'runners' && (
                   <div className="rounded-2xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 shadow-soft animate-fade-up">
                     {/* The Runners sub-tab IS the scheduled-skills dashboard:
                         header + [+ Create a Skill] + [▷ Run a Skill] CTAs
@@ -1130,7 +1068,21 @@ export default function Skills() {
                         {t('channels.mcp.description')}
                       </p>
                     </div>
-                    <McpComingSoonPanel />
+                    {IS_DEV ? (
+                      <div className="h-[72vh] min-h-[480px]">
+                        <McpServersTab />
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="text-3xl mb-3">🔌</div>
+                        <p className="text-sm font-medium text-stone-700 dark:text-neutral-300">
+                          {t('misc.comingSoon')}
+                        </p>
+                        <p className="mt-1 text-xs text-stone-500 dark:text-neutral-400">
+                          {t('channels.mcp.description')}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
               </>
@@ -1167,7 +1119,6 @@ export default function Skills() {
           }
           onChanged={() => {
             void refreshComposio();
-            void dismissPendingEscalationIfResolved(`composio:${composioModalToolkit.slug}`);
           }}
           onClose={() => setComposioModalToolkit(null)}
         />

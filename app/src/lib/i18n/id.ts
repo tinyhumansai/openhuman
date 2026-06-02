@@ -218,6 +218,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Belum pernah dijalankan',
   'routines.runNow': 'Jalankan Sekarang',
   'routines.running': 'Berjalan...',
+  'routines.runNowTimedOut': 'Waktu habis — silakan muat ulang dan coba lagi.',
   'routines.viewHistory': 'Lihat riwayat',
   'routines.loadingHistory': 'Memuat…',
   'routines.noHistory': 'Belum ada riwayat eksekusi.',
@@ -725,16 +726,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Dikirim ke',
   'privacy.leavesDevice': 'Keluar dari perangkat',
   'privacy.staysLocal': 'Tetap lokal',
-  'privacy.anonymizedAnalytics': 'Analitik Anonim',
-  'privacy.shareAnonymizedData': 'Bagikan Data Penggunaan Anonim',
+  'privacy.anonymizedAnalytics': 'Analitik Produk',
+  'privacy.shareAnonymizedData': 'Bagikan Analitik Produk dan Diagnostik',
   'privacy.shareAnonymizedDataDesc':
-    'Bantu meningkatkan OpenHuman dengan membagikan laporan crash dan analitik penggunaan anonim. Semua data sepenuhnya anonim; tidak ada data pribadi, pesan, kunci dompet, atau informasi sesi yang dikumpulkan.',
+    'Bantu meningkatkan OpenHuman dengan membagikan laporan crash dan peristiwa penggunaan yang dibatasi privasi, termasuk ID akun stabil dan metadata versi aplikasi. Pesan, kunci dompet, kunci API, dan token sesi tidak pernah dikumpulkan.',
   'privacy.meetingFollowUps': 'Tindak lanjut rapat',
   'privacy.autoHandoffMeet': 'Serahkan transkrip Google Meet otomatis ke orchestrator',
   'privacy.autoHandoffMeetDesc':
     'Saat panggilan Google Meet berakhir, orchestrator OpenHuman dapat membaca transkrip dan mengambil tindakan seperti menyusun pesan, menjadwalkan tindak lanjut, atau memposting ringkasan ke workspace Slack yang terhubung. Nonaktif secara default.',
   'privacy.analyticsDisclaimer':
-    'Semua analitik dan laporan bug sepenuhnya anonim. Saat aktif, kami hanya mengumpulkan informasi crash, jenis perangkat, dan lokasi file error. Kami tidak pernah mengakses pesan, data sesi, kunci dompet, API key, atau informasi pribadi Anda. Pengaturan ini bisa diubah kapan saja.',
+    'Saat aktif, Analitik Produk dan Diagnostik dapat menyertakan laporan crash dan peristiwa penggunaan yang dibatasi privasi, ID akun stabil, dan metadata versi aplikasi. Pesan, kunci dompet, kunci API, dan token sesi tidak pernah dikumpulkan. Pengaturan ini bisa diubah kapan saja.',
   'settings.about.version': 'Versi',
   'settings.about.updateAvailable': 'tersedia',
   'settings.about.softwareUpdates': 'Pembaruan perangkat lunak',
@@ -1146,6 +1147,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Ya, hapus instalan',
   'mcp.detail.uninstall': 'Hapus instalan',
   'mcp.detail.envVars': 'Variabel lingkungan',
+  'mcp.detail.reconfigure': 'Konfigurasi ulang',
+  'mcp.detail.reconfigureHint':
+    'Masukkan nilai baru untuk setiap variabel, lalu hubungkan kembali. Ini menggantikan nilai yang tersimpan.',
+  'mcp.detail.saveReconnect': 'Simpan dan hubungkan kembali',
+  'mcp.detail.reconfigureSaving': 'Menyimpan…',
+  'mcp.detail.reconfigureSuccess': 'Lingkungan diperbarui dan terhubung kembali.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Tersimpan, tetapi gagal menghubungkan kembali dengan nilai baru.',
   'mcp.detail.tools': 'Alat',
   'onboarding.skipForNow': 'Lewati Sekarang',
   'onboarding.localAI.continueWithCloud': 'Lanjutkan dengan Cloud',
@@ -1914,6 +1923,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Tindakan yang Diusulkan',
   'reflections.act': 'Tindakan',
   'reflections.dismiss': 'Abaikan',
+  'reflections.viewConversation': 'Lihat',
+  'subconscious.mode.label': 'Mode Alam Bawah Sadar',
+  'subconscious.mode.off.title': 'Mati',
+  'subconscious.mode.off.desc': 'Alam bawah sadar dinonaktifkan.',
+  'subconscious.mode.simple.title': 'Sederhana',
+  'subconscious.mode.simple.desc': 'Pengamatan hanya-baca. Hanya akses memori dan file.',
+  'subconscious.mode.aggressive.title': 'Agresif',
+  'subconscious.mode.aggressive.desc':
+    'Akses alat penuh. Dapat menulis, membuat agen, dan mendelegasikan tugas.',
+  'subconscious.mode.aggressiveWarning':
+    'Mode agresif memberikan alam bawah sadar akses alat penuh termasuk menulis dan membuat sub-agen.',
+  'subconscious.interval.label': 'Frekuensi',
+  'subconscious.interval.minutes': '{n} mnt',
+  'subconscious.interval.hours': '{n} jam',
+  'subconscious.interval.oneHour': '1 jam',
+  'subconscious.interval.oneDay': '24 jam',
   'whatsapp.chatsSynced': 'obrolan disinkronkan',
   'whatsapp.chatSynced': 'obrolan disinkronkan',
   'sync.active': 'Aktif',
@@ -1986,6 +2011,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL halaman',
   'memorySources.cssSelector': 'pemilih CSS (opsional)',
   'memorySources.searchQuery': 'Kueri pencarian',
+  'memorySources.build.title': 'Bangun',
+  'memorySources.build.building': 'Membangun…',
+  'memorySources.build.successTitle': 'Pohon dibangun',
+  'memorySources.build.failedTitle': 'Pembangunan gagal',
+  'memorySources.build.sealsMessage': 'penyegelan selesai',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Awan',
   'backend.recommended': 'Direkomendasikan',
@@ -2499,6 +2529,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'berjalan',
   'conversations.subagent.statusCompleted': 'selesai',
   'conversations.subagent.statusFailed': 'gagal',
+  'conversations.subagent.statusAwaitingUser': 'menunggu pengguna',
   'daemon.serviceBlockingGate.body': 'Isi',
   'daemon.serviceBlockingGate.downloadHint': 'Petunjuk unduhan',
   'daemon.serviceBlockingGate.downloadLatest': 'Unduh Versi Terbaru',
@@ -2798,7 +2829,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Grup beban kerja chat',
   'settings.ai.disconnectProvider': 'Putuskan sambungan {label}',
   'settings.ai.connectProviderLabel': 'Sambungkan {label}',
+  'settings.ai.editProviderEndpoint': 'Ubah titik akhir {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Edit titik akhir',
   'settings.ai.endpointUrlLabel': 'Titik Akhir URL',
   'settings.ai.localRuntimeHelper':
     'Dimana {label} bisa dihubungi. Baku adalah localhost; arahkan ini ke host jarak jauh (misalnya, http://10.0.0.4:11434/v1) untuk memakai suatu contoh bersama.',
@@ -3603,6 +3636,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Perlu persetujuan rencana tugas',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Jeda sebelum agen yang ditugaskan mengeksekusi suatu tugas singkat.',
+  'settings.agentAccess.timeout.label': 'Batas waktu tindakan',
+  'settings.agentAccess.timeout.desc':
+    'Berapa lama satu alat atau tindakan boleh berjalan sebelum dibatalkan. Tingkatkan nilai ini jika model lokal besar terhenti sebelum selesai merespons.',
+  'settings.agentAccess.timeout.unit': 'detik',
+  'settings.agentAccess.timeout.invalid':
+    'Masukkan bilangan bulat detik dalam rentang yang diizinkan',
+  'settings.agentAccess.timeout.envOverride':
+    'Variabel lingkungan OPENHUMAN_TOOL_TIMEOUT_SECS menggantikan pengaturan ini, sehingga perubahan di sini tidak berpengaruh hingga variabel tersebut dihapus.',
   'settings.agentAccess.grantedFolders': 'Folder yang diberikan',
   'settings.agentAccess.alwaysAllow': 'Selalu-diperbolehkan alat',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3619,6 +3660,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Tambah',
   'settings.agentAccess.saving': 'Menyimpan...',
   'settings.agentAccess.changesApply': 'Perubahan pada pesan berikutnya.',
+  'settings.agentAccess.directories': 'Direktori',
+  'settings.agentAccess.actionSandbox': 'Sandbox aksi',
+  'settings.agentAccess.readWriteAccess': 'baca + tulis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Direktori kerja default untuk alat shell, file, dan git.',
+  'settings.agentAccess.internalState': 'Status internal',
+  'settings.agentAccess.agentBlocked': 'diblokir untuk agen',
+  'settings.agentAccess.internalStateDesc':
+    'Database memori, sesi, token, dan data inti lainnya. Tidak dapat diakses oleh alat agen.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4115,14 +4165,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'Filter berdasarkan sumber',
   'calls.comingSoonDescription': 'Panggilan dengan bantuan AI akan segera hadir. Pantau terus.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 menit',
-  'subconscious.interval.tenMinutes': '10 menit',
-  'subconscious.interval.fifteenMinutes': '15 menit',
-  'subconscious.interval.thirtyMinutes': '30 menit',
-  'subconscious.interval.oneHour': '1 jam',
-  'subconscious.interval.sixHours': '6 jam',
-  'subconscious.interval.twelveHours': '12 jam',
-  'subconscious.interval.oneDay': '1 hari',
   'subconscious.priority.critical': 'kritis',
   'subconscious.priority.important': 'penting',
   'subconscious.priority.normal': 'normal',
@@ -4399,6 +4441,102 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Pengelompokan rata-rata {avg} · transitivitas {transitivity}',
   'graphCohesion.title': 'Kohesi Graf',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'Penyimpanan aman tidak tersedia',
+  'keyring.consent.description':
+    'Keychain sistem operasi Anda tidak dapat diakses. OpenHuman memerlukan izin Anda untuk menyimpan rahasia menggunakan penyimpanan lokal terenkripsi.',
+  'keyring.consent.reasonPrefix': 'Alasan:',
+  'keyring.consent.showDetails': 'Apa artinya ini?',
+  'keyring.consent.hideDetails': 'Sembunyikan detail',
+  'keyring.consent.tradeoffTitle': 'Kompromi keamanan',
+  'keyring.consent.tradeoffBody':
+    'Dengan penyimpanan lokal terenkripsi, rahasia Anda dienkripsi di disk menggunakan kunci master yang disimpan bersama data. Ini kurang aman dibandingkan keychain OS yang menggunakan perlindungan berbasis perangkat keras. Pencadangan atau sinkronisasi file mungkin menyertakan data terenkripsi.',
+  'keyring.consent.consentButton': 'Gunakan penyimpanan lokal terenkripsi',
+  'keyring.consent.retryButton': 'Coba ulang OS Keychain',
+  'keyring.consent.declineButton': 'Tolak',
+  'keyring.consent.retrying': 'Mencoba ulang…',
+  'keyring.consent.error': 'Gagal menyimpan preferensi. Silakan coba lagi.',
+  'keyring.consent.retryFailed': 'Keychain masih tidak tersedia.',
+  'keyring.settings.title': 'Keamanan',
+  'keyring.settings.storageMode': 'Mode penyimpanan rahasia',
+  'keyring.settings.mode.osKeychain': 'Keychain OS',
+  'keyring.settings.mode.encryptedFile': 'Lokal terenkripsi',
+  'keyring.settings.mode.consentPending': 'Belum dikonfigurasi',
+  'keyring.settings.mode.declined': 'Ditolak',
+  'keyring.settings.availability': 'Ketersediaan keychain',
+  'keyring.settings.available': 'OS keychain tersedia',
+  'keyring.settings.unavailable': 'OS keychain tidak tersedia',
+  'keyring.settings.backend': 'Backend',
+  'keyring.settings.retryButton': 'Coba ulang deteksi keychain',
+  'keyring.settings.retryFailed': 'Percobaan ulang gagal. Keychain masih tidak tersedia.',
+  'keyring.settings.consentTitle': 'Persetujuan penyimpanan',
+  'keyring.settings.consentDescription':
+    'Pilih bagaimana rahasia disimpan saat keychain OS tidak tersedia.',
+  'keyring.settings.grantConsent': 'Izinkan penyimpanan lokal terenkripsi',
+  'keyring.settings.revokeConsent': 'Tolak penyimpanan lokal',
+  'pages.settings.account.security': 'Keamanan',
+  'pages.settings.account.securityDesc': 'Mode penyimpanan rahasia dan status keychain',
+
+  // Agent activity level
+  'activityLevel.title': 'Tingkat aktivitas agen',
+  'activityLevel.description':
+    'Kendalikan seberapa proaktif agen Anda. Tingkat lebih tinggi menggunakan lebih banyak token.',
+  'activityLevel.off': 'Mati',
+  'activityLevel.offDesc':
+    'Tidak ada pemrosesan latar belakang. Hanya sinkronisasi saat tombol ditekan.',
+  'activityLevel.minimal': 'Minimal',
+  'activityLevel.minimalDesc': 'Sinkronisasi sumber sekali sehari. Tidak ada pesan proaktif.',
+  'activityLevel.moderate': 'Sedang',
+  'activityLevel.moderateDesc': 'Sinkronisasi setiap jam. Ringkasan harian. Menyarankan tindakan.',
+  'activityLevel.active': 'Aktif',
+  'activityLevel.activeDesc':
+    'Sinkronisasi setiap 10 menit. Memantau saluran, mengurutkan, dan menyusun balasan.',
+  'activityLevel.alwaysOn': 'Selalu aktif',
+  'activityLevel.alwaysOnDesc':
+    'Sinkronisasi real-time. Otonomi penuh dalam batas yang ditentukan.',
+  'activityLevel.currentMonth': 'Bulan ini: ${amount}',
+  'activityLevel.saved': 'Tingkat aktivitas diperbarui.',
+  'activityLevel.default': 'bawaan',
+  'activityLevel.costFree': '$0',
+  'activityLevel.costRange': '~${min}–${max}/bln',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Anggaran sinkronisasi',
+  'syncBudget.maxTokens': 'Token maksimum per sinkronisasi',
+  'syncBudget.maxTokensHelp': 'Hentikan sinkronisasi setelah sejumlah token ini dikonsumsi.',
+  'syncBudget.maxCost': 'Biaya maksimum per sinkronisasi (USD)',
+  'syncBudget.maxCostHelp': 'Batas dolar mutlak per jalannya sinkronisasi.',
+  'syncBudget.syncDepth': 'Kedalaman sinkronisasi',
+  'syncBudget.syncDepthHelp': 'Hanya ambil item dari jendela waktu ini.',
+  'syncBudget.days7': '7 hari terakhir',
+  'syncBudget.days30': '30 hari terakhir',
+  'syncBudget.days90': '90 hari terakhir',
+  'syncBudget.allTime': 'Sepanjang waktu',
+  'syncBudget.unlimited': 'Tidak terbatas',
+  'syncBudget.saved': 'Anggaran disimpan.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Konfirmasi sinkronisasi',
+  'syncConfirm.message':
+    'Sinkronisasi ini akan memproses ~{items} item (~{tokens} token, est. ${cost}).',
+  'syncConfirm.budgetNote': 'Batas anggaran: ${max}',
+  'syncConfirm.proceed': 'Lanjutkan',
+  'syncConfirm.cancel': 'Batal',
+  'syncConfirm.estimating': 'Memperkirakan biaya...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} bulan ini',
+  'monthlyCost.noData': 'Tidak ada sinkronisasi bulan ini',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Aktivitas',
+  'onboarding.custom.activity.title': 'Aktivitas agen',
+  'onboarding.custom.activity.subtitle':
+    'Seberapa proaktif agen Anda memantau dan bertindak di latar belakang.',
+  'onboarding.custom.activity.defaultDesc':
+    'Aktivitas sedang — sinkronisasi per jam, ringkasan harian.',
+  'onboarding.custom.activity.configureDesc':
+    'Pilih tingkat aktivitas Anda sendiri. Konfigurasi di Pengaturan › Tingkat aktivitas agen.',
 };
 
 export default messages;

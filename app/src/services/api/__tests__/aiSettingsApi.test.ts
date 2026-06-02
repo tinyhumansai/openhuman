@@ -411,6 +411,29 @@ describe('loadAISettings', () => {
     expect(settings.cloudProviders[0].has_api_key).toBe(false);
   });
 
+  it('keeps local runtime endpoint providers so the AI panel can edit them', async () => {
+    mockOpenhumanGetClientConfig.mockResolvedValue(
+      makeClientConfigResult({
+        cloud_providers: [
+          {
+            id: 'p_ollama_1',
+            slug: 'ollama',
+            label: 'Ollama',
+            endpoint: 'http://127.0.0.1:11434/v1',
+            auth_style: 'none',
+          },
+        ],
+      })
+    );
+    mockAuthListProviderCredentials.mockResolvedValue(makeAuthProfileResult([]));
+
+    const settings = await loadAISettings();
+
+    expect(settings.cloudProviders).toHaveLength(1);
+    expect(settings.cloudProviders[0].slug).toBe('ollama');
+    expect(settings.cloudProviders[0].endpoint).toBe('http://127.0.0.1:11434/v1');
+  });
+
   it('includes two cloud providers with correct labels and endpoints', async () => {
     mockOpenhumanGetClientConfig.mockResolvedValue(
       makeClientConfigResult({
@@ -600,6 +623,32 @@ describe('saveAISettings', () => {
     // has_api_key must NOT be present in the wire payload — it's not part of
     // CloudProviderCreds.
     expect(patch.cloud_providers![0]).not.toHaveProperty('has_api_key');
+  });
+
+  it('preserves local runtime providers in the cloud_providers payload', async () => {
+    const prev = makeSettings({ cloudProviders: [] });
+    const next = makeSettings({
+      cloudProviders: [
+        {
+          id: 'p_ollama_1',
+          slug: 'ollama',
+          label: 'Ollama',
+          endpoint: 'http://127.0.0.1:11434/v1',
+          auth_style: 'none',
+          has_api_key: true,
+        },
+      ],
+    });
+
+    await saveAISettings(prev, next);
+
+    const patch = mockOpenhumanUpdateModelSettings.mock.calls[0][0];
+    expect(patch.cloud_providers).toHaveLength(1);
+    expect(patch.cloud_providers![0]).toMatchObject({
+      slug: 'ollama',
+      endpoint: 'http://127.0.0.1:11434/v1',
+      auth_style: 'none',
+    });
   });
 
   it('preserves auth_style through save round-trip for anthropic', async () => {

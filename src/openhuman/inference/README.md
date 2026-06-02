@@ -12,46 +12,49 @@ Unified inference domain: the canonical home for everything LLM/STT/TTS/embeddin
 - Run ChatGPT/Codex OAuth (PKCE) for the `openai` cloud slug and persist tokens in the encrypted auth-profile store.
 - Expose an OpenAI-compatible `/v1/*` HTTP endpoint guarded by a stable user-managed external bearer.
 - Detect device hardware profile and recommend/apply local model presets/tiers.
+- Maintain the built-in BYOK provider preset catalog used by Settings > AI.
+  The current matrix lives in `docs/inference-provider-catalog.md`; credentials
+  are stored under `provider:<slug>` in the auth-profile store.
 
 ## Key files
 
-| File / dir | Role |
-| --- | --- |
-| `mod.rs` | Domain root; module decls + re-exports; wires `inference.*` controller schemas/controllers. |
-| `ops.rs` | Canonical handler file — `inference_*` business logic returning `RpcOutcome<T>`; delegates to `local`, `provider`, `sentiment`, `device`, `presets`, `openai_oauth`. Includes Sentry-noise suppression for expected provider/user-config failures. |
-| `schemas.rs` | `inference.*` controller schemas + `handle_*` fns + param DTOs. |
-| `types.rs` | Serde DTOs: `LocalAiStatus`, `LocalAiAssetsStatus`, `LocalAiDownloadsProgress`, `LocalAiEmbeddingResult`, `LocalAiSpeechResult`, `LocalAiTtsResult`, etc. |
-| `device.rs` | `DeviceProfile` hardware detection (RAM/CPU/GPU/OS), cached. |
-| `model_ids.rs` | Effective chat/vision/embedding/STT/TTS/quantization model id resolution from config. |
-| `model_context.rs` | Known model context-window sizes (`context_window_for_model`) for pre-dispatch budgeting. |
-| `presets.rs` | `ModelPreset`, `ModelTier`, `VisionMode`; tier recommendation + apply-to-config; MVP preset gating. |
-| `sentiment.rs` | `SentimentResult` + emotion/valence analysis via the local model. |
-| `parse.rs` / `paths.rs` | Output parsing helpers / on-disk model artifact paths. |
-| `local/` | Local runtime manager (was `local_ai/`). |
-| `local/core.rs` | `LocalAiService` singleton (`global`/`try_global`), `model_artifact_path`. |
-| `local/ops.rs` | Local RPC entrypoints (`local_ai_status/prompt/summarize/vision_prompt/embed/should_react`, `ReactionDecision`); re-exported as `local::rpc`. |
-| `local/schemas.rs` | `local_ai.*` controller schemas + handlers. |
-| `local/ollama.rs`, `local/lm_studio.rs` | Provider-specific runtime drivers; base-url resolution. |
-| `local/install*.rs`, `local/voice_install_common.rs` | Whisper/Piper install + shared download logic. |
-| `local/model_requirements.rs` | `MIN_CONTEXT_TOKENS`, `evaluate_context`, `ContextEligibility`. |
-| `local/service/` | `LocalAiService` impl split: `bootstrap`, `ollama_admin`, `public_infer`, `speech`, `vision_embed`, `whisper_engine`, `assets`, `spawn_marker`. |
-| `provider/` | Unified provider abstraction (was `providers/`). |
-| `provider/traits.rs` | `Provider` trait + `ChatMessage`/`ChatRequest`/`ChatResponse`/`ToolCall`/`UsageInfo`/`ProviderDelta` etc. |
-| `provider/factory.rs` | `create_chat_provider`, `provider_for_role`, provider-string grammar, local/cloud construction; `BYOK_INCOMPLETE_SENTINEL`. |
-| `provider/router.rs` | `RouterProvider` hint-based multi-model routing. |
-| `provider/reliable.rs` | Retry/backoff wrapper. |
-| `provider/compatible*.rs` | OpenAI-compatible provider (request dump/parse/stream/types). |
-| `provider/openhuman_backend.rs` | Managed OpenHuman backend provider (session JWT). |
-| `provider/claude_agent_sdk/` | Claude Agent SDK subprocess provider (`protocol.rs`, `subprocess.rs`). |
-| `provider/config_rejection.rs`, `provider/billing_error.rs` | Error classifiers (unknown-model / config rejection / budget exhausted). |
-| `provider/temperature.rs`, `provider/thread_context.rs` | Per-workload temperature override; thread context plumbing. |
-| `provider/ops.rs` | `list_configured_models`, SessionExpired publishing on auth failure. |
-| `provider/schemas.rs` | Provider-layer schemas. |
-| `voice/` | Inference implementations imported by `crate::openhuman::voice`. |
-| `voice/cloud_transcribe.rs`, `voice/local_transcribe.rs`, `voice/local_speech.rs` | STT (cloud + local) and local TTS. |
-| `voice/streaming.rs`, `voice/postprocess.rs`, `voice/hallucination.rs` | Streaming transcription, post-processing, hallucination filtering. |
-| `openai_oauth/` | ChatGPT/Codex OAuth: `config.rs` (Codex OAuth config), `flow.rs` (start/complete/status/disconnect), `store.rs` (token persistence). |
-| `http/` | OpenAI-compatible endpoint: `server.rs` (`router()`), `types.rs`; `EXTERNAL_OPENAI_COMPAT_PROVIDER` bearer id. |
+| File / dir                                                                        | Role                                                                                                                                                                                                                                               |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mod.rs`                                                                          | Domain root; module decls + re-exports; wires `inference.*` controller schemas/controllers.                                                                                                                                                        |
+| `ops.rs`                                                                          | Canonical handler file — `inference_*` business logic returning `RpcOutcome<T>`; delegates to `local`, `provider`, `sentiment`, `device`, `presets`, `openai_oauth`. Includes Sentry-noise suppression for expected provider/user-config failures. |
+| `schemas.rs`                                                                      | `inference.*` controller schemas + `handle_*` fns + param DTOs.                                                                                                                                                                                    |
+| `types.rs`                                                                        | Serde DTOs: `LocalAiStatus`, `LocalAiAssetsStatus`, `LocalAiDownloadsProgress`, `LocalAiEmbeddingResult`, `LocalAiSpeechResult`, `LocalAiTtsResult`, etc.                                                                                          |
+| `device.rs`                                                                       | `DeviceProfile` hardware detection (RAM/CPU/GPU/OS), cached.                                                                                                                                                                                       |
+| `model_ids.rs`                                                                    | Effective chat/vision/embedding/STT/TTS/quantization model id resolution from config.                                                                                                                                                              |
+| `model_context.rs`                                                                | Known model context-window sizes (`context_window_for_model`) for pre-dispatch budgeting.                                                                                                                                                          |
+| `presets.rs`                                                                      | `ModelPreset`, `ModelTier`, `VisionMode`; tier recommendation + apply-to-config; MVP preset gating.                                                                                                                                                |
+| `sentiment.rs`                                                                    | `SentimentResult` + emotion/valence analysis via the local model.                                                                                                                                                                                  |
+| `parse.rs` / `paths.rs`                                                           | Output parsing helpers / on-disk model artifact paths.                                                                                                                                                                                             |
+| `local/`                                                                          | Local runtime manager (was `local_ai/`).                                                                                                                                                                                                           |
+| `local/core.rs`                                                                   | `LocalAiService` singleton (`global`/`try_global`), `model_artifact_path`.                                                                                                                                                                         |
+| `local/ops.rs`                                                                    | Local RPC entrypoints (`local_ai_status/prompt/summarize/vision_prompt/embed/should_react`, `ReactionDecision`); re-exported as `local::rpc`.                                                                                                      |
+| `local/schemas.rs`                                                                | `local_ai.*` controller schemas + handlers.                                                                                                                                                                                                        |
+| `local/ollama.rs`, `local/lm_studio.rs`                                           | Provider-specific runtime drivers; base-url resolution.                                                                                                                                                                                            |
+| `local/install*.rs`, `local/voice_install_common.rs`                              | Whisper/Piper install + shared download logic.                                                                                                                                                                                                     |
+| `local/model_requirements.rs`                                                     | `MIN_CONTEXT_TOKENS`, `evaluate_context`, `ContextEligibility`.                                                                                                                                                                                    |
+| `local/service/`                                                                  | `LocalAiService` impl split: `bootstrap`, `ollama_admin`, `public_infer`, `speech`, `vision_embed`, `whisper_engine`, `assets`, `spawn_marker`.                                                                                                    |
+| `provider/`                                                                       | Unified provider abstraction (was `providers/`).                                                                                                                                                                                                   |
+| `provider/traits.rs`                                                              | `Provider` trait + `ChatMessage`/`ChatRequest`/`ChatResponse`/`ToolCall`/`UsageInfo`/`ProviderDelta` etc.                                                                                                                                          |
+| `provider/factory.rs`                                                             | `create_chat_provider`, `provider_for_role`, provider-string grammar, local/cloud construction; `BYOK_INCOMPLETE_SENTINEL`.                                                                                                                        |
+| `provider/router.rs`                                                              | `RouterProvider` hint-based multi-model routing.                                                                                                                                                                                                   |
+| `provider/reliable.rs`                                                            | Retry/backoff wrapper.                                                                                                                                                                                                                             |
+| `provider/compatible*.rs`                                                         | OpenAI-compatible provider (request dump/parse/stream/types).                                                                                                                                                                                      |
+| `provider/openhuman_backend.rs`                                                   | Managed OpenHuman backend provider (session JWT).                                                                                                                                                                                                  |
+| `provider/claude_agent_sdk/`                                                      | Claude Agent SDK subprocess provider (`protocol.rs`, `subprocess.rs`).                                                                                                                                                                             |
+| `provider/config_rejection.rs`, `provider/billing_error.rs`                       | Error classifiers (unknown-model / config rejection / budget exhausted).                                                                                                                                                                           |
+| `provider/temperature.rs`, `provider/thread_context.rs`                           | Per-workload temperature override; thread context plumbing.                                                                                                                                                                                        |
+| `provider/ops.rs`                                                                 | `list_configured_models`, SessionExpired publishing on auth failure.                                                                                                                                                                               |
+| `provider/schemas.rs`                                                             | Provider-layer schemas.                                                                                                                                                                                                                            |
+| `voice/`                                                                          | Inference implementations imported by `crate::openhuman::voice`.                                                                                                                                                                                   |
+| `voice/cloud_transcribe.rs`, `voice/local_transcribe.rs`, `voice/local_speech.rs` | STT (cloud + local) and local TTS.                                                                                                                                                                                                                 |
+| `voice/streaming.rs`, `voice/postprocess.rs`, `voice/hallucination.rs`            | Streaming transcription, post-processing, hallucination filtering.                                                                                                                                                                                 |
+| `openai_oauth/`                                                                   | ChatGPT/Codex OAuth: `config.rs` (Codex OAuth config), `flow.rs` (start/complete/status/disconnect), `store.rs` (token persistence).                                                                                                               |
+| `http/`                                                                           | OpenAI-compatible endpoint: `server.rs` (`router()`), `types.rs`; `EXTERNAL_OPENAI_COMPAT_PROVIDER` bearer id.                                                                                                                                     |
 
 ## Public surface
 

@@ -6,12 +6,14 @@ import InstalledServerDetail from './InstalledServerDetail';
 const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
 const mockUninstall = vi.fn();
+const mockUpdateEnv = vi.fn();
 
 vi.mock('../../../services/api/mcpClientsApi', () => ({
   mcpClientsApi: {
     connect: (...args: unknown[]) => mockConnect(...args),
     disconnect: (...args: unknown[]) => mockDisconnect(...args),
     uninstall: (...args: unknown[]) => mockUninstall(...args),
+    updateEnv: (...args: unknown[]) => mockUpdateEnv(...args),
     configAssist: vi.fn(),
   },
 }));
@@ -33,6 +35,7 @@ describe('InstalledServerDetail', () => {
     mockConnect.mockReset();
     mockDisconnect.mockReset();
     mockUninstall.mockReset();
+    mockUpdateEnv.mockReset();
   });
 
   it('renders server name and description', () => {
@@ -199,6 +202,78 @@ describe('InstalledServerDetail', () => {
     expect(screen.getByText('Error')).toBeInTheDocument();
     // last_error shown in the error banner
     expect(screen.getByText('Timed out')).toBeInTheDocument();
+  });
+
+  // ----------------------------------------------------------------------
+  // Env reconfiguration (issue #3039)
+  // ----------------------------------------------------------------------
+
+  it('opens the reconfigure form with one input per env key', () => {
+    render(
+      <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reconfigure' }));
+    expect(screen.getByLabelText('API_KEY')).toBeInTheDocument();
+    expect(screen.getByLabelText('DB_URL')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save & reconnect' })).toBeInTheDocument();
+  });
+
+  it('validates that every env key is filled before saving', async () => {
+    render(
+      <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reconfigure' }));
+    // Fill only one of the two keys.
+    fireEvent.change(screen.getByLabelText('API_KEY'), { target: { value: 'k' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save & reconnect' }));
+    });
+    expect(screen.getByText('"DB_URL" is required')).toBeInTheDocument();
+    expect(mockUpdateEnv).not.toHaveBeenCalled();
+  });
+
+  it('calls updateEnv with all values and shows success on reconnect', async () => {
+    mockUpdateEnv.mockResolvedValue({
+      server_id: 'srv-1',
+      status: 'connected',
+      env_keys: ['API_KEY', 'DB_URL'],
+      tools: [],
+    });
+    render(
+      <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reconfigure' }));
+    fireEvent.change(screen.getByLabelText('API_KEY'), { target: { value: 'new-key' } });
+    fireEvent.change(screen.getByLabelText('DB_URL'), { target: { value: 'new-url' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save & reconnect' }));
+    });
+    expect(mockUpdateEnv).toHaveBeenCalledWith({
+      server_id: 'srv-1',
+      env: { API_KEY: 'new-key', DB_URL: 'new-url' },
+    });
+    await waitFor(() =>
+      expect(screen.getByText('Environment updated and reconnected.')).toBeInTheDocument()
+    );
+  });
+
+  it('surfaces an error when reconnect after update fails', async () => {
+    mockUpdateEnv.mockResolvedValue({
+      server_id: 'srv-1',
+      status: 'disconnected',
+      env_keys: ['API_KEY', 'DB_URL'],
+      error: 'bad token',
+    });
+    render(
+      <InstalledServerDetail server={BASE_SERVER} connStatus={undefined} onUninstalled={() => {}} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reconfigure' }));
+    fireEvent.change(screen.getByLabelText('API_KEY'), { target: { value: 'k' } });
+    fireEvent.change(screen.getByLabelText('DB_URL'), { target: { value: 'u' } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save & reconnect' }));
+    });
+    await waitFor(() => expect(screen.getByText('bad token')).toBeInTheDocument());
   });
 
   // ----------------------------------------------------------------------

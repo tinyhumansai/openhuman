@@ -340,6 +340,7 @@ async fn round17_ops_trigger_history_app_state_and_profiles_cover_local_edges() 
     std::fs::create_dir_all(&state_dir).expect("state dir");
     std::fs::write(state_dir.join("app-state.json"), "{not-json").expect("corrupt state");
     let updated = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: Some(Some(" round17-key ".into())),
         onboarding_tasks: Some(Some(StoredOnboardingTasks {
             accessibility_permission_granted: false,

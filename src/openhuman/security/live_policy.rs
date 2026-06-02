@@ -23,6 +23,7 @@ use super::SecurityPolicy;
 struct LiveState {
     policy: RwLock<Arc<SecurityPolicy>>,
     workspace_dir: RwLock<PathBuf>,
+    action_dir: RwLock<PathBuf>,
     generation: AtomicU64,
 }
 
@@ -32,10 +33,15 @@ static STATE: OnceLock<LiveState> = OnceLock::new();
 /// `workspace_dir` so later reloads rebuild against the same workspace.
 /// Idempotent: later calls overwrite the stored policy (e.g. a new session
 /// starting with a freshly loaded config). Returns the same `Arc` for chaining.
-pub fn install(policy: Arc<SecurityPolicy>, workspace_dir: PathBuf) -> Arc<SecurityPolicy> {
+pub fn install(
+    policy: Arc<SecurityPolicy>,
+    workspace_dir: PathBuf,
+    action_dir: PathBuf,
+) -> Arc<SecurityPolicy> {
     let state = STATE.get_or_init(|| LiveState {
         policy: RwLock::new(Arc::clone(&policy)),
         workspace_dir: RwLock::new(workspace_dir.clone()),
+        action_dir: RwLock::new(action_dir.clone()),
         generation: AtomicU64::new(0),
     });
     if let Ok(mut guard) = state.policy.write() {
@@ -43,6 +49,9 @@ pub fn install(policy: Arc<SecurityPolicy>, workspace_dir: PathBuf) -> Arc<Secur
     }
     if let Ok(mut guard) = state.workspace_dir.write() {
         *guard = workspace_dir;
+    }
+    if let Ok(mut guard) = state.action_dir.write() {
+        *guard = action_dir;
     }
     policy
 }
@@ -73,7 +82,16 @@ pub fn reload_from(autonomy_config: &crate::openhuman::config::AutonomyConfig) {
         .read()
         .map(|g| g.clone())
         .unwrap_or_default();
-    let rebuilt = Arc::new(SecurityPolicy::from_config(autonomy_config, &workspace));
+    let action = state
+        .action_dir
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let rebuilt = Arc::new(SecurityPolicy::from_config(
+        autonomy_config,
+        &workspace,
+        &action,
+    ));
     if let Ok(mut guard) = state.policy.write() {
         *guard = rebuilt;
     }
@@ -104,7 +122,7 @@ mod tests {
             workspace_dir: workspace.clone(),
             ..SecurityPolicy::default()
         });
-        install(initial, workspace.clone());
+        install(initial, workspace.clone(), workspace.clone());
 
         let before = generation();
         assert_eq!(

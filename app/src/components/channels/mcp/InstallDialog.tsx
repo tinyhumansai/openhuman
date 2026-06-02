@@ -115,6 +115,20 @@ const InstallDialog = ({ qualifiedName, prefillEnv, onSuccess, onCancel }: Insta
         config: parsedConfig,
       });
       log('install success server_id=%s', server.server_id);
+      // Best-effort auto-connect — fire-and-forget so the dialog closes
+      // immediately on install success. A slow or failing handshake must
+      // never block onSuccess (the detail view surfaces errors and offers
+      // a Connect retry).
+      void mcpClientsApi
+        .connect(server.server_id)
+        .then(() => log('auto-connect success server_id=%s', server.server_id))
+        .catch((connectErr: unknown) =>
+          log(
+            'auto-connect failed server_id=%s: %s',
+            server.server_id,
+            connectErr instanceof Error ? connectErr.message : String(connectErr)
+          )
+        );
       onSuccess(server);
     } catch (err) {
       const msg = err instanceof Error ? err.message : t('mcp.install.failedInstall');

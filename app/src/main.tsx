@@ -10,7 +10,7 @@ import { getCoreStateSnapshot } from './lib/coreState/store';
 import MascotWindowApp from './mascot/MascotWindowApp';
 import OverlayApp from './overlay/OverlayApp';
 import './polyfills';
-import { initGA, initSentry, trackEvent } from './services/analytics';
+import { initGA, initSentry, startUiInteractionTracking, trackEvent } from './services/analytics';
 import { setStoreForApiClient } from './services/apiClient';
 import { primeActiveUserId } from './store/userScopedStorage';
 import './styles/theme.css';
@@ -60,6 +60,7 @@ const ensureDefaultHashRoute = () => {
 initSentry();
 initGA();
 if (!isStandaloneWindow) {
+  startUiInteractionTracking();
   trackEvent('app_open', { version: APP_VERSION });
 }
 document.documentElement.dataset.window = currentWindowLabel;

@@ -498,6 +498,23 @@ const ChatRuntimeProvider = ({ children }: { children: React.ReactNode }) => {
           })
         );
       },
+      onSubagentAwaitingUser: (event: ChatSubagentDoneEvent) => {
+        const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
+        const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];
+        if (existing.length > 0) {
+          const entries = existing.map(entry => {
+            if (entry.id !== subagentRowId || entry.status !== 'running') return entry;
+            return decorateEntry({
+              ...entry,
+              status: 'awaiting_user' as ToolTimelineEntryStatus,
+              subagent: entry.subagent
+                ? { ...entry.subagent, status: 'awaiting_user' }
+                : entry.subagent,
+            });
+          });
+          dispatch(setToolTimelineForThread({ threadId: event.thread_id, entries }));
+        }
+      },
       onSubagentDone: (event: ChatSubagentDoneEvent) => {
         const subagentRowId = `${event.thread_id}:subagent:${event.skill_id}:${event.tool_name}`;
         const existing = store.getState().chatRuntime.toolTimelineByThread[event.thread_id] ?? [];

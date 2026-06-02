@@ -14,6 +14,8 @@ struct UpdateLocalStateParams {
     encryption_key: Option<Option<String>>,
     #[serde(default, deserialize_with = "deserialize_nullable_patch")]
     onboarding_tasks: Option<Option<super::ops::StoredOnboardingTasks>>,
+    #[serde(default, deserialize_with = "deserialize_nullable_patch")]
+    keyring_consent: Option<Option<crate::openhuman::keyring_consent::ConsentPreference>>,
 }
 
 pub fn all_app_state_controller_schemas() -> Vec<ControllerSchema> {
@@ -63,6 +65,10 @@ pub fn app_state_schemas(function: &str) -> ControllerSchema {
                     "onboardingTasks",
                     "Set or clear locally stored onboarding task progress.",
                 ),
+                optional_json(
+                    "keyringConsent",
+                    "Set or clear the user's keyring consent preference.",
+                ),
             ],
             outputs: vec![FieldSchema {
                 name: "result",
@@ -101,6 +107,7 @@ fn handle_update_local_state(params: Map<String, Value>) -> ControllerFuture {
         crate::openhuman::app_state::update_local_state(StoredAppStatePatch {
             encryption_key: payload.encryption_key,
             onboarding_tasks: payload.onboarding_tasks,
+            keyring_consent: payload.keyring_consent,
         })
         .await?
         .into_cli_compatible_json()
@@ -159,7 +166,7 @@ mod tests {
         let s = app_state_schemas("update_local_state");
         assert_eq!(s.namespace, "app_state");
         assert_eq!(s.function, "update_local_state");
-        assert_eq!(s.inputs.len(), 2);
+        assert_eq!(s.inputs.len(), 3);
         for input in &s.inputs {
             assert!(!input.required, "input '{}' should be optional", input.name);
         }

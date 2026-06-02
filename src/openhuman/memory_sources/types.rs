@@ -65,13 +65,13 @@ pub struct MemorySourceEntry {
     pub branch: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
-    /// Max commits to pull per sync (default 2000 when absent).
+    /// Max commits to pull per sync (default 1000 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_commits: Option<u32>,
-    /// Max issues to pull per sync (default 2000 when absent).
+    /// Max issues to pull per sync (default 1000 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_issues: Option<u32>,
-    /// Max pull requests to pull per sync (default 2000 when absent).
+    /// Max pull requests to pull per sync (default 1000 when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_prs: Option<u32>,
 
@@ -88,6 +88,17 @@ pub struct MemorySourceEntry {
     // ── WebPage ──
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector: Option<String>,
+
+    // ── Sync Budget (all source kinds) ──
+    /// Maximum tokens to consume per sync run. Sync stops once this budget is hit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_per_sync: Option<u64>,
+    /// Maximum cost in USD per sync run. Refuses LLM calls once reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cost_per_sync_usd: Option<f64>,
+    /// Sync depth in days — only fetch items from the last N days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_depth_days: Option<u32>,
 }
 
 impl MemorySourceEntry {
@@ -262,6 +273,9 @@ mod tests {
             since_days: None,
             max_items: None,
             selector: None,
+            max_tokens_per_sync: None,
+            max_cost_per_sync_usd: None,
+            sync_depth_days: None,
         }
     }
 }

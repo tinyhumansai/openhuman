@@ -651,6 +651,26 @@ fn config_schema_helpers_cover_provider_voice_agent_and_channel_defaults() {
     migrate_legacy_fields(&mut custom_legacy);
     assert_eq!(custom_legacy.label, "Custom");
     assert!(custom_legacy.endpoint.is_empty());
+    let mut sumopod_legacy = CloudProviderCreds {
+        id: "provider-sumopod".to_string(),
+        legacy_type: Some("sumopod".to_string()),
+        ..CloudProviderCreds::default()
+    };
+    migrate_legacy_fields(&mut sumopod_legacy);
+    assert_eq!(sumopod_legacy.slug, "sumopod");
+    assert_eq!(sumopod_legacy.label, "SumoPod");
+    assert_eq!(sumopod_legacy.endpoint, "https://ai.sumopod.com/v1");
+    assert_eq!(sumopod_legacy.auth_style, AuthStyle::Bearer);
+    let mut minimax_legacy = CloudProviderCreds {
+        id: "provider-minimax".to_string(),
+        legacy_type: Some("minimax".to_string()),
+        ..CloudProviderCreds::default()
+    };
+    migrate_legacy_fields(&mut minimax_legacy);
+    assert_eq!(minimax_legacy.slug, "minimax");
+    assert_eq!(minimax_legacy.label, "MiniMax");
+    assert_eq!(minimax_legacy.endpoint, "https://api.minimax.io/anthropic");
+    assert_eq!(minimax_legacy.auth_style, AuthStyle::Anthropic);
     assert_eq!(AuthStyle::OpenhumanJwt.as_str(), "openhuman_jwt");
     assert_eq!(AuthStyle::Anthropic.as_str(), "anthropic");
     assert_eq!(AuthStyle::None.as_str(), "none");
@@ -2763,6 +2783,8 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             vec![
                 "openhuman.config_agent_server_status",
                 "openhuman.config_get",
+                "openhuman.config_get_activity_level_settings",
+                "openhuman.config_get_agent_settings",
                 "openhuman.config_get_analytics_settings",
                 "openhuman.config_get_autonomy_settings",
                 "openhuman.config_get_client_config",
@@ -2779,6 +2801,8 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
+                "openhuman.config_update_activity_level_settings",
+                "openhuman.config_update_agent_settings",
                 "openhuman.config_update_analytics_settings",
                 "openhuman.config_update_autonomy_settings",
                 "openhuman.config_update_browser_settings",
@@ -2824,6 +2848,23 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             ],
         ),
         ("connectivity", vec!["openhuman.connectivity_diag"]),
+        (
+            "memory_sources",
+            vec![
+                "openhuman.memory_sources_add",
+                "openhuman.memory_sources_estimate_sync_cost",
+                "openhuman.memory_sources_get",
+                "openhuman.memory_sources_list",
+                "openhuman.memory_sources_list_items",
+                "openhuman.memory_sources_monthly_cost_summary",
+                "openhuman.memory_sources_read_item",
+                "openhuman.memory_sources_remove",
+                "openhuman.memory_sources_status_list",
+                "openhuman.memory_sources_sync",
+                "openhuman.memory_sources_sync_audit_log",
+                "openhuman.memory_sources_update",
+            ],
+        ),
     ] {
         assert_eq!(
             schema_method_names(&schema, namespace),
@@ -5422,14 +5463,32 @@ fn credentials_profile_store_recovers_dropped_entries_empty_files_and_datetime_e
         .to_string(),
     )
     .expect("write missing oauth secret fixture");
-    let missing_secret_err = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
+    // An OAuth profile missing its access_token must not poison the whole
+    // store: it is dropped just like a bad-kind entry (see #3125), so the load
+    // succeeds with that single profile purged rather than returning an error.
+    let recovered_missing_secret = AuthProfilesStore::new(&missing_oauth_secret_dir, false)
         .load()
-        .expect_err("oauth profile missing access token should fail");
+        .expect("oauth profile missing access_token should be dropped, not fail the whole load");
     assert!(
-        missing_secret_err
-            .to_string()
-            .contains("OAuth profile missing access_token"),
-        "unexpected missing oauth secret error: {missing_secret_err:#}"
+        !recovered_missing_secret
+            .profiles
+            .contains_key("github:missing-access"),
+        "oauth profile missing access_token should be dropped on load: {recovered_missing_secret:#?}"
+    );
+    assert!(
+        !recovered_missing_secret.active_profiles.contains_key("github"),
+        "active profile pointing at a dropped profile should be purged: {recovered_missing_secret:#?}"
+    );
+    let rewritten_missing_secret: Value = serde_json::from_str(
+        &std::fs::read_to_string(missing_oauth_secret_dir.join("auth-profiles.json"))
+            .expect("read rewritten missing-oauth-secret store"),
+    )
+    .expect("rewritten missing-oauth-secret store should be json");
+    assert!(
+        rewritten_missing_secret
+            .pointer("/profiles/github:missing-access")
+            .is_none(),
+        "dropped oauth profile should be purged from persisted store: {rewritten_missing_secret}"
     );
 
     let public_api_dir = tmp.path().join("public-api-errors");

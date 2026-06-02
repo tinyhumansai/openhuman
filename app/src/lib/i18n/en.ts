@@ -237,6 +237,7 @@ const en: TranslationMap = {
   'routines.notRunYet': 'Not run yet',
   'routines.runNow': 'Run Now',
   'routines.running': 'Running…',
+  'routines.runNowTimedOut': 'Run timed out — please refresh and try again.',
   'routines.viewHistory': 'View history',
   'routines.loadingHistory': 'Loading…',
   'routines.noHistory': 'No run history yet.',
@@ -608,12 +609,13 @@ const en: TranslationMap = {
   'onboarding.apiKeys.continue': 'Save and continue',
   'onboarding.apiKeys.saving': 'Saving…',
 
-  // Onboarding: Custom wizard (Inference / Voice / OAuth / Search / Memory)
+  // Onboarding: Custom wizard (Inference / Voice / OAuth / Search / Activity / Memory)
   'onboarding.custom.stepperInference': 'Inference',
   'onboarding.custom.stepperVoice': 'Voice',
   'onboarding.custom.stepperOAuth': 'OAuth',
   'onboarding.custom.stepperSearch': 'Search',
   'onboarding.custom.stepperEmbeddings': 'Embeddings',
+  'onboarding.custom.stepperActivity': 'Activity',
   'onboarding.custom.stepperMemory': 'Memory',
   'onboarding.custom.stepCounter': 'Step {n} of {total}',
   'onboarding.custom.defaultTitle': 'Default',
@@ -671,6 +673,15 @@ const en: TranslationMap = {
   'onboarding.custom.embeddings.configureDesc':
     'Bring your own embedding provider (OpenAI, Voyage, Ollama, etc.).',
 
+  // Onboarding: Custom > Activity
+  'onboarding.custom.activity.title': 'Agent Activity',
+  'onboarding.custom.activity.subtitle':
+    'How proactively your agent monitors and acts in the background.',
+  'onboarding.custom.activity.defaultDesc':
+    'Moderate activity — syncs every hour, sends a daily digest. Balanced cost and responsiveness.',
+  'onboarding.custom.activity.configureDesc':
+    'Pick your own activity level. Configure in Settings › Agent activity level.',
+
   // Onboarding: Custom > Memory
   'onboarding.custom.memory.title': 'Memory',
   'onboarding.custom.memory.subtitle':
@@ -679,6 +690,26 @@ const en: TranslationMap = {
     'OpenHuman manages memory storage and retrieval automatically. Nothing to set up.',
   'onboarding.custom.memory.configureDesc':
     'Inspect, export, or wipe memory yourself. Configure in Settings › Memory.',
+
+  // Agent activity level
+  'activityLevel.title': 'Agent activity level',
+  'activityLevel.description':
+    'Control how proactive your agent is. Higher levels use more tokens.',
+  'activityLevel.off': 'Off',
+  'activityLevel.offDesc': 'No background processing. Syncs only when you press the button.',
+  'activityLevel.minimal': 'Minimal',
+  'activityLevel.minimalDesc': 'Sync sources once per day. No proactive messages.',
+  'activityLevel.moderate': 'Moderate',
+  'activityLevel.moderateDesc': 'Sync every hour. Daily digest. Suggests actions.',
+  'activityLevel.active': 'Active',
+  'activityLevel.activeDesc': 'Sync every 10 min. Monitors channels, triages, drafts replies.',
+  'activityLevel.alwaysOn': 'Always-on',
+  'activityLevel.alwaysOnDesc': 'Real-time sync. Full autonomy within guardrails.',
+  'activityLevel.currentMonth': 'This month: ${amount}',
+  'activityLevel.saved': 'Activity level updated.',
+  'activityLevel.default': 'default',
+  'activityLevel.costFree': '$0',
+  'activityLevel.costRange': '~${min}–${max}/mo',
 
   // Accounts
   'accounts.addAccount': 'Add Account',
@@ -848,16 +879,16 @@ const en: TranslationMap = {
   'privacy.sentTo': 'Sent to',
   'privacy.leavesDevice': 'Leaves device',
   'privacy.staysLocal': 'Stays local',
-  'privacy.anonymizedAnalytics': 'Anonymized Analytics',
-  'privacy.shareAnonymizedData': 'Share Anonymized Usage Data',
+  'privacy.anonymizedAnalytics': 'Product Analytics',
+  'privacy.shareAnonymizedData': 'Share Product Analytics and Diagnostics',
   'privacy.shareAnonymizedDataDesc':
-    'Help improve OpenHuman by sharing anonymous crash reports and usage analytics. All data is fully anonymized — no personal data, messages, wallet keys, or session information is ever collected.',
+    'Help improve OpenHuman by sharing privacy-limited crash reports and usage events, including a stable account ID and app version metadata. Messages, wallet keys, API keys, and session tokens are never collected.',
   'privacy.meetingFollowUps': 'Meeting follow-ups',
   'privacy.autoHandoffMeet': 'Auto-handoff Google Meet transcripts to the orchestrator',
   'privacy.autoHandoffMeetDesc':
     "When a Google Meet call ends, OpenHuman's orchestrator can read the transcript and may take actions like drafting messages, scheduling follow-ups, or posting summaries to your connected Slack workspace. Off by default.",
   'privacy.analyticsDisclaimer':
-    'All analytics and bug reports are fully anonymized. When enabled, we collect only crash information, device type, and the file location of errors. We never access your messages, session data, wallet keys, API keys, or any personally identifiable information. You can change this setting at any time.',
+    'When enabled, Product Analytics and Diagnostics may include privacy-limited crash reports and usage events, a stable account ID, and app version metadata. Messages, wallet keys, API keys, and session tokens are never collected. You can change this setting at any time.',
 
   // Settings: About
   'settings.about.version': 'Version',
@@ -941,7 +972,7 @@ const en: TranslationMap = {
   'settings.search.menuDesc':
     'Default to OpenHuman-managed search or wire up your own provider with an API key.',
   'settings.search.description':
-    'Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman’s backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.',
+    "Pick the search engine the agent uses, or disable search tools entirely. Managed uses OpenHuman's backend (no setup). Parallel, Brave, and Querit run direct from your machine using your API key.",
   'settings.search.engineAria': 'Search engine',
   'settings.search.engineDisabledLabel': 'Disabled',
   'settings.search.engineDisabledDesc':
@@ -1267,6 +1298,13 @@ const en: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Yes, uninstall',
   'mcp.detail.uninstall': 'Uninstall',
   'mcp.detail.envVars': 'Environment variables',
+  'mcp.detail.reconfigure': 'Reconfigure',
+  'mcp.detail.reconfigureHint':
+    'Enter new values for every variable, then reconnect. This replaces the stored values.',
+  'mcp.detail.saveReconnect': 'Save & reconnect',
+  'mcp.detail.reconfigureSaving': 'Saving…',
+  'mcp.detail.reconfigureSuccess': 'Environment updated and reconnected.',
+  'mcp.detail.reconfigureReconnectFailed': 'Saved, but reconnecting with the new values failed.',
   'mcp.detail.tools': 'Tools',
   'onboarding.skipForNow': 'Skip for Now',
   'onboarding.localAI.continueWithCloud': 'Continue with Cloud',
@@ -2112,6 +2150,24 @@ const en: TranslationMap = {
   'reflections.proposedAction': 'Proposed Action',
   'reflections.act': 'Act',
   'reflections.dismiss': 'Dismiss',
+  'reflections.viewConversation': 'View',
+
+  // Subconscious mode selector
+  'subconscious.mode.label': 'Subconscious Mode',
+  'subconscious.mode.off.title': 'Off',
+  'subconscious.mode.off.desc': 'Subconscious is disabled.',
+  'subconscious.mode.simple.title': 'Simple',
+  'subconscious.mode.simple.desc': 'Read-only observation. Memory and file access only.',
+  'subconscious.mode.aggressive.title': 'Aggressive',
+  'subconscious.mode.aggressive.desc':
+    'Full tool access. Can write, spawn agents, and delegate tasks.',
+  'subconscious.mode.aggressiveWarning':
+    'Aggressive mode gives the subconscious full tool access including writes and sub-agent spawning.',
+  'subconscious.interval.label': 'Frequency',
+  'subconscious.interval.minutes': '{n} min',
+  'subconscious.interval.hours': '{n}h',
+  'subconscious.interval.oneHour': '1 hour',
+  'subconscious.interval.oneDay': '24 hours',
 
   // WhatsApp
   'whatsapp.chatsSynced': 'chats synced',
@@ -2189,6 +2245,11 @@ const en: TranslationMap = {
   'memorySources.pageUrl': 'Page URL',
   'memorySources.cssSelector': 'CSS selector (optional)',
   'memorySources.searchQuery': 'Search query',
+  'memorySources.build.title': 'Build',
+  'memorySources.build.building': 'Building…',
+  'memorySources.build.successTitle': 'Tree built',
+  'memorySources.build.failedTitle': 'Build failed',
+  'memorySources.build.sealsMessage': 'seal(s) completed',
 
   // Backend
   'backend.aiBackend': 'AI Backend',
@@ -2384,7 +2445,7 @@ const en: TranslationMap = {
   'composio.envVarOverrides': 'is set, it overrides this setting.',
   'composio.previewBadge': 'Preview',
   'composio.previewTooltip':
-    'Agent integration coming soon — you can connect, but the agent can’t use this toolkit yet.',
+    "Agent integration coming soon — you can connect, but the agent can't use this toolkit yet.",
 
   // Memory: day-of-week labels for heatmap
   'memory.day.sun': 'Sun',
@@ -2493,7 +2554,7 @@ const en: TranslationMap = {
   'app.openhumanLink.notifications.send': 'Send test notification',
   'app.openhumanLink.notifications.sendFailed': "Couldn't send: {error}",
   'app.openhumanLink.notifications.sent':
-    'Test notification sent. If you didn’t receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.',
+    "Test notification sent. If you didn't receive it, go to System Settings → Notifications → OpenHuman, turn on Allow Notifications, and set Banner Style to Persistent.",
   'app.openhumanLink.skipForNow': 'Skip for now',
   'app.openhumanLink.telegramUnavailable': 'Telegram unavailable',
   'app.openhumanLink.title.accounts': 'Connect your apps',
@@ -2752,6 +2813,7 @@ const en: TranslationMap = {
   'conversations.subagent.statusRunning': 'running',
   'conversations.subagent.statusCompleted': 'completed',
   'conversations.subagent.statusFailed': 'failed',
+  'conversations.subagent.statusAwaitingUser': 'awaiting user',
   'daemon.serviceBlockingGate.body':
     'Retrying in the background. This usually resolves in a few seconds.',
   'daemon.serviceBlockingGate.downloadHint':
@@ -3054,7 +3116,9 @@ const en: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Chat and conversations',
   'settings.ai.disconnectProvider': 'Disconnect {label}',
   'settings.ai.connectProviderLabel': 'Connect {label}',
+  'settings.ai.editProviderEndpoint': 'Edit {label} endpoint',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Edit endpoint',
   'settings.ai.endpointUrlLabel': 'Endpoint URL',
   'settings.ai.localRuntimeHelper':
     'Where {label} is reachable. Default is localhost; point this at a remote host (for example, http://10.0.0.4:11434/v1) to use a shared instance.',
@@ -3702,7 +3766,7 @@ const en: TranslationMap = {
   'settings.skillsRunner.repoPicker.empty':
     'No repositories returned. Connect GitHub via Composio to populate this list.',
   'settings.skillsRunner.repoPicker.notConnected':
-    'GitHub isn’t connected via Composio. Connect it under Skills → Composio first.',
+    "GitHub isn't connected via Composio. Connect it under Skills → Composio first.",
   'settings.skillsRunner.repoPicker.privateTag': '(private)',
   'settings.skillsRunner.branchPicker.needRepo': 'Pick a repo first…',
   'settings.skillsRunner.branchPicker.loading': 'Loading branches…',
@@ -3851,6 +3915,14 @@ const en: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Require task plan approval',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Pause before an assigned agent executes an agent-authored task brief.',
+  'settings.agentAccess.timeout.label': 'Action timeout',
+  'settings.agentAccess.timeout.desc':
+    'How long a single tool or action may run before it is cancelled. Increase this if a large local model is interrupted before it finishes responding.',
+  'settings.agentAccess.timeout.unit': 'seconds',
+  'settings.agentAccess.timeout.invalid':
+    'Enter a whole number of seconds within the allowed range',
+  'settings.agentAccess.timeout.envOverride':
+    'The OPENHUMAN_TOOL_TIMEOUT_SECS environment variable is overriding this setting, so changes here have no effect until it is unset.',
   'settings.agentAccess.grantedFolders': 'Granted folders',
   'settings.agentAccess.alwaysAllow': 'Always-allowed tools',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3867,6 +3939,15 @@ const en: TranslationMap = {
   'settings.agentAccess.add': 'Add',
   'settings.agentAccess.saving': 'Saving…',
   'settings.agentAccess.changesApply': 'Changes apply on your next message.',
+  'settings.agentAccess.directories': 'Directories',
+  'settings.agentAccess.actionSandbox': 'Action sandbox',
+  'settings.agentAccess.readWriteAccess': 'read + write',
+  'settings.agentAccess.actionSandboxDesc':
+    'Default working directory for shell, file, and git tools.',
+  'settings.agentAccess.internalState': 'Internal state',
+  'settings.agentAccess.agentBlocked': 'agent-blocked',
+  'settings.agentAccess.internalStateDesc':
+    'Memory databases, sessions, tokens, and other core persistence. Not accessible to agent tools.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4366,14 +4447,6 @@ const en: TranslationMap = {
   'memory.sourceFilterAria': 'Filter by source',
   'calls.comingSoonDescription': 'AI-assisted calls are coming soon. Stay tuned.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 min',
-  'subconscious.interval.tenMinutes': '10 min',
-  'subconscious.interval.fifteenMinutes': '15 min',
-  'subconscious.interval.thirtyMinutes': '30 min',
-  'subconscious.interval.oneHour': '1 hour',
-  'subconscious.interval.sixHours': '6 hours',
-  'subconscious.interval.twelveHours': '12 hours',
-  'subconscious.interval.oneDay': '1 day',
   'subconscious.priority.critical': 'critical',
   'subconscious.priority.important': 'important',
   'subconscious.priority.normal': 'normal',
@@ -4399,7 +4472,7 @@ const en: TranslationMap = {
   'walletBalances.errorGeneric':
     'Unable to load wallet balances. Set up your wallet in Recovery Phrase and try again.',
   'walletBalances.setupHint':
-    'Your recovery phrase isn’t set up yet. Set it up to enable your wallet and see live balances.',
+    "Your recovery phrase isn't set up yet. Set it up to enable your wallet and see live balances.",
   'walletBalances.setupCta': 'Set up recovery phrase',
   'walletBalances.notSetUp': 'Not set up',
   'walletBalances.send': 'Send',
@@ -4606,11 +4679,74 @@ const en: TranslationMap = {
   'settings.agents.editor.toolsAllowAll': 'Allow all tools (*)',
   'settings.agents.editor.toolsAllowAllHint': 'This agent can use every available tool.',
   'settings.agents.editor.toolsLoading': 'Loading tools…',
-  'settings.agents.editor.toolsLoadError': 'Couldn’t load tools',
+  'settings.agents.editor.toolsLoadError': "Couldn't load tools",
   'settings.agents.editor.toolsEmpty': 'No tools match your search.',
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
-    'Built-in agents can’t be edited. You can enable, disable, or reset them from the agents list.',
+    "Built-in agents can't be edited. You can enable, disable, or reset them from the agents list.",
+
+  // Keyring consent & security
+  'keyring.consent.title': 'Secure Storage Unavailable',
+  'keyring.consent.description':
+    'Your operating system keychain is not accessible. OpenHuman needs your permission to store secrets using local encrypted storage instead.',
+  'keyring.consent.reasonPrefix': 'Reason:',
+  'keyring.consent.showDetails': 'What does this mean?',
+  'keyring.consent.hideDetails': 'Hide details',
+  'keyring.consent.tradeoffTitle': 'Security tradeoff',
+  'keyring.consent.tradeoffBody':
+    'With local encrypted storage, your secrets are encrypted on disk using a master key stored alongside the data. This is less secure than the OS keychain, which uses hardware-backed protection. Backups or file syncing may include the encrypted data.',
+  'keyring.consent.consentButton': 'Use Local Encrypted Storage',
+  'keyring.consent.retryButton': 'Retry OS Keychain',
+  'keyring.consent.declineButton': 'Skip',
+  'keyring.consent.retrying': 'Retrying…',
+  'keyring.consent.error': 'Failed to save preference. Please try again.',
+  'keyring.consent.retryFailed': 'Keychain is still unavailable.',
+  'keyring.settings.title': 'Security',
+  'keyring.settings.storageMode': 'Secret storage mode',
+  'keyring.settings.mode.osKeychain': 'OS Keychain',
+  'keyring.settings.mode.encryptedFile': 'Local Encrypted',
+  'keyring.settings.mode.consentPending': 'Not configured',
+  'keyring.settings.mode.declined': 'Declined',
+  'keyring.settings.availability': 'Keychain availability',
+  'keyring.settings.available': 'OS keychain is available',
+  'keyring.settings.unavailable': 'OS keychain is unavailable',
+  'keyring.settings.backend': 'Backend',
+  'keyring.settings.retryButton': 'Retry keychain detection',
+  'keyring.settings.retryFailed': 'Retry failed. Keychain is still unavailable.',
+  'keyring.settings.consentTitle': 'Storage consent',
+  'keyring.settings.consentDescription':
+    'Choose how secrets are stored when the OS keychain is not available.',
+  'keyring.settings.grantConsent': 'Allow local encrypted storage',
+  'keyring.settings.revokeConsent': 'Decline local storage',
+  'pages.settings.account.security': 'Security',
+  'pages.settings.account.securityDesc': 'Secret storage mode and keychain status',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Sync budget',
+  'syncBudget.maxTokens': 'Max tokens per sync',
+  'syncBudget.maxTokensHelp': 'Stop syncing once this many tokens are consumed.',
+  'syncBudget.maxCost': 'Max cost per sync (USD)',
+  'syncBudget.maxCostHelp': 'Hard dollar cap per sync run.',
+  'syncBudget.syncDepth': 'Sync depth',
+  'syncBudget.syncDepthHelp': 'Only fetch items from this time window.',
+  'syncBudget.days7': 'Last 7 days',
+  'syncBudget.days30': 'Last 30 days',
+  'syncBudget.days90': 'Last 90 days',
+  'syncBudget.allTime': 'All time',
+  'syncBudget.unlimited': 'Unlimited',
+  'syncBudget.saved': 'Budget saved.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Confirm sync',
+  'syncConfirm.message': 'This sync will process ~{items} items (~{tokens} tokens, est. ${cost}).',
+  'syncConfirm.budgetNote': 'Budget cap: ${max}',
+  'syncConfirm.proceed': 'Proceed',
+  'syncConfirm.cancel': 'Cancel',
+  'syncConfirm.estimating': 'Estimating cost...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} this month',
+  'monthlyCost.noData': 'No syncs this month',
 };
 
 export default en;

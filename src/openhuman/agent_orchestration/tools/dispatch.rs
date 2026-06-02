@@ -88,6 +88,8 @@ pub(crate) async fn dispatch_subagent(
         model_override: model_override.map(str::to_string),
         task_id: Some(task_id.clone()),
         worker_thread_id: None,
+        initial_history: None,
+        checkpoint_dir: None,
     };
 
     match run_subagent(definition, prompt, options).await {

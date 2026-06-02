@@ -220,6 +220,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Jeszcze nie uruchomiono',
   'routines.runNow': 'Uruchom teraz',
   'routines.running': 'Uruchamianie…',
+  'routines.runNowTimedOut': 'Przekroczono limit czasu — odśwież stronę i spróbuj ponownie.',
   'routines.viewHistory': 'Wyświetl historię',
   'routines.loadingHistory': 'Ładowanie…',
   'routines.noHistory': 'Brak historii uruchomień.',
@@ -736,16 +737,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Wysłano do',
   'privacy.leavesDevice': 'Opuszcza urządzenie',
   'privacy.staysLocal': 'Zostaje lokalnie',
-  'privacy.anonymizedAnalytics': 'Anonimowa analityka',
-  'privacy.shareAnonymizedData': 'Udostępniaj anonimowe dane o użytkowaniu',
+  'privacy.anonymizedAnalytics': 'Analityka produktu',
+  'privacy.shareAnonymizedData': 'Udostępniaj analitykę produktu i diagnostykę',
   'privacy.shareAnonymizedDataDesc':
-    'Pomóż ulepszać OpenHuman, udostępniając anonimowe raporty awarii i analitykę użytkowania. Wszystkie dane są w pełni anonimowe — nigdy nie zbieramy danych osobowych, wiadomości, kluczy portfela ani informacji o sesji.',
+    'Pomóż ulepszać OpenHuman, udostępniając raporty awarii i zdarzenia użycia o ograniczonej prywatności, w tym stabilny identyfikator konta i metadane wersji aplikacji. Wiadomości, klucze portfela, klucze API i tokeny sesji nigdy nie są zbierane.',
   'privacy.meetingFollowUps': 'Działania po spotkaniach',
   'privacy.autoHandoffMeet': 'Automatycznie przekazuj transkrypcje Google Meet do orchestratora',
   'privacy.autoHandoffMeetDesc':
     'Gdy spotkanie Google Meet się kończy, orchestrator OpenHuman może odczytać transkrypcję i wykonać akcje, np. przygotować wiadomości, zaplanować działania lub opublikować podsumowanie w podłączonym workspace Slack. Domyślnie wyłączone.',
   'privacy.analyticsDisclaimer':
-    'Wszystkie raporty analityczne i błędów są w pełni anonimowe. Po włączeniu zbieramy informacje o awariach i typie urządzenia (Sentry) oraz anonimową analitykę (Google Analytics — odsłony, używane funkcje). Nigdy nie uzyskujemy dostępu do Twoich wiadomości, danych sesji, kluczy portfela, kluczy API ani danych osobowych. Możesz zmienić to ustawienie w dowolnym momencie.',
+    'Po włączeniu analityka produktu i diagnostyka mogą obejmować raporty awarii i zdarzenia użycia o ograniczonej prywatności, stabilny identyfikator konta oraz metadane wersji aplikacji. Wiadomości, klucze portfela, klucze API i tokeny sesji nigdy nie są zbierane. Możesz zmienić to ustawienie w dowolnym momencie.',
   'settings.about.version': 'Wersja',
   'settings.about.updateAvailable': 'jest dostępna',
   'settings.about.softwareUpdates': 'Aktualizacje oprogramowania',
@@ -1159,6 +1160,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Tak, odinstaluj',
   'mcp.detail.uninstall': 'Odinstaluj',
   'mcp.detail.envVars': 'Zmienne środowiskowe',
+  'mcp.detail.reconfigure': 'Skonfiguruj ponownie',
+  'mcp.detail.reconfigureHint':
+    'Wprowadź nowe wartości dla każdej zmiennej, a następnie połącz ponownie. Spowoduje to zastąpienie zapisanych wartości.',
+  'mcp.detail.saveReconnect': 'Zapisz i połącz ponownie',
+  'mcp.detail.reconfigureSaving': 'Zapisywanie…',
+  'mcp.detail.reconfigureSuccess': 'Środowisko zaktualizowane i połączone ponownie.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Zapisano, ale ponowne połączenie z nowymi wartościami nie powiodło się.',
   'mcp.detail.tools': 'Narzędzia',
   'onboarding.skipForNow': 'Pomiń na razie',
   'onboarding.localAI.continueWithCloud': 'Kontynuuj z chmurą',
@@ -1932,6 +1941,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Proponowane działanie',
   'reflections.act': 'Wykonaj',
   'reflections.dismiss': 'Odrzuć',
+  'reflections.viewConversation': 'Zobacz',
+  'subconscious.mode.label': 'Tryb podświadomości',
+  'subconscious.mode.off.title': 'Wyłączony',
+  'subconscious.mode.off.desc': 'Podświadomość jest wyłączona.',
+  'subconscious.mode.simple.title': 'Prosty',
+  'subconscious.mode.simple.desc': 'Obserwacja tylko do odczytu. Tylko dostęp do pamięci i plików.',
+  'subconscious.mode.aggressive.title': 'Agresywny',
+  'subconscious.mode.aggressive.desc':
+    'Pełny dostęp do narzędzi. Może pisać, tworzyć agentów i delegować zadania.',
+  'subconscious.mode.aggressiveWarning':
+    'Tryb agresywny daje podświadomości pełny dostęp do narzędzi, w tym pisanie i tworzenie podagentów.',
+  'subconscious.interval.label': 'Częstotliwość',
+  'subconscious.interval.minutes': '{n} min',
+  'subconscious.interval.hours': '{n} godz',
+  'subconscious.interval.oneHour': '1 godzina',
+  'subconscious.interval.oneDay': '24 godziny',
   'whatsapp.chatsSynced': 'rozmów zsynchronizowano',
   'whatsapp.chatSynced': 'rozmowa zsynchronizowana',
   'sync.active': 'Aktywna',
@@ -2004,6 +2029,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL strony',
   'memorySources.cssSelector': 'Selektor CSS (opcjonalnie)',
   'memorySources.searchQuery': 'Zapytanie wyszukiwania',
+  'memorySources.build.title': 'Zbuduj',
+  'memorySources.build.building': 'Budowanie…',
+  'memorySources.build.successTitle': 'Drzewo zbudowane',
+  'memorySources.build.failedTitle': 'Budowanie nie powiodło się',
+  'memorySources.build.sealsMessage': 'pieczętowanie zakończone',
   'backend.aiBackend': 'Backend AI',
   'backend.cloud': 'Chmura',
   'backend.recommended': 'Zalecane',
@@ -2526,6 +2556,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'w toku',
   'conversations.subagent.statusCompleted': 'zakończono',
   'conversations.subagent.statusFailed': 'niepowodzenie',
+  'conversations.subagent.statusAwaitingUser': 'oczekiwanie na użytkownika',
   'daemon.serviceBlockingGate.body':
     'Rdzeń OpenHuman nie odpowiada. Spróbuj ponownie lub pobierz najnowszą wersję aplikacji.',
   'daemon.serviceBlockingGate.downloadHint':
@@ -2838,7 +2869,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Grupa workloadów: czat',
   'settings.ai.disconnectProvider': 'Rozłącz {label}',
   'settings.ai.connectProviderLabel': 'Połącz {label}',
+  'settings.ai.editProviderEndpoint': 'Edytuj punkt końcowy {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Edytuj endpoint',
   'settings.ai.endpointUrlLabel': 'URL endpointu',
   'settings.ai.localRuntimeHelper':
     'Miejsce, w którym dostępny jest {label}. Domyślnie jest to localhost; wskaż zdalny host (na przykład http://10.0.0.4:11434/v1), aby użyć współdzielonej instancji.',
@@ -3651,6 +3684,13 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': 'Wymagaj zatwierdzenia planu zadania',
   'settings.agentAccess.requireTaskPlanApproval.desc':
     'Wstrzymaj, zanim przypisany agent wykona opis zadania utworzony przez agenta.',
+  'settings.agentAccess.timeout.label': 'Limit czasu akcji',
+  'settings.agentAccess.timeout.desc':
+    'Jak długo pojedyncze narzędzie lub akcja może działać przed anulowaniem. Zwiększ tę wartość, jeśli duży lokalny model jest przerywany, zanim zakończy odpowiedź.',
+  'settings.agentAccess.timeout.unit': 'sekundy',
+  'settings.agentAccess.timeout.invalid': 'Wprowadź całkowitą liczbę sekund w dozwolonym zakresie',
+  'settings.agentAccess.timeout.envOverride':
+    'Zmienna środowiskowa OPENHUMAN_TOOL_TIMEOUT_SECS zastępuje to ustawienie, więc zmiany tutaj nie odniosą skutku, dopóki nie zostanie ona usunięta.',
   'settings.agentAccess.grantedFolders': 'Przyznane foldery',
   'settings.agentAccess.alwaysAllow': 'Zawsze dozwolone narzędzia',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3667,6 +3707,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Dodaj',
   'settings.agentAccess.saving': 'Zapisywanie…',
   'settings.agentAccess.changesApply': 'Zmiany zostaną zastosowane w następnej wiadomości.',
+  'settings.agentAccess.directories': 'Katalogi',
+  'settings.agentAccess.actionSandbox': 'Piaskownica akcji',
+  'settings.agentAccess.readWriteAccess': 'odczyt + zapis',
+  'settings.agentAccess.actionSandboxDesc':
+    'Domyślny katalog roboczy dla narzędzi shell, plików i git.',
+  'settings.agentAccess.internalState': 'Stan wewnętrzny',
+  'settings.agentAccess.agentBlocked': 'zablokowane dla agenta',
+  'settings.agentAccess.internalStateDesc':
+    'Bazy danych pamięci, sesje, tokeny i inne podstawowe dane. Niedostępne dla narzędzi agenta.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4169,14 +4218,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'Filtruj po źródle',
   'calls.comingSoonDescription': 'Połączenia wspierane AI pojawią się wkrótce. Bądź na bieżąco.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 min',
-  'subconscious.interval.tenMinutes': '10 min',
-  'subconscious.interval.fifteenMinutes': '15 min',
-  'subconscious.interval.thirtyMinutes': '30 min',
-  'subconscious.interval.oneHour': '1 godz.',
-  'subconscious.interval.sixHours': '6 godz.',
-  'subconscious.interval.twelveHours': '12 godz.',
-  'subconscious.interval.oneDay': '1 dzień',
   'subconscious.priority.critical': 'krytyczne',
   'subconscious.priority.important': 'ważne',
   'subconscious.priority.normal': 'normalne',
@@ -4456,6 +4497,102 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Średnia klasteryzacja {avg} · tranzytywność {transitivity}',
   'graphCohesion.title': 'Spójność grafu',
   'memory.tab.cohesion': 'Cohesion',
+
+  'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
+  'keyring.consent.description':
+    'Pęk kluczy systemu operacyjnego jest niedostępny. OpenHuman potrzebuje Twojej zgody na przechowywanie sekretów w lokalnym zaszyfrowanym magazynie.',
+  'keyring.consent.reasonPrefix': 'Powód:',
+  'keyring.consent.showDetails': 'Co to oznacza?',
+  'keyring.consent.hideDetails': 'Ukryj szczegóły',
+  'keyring.consent.tradeoffTitle': 'Kompromis bezpieczeństwa',
+  'keyring.consent.tradeoffBody':
+    'W przypadku lokalnego zaszyfrowanego magazynu sekrety są szyfrowane na dysku przy użyciu klucza głównego przechowywanego obok danych. Jest to mniej bezpieczne niż pęk kluczy systemu, który wykorzystuje ochronę sprzętową. Kopie zapasowe lub synchronizacja plików mogą zawierać zaszyfrowane dane.',
+  'keyring.consent.consentButton': 'Użyj lokalnego zaszyfrowanego magazynu',
+  'keyring.consent.retryButton': 'Ponów próbę OS Keychain',
+  'keyring.consent.declineButton': 'Odrzuć',
+  'keyring.consent.retrying': 'Ponawiam próbę…',
+  'keyring.consent.error': 'Nie udało się zapisać preferencji. Spróbuj ponownie.',
+  'keyring.consent.retryFailed': 'Pęk kluczy jest nadal niedostępny.',
+  'keyring.settings.title': 'Bezpieczeństwo',
+  'keyring.settings.storageMode': 'Tryb przechowywania sekretów',
+  'keyring.settings.mode.osKeychain': 'Pęk kluczy systemu',
+  'keyring.settings.mode.encryptedFile': 'Lokalnie zaszyfrowany',
+  'keyring.settings.mode.consentPending': 'Nie skonfigurowano',
+  'keyring.settings.mode.declined': 'Odrzucono',
+  'keyring.settings.availability': 'Dostępność pęku kluczy',
+  'keyring.settings.available': 'Pęk kluczy systemu jest dostępny',
+  'keyring.settings.unavailable': 'Pęk kluczy systemu jest niedostępny',
+  'keyring.settings.backend': 'Silnik',
+  'keyring.settings.retryButton': 'Ponów wykrywanie pęku kluczy',
+  'keyring.settings.retryFailed':
+    'Ponowna próba nie powiodła się. Pęk kluczy jest nadal niedostępny.',
+  'keyring.settings.consentTitle': 'Zgoda na przechowywanie',
+  'keyring.settings.consentDescription':
+    'Wybierz sposób przechowywania sekretów, gdy pęk kluczy systemu jest niedostępny.',
+  'keyring.settings.grantConsent': 'Zezwól na lokalne zaszyfrowane przechowywanie',
+  'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
+  'pages.settings.account.security': 'Bezpieczeństwo',
+  'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+
+  // Agent activity level
+  'activityLevel.title': 'Poziom aktywności agenta',
+  'activityLevel.description':
+    'Kontroluj, jak proaktywny jest Twój agent. Wyższe poziomy zużywają więcej tokenów.',
+  'activityLevel.off': 'Wyłączony',
+  'activityLevel.offDesc':
+    'Brak przetwarzania w tle. Synchronizuje tylko po naciśnięciu przycisku.',
+  'activityLevel.minimal': 'Minimalny',
+  'activityLevel.minimalDesc': 'Synchronizuje źródła raz dziennie. Brak proaktywnych wiadomości.',
+  'activityLevel.moderate': 'Umiarkowany',
+  'activityLevel.moderateDesc': 'Synchronizuje co godzinę. Codzienny skrót. Sugeruje działania.',
+  'activityLevel.active': 'Aktywny',
+  'activityLevel.activeDesc':
+    'Synchronizuje co 10 min. Monitoruje kanały, porządkuje i redaguje odpowiedzi.',
+  'activityLevel.alwaysOn': 'Zawsze włączony',
+  'activityLevel.alwaysOnDesc':
+    'Synchronizacja w czasie rzeczywistym. Pełna autonomia w granicach.',
+  'activityLevel.currentMonth': 'W tym miesiącu: ${amount}',
+  'activityLevel.saved': 'Poziom aktywności zaktualizowany.',
+  'activityLevel.default': 'domyślny',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/mies.',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Budżet synchronizacji',
+  'syncBudget.maxTokens': 'Maks. tokenów na synchronizację',
+  'syncBudget.maxTokensHelp': 'Zatrzymaj synchronizację po zużyciu tej liczby tokenów.',
+  'syncBudget.maxCost': 'Maks. koszt na synchronizację (USD)',
+  'syncBudget.maxCostHelp': 'Bezwzględny limit w dolarach na jedno uruchomienie synchronizacji.',
+  'syncBudget.syncDepth': 'Głębokość synchronizacji',
+  'syncBudget.syncDepthHelp': 'Pobieraj tylko elementy z tego okna czasowego.',
+  'syncBudget.days7': 'Ostatnie 7 dni',
+  'syncBudget.days30': 'Ostatnie 30 dni',
+  'syncBudget.days90': 'Ostatnie 90 dni',
+  'syncBudget.allTime': 'Cały czas',
+  'syncBudget.unlimited': 'Bez limitu',
+  'syncBudget.saved': 'Budżet zapisany.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Potwierdź synchronizację',
+  'syncConfirm.message':
+    'Ta synchronizacja przetworzy ~{items} elementów (~{tokens} tokenów, szacunkowo ${cost}).',
+  'syncConfirm.budgetNote': 'Limit budżetu: ${max}',
+  'syncConfirm.proceed': 'Kontynuuj',
+  'syncConfirm.cancel': 'Anuluj',
+  'syncConfirm.estimating': 'Szacowanie kosztów...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} w tym miesiącu',
+  'monthlyCost.noData': 'Brak synchronizacji w tym miesiącu',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Aktywność',
+  'onboarding.custom.activity.title': 'Aktywność agenta',
+  'onboarding.custom.activity.subtitle': 'Jak proaktywnie Twój agent monitoruje i działa w tle.',
+  'onboarding.custom.activity.defaultDesc':
+    'Umiarkowana aktywność — synchronizacja co godzinę, codzienny skrót.',
+  'onboarding.custom.activity.configureDesc':
+    'Wybierz własny poziom aktywności. Skonfiguruj w Ustawieniach › Poziom aktywności agenta.',
 };
 
 export default messages;
