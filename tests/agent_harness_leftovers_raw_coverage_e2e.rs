@@ -124,6 +124,7 @@ impl Memory for StubMemory {
             timestamp: "2026-05-29T00:00:00Z".to_string(),
             session_id: session_id.map(str::to_string),
             score: Some(0.9),
+            taint: Default::default(),
         });
         Ok(())
     }

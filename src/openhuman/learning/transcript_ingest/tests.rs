@@ -62,6 +62,7 @@ impl Memory for InMemory {
             timestamp: "2026-05-09T12:00:00Z".to_string(),
             session_id: session_id.map(|s| s.to_string()),
             score: None,
+            taint: Default::default(),
         });
         Ok(())
     }

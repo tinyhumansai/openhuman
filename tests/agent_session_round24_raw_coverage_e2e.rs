@@ -187,6 +187,7 @@ impl Memory for RecordingMemory {
             timestamp: "2026-05-30T00:00:00Z".to_string(),
             session_id: None,
             score: Some(0.98),
+            taint: Default::default(),
         }]
         .into_iter()
         .take(limit)
@@ -354,6 +355,7 @@ fn entry(key: &str, namespace: &str, content: &str) -> MemoryEntry {
         timestamp: "2026-05-30T00:00:00Z".to_string(),
         session_id: None,
         score: Some(0.9),
+        taint: Default::default(),
     }
 }
 

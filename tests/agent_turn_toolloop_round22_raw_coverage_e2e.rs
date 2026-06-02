@@ -225,6 +225,7 @@ async fn run_turn(
             visible_tool_names: None,
             extra_tools: Vec::new(),
             on_progress,
+            origin: openhuman_core::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
         },
     )
     .await

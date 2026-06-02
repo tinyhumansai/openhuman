@@ -2056,6 +2056,7 @@ fn memory_retrieval_embedding_and_rpc_model_helpers_round_trip() {
         timestamp: now.to_rfc3339(),
         session_id: Some("session-1".into()),
         score: Some(0.9),
+        taint: Default::default(),
     };
     assert_eq!(entry.category.to_string(), "testing");
     let opts = RecallOpts {
