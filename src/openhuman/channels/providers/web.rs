@@ -322,6 +322,9 @@ pub async fn start_chat(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
+    speak_reply: Option<bool>,
+    source: Option<String>,
+    session_id: Option<u64>,
 ) -> Result<String, String> {
     let client_id = client_id.trim().to_string();
     let thread_id = thread_id.trim().to_string();
@@ -485,6 +488,9 @@ pub async fn start_chat(
                     temperature,
                     profile_id,
                     locale,
+                    speak_reply,
+                    source,
+                    session_id,
                 ),
             )
             .await;
@@ -715,6 +721,9 @@ async fn run_chat_task(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
+    speak_reply: Option<bool>,
+    source: Option<String>,
+    session_id: Option<u64>,
 ) -> Result<WebChatTaskResult, String> {
     #[cfg(any(test, debug_assertions))]
     {
@@ -867,6 +876,9 @@ async fn run_chat_task(
         thread_id.to_string(),
         request_id.to_string(),
         turn_state_store,
+        speak_reply,
+        source,
+        session_id,
     );
 
     // Make `thread_id` ambient for any outbound provider call inside
@@ -927,22 +939,38 @@ async fn run_chat_task(
 /// agent turn loop and translates them into [`WebChannelEvent`]s tagged
 /// with the correct client/thread/request IDs. The task runs until the
 /// sender is dropped (i.e. when the agent turn finishes).
+///
+/// `speak_reply`, `source`, and `session_id` are accepted here so that
+/// Task 4 (TTS integration) can read them from the bridge context.
+/// For now they are logged and otherwise unused.
 fn spawn_progress_bridge(
     mut rx: tokio::sync::mpsc::Receiver<crate::openhuman::agent::progress::AgentProgress>,
     client_id: String,
     thread_id: String,
     request_id: String,
     turn_state_store: TurnStateStore,
+    speak_reply: Option<bool>,
+    source: Option<String>,
+    session_id: Option<u64>,
 ) {
     use crate::openhuman::agent::progress::AgentProgress;
 
     tokio::spawn(async move {
         log::debug!(
-            "[web_channel][bridge] spawned client_id={} thread_id={} request_id={}",
+            "[web_channel][bridge] spawned client_id={} thread_id={} request_id={} speak_reply={:?} source={:?} session_id={:?}",
             client_id,
             thread_id,
             request_id,
+            speak_reply,
+            source,
+            session_id,
         );
+        // Retain for Task 4 (TTS wiring): speak_reply drives whether the
+        // final assistant text should be synthesised; source and session_id
+        // are forwarded as metadata to the TTS call site.
+        let _speak_reply = speak_reply;
+        let _source = source;
+        let _session_id = session_id;
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
         let mut turn_state =
@@ -1676,6 +1704,18 @@ struct WebChatParams {
     /// default language (English) so existing integrations don't
     /// silently change behaviour.
     locale: Option<String>,
+    /// When `true`, the agent's final reply should be spoken via TTS
+    /// (for PTT and similar background voice flows). Accepted and
+    /// stored here; wired to TTS in Task 4.
+    #[serde(default)]
+    pub speak_reply: Option<bool>,
+    /// Origin of the message: `"ptt"` | `"dictation"` | `"type"` | other.
+    /// Used for analytics and downstream metadata.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Optional caller-provided correlation id (PTT session id).
+    #[serde(default)]
+    pub session_id: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1692,6 +1732,9 @@ pub async fn channel_web_chat(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
+    speak_reply: Option<bool>,
+    source: Option<String>,
+    session_id: Option<u64>,
 ) -> Result<RpcOutcome<Value>, String> {
     let request_id = start_chat(
         client_id,
@@ -1701,6 +1744,9 @@ pub async fn channel_web_chat(
         temperature,
         profile_id,
         locale,
+        speak_reply,
+        source,
+        session_id,
     )
     .await?;
 
@@ -1766,6 +1812,9 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     "locale",
                     "Optional BCP-47 UI locale (e.g. 'ar', 'zh-CN'). Drives the \"reply in this language\" system-prompt directive.",
                 ),
+                optional_bool("speak_reply", "When true, the agent's final reply is spoken via TTS (for PTT and similar background voice flows)."),
+                optional_string("source", "Origin of the message: \"ptt\" | \"dictation\" | \"type\" | other. Used for analytics + downstream metadata."),
+                optional_u64("session_id", "Optional caller-provided correlation id (PTT session id)."),
             ],
             outputs: vec![json_output("ack", "Acceptance payload.")],
         },
@@ -1806,6 +1855,9 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                 p.temperature,
                 p.profile_id,
                 p.locale,
+                p.speak_reply,
+                p.source,
+                p.session_id,
             )
             .await?,
         )
@@ -1894,6 +1946,24 @@ fn optional_f64(name: &'static str, comment: &'static str) -> FieldSchema {
     FieldSchema {
         name,
         ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_bool(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        comment,
+        required: false,
+    }
+}
+
+fn optional_u64(name: &'static str, comment: &'static str) -> FieldSchema {
+    FieldSchema {
+        name,
+        ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
         comment,
         required: false,
     }

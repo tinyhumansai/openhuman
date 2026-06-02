@@ -435,6 +435,9 @@ pub fn attach_socketio() -> (socketioxide::layer::SocketIoLayer, SocketIo) {
                         payload.temperature,
                         payload.profile_id,
                         payload.locale,
+                        None,
+                        None,
+                        None,
                     )
                     .await
                     {

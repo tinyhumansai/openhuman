@@ -107,7 +107,7 @@ async fn web_controllers_validate_inputs_and_emit_structured_forced_errors() {
     assert_eq!(all_web_channel_registered_controllers().len(), 2);
     assert_eq!(schemas("missing").function, "unknown");
 
-    let err = channel_web_chat("client", "thread", "   ", None, None, None, None)
+    let err = channel_web_chat("client", "thread", "   ", None, None, None, None, None, None, None)
         .await
         .expect_err("blank messages are rejected");
     assert!(err.contains("message is required"));
@@ -133,6 +133,9 @@ async fn web_controllers_validate_inputs_and_emit_structured_forced_errors() {
         Some(0.2),
         None,
         Some("zh-CN".to_string()),
+        None,
+        None,
+        None,
     )
     .await
     .expect("chat request accepted")
@@ -173,6 +176,9 @@ async fn web_chat_cancel_aborts_in_flight_thread_without_real_provider() {
         "cancel-client",
         "cancel-thread",
         "This request should be cancelled before inference completes.",
+        None,
+        None,
+        None,
         None,
         None,
         None,
