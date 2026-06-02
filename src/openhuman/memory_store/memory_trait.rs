@@ -118,6 +118,12 @@ impl Memory for UnifiedMemory {
                 timestamp: Utc::now().to_rfc3339(),
                 session_id: None,
                 score: Some(r.score),
+                // Persistence layer doesn't carry the taint column yet —
+                // legacy rows default to Internal (safe for the gate's
+                // tainted-subconscious escalation). Composio ingest paths
+                // surface taint via a separate API surface (see Step 6
+                // memory_sync wiring).
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             })
             .collect();
 
@@ -169,6 +175,7 @@ impl Memory for UnifiedMemory {
                     timestamp: ts_rfc3339,
                     session_id: Some(entry.session_id),
                     score: Some(match_score),
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
                 });
             }
         }
@@ -239,6 +246,7 @@ impl Memory for UnifiedMemory {
                     timestamp: ts_rfc3339,
                     session_id: Some(entry.session_id),
                     score: Some(match_score),
+                    taint: crate::openhuman::memory::MemoryTaint::Internal,
                 });
             }
         }
@@ -308,6 +316,7 @@ impl Memory for UnifiedMemory {
                 timestamp: timestamp_to_rfc3339(updated_at),
                 session_id: None,
                 score: None,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             }),
         )
     }
@@ -352,6 +361,7 @@ impl Memory for UnifiedMemory {
                 timestamp: format!("idx-{idx}"),
                 session_id: None,
                 score: None,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             });
         }
         Ok(out)
