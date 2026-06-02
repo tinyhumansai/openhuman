@@ -1959,7 +1959,12 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn supports_native_tools(&self) -> bool {
-        true
+        // Must mirror `capabilities().native_tool_calling`. Both signals are
+        // read by the agent harness (`traits.rs:415`) to decide between an
+        // OpenAI-style `tools` array and the prompt-guided text fallback;
+        // letting them disagree would defeat `with_native_tool_calling(false)`
+        // for the Ollama branch of sub-issue 3 of #3098.
+        self.native_tool_calling
     }
 
     fn supports_streaming(&self) -> bool {
