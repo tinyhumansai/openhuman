@@ -10,7 +10,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Mutex;
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum PttError {
+pub(crate) enum PttError {
     EmptyShortcut,
     ModifierOnlyShortcut,
     ConflictsWithDictation(String),
@@ -75,8 +75,10 @@ const MODIFIER_TOKENS: &[&str] = &[
 ];
 
 fn is_modifier_token(token: &str) -> bool {
-    let lower = token.trim().to_ascii_lowercase();
-    MODIFIER_TOKENS.iter().any(|m| *m == lower)
+    let trimmed = token.trim();
+    MODIFIER_TOKENS
+        .iter()
+        .any(|m| trimmed.eq_ignore_ascii_case(m))
 }
 
 /// Expand a user-typed shortcut into one or two OS-specific variants and
@@ -88,6 +90,9 @@ pub(crate) fn expand_ptt_shortcuts(shortcut: &str) -> Result<Vec<String>, PttErr
     }
 
     let parts: Vec<&str> = trimmed.split('+').map(str::trim).collect();
+    if parts.iter().any(|p| p.is_empty()) {
+        return Err(PttError::EmptyShortcut);
+    }
     if parts.iter().all(|p| is_modifier_token(p)) {
         return Err(PttError::ModifierOnlyShortcut);
     }
@@ -171,5 +176,15 @@ mod tests {
     fn cmd_or_ctrl_expands_to_ctrl_off_macos() {
         let result = expand_ptt_shortcuts("CmdOrCtrl+Shift+P").unwrap();
         assert_eq!(result, vec!["Ctrl+Shift+P".to_string()]);
+    }
+
+    #[test]
+    fn malformed_shortcut_with_empty_tokens_is_rejected() {
+        assert_eq!(expand_ptt_shortcuts("+F13"), Err(PttError::EmptyShortcut));
+        assert_eq!(expand_ptt_shortcuts("F13+"), Err(PttError::EmptyShortcut));
+        assert_eq!(
+            expand_ptt_shortcuts("Ctrl++T"),
+            Err(PttError::EmptyShortcut)
+        );
     }
 }
