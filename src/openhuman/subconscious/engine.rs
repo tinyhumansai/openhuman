@@ -21,6 +21,27 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+/// Pick the `TrustedAutomationSource` variant for a subconscious tick.
+///
+/// Extracted from the engine's `run_agent` body so the
+/// origin-escalation contract can be unit-tested without spinning up
+/// a real `Agent` + provider.
+///
+/// Contract: any tick whose situation report contained third-party
+/// sync content (Gmail / Slack / Notion / sealed source summaries)
+/// must run with `SubconsciousTainted` so the approval gate refuses
+/// external_effect tools. Untainted ticks keep the legacy
+/// `Subconscious` origin.
+pub(crate) fn tick_origin_source(
+    has_external_content: bool,
+) -> crate::openhuman::agent::turn_origin::TrustedAutomationSource {
+    if has_external_content {
+        crate::openhuman::agent::turn_origin::TrustedAutomationSource::SubconsciousTainted
+    } else {
+        crate::openhuman::agent::turn_origin::TrustedAutomationSource::Subconscious
+    }
+}
+
 pub struct SubconsciousEngine {
     workspace_dir: PathBuf,
     mode: SubconsciousMode,
@@ -308,11 +329,7 @@ impl SubconsciousEngine {
         // external_effect tools for the rest of the tick — a hostile
         // upstream message can otherwise nudge the LLM into a tool call
         // the user would never have authorised.
-        let source = if has_external_content {
-            crate::openhuman::agent::turn_origin::TrustedAutomationSource::SubconsciousTainted
-        } else {
-            crate::openhuman::agent::turn_origin::TrustedAutomationSource::Subconscious
-        };
+        let source = tick_origin_source(has_external_content);
         debug!(
             "[subconscious] tick origin source={:?} has_external_content={has_external_content}",
             source

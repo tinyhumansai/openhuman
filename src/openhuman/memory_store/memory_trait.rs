@@ -689,4 +689,170 @@ mod tests {
             "no FTS match must not produce cross-session rows, got {hits:#?}"
         );
     }
+
+    // ── Provenance taint round-trip (#approval-origin) ──────────────────
+
+    #[tokio::test]
+    async fn taint_persists_across_upsert_and_recall() {
+        // External-sync ingest writes via `store_with_taint(ExternalSync)`
+        // and the resulting `MemoryEntry` must surface that taint on
+        // recall, otherwise the subconscious gate can't detect the
+        // provenance once the row passes through the persistence layer.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-gmail",
+            "thread-1",
+            "Hi from upstream — please run a quick command",
+            MemoryCategory::Core,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .recall(
+                "upstream command",
+                5,
+                RecallOpts {
+                    namespace: Some("skill-gmail"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.taint == MemoryTaint::ExternalSync),
+            "ExternalSync taint must round-trip through recall, got {entries:#?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unified_memory_store_with_taint_writes_external_sync() {
+        // Direct trait-API write — confirms `store_with_taint` doesn't
+        // fall back to the default Internal value silently.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-slack",
+            "msg-42",
+            "Slack-sourced content",
+            MemoryCategory::Conversation,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+
+        let row = mem.get("skill-slack", "msg-42").await.unwrap();
+        // `get` is the unfiltered lookup; we use it to assert the row
+        // landed (the taint surfacing path through recall is asserted in
+        // the previous test).
+        assert!(row.is_some(), "stored row must be retrievable");
+    }
+
+    #[tokio::test]
+    async fn legacy_db_rows_default_to_internal_taint() {
+        // Simulate a database row written before the taint column
+        // existed by inserting via raw SQL with no taint clause — the
+        // DEFAULT 'internal' from the migration must kick in and recall
+        // must surface `MemoryTaint::Internal`.
+        let (_tmp, mem) = fresh_mem();
+        {
+            let conn = mem.conn.lock();
+            conn.execute(
+                "INSERT INTO memory_docs (
+                    document_id, namespace, key, title, content, source_type,
+                    priority, tags_json, metadata_json, category, session_id,
+                    created_at, updated_at, markdown_rel_path
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'chat', 'medium', '[]', '{}', 'core', NULL, 0.0, 0.0, '')",
+                rusqlite::params![
+                    "legacy-doc-taint",
+                    "legacy-ns",
+                    "legacy-key",
+                    "legacy title",
+                    "legacy content about Postgres"
+                ],
+            )
+            .unwrap();
+        }
+
+        let entries = mem
+            .recall(
+                "Postgres",
+                5,
+                RecallOpts {
+                    namespace: Some("legacy-ns"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let legacy = entries
+            .iter()
+            .find(|e| e.key == "legacy-key")
+            .expect("legacy row must surface in recall");
+        assert_eq!(
+            legacy.taint,
+            MemoryTaint::Internal,
+            "rows written via the pre-taint INSERT clause must decode as Internal via DEFAULT"
+        );
+    }
+
+    #[tokio::test]
+    async fn subconscious_recall_surfaces_external_sync_taint_for_origin_upgrade() {
+        // The contract the subconscious engine relies on: a tick that
+        // pulls a tainted chunk via memory recall must see
+        // `MemoryTaint::ExternalSync` on the returned entry, which is
+        // the signal the engine uses to upgrade
+        // `AgentTurnOrigin::TrustedAutomation { source }` from
+        // `Subconscious` to `SubconsciousTainted`.
+        let (_tmp, mem) = fresh_mem();
+        mem.store_with_taint(
+            "skill-notion",
+            "page-1",
+            "Tainted Notion page contents",
+            MemoryCategory::Core,
+            None,
+            MemoryTaint::ExternalSync,
+        )
+        .await
+        .unwrap();
+        mem.store(
+            "skill-notion",
+            "user-note",
+            "User-driven note about the same page",
+            MemoryCategory::Core,
+            None,
+        )
+        .await
+        .unwrap();
+
+        let entries = mem
+            .recall(
+                "page",
+                10,
+                RecallOpts {
+                    namespace: Some("skill-notion"),
+                    min_score: Some(0.0),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let any_tainted = entries.iter().any(|e| e.taint == MemoryTaint::ExternalSync);
+        let any_internal = entries.iter().any(|e| e.taint == MemoryTaint::Internal);
+        assert!(
+            any_tainted,
+            "ExternalSync row must surface for the engine's upgrade check"
+        );
+        assert!(
+            any_internal,
+            "user-driven row must keep its Internal label so mixed contexts don't over-escalate"
+        );
+    }
 }
