@@ -341,6 +341,30 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             provider,
             fallback_available: None,
         }
+    } else if is_empty_provider_response_text(&lower) {
+        // The agent harness bailed because the provider/model completed a
+        // turn with a completely empty body (text_chars=0 thinking_chars=0
+        // tool_calls=0) — `AgentError::EmptyProviderResponse`, flattened to
+        // a `String` at the native-bus boundary. Without this arm the
+        // message falls through to the generic catch-all and the user sees a
+        // bare "Something went wrong" with no remedy (Sentry TAURI-RUST-4JW,
+        // the single largest source of the #3092 / #3119 chat-error
+        // cluster). Placed early next to max_iterations: both are
+        // deterministic agent-state outcomes with a specific anchor, so
+        // neither can be shadowed by the broad provider-429 / 5xx arms below.
+        // No `with_provider_detail` — an empty response carries no JSON body
+        // to quote.
+        ClassifiedError {
+            error_type: "empty_response",
+            message: "The model returned an empty response. Try a different model or check \
+                 your local provider in Settings → AI → LLM."
+                .to_string(),
+            source: "agent_loop",
+            retryable: true,
+            retry_after_ms: None,
+            provider: None,
+            fallback_available: None,
+        }
     } else if lower.contains("rate limit") || lower.contains("429") {
         let retry_secs = parse_retry_after_secs_from_str(err);
         // Non-retryable business 429s ("plan does not include", balance
@@ -500,6 +524,48 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             provider,
             fallback_available: None,
         }
+    } else if lower.contains("does not support vision") || lower.contains("capability=vision") {
+        // A multimodal turn sent image markers to a text-only model
+        // (`provider_capability_error … capability=vision … does not support
+        // vision input`, raised in agent/harness/engine/core.rs). Without
+        // this arm it dead-ends on the generic catch-all. Retrying the same
+        // image against the same model can't help — the user must drop the
+        // attachment or pick a vision-capable model, so this is non-retryable.
+        ClassifiedError {
+            error_type: "capability_unsupported",
+            message: "This model can't process images. Remove the attachment or switch to a \
+                 vision-capable model in Settings → AI → LLM."
+                .to_string(),
+            source: "config",
+            retryable: false,
+            retry_after_ms: None,
+            provider: None,
+            fallback_available: None,
+        }
+    } else if is_provider_request_rejected_text(&lower) {
+        // A provider rejected the request with a 4xx that none of the
+        // specific arms above claimed (generic 400 Bad Request, 404, 422).
+        // The DeepSeek thinking-mode `reasoning_content` round-trip 400
+        // (deeper fix tracked separately in #3197) and other model/parameter
+        // incompatibilities land here. MUST stay below the
+        // provider-config-rejection (invalid temperature, stale model pin)
+        // and model-unavailable arms so their more specific 4xx verdicts win
+        // first. 4xx is a client/request problem — identical retry fails, so
+        // non-retryable. The real provider reason is already secret-scrubbed
+        // and length-capped by `with_provider_detail` and quoted to the user.
+        ClassifiedError {
+            error_type: "provider_request_rejected",
+            message: with_provider_detail(
+                "The AI provider rejected the request — this is usually a model or \
+                 parameter incompatibility. Try a different model in Settings → AI → LLM.",
+                err,
+            ),
+            source: "provider",
+            retryable: false,
+            retry_after_ms: None,
+            provider,
+            fallback_available,
+        }
     } else {
         ClassifiedError {
             error_type: "inference",
@@ -511,6 +577,41 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
             fallback_available,
         }
     }
+}
+
+/// String-flat mirror of
+/// `crate::core::observability::is_empty_provider_response_message`.
+///
+/// The typed `AgentError::EmptyProviderResponse` is collapsed to a `String`
+/// at the native-bus boundary before reaching this layer, so we re-detect
+/// the same canonical phrase the agent harness emits. Anchored on
+/// `"model returned an empty response"` (the verbatim user-facing string from
+/// `AgentError::EmptyProviderResponse`) — NOT the looser `"empty response"`,
+/// so internal fall-through phrases (`"summarizer returned empty response"`,
+/// `"provider returned an empty response; returning empty extraction"`) are
+/// not misclassified. Keep the anchor in lockstep with the observability
+/// mirror.
+///
+/// Caller passes the already-lowercased error string.
+pub(crate) fn is_empty_provider_response_text(lower: &str) -> bool {
+    lower.contains("model returned an empty response")
+}
+
+/// Detect an un-claimed provider 4xx (generic client-side request rejection).
+///
+/// Mirrors the status tokens emitted by `inference::provider::ops::api_error`
+/// (`"<provider> API error (400 Bad Request): …"`). Ordered AFTER the
+/// provider-config-rejection and model-unavailable arms in
+/// [`classify_inference_error`], so only 4xx shapes those arms did not claim
+/// reach this predicate.
+///
+/// Caller passes the already-lowercased error string.
+pub(crate) fn is_provider_request_rejected_text(lower: &str) -> bool {
+    lower.contains("400")
+        || lower.contains("bad request")
+        || lower.contains("404")
+        || lower.contains("422")
+        || lower.contains("unprocessable")
 }
 
 /// String-flat mirror of
