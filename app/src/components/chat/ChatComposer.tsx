@@ -130,7 +130,9 @@ export default function ChatComposer({
             aria-label={t('composer.attachFile')}
             title={t('composer.attachFile')}
             onClick={() => fileInputRef.current?.click()}
-            disabled={composerInteractionBlocked || isSending || attachments.length >= maxAttachments}
+            disabled={
+              composerInteractionBlocked || isSending || attachments.length >= maxAttachments
+            }
             className="flex items-center justify-center text-stone-400 dark:text-neutral-500 hover:text-stone-600 dark:hover:text-neutral-300 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path
