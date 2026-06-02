@@ -32,7 +32,7 @@ export interface ChatComposerProps {
 /**
  * Two-row chat composer:
  *   Row 1 — full-width textarea with inline ghost completion
- *   Row 2 — toolbar: [+] on left | ModelQualityPill · mic · send/equalizer on right
+ *   Row 2 — toolbar: [+] · CycleUsagePill on left | voice · send on right
  *
  * All buttons live inside the rounded container — no external pill buttons.
  */
