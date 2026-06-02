@@ -238,6 +238,78 @@ export function providerIconChar(provider: string): string {
 }
 
 /**
+ * Per-integration health strip (#2763). Rendered between the four pipeline
+ * tiles and the auto-sync toggle inside `MemoryTreeStatusPanel`. Consumes
+ * the `integrations` slice returned by `useMemoryTreeStatus` — no
+ * additional fetch, no second timer.
+ */
+function IntegrationHealthStrip({
+  integrations,
+  t,
+}: {
+  integrations: MemorySyncStatusRow[];
+  t: TFn;
+}) {
+  return (
+    <div className="space-y-2" data-testid="memory-tree-integrations">
+      <div className="text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+        {t('memoryTree.status.integrationsTitle')}
+      </div>
+      {integrations.length === 0 ? (
+        <div
+          data-testid="memory-tree-integrations-empty"
+          className="rounded-lg border border-dashed border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs text-stone-500 dark:text-neutral-400">
+          {t('memoryTree.status.integrationsEmpty')}
+        </div>
+      ) : (
+        <ul
+          className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50/40 dark:bg-neutral-800/30 p-2"
+          aria-label={t('memoryTree.status.integrationsTitle')}>
+          {integrations.map(row => {
+            const health = classifyIntegration(row.freshness);
+            const healthLabel =
+              health === 'active'
+                ? t('memoryTree.status.integrationActive')
+                : t('memoryTree.status.integrationStale');
+            const dot = health === 'active' ? 'bg-sage-400' : 'bg-stone-400 dark:bg-neutral-500';
+            return (
+              <li
+                key={row.provider}
+                data-testid={`memory-tree-integration-row-${row.provider}`}
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-stone-100/60 dark:hover:bg-neutral-800/60">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="text-base leading-none">
+                    {providerIconChar(row.provider)}
+                  </span>
+                  <span className="truncate text-sm font-medium text-stone-800 dark:text-neutral-200">
+                    {row.provider}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
+                  <span>
+                    {t('memoryTree.status.integrationChunks').replace(
+                      '{count}',
+                      new Intl.NumberFormat().format(row.chunks_synced)
+                    )}
+                  </span>
+                  <span>
+                    {formatRelativeMs(row.last_chunk_at_ms ?? 0, t, t('memoryTree.status.never'))}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white dark:bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-stone-700 dark:text-neutral-200 ring-1 ring-stone-200 dark:ring-neutral-700">
+                    <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+                    {healthLabel}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
  * Memory Tree status panel — render the four-tile dashboard plus the
  * auto-sync toggle. Designed to mount above `<MemorySources>` in
  * `MemoryWorkspace` so it surfaces in both the Intelligence page and
@@ -246,7 +318,6 @@ export function providerIconChar(provider: string): string {
 export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const { t } = useT();
   const { status, integrations, loading, error, refresh } = useMemoryTreeStatus();
-  void integrations; // consumed by Task 5/6; noop prevents unused-var lint
   const [toggleBusy, setToggleBusy] = useState(false);
 
   const handleToggle = useCallback(async () => {
@@ -379,6 +450,8 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           )}
         </div>
       </div>
+
+      <IntegrationHealthStrip integrations={integrations} t={t} />
 
       {/* Auto-sync toggle row — markup mirrors AIPanel's inline ToggleRow */}
       <div

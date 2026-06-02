@@ -189,6 +189,105 @@ describe('<MemoryTreeStatusPanel />', () => {
     });
   });
 
+  it('renders a row per integration with provider name, chunk count, freshness pill', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockSyncStatusList.mockResolvedValue([
+      {
+        provider: 'slack',
+        chunks_synced: 5231,
+        chunks_pending: 0,
+        batch_total: 0,
+        batch_processed: 0,
+        last_chunk_at_ms: FIXED_NOW_MS - 3 * 60 * 1000,
+        freshness: 'active',
+      },
+      {
+        provider: 'gmail',
+        chunks_synced: 842,
+        chunks_pending: 0,
+        batch_total: 0,
+        batch_processed: 0,
+        last_chunk_at_ms: FIXED_NOW_MS - 2 * 60 * 60 * 1000,
+        freshness: 'idle',
+      },
+    ]);
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-integrations')).toBeInTheDocument();
+    });
+
+    const rows = screen.getAllByTestId(/^memory-tree-integration-row-/);
+    expect(rows).toHaveLength(2);
+
+    const slackRow = screen.getByTestId('memory-tree-integration-row-slack');
+    expect(slackRow).toHaveTextContent(/slack/i);
+    expect(slackRow).toHaveTextContent(/5,231 chunks/);
+    expect(slackRow).toHaveTextContent(/Active/);
+
+    const gmailRow = screen.getByTestId('memory-tree-integration-row-gmail');
+    expect(gmailRow).toHaveTextContent(/gmail/i);
+    expect(gmailRow).toHaveTextContent(/Stale/);
+  });
+
+  it('shows the empty state when there are no integrations', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockSyncStatusList.mockResolvedValue([]);
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-integrations-empty')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('memory-tree-integrations-empty')).toHaveTextContent(
+      /no integrations connected/i
+    );
+  });
+
+  it('renders the integration strip between the tile grid and the toggle row', async () => {
+    mockPipelineStatus.mockResolvedValue(payload());
+    mockSyncStatusList.mockResolvedValue([
+      {
+        provider: 'slack',
+        chunks_synced: 1,
+        chunks_pending: 0,
+        batch_total: 0,
+        batch_processed: 0,
+        last_chunk_at_ms: FIXED_NOW_MS - 1000,
+        freshness: 'active',
+      },
+    ]);
+
+    render(<MemoryTreeStatusPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('memory-tree-integrations')).toBeInTheDocument();
+    });
+
+    const panel = screen.getByTestId('memory-tree-status-panel');
+    const tiles = screen.getByTestId('memory-tree-status-tiles');
+    const strip = screen.getByTestId('memory-tree-integrations');
+    const toggle = screen.getByTestId('memory-tree-status-toggle-row');
+
+    const order = Array.from(panel.querySelectorAll('[data-testid]'))
+      .map(el => el.getAttribute('data-testid'))
+      .filter(id =>
+        ['memory-tree-status-tiles', 'memory-tree-integrations', 'memory-tree-status-toggle-row'].includes(
+          id ?? ''
+        )
+      );
+
+    expect(order).toEqual([
+      'memory-tree-status-tiles',
+      'memory-tree-integrations',
+      'memory-tree-status-toggle-row',
+    ]);
+    expect(tiles).toBeInTheDocument();
+    expect(strip).toBeInTheDocument();
+    expect(toggle).toBeInTheDocument();
+  });
+
   it('reports toggle errors via the onToast callback', async () => {
     mockPipelineStatus.mockResolvedValueOnce(payload({ status: 'running', is_paused: false }));
     mockSetEnabled.mockRejectedValueOnce(new Error('disk write failed'));
