@@ -91,6 +91,49 @@ describe('subMascotModelsFromTimeline', () => {
       ])
     ).toHaveLength(0);
   });
+
+  it('prefers subagent displayName from registry over humanized agent id', () => {
+    const models = subMascotModelsFromTimeline([
+      subagentEntry({
+        id: 'thread-1:subagent:sub-1:code_executor',
+        name: 'subagent:code_executor',
+        subagent: {
+          taskId: 'sub-1',
+          agentId: 'code_executor',
+          displayName: 'Code Executor',
+          toolCalls: [],
+        },
+      }),
+    ]);
+
+    expect(models).toHaveLength(1);
+    expect(models[0].label).toBe('Code Executor');
+  });
+
+  it('prefers entry displayName when subagent displayName is absent', () => {
+    const models = subMascotModelsFromTimeline([
+      subagentEntry({
+        displayName: 'Custom Label',
+        subagent: { taskId: 'sub-1', agentId: 'researcher', toolCalls: [] },
+      }),
+    ]);
+
+    expect(models[0].label).toBe('Custom Label');
+  });
+
+  it('uses formatToolName for running child tool activity', () => {
+    const models = subMascotModelsFromTimeline([
+      subagentEntry({
+        subagent: {
+          taskId: 'sub-1',
+          agentId: 'researcher',
+          toolCalls: [{ callId: 'c1', toolName: 'web_fetch', status: 'running' }],
+        },
+      }),
+    ]);
+
+    expect(models[0].activity).toBe('Using Fetching');
+  });
 });
 
 describe('<SubMascotLayer />', () => {

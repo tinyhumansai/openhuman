@@ -1,6 +1,26 @@
 use super::{
-    classify_composio_error, format_provider_error, remap_transport_error, ComposioErrorClass,
+    classify_composio_error, derive_toolkit_slug, format_provider_error, remap_transport_error,
+    ComposioErrorClass,
 };
+
+// ── derive_toolkit_slug (issue #2913 nitpick — shared slug extraction) ──
+
+#[test]
+fn derive_toolkit_slug_extracts_leading_segment_lowercased() {
+    assert_eq!(derive_toolkit_slug("GMAIL_NEW_GMAIL_MESSAGE"), "gmail");
+}
+
+#[test]
+fn derive_toolkit_slug_single_segment_is_lowercased() {
+    assert_eq!(derive_toolkit_slug("SLACK"), "slack");
+}
+
+#[test]
+fn derive_toolkit_slug_empty_input_returns_empty_not_fallback() {
+    // Behavior-parity guard: `"".split('_').next()` yields `Some("")`, so the
+    // `unwrap_or("integration")` fallback does NOT apply — preserve that exactly.
+    assert_eq!(derive_toolkit_slug(""), "");
+}
 
 #[test]
 fn classifies_gmail_insufficient_scope() {

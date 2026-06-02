@@ -10,6 +10,7 @@ import {
   selectCustomSecondaryColor,
   selectMascotColor,
 } from '../../store/mascotSlice';
+import { IS_DEV } from '../../utils/config';
 import { CustomGifMascot, getMascotPalette, hexToArgbInt, RiveMascot } from './Mascot';
 import { useHumanMascot } from './useHumanMascot';
 
@@ -27,7 +28,7 @@ const HumanPage = () => {
     window.localStorage.setItem(SPEAK_REPLIES_KEY, speakReplies ? '1' : '0');
   }, [speakReplies]);
 
-  const { face } = useHumanMascot({ speakReplies });
+  const { face, visemeCode } = useHumanMascot({ speakReplies });
   const mascotColor = useAppSelector(selectMascotColor);
   const customPrimary = useAppSelector(selectCustomPrimaryColor);
   const customSecondary = useAppSelector(selectCustomSecondaryColor);
@@ -57,7 +58,12 @@ const HumanPage = () => {
           {customMascotGifUrl ? (
             <CustomGifMascot src={customMascotGifUrl} face={face} />
           ) : (
-            <RiveMascot face={face} primaryColor={primaryColor} secondaryColor={secondaryColor} />
+            <RiveMascot
+              face={face}
+              primaryColor={primaryColor}
+              secondaryColor={secondaryColor}
+              visemeCode={visemeCode}
+            />
           )}
         </div>
       </div>
@@ -72,18 +78,20 @@ const HumanPage = () => {
         {t('voice.pushToTalk')}
       </label>
 
-      {/* "Send OpenHuman to a meeting" — opens the Flow A modal which spawns
-          an off-screen CEF webview pointed at the Meet URL with the mascot
-          canvas as the outbound camera and synthesized speech as the
-          outbound mic. The user's OS mic is never wired to the meeting. */}
-      <button
-        type="button"
-        onClick={() => setJoinMeetingOpen(true)}
-        data-testid="human-join-meeting-pill"
-        className="absolute top-4 left-44 z-10 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-500 text-white text-xs font-medium shadow-soft hover:bg-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
-        <span aria-hidden="true">📞</span>
-        {t('skills.meetingBots.modalTitle')}
-      </button>
+      {/* "Send OpenHuman to a meeting" — dev-only; opens the Flow A modal
+          which spawns an off-screen CEF webview pointed at the Meet URL with
+          the mascot canvas as the outbound camera and synthesized speech as
+          the outbound mic. The user's OS mic is never wired to the meeting. */}
+      {IS_DEV && (
+        <button
+          type="button"
+          onClick={() => setJoinMeetingOpen(true)}
+          data-testid="human-join-meeting-pill"
+          className="absolute top-4 left-44 z-10 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary-500 text-white text-xs font-medium shadow-soft hover:bg-primary-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+          <span aria-hidden="true">📞</span>
+          {t('skills.meetingBots.modalTitle')}
+        </button>
+      )}
 
       {joinMeetingOpen && <MeetingBotsModal onClose={() => setJoinMeetingOpen(false)} />}
 

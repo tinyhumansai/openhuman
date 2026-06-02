@@ -52,8 +52,11 @@ fn wallet_user_id(config: &Config) -> String {
 ///
 /// Returns `None` if the keychain is unavailable or the entry does not exist.
 fn keychain_load_mnemonic(config: &Config) -> Option<String> {
-    if !crate::openhuman::keyring::is_available() {
-        log::debug!("{LOG_PREFIX} keychain unavailable, skipping mnemonic load");
+    let policy = crate::openhuman::keyring_consent::policy::check_secret_access();
+    if policy != crate::openhuman::keyring_consent::PolicyDecision::Proceed
+        || !crate::openhuman::keyring::is_available()
+    {
+        log::debug!("{LOG_PREFIX} keychain unavailable or consent pending, skipping mnemonic load policy={policy:?}");
         return None;
     }
     let user_id = wallet_user_id(config);
@@ -77,8 +80,11 @@ fn keychain_load_mnemonic(config: &Config) -> Option<String> {
 ///
 /// Returns `true` if the write succeeded.
 fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
-    if !crate::openhuman::keyring::is_available() {
-        log::debug!("{LOG_PREFIX} keychain unavailable, skipping mnemonic save");
+    let policy = crate::openhuman::keyring_consent::policy::check_secret_access();
+    if policy != crate::openhuman::keyring_consent::PolicyDecision::Proceed
+        || !crate::openhuman::keyring::is_available()
+    {
+        log::debug!("{LOG_PREFIX} keychain unavailable or consent pending, skipping mnemonic save policy={policy:?}");
         return false;
     }
     let user_id = wallet_user_id(config);
@@ -96,7 +102,10 @@ fn keychain_save_mnemonic(config: &Config, encrypted_mnemonic: &str) -> bool {
 
 /// Whether a keychain entry exists for the encrypted mnemonic.
 fn keychain_has_mnemonic(config: &Config) -> bool {
-    if !crate::openhuman::keyring::is_available() {
+    let policy = crate::openhuman::keyring_consent::policy::check_secret_access();
+    if policy != crate::openhuman::keyring_consent::PolicyDecision::Proceed
+        || !crate::openhuman::keyring::is_available()
+    {
         return false;
     }
     let user_id = wallet_user_id(config);

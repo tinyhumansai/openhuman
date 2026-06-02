@@ -23,7 +23,9 @@ use super::tool_prep::{
     load_prompt_source, top_k_for_toolkit,
 };
 use super::types::{SubagentMode, SubagentRunError, SubagentRunOptions, SubagentRunOutcome};
-use crate::openhuman::agent::harness::definition::{AgentDefinition, PromptSource};
+use crate::openhuman::agent::harness::definition::{
+    AgentDefinition, IterationPolicy, PromptSource,
+};
 use crate::openhuman::agent::harness::{
     current_spawn_depth, with_current_sandbox_mode, with_spawn_depth, MAX_SPAWN_DEPTH,
 };
@@ -299,103 +301,121 @@ pub async fn run_subagent(
     task_prompt: &str,
     options: SubagentRunOptions,
 ) -> Result<SubagentRunOutcome, SubagentRunError> {
-    let parent = current_parent().ok_or(SubagentRunError::NoParentContext)?;
-    let task_id = options
-        .task_id
-        .clone()
-        .unwrap_or_else(|| format!("sub-{}", uuid::Uuid::new_v4()));
-    let started = Instant::now();
-    let current_depth = current_spawn_depth();
-    let attempted_depth = current_depth.saturating_add(1);
+    // Unconditionally heap-allocate the entire run_subagent body so
+    // every caller — `dispatch_subagent`, `delegate_to_personality`,
+    // `spawn_subagent`, `spawn_parallel_agents`, `spawn_worker_thread`,
+    // `continue_subagent`, `escalation`, `payload_summarizer`,
+    // `session/turn.rs` extraction path, `agent_orchestration::ops`, and
+    // the recursive case from a sub-agent's own tool — doesn't have to
+    // carry this future's state inline. Tools that delegate run inside
+    // the parent agent's already-deep `run_turn_engine` poll, so the
+    // parent's stack would otherwise pile (parent engine state +
+    // dispatch_subagent state + run_subagent's wrapper state +
+    // run_typed_mode state + child engine state) onto tokio's 2 MiB
+    // worker stack and abort with "thread 'tokio-rt-worker' has
+    // overflowed its stack, fatal runtime error: stack overflow"
+    // — observed at `[subagent_runner] dispatching agent_id=researcher
+    // ...` in the `chat-harness-subagent` Playwright lane crash. The
+    // inner `Box::pin`s around `run_typed_mode` / `run_inner_loop` /
+    // child `run_turn_engine` further chunk the child's state so a
+    // single sub-agent run can't blow the stack either.
+    Box::pin(async move {
+        let parent = current_parent().ok_or(SubagentRunError::NoParentContext)?;
+        let task_id = options
+            .task_id
+            .clone()
+            .unwrap_or_else(|| format!("sub-{}", uuid::Uuid::new_v4()));
+        let started = Instant::now();
+        let current_depth = current_spawn_depth();
+        let attempted_depth = current_depth.saturating_add(1);
 
-    if attempted_depth > MAX_SPAWN_DEPTH {
-        tracing::warn!(
+        if attempted_depth > MAX_SPAWN_DEPTH {
+            tracing::warn!(
+                agent_id = %definition.id,
+                task_id = %task_id,
+                current_depth,
+                attempted_depth,
+                max_depth = MAX_SPAWN_DEPTH,
+                "[subagent_runner] spawn depth exceeded"
+            );
+            return Err(SubagentRunError::SpawnDepthExceeded {
+                attempted_depth,
+                max_depth: MAX_SPAWN_DEPTH,
+            });
+        }
+
+        tracing::info!(
             agent_id = %definition.id,
             task_id = %task_id,
-            current_depth,
-            attempted_depth,
-            max_depth = MAX_SPAWN_DEPTH,
-            "[subagent_runner] spawn depth exceeded"
+            spawn_depth = attempted_depth,
+            max_spawn_depth = MAX_SPAWN_DEPTH,
+            prompt_chars = task_prompt.chars().count(),
+            skill_filter = ?options.skill_filter_override.as_deref().or(definition.skill_filter.as_deref()),
+            "[subagent_runner] dispatching"
         );
-        return Err(SubagentRunError::SpawnDepthExceeded {
-            attempted_depth,
-            max_depth: MAX_SPAWN_DEPTH,
-        });
-    }
 
-    tracing::info!(
-        agent_id = %definition.id,
-        task_id = %task_id,
-        spawn_depth = attempted_depth,
-        max_spawn_depth = MAX_SPAWN_DEPTH,
-        prompt_chars = task_prompt.chars().count(),
-        skill_filter = ?options.skill_filter_override.as_deref().or(definition.skill_filter.as_deref()),
-        "[subagent_runner] dispatching"
-    );
-
-    // Install the sub-agent's declared `sandbox_mode` as the active
-    // task-local for every tool invocation inside this run. Tools that
-    // want to gate on it (e.g. `composio_execute` rejecting
-    // Write/Admin slugs under `ReadOnly`) read it via
-    // `current_sandbox_mode()`; tools that don't care just ignore it.
-    // Box-pin the inner future so the large `run_typed_mode` state machine
-    // lives on the heap. Two stacked `task_local::scope` wrappers
-    // (`with_spawn_depth` + `with_current_sandbox_mode`) plus the deeply
-    // nested provider/tool loop inside `run_typed_mode` are otherwise large
-    // enough — under `cargo-llvm-cov` instrumentation in particular — to
-    // overflow tokio's 2 MiB per-thread test stack. See #2234 CI failure.
-    let mut outcome = with_spawn_depth(attempted_depth, async {
-        with_current_sandbox_mode(definition.sandbox_mode, async {
-            Box::pin(run_typed_mode(
-                definition,
-                task_prompt,
-                &options,
-                &parent,
-                &task_id,
-            ))
+        // Install the sub-agent's declared `sandbox_mode` as the active
+        // task-local for every tool invocation inside this run. Tools
+        // that want to gate on it (e.g. `composio_execute` rejecting
+        // Write/Admin slugs under `ReadOnly`) read it via
+        // `current_sandbox_mode()`; tools that don't care just ignore
+        // it. Box-pin the inner future so the large `run_typed_mode`
+        // state machine lives on the heap (#2234 CI failure under
+        // `cargo-llvm-cov`).
+        let mut outcome = with_spawn_depth(attempted_depth, async {
+            with_current_sandbox_mode(definition.sandbox_mode, async {
+                Box::pin(run_typed_mode(
+                    definition,
+                    task_prompt,
+                    &options,
+                    &parent,
+                    &task_id,
+                ))
+                .await
+            })
             .await
         })
-        .await
-    })
-    .await?;
+        .await?;
 
-    // Truncate result to the definition's cap if set.
-    // Use char-count (not byte-length) to avoid panicking on multi-byte
-    // UTF-8 sequences at the truncation boundary.
-    if let Some(cap) = definition.max_result_chars {
-        let original_chars = outcome.output.chars().count();
-        if original_chars > cap {
-            tracing::debug!(
-                agent_id = %definition.id,
-                original_chars,
-                cap,
-                "[subagent_runner] truncating oversized result to max_result_chars cap"
-            );
-            // Find the byte offset of the cap-th character boundary so
-            // `truncate` never lands mid-codepoint.
-            let byte_offset = outcome
-                .output
-                .char_indices()
-                .nth(cap)
-                .map(|(i, _)| i)
-                .unwrap_or(outcome.output.len());
-            outcome.output.truncate(byte_offset);
-            outcome.output.push_str("\n[...truncated]");
+        // Truncate result to the definition's cap if set.
+        // Use char-count (not byte-length) to avoid panicking on
+        // multi-byte UTF-8 sequences at the truncation boundary.
+        if let Some(cap) = definition.max_result_chars {
+            let original_chars = outcome.output.chars().count();
+            if original_chars > cap {
+                tracing::debug!(
+                    agent_id = %definition.id,
+                    original_chars,
+                    cap,
+                    "[subagent_runner] truncating oversized result to max_result_chars cap"
+                );
+                // Find the byte offset of the cap-th character boundary
+                // so `truncate` never lands mid-codepoint.
+                let byte_offset = outcome
+                    .output
+                    .char_indices()
+                    .nth(cap)
+                    .map(|(i, _)| i)
+                    .unwrap_or(outcome.output.len());
+                outcome.output.truncate(byte_offset);
+                outcome.output.push_str("\n[...truncated]");
+            }
         }
-    }
 
-    tracing::info!(
-        agent_id = %definition.id,
-        task_id = %task_id,
-        spawn_depth = attempted_depth,
-        elapsed_ms = outcome.elapsed.as_millis() as u64,
-        iterations = outcome.iterations,
-        output_chars = outcome.output.chars().count(),
-        "[subagent_runner] completed"
-    );
+        tracing::info!(
+            agent_id = %definition.id,
+            task_id = %task_id,
+            spawn_depth = attempted_depth,
+            elapsed_ms = outcome.elapsed.as_millis() as u64,
+            iterations = outcome.iterations,
+            output_chars = outcome.output.chars().count(),
+            "[subagent_runner] completed"
+        );
 
-    let _ = started; // silence unused-warning if logging is compiled out
-    Ok(outcome)
+        let _ = started; // silence unused-warning if logging is compiled out
+        Ok(outcome)
+    })
+    .await
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -976,7 +996,8 @@ async fn run_typed_mode(
         agent_id = %definition.id,
         model = %model,
         tool_count = allowed_names.len(),
-        max_iterations = definition.max_iterations,
+        max_iterations = definition.effective_max_iterations(),
+        iteration_policy = ?definition.iteration_policy,
         "[subagent_runner:typed] resolved configuration"
     );
 
@@ -1147,22 +1168,35 @@ async fn run_typed_mode(
     if let Some(ref ctx) = options.context {
         context_parts.push(ctx);
     }
-    let user_message = if context_parts.is_empty() {
-        task_prompt.to_string()
+    let mut history: Vec<ChatMessage> = if let Some(ref initial) = options.initial_history {
+        tracing::info!(
+            agent_id = %definition.id,
+            task_id = %task_id,
+            history_len = initial.len(),
+            "[subagent_runner] resuming with initial_history (checkpoint replay)"
+        );
+        initial.clone()
     } else {
-        format!("[Context]\n{}\n\n{task_prompt}", context_parts.join("\n\n"))
+        let user_message = if context_parts.is_empty() {
+            task_prompt.to_string()
+        } else {
+            format!("[Context]\n{}\n\n{task_prompt}", context_parts.join("\n\n"))
+        };
+        vec![
+            ChatMessage::system(system_prompt),
+            ChatMessage::user(user_message),
+        ]
     };
-
-    let mut history: Vec<ChatMessage> = vec![
-        ChatMessage::system(system_prompt),
-        ChatMessage::user(user_message),
-    ];
 
     // ── Run the inner tool-call loop ───────────────────────────────────
     // Transcript persistence lives INSIDE the loop (one write per
     // provider response), mirroring the main-agent turn loop in
     // `session/turn.rs`. No post-loop write needed here.
-    let (output, iterations, _agg_usage) = run_inner_loop(
+    // Box-pin so `run_inner_loop`'s state machine (which itself wraps
+    // the engine call below) is heap-allocated independently of
+    // `run_typed_mode`. Belt-and-braces with the inner engine box at
+    // the recursion boundary inside `run_inner_loop`.
+    let (output, iterations, _agg_usage, early_exit_tool) = Box::pin(run_inner_loop(
         subagent_provider.as_ref(),
         &mut history,
         &parent.all_tools,
@@ -1172,14 +1206,83 @@ async fn run_typed_mode(
         lazy_resolver,
         &model,
         temperature,
-        definition.max_iterations,
+        definition.effective_max_iterations(),
         task_id,
         &definition.id,
         options.worker_thread_id.clone(),
         handoff_cache.as_deref(),
         parent,
-    )
+        definition.iteration_policy == IterationPolicy::Extended,
+    ))
     .await?;
+
+    // Determine status: if the turn engine exited early because of
+    // ask_user_clarification, checkpoint the history and return
+    // AwaitingUser so the orchestrator can relay the user's answer.
+    let status = if early_exit_tool.as_deref() == Some("ask_user_clarification") {
+        let question = output.clone();
+        let options_vec: Option<Vec<String>> = None;
+
+        // Persist checkpoint so `continue_subagent` can resume later.
+        let checkpoint_dir = options
+            .checkpoint_dir
+            .clone()
+            .unwrap_or_else(|| parent.workspace_dir.join(".openhuman/subagent_checkpoints"));
+        if let Err(e) = std::fs::create_dir_all(&checkpoint_dir) {
+            tracing::warn!(
+                task_id = %task_id,
+                error = %e,
+                "[subagent_runner] failed to create checkpoint directory"
+            );
+        } else {
+            let checkpoint_data = super::types::SubagentCheckpointData {
+                task_id: task_id.to_string(),
+                agent_id: definition.id.clone(),
+                worker_thread_id: options.worker_thread_id.clone(),
+                history: history.clone(),
+                question: question.clone(),
+                options: options_vec.clone(),
+                toolkit_override: options.toolkit_override.clone(),
+                skill_filter_override: options.skill_filter_override.clone(),
+                model_override: options.model_override.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+            };
+            let checkpoint_path = checkpoint_dir.join(format!("{task_id}.json"));
+            match serde_json::to_string_pretty(&checkpoint_data) {
+                Ok(json) => {
+                    if let Err(e) = std::fs::write(&checkpoint_path, json) {
+                        tracing::warn!(
+                            task_id = %task_id,
+                            path = %checkpoint_path.display(),
+                            error = %e,
+                            "[subagent_runner] failed to write checkpoint"
+                        );
+                    } else {
+                        tracing::info!(
+                            task_id = %task_id,
+                            path = %checkpoint_path.display(),
+                            history_len = history.len(),
+                            "[subagent_runner] checkpoint written for awaiting_user"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        error = %e,
+                        "[subagent_runner] failed to serialize checkpoint"
+                    );
+                }
+            }
+        }
+
+        super::types::SubagentRunStatus::AwaitingUser {
+            question,
+            options: options_vec,
+        }
+    } else {
+        super::types::SubagentRunStatus::Completed
+    };
 
     Ok(SubagentRunOutcome {
         task_id: task_id.to_string(),
@@ -1188,6 +1291,7 @@ async fn run_typed_mode(
         iterations,
         elapsed: started.elapsed(),
         mode: SubagentMode::Typed,
+        status,
     })
 }
 
@@ -1231,7 +1335,8 @@ async fn run_inner_loop(
     worker_thread_id: Option<String>,
     handoff_cache: Option<&ResultHandoffCache>,
     parent: &ParentExecutionContext,
-) -> Result<(String, usize, AggregatedUsage), SubagentRunError> {
+    extended_policy: bool,
+) -> Result<(String, usize, AggregatedUsage, Option<String>), SubagentRunError> {
     // An autonomous skill run (set via `with_autonomous_iter_cap`) lifts the
     // per-agent cap so sub-agents run until done / the circuit breaker trips.
     let max_iterations = super::autonomous::autonomous_iter_cap()
@@ -1333,10 +1438,25 @@ async fn run_inner_loop(
         sink: parent.on_progress.clone(),
         agent_id: agent_id.to_string(),
         task_id: task_id.to_string(),
+        extended_policy,
     };
 
     let parser = super::super::engine::DefaultParser;
-    let outcome = super::super::engine::run_turn_engine(
+    // Heap-allocate the child `run_turn_engine` state machine. Sub-agents
+    // run as nested polls inside the *parent* agent's `run_turn_engine`
+    // (the orchestrator → tool exec → `dispatch_subagent` → `run_subagent`
+    // chain), so without the box the parent's tokio worker poll stack
+    // also has to carry the child engine's ~600-line generator. That
+    // crosses the 2 MiB tokio worker default and aborts with
+    // "thread 'tokio-rt-worker' has overflowed its stack" — see the
+    // `chat-harness-subagent` Playwright lane crash logged here:
+    // `[subagent_runner] dispatching agent_id=researcher ... → fatal
+    // runtime error: stack overflow`. Boxing here breaks the stack
+    // accumulation at the recursion boundary. Smoke-tested in
+    // `nested_subagent_dispatch_runs_on_a_constrained_worker_stack`;
+    // the deep end-to-end catcher is the `chat-harness-subagent`
+    // Playwright spec.
+    let outcome = Box::pin(super::super::engine::run_turn_engine(
         provider,
         history,
         &mut tool_source,
@@ -1349,12 +1469,19 @@ async fn run_inner_loop(
         temperature,
         true, // silent — sub-agents never echo to stdout
         &crate::openhuman::config::MultimodalConfig::default(),
+        &crate::openhuman::config::MultimodalFileConfig::default(),
         max_iterations,
         None, // sub-agents don't stream a draft
-    )
+        &["ask_user_clarification"],
+    ))
     .await?;
 
-    Ok((outcome.text, outcome.iterations as usize, observer.usage))
+    Ok((
+        outcome.text,
+        outcome.iterations as usize,
+        observer.usage,
+        outcome.early_exit_tool,
+    ))
 }
 
 /// Apply the progressive-disclosure handoff to a tool result. If a cache is

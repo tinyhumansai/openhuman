@@ -56,7 +56,6 @@ ALL_E2E_SUITES=(
   ollama_embeddings_fallback_e2e
   screen_intelligence_vision_e2e
   subconscious_e2e
-  vault_sync_e2e
   worker_b_domain_e2e
   worker_c_modules_e2e
 )

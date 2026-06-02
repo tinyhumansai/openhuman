@@ -224,6 +224,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Pas encore exécuté',
   'routines.runNow': 'Cours maintenant',
   'routines.running': 'Course…',
+  'routines.runNowTimedOut': 'Délai dépassé — veuillez rafraîchir et réessayer.',
   'routines.viewHistory': "Afficher l'historique",
   'routines.loadingHistory': 'Chargement…',
   'routines.noHistory': "Pas encore d'historique d'exécution.",
@@ -275,6 +276,7 @@ const messages: TranslationMap = {
   'memory.empty':
     "Aucun souvenir pour l'instant. Les souvenirs sont créés automatiquement au fil de tes interactions.",
   'memory.tab.memory': 'Mémoire',
+  'memory.tab.memoryTree': 'Arbre de mémoire',
   'memory.tab.tasks': "Tâches de l'agent",
   'memory.tab.tasksDescription':
     'Créez et suivez des tâches — vos propres listes de choses à faire ainsi que les tableaux que vos agents construisent au fil des conversations.',
@@ -739,17 +741,17 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Envoyé à',
   'privacy.leavesDevice': "Quitte l'appareil",
   'privacy.staysLocal': 'Reste local',
-  'privacy.anonymizedAnalytics': 'Analyses anonymisées',
-  'privacy.shareAnonymizedData': "Partager les données d'utilisation anonymisées",
+  'privacy.anonymizedAnalytics': 'Analyses produit',
+  'privacy.shareAnonymizedData': 'Partager les analyses produit et les diagnostics',
   'privacy.shareAnonymizedDataDesc':
-    "Aide à améliorer OpenHuman en partageant des rapports de plantage et des analyses d'utilisation anonymes. Toutes les données sont entièrement anonymisées — aucune donnée personnelle, message, clé de portefeuille ou information de session n'est jamais collectée.",
+    "Aide à améliorer OpenHuman en partageant des rapports de plantage et des événements d'utilisation limités pour la confidentialité, incluant un ID de compte stable et les métadonnées de version de l'app. Les messages, clés de portefeuille, clés API et jetons de session ne sont jamais collectés.",
   'privacy.meetingFollowUps': 'Suivis de réunion',
   'privacy.autoHandoffMeet':
     "Transmettre automatiquement les transcriptions Google Meet à l'orchestrateur",
   'privacy.autoHandoffMeetDesc':
     "Quand un appel Google Meet se termine, l'orchestrateur d'OpenHuman peut lire la transcription et effectuer des actions comme rédiger des messages, planifier des suivis ou publier des résumés sur ton espace Slack connecté. Désactivé par défaut.",
   'privacy.analyticsDisclaimer':
-    "Toutes les analyses et rapports de bugs sont entièrement anonymisés. Quand activé, on collecte uniquement les informations de plantage, le type d'appareil et l'emplacement des erreurs. On n'accède jamais à tes messages, données de session, clés de portefeuille, clés API ou toute information personnelle identifiable. Tu peux modifier ce paramètre à tout moment.",
+    "Quand elles sont activées, les analyses produit et les diagnostics peuvent inclure des rapports de plantage et des événements d'utilisation limités pour la confidentialité, un ID de compte stable et les métadonnées de version de l'app. Les messages, clés de portefeuille, clés API et jetons de session ne sont jamais collectés. Tu peux modifier ce paramètre à tout moment.",
   'settings.about.version': 'Version',
   'settings.about.updateAvailable': 'disponible',
   'settings.about.softwareUpdates': 'Mises à jour logicielles',
@@ -1171,6 +1173,14 @@ const messages: TranslationMap = {
   'mcp.detail.confirmUninstallAction': 'Oui, désinstaller',
   'mcp.detail.uninstall': 'Désinstaller',
   'mcp.detail.envVars': "Variables d'environnement",
+  'mcp.detail.reconfigure': 'Reconfigurer',
+  'mcp.detail.reconfigureHint':
+    'Saisissez de nouvelles valeurs pour chaque variable, puis reconnectez-vous. Cela remplace les valeurs enregistrées.',
+  'mcp.detail.saveReconnect': 'Enregistrer et reconnecter',
+  'mcp.detail.reconfigureSaving': 'Enregistrement…',
+  'mcp.detail.reconfigureSuccess': 'Environnement mis à jour et reconnecté.',
+  'mcp.detail.reconfigureReconnectFailed':
+    'Enregistré, mais la reconnexion avec les nouvelles valeurs a échoué.',
   'mcp.detail.tools': 'Outils',
   'onboarding.skipForNow': "Passer pour l'instant",
   'onboarding.localAI.continueWithCloud': 'Continuer avec Cloud',
@@ -1948,6 +1958,7 @@ const messages: TranslationMap = {
   'graph.children': 'enfants',
   'graph.clickToOpenObsidian': 'Clique pour ouvrir dans Obsidian',
   'graph.person': 'Personne',
+  'graph.resetView': 'Réinitialiser la vue',
   'modal.dontShowAgain': 'Ne plus afficher de suggestions similaires',
   'reflections.loading': 'Chargement des réflexions…',
   'reflections.empty': 'Pas encore de réflexions',
@@ -1955,6 +1966,23 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Action proposée',
   'reflections.act': 'Agir',
   'reflections.dismiss': 'Ignorer',
+  'reflections.viewConversation': 'Voir',
+  'subconscious.mode.label': 'Mode subconscient',
+  'subconscious.mode.off.title': 'Désactivé',
+  'subconscious.mode.off.desc': 'Le subconscient est désactivé.',
+  'subconscious.mode.simple.title': 'Simple',
+  'subconscious.mode.simple.desc':
+    'Observation en lecture seule. Accès mémoire et fichiers uniquement.',
+  'subconscious.mode.aggressive.title': 'Agressif',
+  'subconscious.mode.aggressive.desc':
+    'Accès complet aux outils. Peut écrire, créer des agents et déléguer des tâches.',
+  'subconscious.mode.aggressiveWarning':
+    "Le mode agressif donne au subconscient un accès complet aux outils, y compris l'écriture et la création de sous-agents.",
+  'subconscious.interval.label': 'Fréquence',
+  'subconscious.interval.minutes': '{n} min',
+  'subconscious.interval.hours': '{n}h',
+  'subconscious.interval.oneHour': '1 heure',
+  'subconscious.interval.oneDay': '24 heures',
   'whatsapp.chatsSynced': 'conversations synchronisées',
   'whatsapp.chatSynced': 'conversation synchronisée',
   'sync.active': 'Actif',
@@ -2028,6 +2056,11 @@ const messages: TranslationMap = {
   'memorySources.pageUrl': 'URL de la page',
   'memorySources.cssSelector': 'Sélecteur CSS (optionnel)',
   'memorySources.searchQuery': 'Requête de recherche',
+  'memorySources.build.title': 'Construire',
+  'memorySources.build.building': 'Construction…',
+  'memorySources.build.successTitle': 'Arbre construit',
+  'memorySources.build.failedTitle': 'Échec de construction',
+  'memorySources.build.sealsMessage': 'scellement(s) terminé(s)',
   'backend.aiBackend': 'Backend IA',
   'backend.cloud': 'Cloud',
   'backend.recommended': 'Recommandé',
@@ -2534,6 +2567,7 @@ const messages: TranslationMap = {
   'conversations.taskKanban.updateFailed':
     "Impossible de mettre à jour la tâche; les modifications n'ont pas été enregistrées.",
   'conversations.toolTimeline.turn': 'tour',
+  'conversations.toolTimeline.step': 'Étape',
   'conversations.toolTimeline.workerThread': 'fil worker',
   'conversations.subagent.viewProcessing': 'Voir le traitement complet',
   'conversations.subagent.parent': 'Parent',
@@ -2546,6 +2580,7 @@ const messages: TranslationMap = {
   'conversations.subagent.statusRunning': 'en cours',
   'conversations.subagent.statusCompleted': 'terminé',
   'conversations.subagent.statusFailed': 'échoué',
+  'conversations.subagent.statusAwaitingUser': "en attente de l'utilisateur",
   'daemon.serviceBlockingGate.body': 'Corps',
   'daemon.serviceBlockingGate.downloadHint': 'Indice de téléchargement',
   'daemon.serviceBlockingGate.downloadLatest': 'Télécharger la dernière version',
@@ -2846,7 +2881,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Groupe de charge chat',
   'settings.ai.disconnectProvider': 'Déconnecter {label}',
   'settings.ai.connectProviderLabel': 'Connecter {label}',
+  'settings.ai.editProviderEndpoint': 'Modifier le point de terminaison {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Modifier le point de terminaison',
   'settings.ai.endpointUrlLabel': 'Point de terminaison URL',
   'settings.ai.localRuntimeHelper':
     "Là où {label} est accessible. Par défaut, c'est localhost; pointez ceci vers un hôte distant (par exemple, http://10.0.0.4:11434/v1) pour utiliser une instance partagée.",
@@ -3664,6 +3701,14 @@ const messages: TranslationMap = {
   'settings.agentAccess.requireTaskPlanApproval.label': "Exiger l'approbation du plan de tâche",
   'settings.agentAccess.requireTaskPlanApproval.desc':
     "Pause avant qu'un agent assigné n'exécute un briefing de tâche rédigé par un agent.",
+  'settings.agentAccess.timeout.label': "Délai d'expiration de l'action",
+  'settings.agentAccess.timeout.desc':
+    "Durée pendant laquelle un seul outil ou une seule action peut s'exécuter avant d'être annulé. Augmentez cette valeur si un grand modèle local est interrompu avant d'avoir terminé sa réponse.",
+  'settings.agentAccess.timeout.unit': 'secondes',
+  'settings.agentAccess.timeout.invalid':
+    'Saisissez un nombre entier de secondes dans la plage autorisée',
+  'settings.agentAccess.timeout.envOverride':
+    "La variable d'environnement OPENHUMAN_TOOL_TIMEOUT_SECS remplace ce paramètre ; les modifications effectuées ici n'auront donc aucun effet tant qu'elle n'est pas supprimée.",
   'settings.agentAccess.grantedFolders': 'Dossiers accordés',
   'settings.agentAccess.alwaysAllow': 'Outils toujours autorisés',
   'settings.agentAccess.alwaysAllowDesc':
@@ -3680,6 +3725,15 @@ const messages: TranslationMap = {
   'settings.agentAccess.add': 'Ajouter',
   'settings.agentAccess.saving': 'Enregistrement…',
   'settings.agentAccess.changesApply': "Les modifications s'appliquent à votre prochain message.",
+  'settings.agentAccess.directories': 'Répertoires',
+  'settings.agentAccess.actionSandbox': "Bac à sable d'actions",
+  'settings.agentAccess.readWriteAccess': 'lecture + écriture',
+  'settings.agentAccess.actionSandboxDesc':
+    'Répertoire de travail par défaut pour les outils shell, fichiers et git.',
+  'settings.agentAccess.internalState': 'État interne',
+  'settings.agentAccess.agentBlocked': "bloqué pour l'agent",
+  'settings.agentAccess.internalStateDesc':
+    "Bases de données mémoire, sessions, jetons et autres données essentielles. Non accessible aux outils de l'agent.",
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
@@ -4186,74 +4240,7 @@ const messages: TranslationMap = {
     "Configurez les paramètres de triage IA pour les déclencheurs d'intégration Composio",
   'memory.sourceFilterAria': 'Filtrer par source',
   'calls.comingSoonDescription': "Les appels assistés par IA arrivent bientôt. Restez à l'écoute.",
-  'vault.title': 'Coffres de connaissances',
-  'vault.description':
-    'Pointez vers un dossier local ; les fichiers sont découpés et mis en miroir dans la mémoire.',
-  'vault.add': 'Ajouter un coffre-fort',
-  'vault.added': 'Coffre-fort ajouté',
-  'vault.createdMessage': 'Création de "{name}". Cliquez sur {sync} pour ingérer.',
-  'vault.couldNotAdd': "Impossible d'ajouter le coffre",
-  'vault.syncFailed': 'Échec de la synchronisation',
-  'vault.syncFailedFor': 'Échec de la synchronisation pour « {name} »',
-  'vault.syncFailedFiles': 'Échec de {count} fichier(s)',
-  'vault.syncedTitle': '"{name}" synchronisé',
-  'vault.syncSummary': '{ingested} ingéré, {unchanged} inchangé, supprimé {removed}',
-  'vault.syncSummaryFailed': ', échec {count}',
-  'vault.syncSummarySkipped': ', ignoré {count}',
-  'vault.syncSummaryDuration': '· {seconds}s',
-  'vault.confirmRemovePurge':
-    'Supprimer le coffre « {name} » ?\n\nCliquez sur OK pour purger également sa mémoire (supprimer les {count} document(s) ingéré(s)).\nCliquez sur Annuler pour conserver les documents en mémoire.',
-  'vault.confirmRemove': 'Voulez-vous vraiment supprimer le coffre-fort « {name} » ?',
-  'vault.removed': 'Vault supprimé',
-  'vault.removedPurgedMessage': 'Supprimé "{name}" et purgé sa mémoire.',
-  'vault.removedKeptMessage': 'Suppression de "{name}". Documents conservés en mémoire.',
-  'vault.couldNotRemove': 'Impossible de supprimer le coffre-fort',
-  'vault.name': 'Nom',
-  'vault.namePlaceholder': 'Mes notes de recherche',
-  'vault.folderPath': 'Chemin du dossier (absolu)',
-  'vault.folderPathPlaceholder': '/Utilisateurs/vous/Documents/notes',
-  'vault.excludes': 'Exclut (sous-chaînes séparées par des virgules, facultatif)',
-  'vault.excludesPlaceholder': 'drafts/, .secret',
-  'vault.creating': 'Création…',
-  'vault.create': 'Créer un coffre-fort',
-  'vault.loading': 'Chargement coffres-forts…',
-  'vault.failedToLoad': 'Échec du chargement des coffres-forts : {error}',
-  'vault.empty':
-    "Aucun coffre pour l'instant. Ajoutez-en un ci-dessus pour commencer à ingérer un dossier.",
-  'vault.fileCount': '{count} fichier(s)',
-  'vault.syncedRelative': 'synchronisés {time}',
-  'vault.neverSynced': 'jamais synchronisés',
-  'vault.writeState.writable': 'Modifiable',
-  'vault.writeState.read_only': 'Lecture seule',
-  'vault.writeState.unavailable': 'Indisponible',
-  'vault.writeState.unknownReason': "L'état d'écriture est inconnu.",
-  'vault.writeState.reasons.writable':
-    'Les écritures Markdown/wiki approuvées peuvent être enregistrées dans ce coffre.',
-  'vault.writeState.reasons.read_only':
-    'Le dossier du coffre est en lecture seule sur cet appareil.',
-  'vault.writeState.reasons.unavailable':
-    "Le dossier du coffre n'est pas disponible sur cet appareil.",
-  'vault.writeState.reasons.not_directory': "Le chemin du coffre n'est pas un dossier.",
-  'vault.writeState.reasons.empty_path': 'Le chemin du dossier du coffre est vide.',
-  'vault.syncingProgress': 'Synchronisation… {ingested}/{total}',
-  'vault.removing': 'Suppression…',
-  'vault.relative.sec': 'il y a {count}s',
-  'vault.relative.min': 'il y a {count}m',
-  'vault.relative.hr': 'il y a {count}h',
-  'vault.relative.day': '{count}d',
-  'vault.openButton': 'Ouvrir',
-  'vault.openSuccess': 'Ouvert dans Obsidian',
-  'vault.openFallback': 'Obsidian introuvable — ouvert dans le gestionnaire de fichiers',
-  'vault.openError': 'Impossible d\u0027ouvrir le coffre',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 min',
-  'subconscious.interval.tenMinutes': '10 min',
-  'subconscious.interval.fifteenMinutes': '15 min',
-  'subconscious.interval.thirtyMinutes': '30 min',
-  'subconscious.interval.oneHour': '1 heure',
-  'subconscious.interval.sixHours': '6 heures',
-  'subconscious.interval.twelveHours': '12 heures',
-  'subconscious.interval.oneDay': '1 jour',
   'subconscious.priority.critical': 'critique',
   'subconscious.priority.important': 'important',
   'subconscious.priority.normal': 'normal',
@@ -4536,33 +4523,166 @@ const messages: TranslationMap = {
   'graphCohesion.summaryCaption': 'Regroupement moyen {avg} · transitivité {transitivity}',
   'graphCohesion.title': 'Cohésion du graphe',
   'memory.tab.cohesion': 'Cohesion',
-  'memory.tab.core': 'Noyau',
-  'graphCore.title': 'Noyau du graphe',
-  'graphCore.intro':
-    'La décomposition k-core sépare le noyau porteur de votre connaissance — des entités mutuellement renforcées par de nombreux faits interconnectés — de la périphérie des feuilles et des ponts. Même un hub de haut degré avec des faits ponctuels a une coreness de 1 ; la profondeur, et non le degré, marque le noyau.',
-  'graphCore.loading': 'Calcul de la structure du noyau…',
-  'graphCore.errorPrefix': 'Impossible de charger le graphe :',
-  'graphCore.retry': 'Réessayer',
-  'graphCore.empty': "Aucun graphe de connaissance pour l'instant.",
-  'graphCore.emptyHint':
-    "Au fur et à mesure que l'assistant enregistre des faits connectés vous concernant, le noyau densément lié apparaîtra ici.",
-  'graphCore.namespaceLabel': 'Espace de noms',
-  'graphCore.namespaceAll': 'Tous les espaces de noms',
-  'graphCore.metricEntities': 'Entités',
-  'graphCore.metricConnections': 'Connexions',
-  'graphCore.metricDegeneracy': 'Dégénérescence',
-  'graphCore.degeneracyCaption': 'Couche la plus dense : {degeneracy}-core · {coreSize} entités',
-  'graphCore.shellsHeading': 'Décomposition en couches',
-  'graphCore.shellLabel': '{k}-core',
-  'graphCore.shellsMore': '… et {count} coques de plus',
-  'graphCore.rankedHeading': 'Entités du noyau le plus profond',
-  'graphCore.colRank': '#',
-  'graphCore.colEntity': 'Entité',
-  'graphCore.colCore': 'Noyau',
-  'graphCore.colLinks': 'Liens',
-  'graphCore.coreBadge': 'noyau',
-  'graphCore.coreTitle':
-    "Dans le {degeneracy}-core le plus dense — chaque membre ici maintient au moins {degeneracy} liens vers d'autres membres du noyau.",
+
+  'keyring.consent.title': 'Stockage sécurisé indisponible',
+  'keyring.consent.description':
+    "Le trousseau de votre système d'exploitation n'est pas accessible. OpenHuman a besoin de votre autorisation pour stocker les secrets en utilisant un stockage local chiffré.",
+  'keyring.consent.reasonPrefix': 'Raison :',
+  'keyring.consent.showDetails': "Qu'est-ce que cela signifie ?",
+  'keyring.consent.hideDetails': 'Masquer les détails',
+  'keyring.consent.tradeoffTitle': 'Compromis de sécurité',
+  'keyring.consent.tradeoffBody':
+    "Avec le stockage local chiffré, vos secrets sont chiffrés sur disque à l'aide d'une clé maître stockée à côté des données. C'est moins sécurisé que le trousseau du système, qui utilise une protection matérielle. Les sauvegardes ou la synchronisation de fichiers peuvent inclure les données chiffrées.",
+  'keyring.consent.consentButton': 'Utiliser le stockage local chiffré',
+  'keyring.consent.retryButton': 'Réessayer OS Keychain',
+  'keyring.consent.declineButton': 'Refuser',
+  'keyring.consent.retrying': 'Nouvelle tentative…',
+  'keyring.consent.error': "Impossible d'enregistrer la préférence. Veuillez réessayer.",
+  'keyring.consent.retryFailed': 'Le trousseau est toujours indisponible.',
+  'keyring.settings.title': 'Sécurité',
+  'keyring.settings.storageMode': 'Mode de stockage des secrets',
+  'keyring.settings.mode.osKeychain': 'Trousseau du système',
+  'keyring.settings.mode.encryptedFile': 'Local chiffré',
+  'keyring.settings.mode.consentPending': 'Non configuré',
+  'keyring.settings.mode.declined': 'Refusé',
+  'keyring.settings.availability': 'Disponibilité du trousseau',
+  'keyring.settings.available': 'Le trousseau du système est disponible',
+  'keyring.settings.unavailable': 'Le trousseau du système est indisponible',
+  'keyring.settings.backend': 'Moteur',
+  'keyring.settings.retryButton': 'Réessayer la détection du trousseau',
+  'keyring.settings.retryFailed': 'Échec de la tentative. Le trousseau est toujours indisponible.',
+  'keyring.settings.consentTitle': 'Consentement de stockage',
+  'keyring.settings.consentDescription':
+    "Choisissez comment les secrets sont stockés lorsque le trousseau du système n'est pas disponible.",
+  'keyring.settings.grantConsent': 'Autoriser le stockage local chiffré',
+  'keyring.settings.revokeConsent': 'Refuser le stockage local',
+  'pages.settings.account.security': 'Sécurité',
+  'pages.settings.account.securityDesc': 'Mode de stockage des secrets et état du trousseau',
+
+  // Agent activity level
+  'activityLevel.title': "Niveau d'activité de l'agent",
+  'activityLevel.description':
+    'Contrôlez le niveau de proactivité de votre agent. Les niveaux élevés consomment plus de tokens.',
+  'activityLevel.off': 'Désactivé',
+  'activityLevel.offDesc':
+    'Aucun traitement en arrière-plan. Synchronise uniquement sur pression du bouton.',
+  'activityLevel.minimal': 'Minimal',
+  'activityLevel.minimalDesc': 'Synchronise les sources une fois par jour. Aucun message proactif.',
+  'activityLevel.moderate': 'Modéré',
+  'activityLevel.moderateDesc':
+    'Synchronise toutes les heures. Résumé quotidien. Suggère des actions.',
+  'activityLevel.active': 'Actif',
+  'activityLevel.activeDesc':
+    'Synchronise toutes les 10 min. Surveille les canaux, trie et rédige des réponses.',
+  'activityLevel.alwaysOn': 'Toujours actif',
+  'activityLevel.alwaysOnDesc':
+    'Synchronisation en temps réel. Pleine autonomie dans les limites définies.',
+  'activityLevel.currentMonth': 'Ce mois-ci : ${amount}',
+  'activityLevel.saved': "Niveau d'activité mis à jour.",
+  'activityLevel.default': 'par défaut',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/mois',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Budget de synchronisation',
+  'syncBudget.maxTokens': 'Tokens max par synchronisation',
+  'syncBudget.maxTokensHelp': 'Arrêter la synchronisation une fois ce nombre de tokens consommé.',
+  'syncBudget.maxCost': 'Coût max par synchronisation (USD)',
+  'syncBudget.maxCostHelp': 'Plafond absolu en dollars par exécution de synchronisation.',
+  'syncBudget.syncDepth': 'Profondeur de synchronisation',
+  'syncBudget.syncDepthHelp': 'Récupérer uniquement les éléments de cette fenêtre temporelle.',
+  'syncBudget.days7': '7 derniers jours',
+  'syncBudget.days30': '30 derniers jours',
+  'syncBudget.days90': '90 derniers jours',
+  'syncBudget.allTime': 'Tout le temps',
+  'syncBudget.unlimited': 'Illimité',
+  'syncBudget.saved': 'Budget enregistré.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Confirmer la synchronisation',
+  'syncConfirm.message':
+    'Cette synchronisation traitera ~{items} éléments (~{tokens} tokens, est. ${cost}).',
+  'syncConfirm.budgetNote': 'Plafond budgétaire : ${max}',
+  'syncConfirm.proceed': 'Procéder',
+  'syncConfirm.cancel': 'Annuler',
+  'syncConfirm.estimating': 'Estimation du coût...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} ce mois-ci',
+  'monthlyCost.noData': 'Aucune synchronisation ce mois-ci',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Activité',
+  'onboarding.custom.stepperVault': 'Coffre',
+  'onboarding.custom.activity.title': "Activité de l'agent",
+  'onboarding.custom.activity.subtitle':
+    'À quel point votre agent surveille et agit en arrière-plan.',
+  'onboarding.custom.activity.defaultDesc':
+    'Activité modérée — synchronisation horaire, résumé quotidien.',
+  'onboarding.custom.activity.configureDesc':
+    "Choisissez votre propre niveau d'activité. Configurer dans Paramètres › Niveau d'activité de l'agent.",
+
+  // Onboarding: Custom > Vault
+  'onboarding.custom.vault.title': 'Configuration de la mémoire et du coffre',
+  'onboarding.custom.vault.subtitle':
+    'Confirmez où les notes de mémoire sont écrites, comment les données sources sont lues et si votre pipeline de coffre est en bon état.',
+  'onboarding.custom.vault.defaultDesc':
+    "Utiliser les paramètres de mémoire gérés par OpenHuman. Le chemin du coffre et l'état de synchronisation peuvent encore être consultés ultérieurement.",
+  'onboarding.custom.vault.configureDesc':
+    'Vérifiez la propriété du coffre, exécutez des contrôles de santé et affinez les contrôles de mémoire maintenant.',
+  'onboarding.custom.vault.localDisabledReason':
+    "La configuration gérée nécessite une connexion à OpenHuman et n'est pas disponible en mode local.",
+  'onboarding.custom.vault.exitError': "Impossible de terminer l'intégration. Veuillez réessayer.",
+
+  // Vault Health
+  'vaultHealth.title': 'Liste de contrôle de santé du coffre',
+  'vaultHealth.setupTitle': 'Santé de la configuration du coffre',
+  'vaultHealth.workspaceVault': "Coffre de l'espace de travail :",
+  'vaultHealth.refresh': 'Actualiser',
+  'vaultHealth.refreshing': 'Actualisation…',
+  'vaultHealth.revealFolder': 'Afficher le dossier',
+  'vaultHealth.openInObsidian': 'Ouvrir dans Obsidian',
+  'vaultHealth.installObsidian': 'Installer Obsidian',
+  'vaultHealth.openObsidianError': "Impossible d'ouvrir Obsidian",
+  'vaultHealth.revealError': "Impossible d'afficher le dossier du coffre",
+  'vaultHealth.downloadError': "Impossible d'ouvrir la page de téléchargement d'Obsidian",
+  'vaultHealth.loadError': 'Impossible de charger la santé du coffre :',
+  'vaultHealth.lastSync': 'Dernière synchronisation :',
+  'vaultHealth.passed': 'Réussi',
+  'vaultHealth.needsAttention': 'Attention requise',
+  'vaultHealth.existsLabel': "Le chemin du coffre de l'espace de travail existe",
+  'vaultHealth.existsRecovery':
+    'Le dossier du coffre est manquant. Lancez une synchronisation ou créez ce dossier, puis actualisez cette liste de contrôle.',
+  'vaultHealth.writableLabel': 'Le coffre est accessible en écriture par OpenHuman',
+  'vaultHealth.writableRecovery':
+    "OpenHuman ne peut pas encore écrire dans ce coffre. Accordez les autorisations d'écriture et actualisez.",
+  'vaultHealth.obsidianLabel': 'Le coffre est enregistré dans Obsidian',
+  'vaultHealth.obsidianRecovery':
+    'Dans Obsidian, choisissez « Ouvrir le dossier comme coffre » pour ce chemin, puis actualisez cette liste de contrôle.',
+  'vaultHealth.pipelineLabel': 'Le pipeline de mémoire est en bon état',
+  'vaultHealth.pipelineRecovery':
+    "Le pipeline de mémoire est en pause ou en erreur. Réactivez la synchronisation automatique dans le statut de l'arbre de mémoire et réessayez.",
+  'vaultHealth.timeNever': 'Jamais',
+  'vaultHealth.timeJustNow': "à l'instant",
+  'vaultHealth.timeMinAgo': 'il y a {n} min',
+  'vaultHealth.timeHrAgo': 'il y a {n} h',
+  'vaultHealth.timeDayAgo': 'il y a {n} jour',
+  'vaultHealth.timeDaysAgo': 'il y a {n} jours',
+
+  // Memory Data
+  'memoryData.howItWorks': 'Fonctionnement du stockage de la mémoire',
+  'memoryData.workspaceVault': "Coffre de l'espace de travail · écriture",
+  'memoryData.workspaceVaultDesc':
+    'OpenHuman écrit les notes de mémoire générées dans memory_tree/content.',
+  'memoryData.connectedSources': 'Sources connectées · lecture',
+  'memoryData.connectedSourcesDesc':
+    "Les dossiers, boîtes mail, conversations et dépôts sont importés pour l'indexation de la mémoire — leurs fichiers originaux ne sont jamais réécrits.",
+  'memoryData.internalFiles': "Fichiers internes de l'arbre de mémoire",
+  'memoryData.internalFilesDesc':
+    "Les index, l'état de la file d'attente et les résumés sont gérés par OpenHuman pour maintenir la mémoire et la synchronisation en bon état.",
+  'memoryData.windowError': 'Fenêtre de mémoire',
+  'memoryData.windowUpdated': 'Fenêtre de mémoire mise à jour',
+  'memoryData.windowUpdatedMsg': 'Définie sur {window}.',
 };
 
 export default messages;

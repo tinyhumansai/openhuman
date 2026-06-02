@@ -1,6 +1,6 @@
 import { useT } from '../../../lib/i18n/I18nContext';
 import type { SubagentActivity, ToolTimelineEntry } from '../../../store/chatRuntimeSlice';
-import { formatTimelineEntry } from '../../../utils/toolTimelineFormatting';
+import { formatTimelineEntry, formatToolName } from '../../../utils/toolTimelineFormatting';
 import { parseWorkerThreadRef } from '../utils/workerThreadRef';
 import { WorkerThreadRefCard, type WorkerThreadStatus } from './WorkerThreadRefCard';
 
@@ -51,10 +51,14 @@ export function SubagentActivityBlock({
   const headerBits: string[] = [];
   if (subagent.mode) headerBits.push(subagent.mode);
   if (subagent.dedicatedThread) headerBits.push(t('conversations.toolTimeline.workerThread'));
-  if (subagent.childIteration != null && subagent.childMaxIterations != null) {
-    headerBits.push(
-      `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
-    );
+  if (subagent.childIteration != null) {
+    if (subagent.childMaxIterations != null) {
+      headerBits.push(
+        `${t('conversations.toolTimeline.turn')} ${subagent.childIteration}/${subagent.childMaxIterations}`
+      );
+    } else {
+      headerBits.push(`${t('conversations.toolTimeline.step')} ${subagent.childIteration}`);
+    }
   } else if (subagent.iterations != null) {
     headerBits.push(
       subagent.iterations === 1
@@ -115,8 +119,8 @@ export function SubagentActivityBlock({
                 className="flex items-center gap-1.5"
                 data-testid="subagent-tool-call">
                 <span className={`text-[9px] ${tone}`}>•</span>
-                <span className="font-mono text-[10px] text-stone-700 dark:text-neutral-200">
-                  {call.toolName}
+                <span className="text-[10px] text-stone-700 dark:text-neutral-200">
+                  {formatToolName(call.toolName)}
                 </span>
                 {call.iteration != null ? (
                   <span className="text-[9px] text-stone-400 dark:text-neutral-500">

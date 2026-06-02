@@ -204,6 +204,8 @@ impl Tool for SpawnWorkerThreadTool {
             model_override,
             task_id: None,
             worker_thread_id: Some(worker_thread_id.clone()),
+            initial_history: None,
+            checkpoint_dir: None,
         };
 
         tracing::debug!(

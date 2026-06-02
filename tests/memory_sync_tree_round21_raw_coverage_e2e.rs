@@ -82,6 +82,7 @@ fn config_in(tmp: &TempDir) -> Config {
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Config::default()
     };
     config.secrets.encrypt = false;
@@ -237,6 +238,7 @@ async fn configured_loopback_context(
         config: Arc::new(config.clone()),
         toolkit: toolkit.to_string(),
         connection_id: Some(connection_id.to_string()),
+        usage: Default::default(),
     };
     (config, ctx, server)
 }
@@ -547,7 +549,6 @@ fn seed_source_summary(
             body,
         },
         scope,
-        None,
     )
     .expect("stage summary body");
     let embedding_blob = embedding.as_ref().map(|values| pack_embedding(values));

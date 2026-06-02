@@ -101,6 +101,7 @@ async fn run_inner(
         config: Arc::new(config.clone()),
         toolkit: source.provider.as_str().to_string(),
         connection_id: source.connection_id.clone(),
+        usage: Default::default(),
     };
 
     let fetch_filter = filter::to_fetch_filter(&source.filter, source.max_tasks_per_fetch);

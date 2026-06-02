@@ -14,6 +14,13 @@ pub(crate) const STREAM_CHUNK_MIN_CHARS: usize = 80;
 /// Used as a safe fallback when `max_tool_iterations` is unset or configured as zero.
 pub(crate) const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 
+/// Extended iteration cap for agents with `IterationPolicy::Extended`. These
+/// are multi-step specialists (code executor, integrations, planner, …) whose
+/// realistic workflows commonly exceed the default 10-iteration cap. The
+/// repeated-failure circuit breaker and cost budget remain the primary runaway
+/// guards; this value is intentionally generous to avoid premature stops.
+pub(crate) const EXTENDED_MAX_TOOL_ITERATIONS: usize = 50;
+
 /// Repeated-failure circuit breaker. The plain iteration cap lets an agent grind
 /// the same dead-end (e.g. re-running `pip install` when there is no pip) until
 /// `max_iterations`, then return an opaque `MaxIterationsExceeded` that the caller
@@ -176,6 +183,7 @@ pub(crate) async fn agent_turn(
     temperature: f64,
     silent: bool,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_tool_iterations: usize,
     payload_summarizer: Option<&dyn PayloadSummarizer>,
 ) -> Result<String> {
@@ -190,6 +198,7 @@ pub(crate) async fn agent_turn(
         silent,
         "channel",
         multimodal_config,
+        multimodal_file_config,
         max_tool_iterations,
         None,
         None,
@@ -244,6 +253,7 @@ pub(crate) async fn run_tool_call_loop(
     // approval now flows through the process-global `ApprovalGate`.
     _channel_name: &str,
     multimodal_config: &crate::openhuman::config::MultimodalConfig,
+    multimodal_file_config: &crate::openhuman::config::MultimodalFileConfig,
     max_tool_iterations: usize,
     on_delta: Option<tokio::sync::mpsc::Sender<String>>,
     visible_tool_names: Option<&HashSet<String>>,
@@ -296,8 +306,10 @@ pub(crate) async fn run_tool_call_loop(
         temperature,
         silent,
         multimodal_config,
+        multimodal_file_config,
         max_iterations,
         on_delta,
+        &[],
     )
     .await
     .map(|outcome| outcome.text)

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use axum::body::Body;
 use axum::extract::State;
@@ -49,14 +49,14 @@ struct EnvVarGuard {
 impl EnvVarGuard {
     fn set(key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: validation runs this integration test with --test-threads=1.
+        // SAFETY: tests that mutate environment variables hold env_lock().
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
-        // SAFETY: validation runs this integration test with --test-threads=1.
+        // SAFETY: tests that mutate environment variables hold env_lock().
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
     }
@@ -66,15 +66,31 @@ impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         match &self.previous {
             Some(value) => {
-                // SAFETY: validation runs this integration test with --test-threads=1.
+                // SAFETY: tests that mutate environment variables hold env_lock().
                 unsafe { std::env::set_var(self.key, value) }
             }
             None => {
-                // SAFETY: validation runs this integration test with --test-threads=1.
+                // SAFETY: tests that mutate environment variables hold env_lock().
                 unsafe { std::env::remove_var(self.key) }
             }
         }
     }
+}
+
+/// Process-wide lock serializing tests that mutate global environment
+/// variables through [`EnvVarGuard`]. `cargo llvm-cov` runs integration tests
+/// multi-threaded (it does not pass `--test-threads=1`), so without this guard
+/// concurrent tests clobber each other's env — e.g. one test points
+/// `OPENHUMAN_OLLAMA_BASE_URL` at an unreachable port and asserts Ollama is
+/// unavailable while another points it at a mock and asserts it is available.
+/// Each env-mutating test holds this guard for its whole body; declaring it
+/// before any `EnvVarGuard` makes it drop last, after the env is restored.
+fn env_lock() -> MutexGuard<'static, ()> {
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[tokio::test]
@@ -251,6 +267,7 @@ async fn compatible_provider_covers_retry_headers_responses_and_parse_errors() {
 
 #[tokio::test]
 async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
+    let _env_guard = env_lock();
     let (base, state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -392,6 +409,7 @@ async fn local_admin_covers_assets_diagnostics_downloads_and_ops_errors() {
 
 #[tokio::test]
 async fn provider_model_listing_covers_local_synthesis_and_openrouter_failures() {
+    let _env_guard = env_lock();
     let (base, _state) = serve_mock().await;
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
@@ -465,6 +483,7 @@ async fn provider_model_listing_covers_local_synthesis_and_openrouter_failures()
 
 #[tokio::test]
 async fn local_admin_reports_unhealthy_runtime_and_lm_studio_issue_shapes() {
+    let _env_guard = env_lock();
     let tmp = tempdir().expect("tempdir");
     let mut config = temp_config(&tmp);
     config.local_ai.runtime_enabled = true;

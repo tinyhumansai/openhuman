@@ -2,6 +2,7 @@
 
 mod ops;
 mod schemas;
+pub mod tools;
 
 pub use ops::*;
 pub use schemas::{all_team_controller_schemas, all_team_registered_controllers, team_schemas};

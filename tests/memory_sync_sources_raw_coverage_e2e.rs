@@ -21,8 +21,9 @@ use openhuman_core::openhuman::credentials::{
 };
 use openhuman_core::openhuman::memory_sources::readers::SourceReader;
 use openhuman_core::openhuman::memory_sources::{
-    add_source, get_source, list_enabled_by_kind, list_sources, remove_source, update_source,
-    upsert_composio_source, MemorySourceEntry, MemorySourcePatch, SourceKind,
+    add_source, get_source, list_enabled_by_kind, list_sources,
+    remove_composio_source_by_connection_id, remove_source, update_source, upsert_composio_source,
+    MemorySourceEntry, MemorySourcePatch, SourceKind,
 };
 use openhuman_core::openhuman::memory_sync::composio::bus::{
     ComposioConfigChangedSubscriber, ComposioConnectionCreatedSubscriber, ComposioTriggerSubscriber,
@@ -85,6 +86,7 @@ fn config_in(tmp: &TempDir) -> Config {
     let mut config = Config {
         config_path: tmp.path().join("config.toml"),
         workspace_dir: tmp.path().join("workspace"),
+        action_dir: tmp.path().join("workspace"),
         ..Config::default()
     };
     config.secrets.encrypt = false;
@@ -112,7 +114,13 @@ fn source(kind: SourceKind, id: &str) -> MemorySourceEntry {
         query: None,
         since_days: None,
         max_items: None,
+        max_commits: None,
+        max_issues: None,
+        max_prs: None,
         selector: None,
+        max_tokens_per_sync: None,
+        max_cost_per_sync_usd: None,
+        sync_depth_days: None,
     }
 }
 
@@ -196,6 +204,80 @@ async fn memory_sources_registry_persists_crud_and_composio_upserts() {
     let all = list_sources().await.expect("list sources");
     assert_eq!(all.len(), 1);
     assert_eq!(all[0].id, first.id);
+}
+
+#[tokio::test]
+async fn remove_composio_source_by_connection_id_prunes_on_disconnect_and_survives_reconnect() {
+    let _guard = env_lock();
+    let tmp = TempDir::new().expect("tempdir");
+    let config = config_in(&tmp);
+    let _workspace = EnvGuard::set_path("OPENHUMAN_WORKSPACE", tmp.path());
+    let _home = EnvGuard::set_path("HOME", tmp.path());
+    let _backend = EnvGuard::unset("BACKEND_URL");
+    persist_config(&config).await;
+
+    // Two live composio connections plus an unrelated folder source.
+    let gmail_old = upsert_composio_source("gmail", "conn-old", "Gmail · conn-old")
+        .await
+        .expect("insert gmail");
+    upsert_composio_source("slack", "conn-slack", "Slack")
+        .await
+        .expect("insert slack");
+    let mut folder = source(SourceKind::Folder, "src_folder_disc");
+    folder.path = Some(tmp.path().join("notes").to_string_lossy().into_owned());
+    folder.glob = Some("**/*.md".to_string());
+    add_source(folder.clone()).await.expect("add folder");
+
+    // No-match is a no-op (returns 0, removes nothing).
+    assert_eq!(
+        remove_composio_source_by_connection_id("conn-does-not-exist")
+            .await
+            .expect("no-match remove"),
+        0
+    );
+    assert_eq!(list_sources().await.expect("list").len(), 3);
+
+    // Disconnect: prune ONLY the matching composio source, by connection_id.
+    assert_eq!(
+        remove_composio_source_by_connection_id("conn-old")
+            .await
+            .expect("prune on disconnect"),
+        1
+    );
+    let after_disconnect = list_sources().await.expect("list after disconnect");
+    assert_eq!(after_disconnect.len(), 2);
+    assert!(
+        after_disconnect.iter().all(|s| s.id != gmail_old.id),
+        "old gmail entry must be gone"
+    );
+    assert!(
+        after_disconnect
+            .iter()
+            .any(|s| s.connection_id.as_deref() == Some("conn-slack")),
+        "the other composio connection must be untouched"
+    );
+    assert!(
+        after_disconnect.iter().any(|s| s.id == folder.id),
+        "non-composio folder source must be untouched"
+    );
+
+    // Reconnect: backend mints a NEW connection_id for the same Gmail account.
+    // upsert inserts a fresh entry; no stale duplicate is left behind.
+    let gmail_new = upsert_composio_source("gmail", "conn-new", "Gmail · conn-new")
+        .await
+        .expect("reconnect gmail");
+    assert_ne!(gmail_new.id, gmail_old.id);
+    let final_sources = list_sources().await.expect("final list");
+    let gmail_entries: Vec<_> = final_sources
+        .iter()
+        .filter(|s| s.toolkit.as_deref() == Some("gmail"))
+        .collect();
+    assert_eq!(
+        gmail_entries.len(),
+        1,
+        "exactly one gmail source after reconnect — no orphan"
+    );
+    assert_eq!(gmail_entries[0].connection_id.as_deref(), Some("conn-new"));
 }
 
 #[tokio::test]
@@ -302,6 +384,17 @@ async fn rss_reader_lists_reads_and_reports_feed_errors_from_loopback() {
 #[tokio::test]
 async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let _guard = env_lock();
+    if std::process::Command::new("gh")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| !s.success())
+        .unwrap_or(true)
+    {
+        eprintln!("skipping: gh CLI not available");
+        return;
+    }
     let tmp = TempDir::new().expect("tempdir");
     let config = config_in(&tmp);
     let bin = tmp.path().join("bin");
@@ -314,6 +407,9 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
     let reader = openhuman_core::openhuman::memory_sources::readers::github::GithubReader;
     let mut entry = source(SourceKind::GithubRepo, "github-round15");
     entry.url = Some("https://github.com/tinyhumansai/openhuman.git".to_string());
+    entry.max_commits = Some(30);
+    entry.max_issues = Some(30);
+    entry.max_prs = Some(30);
 
     let items = reader
         .list_items(&entry, &config)
@@ -338,7 +434,7 @@ async fn github_reader_uses_fake_gh_for_list_and_read_paths() {
         .read_item(&entry, "issue:7", &config)
         .await
         .expect("read issue");
-    assert!(issue.body.contains("## Comments"));
+    assert!(issue.body.contains("## Description"));
     assert!(issue.body.contains("Needs fixture coverage"));
     assert_eq!(
         issue.metadata.get("state").and_then(Value::as_str),
@@ -411,6 +507,7 @@ async fn composio_providers_fetch_profiles_tasks_and_cover_error_branches() {
         config: Arc::new(config.clone()),
         toolkit: "github".to_string(),
         connection_id: Some("conn-github".to_string()),
+        usage: Default::default(),
     };
     let github = GitHubProvider::new();
     let github_profile = github
@@ -608,17 +705,17 @@ if [[ "${1:-}" != "api" ]]; then
   exit 2
 fi
 case "${2:-}" in
-  repos/tinyhumansai/openhuman/commits?per_page=30)
+  repos/tinyhumansai/openhuman/commits\?*)
     cat <<'JSON'
 [{"sha":"abc123","commit":{"message":"Add coverage hooks\n\nMore details","author":{"name":"Ada","email":"ada@example.test","date":"2026-05-28T10:00:00Z"},"committer":{"name":"Ada","email":"ada@example.test","date":"2026-05-28T10:00:00Z"}}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/issues\?*)
     cat <<'JSON'
 [{"number":7,"title":"Memory source reader gap","body":"Needs fixture coverage","state":"open","user":{"login":"ada"},"labels":[{"name":"coverage"}],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T11:00:00Z","pull_request":null},{"number":99,"title":"PR-shaped issue","body":"","state":"open","user":{"login":"bot"},"labels":[],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T11:00:00Z","pull_request":{}}]
 JSON
     ;;
-  repos/tinyhumansai/openhuman/pulls?per_page=30\&state=all)
+  repos/tinyhumansai/openhuman/pulls\?*)
     cat <<'JSON'
 [{"number":9,"title":"Raw coverage PR","body":"PR body","state":"open","user":{"login":"grace"},"labels":[{"name":"tests"}],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T12:00:00Z","merged_at":null,"comments":1}]
 JSON
@@ -638,7 +735,7 @@ JSON
 {"number":9,"title":"Raw coverage PR","body":"PR body","state":"open","user":{"login":"grace"},"labels":[{"name":"tests"}],"created_at":"2026-05-27T10:00:00Z","updated_at":"2026-05-28T12:00:00Z","merged_at":null,"comments":1}
 JSON
     ;;
-  repos/tinyhumansai/openhuman/issues/7/comments?per_page=50|repos/tinyhumansai/openhuman/issues/9/comments?per_page=50)
+  repos/tinyhumansai/openhuman/issues/7/comments\?*|repos/tinyhumansai/openhuman/issues/9/comments\?*)
     cat <<'JSON'
 [{"user":{"login":"reviewer"},"body":"Looks deterministic","created_at":"2026-05-28T13:00:00Z"}]
 JSON

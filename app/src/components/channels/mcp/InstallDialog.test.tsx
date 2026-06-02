@@ -5,11 +5,13 @@ import InstallDialog from './InstallDialog';
 
 const mockRegistryGet = vi.fn();
 const mockInstall = vi.fn();
+const mockConnect = vi.fn();
 
 vi.mock('../../../services/api/mcpClientsApi', () => ({
   mcpClientsApi: {
     registryGet: (...args: unknown[]) => mockRegistryGet(...args),
     install: (...args: unknown[]) => mockInstall(...args),
+    connect: (...args: unknown[]) => mockConnect(...args),
   },
 }));
 
@@ -25,6 +27,8 @@ describe('InstallDialog', () => {
   beforeEach(() => {
     mockRegistryGet.mockReset();
     mockInstall.mockReset();
+    mockConnect.mockReset();
+    mockConnect.mockResolvedValue({ server_id: 'srv-1', status: 'connected', tools: [] });
   });
 
   it('shows loading state while fetching detail', () => {
@@ -107,6 +111,40 @@ describe('InstallDialog', () => {
       env: { API_KEY: 'my-api-key', SECRET_TOKEN: 'my-secret' },
       config: undefined,
     });
+    // Auto-connect on success (issue #3039 gap B3).
+    expect(mockConnect).toHaveBeenCalledWith('srv-1');
+    expect(onSuccess).toHaveBeenCalledWith(installedServer);
+  });
+
+  it('still reports success when auto-connect fails (best-effort)', async () => {
+    const installedServer = {
+      server_id: 'srv-1',
+      ...DETAIL,
+      command_kind: 'node' as const,
+      command: 'node',
+      args: [],
+      env_keys: ['API_KEY', 'SECRET_TOKEN'],
+      installed_at: 1000,
+    };
+    mockRegistryGet.mockResolvedValue(DETAIL);
+    mockInstall.mockResolvedValue(installedServer);
+    mockConnect.mockRejectedValue(new Error('spawn failed'));
+
+    const onSuccess = vi.fn();
+    render(
+      <InstallDialog qualifiedName="acme/test-server" onSuccess={onSuccess} onCancel={() => {}} />
+    );
+
+    await waitFor(() => screen.getByLabelText('API_KEY'));
+    fireEvent.change(screen.getByLabelText('API_KEY'), { target: { value: 'k' } });
+    fireEvent.change(screen.getByLabelText('SECRET_TOKEN'), { target: { value: 's' } });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Install' }));
+    });
+
+    expect(mockConnect).toHaveBeenCalledWith('srv-1');
+    // A connect failure must NOT block the install success callback.
     expect(onSuccess).toHaveBeenCalledWith(installedServer);
   });
 

@@ -146,6 +146,8 @@ describe('Composio trigger toggles (UI + core RPC)', () => {
       { timeout: 10_000, interval: 500, timeoutMsg: 'trigger toggles did not render' }
     );
     expect(togglesVisible).toBe(true);
-    expect(await textExists('Gmail New Gmail Message')).toBe(true);
+    // formatTriggerLabel('GMAIL_NEW_GMAIL_MESSAGE', { toolkit: 'gmail' }) strips
+    // the leading 'Gmail' prefix, producing "New Gmail Message".
+    expect(await textExists('New Gmail Message')).toBe(true);
   });
 });

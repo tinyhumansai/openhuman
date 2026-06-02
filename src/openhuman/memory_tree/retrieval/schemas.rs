@@ -2,8 +2,6 @@
 //!
 //! Registered JSON-RPC methods:
 //! - `openhuman.memory_tree_query_source`
-//! - `openhuman.memory_tree_query_global`
-//! - `openhuman.memory_tree_query_topic`
 //! - `openhuman.memory_tree_search_entities`
 //! - `openhuman.memory_tree_drill_down`
 //! - `openhuman.memory_tree_fetch_leaves`
@@ -28,8 +26,6 @@ const NAMESPACE: &str = "memory_tree";
 pub fn all_controller_schemas() -> Vec<ControllerSchema> {
     vec![
         schemas("query_source"),
-        schemas("query_global"),
-        schemas("query_topic"),
         schemas("search_entities"),
         schemas("drill_down"),
         schemas("fetch_leaves"),
@@ -43,14 +39,6 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("query_source"),
             handler: handle_query_source,
-        },
-        RegisteredController {
-            schema: schemas("query_global"),
-            handler: handle_query_global,
-        },
-        RegisteredController {
-            schema: schemas("query_topic"),
-            handler: handle_query_topic,
         },
         RegisteredController {
             schema: schemas("search_entities"),
@@ -126,58 +114,6 @@ pub fn schemas(function: &str) -> ControllerSchema {
                     ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
                     comment: "Only return summaries whose time range overlaps the \
                      last N days.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "query",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::String)),
-                    comment: "Optional natural-language query — when present, \
-                     candidates are reranked by cosine similarity to the query's \
-                     embedding. Candidates without stored embeddings sort last.",
-                    required: false,
-                },
-                FieldSchema {
-                    name: "limit",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Max hits (default 10).",
-                    required: false,
-                },
-            ],
-            outputs: query_response_outputs(),
-        },
-        "query_global" => ControllerSchema {
-            namespace: NAMESPACE,
-            function: "query_global",
-            description: "Return the global digest for the last N days. Wraps \
-                 `tree_global::recap`; the returned hit carries `child_ids` pointing \
-                 at the folded per-day summary ids for drill-down.",
-            inputs: vec![FieldSchema {
-                name: "time_window_days",
-                ty: TypeSchema::U64,
-                comment: "Lookback window in days (e.g. 7 for weekly recap).",
-                required: true,
-            }],
-            outputs: query_response_outputs(),
-        },
-        "query_topic" => ControllerSchema {
-            namespace: NAMESPACE,
-            function: "query_topic",
-            description: "Return summaries / chunks associated with a canonical \
-                 entity id across every tree (source, topic, global). Also returns \
-                 the topic tree's root if one has materialised for the entity. \
-                 Sorted by (score DESC, timestamp DESC), or by cosine similarity \
-                 if `query` is provided.",
-            inputs: vec![
-                FieldSchema {
-                    name: "entity_id",
-                    ty: TypeSchema::String,
-                    comment: "Canonical id (e.g. `email:alice@example.com`, `topic:phoenix`).",
-                    required: true,
-                },
-                FieldSchema {
-                    name: "time_window_days",
-                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
-                    comment: "Only return hits whose time range overlaps the last N days.",
                     required: false,
                 },
                 FieldSchema {
@@ -338,22 +274,6 @@ fn handle_query_source(params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
-fn handle_query_global(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<retrieval_rpc::QueryGlobalRequest>(Value::Object(params))?;
-        to_json(retrieval_rpc::query_global_rpc(&config, req).await?)
-    })
-}
-
-fn handle_query_topic(params: Map<String, Value>) -> ControllerFuture {
-    Box::pin(async move {
-        let config = config_rpc::load_config_with_timeout().await?;
-        let req = parse_value::<retrieval_rpc::QueryTopicRequest>(Value::Object(params))?;
-        to_json(retrieval_rpc::query_topic_rpc(&config, req).await?)
-    })
-}
-
 fn handle_search_entities(params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async move {
         let config = config_rpc::load_config_with_timeout().await?;
@@ -398,8 +318,6 @@ mod tests {
             functions,
             vec![
                 "query_source",
-                "query_global",
-                "query_topic",
                 "search_entities",
                 "drill_down",
                 "fetch_leaves",
@@ -410,7 +328,7 @@ mod tests {
     #[test]
     fn registered_controllers_use_memory_tree_namespace() {
         let controllers = all_registered_controllers();
-        assert_eq!(controllers.len(), 6);
+        assert_eq!(controllers.len(), 4);
         assert!(controllers.iter().all(|c| c.schema.namespace == NAMESPACE));
     }
 
@@ -421,13 +339,5 @@ mod tests {
         assert_eq!(schema.function, "unknown");
         assert_eq!(schema.outputs.len(), 1);
         assert_eq!(schema.outputs[0].name, "error");
-    }
-
-    #[test]
-    fn query_global_schema_requires_time_window_days() {
-        let schema = schemas("query_global");
-        assert_eq!(schema.inputs.len(), 1);
-        assert_eq!(schema.inputs[0].name, "time_window_days");
-        assert!(schema.inputs[0].required);
     }
 }

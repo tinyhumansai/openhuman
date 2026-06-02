@@ -66,21 +66,6 @@ fn main() {
             if openhuman_core::core::observability::is_budget_event(&event) {
                 return None;
             }
-            // CORE-RUST-EK (~827 events): drop all HTTP 401 responses from the
-            // embeddings call path (domain=embeddings, failure=non_2xx,
-            // status=401). The primary suppression for the OpenHuman-backend
-            // "Invalid token" shape lives in `expected_error_kind` /
-            // `is_session_expired_message`. This is defense-in-depth that also
-            // catches third-party provider 401s (e.g. OpenAI `invalid_api_key`
-            // body) that don't carry the OpenHuman envelope and therefore fall
-            // through the string-based classifier to Sentry.
-            if openhuman_core::core::observability::is_embeddings_api_key_401_event(&event) {
-                log::debug!(
-                    "[sentry-embeddings-401-filter] dropping embeddings api-key 401 event_id={:?}",
-                    event.event_id
-                );
-                return None;
-            }
             // Defense-in-depth: drop max-tool-iterations cap events that
             // slipped past the call-site filters in
             // `agent::harness::session::runtime::run_single`,
@@ -97,43 +82,6 @@ fn main() {
                 || openhuman_core::core::observability::is_updater_transient_event(&event)
             {
                 return None;
-            }
-            // Defense-in-depth: upstream rate-limit events that slipped past
-            // the call-site suppressors in `ops::api_error` (primary guard)
-            // and `report_error_or_expected` (secondary guard via
-            // `expected_error_kind`). Catches the three major shapes:
-            //   · `rate_limit_error` type in the JSON body (OPENHUMAN-TAURI-2E,
-            //     OPENHUMAN-TAURI-RQ — ~2 223 events combined)
-            //   · `"upstream rate limit exceeded"` in a 500 body (TAURI-6Y —
-            //     ~19 849 events)
-            //   · `"429 rate limit exceeded"` in a 500 body (TAURI-S — ~6 984
-            //     events)
-            // The primary per-attempt suppression lives in
-            // `openhuman::inference::provider::ops::api_error` (skips
-            // `report_error` entirely for rate-limit bodies) and in
-            // `embeddings::openai::embed` (uses `report_error_or_expected` with
-            // the canonical `"Embedding API error ({status}): …"` format so
-            // `is_transient_upstream_http_message` catches it). This filter is
-            // the last line of defense for any future call site that adds a new
-            // report path without routing through one of those two guards.
-            {
-                let direct = event.message.as_deref();
-                let from_logentry = event.logentry.as_ref().map(|l| l.message.as_str());
-                let from_exception = event.exception.last().and_then(|e| e.value.as_deref());
-                let is_rate_limited = [direct, from_logentry, from_exception]
-                    .into_iter()
-                    .flatten()
-                    .map(str::to_ascii_lowercase)
-                    .any(|lower| {
-                        openhuman_core::core::observability::is_upstream_rate_limit_message(&lower)
-                    });
-                if is_rate_limited {
-                    log::debug!(
-                        "[sentry-rate-limit-filter] dropping upstream rate-limit event_id={:?}",
-                        event.event_id
-                    );
-                    return None;
-                }
             }
             // Defense-in-depth: 404 on PATCH/DELETE to a channel-message path
             // is an expected state (provider-side delete or backend GC). Primary
@@ -170,14 +118,25 @@ fn main() {
             // Attach the cached account uid so Sentry can count unique users
             // affected by an issue. We only carry `id` — never email, name,
             // or IP — so this stays consistent with `send_default_pii: false`.
-            // Empty/missing on early-startup events (cache populates after
-            // the first `auth_get_me` RPC); that's expected.
-            event.user = openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
-                .and_then(|identity| identity.id)
-                .map(|id| sentry::User {
-                    id: Some(id),
-                    ..Default::default()
-                });
+            //
+            // Issue #3135: the primary source for `event.user` is now the
+            // Sentry scope, bound proactively at session boundaries
+            // (credentials::store_session / clear_session) and at server boot
+            // (run_server_inner). The `app_state_snapshot` cache is kept as a
+            // fallback so any pre-boot / pre-login event that still rides
+            // the legacy path retains its previous attribution behaviour —
+            // but we only consult it when the scope hasn't already bound a
+            // user, otherwise we'd silently clobber the scope binding when
+            // the cache is empty (root cause of the original userCount=0).
+            if event.user.is_none() {
+                event.user =
+                    openhuman_core::openhuman::app_state::peek_cached_current_user_identity()
+                        .and_then(|identity| identity.id)
+                        .map(|id| sentry::User {
+                            id: Some(id),
+                            ..Default::default()
+                        });
+            }
             // Scrub secrets from exception values and top-level message.
             for exc in &mut event.exception.values {
                 if let Some(ref value) = exc.value {

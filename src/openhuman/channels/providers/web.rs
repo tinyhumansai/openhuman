@@ -1154,13 +1154,15 @@ fn spawn_progress_bridge(
                     dedicated_thread,
                     prompt_chars,
                     worker_thread_id,
+                    display_name,
                 } => {
+                    let label = display_name.as_deref().unwrap_or(&agent_id);
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_spawned".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        message: Some(format!("Sub-agent '{agent_id}' spawned")),
+                        message: Some(format!("Sub-agent '{label}' spawned")),
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
                         round: Some(round),
@@ -1169,6 +1171,7 @@ fn spawn_progress_bridge(
                             dedicated_thread: Some(dedicated_thread),
                             prompt_chars: Some(prompt_chars as u64),
                             worker_thread_id,
+                            display_name,
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -1220,26 +1223,64 @@ fn spawn_progress_bridge(
                         ..Default::default()
                     });
                 }
+                AgentProgress::SubagentAwaitingUser {
+                    agent_id,
+                    task_id,
+                    question,
+                    worker_thread_id,
+                } => {
+                    log::debug!(
+                        "[web_channel][bridge] subagent_awaiting_user agent_id={} task_id={} client_id={} thread_id={} request_id={}",
+                        agent_id,
+                        task_id,
+                        client_id,
+                        thread_id,
+                        request_id,
+                    );
+                    publish_web_channel_event(WebChannelEvent {
+                        event: "subagent_awaiting_user".to_string(),
+                        client_id: client_id.clone(),
+                        thread_id: thread_id.clone(),
+                        request_id: request_id.clone(),
+                        message: Some(question),
+                        tool_name: Some(agent_id),
+                        skill_id: Some(task_id),
+                        success: Some(true),
+                        round: Some(round),
+                        subagent: Some(SubagentProgressDetail {
+                            worker_thread_id,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    });
+                }
                 AgentProgress::SubagentIterationStarted {
                     agent_id,
                     task_id,
                     iteration,
                     max_iterations,
+                    extended_policy,
                 } => {
                     publish_web_channel_event(WebChannelEvent {
                         event: "subagent_iteration_start".to_string(),
                         client_id: client_id.clone(),
                         thread_id: thread_id.clone(),
                         request_id: request_id.clone(),
-                        message: Some(format!(
-                            "Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}"
-                        )),
+                        message: Some(if extended_policy {
+                            format!("Sub-agent '{agent_id}' step {iteration}")
+                        } else {
+                            format!("Sub-agent '{agent_id}' iteration {iteration}/{max_iterations}")
+                        }),
                         tool_name: Some(agent_id),
                         skill_id: Some(task_id),
                         round: Some(round),
                         subagent: Some(SubagentProgressDetail {
                             child_iteration: Some(iteration),
-                            child_max_iterations: Some(max_iterations),
+                            child_max_iterations: if extended_policy {
+                                None
+                            } else {
+                                Some(max_iterations)
+                            },
                             ..Default::default()
                         }),
                         ..Default::default()

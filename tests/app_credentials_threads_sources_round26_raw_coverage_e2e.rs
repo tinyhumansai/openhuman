@@ -154,6 +154,7 @@ async fn round26_app_state_quarantines_corrupt_local_file_and_preserves_patch_no
     );
 
     let unchanged = update_local_state(StoredAppStatePatch {
+        keyring_consent: None,
         encryption_key: None,
         onboarding_tasks: None,
     })

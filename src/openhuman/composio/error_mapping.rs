@@ -121,12 +121,21 @@ fn prefix_class(class: ComposioErrorClass, body: &str) -> String {
     format!("[composio:error:{}] {}", class.as_str(), body)
 }
 
-fn format_insufficient_scope_message(tool: &str, detail: &str) -> String {
-    let toolkit = tool
-        .split('_')
+/// Derive the lowercase toolkit slug from a Composio tool/trigger identifier.
+///
+/// Identifiers are upper-snake-case (e.g. `GMAIL_NEW_GMAIL_MESSAGE`); the leading
+/// segment names the toolkit, so this returns e.g. `gmail`. `str::split('_').next()`
+/// always yields `Some(_)` for `&str` input (empty input yields `Some("")`), so
+/// `unwrap_or_default()` is a safe, equivalent terminator.
+fn derive_toolkit_slug(tool: &str) -> String {
+    tool.split('_')
         .next()
-        .unwrap_or("integration")
-        .to_ascii_lowercase();
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn format_insufficient_scope_message(tool: &str, detail: &str) -> String {
+    let toolkit = derive_toolkit_slug(tool);
     format!(
         "`{tool}` was rejected because the connected {toolkit} account is missing required \
          permissions ({detail}). Reconnect the integration in Settings → Connections → \
@@ -140,11 +149,7 @@ fn format_insufficient_scope_message(tool: &str, detail: &str) -> String {
 /// [`format_insufficient_scope_message`] does (e.g. `GMAIL_NEW_GMAIL_MESSAGE`
 /// → `gmail`), so the copy is branded and points the user at reconnecting.
 fn format_trigger_permission_message(tool: &str) -> String {
-    let toolkit = tool
-        .split('_')
-        .next()
-        .unwrap_or("integration")
-        .to_ascii_lowercase();
+    let toolkit = derive_toolkit_slug(tool);
     format!(
         "Couldn't enable this trigger: the connected {toolkit} account doesn't have \
          permission to manage triggers. Reconnect {toolkit} in Settings → Connections → \
