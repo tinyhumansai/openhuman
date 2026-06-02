@@ -572,6 +572,35 @@ describe('useHumanMascot state machine', () => {
     expect(result.current.face).toBe('concerned');
   });
 
+  it('shows concerned on chat_done when a tool succeeded but a subagent failed in the same turn', () => {
+    const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
+    act(() => {
+      capturedListeners?.onInferenceStart?.(fakeEvent({}));
+      capturedListeners?.onToolResult?.(
+        fakeEvent({ tool_name: 'run', skill_id: 's', output: 'ok', success: true, round: 1 })
+      );
+      capturedListeners?.onSubagentDone?.(
+        fakeEvent({
+          tool_name: 'researcher',
+          skill_id: 'sa1',
+          message: 'failed',
+          success: false,
+          round: 1,
+        })
+      );
+      capturedListeners?.onDone?.(
+        fakeEvent({
+          full_response: 'Sorry, the researcher failed.',
+          reaction_emoji: null,
+          rounds_used: 2,
+          total_input_tokens: 1,
+          total_output_tokens: 1,
+        })
+      );
+    });
+    expect(result.current.face).toBe('concerned');
+  });
+
   it('resets work tracking on each new turn', () => {
     const { result } = renderHook(() => useHumanMascot({ speakReplies: false }));
     // Turn 1: tool succeeded → celebrating
