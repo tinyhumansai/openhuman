@@ -108,8 +108,8 @@ impl HeartbeatEngine {
                 match engine.tick().await {
                     Ok(result) => {
                         info!(
-                            "[heartbeat] tick: executed={} escalated={} duration={}ms",
-                            result.executed, result.escalated, result.duration_ms
+                            "[heartbeat] tick: thoughts={} thread={:?} duration={}ms",
+                            result.thoughts_count, result.thread_id, result.duration_ms
                         );
                     }
                     Err(e) => {

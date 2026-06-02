@@ -19,6 +19,7 @@ const hoisted = vi.hoisted(() => ({
   // Config state
   analyticsEnabled: false,
   appEnvironment: 'staging' as 'staging' | 'production' | 'development',
+  currentUserId: null as string | null,
   isDev: false,
 }));
 
@@ -41,7 +42,10 @@ vi.mock('@sentry/react', () => ({
 // consent without instantiating the real Redux/persistence stack.
 vi.mock('../../lib/coreState/store', () => ({
   getCoreStateSnapshot: () => ({
-    snapshot: { analyticsEnabled: hoisted.analyticsEnabled, currentUser: null },
+    snapshot: {
+      analyticsEnabled: hoisted.analyticsEnabled,
+      currentUser: hoisted.currentUserId ? { _id: hoisted.currentUserId } : null,
+    },
   }),
 }));
 
@@ -58,9 +62,16 @@ vi.mock('../../utils/config', () => ({
     return hoisted.isDev;
   },
   GA_MEASUREMENT_ID: 'G-TEST12345',
+  APP_BINARY_VERSION: '0.57.4',
+  APP_VERSION: '0.57.4',
+  BUILD_SHA: 'abc123',
+  CORE_CARGO_VERSION: '0.57.4',
+  OPENPANEL_API_URL: 'https://panel.tinyhumans.ai/api',
+  OPENPANEL_CLIENT_ID: 'e9c996d5-497f-4eec-9bde-630019ad525b',
   SENTRY_DSN: 'https://abc@example.ingest.sentry.io/1',
   SENTRY_RELEASE: 'openhuman@test+abc',
   SENTRY_SMOKE_TEST: false,
+  TAURI_CARGO_VERSION: '0.57.4',
   // analytics.ts now imports CoreRpcError from coreRpcClient, whose
   // dependency chain reads CORE_RPC_URL and CORE_RPC_TIMEOUT_MS. Provide
   // stub values so the module graph loads under this mock.
@@ -76,6 +87,7 @@ describe('triggerSentryTestEvent', () => {
     hoisted.flush.mockReturnValue(Promise.resolve(true));
     hoisted.init.mockReset();
     hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = null;
   });
 
   test('refuses to fire outside staging (defense in depth)', async () => {
@@ -163,6 +175,7 @@ describe('initSentry beforeSend manual-staging bypass', () => {
   beforeEach(() => {
     hoisted.analyticsEnabled = false;
     hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = null;
   });
 
   test('drops events when consent is off and event is not test-tagged', async () => {
@@ -364,11 +377,22 @@ describe('initSentry beforeSend manual-staging bypass', () => {
 let createdScripts: Array<{ async: boolean; defer: boolean; src: string }> = [];
 const originalCreateElement = document.createElement.bind(document);
 
-/** Reset window.op and module state, return a fresh analytics module. */
+/** Reset module state and return a fresh analytics module. */
 async function freshAnalytics() {
   vi.resetModules();
-  delete (window as unknown as Record<string, unknown>).op;
   createdScripts = [];
+  delete (window as Partial<Window>).gtag;
+  delete (window as Partial<Window>).dataLayer;
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('{"deviceId":"test-device","sessionId":"test-session"}'),
+      })
+    )
+  );
   vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
     if (tag === 'script') {
       const fake = { async: false, defer: false, src: '' } as unknown as HTMLScriptElement;
@@ -381,25 +405,74 @@ async function freshAnalytics() {
   return import('../analytics');
 }
 
+function openPanelPayload(callIndex = 0) {
+  const body = String((fetch as ReturnType<typeof vi.fn>).mock.calls[callIndex][1].body);
+  return JSON.parse(body) as {
+    type: string;
+    payload: {
+      name: string;
+      profileId?: string;
+      properties: Record<string, string | number | boolean>;
+    };
+  };
+}
+
+function expectAnalyticsContext(properties: Record<string, string | number | boolean>) {
+  expect(properties).toMatchObject({
+    app_version: '0.57.4',
+    binary_version: '0.57.4',
+    core_cargo_version: '0.57.4',
+    tauri_cargo_version: '0.57.4',
+    release: 'openhuman@test+abc',
+    build_sha: 'abc123',
+    app_environment: 'staging',
+  });
+}
+
 describe('initGA (OpenPanel)', () => {
   beforeEach(() => {
     hoisted.analyticsEnabled = false;
+    hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = null;
     hoisted.isDev = false;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  test('injects both gtag.js and op1.js scripts', async () => {
+  test('injects gtag.js and initializes OpenPanel direct ingestion without an external script', async () => {
     hoisted.analyticsEnabled = true;
     const { initGA } = await freshAnalytics();
     initGA();
-    expect(createdScripts).toHaveLength(2);
+    expect(createdScripts).toHaveLength(1);
     expect(createdScripts[0].src).toBe('https://www.googletagmanager.com/gtag/js?id=G-TEST12345');
-    expect(createdScripts[1].src).toBe('https://openpanel.dev/op1.js');
     expect(window.gtag).toBeDefined();
-    expect(window.op).toBeDefined();
+  });
+
+  test('does not initialize vendors until consent is enabled', async () => {
+    hoisted.analyticsEnabled = false;
+    const { initGA } = await freshAnalytics();
+    initGA();
+    expect(createdScripts).toHaveLength(0);
+    expect(window.gtag).toBeUndefined();
+  });
+
+  test('initializes vendors when consent flips on after startup', async () => {
+    hoisted.analyticsEnabled = false;
+    const { initGA, syncAnalyticsConsent, trackEvent } = await freshAnalytics();
+    initGA();
+    syncAnalyticsConsent(true);
+    trackEvent('app_open');
+    expect(createdScripts).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://panel.tinyhumans.ai/api/track',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"name":"app_open"'),
+      })
+    );
   });
 
   test('is idempotent — second call does not inject additional scripts', async () => {
@@ -407,72 +480,123 @@ describe('initGA (OpenPanel)', () => {
     const { initGA } = await freshAnalytics();
     initGA();
     initGA();
-    expect(createdScripts).toHaveLength(2);
+    expect(createdScripts).toHaveLength(1);
   });
 });
 
 describe('trackPageView (OpenPanel)', () => {
   beforeEach(() => {
     hoisted.analyticsEnabled = true;
+    hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = null;
     hoisted.isDev = false;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  test('sends a screen_view event when consent is on', async () => {
+  test('sends a screen_view event to OpenPanel when consent is on', async () => {
     const { initGA, trackPageView } = await freshAnalytics();
+    document.title = 'OpenHuman Test';
     initGA();
-    const opSpy = vi.spyOn(window, 'op');
     trackPageView('/home');
-    expect(opSpy).toHaveBeenCalledWith('track', 'screen_view', { page: '/home' });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://panel.tinyhumans.ai/api/track',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          'openpanel-client-id': 'e9c996d5-497f-4eec-9bde-630019ad525b',
+          'openpanel-sdk-name': 'openhuman-react',
+        }),
+        body: expect.stringContaining('"name":"screen_view"'),
+        keepalive: true,
+      })
+    );
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      page: '/home',
+      user_id: '',
+      page_hash: '',
+      __path: '/home',
+      __referrer: document.referrer,
+      __title: 'OpenHuman Test',
+    });
+    expectAnalyticsContext(openPanelPayload().payload.properties);
+    expect(openPanelPayload().payload.properties.__timestamp).toEqual(expect.any(String));
   });
 
   test('is a no-op when consent is off', async () => {
     const { initGA, syncAnalyticsConsent, trackPageView } = await freshAnalytics();
     initGA();
-    const opSpy = vi.spyOn(window, 'op');
     syncAnalyticsConsent(false);
     trackPageView('/home');
-    expect(opSpy).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('is a no-op when OpenPanel was never initialized', async () => {
     const { trackPageView } = await freshAnalytics();
     trackPageView('/home');
-    expect(window.op).toBeUndefined();
+    expect(fetch).not.toHaveBeenCalled();
   });
 });
 
 describe('trackEvent (OpenPanel)', () => {
   beforeEach(() => {
     hoisted.analyticsEnabled = true;
+    hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = null;
     hoisted.isDev = false;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
-  test('sends allowed events with correct params', async () => {
+  test('sends allowed events with correct params to OpenPanel', async () => {
+    hoisted.currentUserId = 'user-123';
     const { initGA, trackEvent } = await freshAnalytics();
     initGA();
-    const opSpy = vi.spyOn(window, 'op');
     trackEvent('app_open', { version: '1.0.0' });
-    expect(opSpy).toHaveBeenCalledWith('track', 'app_open', { version: '1.0.0' });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://panel.tinyhumans.ai/api/track',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"name":"app_open"'),
+      })
+    );
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      version: '1.0.0',
+      user_id: 'user-123',
+      __path: window.location.pathname,
+      __referrer: document.referrer,
+    });
+    expect(openPanelPayload().payload.profileId).toBe('user-123');
+    expectAnalyticsContext(openPanelPayload().payload.properties);
+    expect(openPanelPayload().payload.properties.__timestamp).toEqual(expect.any(String));
+  });
+
+  test('redacts user_id from event debug logs', async () => {
+    const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+    hoisted.currentUserId = 'user-123';
+    const { initGA, trackEvent } = await freshAnalytics();
+    initGA();
+    trackEvent('app_open', { version: '1.0.0' });
+    const trackLog = debugSpy.mock.calls.find(call => call[0] === '[analytics] trackEvent');
+    expect(trackLog?.[1]).toMatchObject({
+      eventName: 'app_open',
+      params: expect.not.objectContaining({ user_id: 'user-123' }),
+    });
+    debugSpy.mockRestore();
   });
 
   test('drops events not in the allowlist and logs a warning', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { initGA, trackEvent } = await freshAnalytics();
     initGA();
-    const opSpy = vi.spyOn(window, 'op');
     trackEvent('internal_debug_event');
-    const trackCalls = opSpy.mock.calls.filter(
-      c => c[0] === 'track' && c[1] === 'internal_debug_event'
-    );
-    expect(trackCalls).toHaveLength(0);
+    expect(fetch).not.toHaveBeenCalled();
     expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('internal_debug_event'));
     warnSpy.mockRestore();
   });
@@ -480,10 +604,111 @@ describe('trackEvent (OpenPanel)', () => {
   test('is a no-op when consent is off', async () => {
     const { initGA, syncAnalyticsConsent, trackEvent } = await freshAnalytics();
     initGA();
-    const opSpy = vi.spyOn(window, 'op');
     syncAnalyticsConsent(false);
     trackEvent('app_open');
-    expect(opSpy).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('startUiInteractionTracking', () => {
+  beforeEach(() => {
+    hoisted.analyticsEnabled = true;
+    hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = 'user-456';
+    hoisted.isDev = false;
+    window.location.hash = '#/home';
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  test('tracks delegated button clicks with stable scrubbed identifiers', async () => {
+    const { initGA, startUiInteractionTracking } = await freshAnalytics();
+    initGA();
+    const stop = startUiInteractionTracking();
+    const button = document.createElement('button');
+    button.setAttribute('data-testid', 'thread-row-123456789-open');
+    button.type = 'button';
+    document.body.appendChild(button);
+
+    button.click();
+
+    expect(openPanelPayload().payload.name).toBe('ui_click');
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      page: '/home',
+      page_hash: '#/home',
+      user_id: 'user-456',
+      interaction_kind: 'click',
+      element_tag: 'button',
+      element_type: 'button',
+      control_id: 'thread-row-:num-open',
+    });
+    expect(openPanelPayload().payload.profileId).toBe('user-456');
+    expect(openPanelPayload().payload.properties.__path).toBe('/home');
+    expectAnalyticsContext(openPanelPayload().payload.properties);
+    stop();
+  });
+
+  test('tracks checkbox/radio/select style control changes without raw values', async () => {
+    const { initGA, startUiInteractionTracking } = await freshAnalytics();
+    initGA();
+    const stop = startUiInteractionTracking();
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.name = 'analytics-enabled';
+    document.body.appendChild(checkbox);
+
+    checkbox.checked = true;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(openPanelPayload().payload.name).toBe('ui_control_change');
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      page: '/home',
+      interaction_kind: 'change',
+      element_tag: 'input',
+      element_type: 'checkbox',
+      control_id: 'analytics-enabled',
+      control_state: 'checked',
+    });
+    stop();
+  });
+
+  test('tracks form submits by form identifier only', async () => {
+    const { initGA, startUiInteractionTracking } = await freshAnalytics();
+    initGA();
+    const stop = startUiInteractionTracking();
+    const form = document.createElement('form');
+    form.setAttribute('data-testid', 'migration-form');
+    document.body.appendChild(form);
+
+    form.dispatchEvent(new SubmitEvent('submit', { bubbles: true, cancelable: true }));
+
+    expect(openPanelPayload().payload.name).toBe('ui_form_submit');
+    expect(openPanelPayload().payload.properties).toMatchObject({
+      page: '/home',
+      interaction_kind: 'submit',
+      element_tag: 'form',
+      control_id: 'migration-form',
+    });
+    stop();
+  });
+
+  test('does not track typed text inputs', async () => {
+    const { initGA, startUiInteractionTracking } = await freshAnalytics();
+    initGA();
+    const stop = startUiInteractionTracking();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.name = 'secret-user-text';
+    document.body.appendChild(input);
+
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(fetch).not.toHaveBeenCalled();
+    stop();
   });
 });
 
@@ -493,21 +718,22 @@ describe('syncAnalyticsConsent OpenPanel integration', () => {
     hoisted.flush.mockReset();
     hoisted.flush.mockReturnValue(Promise.resolve(true));
     hoisted.analyticsEnabled = true;
+    hoisted.appEnvironment = 'staging';
+    hoisted.currentUserId = null;
     hoisted.isDev = false;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   test('syncAnalyticsConsent(false) prevents subsequent events', async () => {
     const { initGA, syncAnalyticsConsent, trackEvent } = await freshAnalytics();
     initGA();
-    const opSpy = vi.spyOn(window, 'op');
     syncAnalyticsConsent(false);
     trackEvent('app_open');
-    const trackCalls = opSpy.mock.calls.filter(c => c[0] === 'track');
-    expect(trackCalls).toHaveLength(0);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   test('syncAnalyticsConsent(true) re-enables events after disable', async () => {
@@ -515,8 +741,13 @@ describe('syncAnalyticsConsent OpenPanel integration', () => {
     initGA();
     syncAnalyticsConsent(false);
     syncAnalyticsConsent(true);
-    const opSpy = vi.spyOn(window, 'op');
     trackEvent('app_open');
-    expect(opSpy).toHaveBeenCalledWith('track', 'app_open', undefined);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://panel.tinyhumans.ai/api/track',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"name":"app_open"'),
+      })
+    );
   });
 });

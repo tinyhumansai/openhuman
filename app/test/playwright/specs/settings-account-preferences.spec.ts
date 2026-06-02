@@ -99,7 +99,7 @@ test.describe('Settings - Account Preferences', () => {
     await gotoSettingsRoute(page, '/settings/privacy');
 
     await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
-    await expect(page.getByText('Share Anonymized Usage Data')).toBeVisible();
+    await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
 
     await page.getByTestId('privacy-analytics-toggle').click();
     await page.getByTestId('privacy-meet-handoff-toggle').click();

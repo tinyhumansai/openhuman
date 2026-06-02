@@ -80,13 +80,12 @@ fn build_description(connected: &[(String, String)]) -> String {
     buf
 }
 
-/// Test-only override for the live status fetch. When set, the live re-check
-/// returns this value instead of touching `Config::load_or_init` /
-/// `fetch_connected_integrations_status` — which would otherwise read the host
-/// machine's login/config state and could hit the Composio backend over HTTP,
-/// making the reject-path unit tests environment-dependent. `Some(None)`
-/// forces the "Unavailable" outcome (no live data); `Some(Some(vec))` injects
-/// a deterministic connected set.
+// Test-only override for the live status fetch. When set, the live re-check
+// returns this value instead of touching `Config::load_or_init` /
+// `fetch_connected_integrations_status`, which would otherwise read the host
+// machine's login/config state and could hit the Composio backend over HTTP.
+// `Some(None)` forces the "Unavailable" outcome (no live data);
+// `Some(Some(vec))` injects a deterministic connected set.
 #[cfg(test)]
 thread_local! {
     static LIVE_FETCH_OVERRIDE: std::cell::RefCell<Option<Option<Vec<String>>>> =
@@ -138,8 +137,9 @@ fn resolve_connected_toolkits(
         return (true, allowed);
     }
     if let Some(live) = live_connected {
-        let known = live.iter().any(|s| s == slug);
-        return (known, live.to_vec());
+        if live.iter().any(|s| s == slug) {
+            return (true, live.to_vec());
+        }
     }
     (
         false,
@@ -469,6 +469,6 @@ mod tests {
         let (known_none, allowed_none) =
             resolve_connected_toolkits(&snapshot, "slack", Some(live_no_match.as_slice()));
         assert!(!known_none);
-        assert_eq!(allowed_none, live_no_match);
+        assert_eq!(allowed_none, vec!["gmail".to_string()]);
     }
 }

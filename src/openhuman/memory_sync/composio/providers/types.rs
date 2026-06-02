@@ -1,7 +1,7 @@
 //! Shared types for Composio provider implementations.
 
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::openhuman::composio::client::{
     create_composio_client, direct_execute, ComposioClient, ComposioClientKind,
@@ -196,11 +196,38 @@ impl TaskFetchFilter {
 /// keeps an [`Arc<Config>`] and resolves the underlying client per call
 /// through [`ProviderContext::execute`], mirroring the agent-tool
 /// migration in [`crate::openhuman::composio::tools::ComposioExecuteTool`].
+/// Per-sync accumulator for Composio billable-action usage.
+///
+/// Lives behind a shared handle on [`ProviderContext`] so the single
+/// `execute` chokepoint can tally every action a provider fires during one
+/// sync run, regardless of which provider (gmail / slack / github / notion /
+/// linear / clickup) or how many pages it paginates.
+/// [`crate::openhuman::memory_sync::composio::run_connection_sync`] returns
+/// the final tally alongside the [`SyncOutcome`] for the sync audit log
+/// (#3111).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComposioUsage {
+    /// Count of `execute` calls that returned a response this run.
+    pub actions_called: u32,
+    /// Sum of each response's backend-reported `cost_usd`.
+    pub cost_usd: f64,
+}
+
+/// Shared, interior-mutable handle to a [`ComposioUsage`] tally. Cloning a
+/// [`ProviderContext`] shares the same underlying counter, so the count is
+/// stable no matter how the context is passed around within a sync.
+pub type ComposioUsageHandle = Arc<Mutex<ComposioUsage>>;
+
 #[derive(Clone)]
 pub struct ProviderContext {
     pub config: Arc<Config>,
     pub toolkit: String,
     pub connection_id: Option<String>,
+    /// Accumulates Composio billable-action usage across this context's
+    /// lifetime. Defaulted at every construction site; only the sync path
+    /// (`run_connection_sync`) reads it back. Non-sync callers (agent tools,
+    /// task-source fetches) leave it at zero — harmless.
+    pub usage: ComposioUsageHandle,
 }
 
 impl ProviderContext {
@@ -230,6 +257,7 @@ impl ProviderContext {
                 config,
                 toolkit: toolkit.into(),
                 connection_id,
+                usage: ComposioUsageHandle::default(),
             }),
             Err(e) => {
                 tracing::debug!(
@@ -282,7 +310,7 @@ impl ProviderContext {
                 anyhow::anyhow!("composio provider_context: failed to reload live config: {e}")
             })?;
         let kind = create_composio_client(&live_config)?;
-        match kind {
+        let result = match kind {
             ComposioClientKind::Backend(client) => {
                 tracing::debug!(
                     action = %action,
@@ -299,7 +327,21 @@ impl ProviderContext {
                 );
                 direct_execute(&direct, action, arguments, &live_config.composio.entity_id).await
             }
+        };
+
+        // Tally billable-action usage at the single chokepoint every provider
+        // routes through (#3111). We count any *completed* round-trip — even a
+        // provider-reported failure (`successful == false`) is a billable call
+        // — and sum the backend-reported `cost_usd`. Transport errors (the
+        // `Err` arm) never reached Composio, so they don't count. The lock is
+        // held only for the increment, never across an `.await`.
+        if let Ok(ref resp) = result {
+            if let Ok(mut usage) = self.usage.lock() {
+                usage.actions_called = usage.actions_called.saturating_add(1);
+                usage.cost_usd += resp.cost_usd;
+            }
         }
+        result
     }
 
     /// Resolve a `ComposioClient` for callers that need a handle to
@@ -364,6 +406,46 @@ impl ProviderContext {
 mod tests {
     use super::*;
 
+    /// The whole #3111 tally relies on the `usage` handle being *shared*
+    /// across `ProviderContext` clones: a provider's `sync` runs against a
+    /// clone (or the same ctx passed by `&`), accumulates via `execute`, and
+    /// `run_connection_sync` reads the count back from its own handle. Pin
+    /// that the `Arc<Mutex<_>>` is genuinely shared so a clone's increments
+    /// are visible from the original — if this regressed to a per-clone
+    /// counter, the audit cost would silently always read zero.
+    #[test]
+    fn usage_handle_is_shared_across_context_clones() {
+        let ctx = ProviderContext {
+            config: Arc::new(Config::default()),
+            toolkit: "gmail".to_string(),
+            connection_id: None,
+            usage: ComposioUsageHandle::default(),
+        };
+        let cloned = ctx.clone();
+
+        // Simulate two `execute` round-trips accumulating on the clone.
+        {
+            let mut usage = cloned.usage.lock().expect("lock usage");
+            usage.actions_called = usage.actions_called.saturating_add(2);
+            usage.cost_usd += 0.015;
+        }
+
+        // The original handle must observe the clone's tally.
+        let observed = ctx.usage.lock().expect("lock usage");
+        assert_eq!(observed.actions_called, 2);
+        assert!((observed.cost_usd - 0.015).abs() < 1e-9);
+    }
+
+    /// `ComposioUsage` defaults to a zero tally — the value
+    /// `run_connection_sync` returns for a sync that fired no Composio
+    /// actions, and what non-sync `ProviderContext` callers carry.
+    #[test]
+    fn composio_usage_defaults_to_zero() {
+        let usage = ComposioUsage::default();
+        assert_eq!(usage.actions_called, 0);
+        assert_eq!(usage.cost_usd, 0.0);
+    }
+
     // `ProviderContext::execute` and `ProviderContext::backend_client` reload
     // config from `ctx.config.config_path` (via `reload_config_snapshot_with_timeout`)
     // rather than from the process-global `OPENHUMAN_WORKSPACE`. Tests
@@ -392,6 +474,7 @@ mod tests {
             config: Arc::new(config),
             toolkit: "gmail".to_string(),
             connection_id: None,
+            usage: ComposioUsageHandle::default(),
         };
         let res = ctx.execute("GMAIL_FETCH_EMAILS", None).await;
         // The actual HTTP call will fail in the unit-test sandbox, but
@@ -424,6 +507,7 @@ mod tests {
             config: Arc::new(config),
             toolkit: "gmail".to_string(),
             connection_id: None,
+            usage: ComposioUsageHandle::default(),
         };
         let res = ctx.execute("GMAIL_FETCH_EMAILS", None).await;
         let err = res.expect_err("no backend session must error");

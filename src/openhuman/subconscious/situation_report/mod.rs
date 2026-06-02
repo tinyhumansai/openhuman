@@ -139,24 +139,8 @@ fn build_identifiers_section() -> String {
     out
 }
 
-fn build_tasks_section(workspace_dir: &Path) -> String {
-    use std::fmt::Write;
-    let tasks = match super::store::with_connection(workspace_dir, |conn| {
-        super::store::list_tasks(conn, false)
-    }) {
-        Ok(tasks) => tasks,
-        Err(_) => return "## Pending Tasks\n\nFailed to read tasks.\n".to_string(),
-    };
-
-    if tasks.is_empty() {
-        return "## Pending Tasks\n\nNo tasks defined.\n".to_string();
-    }
-
-    let mut section = String::from("## Pending Tasks\n\n");
-    for task in &tasks {
-        let _ = writeln!(section, "- {}", task.title);
-    }
-    section
+fn build_tasks_section(_workspace_dir: &Path) -> String {
+    String::new()
 }
 
 /// Append a section, truncating at a UTF-8 char boundary if it overflows

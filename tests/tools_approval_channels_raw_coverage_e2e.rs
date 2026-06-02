@@ -1606,6 +1606,14 @@ fn tools_and_tool_registry_public_surfaces_cover_schema_and_assembly_paths() {
 
 #[tokio::test]
 async fn orchestrator_tool_synthesis_covers_agent_and_integration_delegation_edges() {
+    // This test reads the process-global connection/toolkit registry (the
+    // integrations tool's available-toolkit list). Sibling tests mutate
+    // OPENHUMAN_WORKSPACE under env_lock; without holding it here, a concurrent
+    // workspace swap trampled our view and dropped gmail_pro/slack_bot from the
+    // unknown-toolkit suggestion (flaky only under llvm-cov's slower parallel
+    // run). Hold the same lock so this test is hermetic without serializing the
+    // whole suite.
+    let _lock = env_lock();
     let mut registry = AgentDefinitionRegistry::default();
     registry.insert(coverage_agent_definition(
         "researcher",

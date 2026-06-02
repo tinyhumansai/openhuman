@@ -17,13 +17,33 @@ pub(crate) fn is_inference_budget_exceeded_error(message: &str) -> bool {
     let normalized = BUDGET_ERROR_NORMALIZE_RE
         .replace_all(&message.trim().to_ascii_lowercase(), " ")
         .into_owned();
-    BUDGET_ERROR_PATTERNS
+    if BUDGET_ERROR_PATTERNS
         .iter()
         .any(|pattern| pattern.is_match(&normalized))
+    {
+        return true;
+    }
+    // Align with the canonical OpenHuman-backend budget detector
+    // (`billing_error::is_budget_exhausted_message`) so the managed
+    // no-credits response — a 400 carrying "Insufficient budget" /
+    // "Insufficient balance" — surfaces the actionable budget message
+    // below instead of the generic "Something went wrong" apology
+    // (issue #3088). Without this, an Ollama user with zero credits and
+    // routing still on Managed sees an opaque "provider error" and has no
+    // way to self-diagnose that they must top up or switch routing.
+    crate::openhuman::inference::provider::is_budget_exhausted_message(message)
 }
 
 pub(crate) fn inference_budget_exceeded_user_message() -> &'static str {
-    "I don't have any budget available right now. Please top up your credits or choose a plan to continue."
+    // Keep the literal "top up" / "credits" tokens (asserted by
+    // `budget_exceeded_copy_mentions_top_up`) and add the self-diagnosis
+    // path for issue #3088: a user who enabled a local model but left
+    // routing on Managed needs to know they can switch to their own model
+    // rather than being stuck. We guide, never auto-switch — the user's
+    // routing choice in Settings is respected.
+    "You're out of credits, so I can't run the managed (cloud) model right now. \
+     You can top up your credits or pick a plan to continue — or, if you've enabled a \
+     local model like Ollama, switch routing to \"Use Your Own Models\" in Settings → AI Configuration."
 }
 
 pub(crate) fn generic_inference_error_user_message() -> &'static str {
@@ -379,6 +399,12 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
     } else if lower.contains("402")
         || lower.contains("payment required")
         || lower.contains("insufficient balance")
+        // Issue #3088: the OpenHuman managed backend reports no-credits as a
+        // 400 with "Insufficient budget" (not a 402), which previously fell
+        // through to the generic "Something went wrong" branch. Catch the
+        // canonical budget phrases here so the user gets the actionable
+        // top-up / switch-to-your-own-model guidance instead.
+        || is_inference_budget_exceeded_error(err)
     {
         // `openhuman_billing` means OpenHuman's own credit/quota system —
         // a 402 carrying the "openhuman" envelope (or no envelope at all,
@@ -392,7 +418,7 @@ pub(crate) fn classify_inference_error(err: &str) -> ClassifiedError {
         };
         ClassifiedError {
             error_type: "budget_exhausted",
-            message: with_provider_detail("Insufficient credits. Please top up to continue.", err),
+            message: with_provider_detail(inference_budget_exceeded_user_message(), err),
             source,
             retryable: false,
             retry_after_ms: None,

@@ -186,7 +186,7 @@ test.describe('Harness - Search tool-flow', () => {
     await setMockBehavior('llmStreamChunkDelayMs', '10');
 
     await sendMessage(page, 'search for Rust async best practices');
-    await expect(page.getByText(CANARY)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText(CANARY).first()).toBeVisible({ timeout: 60_000 });
     await expect(
       page.getByText(/Here are the top results for Rust async best practices/i)
     ).toBeVisible();

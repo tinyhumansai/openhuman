@@ -458,7 +458,7 @@ pub struct LocalAiSettingsPatch {
     /// behaviour without needing to apply a preset first.
     pub opt_in_confirmed: Option<bool>,
     pub provider: Option<String>,
-    pub base_url: Option<String>,
+    pub base_url: Option<Option<String>>,
     pub model_id: Option<String>,
     pub chat_model_id: Option<String>,
     pub usage_embeddings: Option<bool>,
@@ -913,6 +913,105 @@ pub async fn load_and_apply_autonomy_settings(
     apply_autonomy_settings(&mut config, update).await
 }
 
+// ── Agent Activity Level ───────────────────────────────────────────────
+
+/// Partial update for the agent activity level (0–4).
+#[derive(Debug, Clone, Default)]
+pub struct ActivityLevelSettingsPatch {
+    /// "off" | "minimal" | "moderate" | "active" | "always_on" (or "0"-"4").
+    pub level: Option<String>,
+}
+
+/// Returns the current activity level and its derived settings.
+pub async fn get_activity_level_settings() -> Result<RpcOutcome<serde_json::Value>, String> {
+    let config = load_config_with_timeout().await?;
+    let level = config.agent_activity_level;
+    let (cost_min, cost_max) = level.estimated_monthly_cost_range();
+    let value = serde_json::json!({
+        "level": level as u8,
+        "level_label": level.as_str(),
+        "sync_interval_secs": level.sync_interval_secs(),
+        "heartbeat_enabled": level.heartbeat_enabled(),
+        "subconscious_enabled": level.subconscious_enabled(),
+        "token_budget_per_cycle": level.token_budget_per_cycle(),
+        "estimated_monthly_cost_min_usd": cost_min,
+        "estimated_monthly_cost_max_usd": cost_max,
+    });
+    Ok(RpcOutcome::single_log(
+        value,
+        "activity level settings read",
+    ))
+}
+
+/// Updates the agent activity level and pushes it into the scheduler gate.
+pub async fn apply_activity_level_settings(
+    config: &mut Config,
+    update: ActivityLevelSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    use crate::openhuman::config::schema::activity_level::AgentActivityLevel;
+    use crate::openhuman::config::SchedulerGateMode;
+
+    if let Some(level_str) = update.level {
+        let level = AgentActivityLevel::from_str_opt(&level_str).ok_or_else(|| {
+            format!(
+                "invalid activity level '{}' \
+                 (expected off|minimal|moderate|active|always_on or 0-4)",
+                level_str
+            )
+        })?;
+        config.agent_activity_level = level;
+    }
+
+    // Derive the gate mode from the (possibly updated) activity level and
+    // persist it alongside the level so the saved config is self-consistent.
+    let level = config.agent_activity_level;
+    let gate_mode = match level {
+        AgentActivityLevel::Off => SchedulerGateMode::Off,
+        AgentActivityLevel::Minimal | AgentActivityLevel::Moderate => SchedulerGateMode::Auto,
+        AgentActivityLevel::Active | AgentActivityLevel::AlwaysOn => SchedulerGateMode::AlwaysOn,
+    };
+    config.scheduler_gate.mode = gate_mode;
+
+    config.save().await.map_err(|e| e.to_string())?;
+
+    let gate_cfg = config.scheduler_gate.clone();
+    crate::openhuman::scheduler_gate::gate::update_config(gate_cfg);
+
+    tracing::info!(
+        level = %level.as_str(),
+        gate_mode = %gate_mode.as_str(),
+        "[config:activity_level] activity level updated"
+    );
+
+    let (cost_min, cost_max) = level.estimated_monthly_cost_range();
+    let value = serde_json::json!({
+        "level": level as u8,
+        "level_label": level.as_str(),
+        "sync_interval_secs": level.sync_interval_secs(),
+        "heartbeat_enabled": level.heartbeat_enabled(),
+        "subconscious_enabled": level.subconscious_enabled(),
+        "token_budget_per_cycle": level.token_budget_per_cycle(),
+        "estimated_monthly_cost_min_usd": cost_min,
+        "estimated_monthly_cost_max_usd": cost_max,
+    });
+    Ok(RpcOutcome::new(
+        value,
+        vec![format!(
+            "activity level set to '{}' — saved to {}",
+            level.as_str(),
+            config.config_path.display()
+        )],
+    ))
+}
+
+/// Loads the configuration, applies activity level settings, and saves it.
+pub async fn load_and_apply_activity_level_settings(
+    update: ActivityLevelSettingsPatch,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    let mut config = load_config_with_timeout().await?;
+    apply_activity_level_settings(&mut config, update).await
+}
+
 /// Serializes the load-modify-save in [`add_auto_approve_tool`] so two
 /// concurrent "Always allow" appends (different tools) can't read the same
 /// `auto_approve`, each push their own, and clobber the other on save
@@ -1316,10 +1415,18 @@ pub async fn apply_local_ai_settings(
             crate::openhuman::inference::local::provider::normalize_provider(&provider);
     }
     if let Some(base_url) = update.base_url {
-        config.local_ai.base_url = if base_url.trim().is_empty() {
-            None
-        } else {
-            Some(base_url.trim().to_string())
+        config.local_ai.base_url = match base_url {
+            None => None,
+            Some(base_url) if base_url.trim().is_empty() => None,
+            Some(base_url)
+                if crate::openhuman::inference::local::provider::provider_from_config(config)
+                    == crate::openhuman::inference::local::provider::LocalAiProvider::Ollama =>
+            {
+                Some(crate::openhuman::inference::local::validate_ollama_url(
+                    &base_url,
+                )?)
+            }
+            Some(base_url) => Some(base_url.trim().trim_end_matches('/').to_string()),
         };
     }
     if let Some(model_id) = update.model_id {

@@ -50,8 +50,8 @@ test.describe('Settings - Channels & Permissions', () => {
     await dismissWalkthroughIfPresent(page);
 
     await expect(page.getByRole('heading', { name: 'Privacy & Security' })).toBeVisible();
-    await expect(page.getByText('Anonymized Analytics')).toBeVisible();
-    await expect(page.getByText('Share Anonymized Usage Data')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Product Analytics' })).toBeVisible();
+    await expect(page.getByText('Share Product Analytics and Diagnostics')).toBeVisible();
     await expect(page.getByText('What leaves your computer')).toBeVisible();
   });
 });

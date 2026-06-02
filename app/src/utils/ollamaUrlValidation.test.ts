@@ -71,6 +71,12 @@ describe('validateOllamaUrl', () => {
     expect(result.normalized).toBe('https://example.com');
   });
 
+  it('normalizes server bind addresses to client loopback addresses', () => {
+    const result = validateOllamaUrl('http://0.0.0.0:11434');
+    expect(result.valid).toBe(true);
+    expect(result.normalized).toBe('http://localhost:11434');
+  });
+
   it('rejects a URL that starts with http:// but is not parseable', () => {
     const result = validateOllamaUrl('http:// has spaces');
     expect(result.valid).toBe(false);
