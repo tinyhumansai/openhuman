@@ -364,7 +364,11 @@ pub async fn finalize_artifact(
     size_bytes: u64,
 ) -> Result<ArtifactMeta, String> {
     let mut meta = get_artifact(workspace_dir, artifact_id).await?;
-    if matches!(meta.status, ArtifactStatus::Ready) && meta.size_bytes == size_bytes {
+    if matches!(meta.status, ArtifactStatus::Ready) {
+        // Idempotent on status alone: a second finalize with a different
+        // size_bytes shouldn't re-emit ArtifactReady and flap the UI card
+        // — once an artifact is Ready, callers should not be redefining
+        // its size. Per graycyrus on PR #3017.
         log::debug!("[artifacts] finalize_artifact: id={artifact_id} already Ready, no-op");
         return Ok(meta);
     }
