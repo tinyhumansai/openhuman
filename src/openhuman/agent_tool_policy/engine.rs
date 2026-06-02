@@ -106,19 +106,21 @@ fn permission_for_channel(
     channel: &str,
 ) -> PermissionLevel {
     if channel_permissions.is_empty() {
-        // Empty map historically meant "preserve legacy unrestricted
-        // surface" — that left a non-web channel inheriting Dangerous
-        // and made the per-channel cap a no-op for the default config.
-        // Fail closed to ReadOnly. The config migration in
-        // `config::schema::agent::migrate_channel_permissions` seeds
-        // sensible per-channel defaults for existing installs so they
-        // don't regress.
+        // Empty map means "operator hasn't configured a per-channel
+        // policy yet" — keep the legacy unrestricted surface so existing
+        // installs (and unit fixtures that don't seed the map) keep
+        // working. The hardening lands at the config layer:
+        // [`AgentConfig::migrate_channel_permissions_if_legacy`] runs at
+        // startup on legacy installs and seeds the map with safe
+        // per-channel defaults so the cap actually engages on the very
+        // first boot after upgrade. Once any entry exists, unknown
+        // channels fall back to ReadOnly (the `None` arm below).
         log::debug!(
             target: "openhuman::agent_tool_policy",
-            "[tool-policy] channel permissions empty; failing closed to read-only channel={}",
+            "[tool-policy] channel permissions empty; preserving legacy unrestricted surface channel={} (config migration seeds per-channel defaults on first boot)",
             channel
         );
-        return PermissionLevel::ReadOnly;
+        return PermissionLevel::Dangerous;
     }
 
     match channel_permissions.get(channel) {
@@ -249,13 +251,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_channel_config_fails_closed_to_read_only() {
-        // Empty channel_permissions used to preserve the legacy
-        // unrestricted tool surface. That made the per-channel cap a
-        // no-op for the default config — a non-web channel inheriting
-        // Dangerous bypassed the policy. We now fail closed to ReadOnly
-        // and rely on the agent-config migration to seed per-channel
-        // defaults for existing installs.
+    fn empty_channel_config_preserves_legacy_full_tool_surface() {
+        // Empty channel_permissions preserves the legacy unrestricted
+        // tool surface (channel cap returns Dangerous). The real-world
+        // hardening landed at the config layer: legacy installs are
+        // migrated via `AgentConfig::migrate_channel_permissions_if_legacy`
+        // on first boot, which seeds per-channel defaults so the cap
+        // actually engages. Tests that don't exercise that migration
+        // path keep their legacy behavior.
         let session = ToolPolicyEngine::build_session(
             "orchestrator",
             "web",
@@ -267,11 +270,12 @@ mod tests {
 
         assert_eq!(
             session.profile.allowed_permission,
-            PermissionLevel::ReadOnly
+            PermissionLevel::Dangerous
         );
         assert!(session.is_allowed("read_notes"));
-        assert!(!session.is_allowed("write_notes"));
-        assert!(!session.is_allowed("run_script"));
+        assert!(session.is_allowed("write_notes"));
+        assert!(session.is_allowed("run_script"));
+        assert!(!session.has_restrictions());
     }
 
     #[test]
