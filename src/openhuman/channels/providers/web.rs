@@ -322,9 +322,7 @@ pub async fn start_chat(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
-    speak_reply: Option<bool>,
-    source: Option<String>,
-    session_id: Option<u64>,
+    metadata: ChatRequestMetadata,
 ) -> Result<String, String> {
     let client_id = client_id.trim().to_string();
     let thread_id = thread_id.trim().to_string();
@@ -488,9 +486,7 @@ pub async fn start_chat(
                     temperature,
                     profile_id,
                     locale,
-                    speak_reply,
-                    source,
-                    session_id,
+                    metadata,
                 ),
             )
             .await;
@@ -721,9 +717,7 @@ async fn run_chat_task(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
-    speak_reply: Option<bool>,
-    source: Option<String>,
-    session_id: Option<u64>,
+    metadata: ChatRequestMetadata,
 ) -> Result<WebChatTaskResult, String> {
     #[cfg(any(test, debug_assertions))]
     {
@@ -876,9 +870,7 @@ async fn run_chat_task(
         thread_id.to_string(),
         request_id.to_string(),
         turn_state_store,
-        speak_reply,
-        source,
-        session_id,
+        metadata,
     );
 
     // Make `thread_id` ambient for any outbound provider call inside
@@ -940,8 +932,8 @@ async fn run_chat_task(
 /// with the correct client/thread/request IDs. The task runs until the
 /// sender is dropped (i.e. when the agent turn finishes).
 ///
-/// `speak_reply`, `source`, and `session_id` are accepted here so that
-/// Task 4 (TTS integration) can read them from the bridge context.
+/// `metadata` is accepted here so that Task 4 (TTS integration) can read the
+/// PTT fields (`speak_reply`, `source`, `session_id`) from the bridge context.
 /// For now they are logged and otherwise unused.
 fn spawn_progress_bridge(
     mut rx: tokio::sync::mpsc::Receiver<crate::openhuman::agent::progress::AgentProgress>,
@@ -949,9 +941,7 @@ fn spawn_progress_bridge(
     thread_id: String,
     request_id: String,
     turn_state_store: TurnStateStore,
-    speak_reply: Option<bool>,
-    source: Option<String>,
-    session_id: Option<u64>,
+    metadata: ChatRequestMetadata,
 ) {
     use crate::openhuman::agent::progress::AgentProgress;
 
@@ -961,16 +951,14 @@ fn spawn_progress_bridge(
             client_id,
             thread_id,
             request_id,
-            speak_reply,
-            source,
-            session_id,
+            metadata.speak_reply,
+            metadata.source,
+            metadata.session_id,
         );
-        // Retain for Task 4 (TTS wiring): speak_reply drives whether the
-        // final assistant text should be synthesised; source and session_id
+        // TODO(#3090, Task 4): consume metadata for reply_speech — speak_reply drives
+        // whether the final assistant text should be synthesised; source and session_id
         // are forwarded as metadata to the TTS call site.
-        let _speak_reply = speak_reply;
-        let _source = source;
-        let _session_id = session_id;
+        let _ = metadata;
         let mut round: u32 = 0;
         let mut events_seen: u64 = 0;
         let mut turn_state =
@@ -1708,13 +1696,23 @@ struct WebChatParams {
     /// (for PTT and similar background voice flows). Accepted and
     /// stored here; wired to TTS in Task 4.
     #[serde(default)]
-    pub speak_reply: Option<bool>,
+    speak_reply: Option<bool>,
     /// Origin of the message: `"ptt"` | `"dictation"` | `"type"` | other.
     /// Used for analytics and downstream metadata.
     #[serde(default)]
-    pub source: Option<String>,
+    source: Option<String>,
     /// Optional caller-provided correlation id (PTT session id).
     #[serde(default)]
+    session_id: Option<u64>,
+}
+
+/// Per-request metadata carried alongside a chat send. Currently used by the
+/// PTT flow (Task 4 wires it to `voice::reply_speech`); other voice surfaces
+/// can populate it the same way.
+#[derive(Debug, Default, Clone)]
+pub struct ChatRequestMetadata {
+    pub speak_reply: Option<bool>,
+    pub source: Option<String>,
     pub session_id: Option<u64>,
 }
 
@@ -1732,9 +1730,7 @@ pub async fn channel_web_chat(
     temperature: Option<f64>,
     profile_id: Option<String>,
     locale: Option<String>,
-    speak_reply: Option<bool>,
-    source: Option<String>,
-    session_id: Option<u64>,
+    metadata: ChatRequestMetadata,
 ) -> Result<RpcOutcome<Value>, String> {
     let request_id = start_chat(
         client_id,
@@ -1744,9 +1740,7 @@ pub async fn channel_web_chat(
         temperature,
         profile_id,
         locale,
-        speak_reply,
-        source,
-        session_id,
+        metadata,
     )
     .await?;
 
@@ -1855,9 +1849,11 @@ fn handle_chat(params: Map<String, Value>) -> ControllerFuture {
                 p.temperature,
                 p.profile_id,
                 p.locale,
-                p.speak_reply,
-                p.source,
-                p.session_id,
+                ChatRequestMetadata {
+                    speak_reply: p.speak_reply,
+                    source: p.source,
+                    session_id: p.session_id,
+                },
             )
             .await?,
         )

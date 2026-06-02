@@ -5,8 +5,8 @@ use super::{
     inference_budget_exceeded_user_message, is_inference_budget_exceeded_error, json_output,
     key_for, locale_reply_directive, normalize_model_override, optional_bool, optional_f64,
     optional_string, optional_u64, provider_role_for_model_override, required_string, schemas,
-    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events, ClassifiedError,
-    WebChatParams,
+    set_test_forced_run_chat_task_error, start_chat, subscribe_web_channel_events,
+    ChatRequestMetadata, ClassifiedError, WebChatParams,
 };
 use crate::core::TypeSchema;
 use once_cell::sync::Lazy;
@@ -25,17 +25,17 @@ static FORCED_ERROR_TEST_LOCK: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::n
 
 #[tokio::test]
 async fn start_chat_validates_required_fields() {
-    let err = start_chat("", "thread", "hello", None, None, None, None, None, None, None)
+    let err = start_chat("", "thread", "hello", None, None, None, None, ChatRequestMetadata::default())
         .await
         .expect_err("client id should be required");
     assert!(err.contains("client_id is required"));
 
-    let err = start_chat("client", "", "hello", None, None, None, None, None, None, None)
+    let err = start_chat("client", "", "hello", None, None, None, None, ChatRequestMetadata::default())
         .await
         .expect_err("thread id should be required");
     assert!(err.contains("thread_id is required"));
 
-    let err = start_chat("client", "thread", "   ", None, None, None, None, None, None, None)
+    let err = start_chat("client", "thread", "   ", None, None, None, None, ChatRequestMetadata::default())
         .await
         .expect_err("message should be required");
     assert!(err.contains("message is required"));
@@ -51,9 +51,7 @@ async fn start_chat_rejects_prompt_injection_payload() {
         None,
         None,
         None,
-        None,
-        None,
-        None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect_err("prompt-injection payload should be rejected");
@@ -96,9 +94,7 @@ async fn start_chat_emits_sanitized_chat_error_on_inference_failure() {
         None,
         None,
         None,
-        None,
-        None,
-        None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start_chat should accept valid request");
@@ -509,9 +505,7 @@ async fn start_chat_chat_error_event_serializes_structured_fields_to_json_wire()
         None,
         None,
         None,
-        None,
-        None,
-        None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start_chat should accept valid request");
@@ -605,9 +599,7 @@ async fn start_chat_emits_structured_rate_limit_metadata_on_chat_error_event() {
         None,
         None,
         None,
-        None,
-        None,
-        None,
+        ChatRequestMetadata::default(),
     )
     .await
     .expect("start_chat should accept valid request");
@@ -1232,6 +1224,25 @@ fn web_chat_schema_accepts_optional_ptt_fields() {
             .expect("field present");
         assert!(!f.required, "{field} must be optional");
     }
+    // Type assertions: ensure each field has the correct wire type.
+    let speak_reply = schema.inputs.iter().find(|f| f.name == "speak_reply").unwrap();
+    assert_eq!(
+        speak_reply.ty,
+        TypeSchema::Option(Box::new(TypeSchema::Bool)),
+        "speak_reply must be Option<bool>"
+    );
+    let source = schema.inputs.iter().find(|f| f.name == "source").unwrap();
+    assert_eq!(
+        source.ty,
+        TypeSchema::Option(Box::new(TypeSchema::String)),
+        "source must be Option<String>"
+    );
+    let session_id = schema.inputs.iter().find(|f| f.name == "session_id").unwrap();
+    assert_eq!(
+        session_id.ty,
+        TypeSchema::Option(Box::new(TypeSchema::U64)),
+        "session_id must be Option<u64>"
+    );
 }
 
 #[test]

@@ -21,7 +21,7 @@ use openhuman_core::core::socketio::WebChannelEvent;
 use openhuman_core::openhuman::channels::providers::web::{
     all_web_channel_controller_schemas, all_web_channel_registered_controllers, cancel_chat,
     channel_web_cancel, publish_web_channel_event, schemas as web_channel_schema, start_chat,
-    subscribe_web_channel_events,
+    subscribe_web_channel_events, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::config::{
     AutonomyConfig, Config, PolymarketClobCredentials, PolymarketConfig,
@@ -556,7 +556,7 @@ async fn web_channel_public_paths_cover_validation_cancel_schema_and_event_bus()
     assert_eq!(web_channel_schema("cancel").function, "web_cancel");
     assert_eq!(web_channel_schema("missing").function, "unknown");
 
-    let missing_client = start_chat(" ", "thread", "hello", None, None, None, None, None, None, None)
+    let missing_client = start_chat(" ", "thread", "hello", None, None, None, None, ChatRequestMetadata::default())
         .await
         .expect_err("blank client");
     assert_contains(&missing_client, "client_id is required");

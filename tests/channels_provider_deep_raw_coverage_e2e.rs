@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 use openhuman_core::openhuman::channels::providers::web::{
-    cancel_chat, start_chat, subscribe_web_channel_events,
+    cancel_chat, start_chat, subscribe_web_channel_events, ChatRequestMetadata,
 };
 use openhuman_core::openhuman::channels::providers::yuanbao::{YuanbaoChannel, YuanbaoConfig};
 use openhuman_core::openhuman::channels::test_support::{
@@ -229,16 +229,16 @@ async fn dispatch_harness_covers_error_context_compaction_and_timeout_paths() {
 
 #[tokio::test]
 async fn web_channel_validation_cancel_and_classifier_snapshots_are_publicly_exercised() {
-    assert!(start_chat("", "thread", "hello", None, None, None, None, None, None, None)
+    assert!(start_chat("", "thread", "hello", None, None, None, None, ChatRequestMetadata::default())
         .await
         .expect_err("empty client rejected")
         .contains("client_id"));
-    assert!(start_chat("client", "", "hello", None, None, None, None, None, None, None)
+    assert!(start_chat("client", "", "hello", None, None, None, None, ChatRequestMetadata::default())
         .await
         .expect_err("empty thread rejected")
         .contains("thread_id"));
     assert!(
-        start_chat("client", "thread", "   ", None, None, None, None, None, None, None)
+        start_chat("client", "thread", "   ", None, None, None, None, ChatRequestMetadata::default())
             .await
             .expect_err("empty message rejected")
             .contains("message")
@@ -261,9 +261,7 @@ async fn web_channel_validation_cancel_and_classifier_snapshots_are_publicly_exe
         None,
         None,
         None,
-        None,
-        None,
-        None,
+        ChatRequestMetadata::default(),
     )
     .await;
     assert!(blocked.is_err());
