@@ -2,7 +2,9 @@ use super::client::{
     McpAuthorizationContext, McpHttpClient, McpInitializeResult, McpRemoteTool, McpServerToolResult,
 };
 use super::stdio::McpStdioClient;
+use crate::core::event_bus::{publish_global, DomainEvent};
 use crate::openhuman::config::{Config, McpAuthConfig, McpClientIdentityConfig, McpServerConfig};
+use crate::openhuman::prompt_injection::scan_tool_definition;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -48,6 +50,60 @@ impl McpServerDefinition {
             .filter(|tool| self.is_tool_allowed(&tool.name))
             .collect()
     }
+}
+
+/// Run the input-validation scanner over each tool's `description`
+/// and `title` and drop any tool whose definition trips a detector
+/// rule. Surviving tools are returned unchanged.
+///
+/// For every drop the function publishes a
+/// [`DomainEvent::McpToolRejected`] event so audit / observability
+/// surfaces can record it, and emits a `tracing::warn` line with the
+/// server, tool name, and rule code. The rejected text itself is
+/// never logged or republished — payload content could be the vector.
+///
+/// This complements [`McpServerDefinition::filter_allowed_tools`],
+/// which enforces the operator-defined `allowed_tools` / `disallowed_tools`
+/// allow-list by name. `apply_safety_filter` enforces the input-
+/// validation policy on the metadata.
+pub(crate) fn apply_safety_filter(server: &str, tools: Vec<McpRemoteTool>) -> Vec<McpRemoteTool> {
+    tools
+        .into_iter()
+        .filter_map(|tool| {
+            if let Some(hit) = tool
+                .description
+                .as_deref()
+                .and_then(|text| scan_tool_definition("description", text))
+            {
+                emit_rejection(server, &tool.name, &hit.code);
+                return None;
+            }
+            if let Some(hit) = tool
+                .title
+                .as_deref()
+                .and_then(|text| scan_tool_definition("title", text))
+            {
+                emit_rejection(server, &tool.name, &hit.code);
+                return None;
+            }
+            Some(tool)
+        })
+        .collect()
+}
+
+fn emit_rejection(server: &str, tool: &str, reason: &str) {
+    tracing::warn!(
+        target: "[mcp_client]",
+        server = server,
+        tool = tool,
+        reason = reason,
+        "remote MCP tool dropped by input-validation scan"
+    );
+    let _ = publish_global(DomainEvent::McpToolRejected {
+        server: server.to_string(),
+        tool: tool.to_string(),
+        reason: reason.to_string(),
+    });
 }
 
 #[derive(Debug)]
@@ -120,7 +176,8 @@ impl McpServerRegistry {
             .get(server)
             .ok_or_else(|| anyhow::anyhow!("unknown MCP server `{server}`"))?;
         let tools = server.client.list_tools().await?;
-        Ok(server.filter_allowed_tools(tools))
+        let safe = apply_safety_filter(&server.name, tools);
+        Ok(server.filter_allowed_tools(safe))
     }
 
     pub async fn call_tool(

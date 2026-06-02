@@ -45,4 +45,5 @@ pub use client::{
     ProtectedResourceMetadata,
 };
 pub use registry::{McpRegistrySource, McpServerDefinition, McpServerRegistry, McpTransportClient};
+pub(crate) use registry::apply_safety_filter;
 pub use stdio::McpStdioClient;
