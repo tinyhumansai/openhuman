@@ -24,11 +24,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import {
+  memorySyncStatusList,
+  type MemorySyncStatusRow,
   memoryTreePipelineStatus,
   type MemoryTreePipelineStatus,
   memoryTreeSetEnabled,
-  memorySyncStatusList,
-  type MemorySyncStatusRow,
 } from '../../utils/tauriCommands';
 
 /** Translator function shape exposed by `useT()`. */
@@ -204,7 +204,9 @@ function statusDotClass(kind: MemoryTreePipelineStatus['status']): string {
 export type IntegrationHealth = 'active' | 'stale';
 
 /** Map the wire `freshness` enum to the two-state UI classification. */
-export function classifyIntegration(freshness: MemorySyncStatusRow['freshness']): IntegrationHealth {
+export function classifyIntegration(
+  freshness: MemorySyncStatusRow['freshness']
+): IntegrationHealth {
   return freshness === 'active' ? 'active' : 'stale';
 }
 

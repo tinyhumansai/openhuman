@@ -14,8 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { MemoryTreePipelineStatus } from '../../utils/tauriCommands';
 import {
-  MemoryTreeStatusPanel,
   classifyIntegration,
+  MemoryTreeStatusPanel,
   providerIconChar,
 } from './MemoryTreeStatusPanel';
 
@@ -65,7 +65,7 @@ describe('<MemoryTreeStatusPanel />', () => {
     mockPipelineStatus.mockReset();
     mockSetEnabled.mockReset();
     mockSyncStatusList.mockReset();
-    mockSyncStatusList.mockResolvedValue([]);  // default: empty, harmless to existing tests
+    mockSyncStatusList.mockResolvedValue([]); // default: empty, harmless to existing tests
   });
 
   afterEach(() => {
@@ -273,9 +273,11 @@ describe('<MemoryTreeStatusPanel />', () => {
     const order = Array.from(panel.querySelectorAll('[data-testid]'))
       .map(el => el.getAttribute('data-testid'))
       .filter(id =>
-        ['memory-tree-status-tiles', 'memory-tree-integrations', 'memory-tree-status-toggle-row'].includes(
-          id ?? ''
-        )
+        [
+          'memory-tree-status-tiles',
+          'memory-tree-integrations',
+          'memory-tree-status-toggle-row',
+        ].includes(id ?? '')
       );
 
     expect(order).toEqual([
