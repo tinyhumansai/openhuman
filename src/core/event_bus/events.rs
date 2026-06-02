@@ -658,6 +658,20 @@ pub enum DomainEvent {
         key_name: String,
         prompt: String,
     },
+    /// A remote MCP server returned a tool whose `description` or
+    /// `title` failed the input-validation scan and was dropped from
+    /// the registry before reaching the agent LLM context. Surfaced for
+    /// audit / observability only; carries no payload content because
+    /// the rejected text could itself be a vector.
+    McpToolRejected {
+        /// Registered MCP server name the tool came from.
+        server: String,
+        /// Remote tool name as advertised by the server.
+        tool: String,
+        /// Short pattern / rule code from the validator (e.g.
+        /// `"override.ignore_previous"`). Never the rejected payload.
+        reason: String,
+    },
 
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
@@ -850,7 +864,8 @@ impl DomainEvent {
             | Self::McpServerConnected { .. }
             | Self::McpServerDisconnected { .. }
             | Self::McpClientToolExecuted { .. }
-            | Self::McpSetupSecretRequested { .. } => "mcp_client",
+            | Self::McpSetupSecretRequested { .. }
+            | Self::McpToolRejected { .. } => "mcp_client",
         }
     }
 
@@ -939,6 +954,7 @@ impl DomainEvent {
             Self::McpServerDisconnected { .. } => "McpServerDisconnected",
             Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
+            Self::McpToolRejected { .. } => "McpToolRejected",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
             Self::TaskSourceFetched { .. } => "TaskSourceFetched",
             Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
