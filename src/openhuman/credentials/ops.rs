@@ -317,6 +317,15 @@ pub async fn store_session(
     // pick this up at their next iteration and resume LLM-bound work.
     crate::openhuman::scheduler_gate::set_signed_out(false);
 
+    // Bind the Sentry scope to this user so background events that fire
+    // before the frontend's `app_state_snapshot` warms the user cache still
+    // carry `user.id` — issue #3135. The `before_send` filter is now a
+    // fallback for legacy cache-warming paths; setting scope here is the
+    // primary source.
+    if let Some(ref uid) = resolved_user_id {
+        super::sentry_scope::bind(uid);
+    }
+
     Ok(RpcOutcome::new(summarize_auth_profile(&profile), logs))
 }
 
@@ -374,6 +383,11 @@ pub async fn clear_session(config: &Config) -> Result<RpcOutcome<serde_json::Val
     // and the heartbeat task would leak, ticking against the wrong DB when a
     // different user signs in to the same sidecar process.
     crate::openhuman::subconscious::global::reset_engine_for_user_switch().await;
+
+    // Drop the Sentry scope user so events surfaced during/after teardown
+    // (and before the next login) are no longer attributed to the
+    // signed-out account — issue #3135.
+    super::sentry_scope::clear();
 
     Ok(RpcOutcome::single_log(
         json!({ "removed": removed }),

@@ -2783,6 +2783,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             vec![
                 "openhuman.config_agent_server_status",
                 "openhuman.config_get",
+                "openhuman.config_get_activity_level_settings",
                 "openhuman.config_get_agent_settings",
                 "openhuman.config_get_analytics_settings",
                 "openhuman.config_get_autonomy_settings",
@@ -2800,6 +2801,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_resolve_api_url",
                 "openhuman.config_set_browser_allow_all",
                 "openhuman.config_set_onboarding_completed",
+                "openhuman.config_update_activity_level_settings",
                 "openhuman.config_update_agent_settings",
                 "openhuman.config_update_analytics_settings",
                 "openhuman.config_update_autonomy_settings",
@@ -2846,6 +2848,23 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
             ],
         ),
         ("connectivity", vec!["openhuman.connectivity_diag"]),
+        (
+            "memory_sources",
+            vec![
+                "openhuman.memory_sources_add",
+                "openhuman.memory_sources_estimate_sync_cost",
+                "openhuman.memory_sources_get",
+                "openhuman.memory_sources_list",
+                "openhuman.memory_sources_list_items",
+                "openhuman.memory_sources_monthly_cost_summary",
+                "openhuman.memory_sources_read_item",
+                "openhuman.memory_sources_remove",
+                "openhuman.memory_sources_status_list",
+                "openhuman.memory_sources_sync",
+                "openhuman.memory_sources_sync_audit_log",
+                "openhuman.memory_sources_update",
+            ],
+        ),
     ] {
         assert_eq!(
             schema_method_names(&schema, namespace),

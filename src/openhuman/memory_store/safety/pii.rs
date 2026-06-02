@@ -190,13 +190,15 @@ pub fn redact_pii(text: &str) -> Sanitized<String> {
 /// [`super::has_likely_secret`]).
 ///
 /// Uses the **strict** match set — only formatted / keyword-gated patterns.
-/// Bare-numeric patterns whose only gate is a checksum (credit card via Luhn,
-/// bare CPF, bare CNPJ) are excluded here because their false-positive rate
-/// against random digit runs (millisecond timestamps, sequence IDs, padded
-/// counters) is too high to use as a hard rejection signal on internal
-/// identifiers. Content scrubbing via [`redact_pii`] still applies those
-/// patterns — false positives are tolerable there because they only replace
-/// bytes inside a string, not reject the whole write.
+/// Bare-numeric patterns whose only signal is a digit run (credit card via
+/// Luhn, bare CPF, bare CNPJ) or a phone-shaped digit run (NANP without
+/// separators, E.164 leading `+`) are excluded here because their false-
+/// positive rate against scanner-built namespace/key identifiers (WhatsApp
+/// JIDs like `12025551234-1543890267@g.us`, telegram numeric peer IDs,
+/// millisecond timestamps, padded counters) is too high to use as a hard
+/// rejection signal. Content scrubbing via [`redact_pii`] still applies
+/// those patterns — false positives are tolerable there because they only
+/// replace bytes inside a string, not reject the whole write.
 pub fn has_likely_pii(value: &str) -> bool {
     let nview = NormalizedView::build(value);
     SCREEN.is_match(&nview.normalized) && !collect_strict_redactions(&nview.normalized).is_empty()
@@ -215,16 +217,19 @@ fn collect_redactions(norm: &str) -> Vec<Hit> {
     collect_redactions_inner(norm, true)
 }
 
-/// Variant of [`collect_redactions`] that omits bare-numeric checksum
-/// patterns (credit card via Luhn, bare CPF, bare CNPJ). Used for
-/// boundary checks like [`has_likely_pii`] where rejection on a checksum
-/// hit alone would have too many false positives on internal identifiers
-/// (timestamps, padded counters).
+/// Variant of [`collect_redactions`] that omits bare-numeric patterns
+/// whose only signal is a digit-run shape: credit card via Luhn, bare
+/// CPF, bare CNPJ, NANP phones (separators optional, so any 10-11 digit
+/// run starting `[2-9]`/`1[2-9]` matches), and E.164 phones (literal `+`
+/// the only signal). Used for boundary checks like [`has_likely_pii`]
+/// where rejection on such a hit alone would have too many false
+/// positives on scanner-built identifiers (WhatsApp group JIDs
+/// `<phone>-<unix>@g.us`, timestamps, padded counters).
 fn collect_strict_redactions(norm: &str) -> Vec<Hit> {
     collect_redactions_inner(norm, false)
 }
 
-fn collect_redactions_inner(norm: &str, include_bare_checksum: bool) -> Vec<Hit> {
+fn collect_redactions_inner(norm: &str, include_bare_numeric: bool) -> Vec<Hit> {
     let mut hits: Vec<Hit> = Vec::new();
 
     // Priority order: most specific / highest-confidence first.
@@ -241,7 +246,7 @@ fn collect_redactions_inner(norm: &str, include_bare_checksum: bool) -> Vec<Hit>
     // IBAN before credit card: CC can match an IBAN tail of all digits.
     push_checksum(&mut hits, norm, &IBAN_RE, PII_IBAN, |s| valid_iban(s));
 
-    if include_bare_checksum {
+    if include_bare_numeric {
         // Credit card before bare CPF/CNPJ to avoid catching a 13-19 digit run as CPF/CNPJ.
         push_checksum(&mut hits, norm, &CC_RE, PII_CC, |s| valid_luhn(s));
 
@@ -269,9 +274,16 @@ fn collect_redactions_inner(norm: &str, include_bare_checksum: bool) -> Vec<Hit>
     push_simple(&mut hits, norm, &RFC_RE, PII_RFC);
     push_simple(&mut hits, norm, &PAN_IN_RE, PII_PAN_IN);
 
-    // Phones: E.164 first (more specific), then NANP.
-    push_simple(&mut hits, norm, &PHONE_E164_RE, PII_PHONE);
-    push_simple(&mut hits, norm, &PHONE_NANP_RE, PII_PHONE);
+    if include_bare_numeric {
+        // Phones: E.164 first (more specific), then NANP. Both are bare-numeric
+        // shapes — NANP allows optional separators (`\b\d{10,11}\b` matches as
+        // `XXX-XXX-XXXX`), and E.164 keys on a literal `+` with no further gate.
+        // Strict callers (boundary checks like `has_likely_pii`) exclude these
+        // so scanner-built namespace/key values (WhatsApp JIDs
+        // `<phone>-<unix>@g.us`, telegram numeric peer IDs) don't get rejected.
+        push_simple(&mut hits, norm, &PHONE_E164_RE, PII_PHONE);
+        push_simple(&mut hits, norm, &PHONE_NANP_RE, PII_PHONE);
+    }
 
     // My Number — captured digit group only, keyword remains visible.
     push_captured(&mut hits, norm, &MYNUM_RE, PII_MYNUM, |_| true);
@@ -979,6 +991,97 @@ Phone +15551234567.";
         assert!(has_likely_pii("ssn-123-45-6789"));
         assert!(has_likely_pii("cliente-RFC-VECJ880326XK4"));
         assert!(has_likely_pii("cuit-20-11111111-2"));
+    }
+
+    /// Regression for Sentry TAURI-RUST-54T / GH #2848: scanner-built
+    /// `namespace` and `key` values containing bare-numeric phone-shaped
+    /// digit runs (WhatsApp group JID `<phone>-<unix>@g.us`, WhatsApp
+    /// broadcast `<phone>@broadcast`, US-prefixed WhatsApp 1:1 JID,
+    /// telegram numeric peer ID) must NOT be rejected by the boundary
+    /// PII check. NANP matches `\d{10,11}` with optional separators —
+    /// strict mode must skip it. Content scrubbing via `redact_pii`
+    /// continues to redact these substrings (see
+    /// `redact_pii_still_blurs_bare_phone_in_content` below).
+    #[test]
+    fn has_likely_pii_ignores_scanner_bare_phone_keys() {
+        for key in [
+            // WhatsApp group JID — chat_id = "<phone>-<unix-ts>@g.us"
+            "12025551234-1543890267@g.us:2026-05-30",
+            // WhatsApp broadcast list
+            "12025551234@broadcast:2026-05-30",
+            // WhatsApp 1:1 JID, country-coded US number (`1` + 10 digits)
+            "12025551234@c.us:2026-05-30",
+            // Same shape carried in the namespace
+            "whatsapp-web:12025551234@c.us",
+            "whatsapp-web:12025551234-1543890267@g.us",
+            // Telegram numeric peer_id key
+            "4123456789:2026-05-30",
+        ] {
+            assert!(
+                !has_likely_pii(key),
+                "scanner-built key {key:?} must not be rejected as PII"
+            );
+        }
+    }
+
+    /// Same regression but for the E.164 (`+`-prefixed) shape — iMessage
+    /// posts `key = format!("{chat_id}:{day}")` where `chat_id` can be
+    /// `+12025551234`. Strict mode must skip; content redaction stays.
+    #[test]
+    fn has_likely_pii_ignores_bare_e164_phone_keys() {
+        for key in [
+            "+12025551234:2026-05-30",
+            "imessage:+12025551234",
+            "imessage:+12025551234:2026-05-30",
+        ] {
+            assert!(
+                !has_likely_pii(key),
+                "E.164-shaped key {key:?} must not be rejected as PII"
+            );
+        }
+    }
+
+    /// `redact_pii` (content scrubbing path — NOT the boundary check)
+    /// must still redact formatted NANP and E.164 phone numbers found
+    /// inside document bodies. False positives in the content path only
+    /// blur substring bytes; they do not reject the write — which is the
+    /// asymmetry this PR preserves vs. the boundary check.
+    ///
+    /// Note: bare 10-digit NANP runs (`2025551234` with no separators)
+    /// are NOT reached by `redact_pii` at all — the SCREEN fast-path
+    /// requires either `\d{11,}`, a separator, or `+`, so a bare 10-digit
+    /// run short-circuits as "no candidate". That pre-existed this PR; a
+    /// pinning sentinel for it lives below.
+    #[test]
+    fn redact_pii_still_blurs_formatted_and_e164_phone_in_content() {
+        let out = redact_pii("call me at 202-555-1234 or +12025551234");
+        let n_phone = out.value.matches(PII_PHONE).count();
+        assert!(
+            n_phone >= 2,
+            "redact_pii must still blur both formatted NANP and E.164 phones in content, \
+             got {n_phone} PII_PHONE token(s) in: {}",
+            out.value
+        );
+        assert!(out.report.pii_redactions >= 2);
+    }
+
+    /// Sentinel pinning a pre-existing SCREEN limitation: a bare 10-digit
+    /// NANP run (`2025551234` with no separators) is short-circuited by
+    /// the `SCREEN` fast-path because no `SCREEN` regex matches a 10-digit
+    /// bare run (`\d{11,}` is the closest, but it needs 11+). This is the
+    /// status quo on `main` — this PR does not change it. The test exists
+    /// so any future widening of `SCREEN` (e.g. to catch bare NANP) trips
+    /// here as a deliberate review checkpoint, NOT a regression.
+    #[test]
+    fn redact_pii_does_not_reach_bare_10_digit_nanp_today() {
+        let out = redact_pii("call me at 2025551234 thanks");
+        assert!(
+            !out.value.contains(PII_PHONE),
+            "SCREEN fast-path historically skips bare 10-digit NANP — \
+             if this test fails, SCREEN was widened; revisit the boundary-check \
+             behavior in `has_likely_pii` before adjusting. Got: {}",
+            out.value
+        );
     }
 
     #[test]

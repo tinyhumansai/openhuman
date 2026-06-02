@@ -88,6 +88,17 @@ pub struct MemorySourceEntry {
     // ── WebPage ──
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selector: Option<String>,
+
+    // ── Sync Budget (all source kinds) ──
+    /// Maximum tokens to consume per sync run. Sync stops once this budget is hit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens_per_sync: Option<u64>,
+    /// Maximum cost in USD per sync run. Refuses LLM calls once reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_cost_per_sync_usd: Option<f64>,
+    /// Sync depth in days — only fetch items from the last N days.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_depth_days: Option<u32>,
 }
 
 impl MemorySourceEntry {
@@ -262,6 +273,9 @@ mod tests {
             since_days: None,
             max_items: None,
             selector: None,
+            max_tokens_per_sync: None,
+            max_cost_per_sync_usd: None,
+            sync_depth_days: None,
         }
     }
 }

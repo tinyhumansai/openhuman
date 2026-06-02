@@ -318,11 +318,14 @@ async fn web_round19_covers_classifier_variants_and_cancel_cleanup() {
     assert_eq!(auth.source, "config");
     assert!(!auth.retryable);
 
+    // Issue #3088: budget-signal strings now classify as `budget_exhausted`
+    // instead of falling through to the generic `inference` branch — the
+    // user gets an actionable "top up or switch routing" message.
     let budget = web_test_support::classify_error_for_test(
         "inference budget exceeded: monthly limit reached",
     );
-    assert_eq!(budget.error_type, "inference");
-    assert_eq!(budget.source, "provider");
+    assert_eq!(budget.error_type, "budget_exhausted");
+    assert_eq!(budget.source, "openhuman_billing");
 
     let network = web_test_support::classify_error_for_test(
         "request error: dns error while trying to connect",

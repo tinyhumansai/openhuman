@@ -7,6 +7,7 @@ pub mod ops;
 pub mod profiles;
 pub mod responses;
 mod schemas;
+pub mod sentry_scope;
 pub mod session_support;
 pub mod tools;
 

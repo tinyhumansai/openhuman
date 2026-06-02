@@ -1,5 +1,5 @@
 import createDebug from 'debug';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import RoutineCard from '../components/routines/RoutineCard';
@@ -24,6 +24,14 @@ const Routines = () => {
   const [jobs, setJobs] = useState<CoreCronJob[]>([]);
   const [runsByJob, setRunsByJob] = useState<Record<string, CoreCronRun[]>>({});
   const [busyKeys, setBusyKeys] = useState<Set<string>>(new Set());
+
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const addBusy = (key: string) => setBusyKeys(prev => new Set(prev).add(key));
   const removeBusy = (key: string) =>
@@ -80,21 +88,58 @@ const Routines = () => {
     addBusy(key);
     setError(null);
     try {
-      await openhumanCronRun(jobId);
-      const runs = await openhumanCronRuns(jobId, 10);
-      setRunsByJob(prev => ({ ...prev, [jobId]: runs.result }));
-      // Refresh job list to update last_status
+      const runResponse = await openhumanCronRun(jobId);
+
+      if (runResponse.result.status === 'queued') {
+        // Job was enqueued asynchronously — poll until a new run record appears.
+        // Compare by the latest run's id (not list length) so this works correctly
+        // when the job already has >= 10 runs and the list stays at the fetch limit.
+        const previousLatestId = (runsByJob[jobId] ?? [])[0]?.id;
+        const POLL_INTERVAL_MS = 2000;
+        const MAX_WAIT_MS = 120_000;
+        let elapsed = 0;
+
+        while (elapsed < MAX_WAIT_MS) {
+          await new Promise<void>(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+          if (!isMountedRef.current) return;
+          elapsed += POLL_INTERVAL_MS;
+          const runs = await openhumanCronRuns(jobId, 10);
+          if (!isMountedRef.current) return;
+          setRunsByJob(prev => ({ ...prev, [jobId]: runs.result }));
+          const latest = runs.result[0];
+          if (
+            latest?.id !== undefined &&
+            latest.id !== previousLatestId &&
+            latest.status !== 'queued'
+          ) {
+            break;
+          }
+        }
+        if (elapsed >= MAX_WAIT_MS && isMountedRef.current) {
+          setError(t('routines.runNowTimedOut'));
+        }
+      } else {
+        // Synchronous response (legacy path — kept for backward compatibility).
+        const runs = await openhumanCronRuns(jobId, 10);
+        setRunsByJob(prev => ({ ...prev, [jobId]: runs.result }));
+      }
+
+      if (!isMountedRef.current) return;
+
+      // Refresh job list to update last_status regardless of path.
       const response = await openhumanCronList();
+      if (!isMountedRef.current) return;
       setJobs(
         [...response.result].sort(
           (a, b) => new Date(a.next_run).getTime() - new Date(b.next_run).getTime()
         )
       );
     } catch (err) {
+      if (!isMountedRef.current) return;
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
     } finally {
-      removeBusy(key);
+      if (isMountedRef.current) removeBusy(key);
     }
   };
 

@@ -109,6 +109,9 @@ async fn append_record_to(path: &Path, record: &MeetCallRecord) -> Result<(), St
     file.write_all(line.as_bytes())
         .await
         .map_err(|e| format!("write {}: {e}", path.display()))?;
+    file.flush()
+        .await
+        .map_err(|e| format!("flush {}: {e}", path.display()))?;
     Ok(())
 }
 

@@ -2,6 +2,8 @@
 //!
 //! Split into submodules; this module re-exports the main `Config` and all public types.
 
+pub mod activity_level;
+pub use activity_level::AgentActivityLevel;
 pub mod cloud_providers;
 pub use cloud_providers::{
     generate_provider_id, is_slug_reserved, migrate_legacy_fields, AuthStyle, CloudProviderCreds,
@@ -59,7 +61,7 @@ pub use channels::{
 pub use context::ContextConfig;
 pub use dashboard::{DashboardConfig, DiagramViewerConfig, EventStreamConfig, ModelHealthConfig};
 pub use dictation::{DictationActivationMode, DictationConfig};
-pub use heartbeat_cron::{CronConfig, HeartbeatConfig};
+pub use heartbeat_cron::{CronConfig, HeartbeatConfig, SubconsciousMode};
 pub use identity_cost::{CostConfig, ModelPricing};
 pub use learning::{LearningConfig, ReflectionSource};
 pub use local_ai::{LocalAiConfig, LocalAiUsage};

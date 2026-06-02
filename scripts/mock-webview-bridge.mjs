@@ -6,7 +6,30 @@
 
 import { WebSocketServer } from 'ws';
 
-const port = Number(process.argv[2] ?? 9826);
+function usage() {
+  return 'Usage: node scripts/mock-webview-bridge.mjs [port]';
+}
+
+function readPortArg() {
+  const args = process.argv.slice(2);
+  const [rawPort] = args;
+  if (rawPort === '--help' || rawPort === '-h') {
+    console.log(usage());
+    process.exit(0);
+  }
+  if (args.length > 1) {
+    console.error(usage());
+    process.exit(2);
+  }
+  const port = Number(rawPort ?? 9826);
+  if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
+    console.error('[mock-bridge] port must be an integer between 1 and 65535');
+    process.exit(2);
+  }
+  return port;
+}
+
+const port = readPortArg();
 const wss = new WebSocketServer({ host: '127.0.0.1', port });
 
 console.log(`[mock-bridge] listening on ws://127.0.0.1:${port}`);

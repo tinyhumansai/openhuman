@@ -218,6 +218,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': 'Еще не запущен',
   'routines.runNow': 'Беги сейчас',
   'routines.running': 'Бег…',
+  'routines.runNowTimedOut': 'Время выполнения истекло — обновите страницу и попробуйте снова.',
   'routines.viewHistory': 'Посмотреть историю',
   'routines.loadingHistory': 'Загрузка…',
   'routines.noHistory': 'Истории запусков пока нет.',
@@ -730,16 +731,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': 'Отправляется в',
   'privacy.leavesDevice': 'Покидает устройство',
   'privacy.staysLocal': 'Остаётся локально',
-  'privacy.anonymizedAnalytics': 'Анонимная аналитика',
-  'privacy.shareAnonymizedData': 'Делиться анонимными данными об использовании',
+  'privacy.anonymizedAnalytics': 'Аналитика продукта',
+  'privacy.shareAnonymizedData': 'Отправлять аналитику продукта и диагностику',
   'privacy.shareAnonymizedDataDesc':
-    'Помоги улучшить OpenHuman, отправляя анонимные отчёты об ошибках и данные об использовании. Все данные полностью анонимизированы — личные данные, сообщения, ключи кошелька и информация о сессии никогда не собираются.',
+    'Помоги улучшить OpenHuman, отправляя ограниченные по приватности отчёты о сбоях и события использования, включая стабильный ID аккаунта и метаданные версии приложения. Сообщения, ключи кошелька, API-ключи и токены сессии никогда не собираются.',
   'privacy.meetingFollowUps': 'Действия после встреч',
   'privacy.autoHandoffMeet': 'Автоматически передавать транскрипты Google Meet оркестратору',
   'privacy.autoHandoffMeetDesc':
     'Когда звонок в Google Meet заканчивается, оркестратор OpenHuman может прочитать транскрипт и выполнить действия: составить сообщения, запланировать задачи или опубликовать итоги в Slack. По умолчанию выключено.',
   'privacy.analyticsDisclaimer':
-    'Вся аналитика и отчёты об ошибках полностью анонимизированы. При включении мы собираем только информацию об ошибках, тип устройства и расположение файлов с ошибками. Мы никогда не получаем доступ к твоим сообщениям, данным сессии, ключам кошелька, API-ключам или любой личной информации. Ты можешь изменить этот параметр в любое время.',
+    'При включении аналитика продукта и диагностика могут включать ограниченные по приватности отчёты о сбоях и события использования, стабильный ID аккаунта и метаданные версии приложения. Сообщения, ключи кошелька, API-ключи и токены сессии никогда не собираются. Этот параметр можно изменить в любое время.',
   'settings.about.version': 'Версия',
   'settings.about.updateAvailable': 'доступна',
   'settings.about.softwareUpdates': 'Обновления ПО',
@@ -1932,6 +1933,22 @@ const messages: TranslationMap = {
   'reflections.proposedAction': 'Предлагаемое действие',
   'reflections.act': 'Выполнить',
   'reflections.dismiss': 'Закрыть',
+  'reflections.viewConversation': 'Просмотр',
+  'subconscious.mode.label': 'Режим подсознания',
+  'subconscious.mode.off.title': 'Выкл',
+  'subconscious.mode.off.desc': 'Подсознание отключено.',
+  'subconscious.mode.simple.title': 'Простой',
+  'subconscious.mode.simple.desc': 'Наблюдение в режиме чтения. Только доступ к памяти и файлам.',
+  'subconscious.mode.aggressive.title': 'Агрессивный',
+  'subconscious.mode.aggressive.desc':
+    'Полный доступ к инструментам. Может писать, создавать агентов и делегировать задачи.',
+  'subconscious.mode.aggressiveWarning':
+    'Агрессивный режим даёт подсознанию полный доступ к инструментам, включая запись и создание подагентов.',
+  'subconscious.interval.label': 'Частота',
+  'subconscious.interval.minutes': '{n} мин',
+  'subconscious.interval.hours': '{n} ч',
+  'subconscious.interval.oneHour': '1 час',
+  'subconscious.interval.oneDay': '24 часа',
   'whatsapp.chatsSynced': 'чатов синхронизировано',
   'whatsapp.chatSynced': 'чат синхронизирован',
   'sync.active': 'Активно',
@@ -2822,7 +2839,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': 'Чат',
   'settings.ai.disconnectProvider': 'Отключить {label}',
   'settings.ai.connectProviderLabel': 'Подключить {label}',
+  'settings.ai.editProviderEndpoint': 'Изменить конечную точку {label}',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': 'Изменить конечную точку',
   'settings.ai.endpointUrlLabel': 'Конечная точка URL',
   'settings.ai.localRuntimeHelper':
     'Где доступен {label}. По умолчанию используется локальный хост; укажите это на удаленном хосте (например, http://10.0.0.4:11434/v1), чтобы использовать общий экземпляр.',
@@ -4166,14 +4185,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': 'Фильтровать по источнику',
   'calls.comingSoonDescription': 'Звонки с поддержкой ИИ скоро появятся. Следите за обновлениями.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5 минут',
-  'subconscious.interval.tenMinutes': '10 минут',
-  'subconscious.interval.fifteenMinutes': '15 минут',
-  'subconscious.interval.thirtyMinutes': '30 минут',
-  'subconscious.interval.oneHour': '1 час',
-  'subconscious.interval.sixHours': '6 часов',
-  'subconscious.interval.twelveHours': '12 часов',
-  'subconscious.interval.oneDay': '1 день',
   'subconscious.priority.critical': 'критический',
   'subconscious.priority.important': 'важный',
   'subconscious.priority.normal': 'нормальный',
@@ -4491,6 +4502,67 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Отклонить локальное хранилище',
   'pages.settings.account.security': 'Безопасность',
   'pages.settings.account.securityDesc': 'Режим хранения секретов и статус связки ключей',
+
+  // Agent activity level
+  'activityLevel.title': 'Уровень активности агента',
+  'activityLevel.description':
+    'Управляйте проактивностью вашего агента. Более высокие уровни потребляют больше токенов.',
+  'activityLevel.off': 'Выкл.',
+  'activityLevel.offDesc': 'Нет фоновой обработки. Синхронизация только по нажатию кнопки.',
+  'activityLevel.minimal': 'Минимальный',
+  'activityLevel.minimalDesc': 'Синхронизация источников раз в день. Нет проактивных сообщений.',
+  'activityLevel.moderate': 'Умеренный',
+  'activityLevel.moderateDesc': 'Синхронизация каждый час. Ежедневная сводка. Предлагает действия.',
+  'activityLevel.active': 'Активный',
+  'activityLevel.activeDesc':
+    'Синхронизация каждые 10 мин. Мониторинг каналов, сортировка и составление ответов.',
+  'activityLevel.alwaysOn': 'Всегда включён',
+  'activityLevel.alwaysOnDesc':
+    'Синхронизация в реальном времени. Полная автономия в рамках ограничений.',
+  'activityLevel.currentMonth': 'В этом месяце: ${amount}',
+  'activityLevel.saved': 'Уровень активности обновлён.',
+  'activityLevel.default': 'по умолчанию',
+  'activityLevel.costFree': '0 $',
+  'activityLevel.costRange': '~${min}–${max}/мес.',
+
+  // Sync budget dialog
+  'syncBudget.title': 'Бюджет синхронизации',
+  'syncBudget.maxTokens': 'Макс. токенов на синхронизацию',
+  'syncBudget.maxTokensHelp':
+    'Остановить синхронизацию после потребления указанного количества токенов.',
+  'syncBudget.maxCost': 'Макс. стоимость на синхронизацию (USD)',
+  'syncBudget.maxCostHelp': 'Жёсткий лимит в долларах за один запуск синхронизации.',
+  'syncBudget.syncDepth': 'Глубина синхронизации',
+  'syncBudget.syncDepthHelp': 'Загружать только элементы из этого временного окна.',
+  'syncBudget.days7': 'Последние 7 дней',
+  'syncBudget.days30': 'Последние 30 дней',
+  'syncBudget.days90': 'Последние 90 дней',
+  'syncBudget.allTime': 'За всё время',
+  'syncBudget.unlimited': 'Без ограничений',
+  'syncBudget.saved': 'Бюджет сохранён.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': 'Подтвердить синхронизацию',
+  'syncConfirm.message':
+    'Эта синхронизация обработает ~{items} элементов (~{tokens} токенов, ест. ${cost}).',
+  'syncConfirm.budgetNote': 'Лимит бюджета: ${max}',
+  'syncConfirm.proceed': 'Продолжить',
+  'syncConfirm.cancel': 'Отмена',
+  'syncConfirm.estimating': 'Оценка стоимости...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '${amount} в этом месяце',
+  'monthlyCost.noData': 'Синхронизаций в этом месяце нет',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': 'Активность',
+  'onboarding.custom.activity.title': 'Активность агента',
+  'onboarding.custom.activity.subtitle':
+    'Насколько проактивно агент отслеживает события и действует в фоне.',
+  'onboarding.custom.activity.defaultDesc':
+    'Умеренная активность — синхронизация каждый час, ежедневная сводка.',
+  'onboarding.custom.activity.configureDesc':
+    'Выберите свой уровень активности. Настройка в Параметры › Уровень активности агента.',
 };
 
 export default messages;

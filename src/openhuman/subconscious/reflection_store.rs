@@ -36,7 +36,8 @@ pub const REFLECTION_SCHEMA_DDL: &str = "
         source_chunks   TEXT NOT NULL DEFAULT '[]',
         created_at      REAL NOT NULL,
         acted_on_at     REAL,
-        dismissed_at    REAL
+        dismissed_at    REAL,
+        thread_id       TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_reflections_created
         ON subconscious_reflections(created_at DESC);
@@ -86,6 +87,13 @@ pub fn migrate_add_source_chunks_column(conn: &Connection) {
     );
 }
 
+pub fn migrate_add_thread_id_column(conn: &Connection) {
+    let _ = conn.execute(
+        "ALTER TABLE subconscious_reflections ADD COLUMN thread_id TEXT",
+        [],
+    );
+}
+
 // ── Reflection CRUD ──────────────────────────────────────────────────────────
 
 /// Persist a fresh reflection. Idempotent on `id`: if a row with the same
@@ -101,8 +109,8 @@ pub fn add_reflection(conn: &Connection, reflection: &Reflection) -> Result<()> 
     conn.execute(
         "INSERT OR IGNORE INTO subconscious_reflections (
             id, kind, body, proposed_action, source_refs, source_chunks,
-            created_at, acted_on_at, dismissed_at
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            created_at, acted_on_at, dismissed_at, thread_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         params![
             reflection.id,
             reflection.kind.as_str(),
@@ -113,14 +121,16 @@ pub fn add_reflection(conn: &Connection, reflection: &Reflection) -> Result<()> 
             reflection.created_at,
             reflection.acted_on_at,
             reflection.dismissed_at,
+            reflection.thread_id,
         ],
     )
     .context("insert reflection")?;
     log::debug!(
-        "[subconscious::reflection_store] added id={} kind={} chunks={}",
+        "[subconscious::reflection_store] added id={} kind={} chunks={} thread={:?}",
         reflection.id,
         reflection.kind.as_str(),
-        reflection.source_chunks.len()
+        reflection.source_chunks.len(),
+        reflection.thread_id,
     );
     Ok(())
 }
@@ -138,7 +148,7 @@ pub fn list_recent(
     let mapped: Vec<Reflection> = if let Some(ts) = since_ts {
         stmt = conn.prepare(
             "SELECT id, kind, body, proposed_action, source_refs, source_chunks,
-                    created_at, acted_on_at, dismissed_at
+                    created_at, acted_on_at, dismissed_at, thread_id
              FROM subconscious_reflections
              WHERE created_at > ?1
              ORDER BY created_at DESC LIMIT ?2",
@@ -151,7 +161,7 @@ pub fn list_recent(
     } else {
         stmt = conn.prepare(
             "SELECT id, kind, body, proposed_action, source_refs, source_chunks,
-                    created_at, acted_on_at, dismissed_at
+                    created_at, acted_on_at, dismissed_at, thread_id
              FROM subconscious_reflections
              ORDER BY created_at DESC LIMIT ?1",
         )?;
@@ -168,7 +178,7 @@ pub fn list_recent(
 pub fn get_reflection(conn: &Connection, id: &str) -> Result<Option<Reflection>> {
     let mut stmt = conn.prepare(
         "SELECT id, kind, body, proposed_action, source_refs, source_chunks,
-                created_at, acted_on_at, dismissed_at
+                created_at, acted_on_at, dismissed_at, thread_id
          FROM subconscious_reflections WHERE id = ?1",
     )?;
     let r = stmt
@@ -206,6 +216,7 @@ fn row_to_reflection(row: &rusqlite::Row) -> rusqlite::Result<Reflection> {
     let created_at: f64 = row.get(6)?;
     let acted_on_at: Option<f64> = row.get(7)?;
     let dismissed_at: Option<f64> = row.get(8)?;
+    let thread_id: Option<String> = row.get(9)?;
 
     let source_refs: Vec<String> =
         serde_json::from_str(&source_refs_json).unwrap_or_else(|_| Vec::new());
@@ -222,6 +233,7 @@ fn row_to_reflection(row: &rusqlite::Row) -> rusqlite::Result<Reflection> {
         created_at,
         acted_on_at,
         dismissed_at,
+        thread_id,
     })
 }
 

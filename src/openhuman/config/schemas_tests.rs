@@ -107,6 +107,16 @@ fn optional_string_builds_option_string_field() {
 }
 
 #[test]
+fn optional_json_builds_option_json_field() {
+    let f = optional_json("payload", "json payload");
+    assert!(!f.required);
+    match &f.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
+        other => panic!("expected Option<Json>, got {other:?}"),
+    }
+}
+
+#[test]
 fn optional_bool_builds_option_bool_field() {
     let f = optional_bool("enabled", "Whether enabled");
     assert!(!f.required);
@@ -206,11 +216,37 @@ fn deserialize_params_parses_local_ai_settings_update() {
     assert_eq!(out.runtime_enabled, Some(true));
     assert_eq!(out.opt_in_confirmed, Some(true));
     assert_eq!(out.provider.as_deref(), Some("lm_studio"));
-    assert_eq!(out.base_url.as_deref(), Some("http://localhost:1234/v1"));
+    assert_eq!(
+        out.base_url.as_ref().and_then(Value::as_str),
+        Some("http://localhost:1234/v1")
+    );
     assert_eq!(out.model_id.as_deref(), Some("local-default"));
     assert_eq!(out.chat_model_id.as_deref(), Some("local-chat"));
     assert_eq!(out.usage_embeddings, Some(true));
     assert_eq!(out.usage_subconscious, Some(false));
+}
+
+#[test]
+fn deserialize_params_preserves_local_ai_base_url_null() {
+    let mut m = Map::new();
+    m.insert("base_url".into(), Value::Null);
+
+    let out: LocalAiSettingsUpdate = deserialize_params(m).unwrap();
+    assert!(out.base_url.as_ref().is_some_and(Value::is_null));
+}
+
+#[test]
+fn update_local_ai_settings_schema_allows_json_base_url() {
+    let schema = schemas("update_local_ai_settings");
+    let field = schema
+        .inputs
+        .iter()
+        .find(|field| field.name == "base_url")
+        .expect("base_url field");
+    match &field.ty {
+        TypeSchema::Option(inner) => assert!(matches!(**inner, TypeSchema::Json)),
+        other => panic!("expected Option<Json>, got {other:?}"),
+    }
 }
 
 #[test]

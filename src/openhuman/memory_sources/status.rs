@@ -179,6 +179,9 @@ mod tests {
             max_issues: None,
             max_prs: None,
             selector: None,
+            max_tokens_per_sync: None,
+            max_cost_per_sync_usd: None,
+            sync_depth_days: None,
         };
         assert_eq!(source_id_prefix(&entry), "mem_src:src_abc:%");
 

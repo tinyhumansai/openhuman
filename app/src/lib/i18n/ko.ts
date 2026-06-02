@@ -216,6 +216,7 @@ const messages: TranslationMap = {
   'routines.notRunYet': '아직 실행되지 않음',
   'routines.runNow': '지금 실행',
   'routines.running': '실행 중…',
+  'routines.runNowTimedOut': '실행 시간 초과 — 새로고침 후 다시 시도하세요.',
   'routines.viewHistory': '기록 보기',
   'routines.loadingHistory': '로딩 중…',
   'routines.noHistory': '아직 실행 기록이 없습니다.',
@@ -721,16 +722,16 @@ const messages: TranslationMap = {
   'privacy.sentTo': '전송 대상',
   'privacy.leavesDevice': '기기를 떠남',
   'privacy.staysLocal': '로컬에 유지됨',
-  'privacy.anonymizedAnalytics': '익명화된 분석',
-  'privacy.shareAnonymizedData': '익명화된 사용 데이터 공유',
+  'privacy.anonymizedAnalytics': '제품 분석',
+  'privacy.shareAnonymizedData': '제품 분석 및 진단 공유',
   'privacy.shareAnonymizedDataDesc':
-    '익명 충돌 보고서와 사용 분석을 공유하여 OpenHuman 개선을 도와주세요. 모든 데이터는 완전히 익명화되며, 개인 데이터, 메시지, 지갑 키 또는 세션 정보는 절대 수집되지 않습니다.',
+    '안정적인 계정 ID와 앱 버전 메타데이터를 포함한 개인정보 제한 충돌 보고서와 사용 이벤트를 공유하여 OpenHuman 개선을 도와주세요. 메시지, 지갑 키, API 키, 세션 토큰은 절대 수집되지 않습니다.',
   'privacy.meetingFollowUps': '회의 후속 조치',
   'privacy.autoHandoffMeet': 'Google Meet transcript를 오케스트레이터에 자동 전달',
   'privacy.autoHandoffMeetDesc':
     'Google Meet 통화가 끝나면 OpenHuman의 오케스트레이터가 transcript를 읽고 메시지 초안 작성, 후속 일정 예약, 연결된 Slack 워크스페이스에 요약 게시 같은 작업을 수행할 수 있습니다. 기본값은 꺼짐입니다.',
   'privacy.analyticsDisclaimer':
-    '모든 분석 및 버그 보고서는 완전히 익명화됩니다. 활성화하면 충돌 정보, 기기 유형, 오류 파일 위치만 수집합니다. 메시지, 세션 데이터, 지갑 키, API 키 또는 개인 식별 정보에는 절대 접근하지 않습니다. 이 설정은 언제든지 변경할 수 있습니다.',
+    '활성화하면 제품 분석 및 진단에 개인정보가 제한된 충돌 보고서와 사용 이벤트, 안정적인 계정 ID, 앱 버전 메타데이터가 포함될 수 있습니다. 메시지, 지갑 키, API 키, 세션 토큰은 절대 수집되지 않습니다. 이 설정은 언제든지 변경할 수 있습니다.',
   'settings.about.version': '버전',
   'settings.about.updateAvailable': '사용 가능',
   'settings.about.softwareUpdates': '소프트웨어 업데이트',
@@ -1899,6 +1900,21 @@ const messages: TranslationMap = {
   'reflections.proposedAction': '제안된 작업',
   'reflections.act': '실행',
   'reflections.dismiss': '닫기',
+  'reflections.viewConversation': '보기',
+  'subconscious.mode.label': '잠재의식 모드',
+  'subconscious.mode.off.title': '끔',
+  'subconscious.mode.off.desc': '잠재의식이 비활성화되었습니다.',
+  'subconscious.mode.simple.title': '심플',
+  'subconscious.mode.simple.desc': '읽기 전용 관찰. 메모리 및 파일 접근만 가능.',
+  'subconscious.mode.aggressive.title': '적극적',
+  'subconscious.mode.aggressive.desc': '전체 도구 접근. 쓰기, 에이전트 생성, 작업 위임 가능.',
+  'subconscious.mode.aggressiveWarning':
+    '적극적 모드는 잠재의식에 쓰기 및 하위 에이전트 생성을 포함한 전체 도구 접근 권한을 부여합니다.',
+  'subconscious.interval.label': '빈도',
+  'subconscious.interval.minutes': '{n}분',
+  'subconscious.interval.hours': '{n}시간',
+  'subconscious.interval.oneHour': '1시간',
+  'subconscious.interval.oneDay': '24시간',
   'whatsapp.chatsSynced': '채팅 동기화됨',
   'whatsapp.chatSynced': '채팅 동기화됨',
   'sync.active': '활성',
@@ -2786,7 +2802,9 @@ const messages: TranslationMap = {
   'settings.ai.workloadGroupChat': '채팅 작업 그룹',
   'settings.ai.disconnectProvider': '{label} 연결 끊기',
   'settings.ai.connectProviderLabel': '{label} 연결',
+  'settings.ai.editProviderEndpoint': '{label} 엔드포인트 편집',
   'settings.ai.defaultLocalEndpoint': 'http://localhost:11434/v1',
+  'settings.ai.editEndpoint': '엔드포인트 편집',
   'settings.ai.endpointUrlLabel': '끝점 URL',
   'settings.ai.localRuntimeHelper':
     '{label}에 연결할 수 있는 위치입니다. 기본값은 localhost입니다. 공유 인스턴스를 사용하려면 원격 호스트(예: http://10.0.0.4:11434/v1)를 가리키세요.',
@@ -4094,14 +4112,6 @@ const messages: TranslationMap = {
   'memory.sourceFilterAria': '소스별 필터링',
   'calls.comingSoonDescription': 'AI 지원 통화가 곧 제공됩니다. 기대해 주세요.',
   'whatsapp.title': 'WhatsApp',
-  'subconscious.interval.fiveMinutes': '5분',
-  'subconscious.interval.tenMinutes': '10분',
-  'subconscious.interval.fifteenMinutes': '15분',
-  'subconscious.interval.thirtyMinutes': '30분',
-  'subconscious.interval.oneHour': '1시간',
-  'subconscious.interval.sixHours': '6시간',
-  'subconscious.interval.twelveHours': '12시간',
-  'subconscious.interval.oneDay': '1일',
   'subconscious.priority.critical': '심각',
   'subconscious.priority.important': '중요',
   'subconscious.priority.normal': '정상',
@@ -4413,6 +4423,62 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': '로컬 저장소 거부',
   'pages.settings.account.security': '보안',
   'pages.settings.account.securityDesc': '비밀 저장 모드 및 키체인 상태',
+
+  // Agent activity level
+  'activityLevel.title': '에이전트 활동 수준',
+  'activityLevel.description':
+    '에이전트의 능동성을 조절하세요. 높은 수준은 더 많은 토큰을 사용합니다.',
+  'activityLevel.off': '끄기',
+  'activityLevel.offDesc': '백그라운드 처리 없음. 버튼을 눌러야만 동기화됩니다.',
+  'activityLevel.minimal': '최소',
+  'activityLevel.minimalDesc': '소스를 하루에 한 번 동기화합니다. 능동적 메시지 없음.',
+  'activityLevel.moderate': '보통',
+  'activityLevel.moderateDesc': '매 시간 동기화. 일일 요약. 작업을 제안합니다.',
+  'activityLevel.active': '활성',
+  'activityLevel.activeDesc': '10분마다 동기화. 채널 모니터링, 분류, 답변 초안 작성.',
+  'activityLevel.alwaysOn': '항상 켜짐',
+  'activityLevel.alwaysOnDesc': '실시간 동기화. 가이드라인 내 완전한 자율성.',
+  'activityLevel.currentMonth': '이번 달: ${amount}',
+  'activityLevel.saved': '활동 수준이 업데이트되었습니다.',
+  'activityLevel.default': '기본값',
+  'activityLevel.costFree': '$0',
+  'activityLevel.costRange': '~${min}–${max}/월',
+
+  // Sync budget dialog
+  'syncBudget.title': '동기화 예산',
+  'syncBudget.maxTokens': '동기화당 최대 토큰',
+  'syncBudget.maxTokensHelp': '이 토큰 수를 소비하면 동기화를 중지합니다.',
+  'syncBudget.maxCost': '동기화당 최대 비용 (USD)',
+  'syncBudget.maxCostHelp': '각 동기화 실행당 달러 한도.',
+  'syncBudget.syncDepth': '동기화 깊이',
+  'syncBudget.syncDepthHelp': '이 기간의 항목만 가져옵니다.',
+  'syncBudget.days7': '최근 7일',
+  'syncBudget.days30': '최근 30일',
+  'syncBudget.days90': '최근 90일',
+  'syncBudget.allTime': '전체 기간',
+  'syncBudget.unlimited': '무제한',
+  'syncBudget.saved': '예산이 저장되었습니다.',
+
+  // Sync confirm dialog
+  'syncConfirm.title': '동기화 확인',
+  'syncConfirm.message': '이 동기화는 ~{items}개 항목 (~{tokens} 토큰, 예상 ${cost})을 처리합니다.',
+  'syncConfirm.budgetNote': '예산 한도: ${max}',
+  'syncConfirm.proceed': '진행',
+  'syncConfirm.cancel': '취소',
+  'syncConfirm.estimating': '비용 계산 중...',
+
+  // Monthly cost badge
+  'monthlyCost.badge': '이번 달 ${amount}',
+  'monthlyCost.noData': '이번 달 동기화 없음',
+
+  // Onboarding: Custom > Activity
+  'onboarding.custom.stepperActivity': '활동',
+  'onboarding.custom.activity.title': '에이전트 활동',
+  'onboarding.custom.activity.subtitle':
+    '에이전트가 백그라운드에서 얼마나 능동적으로 모니터링하고 행동하는지.',
+  'onboarding.custom.activity.defaultDesc': '보통 활동 — 매시간 동기화, 일일 요약.',
+  'onboarding.custom.activity.configureDesc':
+    '자신만의 활동 수준을 선택하세요. 설정 › 에이전트 활동 수준에서 구성하세요.',
 };
 
 export default messages;
