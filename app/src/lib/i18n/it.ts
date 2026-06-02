@@ -452,7 +452,7 @@ const messages: TranslationMap = {
   'memoryTree.status.integrationsEmpty': 'Nessuna integrazione collegata',
   'memoryTree.status.integrationActive': 'Attiva',
   'memoryTree.status.integrationStale': 'Obsoleta',
-  'memoryTree.status.integrationChunks': 'Frammenti: {count}',
+  'memoryTree.status.integrationChunks': 'Blocchi: {count}',
   'alerts.title': 'Avvisi',
   'alerts.empty': 'Nessun avviso',
   'alerts.markAllRead': 'Segna tutti come letti',
