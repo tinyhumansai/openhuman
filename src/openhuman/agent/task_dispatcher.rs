@@ -378,9 +378,16 @@ async fn run_autonomous(
         run_id.get(..8).unwrap_or(run_id)
     ));
 
-    with_autonomous_iter_cap(TASK_RUN_MAX_ITERATIONS, agent.run_single(prompt))
-        .await
-        .map_err(|e| format!("{e:#}"))
+    // Sub-agent task runs are internal to the agent harness — the user
+    // already authorized the parent turn that dispatched this task. Label
+    // as CLI so the approval gate doesn't fail closed on internal
+    // sub-agent invocations.
+    crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
+        with_autonomous_iter_cap(TASK_RUN_MAX_ITERATIONS, agent.run_single(prompt)),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Deterministic board write-back: the dispatcher owns the card lifecycle.

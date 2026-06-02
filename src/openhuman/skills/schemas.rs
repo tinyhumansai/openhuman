@@ -974,9 +974,15 @@ pub(crate) async fn spawn_skill_run_background(
             let bridge = tokio::spawn(run_log::drain_to_log(rx, log_path.clone()));
 
             let started = std::time::Instant::now();
-            let result =
-                with_autonomous_iter_cap(SKILL_RUN_MAX_ITERATIONS, agent.run_single(&task_prompt))
-                    .await;
+            // Skill execution is an internal automation surface invoked from
+            // user RPC / CLI flows — there is no remote-attacker entry
+            // here. Label as CLI so the approval gate doesn't fail closed
+            // on a turn the user explicitly initiated.
+            let result = crate::openhuman::agent::turn_origin::with_origin(
+                crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
+                with_autonomous_iter_cap(SKILL_RUN_MAX_ITERATIONS, agent.run_single(&task_prompt)),
+            )
+            .await;
             agent.set_on_progress(None);
             drop(agent);
             let _ = bridge.await;

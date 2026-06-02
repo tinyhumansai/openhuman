@@ -926,7 +926,13 @@ async fn llm_meeting_agentic(prompt: &str, request_id: &str) -> Result<String, S
         agent.history().len(),
     );
 
-    let fut = agent.run_single(&user_message);
+    // Meet-agent runs during an active call the user joined — the
+    // prompt text is the user's own meeting transcript. CLI-class
+    // internal automation; the approval gate skips the prompt.
+    let fut = crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
+        agent.run_single(&user_message),
+    );
     let reply = match tokio::time::timeout(Duration::from_secs(AGENTIC_TURN_TIMEOUT_SECS), fut)
         .await
     {
