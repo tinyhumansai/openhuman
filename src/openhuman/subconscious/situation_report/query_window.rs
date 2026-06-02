@@ -24,7 +24,14 @@ const MIN_WINDOW_DAYS: u32 = 1;
 /// Max source summaries to pull into the recap window.
 const MAX_RECAP_HITS: usize = 20;
 
-pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
+/// Build the source-tree recap window section.
+///
+/// Returns `(section_markdown, has_external_content)` — the bool is
+/// `true` iff at least one fresh source-tree hit was rendered, which
+/// means the prompt now carries third-party sync content. See the
+/// matching note on `summaries::build_section` for why the caller uses
+/// this to upgrade the tick's turn origin.
+pub async fn build_section(config: &Config, last_tick_at: f64) -> (String, bool) {
     let window_days = compute_window_days(last_tick_at);
     log::debug!(
         "[subconscious::situation_report::query_window] window_days={window_days} \
@@ -36,7 +43,7 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
         Ok(r) => r,
         Err(e) => {
             log::warn!("[subconscious::situation_report::query_window] failed: {e}");
-            return "## Recap window\n\nRecap unavailable.\n".to_string();
+            return ("## Recap window\n\nRecap unavailable.\n".to_string(), false);
         }
     };
 
@@ -61,10 +68,13 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
     };
 
     if fresh_hits.is_empty() {
-        return format!(
-            "## Recap window ({} day{})\n\nNo new recap content since last tick.\n",
-            window_days,
-            if window_days == 1 { "" } else { "s" }
+        return (
+            format!(
+                "## Recap window ({} day{})\n\nNo new recap content since last tick.\n",
+                window_days,
+                if window_days == 1 { "" } else { "s" }
+            ),
+            false,
         );
     }
 
@@ -83,7 +93,7 @@ pub async fn build_section(config: &Config, last_tick_at: f64) -> String {
             truncate(&hit.content, 600)
         );
     }
-    section
+    (section, true)
 }
 
 fn compute_window_days(last_tick_at: f64) -> u32 {

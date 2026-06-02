@@ -167,13 +167,16 @@ impl SubconsciousEngine {
             &recent_reflections,
         )
         .await;
+        let has_external_content = report.has_external_content;
 
         // 2. Load identity context
         let identity = prompt::load_identity_context(&self.workspace_dir);
 
         // 3. Run the subconscious agent
-        let agent_prompt = prompt::build_agent_prompt(&report, &identity);
-        let agent_result = self.run_agent(&config, &agent_prompt).await;
+        let agent_prompt = prompt::build_agent_prompt(&report.prompt_text, &identity);
+        let agent_result = self
+            .run_agent(&config, &agent_prompt, has_external_content)
+            .await;
         let agent_failed = agent_result.is_err();
         let drafts = agent_result.unwrap_or_default();
 
@@ -258,6 +261,7 @@ impl SubconsciousEngine {
         &self,
         config: &Config,
         prompt_text: &str,
+        has_external_content: bool,
     ) -> Result<Vec<ReflectionDraft>, String> {
         use crate::openhuman::agent::Agent;
 
@@ -298,17 +302,24 @@ impl SubconsciousEngine {
         debug!("[subconscious] spawning agent with tool access");
         // Subconscious ticks are trusted automation: the user enabled the
         // background loop knowing it should think about their state.
-        // The internal-memory variant is allowed through the approval
-        // gate without prompting. A `SubconsciousTainted` variant exists
-        // for ticks that read external-sync memory chunks (Gmail / Slack
-        // / Notion / Composio) — until the memory subsystem surfaces
-        // per-chunk taint to the engine, we conservatively label all
-        // ticks as `Subconscious` and rely on the memory-taint signal
-        // wiring planned in a follow-up to escalate when external-sync
-        // content is in context.
+        // When the situation report carries content derived from third-
+        // party sync sources (Gmail / Slack / Notion / sealed source
+        // summaries), escalate the origin so the approval gate refuses
+        // external_effect tools for the rest of the tick — a hostile
+        // upstream message can otherwise nudge the LLM into a tool call
+        // the user would never have authorised.
+        let source = if has_external_content {
+            crate::openhuman::agent::turn_origin::TrustedAutomationSource::SubconsciousTainted
+        } else {
+            crate::openhuman::agent::turn_origin::TrustedAutomationSource::Subconscious
+        };
+        debug!(
+            "[subconscious] tick origin source={:?} has_external_content={has_external_content}",
+            source
+        );
         let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
             job_id: format!("subconscious:tick:{}", now_secs() as u64),
-            source: crate::openhuman::agent::turn_origin::TrustedAutomationSource::Subconscious,
+            source,
         };
         let response = crate::openhuman::agent::turn_origin::with_origin(
             origin,
