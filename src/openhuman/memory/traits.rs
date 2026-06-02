@@ -37,6 +37,31 @@ pub enum MemoryTaint {
     ExternalSync,
 }
 
+impl MemoryTaint {
+    /// Serialised form used by the SQLite `memory_docs.taint` column.
+    ///
+    /// Kept short + snake_case to match the serde representation and to
+    /// keep the on-disk footprint minimal. Round-trips via
+    /// [`Self::from_db_str`].
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::Internal => "internal",
+            Self::ExternalSync => "external_sync",
+        }
+    }
+
+    /// Reverse of [`Self::as_db_str`]. Unknown values (e.g. from a
+    /// forward-rolled schema or a manual `UPDATE` typo) decode as the
+    /// conservative [`MemoryTaint::Internal`] so the subconscious gate
+    /// never silently escalates on garbage column data.
+    pub fn from_db_str(raw: &str) -> Self {
+        match raw {
+            "external_sync" => Self::ExternalSync,
+            _ => Self::Internal,
+        }
+    }
+}
+
 /// Represents a single stored memory entry with associated metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryEntry {
@@ -292,6 +317,33 @@ mod tests {
         }"#;
         let parsed: MemoryEntry = serde_json::from_str(legacy).unwrap();
         assert_eq!(parsed.taint, MemoryTaint::Internal);
+    }
+
+    #[test]
+    fn memory_taint_as_db_str_uses_snake_case_form() {
+        assert_eq!(MemoryTaint::Internal.as_db_str(), "internal");
+        assert_eq!(MemoryTaint::ExternalSync.as_db_str(), "external_sync");
+    }
+
+    #[test]
+    fn memory_taint_from_db_str_roundtrips_and_defaults_internal() {
+        // Round-trip both known values.
+        assert_eq!(
+            MemoryTaint::from_db_str(MemoryTaint::Internal.as_db_str()),
+            MemoryTaint::Internal
+        );
+        assert_eq!(
+            MemoryTaint::from_db_str(MemoryTaint::ExternalSync.as_db_str()),
+            MemoryTaint::ExternalSync
+        );
+        // Unknown / corrupted column values fall back to the conservative
+        // `Internal` so the subconscious gate never escalates on garbage.
+        assert_eq!(MemoryTaint::from_db_str(""), MemoryTaint::Internal);
+        assert_eq!(
+            MemoryTaint::from_db_str("EXTERNAL_SYNC"),
+            MemoryTaint::Internal
+        );
+        assert_eq!(MemoryTaint::from_db_str("future"), MemoryTaint::Internal);
     }
 
     #[test]

@@ -99,6 +99,7 @@ impl UnifiedMemory {
                created_at REAL NOT NULL,
                updated_at REAL NOT NULL,
                markdown_rel_path TEXT NOT NULL,
+               taint TEXT NOT NULL DEFAULT 'internal',
                UNIQUE(namespace, key)
              );
              CREATE INDEX IF NOT EXISTS idx_memory_docs_ns_updated ON memory_docs(namespace, updated_at DESC);
@@ -170,6 +171,21 @@ impl UnifiedMemory {
                 Err(e) => {
                     tracing::trace!("[vector_chunks:init] skipped (probably already exists): {e}")
                 }
+            }
+        }
+
+        // Backfill the `taint` column on existing `memory_docs` databases.
+        // Fresh installs get this via the CREATE TABLE above; older DBs need
+        // the ALTER so retrieval can carry the provenance signal up to the
+        // subconscious gate. Idempotent: a duplicate-column error on
+        // re-application is expected (logged at trace).
+        match conn.execute(
+            "ALTER TABLE memory_docs ADD COLUMN taint TEXT NOT NULL DEFAULT 'internal'",
+            [],
+        ) {
+            Ok(_) => tracing::debug!("[memory_docs:init] applied taint column migration"),
+            Err(e) => {
+                tracing::trace!("[memory_docs:init] taint column already present: {e}")
             }
         }
 
