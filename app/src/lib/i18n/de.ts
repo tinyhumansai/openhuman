@@ -2313,10 +2313,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Vorteil2',
   'app.openhumanLink.discord.perk3': 'Vorteil3',
   'app.openhumanLink.discord.perk4': 'Vorteil4',
-  'app.openhumanLink.discordReport.copied': 'In die Zwischenablage kopiert',
-  'app.openhumanLink.discordReport.copyDetails': 'Fehlerdetails kopieren',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'OpenHuman-Agent-Fehler (keine weiteren Details verfügbar).',
   'app.openhumanLink.discordReport.intro':
     'Entschuldigung — bei uns ist etwas schiefgelaufen. Wir versuchen, solche Fehler automatisch zu protokollieren, aber wenn du die Details auf Discord teilst, können wir sie schneller beheben.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord öffnen',

@@ -2217,10 +2217,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'ميزة 2',
   'app.openhumanLink.discord.perk3': 'ميزة 3',
   'app.openhumanLink.discord.perk4': 'ميزة 4',
-  'app.openhumanLink.discordReport.copied': 'تم النسخ إلى الحافظة',
-  'app.openhumanLink.discordReport.copyDetails': 'نسخ تفاصيل الخطأ',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'خطأ في وكيل OpenHuman (لا تتوفر تفاصيل إضافية).',
   'app.openhumanLink.discordReport.intro':
     'نعتذر — حدث خطأ من جانبنا. نحاول تسجيل هذه الأخطاء تلقائيًا، لكن مشاركة التفاصيل على Discord تساعدنا على إصلاحها بشكل أسرع.',
   'app.openhumanLink.discordReport.openDiscord': 'فتح Discord',

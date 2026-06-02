@@ -2303,10 +2303,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Ventaja 2',
   'app.openhumanLink.discord.perk3': 'Ventaja 3',
   'app.openhumanLink.discord.perk4': 'Ventaja 4',
-  'app.openhumanLink.discordReport.copied': 'Copiado al portapapeles',
-  'app.openhumanLink.discordReport.copyDetails': 'Copiar detalles del error',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'Error del agente OpenHuman (no hay detalles adicionales disponibles).',
   'app.openhumanLink.discordReport.intro':
     'Lo sentimos — algo falló de nuestra parte. Intentamos registrar estos errores automáticamente, pero compartir los detalles en Discord nos ayuda a solucionarlo más rápido.',
   'app.openhumanLink.discordReport.openDiscord': 'Abrir Discord',

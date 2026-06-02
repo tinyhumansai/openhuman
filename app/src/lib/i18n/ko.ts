@@ -2236,10 +2236,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': '혜택2',
   'app.openhumanLink.discord.perk3': '혜택3',
   'app.openhumanLink.discord.perk4': '혜택4',
-  'app.openhumanLink.discordReport.copied': '클립보드에 복사됨',
-  'app.openhumanLink.discordReport.copyDetails': '오류 세부 정보 복사',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'OpenHuman 에이전트 오류 (추가 세부 정보 없음).',
   'app.openhumanLink.discordReport.intro':
     '죄송합니다 — 저희 측에서 오류가 발생했습니다. 이러한 오류를 자동으로 기록하려고 하지만, Discord에 세부 정보를 공유해 주시면 더 빠르게 해결할 수 있습니다.',
   'app.openhumanLink.discordReport.openDiscord': 'Discord 열기',

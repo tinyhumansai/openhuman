@@ -2149,9 +2149,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': '福利 2',
   'app.openhumanLink.discord.perk3': '福利 3',
   'app.openhumanLink.discord.perk4': '福利 4',
-  'app.openhumanLink.discordReport.copied': '已复制到剪贴板',
-  'app.openhumanLink.discordReport.copyDetails': '复制错误详情',
-  'app.openhumanLink.discordReport.fallbackDetails': 'OpenHuman 代理错误（无其他详情）。',
   'app.openhumanLink.discordReport.intro':
     '抱歉 — 我们这边出错了。我们会尝试自动记录这些错误，但在 Discord 上分享详情能帮助我们更快地修复问题。',
   'app.openhumanLink.discordReport.openDiscord': '打开 Discord',

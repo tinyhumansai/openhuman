@@ -2285,10 +2285,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Wczesny dostęp do nowych funkcji',
   'app.openhumanLink.discord.perk3': 'Wymiana skryptów i przepisów',
   'app.openhumanLink.discord.perk4': 'Możliwość wpływu na priorytety',
-  'app.openhumanLink.discordReport.copied': 'Skopiowano do schowka',
-  'app.openhumanLink.discordReport.copyDetails': 'Kopiuj szczegóły błędu',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'Błąd agenta OpenHuman (brak dodatkowych szczegółów).',
   'app.openhumanLink.discordReport.intro':
     'Przepraszamy — coś poszło nie tak po naszej stronie. Staramy się rejestrować takie błędy automatycznie, ale udostępnienie szczegółów na Discord pomaga nam szybciej je naprawić.',
   'app.openhumanLink.discordReport.openDiscord': 'Otwórz Discord',

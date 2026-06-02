@@ -26,20 +26,12 @@ const EMPTY_PLUGINS: [] = [];
  * emits. Click dispatches an `OPENHUMAN_LINK_EVENT` window event that
  * `OpenhumanLinkModal` listens for, so the chat stays in view.
  */
-function OpenhumanLinkPill({
-  path,
-  label,
-  context,
-}: {
-  path: string;
-  label: string;
-  context?: string;
-}) {
+function OpenhumanLinkPill({ path, label }: { path: string; label: string }) {
   return (
     <button
       type="button"
       onClick={() =>
-        window.dispatchEvent(new CustomEvent(OPENHUMAN_LINK_EVENT, { detail: { path, context } }))
+        window.dispatchEvent(new CustomEvent(OPENHUMAN_LINK_EVENT, { detail: { path } }))
       }
       className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-xs font-medium text-primary-700 transition-colors hover:bg-primary-100">
       {label}
@@ -203,7 +195,6 @@ export function AgentMessageBubble({
               key={`pill-${idx}-${segment.path}`}
               path={segment.path}
               label={segment.label}
-              context={textContent}
             />
           ))}
         </div>

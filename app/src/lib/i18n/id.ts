@@ -2263,10 +2263,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Keuntungan 2',
   'app.openhumanLink.discord.perk3': 'Keuntungan 3',
   'app.openhumanLink.discord.perk4': 'Keuntungan 4',
-  'app.openhumanLink.discordReport.copied': 'Disalin ke clipboard',
-  'app.openhumanLink.discordReport.copyDetails': 'Salin detail error',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'Error agen OpenHuman (tidak ada detail tambahan yang tersedia).',
   'app.openhumanLink.discordReport.intro':
     'Mohon maaf — terjadi kesalahan di pihak kami. Kami berusaha mencatat error ini secara otomatis, tetapi membagikan detailnya di Discord membantu kami memperbaikinya lebih cepat.',
   'app.openhumanLink.discordReport.openDiscord': 'Buka Discord',

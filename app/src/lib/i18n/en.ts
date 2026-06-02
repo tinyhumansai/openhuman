@@ -2603,10 +2603,6 @@ const en: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Connect with other OpenHuman users',
   'app.openhumanLink.discord.perk3': 'Share feedback directly with the team',
   'app.openhumanLink.discord.perk4': 'Community help and support',
-  'app.openhumanLink.discordReport.copied': 'Copied to clipboard',
-  'app.openhumanLink.discordReport.copyDetails': 'Copy error details',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'OpenHuman agent error (no additional details were available).',
   'app.openhumanLink.discordReport.intro':
     'Sorry — something broke on our end. We try to log these automatically, but sharing the details on Discord helps us fix it faster.',
   'app.openhumanLink.discordReport.openDiscord': 'Open Discord',

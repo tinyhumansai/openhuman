@@ -2258,10 +2258,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'সুবিধা ২',
   'app.openhumanLink.discord.perk3': 'সুবিধা ৩',
   'app.openhumanLink.discord.perk4': 'সুবিধা ৪',
-  'app.openhumanLink.discordReport.copied': 'ক্লিপবোর্ডে কপি হয়েছে',
-  'app.openhumanLink.discordReport.copyDetails': 'ত্রুটির বিবরণ কপি করুন',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'OpenHuman এজেন্ট ত্রুটি (কোনো অতিরিক্ত বিবরণ পাওয়া যায়নি)।',
   'app.openhumanLink.discordReport.intro':
     'দুঃখিত — আমাদের দিক থেকে কিছু ভুল হয়েছে। আমরা এগুলো স্বয়ংক্রিয়ভাবে লগ করার চেষ্টা করি, তবে Discord-এ বিবরণ শেয়ার করলে আমরা দ্রুত সমাধান করতে পারি।',
   'app.openhumanLink.discordReport.openDiscord': 'Discord খুলুন',

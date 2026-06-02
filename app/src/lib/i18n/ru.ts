@@ -2274,10 +2274,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'Преимущество 2',
   'app.openhumanLink.discord.perk3': 'Преимущество 3',
   'app.openhumanLink.discord.perk4': 'Преимущество 4',
-  'app.openhumanLink.discordReport.copied': 'Скопировано в буфер обмена',
-  'app.openhumanLink.discordReport.copyDetails': 'Копировать сведения об ошибке',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'Ошибка агента OpenHuman (дополнительная информация недоступна).',
   'app.openhumanLink.discordReport.intro':
     'Приносим извинения — что-то пошло не так с нашей стороны. Мы стараемся фиксировать такие ошибки автоматически, но если вы поделитесь подробностями в Discord, мы исправим их быстрее.',
   'app.openhumanLink.discordReport.openDiscord': 'Открыть Discord',

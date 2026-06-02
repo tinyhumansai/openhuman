@@ -2260,10 +2260,6 @@ const messages: TranslationMap = {
   'app.openhumanLink.discord.perk2': 'लाभ 2',
   'app.openhumanLink.discord.perk3': 'लाभ 3',
   'app.openhumanLink.discord.perk4': 'लाभ 4',
-  'app.openhumanLink.discordReport.copied': 'क्लिपबोर्ड पर कॉपी हो गया',
-  'app.openhumanLink.discordReport.copyDetails': 'त्रुटि विवरण कॉपी करें',
-  'app.openhumanLink.discordReport.fallbackDetails':
-    'OpenHuman एजेंट त्रुटि (कोई अतिरिक्त विवरण उपलब्ध नहीं था)।',
   'app.openhumanLink.discordReport.intro':
     'माफ करें — हमारी तरफ से कुछ गड़बड़ हुई। हम इन्हें स्वचालित रूप से लॉग करने की कोशिश करते हैं, लेकिन Discord पर विवरण साझा करने से हमें इसे जल्दी ठीक करने में मदद मिलती है।',
   'app.openhumanLink.discordReport.openDiscord': 'Discord खोलें',

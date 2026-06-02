@@ -37,7 +37,6 @@ import ChannelSetupModal from './channels/ChannelSetupModal';
 
 interface OpenhumanLinkEvent {
   path: string;
-  context?: string;
 }
 
 export const OPENHUMAN_LINK_EVENT = 'openhuman-link';
@@ -58,24 +57,19 @@ const ALLOWED_PATHS_SET = new Set<string>(ALLOWED_PATHS);
 const OpenhumanLinkModal = () => {
   const { t } = useT();
   const [activePath, setActivePath] = useState<AllowedPath | null>(null);
-  const [activeContext, setActiveContext] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const handler = (event: Event) => {
       const detail = (event as CustomEvent<OpenhumanLinkEvent>).detail;
       if (detail?.path && ALLOWED_PATHS_SET.has(detail.path)) {
         setActivePath(detail.path as AllowedPath);
-        setActiveContext(detail.context);
       }
     };
     window.addEventListener(OPENHUMAN_LINK_EVENT, handler);
     return () => window.removeEventListener(OPENHUMAN_LINK_EVENT, handler);
   }, []);
 
-  const close = useCallback(() => {
-    setActivePath(null);
-    setActiveContext(undefined);
-  }, []);
+  const close = useCallback(() => setActivePath(null), []);
 
   if (!activePath) return null;
 
@@ -114,7 +108,7 @@ const OpenhumanLinkModal = () => {
             </svg>
           </button>
         </div>
-        <div className="p-5">{renderBody(activePath, close, activeContext)}</div>
+        <div className="p-5">{renderBody(activePath, close)}</div>
       </div>
     </div>
   );
@@ -183,7 +177,7 @@ function titleForPath(path: AllowedPath, t: (k: string) => string): string {
   }
 }
 
-function renderBody(path: AllowedPath, close: () => void, context?: string) {
+function renderBody(path: AllowedPath, close: () => void) {
   switch (path) {
     case 'settings/notifications':
       return <NotificationsBody close={close} />;
@@ -198,7 +192,7 @@ function renderBody(path: AllowedPath, close: () => void, context?: string) {
     case 'community/discord':
       return <DiscordBody close={close} />;
     case 'community/discord-report':
-      return <DiscordReportBody close={close} context={context} />;
+      return <DiscordReportBody close={close} />;
     case 'accounts/setup':
       return <AccountsSetupBody close={close} />;
   }
@@ -386,49 +380,24 @@ const DiscordBody = ({ close }: { close: () => void }) => {
  * with path "community/discord-report" is clicked. Distinct from DiscordBody
  * (join-community flow):
  *  - Leads with an apology/acknowledgement copy.
- *  - Offers a "Copy error details" button so the user can paste context into
- *    the Discord report thread.
- *  - Offers an "Open Discord" primary button to jump straight to the server.
- *  - Closes with the shared DoneFooter ("Maybe later" skip link).
+ *  - Offers an "Open Discord" primary button to jump straight to the server
+ *    (and closes the modal).
  */
-const DiscordReportBody = ({ close, context }: { close: () => void; context?: string }) => {
+const DiscordReportBody = ({ close }: { close: () => void }) => {
   const { t } = useT();
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = async () => {
-    const text =
-      context && context.trim() ? context : t('app.openhumanLink.discordReport.fallbackDetails');
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard write rejected (e.g. document not focused) — fail silently.
-    }
-  };
 
   return (
     <div className="space-y-4 text-sm text-stone-700 dark:text-neutral-200">
       <p>{t('app.openhumanLink.discordReport.intro')}</p>
-      <div className="flex items-stretch gap-2">
-        <button
-          type="button"
-          onClick={() => void handleCopy()}
-          className="flex-1 rounded-xl border border-stone-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-3 py-2.5 text-sm font-medium text-stone-700 dark:text-neutral-200 hover:bg-stone-50 dark:hover:bg-neutral-800/60 transition-colors">
-          {copied
-            ? t('app.openhumanLink.discordReport.copied')
-            : t('app.openhumanLink.discordReport.copyDetails')}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            void openUrl(DISCORD_INVITE_URL).catch(() => {});
-            close();
-          }}
-          className="flex-1 rounded-xl bg-primary-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
-          {t('app.openhumanLink.discordReport.openDiscord')}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => {
+          void openUrl(DISCORD_INVITE_URL).catch(() => {});
+          close();
+        }}
+        className="w-full rounded-xl bg-primary-500 px-3 py-2.5 text-sm font-medium text-white hover:bg-primary-600 transition-colors">
+        {t('app.openhumanLink.discordReport.openDiscord')}
+      </button>
     </div>
   );
 };
