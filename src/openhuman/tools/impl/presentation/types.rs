@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 pub(super) const MAX_SLIDES: usize = 64;
 
 /// Maximum length of a single text field (title, body, individual
-/// bullet, speaker notes). Bounds the payload size sent to python-pptx
-/// and avoids pathological inputs that would balloon the deck.
+/// bullet, speaker notes). Bounds the payload size sent to the
+/// `ppt-rs` engine and avoids pathological inputs that would balloon
+/// the deck.
 pub(super) const MAX_TEXT_CHARS: usize = 2_000;
 
 /// Maximum number of bullets per slide. Higher counts produce
@@ -25,8 +26,8 @@ pub struct SlideSpec {
     /// `bullets` must be populated.
     #[serde(default)]
     pub title: String,
-    /// Paragraph body text. Plain text only — python-pptx renders it
-    /// in the default content layout's body placeholder.
+    /// Paragraph body text. Plain text only — rendered into the
+    /// default content layout's body placeholder by `ppt-rs`.
     #[serde(default)]
     pub body: Option<String>,
     /// Bullet points rendered after the body text (if any).
@@ -47,9 +48,9 @@ pub struct GeneratePresentationInput {
     /// Optional author byline, surfaced on the title slide.
     #[serde(default)]
     pub author: Option<String>,
-    /// Optional theme hint. Currently informational only; the bundled
-    /// Python script uses python-pptx's default template regardless.
-    /// Reserved for future template-selection work.
+    /// Optional theme hint. Currently informational only; the `ppt-rs`
+    /// engine uses its default template regardless. Reserved for
+    /// future template-selection work.
     #[serde(default)]
     pub theme: Option<String>,
     /// Slide specs, in display order. Must contain at least one entry.
@@ -58,8 +59,7 @@ pub struct GeneratePresentationInput {
 }
 
 /// Tool output returned via [`crate::openhuman::tools::traits::ToolResult`]
-/// as the JSON `data` field. Mirrored in the Python helper's stdout
-/// JSON shape so the Rust side can confirm the script completed.
+/// as the JSON `data` field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneratePresentationOutput {
     /// UUID of the persisted artifact record. Use with the
@@ -81,24 +81,6 @@ pub struct GeneratePresentationOutput {
 pub enum PresentationError {
     #[error("invalid input for field '{field}': {reason}")]
     InvalidInput { field: String, reason: String },
-
-    /// No longer constructed after the native-Rust engine swap
-    /// dropped the python-pptx subprocess path. Retained for
-    /// downstream pattern-match stability — callers that exhaustively
-    /// match on `PresentationError` continue to compile across the
-    /// engine swap, and a future runtime-dependent fallback (e.g. a
-    /// LibreOffice headless renderer for a `format = "pdf"` option)
-    /// can re-construct it without an enum-variant bump.
-    #[allow(dead_code)]
-    #[error("{name} runtime is not available; install hint: {install_hint}")]
-    MissingRuntime { name: String, install_hint: String },
-
-    /// Same rationale as [`Self::MissingRuntime`] — kept around for
-    /// downstream pattern-match stability after the python-pptx
-    /// subprocess path was removed.
-    #[allow(dead_code)]
-    #[error("required package '{name}' is not installed; install hint: {install_hint}")]
-    MissingPackage { name: String, install_hint: String },
 
     #[error("presentation generation failed (exit={exit_code}): {stderr_truncated}")]
     GenerationFailed {

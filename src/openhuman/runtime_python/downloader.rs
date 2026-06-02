@@ -132,17 +132,6 @@ fn parse_distribution_asset(asset: &GithubAsset, release_tag: &str) -> Option<Py
 
     let rest = name.strip_prefix("cpython-")?;
     let version_str = rest.split('+').next()?;
-    // Reject pre-release tags (e.g. `3.15.0b1`, `3.16.0a2`, `3.14.0rc1`).
-    // parse_python_version is lenient — it strips suffix chars from the
-    // patch segment and would happily return `3.15.0` for `3.15.0b1` —
-    // but third-party wheels often don't exist for unreleased Pythons
-    // yet, so pip falls back to source builds that crash on missing
-    // toolchain (observed: Pillow 11.x wheels absent for 3.15.0b1 as of
-    // 2026-05-30, source build fails on `llvm-ar` not found, blowing
-    // up every `generate_presentation` call).
-    if !version_str.chars().all(|c| c.is_ascii_digit() || c == '.') {
-        return None;
-    }
     let version = parse_python_version(version_str)?;
 
     let expected_sha256 = asset
