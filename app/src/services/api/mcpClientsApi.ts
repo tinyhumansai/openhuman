@@ -56,6 +56,11 @@ interface DisconnectResult {
   status: 'disconnected';
 }
 
+interface SetEnabledResult {
+  server_id: string;
+  enabled: boolean;
+}
+
 interface StatusResult {
   servers: ConnStatus[];
 }
@@ -231,6 +236,17 @@ export const mcpClientsApi = {
       params: { server_id },
     });
     log('disconnect status=%s', result.status);
+    return result;
+  },
+
+  /** Enable or disable a server. Returns the new enabled state. */
+  setEnabled: async (server_id: string, enabled: boolean): Promise<SetEnabledResult> => {
+    log('set_enabled server_id=%s enabled=%s', server_id, enabled);
+    const result = await callCoreRpc<SetEnabledResult>({
+      method: 'openhuman.mcp_clients_set_enabled',
+      params: { server_id, enabled },
+    });
+    log('set_enabled server_id=%s enabled=%s', result.server_id, result.enabled);
     return result;
   },
 

@@ -34,6 +34,7 @@ const SERVER_FS: InstalledServer = {
   config: { region: 'us-east-1' },
   installed_at: 1_700_000_000,
   last_connected_at: 1_700_001_000,
+  enabled: true,
 };
 
 const SERVER_DB: InstalledServer = {
@@ -46,6 +47,7 @@ const SERVER_DB: InstalledServer = {
   args: ['-y', 'acme/db-server'],
   env_keys: ['DB_URL'],
   installed_at: 1_700_000_500,
+  enabled: true,
 };
 
 describe('McpInventoryManifest: buildManifest', () => {

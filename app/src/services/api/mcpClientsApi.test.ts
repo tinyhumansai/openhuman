@@ -359,4 +359,34 @@ describe('mcpClientsApi', () => {
       expect(result.suggested_env).toEqual({ API_KEY: 'token-value' });
     });
   });
+
+  describe('setEnabled', () => {
+    it('calls mcp_clients_set_enabled with server_id and enabled=true and returns the result', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({ server_id: 'srv-1', enabled: true });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      const result = await mcpClientsApi.setEnabled('srv-1', true);
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_set_enabled',
+        params: { server_id: 'srv-1', enabled: true },
+      });
+      expect(result.server_id).toBe('srv-1');
+      expect(result.enabled).toBe(true);
+    });
+
+    it('calls mcp_clients_set_enabled with enabled=false and returns the disabled result', async () => {
+      mockCallCoreRpc.mockResolvedValueOnce({ server_id: 'srv-2', enabled: false });
+
+      const { mcpClientsApi } = await import('./mcpClientsApi');
+      const result = await mcpClientsApi.setEnabled('srv-2', false);
+
+      expect(mockCallCoreRpc).toHaveBeenCalledWith({
+        method: 'openhuman.mcp_clients_set_enabled',
+        params: { server_id: 'srv-2', enabled: false },
+      });
+      expect(result.server_id).toBe('srv-2');
+      expect(result.enabled).toBe(false);
+    });
+  });
 });

@@ -19,6 +19,15 @@ describe('McpStatusBadge', () => {
     expect(screen.getByRole('status')).toHaveTextContent(expectedLabel);
   });
 
+  it('renders the disabled status badge with the mcp.status.disabled i18n key', () => {
+    render(<McpStatusBadge status="disabled" />);
+    // The i18n key 'mcp.status.disabled' will be added in Task 9; until then
+    // the runtime falls back to the key string itself.
+    const badge = screen.getByRole('status');
+    // The badge renders without crashing and carries the italic style.
+    expect(badge.className).toContain('italic');
+  });
+
   it('exposes role="status" and aria-live="polite" for assistive tech', () => {
     render(<McpStatusBadge status="connecting" />);
     const badge = screen.getByRole('status');

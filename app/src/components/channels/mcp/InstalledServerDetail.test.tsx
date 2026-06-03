@@ -28,6 +28,7 @@ const BASE_SERVER = {
   args: [],
   env_keys: ['API_KEY', 'DB_URL'],
   installed_at: 1_700_000_000,
+  enabled: true,
 };
 
 describe('InstalledServerDetail', () => {
