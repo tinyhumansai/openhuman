@@ -14,8 +14,9 @@ use crate::openhuman::agent::task_board::{
 use chrono::Utc;
 use parking_lot::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 use super::store::{global_scratch_store, ScratchTodoStore};
@@ -30,6 +31,20 @@ fn scratch_serial_lock() -> MutexGuard<'static, ()> {
 
 fn maybe_scratch_lock(location: &BoardLocation) -> Option<MutexGuard<'static, ()>> {
     matches!(location, BoardLocation::Scratch).then(scratch_serial_lock)
+}
+
+/// Per-thread mutex map for serialising claim operations. Keyed by a
+/// canonical board key (thread_id for `Thread`, `"_scratch_"` for `Scratch`).
+/// The outer `Mutex` protects the map itself; the inner `Arc<Mutex<()>>`
+/// is the per-board lock that claim callers hold across load → check → write.
+fn board_lock(location: &BoardLocation) -> Arc<Mutex<()>> {
+    static MAP: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let map_mu = MAP.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = match location {
+        BoardLocation::Thread { thread_id, .. } => thread_id.clone(),
+        BoardLocation::Scratch => "_scratch_".to_string(),
+    };
+    map_mu.lock().entry(key).or_default().clone()
 }
 
 /// Stable string aliases accepted on the wire for [`TaskCardStatus`].
@@ -462,6 +477,66 @@ pub fn list(location: &BoardLocation) -> Result<TodosSnapshot, String> {
     Ok(into_snapshot(location, cards))
 }
 
+/// Atomic compare-and-set claim: transition a card from one of the
+/// `expected` statuses to `target` under a per-board lock, returning the
+/// **fresh** card snapshot on success. If the card's current status is not
+/// in `expected`, the claim is rejected with `Err` — the caller lost the
+/// race or the card already moved on.
+///
+/// This is the single safe entry-point for the dispatcher to claim a card;
+/// callers must **not** do a manual load→check→write outside this lock.
+pub fn claim_card(
+    location: &BoardLocation,
+    card_id: &str,
+    expected: &[TaskCardStatus],
+    target: TaskCardStatus,
+) -> Result<TaskBoardCard, String> {
+    let lock = board_lock(location);
+    let _guard = lock.lock();
+
+    tracing::debug!(
+        card_id = %card_id,
+        expected = ?expected.iter().map(TaskCardStatus::as_str).collect::<Vec<_>>(),
+        target = %target.as_str(),
+        "[todos][ops] claim_card entry"
+    );
+
+    let _scratch_guard = maybe_scratch_lock(location);
+    let mut cards = load_cards(location)?;
+    let card = cards
+        .iter_mut()
+        .find(|c| c.id == card_id)
+        .ok_or_else(|| format!("[todos][ops] claim_card: card '{card_id}' not found on board"))?;
+
+    if !expected.iter().any(|s| *s == card.status) {
+        let current = card.status.as_str();
+        return Err(format!(
+            "[todos][ops] claim_card: card '{card_id}' status is '{current}', \
+             expected one of [{}]; claim rejected",
+            expected
+                .iter()
+                .map(TaskCardStatus::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    card.status = target;
+    card.updated_at = Utc::now().to_rfc3339();
+    let claimed_card = card.clone();
+
+    enforce_single_in_progress(&cards)?;
+    let cards = save_cards(location, cards)?;
+    emit_progress(location, &cards);
+
+    tracing::info!(
+        card_id = %card_id,
+        new_status = %claimed_card.status.as_str(),
+        "[todos][ops] claim_card ok"
+    );
+    Ok(claimed_card)
+}
+
 fn non_empty(s: String) -> Option<String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -792,6 +867,98 @@ mod tests {
         let snap = clear(&loc).unwrap();
         assert!(snap.cards.is_empty());
         assert!(snap.markdown.contains("No todos"));
+    }
+
+    #[test]
+    fn claim_card_transitions_todo_to_in_progress() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "claim-1");
+        let added = add(&loc, "claimable task", CardPatch::default()).unwrap();
+        let id = added.cards[0].id.clone();
+
+        let claimed = claim_card(
+            &loc,
+            &id,
+            &[TaskCardStatus::Todo, TaskCardStatus::Ready],
+            TaskCardStatus::InProgress,
+        )
+        .unwrap();
+        assert_eq!(claimed.status, TaskCardStatus::InProgress);
+        assert_eq!(claimed.id, id);
+
+        let snap = list(&loc).unwrap();
+        assert_eq!(snap.cards[0].status, TaskCardStatus::InProgress);
+    }
+
+    #[test]
+    fn claim_card_rejects_when_status_does_not_match() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "claim-2");
+        let added = add(&loc, "done task", CardPatch::default()).unwrap();
+        let id = added.cards[0].id.clone();
+        update_status(&loc, &id, TaskCardStatus::Done).unwrap();
+
+        let err = claim_card(
+            &loc,
+            &id,
+            &[TaskCardStatus::Todo, TaskCardStatus::Ready],
+            TaskCardStatus::InProgress,
+        )
+        .unwrap_err();
+        assert!(err.contains("claim rejected"), "err: {err}");
+    }
+
+    #[test]
+    fn claim_card_returns_not_found_for_missing_id() {
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "claim-3");
+        let err = claim_card(
+            &loc,
+            "task-nonexistent",
+            &[TaskCardStatus::Todo],
+            TaskCardStatus::InProgress,
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"), "err: {err}");
+    }
+
+    #[test]
+    fn concurrent_claims_only_one_wins() {
+        use std::sync::Barrier;
+
+        let dir = tempdir().unwrap();
+        let loc = thread_loc(dir.path(), "race-1");
+        let added = add(&loc, "race target", CardPatch::default()).unwrap();
+        let id = added.cards[0].id.clone();
+
+        let barrier = Arc::new(Barrier::new(2));
+        let results: Vec<_> = (0..2)
+            .map(|_| {
+                let loc = loc.clone();
+                let id = id.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    claim_card(
+                        &loc,
+                        &id,
+                        &[TaskCardStatus::Todo, TaskCardStatus::Ready],
+                        TaskCardStatus::InProgress,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .collect();
+
+        let wins = results.iter().filter(|r| r.is_ok()).count();
+        let losses = results.iter().filter(|r| r.is_err()).count();
+        assert_eq!(wins, 1, "exactly one claimer wins");
+        assert_eq!(losses, 1, "exactly one claimer is rejected");
+
+        let snap = list(&loc).unwrap();
+        assert_eq!(snap.cards[0].status, TaskCardStatus::InProgress);
     }
 
     #[test]

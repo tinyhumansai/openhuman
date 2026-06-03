@@ -424,7 +424,22 @@ async fn run_agent_job(config: &Config, job: &CronJob) -> (bool, String, Option<
                     // cron-triggered turns. `cron` is the channel so the
                     // event bus can filter from other flows (`cli`, `web`…).
                     agent.set_event_context(format!("cron:{}", job.id), "cron");
-                    agent.run_single(&prefixed_prompt).await
+                    // Scope a `TrustedAutomation { Cron }` origin around the
+                    // turn. The approval gate treats this as user-authorized
+                    // automation and lets external_effect tools run without
+                    // an in-app prompt — the user explicitly created this
+                    // cron job and authorized its prompt at the same time.
+                    let origin =
+                        crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
+                            job_id: job.id.clone(),
+                            source:
+                                crate::openhuman::agent::turn_origin::TrustedAutomationSource::Cron,
+                        };
+                    crate::openhuman::agent::turn_origin::with_origin(
+                        origin,
+                        agent.run_single(&prefixed_prompt),
+                    )
+                    .await
                 }
                 Err(e) => Err(e),
             }

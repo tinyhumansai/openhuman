@@ -229,3 +229,40 @@ fn transcript_renders_all_message_variants() {
     assert!(rendered.contains("assistant tool_call: shell("));
     assert!(rendered.contains("tool_result(1): file.txt"));
 }
+
+// ── #3205: keep image base64 out of the summarizer transcript ───────────────
+
+#[test]
+fn redact_image_markers_passes_through_markerless_text() {
+    let s = "just a normal message with no attachments";
+    assert!(matches!(redact_image_markers(s), Cow::Borrowed(b) if b == s));
+}
+
+#[test]
+fn redact_image_markers_replaces_marker_with_placeholder() {
+    let out =
+        redact_image_markers("look at this [IMAGE:data:image/png;base64,iVBORw0KGgoAAAA=] please");
+    assert_eq!(out, "look at this [image attachment] please");
+    assert!(!out.contains("base64"));
+}
+
+#[test]
+fn redact_image_markers_handles_multiple_markers() {
+    let out = redact_image_markers("[IMAGE:data:image/png;base64,AAA] and [IMAGE:https://x/y.jpg]");
+    assert_eq!(out, "[image attachment] and [image attachment]");
+}
+
+#[test]
+fn render_transcript_strips_image_base64() {
+    let big = format!(
+        "describe [IMAGE:data:image/png;base64,{}]",
+        "Q".repeat(50_000)
+    );
+    let history = vec![ConversationMessage::Chat(ChatMessage::user(&big))];
+    let rendered = render_transcript(&history);
+    assert!(rendered.contains("[image attachment]"));
+    assert!(!rendered.contains("base64"));
+    assert!(!rendered.contains("QQQQ"));
+    // The 50k-char base64 payload must not survive into the summarizer input.
+    assert!(rendered.len() < 200);
+}

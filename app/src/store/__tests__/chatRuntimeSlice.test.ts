@@ -4,6 +4,7 @@ import type { PersistedTurnState } from '../../types/turnState';
 import reducer, {
   beginInferenceTurn,
   clearAllChatRuntime,
+  clearArtifactsForThread,
   clearInferenceStatusForThread,
   clearPendingApprovalForThread,
   clearRuntimeForThread,
@@ -13,11 +14,15 @@ import reducer, {
   endInferenceTurn,
   hydrateRuntimeFromSnapshot,
   markInferenceTurnStreaming,
+  removeArtifactForThread,
   setInferenceStatusForThread,
   setPendingApprovalForThread,
   setStreamingAssistantForThread,
   setTaskBoardForThread,
   setToolTimelineForThread,
+  upsertArtifactFailedForThread,
+  upsertArtifactInProgressForThread,
+  upsertArtifactReadyForThread,
 } from '../chatRuntimeSlice';
 
 describe('chatRuntimeSlice', () => {
@@ -317,6 +322,275 @@ describe('chatRuntimeSlice', () => {
       );
       const cleared = reducer(withApproval, clearAllChatRuntime());
       expect(cleared.pendingApprovalByThread).toEqual({});
+    });
+  });
+
+  describe('removeArtifactForThread (#3024)', () => {
+    it('removes a single artifact from a bucket while leaving siblings intact', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'b',
+          kind: 'document',
+          title: 'B',
+          path: 'artifacts/b.pdf',
+          sizeBytes: 200,
+        })
+      );
+      const next = reducer(state, removeArtifactForThread({ threadId: 't1', artifactId: 'a' }));
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      expect(next.artifactsByThread['t1'][0].artifactId).toBe('b');
+    });
+
+    it('drops the thread key entirely when the last artifact is removed', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      const next = reducer(seeded, removeArtifactForThread({ threadId: 't1', artifactId: 'a' }));
+      expect(next.artifactsByThread['t1']).toBeUndefined();
+    });
+
+    it('is a no-op for an unknown thread or unknown id', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      const noThread = reducer(
+        seeded,
+        removeArtifactForThread({ threadId: 'nope', artifactId: 'a' })
+      );
+      expect(noThread.artifactsByThread['t1']).toHaveLength(1);
+
+      const noId = reducer(
+        seeded,
+        removeArtifactForThread({ threadId: 't1', artifactId: 'missing' })
+      );
+      expect(noId.artifactsByThread['t1']).toHaveLength(1);
+    });
+
+    it('replaces an existing snapshot in place (status promotion in_progress → ready)', () => {
+      // Covers the upsertArtifact "found at idx" branch — the snapshot
+      // must update in place so the inline card flips status without
+      // remounting.
+      let state = reducer(
+        undefined,
+        upsertArtifactInProgressForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+        })
+      );
+      expect(state.artifactsByThread['t1']).toHaveLength(1);
+      expect(state.artifactsByThread['t1'][0].status).toBe('in_progress');
+
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 4096,
+        })
+      );
+      // Same artifactId — count must NOT grow; status flips in place.
+      expect(state.artifactsByThread['t1']).toHaveLength(1);
+      expect(state.artifactsByThread['t1'][0].status).toBe('ready');
+      expect(state.artifactsByThread['t1'][0].path).toBe('artifacts/a.pptx');
+      expect(state.artifactsByThread['t1'][0].sizeBytes).toBe(4096);
+    });
+
+    it('coexists with in_progress siblings without disturbing them', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactInProgressForThread({
+          threadId: 't1',
+          artifactId: 'in-flight',
+          kind: 'presentation',
+          title: 'Live',
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'done',
+          kind: 'presentation',
+          title: 'Done',
+          path: 'artifacts/done.pptx',
+          sizeBytes: 1,
+        })
+      );
+      const next = reducer(state, removeArtifactForThread({ threadId: 't1', artifactId: 'done' }));
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      expect(next.artifactsByThread['t1'][0].artifactId).toBe('in-flight');
+      expect(next.artifactsByThread['t1'][0].status).toBe('in_progress');
+    });
+  });
+
+  describe('upsertArtifactFailedForThread (#3024)', () => {
+    it('appends a new failed snapshot with the producer-supplied error', () => {
+      const next = reducer(
+        undefined,
+        upsertArtifactFailedForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Bad Deck',
+          error: 'engine failed: validation rejected slides[0]',
+        })
+      );
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      const entry = next.artifactsByThread['t1'][0];
+      expect(entry.status).toBe('failed');
+      expect(entry.error).toBe('engine failed: validation rejected slides[0]');
+      expect(entry.title).toBe('Bad Deck');
+      expect(entry.kind).toBe('presentation');
+    });
+
+    it('promotes an in-flight snapshot to failed in place (same artifactId)', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactInProgressForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+        })
+      );
+      const next = reducer(
+        seeded,
+        upsertArtifactFailedForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'Live',
+          error: 'timeout',
+        })
+      );
+      expect(next.artifactsByThread['t1']).toHaveLength(1);
+      expect(next.artifactsByThread['t1'][0].status).toBe('failed');
+      expect(next.artifactsByThread['t1'][0].error).toBe('timeout');
+    });
+  });
+
+  describe('clearArtifactsForThread (#3024)', () => {
+    it('drops the entire bucket for the named thread', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't2',
+          artifactId: 'b',
+          kind: 'document',
+          title: 'B',
+          path: 'artifacts/b.pdf',
+          sizeBytes: 200,
+        })
+      );
+      const next = reducer(state, clearArtifactsForThread({ threadId: 't1' }));
+      expect(next.artifactsByThread['t1']).toBeUndefined();
+      // Sibling thread is untouched.
+      expect(next.artifactsByThread['t2']).toHaveLength(1);
+    });
+
+    it('is safe to call against an unknown thread (no-op)', () => {
+      const next = reducer(undefined, clearArtifactsForThread({ threadId: 'never-seen' }));
+      expect(next.artifactsByThread).toEqual({});
+    });
+  });
+
+  // Pins the cross-reducer contract: clearRuntimeForThread is a soft reset
+  // (drops in-flight turn state, pending approvals, tool timelines, task
+  // board) but *preserves* artifact ledgers so the Files panel + chat
+  // ArtifactCard surfaces don't lose ready deck rows on a routine
+  // turn-clear. clearAllChatRuntime is a hard reset (signout / workspace
+  // switch) and *does* drop artifacts. Per graycyrus on PR #3026: the
+  // kind of contract that silently regresses on a refactor without a
+  // pinning test — also a CodeRabbit nit. (#3024)
+  describe('clear-semantics: artifacts preserved vs cleared (#3024)', () => {
+    it('clearRuntimeForThread preserves ready artifacts on the same thread', () => {
+      const seeded = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      const cleared = reducer(seeded, clearRuntimeForThread({ threadId: 't1' }));
+      expect(cleared.artifactsByThread['t1']).toHaveLength(1);
+      expect(cleared.artifactsByThread['t1'][0].artifactId).toBe('a');
+      expect(cleared.artifactsByThread['t1'][0].status).toBe('ready');
+    });
+
+    it('clearAllChatRuntime drops every thread bucket', () => {
+      let state = reducer(
+        undefined,
+        upsertArtifactReadyForThread({
+          threadId: 't1',
+          artifactId: 'a',
+          kind: 'presentation',
+          title: 'A',
+          path: 'artifacts/a.pptx',
+          sizeBytes: 100,
+        })
+      );
+      state = reducer(
+        state,
+        upsertArtifactReadyForThread({
+          threadId: 't2',
+          artifactId: 'b',
+          kind: 'document',
+          title: 'B',
+          path: 'artifacts/b.pdf',
+          sizeBytes: 200,
+        })
+      );
+      const cleared = reducer(state, clearAllChatRuntime());
+      expect(cleared.artifactsByThread).toEqual({});
     });
   });
 });

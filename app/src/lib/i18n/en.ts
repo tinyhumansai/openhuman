@@ -504,7 +504,34 @@ const en: TranslationMap = {
   'memoryTree.status.statusSyncing': 'Syncing',
   'memoryTree.status.statusError': 'Error',
   'memoryTree.status.statusIdle': 'Idle',
+  'memoryTree.status.statusDegraded': 'Degraded',
   'memoryTree.status.never': 'Never',
+  // #002: degraded badges + typed remediation strings. The Rust core sends a
+  // `remediation_key` (one of memory.health.remediation.*) which the status
+  // panel resolves verbatim, so the cause + fix come from one source of truth.
+  'memoryTree.status.degradedRecall': 'Semantic recall disabled',
+  'memoryTree.status.degradedStructure': 'Wiki structure incomplete',
+  'memoryTree.status.extractionCoverage': 'Extraction coverage: {pct}% of chunks have structure',
+  'memory.health.remediation.budget_exhausted':
+    'Memory embeddings hit the managed budget. Set up local Ollama embeddings (Settings → AI → Embeddings) or add your own embeddings API key to keep building memory.',
+  'memory.health.remediation.auth_missing':
+    'No embeddings credentials found. Log in to OpenHuman, or set up local Ollama embeddings in Settings → AI → Embeddings.',
+  'memory.health.remediation.auth_invalid':
+    'Your embeddings credentials were rejected. Re-authenticate, or switch to local Ollama embeddings in Settings → AI → Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'No embeddings provider is configured, so semantic recall is off. Set up local Ollama embeddings (recommended) or add an embeddings key in Settings → AI → Embeddings.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'The embedding model returns the wrong vector size (memory expects 1024 dimensions). Pick a 1024-dim model, or request 1024 dimensions for your provider.',
+  'memory.health.remediation.local_model_unavailable':
+    'A required local model is not available. Install/run Ollama and pull the model, or switch this workload to a cloud provider in Settings → AI.',
+  'memory.health.remediation.extraction_timeout':
+    'The memory extraction model is timing out, so the wiki has little structure. Switch the Memory extraction model to a faster one in Settings → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No summarization provider is available for Build Summary Trees. Enable local AI (Ollama), or enable cloud summarization in Settings → AI → Memory.',
+  'memory.health.remediation.transient':
+    'A temporary error interrupted memory processing. It will retry automatically.',
+  'memory.health.remediation.unknown':
+    'Memory processing encountered an issue. Check Settings → AI for configuration.',
   'memoryTree.status.fetchError': "Couldn't fetch Memory Tree status",
   'memoryTree.status.retry': 'Retry',
   'memoryTree.status.toggleFailed': "Couldn't toggle auto-sync",
@@ -519,6 +546,13 @@ const en: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} hr ago',
   'memoryTree.status.dayAgo': '1 day ago',
   'memoryTree.status.daysAgo': '{count} days ago',
+  // Per-integration health strip (#2763) — rendered between the 4-tile grid
+  // and the auto-sync toggle in MemoryTreeStatusPanel.
+  'memoryTree.status.integrationsTitle': 'Per-integration health',
+  'memoryTree.status.integrationsEmpty': 'No integrations connected',
+  'memoryTree.status.integrationActive': 'Active',
+  'memoryTree.status.integrationStale': 'Stale',
+  'memoryTree.status.integrationChunks': 'Chunks: {count}',
 
   // Notifications / Alerts
   'alerts.title': 'Alerts',
@@ -579,6 +613,7 @@ const en: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Continue with Simple',
   'onboarding.runtimeChoice.continueCustom': 'Continue with Custom',
   'onboarding.runtimeChoice.recommended': 'Recommended',
+  'onboarding.runtimeChoice.exitError': 'Could not finish onboarding. Please try again.',
 
   // Onboarding: API keys step (only when Custom is picked)
   'onboarding.apiKeys.title': "Let's Add Your API Keys",
@@ -4019,6 +4054,42 @@ const en: TranslationMap = {
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
   'settings.agentAccess.viewApprovalHistory': 'View approval history',
+
+  // ── Sandbox execution backend ─────────────────────────────────────
+  'settings.sandbox.title': 'Sandbox execution',
+  'settings.sandbox.menuDesc': 'Configure sandbox backends for agent tool isolation.',
+  'settings.sandbox.loading': 'Loading…',
+  'settings.sandbox.desktopOnly': 'Sandbox settings are only available in the desktop app.',
+  'settings.sandbox.loadError': 'Failed to load sandbox settings.',
+  'settings.sandbox.saveError': 'Failed to save sandbox settings.',
+  'settings.sandbox.saved': 'Saved — applies to new agent sessions.',
+  'settings.sandbox.saving': 'Saving…',
+  'settings.sandbox.status': 'Status',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Available',
+  'settings.sandbox.unavailable': 'Unavailable',
+  'settings.sandbox.detectedBackend': 'OS backend',
+  'settings.sandbox.enableLabel': 'Enable sandbox execution',
+  'settings.sandbox.enableDesc': 'Run agent tools inside an isolated sandbox environment.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc': 'Choose which isolation backend to use for sandboxed execution.',
+  'settings.sandbox.backend.auto': 'Auto (detect best available)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'None (no sandbox)',
+  'settings.sandbox.dockerSettings': 'Docker settings',
+  'settings.sandbox.dockerImage': 'Image',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Memory limit',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'CPU limit',
+  'settings.sandbox.cpuUnit': 'cores',
+  'settings.sandbox.envPassthrough': 'Environment passthrough',
+  'settings.sandbox.envPassthroughDesc': 'Environment variables forwarded into the sandbox.',
+  'settings.sandbox.noEnvVars': 'No environment variables configured.',
+
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4752,6 +4823,41 @@ const en: TranslationMap = {
   'settings.agents.editor.builtInReadonly':
     "Built-in agents can't be edited. You can enable, disable, or reset them from the agents list.",
 
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artifact: {title}',
+  'chat.artifact.generating': 'Generating {kind}…',
+  'chat.artifact.ready': 'Ready',
+  'chat.artifact.failed': 'Generation failed',
+  'chat.artifact.download': 'Download',
+  'chat.artifact.downloading': 'Downloading…',
+  'chat.artifact.downloaded': 'Saved to {path}',
+  'chat.artifact.download_failed': 'Download failed: {reason}',
+  'chat.artifact.retry': 'Retry',
+  'chat.artifact.reveal': 'Show in folder',
+  'chat.artifact.show_more': 'Show more',
+  'chat.artifact.show_less': 'Show less',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} file in this chat',
+  'chat.files.chip.aria.other': '{count} files in this chat',
+  'chat.files.panel.aria': 'Files in this chat',
+  'chat.files.panel.title': 'Files ({count})',
+  'chat.files.panel.empty': 'No files yet. Ask the agent to generate one.',
+  'chat.files.panel.close': 'Close files panel',
+  'chat.files.delete.aria': 'Delete {title}',
+  'chat.files.delete.confirm': 'Delete this file?',
+  'chat.files.delete.cancel': 'Cancel',
+  'chat.files.delete.action': 'Delete',
+  'chat.files.delete.failed': 'Couldn’t delete the file. Try again.',
+  // Error labels for download/delete outcomes (#3024). Keyed off
+  // `ArtifactErrorCode` returned by artifactDownloadService.
+  'chat.files.error.not_desktop': 'Downloads are only available in the desktop app.',
+  'chat.files.error.missing_artifact_id': 'Missing artifact id.',
+  'chat.files.error.missing_artifact_path': 'The artifact path is missing from the core response.',
+  'chat.files.error.resolve_failed': 'Couldn’t resolve the artifact. Please try again.',
+  'chat.files.error.download_failed': 'Download failed. Please try again.',
+  'chat.files.error.delete_failed': 'Couldn’t delete the file. Please try again.',
+
   // Keyring consent & security
   'keyring.consent.title': 'Secure Storage Unavailable',
   'keyring.consent.description':
@@ -4789,18 +4895,6 @@ const en: TranslationMap = {
   'pages.settings.account.securityDesc': 'Secret storage mode and keychain status',
 
   // Chat — agent-generated artifacts (#2779)
-  'chat.artifact.aria': 'Artifact: {title}',
-  'chat.artifact.generating': 'Generating {kind}…',
-  'chat.artifact.ready': 'Ready',
-  'chat.artifact.failed': 'Generation failed',
-  'chat.artifact.download': 'Download',
-  'chat.artifact.downloading': 'Downloading…',
-  'chat.artifact.downloaded': 'Saved to {path}',
-  'chat.artifact.download_failed': 'Download failed: {reason}',
-  'chat.artifact.retry': 'Retry',
-  'chat.artifact.reveal': 'Show in folder',
-  'chat.artifact.show_more': 'Show more',
-  'chat.artifact.show_less': 'Show less',
   // Chat composer toolbar
   'composer.attachFile': 'Attach file',
   'composer.modelSelector': 'Model',

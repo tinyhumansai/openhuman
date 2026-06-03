@@ -257,6 +257,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("agent_server_status"),
         schemas("reset_local_data"),
         schemas("get_data_paths"),
+        schemas("get_agent_paths"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
@@ -273,6 +274,8 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("get_search_settings"),
         schemas("get_activity_level_settings"),
         schemas("update_activity_level_settings"),
+        schemas("get_sandbox_settings"),
+        schemas("update_sandbox_settings"),
     ]
 }
 
@@ -363,6 +366,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
             handler: handle_get_data_paths,
         },
         RegisteredController {
+            schema: schemas("get_agent_paths"),
+            handler: handle_get_agent_paths,
+        },
+        RegisteredController {
             schema: schemas("get_onboarding_completed"),
             handler: handle_get_onboarding_completed,
         },
@@ -425,6 +432,14 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("update_activity_level_settings"),
             handler: handle_update_activity_level_settings,
+        },
+        RegisteredController {
+            schema: schemas("get_sandbox_settings"),
+            handler: handle_get_sandbox_settings,
+        },
+        RegisteredController {
+            schema: schemas("update_sandbox_settings"),
+            handler: handle_update_sandbox_settings,
         },
     ]
 }
@@ -942,6 +957,42 @@ pub fn schemas(function: &str) -> ControllerSchema {
             inputs: vec![optional_string("level", "Activity level: off | minimal | moderate | active | always_on (or 0–4).")],
             outputs: vec![json_output("settings", "Updated activity level settings with cost estimates.")],
         },
+        "get_sandbox_settings" => ControllerSchema {
+            namespace: "config",
+            function: "get_sandbox_settings",
+            description: "Get sandbox execution backend settings: selected backend, Docker image/limits, env passthrough, Docker availability, and detected OS backend.",
+            inputs: vec![],
+            outputs: vec![json_output("settings", "Sandbox settings with status.")],
+        },
+        "update_sandbox_settings" => ControllerSchema {
+            namespace: "config",
+            function: "update_sandbox_settings",
+            description: "Update sandbox execution backend settings: backend selection, Docker image, memory/CPU limits, and env passthrough. Applies to new agent sessions.",
+            inputs: vec![
+                optional_string("backend", "Sandbox backend: auto | landlock | firejail | bubblewrap | docker | none."),
+                optional_bool("enabled", "Enable or disable sandbox execution."),
+                optional_string("docker_image", "Docker image for sandboxed execution (e.g. alpine:3.20)."),
+                FieldSchema {
+                    name: "docker_memory_limit_mb",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::U64)),
+                    comment: "Docker container memory limit in MB.",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "docker_cpu_limit",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::F64)),
+                    comment: "Docker container CPU limit (e.g. 1.0 = one core).",
+                    required: false,
+                },
+                FieldSchema {
+                    name: "env_passthrough",
+                    ty: TypeSchema::Option(Box::new(TypeSchema::Array(Box::new(TypeSchema::String)))),
+                    comment: "Environment variables to pass through into the sandbox.",
+                    required: false,
+                },
+            ],
+            outputs: vec![json_output("snapshot", "Updated config snapshot.")],
+        },
         "agent_server_status" => ControllerSchema {
             namespace: "config",
             function: "agent_server_status",
@@ -966,6 +1017,17 @@ pub fn schemas(function: &str) -> ControllerSchema {
             outputs: vec![json_output(
                 "paths",
                 "Resolved data paths: current_openhuman_dir, default_openhuman_dir, active_workspace_marker_path.",
+            )],
+        },
+        "get_agent_paths" => ControllerSchema {
+            namespace: "config",
+            function: "get_agent_paths",
+            description:
+                "Resolve the agent's filesystem roots (action_dir, workspace_dir, projects_dir) so the UI can render live values instead of hard-coded strings. Read-only.",
+            inputs: vec![],
+            outputs: vec![json_output(
+                "paths",
+                "Resolved agent paths: action_dir (acting-tool CWD), workspace_dir (internal state, agent-blocked), projects_dir (default projects home).",
             )],
         },
         "get_onboarding_completed" => ControllerSchema {
@@ -1545,6 +1607,22 @@ fn handle_get_data_paths(_params: Map<String, Value>) -> ControllerFuture {
     })
 }
 
+fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async {
+        log::debug!("[config][rpc] get_agent_paths enter");
+        match config_rpc::get_agent_paths().await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] get_agent_paths ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] get_agent_paths fail: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
 fn handle_get_onboarding_completed(_params: Map<String, Value>) -> ControllerFuture {
     Box::pin(async { to_json(config_rpc::get_onboarding_completed().await?) })
 }
@@ -1698,6 +1776,35 @@ fn handle_update_activity_level_settings(params: Map<String, Value>) -> Controll
             level: update.level,
         };
         to_json(config_rpc::load_and_apply_activity_level_settings(patch).await?)
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct SandboxSettingsUpdate {
+    backend: Option<String>,
+    enabled: Option<bool>,
+    docker_image: Option<String>,
+    docker_memory_limit_mb: Option<u64>,
+    docker_cpu_limit: Option<f64>,
+    env_passthrough: Option<Vec<String>>,
+}
+
+fn handle_get_sandbox_settings(_params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move { to_json(config_rpc::get_sandbox_settings().await?) })
+}
+
+fn handle_update_sandbox_settings(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        let update = deserialize_params::<SandboxSettingsUpdate>(params)?;
+        let patch = config_rpc::SandboxSettingsPatch {
+            backend: update.backend,
+            enabled: update.enabled,
+            docker_image: update.docker_image,
+            docker_memory_limit_mb: update.docker_memory_limit_mb,
+            docker_cpu_limit: update.docker_cpu_limit,
+            env_passthrough: update.env_passthrough,
+        };
+        to_json(config_rpc::load_and_apply_sandbox_settings(patch).await?)
     })
 }
 

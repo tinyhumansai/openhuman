@@ -407,4 +407,48 @@ mod tests {
             );
         }
     }
+
+    /// Regression guard for #3238.
+    ///
+    /// `node_exec` resolves caller-supplied `script_path` values against
+    /// `security.action_dir` (the agent's writable sandbox), never
+    /// `security.workspace_dir` (internal product state). If a future
+    /// refactor changes `NodeExecTool::execute` to pass
+    /// `&self.security.workspace_dir` to `resolve_script_path`, scripts
+    /// would resolve into the internal denylist instead of the action
+    /// sandbox, which is exactly the action/internal split that
+    /// PR #3074 prevents.
+    ///
+    /// The behavioural end-to-end test for the CWD plumbing lives in
+    /// `shell.rs` (`shell_pwd_returns_action_dir_not_workspace_dir`) —
+    /// `node_exec` shares the same `runtime.build_shell_command(&command,
+    /// &self.security.action_dir)` call site, and the source-grep guard
+    /// in `shell.rs` (`shell_family_tools_route_cwd_through_action_dir`)
+    /// covers all three system tools. This test pins the script-resolution
+    /// contract specifically for `node_exec` by exercising
+    /// `resolve_script_path` against an `action_dir` distinct from
+    /// `workspace_dir`.
+    #[test]
+    fn resolve_script_path_targets_action_dir_not_workspace_dir() {
+        let action_dir = std::path::Path::new("/tmp/action-sandbox-3238");
+        let workspace_dir = std::path::Path::new("/tmp/internal-workspace-3238");
+
+        let resolved = resolve_script_path(action_dir, "scripts/run.js")
+            .expect("relative script under action_dir must resolve");
+        assert_eq!(
+            resolved,
+            action_dir.join("scripts/run.js"),
+            "script_path must resolve under action_dir, not workspace_dir (see #3238)"
+        );
+        assert!(
+            resolved.starts_with(action_dir),
+            "resolved path must be under action_dir; got {}",
+            resolved.display()
+        );
+        assert!(
+            !resolved.starts_with(workspace_dir),
+            "resolved path leaked into workspace_dir; got {}",
+            resolved.display()
+        );
+    }
 }

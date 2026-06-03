@@ -120,7 +120,9 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the workspace directory"
+        "Execute a shell command. Use this to run code, manipulate files in the workspace, \
+         or perform system actions on the user's machine — including launching applications \
+         (e.g. `open -a Music` on macOS, `xdg-open music://` on Linux)."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -229,6 +231,16 @@ impl ShellTool {
             );
         }
 
+        // When the agent's sandbox mode is `Sandboxed`, route execution
+        // through the sandbox backend (Docker or OS-level jail) instead
+        // of the normal runtime. Security checks above still apply.
+        if matches!(
+            crate::openhuman::agent::harness::current_sandbox_mode(),
+            Some(crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed)
+        ) {
+            return self.run_sandboxed(command).await;
+        }
+
         // Execute with timeout to prevent hanging commands.
         // Clear the environment to prevent leaking API keys and other secrets
         // (CWE-200), then re-add only safe, functional variables.
@@ -316,6 +328,79 @@ impl ShellTool {
             )),
         };
         (true, tool_result)
+    }
+
+    /// Execute a command through the sandbox backend. Called when the
+    /// agent's `SandboxMode` is `Sandboxed`.
+    async fn run_sandboxed(&self, command: &str) -> (bool, ToolResult) {
+        use crate::openhuman::sandbox;
+
+        let config = crate::openhuman::config::RuntimeConfig::default();
+        let policy = sandbox::resolve_sandbox_policy(
+            crate::openhuman::agent::harness::definition::SandboxMode::Sandboxed,
+            &self.security.action_dir,
+            &config,
+            false,
+        );
+
+        tracing::debug!(
+            backend = ?policy.backend,
+            command = command,
+            "[shell] routing to sandbox backend"
+        );
+
+        let mut extra_env = std::collections::HashMap::new();
+        if let Some(bootstrap) = self.node_bootstrap.as_ref() {
+            if let Some(resolved) = bootstrap.try_cached() {
+                let host_path = std::env::var("PATH").unwrap_or_default();
+                let sep = if cfg!(windows) { ";" } else { ":" };
+                let prepended = if host_path.is_empty() {
+                    resolved.bin_dir.to_string_lossy().into_owned()
+                } else {
+                    format!("{}{}{}", resolved.bin_dir.display(), sep, host_path)
+                };
+                extra_env.insert("PATH".to_string(), prepended);
+            }
+        }
+
+        match sandbox::execute_in_sandbox(
+            &policy,
+            command,
+            &self.security.action_dir,
+            extra_env,
+            Duration::from_secs(SHELL_TIMEOUT_SECS),
+        )
+        .await
+        {
+            Ok(result) => {
+                let tool_result = if result.timed_out {
+                    ToolResult::error(format!(
+                        "Command timed out after {SHELL_TIMEOUT_SECS}s and was killed"
+                    ))
+                } else if result.success() {
+                    if result.stderr.is_empty() {
+                        ToolResult::success(result.stdout)
+                    } else {
+                        ToolResult::success(format!(
+                            "{}\n[stderr]\n{}",
+                            result.stdout, result.stderr
+                        ))
+                    }
+                } else {
+                    let err_msg = if result.stderr.is_empty() {
+                        result.stdout
+                    } else {
+                        result.stderr
+                    };
+                    ToolResult::error(err_msg)
+                };
+                (true, tool_result)
+            }
+            Err(e) => (
+                true,
+                ToolResult::error(format!("Sandbox execution failed: {e}")),
+            ),
+        }
     }
 }
 
@@ -475,6 +560,119 @@ mod tests {
             CommandClass::Destructive
         );
         assert!(tool.external_effect_with_args(&json!({"command": "rm -rf /"})));
+    }
+
+    /// End-to-end regression guard for #3238.
+    ///
+    /// PR #3074 split `Config.action_dir` (the agent's read/write root)
+    /// from `Config.workspace_dir` (internal product state). `ShellTool`
+    /// is contractually obligated to spawn its child process with
+    /// `current_dir = security.action_dir` so `pwd` inside the shell
+    /// reports the action sandbox path, never `workspace_dir` and never
+    /// the cargo-test caller's CWD.
+    ///
+    /// This test constructs a `SecurityPolicy` whose `action_dir` is a
+    /// fresh tempdir (distinct from `workspace_dir` and from `cwd`),
+    /// runs `pwd`, and asserts the captured stdout canonicalises to the
+    /// same path as `action_dir`. If `ShellTool::run_with_security`
+    /// stops passing `&security.action_dir` to `build_shell_command`
+    /// (or `build_shell_command` stops calling `current_dir`), this
+    /// test fails before the regression ships.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_pwd_returns_action_dir_not_workspace_dir() {
+        let action_tmp = tempfile::tempdir().expect("create action tempdir");
+        let workspace_tmp = tempfile::tempdir().expect("create workspace tempdir");
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            workspace_dir: workspace_tmp.path().to_path_buf(),
+            action_dir: action_tmp.path().to_path_buf(),
+            ..SecurityPolicy::default()
+        });
+        let tool = ShellTool::new(security.clone(), test_runtime(), test_audit());
+
+        let result = tool
+            .execute(json!({"command": "pwd"}))
+            .await
+            .expect("pwd should execute without harness error");
+        assert!(
+            !result.is_error,
+            "pwd unexpectedly errored: {}",
+            result.output()
+        );
+
+        // Canonicalise both sides — on macOS `/tmp` is a symlink to
+        // `/private/tmp`, so the raw strings won't match even when the
+        // paths are the same.
+        let reported = std::path::PathBuf::from(result.output().trim());
+        let actual = reported.canonicalize().unwrap_or_else(|_| reported.clone());
+        let expected = security
+            .action_dir
+            .canonicalize()
+            .unwrap_or_else(|_| security.action_dir.clone());
+        let workspace_canon = security
+            .workspace_dir
+            .canonicalize()
+            .unwrap_or_else(|_| security.workspace_dir.clone());
+
+        assert_eq!(
+            actual,
+            expected,
+            "pwd must report `action_dir`. got `{}`, expected `{}`. \
+             If this fails, `ShellTool::run_with_security` likely stopped \
+             passing `&security.action_dir` to `runtime.build_shell_command`, \
+             or `build_shell_command` stopped calling `current_dir(...)`. See #3238.",
+            actual.display(),
+            expected.display(),
+        );
+        assert_ne!(
+            actual, workspace_canon,
+            "pwd reported `workspace_dir` instead of `action_dir` — the \
+             action/internal split is broken. See #3074, #3238."
+        );
+    }
+
+    /// Source-level regression guard for #3238.
+    ///
+    /// Locks in the contract that the three shell-family acting tools
+    /// (`shell`, `node_exec`, `npm_exec`) resolve their CWD against
+    /// `security.action_dir`, never `security.workspace_dir`. The
+    /// behavioural assertion above covers `shell`; this guard catches
+    /// regressions in `node_exec` / `npm_exec` without requiring a real
+    /// Node.js install in CI (their `execute()` path runs
+    /// `NodeBootstrap::resolve()` first, which is brittle to mock).
+    ///
+    /// If a future refactor accidentally switches any of these tools
+    /// back to `workspace_dir`, this assertion fires at compile-time
+    /// string-match level.
+    #[test]
+    fn shell_family_tools_route_cwd_through_action_dir() {
+        const SHELL_SRC: &str = include_str!("shell.rs");
+        const NODE_EXEC_SRC: &str = include_str!("node_exec.rs");
+        const NPM_EXEC_SRC: &str = include_str!("npm_exec.rs");
+
+        // Compose forbidden patterns at runtime so this test's own source
+        // doesn't trigger the contains() check on itself.
+        let bad_field = format!("self.security.{}_dir", "workspace");
+        let bad_call_1 = format!("build_shell_command(&command, &{bad_field})");
+        let bad_call_2 = format!("build_shell_command(command, &{bad_field})");
+
+        for (name, src) in [
+            ("shell.rs", SHELL_SRC),
+            ("node_exec.rs", NODE_EXEC_SRC),
+            ("npm_exec.rs", NPM_EXEC_SRC),
+        ] {
+            assert!(
+                src.contains("self.security.action_dir"),
+                "{name} must reference `self.security.action_dir` for tool CWD \
+                 (see #3074, #3238)"
+            );
+            assert!(
+                !src.contains(&bad_call_1) && !src.contains(&bad_call_2),
+                "{name} must not pass `workspace_dir` to `build_shell_command` — \
+                 acting tools spawn into `action_dir`. See #3074, #3238."
+            );
+        }
     }
 
     #[tokio::test]
@@ -709,5 +907,34 @@ mod tests {
         let result = tool.execute(json!({"command": "echo test"})).await.unwrap();
         assert!(result.is_error);
         assert!(result.output().contains("Rate limit"));
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn shell_sandboxed_mode_routes_through_sandbox_backend() {
+        use crate::openhuman::agent::harness::definition::SandboxMode;
+        use crate::openhuman::agent::harness::with_current_sandbox_mode;
+
+        let tool = ShellTool::new(
+            test_security(AutonomyLevel::Supervised),
+            test_runtime(),
+            test_audit(),
+        );
+        let result = with_current_sandbox_mode(SandboxMode::Sandboxed, async {
+            tool.execute(json!({"command": "echo sandboxed-output"}))
+                .await
+                .unwrap()
+        })
+        .await;
+        assert!(
+            !result.is_error,
+            "sandboxed echo should succeed: {}",
+            result.output()
+        );
+        assert!(
+            result.output().contains("sandboxed-output"),
+            "expected 'sandboxed-output' in result, got: {:?}",
+            result.output()
+        );
     }
 }

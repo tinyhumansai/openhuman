@@ -31,6 +31,7 @@ use super::microcompact::MicrocompactStats;
 use crate::openhuman::inference::provider::{ChatMessage, ConversationMessage, Provider};
 use anyhow::Result;
 use async_trait::async_trait;
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
@@ -275,6 +276,46 @@ pub(super) fn snap_split_forward(history: &[ConversationMessage], proposed_head:
     }
 }
 
+/// `[IMAGE:<data-uri>]` marker prefix — mirrors
+/// [`crate::openhuman::agent::multimodal`]. Image attachments ride as these
+/// markers inside chat content.
+const IMAGE_MARKER_PREFIX: &str = "[IMAGE:";
+
+/// Replace each `[IMAGE:<data-uri>]` marker with a short `[image attachment]`
+/// placeholder before the content reaches the summarizer.
+///
+/// The summarizer is a **text** model fed a plain-text transcript; handing it
+/// the raw base64 `data:` URI is both useless (it can't interpret pixels) and
+/// harmful — a single 8 MiB image is ~11 M characters, which blows the
+/// summarizer's input budget and can fail the compaction turn outright (#3205).
+/// We keep a placeholder so the summary still records that an image was present.
+fn redact_image_markers(content: &str) -> Cow<'_, str> {
+    if !content.contains(IMAGE_MARKER_PREFIX) {
+        return Cow::Borrowed(content);
+    }
+    let mut out = String::with_capacity(content.len().min(4096));
+    let mut cursor = 0usize;
+    while let Some(rel) = content[cursor..].find(IMAGE_MARKER_PREFIX) {
+        let start = cursor + rel;
+        out.push_str(&content[cursor..start]);
+        let after = start + IMAGE_MARKER_PREFIX.len();
+        match content[after..].find(']') {
+            Some(rel_end) => {
+                out.push_str("[image attachment]");
+                cursor = after + rel_end + 1;
+            }
+            None => {
+                // Unterminated marker — keep the remainder verbatim and stop.
+                out.push_str(&content[start..]);
+                cursor = content.len();
+                break;
+            }
+        }
+    }
+    out.push_str(&content[cursor..]);
+    Cow::Owned(out)
+}
+
 /// Render a slice of `ConversationMessage` as a plain-text transcript
 /// for the summarizer prompt. Format is intentionally simple — the
 /// summarizer reads it as-is.
@@ -286,7 +327,14 @@ fn render_transcript(msgs: &[ConversationMessage]) -> String {
         }
         match msg {
             ConversationMessage::Chat(m) => {
-                let _ = writeln!(&mut out, "[{i}] {}: {}", m.role, m.content);
+                // Strip image base64 — the summarizer can't read pixels and the
+                // payload would blow its input budget (#3205).
+                let _ = writeln!(
+                    &mut out,
+                    "[{i}] {}: {}",
+                    m.role,
+                    redact_image_markers(&m.content)
+                );
             }
             ConversationMessage::AssistantToolCalls {
                 text, tool_calls, ..

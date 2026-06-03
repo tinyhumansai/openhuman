@@ -75,7 +75,8 @@ export type ProviderRef =
   | { kind: 'openhuman' }
   | { kind: 'default' }
   | { kind: 'cloud'; providerSlug: string; model: string; temperature?: number | null }
-  | { kind: 'local'; model: string; temperature?: number | null };
+  | { kind: 'local'; model: string; temperature?: number | null }
+  | { kind: 'claude-code'; model: string; temperature?: number | null };
 
 /** Parse a `<model>[@<temp>]` suffix into `(model, temperature)`. */
 function splitModelAndTemp(raw: string): { model: string; temperature: number | null } {
@@ -156,6 +157,12 @@ export function parseProviderString(s: string | null | undefined): ProviderRef {
     const { model, temperature } = splitModelAndTemp(trimmed.slice('ollama:'.length));
     return temperature == null ? { kind: 'local', model } : { kind: 'local', model, temperature };
   }
+  if (trimmed.startsWith('claude-code:')) {
+    const { model, temperature } = splitModelAndTemp(trimmed.slice('claude-code:'.length));
+    return temperature == null
+      ? { kind: 'claude-code', model }
+      : { kind: 'claude-code', model, temperature };
+  }
   const colonIdx = trimmed.indexOf(':');
   if (colonIdx > 0) {
     const slug = trimmed.slice(0, colonIdx).trim();
@@ -182,6 +189,8 @@ export function serializeProviderRef(ref: ProviderRef): string {
       return `${ref.providerSlug}:${joinModelAndTemp(ref.model, ref.temperature)}`;
     case 'local':
       return `ollama:${joinModelAndTemp(ref.model, ref.temperature)}`;
+    case 'claude-code':
+      return `claude-code:${joinModelAndTemp(ref.model, ref.temperature)}`;
   }
 }
 

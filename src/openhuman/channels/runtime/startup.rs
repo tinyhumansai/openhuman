@@ -729,6 +729,23 @@ pub async fn start_channels(mut config: Config) -> Result<()> {
     } else {
         None
     };
+    // Sub-issue 2 of #3098: when Telegram is enabled, register the
+    // approval-surface subscriber so `Prompt`-class tool calls actually
+    // get gated for the user instead of silently allowed (the legacy
+    // behavior when `ApprovalChatContext` is unset). The dispatch loop
+    // pairs this by scoping each Telegram turn in an `ApprovalChatContext`
+    // and intercepting `yes`/`no` replies for parked approvals.
+    let _telegram_approval_surface_handle = if channels_by_name.contains_key("telegram") {
+        let handle = bus.subscribe(Arc::new(
+            crate::openhuman::channels::providers::telegram::TelegramApprovalSurfaceSubscriber::new(
+                Arc::clone(&channels_by_name),
+            ),
+        ));
+        tracing::debug!("[telegram-approval] registered TelegramApprovalSurfaceSubscriber");
+        Some(handle)
+    } else {
+        None
+    };
     // Register the tree summarizer event subscriber for observability logging.
     let _tree_summarizer_handle = bus.subscribe(Arc::new(
         crate::openhuman::memory_tree::tree_runtime::bus::TreeSummarizerEventSubscriber::new(),

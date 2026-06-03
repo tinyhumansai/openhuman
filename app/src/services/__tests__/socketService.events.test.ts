@@ -212,3 +212,125 @@ describe('socketService — socket event handler dispatches (lines 212, 230, 237
     expect((disconnectedCall![0] as { error: string }).error).toBe('connection refused');
   });
 });
+
+describe('socketService — agent_meetings event handlers (lines 428-480)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    storeMock.dispatch.mockClear();
+    storeMock.getState.mockReturnValue({
+      thread: { selectedThreadId: null, activeThreadId: null },
+    });
+    getCoreRpcUrlMock.mockReset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('dispatches setBackendMeetJoined on agent_meetings:joined', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-joined');
+
+    await pollUntil(() => expect(handlers['agent_meetings:joined']).toBeDefined());
+    handlers['agent_meetings:joined']!({ meet_url: 'https://meet.google.com/abc' });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { meetUrl: 'https://meet.google.com/abc' } })
+    );
+  });
+
+  it('dispatches setBackendMeetLeft on agent_meetings:left', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-left');
+
+    await pollUntil(() => expect(handlers['agent_meetings:left']).toBeDefined());
+    handlers['agent_meetings:left']!({ reason: 'call-ended' });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { reason: 'call-ended' } })
+    );
+  });
+
+  it('dispatches setBackendMeetReply on agent_meetings:reply', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-reply');
+
+    await pollUntil(() => expect(handlers['agent_meetings:reply']).toBeDefined());
+    handlers['agent_meetings:reply']!({ transcript: 'hi', reply: 'hello', emotion: 'happy' });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { transcript: 'hi', reply: 'hello', emotion: 'happy' } })
+    );
+  });
+
+  it('dispatches setBackendMeetHarness on agent_meetings:harness', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-harness');
+
+    await pollUntil(() => expect(handlers['agent_meetings:harness']).toBeDefined());
+    handlers['agent_meetings:harness']!({
+      transcript: 'check email',
+      instruction: 'read inbox',
+      emotion: 'thinking',
+    });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: { transcript: 'check email', instruction: 'read inbox', emotion: 'thinking' },
+      })
+    );
+  });
+
+  it('dispatches setBackendMeetTranscript on agent_meetings:transcript', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-transcript');
+
+    await pollUntil(() => expect(handlers['agent_meetings:transcript']).toBeDefined());
+    handlers['agent_meetings:transcript']!({
+      turns: [{ role: 'user', content: 'hi' }],
+      duration_ms: 5000,
+    });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: { turns: [{ role: 'user', content: 'hi' }], duration_ms: 5000 },
+      })
+    );
+  });
+
+  it('dispatches setBackendMeetError on agent_meetings:error', async () => {
+    const { handlers, mockSocket } = buildMockSocket();
+    vi.doMock('socket.io-client', () => ({ io: vi.fn(() => mockSocket) }));
+    getCoreRpcUrlMock.mockResolvedValue('http://127.0.0.1:7788/rpc');
+
+    const { socketService } = await import('../socketService');
+    socketService.connect('jwt-test-meet-error');
+
+    await pollUntil(() => expect(handlers['agent_meetings:error']).toBeDefined());
+    handlers['agent_meetings:error']!({ error: 'bot crashed' });
+
+    expect(storeMock.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ payload: { error: 'bot crashed' } })
+    );
+  });
+});

@@ -150,7 +150,9 @@ export function useDictationHotkey(): DictationHotkeyState {
           if (!text) return;
           console.debug(`[dictation] transcription received: ${text.length} chars — "${text}"`);
 
-          window.dispatchEvent(new CustomEvent('dictation://insert-text', { detail: { text } }));
+          window.dispatchEvent(
+            new CustomEvent('dictation://insert-text', { detail: { text, autoSend: true } })
+          );
         });
 
         socket.connect();

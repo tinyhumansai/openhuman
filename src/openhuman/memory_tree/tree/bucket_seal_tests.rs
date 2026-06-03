@@ -41,6 +41,12 @@ fn test_config() -> (TempDir, Config) {
     cfg.memory_tree.embedding_endpoint = None;
     cfg.memory_tree.embedding_model = None;
     cfg.memory_tree.embedding_strict = false;
+    // #002: opt into the deterministic inert embedder via `provider="none"`.
+    // This is `Some(inert)` (vector search off by choice) and does NOT set the
+    // process-global semantic-recall degraded flag — unlike the no-provider
+    // path, which marks degraded and would leak that signal into parallel
+    // `pipeline_status` tests.
+    cfg.embeddings_provider = Some("none".into());
     (tmp, cfg)
 }
 

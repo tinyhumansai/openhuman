@@ -226,6 +226,29 @@ pub enum ExpectedErrorKind {
     /// `is_network_unreachable_message` anchors miss the inner OS message.
     ChannelSupervisorRestart,
     ConfigLoadTimedOut,
+    /// The subconscious engine's SQLite schema init couldn't open its database
+    /// file at all — a host-filesystem condition, not a code bug. Two canonical
+    /// renderings, both bound to the user's local FS:
+    ///
+    /// - `SQLITE_CANTOPEN` (14): `unable to open the database file` — the
+    ///   `subconscious/` dir or DB file isn't writable/openable (permissions,
+    ///   a vanished mount, a read-only volume).
+    /// - `SQLITE_IOERR_SHMMAP` (4618): `I/O error within the xShmMap method` —
+    ///   the filesystem can't back WAL's mmap'd `-shm` segment (network mounts,
+    ///   FUSE, some sandboxed/synced macOS paths).
+    ///
+    /// The `xShmMap` case is now *prevented* at the source by
+    /// `subconscious::store::apply_journal_mode`, which degrades WAL to a
+    /// rollback journal that needs no shared memory (issue #3231). This kind
+    /// demotes the *residual* genuine `CANTOPEN` failures — where even opening
+    /// the file fails — which the user must resolve locally (fix permissions,
+    /// remount, free the volume) and which Sentry has no remediation path for.
+    ///
+    /// Anchored to the subconscious schema/open envelope plus the SQLite
+    /// cant-open / shared-memory IO text, so transient `database is locked`
+    /// contention (handled by the store's busy-retry loop) and unrelated DB
+    /// failures in other domains still reach Sentry.
+    SubconsciousSchemaUnavailable,
 }
 
 pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
@@ -344,6 +367,9 @@ pub fn expected_error_kind(message: &str) -> Option<ExpectedErrorKind> {
     if is_whatsapp_data_sqlite_busy_message(&lower) {
         return Some(ExpectedErrorKind::WhatsAppDataSqliteBusy);
     }
+    if is_subconscious_schema_unavailable_message(&lower) {
+        return Some(ExpectedErrorKind::SubconsciousSchemaUnavailable);
+    }
     if is_disk_full_message(&lower) {
         return Some(ExpectedErrorKind::DiskFull);
     }
@@ -407,6 +433,26 @@ fn is_whatsapp_data_sqlite_busy_message(lower: &str) -> bool {
         || lower.contains("database table is locked")
         || lower.contains("database file is locked")
         || lower.contains("error code 5")
+}
+
+/// Match subconscious-engine SQLite schema-init failures caused by the host
+/// filesystem being unable to open the DB file (`SQLITE_CANTOPEN` /
+/// `SQLITE_IOERR_SHMMAP`). Anchored to the subconscious open/DDL envelope so it
+/// can't demote unrelated DB failures, and deliberately scoped to cant-open /
+/// shared-memory IO text — *not* `database is locked`, which the store retries
+/// and which (if persistent) is a real contention signal worth surfacing.
+///
+/// See [`ExpectedErrorKind::SubconsciousSchemaUnavailable`].
+fn is_subconscious_schema_unavailable_message(lower: &str) -> bool {
+    let in_subconscious_envelope = lower.contains("subconscious schema ddl")
+        || lower.contains("failed to open subconscious db");
+    if !in_subconscious_envelope {
+        return false;
+    }
+    lower.contains("unable to open the database file")
+        || lower.contains("xshmmap")
+        || lower.contains("error code 14")
+        || lower.contains("error code 4618")
 }
 
 fn is_embedding_backend_auth_failure(lower: &str) -> bool {
@@ -1503,6 +1549,26 @@ fn report_expected_message(kind: ExpectedErrorKind, message: &str, domain: &str,
                 "[observability] {domain}.{operation} skipped expected config-load timeout: {message}"
             );
         }
+        ExpectedErrorKind::SubconsciousSchemaUnavailable => {
+            // Host-filesystem condition: SQLite couldn't open the subconscious
+            // DB file (CANTOPEN / xShmMap). The WAL-fallback in
+            // `subconscious::store` already prevents the shared-memory variant;
+            // what reaches here is a genuine local open failure the user must
+            // fix on their machine (permissions, remount, free the volume) —
+            // Sentry has no remediation path. Demote at `warn!` so a sustained
+            // spike still shows in operator dashboards without turning every
+            // affected session into a Sentry error event. Drops TAURI-RUST-8WM.
+            // Do not include the raw `message`: it can embed the absolute
+            // subconscious DB path (home dir / username). Mirror the
+            // metadata-only demotions (`DiskFull`, `FilesystemUserPathInvalid`)
+            // and log only domain/operation/kind — no PII in the breadcrumb.
+            tracing::warn!(
+                domain = domain,
+                operation = operation,
+                kind = "subconscious_schema_unavailable",
+                "[observability] {domain}.{operation} skipped expected subconscious schema DB-unavailable error"
+            );
+        }
     }
 }
 
@@ -2524,6 +2590,46 @@ mod tests {
                 expected_error_kind(raw),
                 Some(ExpectedErrorKind::WhatsAppDataSqliteBusy),
                 "should classify whatsapp_data sqlite busy/locked: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_subconscious_schema_unavailable_errors() {
+        for raw in [
+            // SQLITE_IOERR_SHMMAP (4618) — the original escalating issue (#3231).
+            "failed to run subconscious schema DDL: disk I/O error: Error code 4618: I/O error within the xShmMap method (trying to open a new shared-memory segment)",
+            // SQLITE_CANTOPEN (14) — sibling variant from the user report.
+            "failed to run subconscious schema DDL: unable to open database file: Error code 14: Unable to open the database file",
+            // Failure surfaced at the open step rather than the DDL step.
+            "failed to open subconscious DB: /home/u/.openhuman/subconscious/subconscious.db: unable to open the database file",
+            // Wrapped in outer RPC context — classifier runs on the full chain.
+            "rpc.invoke_method failed: failed to run subconscious schema DDL: disk I/O error: Error code 4618",
+        ] {
+            assert_eq!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SubconsciousSchemaUnavailable),
+                "should classify subconscious schema DB-unavailable: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_classify_subconscious_lock_or_unrelated_open_failures() {
+        for raw in [
+            // Transient busy/locked is retried by the store and, if persistent,
+            // is a real contention signal — must NOT be demoted here.
+            "failed to run subconscious schema DDL: database is locked",
+            // Cant-open text without the subconscious envelope must not match.
+            "failed to open memory DB: unable to open the database file",
+            // Subconscious envelope but a non-FS error (e.g. malformed SQL) stays
+            // a real bug worth reporting.
+            "failed to run subconscious schema DDL: near \"CREAT\": syntax error",
+        ] {
+            assert_ne!(
+                expected_error_kind(raw),
+                Some(ExpectedErrorKind::SubconsciousSchemaUnavailable),
+                "must not classify as subconscious schema unavailable: {raw}"
             );
         }
     }

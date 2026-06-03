@@ -17,6 +17,7 @@ use tempfile::{tempdir, TempDir};
 
 use openhuman_core::core::auth::{init_rpc_token, CORE_TOKEN_ENV_VAR};
 use openhuman_core::core::jsonrpc::build_core_http_router;
+use openhuman_core::openhuman::agent::turn_origin::{self, AgentTurnOrigin};
 use openhuman_core::openhuman::approval::gate::{
     parse_approval_reply, ApprovalChatContext, ApprovalGate, APPROVAL_CHAT_CONTEXT,
 };
@@ -667,6 +668,11 @@ async fn tool_registry_entries_include_connected_mcp_client_tools() {
 
 #[tokio::test]
 async fn tool_registry_schema_handlers_validate_and_return_payloads() {
+    // Acquire the env lock — this test loads Config via the diagnostics
+    // handler, and a sibling test temporarily points OPENHUMAN_WORKSPACE at
+    // a file to exercise the load-failure branch. Without the lock those
+    // two can race and this test sees the corrupted env.
+    let _lock = env_lock();
     let schemas = all_tool_registry_controller_schemas();
     assert_eq!(
         schemas
@@ -1167,8 +1173,14 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     let gate_for_task = gate.clone();
 
     let approval_task = tokio::spawn(async move {
-        APPROVAL_CHAT_CONTEXT
-            .scope(
+        // Scope a WebChat origin alongside the chat context — the gate now
+        // requires an origin label or it fails closed on `Unknown`.
+        turn_origin::with_origin(
+            AgentTurnOrigin::WebChat {
+                thread_id: "approval-raw-thread".to_string(),
+                client_id: "approval-raw-client".to_string(),
+            },
+            APPROVAL_CHAT_CONTEXT.scope(
                 ApprovalChatContext {
                     thread_id: "approval-raw-thread".to_string(),
                     client_id: "approval-raw-client".to_string(),
@@ -1186,8 +1198,9 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
                         )
                         .await
                 },
-            )
-            .await
+            ),
+        )
+        .await
     });
 
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -1301,6 +1314,11 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
         "approve_always_for_tool should persist an auto-approve entry"
     );
 
+    // Bare call with neither a chat context nor an AgentTurnOrigin scope:
+    // the gate now treats this as `Unknown` and fails closed (refuses to
+    // execute an external_effect tool from an unlabelled call site). The
+    // earlier "non-chat ⇒ Allow" behaviour leaked trusted execution to any
+    // caller that forgot to scope a label.
     let no_chat = gate
         .intercept_audited(
             "tools.web_search",
@@ -1308,13 +1326,18 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             json!({ "query": "coverage" }),
         )
         .await;
-    assert!(matches!(
-        no_chat.0,
-        openhuman_core::openhuman::approval::GateOutcome::Allow
-    ));
+    match &no_chat.0 {
+        openhuman_core::openhuman::approval::GateOutcome::Deny { reason } => {
+            assert!(
+                reason.contains("no origin label"),
+                "unlabelled call should be denied for missing origin: {reason}"
+            );
+        }
+        other => panic!("expected Deny for unlabelled call, got {other:?}"),
+    }
     assert_eq!(
         no_chat.1, None,
-        "non-chat calls should not create approval rows"
+        "denied calls should not create approval rows"
     );
     assert!(matches!(
         gate.intercept(
@@ -1323,16 +1346,35 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
             json!({ "query": "legacy" }),
         )
         .await,
-        GateOutcome::Allow
+        GateOutcome::Deny { .. }
     ));
 
-    let auto_approved = gate
-        .intercept_audited(
+    // Always-allowed tools should bypass approval even when an origin is
+    // scoped — the auto_approve allowlist short-circuit runs before the
+    // origin branch. Install a live policy with the persisted entry so the
+    // gate sees the latest auto_approve set (the gate's boot-time config
+    // snapshot predates the approve_always_for_tool decision we just made).
+    live_policy::install(
+        Arc::new(SecurityPolicy {
+            workspace_dir: config.workspace_dir.clone(),
+            auto_approve: vec!["tools.composio_execute".to_string()],
+            ..SecurityPolicy::default()
+        }),
+        config.workspace_dir.clone(),
+        config.workspace_dir.clone(),
+    );
+    let auto_approved = turn_origin::with_origin(
+        AgentTurnOrigin::WebChat {
+            thread_id: "approval-auto-thread".to_string(),
+            client_id: "approval-auto-client".to_string(),
+        },
+        gate.intercept_audited(
             "tools.composio_execute",
             "tools.composio_execute(action=execute)",
             json!({ "action": "execute" }),
-        )
-        .await;
+        ),
+    )
+    .await;
     assert!(matches!(
         auto_approved.0,
         openhuman_core::openhuman::approval::GateOutcome::Allow
@@ -1372,8 +1414,12 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
 
     let gate_for_deny_task = gate.clone();
     let deny_task = tokio::spawn(async move {
-        APPROVAL_CHAT_CONTEXT
-            .scope(
+        turn_origin::with_origin(
+            AgentTurnOrigin::WebChat {
+                thread_id: "approval-deny-thread".to_string(),
+                client_id: "approval-deny-client".to_string(),
+            },
+            APPROVAL_CHAT_CONTEXT.scope(
                 ApprovalChatContext {
                     thread_id: "approval-deny-thread".to_string(),
                     client_id: "approval-deny-client".to_string(),
@@ -1387,8 +1433,9 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
                         )
                         .await
                 },
-            )
-            .await
+            ),
+        )
+        .await
     });
 
     let deny_request_id = loop {
@@ -1485,8 +1532,12 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
     .await;
     assert!(decide_failure.get("error").is_some());
 
-    let persist_failure = APPROVAL_CHAT_CONTEXT
-        .scope(
+    let persist_failure = turn_origin::with_origin(
+        AgentTurnOrigin::WebChat {
+            thread_id: "approval-persist-failure-thread".to_string(),
+            client_id: "approval-persist-failure-client".to_string(),
+        },
+        APPROVAL_CHAT_CONTEXT.scope(
             ApprovalChatContext {
                 thread_id: "approval-persist-failure-thread".to_string(),
                 client_id: "approval-persist-failure-client".to_string(),
@@ -1496,8 +1547,9 @@ async fn approval_rpc_decision_paths_persist_always_allow_and_recent_audit() {
                 "tools.persistence_failure(action=coverage)",
                 json!({ "action": "coverage" }),
             ),
-        )
-        .await;
+        ),
+    )
+    .await;
     match persist_failure.0 {
         GateOutcome::Deny { reason } => {
             assert!(reason.contains("Approval gate could not persist the request"));

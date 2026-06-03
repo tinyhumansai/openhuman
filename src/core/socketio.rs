@@ -552,6 +552,7 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
     let io_companion = io.clone();
     let io_mcp_setup = io.clone();
     let io_memory_sync = io.clone();
+    let io_agent_meetings = io.clone();
 
     // 2. Dictation hotkey events → broadcast to all connected clients.
     tokio::spawn(async move {
@@ -920,6 +921,110 @@ pub fn spawn_web_channel_bridge(io: SocketIo) {
             }
         }
         log::debug!("[socketio] memory_sync bridge stopped");
+    });
+
+    // 9. Backend Meet bot events → broadcast to all connected frontend sockets.
+    tokio::spawn(async move {
+        let bus = {
+            const RETRY_INTERVAL_MS: u64 = 250;
+            const MAX_WAIT_SECS: u64 = 30;
+            let max_attempts = (MAX_WAIT_SECS * 1000) / RETRY_INTERVAL_MS;
+            let mut attempts: u64 = 0;
+            loop {
+                if let Some(bus) = crate::core::event_bus::global() {
+                    break bus;
+                }
+                attempts += 1;
+                if attempts > max_attempts {
+                    log::warn!(
+                        "[socketio] event_bus not initialised after {}s — agent_meetings bridge giving up",
+                        MAX_WAIT_SECS
+                    );
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_INTERVAL_MS)).await;
+            }
+        };
+        let mut rx = bus.raw_receiver();
+        loop {
+            let event = match rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    log::warn!(
+                        "[socketio] dropped {} event_bus events due to lag (agent_meetings bridge)",
+                        skipped
+                    );
+                    continue;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            match event {
+                crate::core::event_bus::DomainEvent::BackendMeetJoined { meet_url } => {
+                    let payload = serde_json::json!({ "meet_url": meet_url });
+                    log::debug!("[socketio] broadcast agent_meetings:joined");
+                    let _ = io_agent_meetings.emit("agent_meetings:joined", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetLeft { reason } => {
+                    let payload = serde_json::json!({ "reason": reason });
+                    log::debug!("[socketio] broadcast agent_meetings:left reason={}", reason);
+                    let _ = io_agent_meetings.emit("agent_meetings:left", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetReply {
+                    transcript,
+                    reply,
+                    emotion,
+                } => {
+                    let payload = serde_json::json!({
+                        "transcript": transcript,
+                        "reply": reply,
+                        "emotion": emotion,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:reply reply_len={}",
+                        reply.len()
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:reply", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetHarness {
+                    transcript,
+                    instruction,
+                    emotion,
+                } => {
+                    let payload = serde_json::json!({
+                        "transcript": transcript,
+                        "instruction": instruction,
+                        "emotion": emotion,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:harness instruction_len={}",
+                        instruction.len()
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:harness", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetTranscript {
+                    turns,
+                    duration_ms,
+                } => {
+                    let payload = serde_json::json!({
+                        "turns": turns,
+                        "duration_ms": duration_ms,
+                    });
+                    log::debug!(
+                        "[socketio] broadcast agent_meetings:transcript turns={} duration_ms={}",
+                        turns.len(),
+                        duration_ms
+                    );
+                    let _ = io_agent_meetings.emit("agent_meetings:transcript", &payload);
+                }
+                crate::core::event_bus::DomainEvent::BackendMeetError { error } => {
+                    let payload = serde_json::json!({ "error": error });
+                    log::debug!("[socketio] broadcast agent_meetings:error");
+                    let _ = io_agent_meetings.emit("agent_meetings:error", &payload);
+                }
+                _ => {}
+            }
+        }
+        log::debug!("[socketio] agent_meetings bridge stopped");
     });
 }
 

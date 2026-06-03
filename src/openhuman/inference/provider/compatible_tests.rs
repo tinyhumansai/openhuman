@@ -65,6 +65,7 @@ fn native_request_emits_thread_id_when_present() {
         tool_choice: None,
         thread_id: Some("thread-abc".to_string()),
         stream_options: None,
+        options: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -82,6 +83,7 @@ fn native_request_emits_thread_id_when_present() {
         tool_choice: None,
         thread_id: None,
         stream_options: None,
+        options: None,
     };
     let json_no_thread = serde_json::to_value(&req_no_thread).unwrap();
     assert!(
@@ -108,6 +110,7 @@ fn streaming_request_sets_stream_options_include_usage() {
         stream_options: Some(super::compatible_types::OpenAiStreamOptions {
             include_usage: true,
         }),
+        options: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(
@@ -129,11 +132,55 @@ fn non_streaming_request_omits_stream_options() {
         tool_choice: None,
         thread_id: None,
         stream_options: None,
+        options: None,
     };
     let json = serde_json::to_value(&req).unwrap();
     assert!(
         json.get("stream_options").is_none(),
         "non-streaming requests must not emit stream_options (OpenAI rejects it on stream=false)"
+    );
+}
+
+#[test]
+fn ollama_options_num_ctx_serializes_correctly() {
+    let req = super::NativeChatRequest {
+        model: "qwen3:14b".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: Some(super::compatible_types::OllamaOptions {
+            num_ctx: Some(32768),
+        }),
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json.pointer("/options/num_ctx").and_then(|v| v.as_u64()),
+        Some(32768),
+        "Ollama num_ctx must appear at options.num_ctx in serialized body"
+    );
+}
+
+#[test]
+fn ollama_options_none_is_omitted() {
+    let req = super::NativeChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: Vec::new(),
+        temperature: Some(0.7),
+        stream: Some(false),
+        tools: None,
+        tool_choice: None,
+        thread_id: None,
+        stream_options: None,
+        options: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert!(
+        json.get("options").is_none(),
+        "options field must be omitted when None (non-Ollama providers)"
     );
 }
 
@@ -168,11 +215,11 @@ fn request_serializes_correctly() {
         messages: vec![
             Message {
                 role: "system".to_string(),
-                content: "You are OpenHuman".to_string(),
+                content: "You are OpenHuman".into(),
             },
             Message {
                 role: "user".to_string(),
-                content: "hello".to_string(),
+                content: "hello".into(),
             },
         ],
         temperature: Some(0.4),
@@ -531,7 +578,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         model: "kimi-k2".to_string(),
         messages: vec![NativeMessage {
             role: "user".to_string(),
-            content: Some("hello".to_string()),
+            content: Some("hello".into()),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -544,6 +591,7 @@ async fn streaming_chat_config_rejection_propagates_error_without_sentry_report(
         stream_options: Some(super::compatible_types::OpenAiStreamOptions {
             include_usage: true,
         }),
+        options: None,
     };
     let (delta_tx, _delta_rx) = tokio::sync::mpsc::channel(8);
 
@@ -836,7 +884,10 @@ fn convert_messages_for_native_maps_tool_result_payload() {
     assert_eq!(converted.len(), 2);
     assert_eq!(converted[1].role, "tool");
     assert_eq!(converted[1].tool_call_id.as_deref(), Some("call_abc"));
-    assert_eq!(converted[1].content.as_deref(), Some("done"));
+    assert_eq!(
+        serde_json::to_value(&converted[1].content).unwrap(),
+        serde_json::json!("done")
+    );
 }
 
 /// Helper: roles in serialized order.
@@ -941,7 +992,10 @@ fn tool_invariants_collapse_fully_unanswered_assistant_call() {
         converted[0].tool_calls.is_none(),
         "fully-unanswered tool_calls must be dropped"
     );
-    assert_eq!(converted[0].content.as_deref(), Some("on it"));
+    assert_eq!(
+        serde_json::to_value(&converted[0].content).unwrap(),
+        serde_json::json!("on it")
+    );
 }
 
 /// Regression guard: a well-formed tool cycle is passed through untouched —
@@ -1143,7 +1197,7 @@ fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
     let messages = vec![
         NativeMessage {
             role: "assistant".to_string(),
-            content: Some("partial thought".to_string()),
+            content: Some("partial thought".into()),
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall {
                 id: Some("orphan_call".to_string()),
@@ -1158,7 +1212,7 @@ fn enforce_invariants_clears_reasoning_when_assistant_collapses_to_text() {
         // No tool result follows — the tool_calls are orphaned.
         NativeMessage {
             role: "user".to_string(),
-            content: Some("next question".to_string()),
+            content: Some("next question".into()),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -1303,6 +1357,69 @@ fn capabilities_reports_native_tool_calling() {
     assert!(caps.native_tool_calling);
 }
 
+// Sub-issue 3 of #3098: Ollama's OpenAI-compat endpoint silently rejects the
+// `tools` parameter for many models, so we must let the factory opt the
+// Ollama provider out of native tool calling. The agent harness then falls
+// back to prompt-guided tool specs (embedded in the system prompt) which
+// any chat model can follow. The builder defaults to enabled so cloud
+// providers (OpenAI, BYOK slugs, OpenHuman backend) are unaffected.
+
+#[test]
+fn with_native_tool_calling_false_disables_capability() {
+    let p = make_provider("test", "https://example.com", None).with_native_tool_calling(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(
+        !caps.native_tool_calling,
+        "capabilities() must mirror the builder override; this is the gate the agent harness uses to decide between native vs prompt-guided tool specs"
+    );
+}
+
+#[test]
+fn with_native_tool_calling_true_preserves_default() {
+    let p = make_provider("test", "https://example.com", None).with_native_tool_calling(true);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(caps.native_tool_calling);
+}
+
+#[test]
+fn with_native_tool_calling_is_idempotent() {
+    let p = make_provider("test", "https://example.com", None)
+        .with_native_tool_calling(false)
+        .with_native_tool_calling(false);
+    let caps = <OpenAiCompatibleProvider as Provider>::capabilities(&p);
+    assert!(!caps.native_tool_calling);
+}
+
+/// `supports_native_tools()` is the gate the agent harness reads
+/// (`traits.rs:415`) when deciding whether to send tools natively or
+/// inject them into the prompt. It MUST agree with
+/// `capabilities().native_tool_calling`; otherwise
+/// `with_native_tool_calling(false)` silently fails to switch to
+/// prompt-guided and Ollama still receives a `tools` array (the exact
+/// regression sub-issue 3 of #3098 was meant to fix).
+#[test]
+fn supports_native_tools_mirrors_capabilities_flag() {
+    let default = make_provider("test", "https://example.com", None);
+    assert_eq!(
+        default.supports_native_tools(),
+        <OpenAiCompatibleProvider as Provider>::capabilities(&default).native_tool_calling,
+        "default provider: the two capability signals must match"
+    );
+    assert!(default.supports_native_tools(), "default must remain true");
+
+    let opted_out =
+        make_provider("test", "https://example.com", None).with_native_tool_calling(false);
+    assert_eq!(
+        opted_out.supports_native_tools(),
+        <OpenAiCompatibleProvider as Provider>::capabilities(&opted_out).native_tool_calling,
+        "after with_native_tool_calling(false): the two capability signals must match"
+    );
+    assert!(
+        !opted_out.supports_native_tools(),
+        "after with_native_tool_calling(false), supports_native_tools must report false so the harness picks the prompt-guided fallback"
+    );
+}
+
 #[test]
 fn tool_specs_convert_to_openai_format() {
     let specs = vec![crate::openhuman::tools::ToolSpec {
@@ -1343,7 +1460,7 @@ fn request_serializes_with_tools() {
         model: "test-model".to_string(),
         messages: vec![Message {
             role: "user".to_string(),
-            content: "What is the weather?".to_string(),
+            content: "What is the weather?".into(),
         }],
         temperature: Some(0.7),
         stream: Some(false),
@@ -2009,7 +2126,7 @@ fn convert_messages_for_native_no_reasoning_content_stays_none() {
 fn native_message_reasoning_content_omitted_when_none() {
     let msg = NativeMessage {
         role: "assistant".to_string(),
-        content: Some("hello".to_string()),
+        content: Some("hello".into()),
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: None,
@@ -2027,7 +2144,7 @@ fn native_message_reasoning_content_omitted_when_none() {
 fn native_message_reasoning_content_present_when_some() {
     let msg = NativeMessage {
         role: "assistant".to_string(),
-        content: Some("hello".to_string()),
+        content: Some("hello".into()),
         tool_call_id: None,
         tool_calls: None,
         reasoning_content: Some("I thought carefully.".to_string()),
@@ -2117,4 +2234,257 @@ fn convert_tool_specs_dedups_many_duplicates() {
         .map(|t| t["function"]["name"].as_str().unwrap())
         .collect();
     assert_eq!(names, vec!["x", "y", "z"]);
+}
+
+// ── #3193: completion-only model 404 detection + actionable message ──────────
+
+#[test]
+fn completion_only_model_404_detected_from_openai_signature() {
+    // The exact body OpenAI returns when a completion-only/base model is sent
+    // to /v1/chat/completions.
+    let body = "This is not a chat model and thus not supported in the \
+                v1/chat/completions endpoint. Did you mean to use v1/completions?";
+    assert!(OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::NOT_FOUND,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_model_404_ignores_ordinary_not_found() {
+    // A "model does not exist" 404 must NOT be misclassified — it should keep
+    // its existing fallback / enrich behaviour, not get the completion-only
+    // message.
+    let body = "The model `gpt-9o` does not exist or you do not have access to it.";
+    assert!(!OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::NOT_FOUND,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_model_404_requires_404_status() {
+    // Same phrasing under a non-404 status is not the completion-only case.
+    let body = "not a chat model";
+    assert!(!OpenAiCompatibleProvider::is_completion_only_model_404(
+        reqwest::StatusCode::BAD_REQUEST,
+        body
+    ));
+}
+
+#[test]
+fn completion_only_message_names_model_and_remediation() {
+    let p = make_provider("openhuman", "https://api.example.com/v1", Some("k"));
+    let msg = p.completion_only_model_message(
+        "davinci-002",
+        "This is not a chat model ... Did you mean to use v1/completions?",
+    );
+    assert!(
+        msg.contains("davinci-002"),
+        "names the offending model: {msg}"
+    );
+    assert!(
+        msg.contains("completion-only") && msg.contains("chat-completions"),
+        "explains the capability mismatch: {msg}"
+    );
+    assert!(
+        msg.contains("chat-capable model"),
+        "states the remediation: {msg}"
+    );
+}
+
+#[test]
+fn completion_only_404_guard_fires_only_on_signature() {
+    let p = make_provider("openhuman", "https://api.example.com/v1", Some("k"));
+    // Matches → Some(actionable error).
+    let hit = p.completion_only_404_guard(
+        reqwest::StatusCode::NOT_FOUND,
+        "This is not a chat model. Did you mean to use v1/completions?",
+        "davinci-002",
+    );
+    let err = hit.expect("guard should fire on the completion-only signature");
+    assert!(err.to_string().contains("davinci-002"));
+    // Ordinary not-found → None (normal fallback/enrich path is preserved).
+    assert!(p
+        .completion_only_404_guard(
+            reqwest::StatusCode::NOT_FOUND,
+            "The model `gpt-9o` does not exist.",
+            "gpt-9o"
+        )
+        .is_none());
+}
+
+#[tokio::test]
+async fn completion_only_404_fails_fast_without_responses_fallback() {
+    // End-to-end over the wire: a completion-only 404 must short-circuit with
+    // the actionable message and NOT attempt /v1/responses (not mounted here —
+    // if the guard regressed, the error would instead read "responses fallback
+    // failed"). Provider has the fallback ENABLED (default `new`), proving the
+    // guard pre-empts it. #3193.
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+            "error": {
+                "message": "This is not a chat model and thus not supported in the \
+                            v1/chat/completions endpoint. Did you mean to use v1/completions?",
+                "type": "invalid_request_error"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let provider = OpenAiCompatibleProvider::new(
+        "openhuman",
+        &format!("{}/v1", server.uri()),
+        Some("key"),
+        AuthStyle::Bearer,
+    );
+
+    let err = provider
+        .chat_with_history(&[ChatMessage::user("write a file")], "davinci-002", 0.0)
+        .await
+        .expect_err("completion-only model must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("davinci-002") && msg.contains("chat-capable model"),
+        "expected actionable completion-only message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("responses fallback failed"),
+        "guard must pre-empt the responses fallback, got: {msg}"
+    );
+}
+
+// ── #3205: multimodal [IMAGE:] markers → OpenAI image_url content parts ─────────
+
+const TEST_PNG_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+/// Text with no markers stays the plain-string `content` arm — byte-identical
+/// to the legacy wire shape so every non-attachment turn is unaffected.
+#[test]
+fn message_content_text_only_serializes_as_string() {
+    let content = MessageContent::from_chat_text("just a normal message");
+    let json = serde_json::to_value(&content).unwrap();
+    assert_eq!(json, serde_json::json!("just a normal message"));
+}
+
+/// A user message carrying one `[IMAGE:data-uri]` marker is promoted to the
+/// OpenAI `content` array: a `text` part followed by an `image_url` part.
+#[test]
+fn message_content_text_plus_image_serializes_as_parts() {
+    let raw = format!("what is in this picture? [IMAGE:{TEST_PNG_DATA_URI}]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "text", "text": "what is in this picture?" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// An image with no accompanying text emits only the `image_url` part.
+#[test]
+fn message_content_image_only_omits_empty_text_part() {
+    let raw = format!("[IMAGE:{TEST_PNG_DATA_URI}]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// Multiple markers become multiple `image_url` parts, with the text between
+/// them preserved in authored order (not collapsed before the images).
+#[test]
+fn message_content_multiple_images_serialize_in_order() {
+    let raw = format!("compare [IMAGE:{TEST_PNG_DATA_URI}] and [IMAGE:https://example.com/b.jpg]");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "text", "text": "compare" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+            { "type": "text", "text": "and" },
+            { "type": "image_url", "image_url": { "url": "https://example.com/b.jpg" } },
+        ])
+    );
+}
+
+/// Interleaved order is preserved exactly — an image-first prompt keeps the
+/// image before the trailing text (CodeRabbit #3268).
+#[test]
+fn message_content_preserves_image_first_then_text_order() {
+    let raw = format!("[IMAGE:{TEST_PNG_DATA_URI}] then explain");
+    let json = serde_json::to_value(MessageContent::from_chat_text(&raw)).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!([
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+            { "type": "text", "text": "then explain" },
+        ])
+    );
+}
+
+/// Request-level: a chat history with an image-bearing user turn serialises the
+/// full body with a string `system` content and an array `user` content.
+#[test]
+fn api_chat_request_mixes_string_and_array_content() {
+    let req = ApiChatRequest {
+        model: "gpt-4o".to_string(),
+        messages: vec![
+            Message {
+                role: "system".to_string(),
+                content: "You are helpful.".into(),
+            },
+            Message {
+                role: "user".to_string(),
+                content: MessageContent::from_chat_text(&format!(
+                    "describe this [IMAGE:{TEST_PNG_DATA_URI}]"
+                )),
+            },
+        ],
+        temperature: None,
+        stream: None,
+        tools: None,
+        tool_choice: None,
+    };
+    let json = serde_json::to_value(&req).unwrap();
+    assert_eq!(
+        json["messages"][0]["content"],
+        serde_json::json!("You are helpful.")
+    );
+    assert_eq!(
+        json["messages"][1]["content"],
+        serde_json::json!([
+            { "type": "text", "text": "describe this" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
+}
+
+/// The agent streaming path runs history through `convert_messages_for_native`;
+/// an image marker must survive into the `NativeMessage` array content while
+/// plain turns stay strings.
+#[test]
+fn convert_messages_for_native_promotes_image_marker() {
+    let history = vec![
+        ChatMessage::system("be brief"),
+        ChatMessage::user(&format!("look [IMAGE:{TEST_PNG_DATA_URI}]")),
+    ];
+    let native = OpenAiCompatibleProvider::convert_messages_for_native(&history);
+    assert_eq!(
+        serde_json::to_value(&native[0]).unwrap()["content"],
+        serde_json::json!("be brief")
+    );
+    assert_eq!(
+        serde_json::to_value(&native[1]).unwrap()["content"],
+        serde_json::json!([
+            { "type": "text", "text": "look" },
+            { "type": "image_url", "image_url": { "url": TEST_PNG_DATA_URI } },
+        ])
+    );
 }

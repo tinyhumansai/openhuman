@@ -138,6 +138,7 @@ export default function ChatComposer({
           {attachmentsEnabled && (
             <button
               type="button"
+              data-analytics-id="chat-composer-attach-file"
               aria-label={t('composer.attachFile')}
               title={t('composer.attachFile')}
               onClick={() => fileInputRef.current?.click()}
@@ -163,6 +164,7 @@ export default function ChatComposer({
           {/* Voice mode — switches to mic-cloud mode */}
           <button
             type="button"
+            data-analytics-id="chat-composer-voice-mode"
             aria-label={t('composer.voiceMode')}
             title={t('composer.voiceMode')}
             onClick={onSwitchToMicCloud}
@@ -187,6 +189,7 @@ export default function ChatComposer({
           {/* Send button — always visible */}
           <button
             type="button"
+            data-analytics-id="chat-composer-send"
             data-testid="send-message-button"
             aria-label={t('chat.send')}
             title={t('chat.send')}

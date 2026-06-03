@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 
 import { useT } from '../../../lib/i18n/I18nContext';
 import {
+  type AgentPaths,
   type AutonomyLevel,
   isTauri,
+  openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
   openhumanUpdateAgentSettings,
@@ -77,6 +79,10 @@ const AgentAccessPanel = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState<string | null>(null);
+  // Live agent filesystem roots fetched from the core. `null` while the
+  // RPC is pending or when not running under Tauri — the JSX falls back to
+  // the documented defaults so the section never renders empty.
+  const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
   // Monotonic guard so out-of-order auto-save responses can't clobber UI state
   // with a stale result (last write wins).
   const persistSeqRef = useRef(0);
@@ -99,8 +105,6 @@ const AgentAccessPanel = () => {
       } catch (e) {
         if (!cancelled)
           setError(e instanceof Error ? e.message : t('settings.agentAccess.loadError'));
-      } finally {
-        if (!cancelled) setIsLoading(false);
       }
       try {
         const agentResp = await openhumanGetAgentSettings();
@@ -113,6 +117,16 @@ const AgentAccessPanel = () => {
       } catch {
         // Non-fatal: autonomy controls still render; timeout section
         // stays at defaults and the user can try saving manually.
+      }
+      try {
+        const pathsResp = await openhumanGetAgentPaths();
+        if (cancelled) return;
+        setAgentPaths(pathsResp.result);
+      } catch {
+        // Non-fatal: the Directories section falls back to the documented
+        // defaults below. We don't gate the rest of the panel on this.
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     };
     void load();
@@ -335,8 +349,10 @@ const AgentAccessPanel = () => {
                       {t('settings.agentAccess.readWriteAccess')}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono">
-                    ~/OpenHuman/projects
+                  <p
+                    className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono"
+                    data-testid="agent-access-action-dir">
+                    {agentPaths?.action_dir ?? '~/OpenHuman/projects'}
                   </p>
                   <p className="text-xs text-stone-500 dark:text-neutral-500">
                     {t('settings.agentAccess.actionSandboxDesc')}
@@ -352,8 +368,10 @@ const AgentAccessPanel = () => {
                       {t('settings.agentAccess.agentBlocked')}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono">
-                    ~/.openhuman/workspace
+                  <p
+                    className="mt-0.5 text-xs text-stone-600 dark:text-neutral-400 font-mono"
+                    data-testid="agent-access-workspace-dir">
+                    {agentPaths?.workspace_dir ?? '~/.openhuman/workspace'}
                   </p>
                   <p className="text-xs text-stone-500 dark:text-neutral-500">
                     {t('settings.agentAccess.internalStateDesc')}

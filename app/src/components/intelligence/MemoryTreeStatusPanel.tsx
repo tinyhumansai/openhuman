@@ -24,6 +24,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useT } from '../../lib/i18n/I18nContext';
 import type { ToastNotification } from '../../types/intelligence';
 import {
+  memorySyncStatusList,
+  type MemorySyncStatusRow,
   memoryTreePipelineStatus,
   type MemoryTreePipelineStatus,
   memoryTreeSetEnabled,
@@ -45,11 +47,13 @@ const DEFAULT_POLL_MS = 4000;
  */
 function useMemoryTreeStatus(): {
   status: MemoryTreePipelineStatus | null;
+  integrations: MemorySyncStatusRow[];
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
 } {
   const [status, setStatus] = useState<MemoryTreePipelineStatus | null>(null);
+  const [integrations, setIntegrations] = useState<MemorySyncStatusRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const cancelledRef = useRef(false);
@@ -59,14 +63,30 @@ function useMemoryTreeStatus(): {
   const fetchOnce = useCallback(async () => {
     console.debug('[ui-flow][memory-tree-status] fetchOnce: entry');
     try {
-      const next = await memoryTreePipelineStatus();
+      // Fetch pipeline + per-integration health in parallel so the strip
+      // and the tiles share a single 1.5s / 4s adaptive tick (#2763).
+      const [next, rows] = await Promise.all([
+        memoryTreePipelineStatus(),
+        memorySyncStatusList().catch(err => {
+          // Per-integration list is best-effort: surface an empty strip
+          // rather than wiping the panel when only the secondary endpoint
+          // fails. Pipeline failure still flips the panel-wide error.
+          console.warn(
+            '[ui-flow][memory-tree-status] memorySyncStatusList failed: %s',
+            err instanceof Error ? err.message : String(err)
+          );
+          return [] as MemorySyncStatusRow[];
+        }),
+      ]);
       if (cancelledRef.current) return;
       setStatus(next);
+      setIntegrations(rows);
       setError(null);
       console.debug(
-        '[ui-flow][memory-tree-status] fetchOnce: ok status=%s total=%d',
+        '[ui-flow][memory-tree-status] fetchOnce: ok status=%s total=%d integrations=%d',
         next.status,
-        next.total_chunks
+        next.total_chunks,
+        rows.length
       );
     } catch (err) {
       if (cancelledRef.current) return;
@@ -98,7 +118,7 @@ function useMemoryTreeStatus(): {
     };
   }, [fetchOnce]);
 
-  return { status, loading, error, refresh: fetchOnce };
+  return { status, integrations, loading, error, refresh: fetchOnce };
 }
 
 interface MemoryTreeStatusPanelProps {
@@ -167,10 +187,141 @@ function statusDotClass(kind: MemoryTreePipelineStatus['status']): string {
       return 'bg-stone-400 dark:bg-neutral-500';
     case 'error':
       return 'bg-coral-500';
+    case 'degraded':
+      // Amber: the pipeline is running but recall/structure is reduced.
+      return 'bg-amber-500';
     case 'idle':
     default:
       return 'bg-stone-400 dark:bg-neutral-500';
   }
+}
+
+/**
+ * UI health classification for a single provider row in the integration
+ * health strip (#2763). The wire shape's three-state `freshness` collapses
+ * to two states here — `Active` (currently producing chunks) vs `Stale`
+ * (anything older). An `Error` state is intentionally NOT derived from the
+ * current data; per-provider failure attribution needs new core work and
+ * is filed as a follow-up to issue #2763.
+ */
+export type IntegrationHealth = 'active' | 'stale';
+
+/** Map the wire `freshness` enum to the two-state UI classification. */
+export function classifyIntegration(
+  freshness: MemorySyncStatusRow['freshness']
+): IntegrationHealth {
+  return freshness === 'active' ? 'active' : 'stale';
+}
+
+/**
+ * Built-in glyph for each known provider key from `memory_sync_status_list`.
+ * Source: `MemorySyncStatus.provider` in `src/openhuman/memory_sync/sync_status/types.rs`
+ * — that file's doc comment enumerates the providers ("slack", "gmail",
+ * "discord", "telegram", "whatsapp", "notion", "meeting_notes",
+ * "drive_docs", etc.). Anything not in this map falls back to a generic
+ * plug glyph so unknown providers still render cleanly.
+ *
+ * Kept inline (rather than re-using `SOURCE_KIND_ICONS` from
+ * `memorySourcesService`) because that map is keyed by `SourceKind`
+ * (`composio` / `folder` / `github_repo` / …) — a different taxonomy.
+ */
+const PROVIDER_ICONS: Record<string, string> = {
+  slack: '💬',
+  gmail: '📧',
+  discord: '🎮',
+  telegram: '✈️',
+  whatsapp: '🟢',
+  notion: '📝',
+  meeting_notes: '🎙️',
+  drive_docs: '📄',
+  github: '🐙',
+};
+
+/** Look up a provider glyph; fall back to a generic plug for unknowns. */
+export function providerIconChar(provider: string): string {
+  return PROVIDER_ICONS[provider] ?? '🔌';
+}
+
+/**
+ * Per-integration health strip (#2763). Rendered between the four pipeline
+ * tiles and the auto-sync toggle inside `MemoryTreeStatusPanel`. Consumes
+ * the `integrations` slice returned by `useMemoryTreeStatus` — no
+ * additional fetch, no second timer.
+ */
+function IntegrationHealthStrip({
+  integrations,
+  loading,
+  t,
+}: {
+  integrations: MemorySyncStatusRow[];
+  loading: boolean;
+  t: TFn;
+}) {
+  return (
+    <div className="space-y-2" data-testid="memory-tree-integrations">
+      <div className="text-[11px] uppercase tracking-wide text-stone-500 dark:text-neutral-400">
+        {t('memoryTree.status.integrationsTitle')}
+      </div>
+      {loading && integrations.length === 0 ? (
+        // First-mount: suppress "no integrations" copy until the initial poll
+        // resolves, otherwise the strip falsely implies nothing is connected
+        // before data arrives (CodeRabbit feedback on #2763).
+        <div
+          data-testid="memory-tree-integrations-skeleton"
+          className="h-9 animate-pulse rounded-lg bg-stone-200 dark:bg-neutral-800"
+        />
+      ) : integrations.length === 0 ? (
+        <div
+          data-testid="memory-tree-integrations-empty"
+          className="rounded-lg border border-dashed border-stone-200 dark:border-neutral-800 px-3 py-2 text-xs text-stone-500 dark:text-neutral-400">
+          {t('memoryTree.status.integrationsEmpty')}
+        </div>
+      ) : (
+        <ul
+          className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-stone-200 dark:border-neutral-800 bg-stone-50/40 dark:bg-neutral-800/30 p-2"
+          aria-label={t('memoryTree.status.integrationsTitle')}>
+          {integrations.map(row => {
+            const health = classifyIntegration(row.freshness);
+            const healthLabel =
+              health === 'active'
+                ? t('memoryTree.status.integrationActive')
+                : t('memoryTree.status.integrationStale');
+            const dot = health === 'active' ? 'bg-sage-400' : 'bg-stone-400 dark:bg-neutral-500';
+            return (
+              <li
+                key={row.provider}
+                data-testid={`memory-tree-integration-row-${row.provider}`}
+                className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-stone-100/60 dark:hover:bg-neutral-800/60">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span aria-hidden className="text-base leading-none">
+                    {providerIconChar(row.provider)}
+                  </span>
+                  <span className="truncate text-sm font-medium text-stone-800 dark:text-neutral-200">
+                    {row.provider}
+                  </span>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs text-stone-500 dark:text-neutral-400">
+                  <span>
+                    {t('memoryTree.status.integrationChunks').replace(
+                      '{count}',
+                      new Intl.NumberFormat().format(row.chunks_synced)
+                    )}
+                  </span>
+                  <span>
+                    {formatRelativeMs(row.last_chunk_at_ms ?? 0, t, t('memoryTree.status.never'))}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white dark:bg-neutral-900 px-2 py-0.5 text-[11px] font-medium text-stone-700 dark:text-neutral-200 ring-1 ring-stone-200 dark:ring-neutral-700">
+                    <span aria-hidden className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
+                    {healthLabel}
+                  </span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -181,7 +332,7 @@ function statusDotClass(kind: MemoryTreePipelineStatus['status']): string {
  */
 export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
   const { t } = useT();
-  const { status, loading, error, refresh } = useMemoryTreeStatus();
+  const { status, integrations, loading, error, refresh } = useMemoryTreeStatus();
   const [toggleBusy, setToggleBusy] = useState(false);
 
   const handleToggle = useCallback(async () => {
@@ -212,11 +363,20 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
         return t('memoryTree.status.statusSyncing');
       case 'error':
         return t('memoryTree.status.statusError');
+      case 'degraded':
+        return t('memoryTree.status.statusDegraded');
       case 'idle':
       default:
         return t('memoryTree.status.statusIdle');
     }
   })();
+
+  // #002 (FR-004): the single first blocking cause, rendered verbatim with a
+  // localized remediation. Prefer the explicit `first_blocking_cause`; fall
+  // back to the active degradation cause so older payload shapes still surface
+  // something actionable.
+  const blockingCause = status?.first_blocking_cause ?? status?.degraded?.cause ?? null;
+  const degraded = status?.degraded;
 
   const checked = !(status?.is_paused ?? false);
 
@@ -249,6 +409,37 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
             className="rounded-md border border-coral-300 dark:border-coral-500/40 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-medium text-coral-700 dark:text-coral-300 hover:bg-coral-50 dark:hover:bg-coral-500/20">
             {t('memoryTree.status.retry')}
           </button>
+        </div>
+      ) : null}
+
+      {/* #002 (FR-004): actionable first-blocking-cause banner. Shown when the
+          core reports a typed cause — names the problem + the fix instead of a
+          generic "error". Degraded badges below distinguish recall vs structure. */}
+      {!loading && blockingCause ? (
+        <div
+          className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
+          data-testid="memory-tree-blocking-cause">
+          <div className="font-medium" data-testid="memory-tree-blocking-cause-remediation">
+            {t(blockingCause.remediation_key, t('memory.health.remediation.unknown'))}
+          </div>
+          {degraded?.semantic_recall || degraded?.structure ? (
+            <div className="mt-1 flex flex-wrap gap-1.5" data-testid="memory-tree-degraded-badges">
+              {degraded?.semantic_recall ? (
+                <span
+                  className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200"
+                  data-testid="memory-tree-badge-recall">
+                  {t('memoryTree.status.degradedRecall')}
+                </span>
+              ) : null}
+              {degraded?.structure ? (
+                <span
+                  className="inline-flex items-center rounded-full bg-amber-100 dark:bg-amber-500/20 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200"
+                  data-testid="memory-tree-badge-structure">
+                  {t('memoryTree.status.degradedStructure')}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -314,6 +505,22 @@ export function MemoryTreeStatusPanel({ onToast }: MemoryTreeStatusPanelProps) {
           )}
         </div>
       </div>
+
+      {/* #002 (FR-010 / US5): extraction coverage. Only meaningful once chunks
+          exist; near-0% with chunks present means the wiki is built but has no
+          structure (the extraction model is failing). */}
+      {!loading && status && status.total_chunks > 0 && status.extraction_coverage != null ? (
+        <div
+          className="text-xs text-stone-500 dark:text-neutral-400"
+          data-testid="memory-tree-extraction-coverage">
+          {t('memoryTree.status.extractionCoverage').replace(
+            '{pct}',
+            String(Math.round((status.extraction_coverage ?? 0) * 100))
+          )}
+        </div>
+      ) : null}
+
+      <IntegrationHealthStrip integrations={integrations} loading={loading} t={t} />
 
       {/* Auto-sync toggle row — markup mirrors AIPanel's inline ToggleRow */}
       <div

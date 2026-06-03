@@ -249,6 +249,9 @@ pub(super) fn enrich_document_metadata(
             category: input.category.clone(),
             session_id: input.session_id.clone(),
             document_id: input.document_id.clone(),
+            // Carry the caller's provenance forward — parsing is a pure
+            // metadata-enrichment step, so ingest taint must survive it.
+            taint: input.taint,
         },
         tags,
     )

@@ -368,6 +368,14 @@ pub enum DomainEvent {
         kind: String,
         /// Human-readable title (also the on-disk filename stem).
         title: String,
+        /// Absolute workspace root the artifact belongs to (matches
+        /// the `workspace_dir` parameter passed to
+        /// `finalize_artifact`). Bound to the event so a subscriber
+        /// firing AFTER the user switched workspaces can detect the
+        /// mismatch and drop the surface — `path` is workspace-
+        /// relative and would otherwise resolve into the wrong
+        /// `<workspace>/artifacts/` tree.
+        workspace_dir: String,
         /// Relative path under `<workspace>/artifacts/`, e.g.
         /// `"<uuid>/deck.pptx"`. The absolute path is reachable via
         /// `ai_get_artifact` so the renderer never needs the
@@ -391,6 +399,9 @@ pub enum DomainEvent {
         artifact_id: String,
         kind: String,
         title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
         /// Producer-supplied failure reason. Already truncated by the
         /// producer (e.g. `PresentationError::truncate_stderr`).
         error: String,
@@ -704,6 +715,20 @@ pub enum DomainEvent {
         key_name: String,
         prompt: String,
     },
+    /// A remote MCP server returned a tool whose `description` or
+    /// `title` failed the input-validation scan and was dropped from
+    /// the registry before reaching the agent LLM context. Surfaced for
+    /// audit / observability only; carries no payload content because
+    /// the rejected text could itself be a vector.
+    McpToolRejected {
+        /// Registered MCP server name the tool came from.
+        server: String,
+        /// Remote tool name as advertised by the server.
+        tool: String,
+        /// Short pattern / rule code from the validator (e.g.
+        /// `"override.ignore_previous"`). Never the rejected payload.
+        reason: String,
+    },
 
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
@@ -788,6 +813,45 @@ pub enum DomainEvent {
     /// deliberate follow-up; emitting the event now lets that bridge attach
     /// without a schema change.
     TaskPlanAwaitingApproval { card_id: String, thread_id: String },
+    /// A stale or wedged task run was reclaimed — the card moved back to
+    /// `todo` (re-dispatchable) or `blocked` (max reclaim count exceeded).
+    TaskRunReclaimed {
+        run_id: String,
+        card_id: String,
+        thread_id: String,
+        reason: String,
+    },
+
+    // ── Backend Meet Bot ──────────────────────────────────────────────
+    /// Backend gmeet bot successfully joined the meeting.
+    BackendMeetJoined { meet_url: String },
+    /// Backend gmeet bot left the meeting.
+    BackendMeetLeft { reason: String },
+    /// Backend gmeet bot produced a spoken reply.
+    BackendMeetReply {
+        transcript: String,
+        reply: String,
+        emotion: String,
+    },
+    /// Backend gmeet bot needs the harness to execute a tool instruction.
+    BackendMeetHarness {
+        transcript: String,
+        instruction: String,
+        emotion: String,
+    },
+    /// Backend gmeet bot sent the full meeting transcript on close.
+    BackendMeetTranscript {
+        turns: Vec<BackendMeetTurn>,
+        duration_ms: u64,
+    },
+    /// Backend gmeet bot emitted an error.
+    BackendMeetError { error: String },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct BackendMeetTurn {
+    pub role: String,
+    pub content: String,
 }
 
 impl DomainEvent {
@@ -888,7 +952,7 @@ impl DomainEvent {
             | Self::TaskSourceTaskIngested { .. }
             | Self::TaskSourceFetchFailed { .. } => "task_sources",
 
-            Self::TaskPlanAwaitingApproval { .. } => "agent",
+            Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
 
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
 
@@ -898,7 +962,15 @@ impl DomainEvent {
             | Self::McpServerConnected { .. }
             | Self::McpServerDisconnected { .. }
             | Self::McpClientToolExecuted { .. }
-            | Self::McpSetupSecretRequested { .. } => "mcp_client",
+            | Self::McpSetupSecretRequested { .. }
+            | Self::McpToolRejected { .. } => "mcp_client",
+
+            Self::BackendMeetJoined { .. }
+            | Self::BackendMeetLeft { .. }
+            | Self::BackendMeetReply { .. }
+            | Self::BackendMeetHarness { .. }
+            | Self::BackendMeetTranscript { .. }
+            | Self::BackendMeetError { .. } => "agent_meetings",
         }
     }
 
@@ -989,11 +1061,19 @@ impl DomainEvent {
             Self::McpServerDisconnected { .. } => "McpServerDisconnected",
             Self::McpClientToolExecuted { .. } => "McpClientToolExecuted",
             Self::McpSetupSecretRequested { .. } => "McpSetupSecretRequested",
+            Self::McpToolRejected { .. } => "McpToolRejected",
             Self::EmbeddingModelUnhealthy { .. } => "EmbeddingModelUnhealthy",
             Self::TaskSourceFetched { .. } => "TaskSourceFetched",
             Self::TaskSourceTaskIngested { .. } => "TaskSourceTaskIngested",
             Self::TaskSourceFetchFailed { .. } => "TaskSourceFetchFailed",
             Self::TaskPlanAwaitingApproval { .. } => "TaskPlanAwaitingApproval",
+            Self::TaskRunReclaimed { .. } => "TaskRunReclaimed",
+            Self::BackendMeetJoined { .. } => "BackendMeetJoined",
+            Self::BackendMeetLeft { .. } => "BackendMeetLeft",
+            Self::BackendMeetReply { .. } => "BackendMeetReply",
+            Self::BackendMeetHarness { .. } => "BackendMeetHarness",
+            Self::BackendMeetTranscript { .. } => "BackendMeetTranscript",
+            Self::BackendMeetError { .. } => "BackendMeetError",
         }
     }
 

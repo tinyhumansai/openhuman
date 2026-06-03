@@ -443,6 +443,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} godz. temu',
   'memoryTree.status.dayAgo': '1 dzień temu',
   'memoryTree.status.daysAgo': '{count} dni temu',
+  'memoryTree.status.integrationsTitle': 'Stan poszczególnych integracji',
+  'memoryTree.status.integrationsEmpty': 'Brak podłączonych integracji',
+  'memoryTree.status.integrationActive': 'Aktywna',
+  'memoryTree.status.integrationStale': 'Nieaktualna',
+  'memoryTree.status.integrationChunks': 'Liczba fragmentów: {count}',
   'alerts.title': 'Alerty',
   'alerts.empty': 'Brak alertów',
   'alerts.markAllRead': 'Oznacz wszystkie jako przeczytane',
@@ -496,6 +501,7 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Kontynuuj w trybie Prosto',
   'onboarding.runtimeChoice.continueCustom': 'Kontynuuj w trybie Niestandardowo',
   'onboarding.runtimeChoice.recommended': 'Polecane',
+  'onboarding.runtimeChoice.exitError': 'Nie udało się zakończyć wdrożenia. Spróbuj ponownie.',
   'onboarding.apiKeys.title': 'Dodajmy Twoje klucze API',
   'onboarding.apiKeys.subtitle':
     'Możesz wkleić je teraz lub pominąć i dodać później w Ustawieniach › AI. Klucze są przechowywane na tym urządzeniu, zaszyfrowane w spoczynku.',
@@ -3723,7 +3729,42 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': 'Wyświetl historię zatwierdzeń',
+  'settings.sandbox.title': 'Wykonanie w piaskownicy',
+  'settings.sandbox.menuDesc': 'Konfiguruj backendy piaskownicy do izolacji narzędzi agenta.',
+  'settings.sandbox.loading': 'Ładowanie…',
+  'settings.sandbox.desktopOnly':
+    'Ustawienia piaskownicy są dostępne tylko w aplikacji desktopowej.',
+  'settings.sandbox.loadError': 'Nie udało się załadować ustawień piaskownicy.',
+  'settings.sandbox.saveError': 'Nie udało się zapisać ustawień piaskownicy.',
+  'settings.sandbox.saved': 'Zapisano — dotyczy nowych sesji agenta.',
+  'settings.sandbox.saving': 'Zapisywanie…',
+  'settings.sandbox.status': 'Status',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Dostępny',
+  'settings.sandbox.unavailable': 'Niedostępny',
+  'settings.sandbox.detectedBackend': 'Backend systemu operacyjnego',
+  'settings.sandbox.enableLabel': 'Włącz wykonanie w piaskownicy',
+  'settings.sandbox.enableDesc': 'Uruchamiaj narzędzia agenta w izolowanym środowisku piaskownicy.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc':
+    'Wybierz backend izolacji do użycia przy wykonaniu w piaskownicy.',
+  'settings.sandbox.backend.auto': 'Automatyczny (wykryj najlepszy dostępny)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Brak (bez piaskownicy)',
+  'settings.sandbox.dockerSettings': 'Ustawienia Docker',
+  'settings.sandbox.dockerImage': 'Obraz',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Limit pamięci',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'Limit CPU',
+  'settings.sandbox.cpuUnit': 'rdzenie',
+  'settings.sandbox.envPassthrough': 'Przekazywanie zmiennych środowiskowych',
+  'settings.sandbox.envPassthroughDesc': 'Zmienne środowiskowe przekazywane do piaskownicy.',
+  'settings.sandbox.noEnvVars': 'Nie skonfigurowano żadnych zmiennych środowiskowych.',
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4502,6 +4543,42 @@ const messages: TranslationMap = {
   'graphCohesion.title': 'Spójność grafu',
   'memory.tab.cohesion': 'Cohesion',
 
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Generowanie: {kind}…',
+  'chat.artifact.ready': 'Gotowe',
+  'chat.artifact.failed': 'Generowanie nie powiodło się',
+  'chat.artifact.download': 'Pobierz',
+  'chat.artifact.downloading': 'Pobieranie…',
+  'chat.artifact.downloaded': 'Zapisano w {path}',
+  'chat.artifact.download_failed': 'Pobieranie nie powiodło się: {reason}',
+  'chat.artifact.retry': 'Spróbuj ponownie',
+  'chat.artifact.reveal': 'Pokaż w folderze',
+  'chat.artifact.show_more': 'Pokaż więcej',
+  'chat.artifact.show_less': 'Pokaż mniej',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} plik w tej rozmowie',
+  'chat.files.chip.aria.other': '{count} plików w tej rozmowie',
+  'chat.files.panel.aria': 'Pliki w tej rozmowie',
+  'chat.files.panel.title': 'Pliki ({count})',
+  'chat.files.panel.empty': 'Brak plików. Poproś agenta o wygenerowanie pliku.',
+  'chat.files.panel.close': 'Zamknij panel plików',
+  'chat.files.delete.aria': 'Usuń: {title}',
+  'chat.files.delete.confirm': 'Usunąć ten plik?',
+  'chat.files.delete.cancel': 'Anuluj',
+  'chat.files.delete.action': 'Usuń',
+  'chat.files.delete.failed': 'Nie udało się usunąć pliku. Spróbuj ponownie.',
+  // Etykiety błędów dla pobrania/usunięcia (#3024). Powiązane z
+  // `ArtifactErrorCode` zwracanym przez artifactDownloadService.
+  'chat.files.error.not_desktop': 'Pobieranie jest dostępne tylko w aplikacji desktopowej.',
+  'chat.files.error.missing_artifact_id': 'Brak identyfikatora artefaktu.',
+  'chat.files.error.missing_artifact_path': 'W odpowiedzi rdzenia brakuje ścieżki artefaktu.',
+  'chat.files.error.resolve_failed':
+    'Nie udało się odnaleźć artefaktu. Prosimy spróbować ponownie.',
+  'chat.files.error.download_failed': 'Pobieranie nie powiodło się. Prosimy spróbować ponownie.',
+  'chat.files.error.delete_failed': 'Nie udało się usunąć pliku. Prosimy spróbować ponownie.',
+
   'keyring.consent.title': 'Bezpieczne przechowywanie niedostępne',
   'keyring.consent.description':
     'Pęk kluczy systemu operacyjnego jest niedostępny. OpenHuman potrzebuje Twojej zgody na przechowywanie sekretów w lokalnym zaszyfrowanym magazynie.',
@@ -4537,19 +4614,32 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Odmów lokalnego przechowywania',
   'pages.settings.account.security': 'Bezpieczeństwo',
   'pages.settings.account.securityDesc': 'Tryb przechowywania sekretów i stan pęku kluczy',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Ograniczony',
+  'memoryTree.status.degradedRecall': 'Wyszukiwanie semantyczne wyłączone',
+  'memoryTree.status.degradedStructure': 'Struktura wiki niekompletna',
+  'memoryTree.status.extractionCoverage': 'Pokrycie ekstrakcji: {pct}% fragmentów ma strukturę',
+  'memory.health.remediation.budget_exhausted':
+    'Osadzenia pamięci wyczerpały zarządzany budżet. Skonfiguruj lokalne osadzenia Ollama (Ustawienia → AI → Embeddings) lub dodaj własny klucz API osadzeń, aby kontynuować budowanie pamięci.',
+  'memory.health.remediation.auth_missing':
+    'Nie znaleziono poświadczeń osadzeń. Zaloguj się do OpenHuman lub skonfiguruj lokalne osadzenia Ollama w Ustawienia → AI → Embeddings.',
+  'memory.health.remediation.auth_invalid':
+    'Twoje poświadczenia osadzeń zostały odrzucone. Uwierzytelnij się ponownie lub przełącz na lokalne osadzenia Ollama w Ustawienia → AI → Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Nie skonfigurowano dostawcy osadzeń, więc wyszukiwanie semantyczne jest wyłączone. Skonfiguruj lokalne osadzenia Ollama (zalecane) lub dodaj klucz osadzeń w Ustawienia → AI → Embeddings.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Model osadzeń zwraca nieprawidłowy rozmiar wektora (pamięć oczekuje 1024 wymiarów). Wybierz model o 1024 wymiarach lub poproś dostawcę o 1024 wymiary.',
+  'memory.health.remediation.local_model_unavailable':
+    'Wymagany model lokalny jest niedostępny. Zainstaluj/uruchom Ollama i pobierz model albo przełącz to zadanie na dostawcę chmurowego w Ustawienia → AI.',
+  'memory.health.remediation.extraction_timeout':
+    'Model ekstrakcji pamięci przekracza limit czasu, więc wiki ma niewielką strukturę. Zmień model ekstrakcji pamięci na szybszy w Ustawienia → AI.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Brak dostępnego dostawcy podsumowań dla funkcji Twórz drzewa podsumowań. Włącz lokalną AI (Ollama) lub włącz podsumowywanie w chmurze w Ustawienia → AI → Pamięć.',
+  'memory.health.remediation.transient':
+    'Tymczasowy błąd przerwał przetwarzanie pamięci. Ponowna próba nastąpi automatycznie.',
+  'memory.health.remediation.unknown':
+    'Przetwarzanie pamięci napotkało problem. Sprawdź Ustawienia → AI w celu konfiguracji.',
   // Chat — agent-generated artifacts (#2779)
-  'chat.artifact.aria': 'Artefakt: {title}',
-  'chat.artifact.generating': 'Tworzenie {kind}…',
-  'chat.artifact.ready': 'Gotowe',
-  'chat.artifact.failed': 'Tworzenie nie powiodło się',
-  'chat.artifact.download': 'Pobierz',
-  'chat.artifact.downloading': 'Pobieranie…',
-  'chat.artifact.downloaded': 'Zapisano w {path}',
-  'chat.artifact.download_failed': 'Pobieranie nie powiodło się: {reason}',
-  'chat.artifact.retry': 'Spróbuj ponownie',
-  'chat.artifact.reveal': 'Pokaż w folderze',
-  'chat.artifact.show_more': 'Pokaż więcej',
-  'chat.artifact.show_less': 'Pokaż mniej',
 
   // Chat composer toolbar
   'composer.attachFile': 'Dołącz plik',

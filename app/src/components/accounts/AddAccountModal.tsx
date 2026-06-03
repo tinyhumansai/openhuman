@@ -49,7 +49,9 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
           </h2>
           <button
             ref={closeBtnRef}
+            type="button"
             onClick={onClose}
+            data-analytics-id="add-account-modal-close"
             className="rounded p-1 text-stone-500 dark:text-neutral-400 hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60"
             aria-label={t('common.close')}>
             <CloseIcon className="h-5 w-5" />
@@ -65,6 +67,8 @@ const AddAccountModal = ({ open, onClose, onPick, connectedProviders }: AddAccou
             available.map(p => (
               <button
                 key={p.id}
+                type="button"
+                data-analytics-id={`add-account-provider-${p.id}`}
                 data-testid={`add-account-provider-${p.id}`}
                 onClick={() => onPick(p)}
                 className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors hover:bg-stone-100 dark:hover:bg-neutral-800 dark:bg-neutral-800 dark:hover:bg-neutral-800/60">

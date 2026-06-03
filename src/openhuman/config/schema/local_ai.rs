@@ -118,6 +118,12 @@ pub struct LocalAiConfig {
     /// local LLM to fix grammar/punctuation using conversation context.
     #[serde(default = "default_voice_llm_cleanup_enabled")]
     pub voice_llm_cleanup_enabled: bool,
+    /// Ollama `options.num_ctx` override. When set, every chat request to
+    /// an Ollama provider includes `"options": {"num_ctx": <value>}` so
+    /// the model allocates at least this much KV-cache. Ollama defaults
+    /// to 2048 for many models which is too small for agentic use.
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
     /// Per-feature flags. Each gate is AND-ed with `runtime_enabled`.
     /// All default to `false` (cloud path).
     #[serde(default)]
@@ -290,6 +296,7 @@ impl Default for LocalAiConfig {
             ollama_binary_path: None,
             whisper_in_process: default_whisper_in_process(),
             voice_llm_cleanup_enabled: default_voice_llm_cleanup_enabled(),
+            num_ctx: None,
             usage: LocalAiUsage::default(),
         }
     }

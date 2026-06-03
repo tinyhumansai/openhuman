@@ -241,7 +241,7 @@ async fn tree_runtime_engine_rpc_and_walk_cover_success_and_edge_paths() {
         "rebuilt hour 10",
         "rebuilt hour 11",
     ]);
-    let last = engine::run_summarization(&cfg, &provider, ns, Utc::now())
+    let last = engine::run_summarization(&cfg, &provider, "test-model", ns, Utc::now())
         .await
         .expect("run summarization")
         .expect("last hour node");
@@ -275,7 +275,7 @@ async fn tree_runtime_engine_rpc_and_walk_cover_success_and_edge_paths() {
         "rebuilt year summary",
         "rebuilt root summary",
     ]);
-    let rebuilt = engine::rebuild_tree(&cfg, &rebuild_provider, ns)
+    let rebuilt = engine::rebuild_tree(&cfg, &rebuild_provider, "test-model", ns)
         .await
         .expect("rebuild tree");
     assert_eq!(rebuilt.total_nodes, 6);

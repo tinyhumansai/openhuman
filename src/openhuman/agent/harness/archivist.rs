@@ -994,7 +994,15 @@ impl ArchivistHook {
                 } else {
                     e.content.clone()
                 };
-                let text = raw_text.trim().to_string();
+                // Strip `[IMAGE:<base64>]` attachment markers so images never
+                // enter episodic memory ingestion — otherwise the base64 is
+                // chunked, embedded (garbage + Voyage size errors), and fed to
+                // the extract LLM (#3205). `parse_image_markers` returns the
+                // marker-free prose, already trimmed; the image itself isn't
+                // useful memory text. An image-only turn collapses to empty and
+                // is skipped by the guard below.
+                let (text, _image_refs) =
+                    crate::openhuman::agent::multimodal::parse_image_markers(&raw_text);
                 if text.is_empty() {
                     return None;
                 }

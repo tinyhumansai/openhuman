@@ -186,6 +186,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_registered_controllers(),
     );
+    // Sandbox execution backends (Docker, local jail, policy, cleanup)
+    controllers.extend(crate::openhuman::sandbox::all_sandbox_registered_controllers());
     // Backend Socket.IO bridge + related runtime plumbing
     controllers.extend(crate::openhuman::socket::all_socket_registered_controllers());
     // Managed Node.js runtime bridge (tool listing + dispatch)
@@ -264,6 +266,9 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::notifications::all_notifications_registered_controllers());
     // Google Meet call-join request validation (shell handles the webview)
     controllers.extend(crate::openhuman::meet::all_meet_registered_controllers());
+    // Agent meetings — backend-delegated Meet bot via Socket.IO
+    controllers
+        .extend(crate::openhuman::agent_meetings::all_agent_meetings_registered_controllers());
     // Live meet-agent loop: STT/LLM/TTS over the open call's audio.
     controllers.extend(crate::openhuman::meet_agent::all_meet_agent_registered_controllers());
     // Desktop companion — Clicky-style interaction loop.
@@ -275,6 +280,8 @@ fn build_registered_controllers() -> Vec<RegisteredController> {
     controllers.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_registered_controllers());
     // Mobile device pairing and management
     controllers.extend(crate::openhuman::devices::all_devices_registered_controllers());
+    // Durable agent session database — queryable index over transcripts, lineage, tool calls
+    controllers.extend(crate::openhuman::session_db::all_session_db_registered_controllers());
     controllers
 }
 
@@ -339,6 +346,7 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(
         crate::openhuman::screen_intelligence::all_screen_intelligence_controller_schemas(),
     );
+    schemas.extend(crate::openhuman::sandbox::all_sandbox_controller_schemas());
     schemas.extend(crate::openhuman::socket::all_socket_controller_schemas());
     schemas.extend(crate::openhuman::javascript::all_javascript_controller_schemas());
     schemas.extend(crate::openhuman::skills::all_skills_controller_schemas());
@@ -383,6 +391,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::notifications::all_notifications_controller_schemas());
     // Google Meet call-join request validation
     schemas.extend(crate::openhuman::meet::all_meet_controller_schemas());
+    // Agent meetings — backend-delegated Meet bot via Socket.IO
+    schemas.extend(crate::openhuman::agent_meetings::all_agent_meetings_controller_schemas());
     // Live meet-agent listening + speaking loop
     schemas.extend(crate::openhuman::meet_agent::all_meet_agent_controller_schemas());
     // Desktop companion — Clicky-style interaction loop.
@@ -391,6 +401,8 @@ fn build_declared_controller_schemas() -> Vec<ControllerSchema> {
     schemas.extend(crate::openhuman::whatsapp_data::all_whatsapp_data_controller_schemas());
     // Mobile device pairing and management
     schemas.extend(crate::openhuman::devices::all_devices_controller_schemas());
+    // Durable agent session database
+    schemas.extend(crate::openhuman::session_db::all_session_db_controller_schemas());
     schemas
 }
 
@@ -513,6 +525,9 @@ pub fn namespace_description(namespace: &str) -> Option<&'static str> {
         "meet_agent" => Some(
             "Live agent loop for an open Google Meet call: shell streams inbound PCM, \
              core runs VAD-segmented STT → LLM → TTS, shell pulls synthesized PCM back.",
+        ),
+        "agent_meetings" => Some(
+            "Backend-delegated meeting bot (Google Meet, Zoom, Teams, Webex) via Socket.IO — join, leave, and harness response.",
         ),
         "devices" => Some(
             "Paired mobile device management — pairing channel creation, listing, and revocation.",

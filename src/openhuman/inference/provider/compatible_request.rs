@@ -9,6 +9,15 @@ use crate::openhuman::inference::provider::{temperature, thread_context};
 use super::{AuthStyle, OpenAiCompatibleProvider};
 
 impl OpenAiCompatibleProvider {
+    /// Build the Ollama-specific `options` block for the request body.
+    /// Returns `None` when no `num_ctx` override is configured.
+    pub(super) fn build_ollama_options(&self) -> Option<super::compatible_types::OllamaOptions> {
+        self.ollama_num_ctx
+            .map(|num_ctx| super::compatible_types::OllamaOptions {
+                num_ctx: Some(num_ctx),
+            })
+    }
+
     /// Resolve the effective temperature for `model`. Returns `None` when the
     /// model matches a pattern in `temperature_unsupported_models` (causing the
     /// field to be omitted from the serialised request). Otherwise yields the

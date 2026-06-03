@@ -542,6 +542,46 @@ describe('useUsageState', () => {
     expect(mockGetTeamUsage).not.toHaveBeenCalled();
   });
 
+  it('suppresses near-limit banner when chat is fully routed away but background workloads remain (#3097)', async () => {
+    // Background workloads (memory, heartbeat, …) keep the billing API call
+    // alive (ALL_WORKLOADS check), but isFullyRoutedAway (CHAT_WORKLOADS) is
+    // true so the near-limit banner must NOT show — the user's chat is not
+    // on OpenHuman's budget.
+    const { useUsageState } = await import('./useUsageState');
+
+    mockGetCurrentPlan.mockResolvedValue(freePlan());
+    // Usage at 90% — would trigger isNearLimit for OpenHuman-routed users.
+    mockGetTeamUsage.mockResolvedValue(buildUsage({ remainingUsd: 1, cycleBudgetUsd: 10 }));
+    mockLoadAISettings.mockResolvedValue({
+      cloudProviders: [],
+      routing: {
+        chat: { kind: 'local' as const, model: 'qwen3:8b' },
+        reasoning: { kind: 'local' as const, model: 'qwen3:8b' },
+        agentic: { kind: 'local' as const, model: 'qwen3:8b' },
+        coding: { kind: 'local' as const, model: 'qwen3:8b' },
+        // background workloads still on OpenHuman → billing API is still called
+        memory: { kind: 'openhuman' as const },
+        embeddings: { kind: 'openhuman' as const },
+        heartbeat: { kind: 'openhuman' as const },
+        learning: { kind: 'openhuman' as const },
+        subconscious: { kind: 'openhuman' as const },
+      },
+    });
+
+    const { result } = renderHook(() => useUsageState());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.isFullyRoutedAway).toBe(true);
+    // usagePct ~90% but user is routed away from OpenHuman — no near-limit warning.
+    expect(result.current.isNearLimit).toBe(false);
+    expect(result.current.isAtLimit).toBe(false);
+    // billing was still fetched because background workloads remain on OpenHuman
+    expect(mockGetTeamUsage).toHaveBeenCalledTimes(1);
+  });
+
   it('still fetches billing when a background workload remains on OpenHuman', async () => {
     const { useUsageState } = await import('./useUsageState');
 

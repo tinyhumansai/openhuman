@@ -47,6 +47,7 @@ export type SettingsRoute =
   | 'composio-routing'
   | 'mcp-server'
   | 'dev-workflow'
+  | 'sandbox-settings'
   | 'devices';
 
 export interface BreadcrumbItem {
@@ -137,6 +138,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
     // `agents-settings` (the Agents section page) must be checked before the
     // shorter `agents` (the manage-agents registry panel) so it isn't swallowed.
     if (path.includes('/settings/agents-settings')) return 'agents-settings';
+    if (path.includes('/settings/sandbox-settings')) return 'sandbox-settings';
     if (path.includes('/settings/agent-access')) return 'agent-access';
     if (path.includes('/settings/agents')) return 'agents';
     if (path.includes('/settings/mcp-server')) return 'mcp-server';
@@ -230,6 +232,7 @@ export const useSettingsNavigation = (): SettingsNavigationHook => {
       // Leaf panels under the Agents section
       case 'agents':
       case 'agent-access':
+      case 'sandbox-settings':
       case 'autonomy':
       case 'persona':
         return [settingsCrumb, agentsCrumb];

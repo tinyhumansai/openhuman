@@ -454,12 +454,15 @@ impl AgentBuilder {
         let visible_tool_specs: Vec<ToolSpec> =
             dedup_visible_tool_specs(visible_tool_specs_unfiltered);
 
+        let visible_names_list: Vec<&str> =
+            visible_tool_specs.iter().map(|s| s.name.as_str()).collect();
         log::info!(
-            "[agent] tool spec filter: total={} visible={} (filter_active={} policy_restricted={})",
+            "[agent] tool spec filter: total={} visible={} (filter_active={} policy_restricted={}) names=[{}]",
             tool_specs.len(),
             visible_tool_specs.len(),
             !visible_names.is_empty(),
-            tool_policy_session.has_restrictions()
+            tool_policy_session.has_restrictions(),
+            visible_names_list.join(", ")
         );
 
         // Pull the provider out of the builder once. We store it on

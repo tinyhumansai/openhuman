@@ -233,7 +233,7 @@ async fn builds_hour_day_month_year_chain() {
     ]);
 
     log::debug!("[memory_tree_summarizer_e2e] running summarization");
-    let result = engine::run_summarization(&config, &provider, NS, Utc::now()).await;
+    let result = engine::run_summarization(&config, &provider, "test-model", NS, Utc::now()).await;
 
     log::debug!(
         "[memory_tree_summarizer_e2e] run_summarization returned: {:?}",
@@ -379,7 +379,7 @@ async fn merges_into_existing_hour_node() {
     )]);
 
     log::debug!("[memory_tree_summarizer_e2e] first run");
-    let r1 = engine::run_summarization(&config, &provider1, NS, Utc::now())
+    let r1 = engine::run_summarization(&config, &provider1, "test-model", NS, Utc::now())
         .await
         .expect("first run_summarization");
     assert!(r1.is_some(), "first run should yield a node");
@@ -415,7 +415,7 @@ async fn merges_into_existing_hour_node() {
     )]);
 
     log::debug!("[memory_tree_summarizer_e2e] second run (same hour)");
-    let r2 = engine::run_summarization(&config, &provider2, NS, Utc::now())
+    let r2 = engine::run_summarization(&config, &provider2, "test-model", NS, Utc::now())
         .await
         .expect("second run_summarization");
     assert!(r2.is_some(), "second run should yield a node");
@@ -504,7 +504,7 @@ async fn survives_llm_error_with_partial_progress() {
     ]);
 
     log::debug!("[memory_tree_summarizer_e2e] running summarization expecting partial failure");
-    let result = engine::run_summarization(&config, &provider, NS, Utc::now()).await;
+    let result = engine::run_summarization(&config, &provider, "test-model", NS, Utc::now()).await;
 
     log::debug!(
         "[memory_tree_summarizer_e2e] run_summarization result: is_ok={}",

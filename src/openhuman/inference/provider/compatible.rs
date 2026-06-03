@@ -35,9 +35,9 @@ use compatible_parse::{
 };
 use compatible_stream::sse_bytes_to_chunks;
 use compatible_types::{
-    ApiChatRequest, ApiChatResponse, ApiUsage, Choice, Function, Message, NativeChatRequest,
-    NativeMessage, OpenAiStreamOptions, OpenHumanMeta, ResponseMessage, ResponsesRequest,
-    StreamChunkResponse, StreamingToolCall, ToolCall,
+    ApiChatRequest, ApiChatResponse, ApiUsage, Choice, Function, Message, MessageContent,
+    NativeChatRequest, NativeMessage, OpenAiStreamOptions, OpenHumanMeta, ResponseMessage,
+    ResponsesRequest, StreamChunkResponse, StreamingToolCall, ToolCall,
 };
 
 /// A provider that speaks the OpenAI-compatible chat completions API.
@@ -80,6 +80,22 @@ pub struct OpenAiCompatibleProvider {
     /// carries an `@<temp>` suffix (e.g. `"openai:gpt-4o@0.2"`). The
     /// `temperature_unsupported_models` glob filter still applies after.
     pub(crate) temperature_override: Option<f64>,
+    /// Value reported by `capabilities().native_tool_calling`. Defaults to
+    /// `true` because most OpenAI-compatible providers (OpenAI, Anthropic
+    /// adapters, GLM, Groq, Mistral, OpenHuman backend, …) implement the
+    /// `tools` parameter correctly. The factory flips this to `false` for
+    /// Ollama (sub-issue 3 of #3098), whose OpenAI-compat endpoint returns
+    /// HTTP 400 on `tools` for many models — making prompt-guided text
+    /// tool specs the only path that works across the Ollama model zoo.
+    native_tool_calling: bool,
+    /// Ollama-specific `options.num_ctx` override. When set, every request
+    /// to this provider includes `"options": {"num_ctx": <value>}` in the
+    /// body so Ollama allocates the requested KV-cache size.
+    pub(crate) ollama_num_ctx: Option<u32>,
+    /// The local provider kind, if this is a local provider.
+    /// Used for profile-aware context window resolution and diagnostics.
+    pub(crate) local_provider_kind:
+        Option<crate::openhuman::inference::local::profile::LocalProviderKind>,
 }
 
 /// How the provider expects the API key to be sent.
@@ -126,6 +142,43 @@ impl OpenAiCompatibleProvider {
             )
         } else {
             base
+        }
+    }
+
+    /// Build an actionable error for a completion-only model that was routed
+    /// to `/v1/chat/completions`. OpenHuman only speaks the chat-completions
+    /// API (with an optional `/v1/responses` fallback) — a completion-only /
+    /// base model 404s here and the responses fallback cannot rescue it, so we
+    /// surface the model name and concrete remediation instead of an opaque
+    /// "responses fallback failed" chain. See issue #3193.
+    fn completion_only_model_message(&self, model: &str, sanitized: &str) -> String {
+        format!(
+            "{name} API error (404): model '{model}' does not support the \
+             chat-completions API that OpenHuman uses — it appears to be a \
+             completion-only / base model. Assign a chat-capable model to this \
+             provider (e.g. in Settings → AI), or pick a different model. \
+             Provider detail: {sanitized}",
+            name = self.name,
+        )
+    }
+
+    /// Guard shared by every chat-completions 404 handler: if the body shows a
+    /// completion-only model, return the actionable error so the caller can
+    /// fail fast instead of attempting the futile `/v1/responses` fallback.
+    /// `None` means "not this case — proceed with normal fallback/enrich".
+    /// See issue #3193.
+    fn completion_only_404_guard(
+        &self,
+        status: reqwest::StatusCode,
+        sanitized: &str,
+        model: &str,
+    ) -> Option<anyhow::Error> {
+        if Self::is_completion_only_model_404(status, sanitized) {
+            Some(anyhow::anyhow!(
+                self.completion_only_model_message(model, sanitized)
+            ))
+        } else {
+            None
         }
     }
 
@@ -195,7 +248,20 @@ impl OpenAiCompatibleProvider {
             emit_openhuman_thread_id: false,
             temperature_unsupported_models: Vec::new(),
             temperature_override: None,
+            native_tool_calling: true,
+            ollama_num_ctx: None,
+            local_provider_kind: None,
         }
+    }
+
+    /// Toggle whether this provider advertises native (OpenAI-style) tool
+    /// calling to the agent harness. The default is `true`; set to `false`
+    /// for providers whose `/v1/chat/completions` endpoint rejects the
+    /// `tools` parameter — the harness will then embed tool specs in the
+    /// system prompt and parse calls out of the response text instead.
+    pub fn with_native_tool_calling(mut self, enabled: bool) -> Self {
+        self.native_tool_calling = enabled;
+        self
     }
 
     /// Set the list of model glob patterns for which temperature must be
@@ -210,6 +276,23 @@ impl OpenAiCompatibleProvider {
     /// Set by the factory when the provider string carries an `@<temp>` suffix.
     pub fn with_temperature_override(mut self, temperature: Option<f64>) -> Self {
         self.temperature_override = temperature;
+        self
+    }
+
+    /// Set the Ollama `options.num_ctx` override. When set, the provider
+    /// includes `"options": {"num_ctx": <value>}` in every request body.
+    pub fn with_ollama_num_ctx(mut self, num_ctx: Option<u32>) -> Self {
+        self.ollama_num_ctx = num_ctx;
+        self
+    }
+
+    /// Tag this provider with its local provider kind for profile-aware
+    /// context window resolution and diagnostics.
+    pub fn with_local_provider_kind(
+        mut self,
+        kind: crate::openhuman::inference::local::profile::LocalProviderKind,
+    ) -> Self {
+        self.local_provider_kind = Some(kind);
         self
     }
 
@@ -423,13 +506,13 @@ impl OpenAiCompatibleProvider {
                                     // emits `"content":""` rather than omitting
                                     // the key — some providers reject a missing
                                     // content alongside reasoning_content.
-                                    let content = Some(
+                                    let content = Some(MessageContent::Text(
                                         value
                                             .get("content")
                                             .and_then(serde_json::Value::as_str)
                                             .unwrap_or("")
                                             .to_string(),
-                                    );
+                                    ));
 
                                     // Replay the assistant's reasoning so
                                     // DeepSeek thinking mode accepts the
@@ -471,7 +554,8 @@ impl OpenAiCompatibleProvider {
                                 .get("content")
                                 .and_then(serde_json::Value::as_str)
                                 .map(ToString::to_string)
-                                .or_else(|| Some(message.content.clone()));
+                                .or_else(|| Some(message.content.clone()))
+                                .map(MessageContent::Text);
 
                             return NativeMessage {
                                 role: "tool".to_string(),
@@ -485,7 +569,12 @@ impl OpenAiCompatibleProvider {
 
                     NativeMessage {
                         role: message.role.clone(),
-                        content: Some(message.content.clone()),
+                        // User-authored content may carry `[IMAGE:<data-uri>]`
+                        // markers from chat attachments — promote them to
+                        // structured `image_url` parts here. Markerless text
+                        // (every system/assistant/tool turn) is returned as the
+                        // plain-string arm, unchanged on the wire.
+                        content: Some(MessageContent::from_chat_text(&message.content)),
                         tool_call_id: None,
                         tool_calls: None,
                         reasoning_content,
@@ -797,6 +886,24 @@ impl OpenAiCompatibleProvider {
 
     fn err_supports_no_tools_retry(error: &str) -> bool {
         Self::is_native_tool_schema_unsupported(reqwest::StatusCode::BAD_REQUEST, error)
+    }
+
+    /// Detect a 404 whose body says the model is completion-only and cannot be
+    /// served from `/v1/chat/completions` (OpenAI: "This is not a chat model
+    /// and thus not supported in the v1/chat/completions endpoint. Did you
+    /// mean to use v1/completions?"). When this fires, attempting the
+    /// `/v1/responses` fallback is futile, so callers should fail fast with an
+    /// actionable message via [`completion_only_model_message`]. The match is
+    /// deliberately tight so ordinary "model does not exist" 404s are NOT
+    /// caught (those should keep their existing fallback / enrich behaviour).
+    /// See issue #3193.
+    fn is_completion_only_model_404(status: reqwest::StatusCode, error: &str) -> bool {
+        if status != reqwest::StatusCode::NOT_FOUND {
+            return false;
+        }
+        let lower = error.to_lowercase();
+        lower.contains("not a chat model")
+            || (lower.contains("v1/chat/completions") && lower.contains("v1/completions"))
     }
 
     /// Streaming variant of the native-tools chat path.
@@ -1248,7 +1355,14 @@ impl OpenAiCompatibleProvider {
 impl Provider for OpenAiCompatibleProvider {
     fn capabilities(&self) -> crate::openhuman::inference::provider::traits::ProviderCapabilities {
         crate::openhuman::inference::provider::traits::ProviderCapabilities {
-            native_tool_calling: true,
+            native_tool_calling: self.native_tool_calling,
+            // Kept `false` for now. The provider already serializes images as
+            // `image_url` content parts on the chat-completions path (#3205), but
+            // vision is a per-*model* property the provider can't know here — and
+            // the Responses-API path (`chat_via_responses`) is still text-only.
+            // Claiming vision provider-wide would let image turns through the
+            // gate to a possibly-non-vision model. The capability stays off until
+            // it can be driven per-model (e.g. from `model_registry.vision`).
             vision: false,
         }
     }
@@ -1271,18 +1385,18 @@ impl Provider for OpenAiCompatibleProvider {
             };
             messages.push(Message {
                 role: "user".to_string(),
-                content,
+                content: MessageContent::from_chat_text(&content),
             });
         } else {
             if let Some(sys) = system_prompt {
                 messages.push(Message {
                     role: "system".to_string(),
-                    content: sys.to_string(),
+                    content: sys.into(),
                 });
             }
             messages.push(Message {
                 role: "user".to_string(),
-                content: message.to_string(),
+                content: MessageContent::from_chat_text(message),
             });
         }
 
@@ -1343,6 +1457,12 @@ impl Provider for OpenAiCompatibleProvider {
             let status = response.status();
             let error = response.text().await?;
             let sanitized = super::sanitize_api_error(&error);
+
+            // A completion-only model 404s here and the /v1/responses fallback
+            // cannot rescue it — fail fast with actionable guidance (#3193).
+            if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
+            }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
                 return self
@@ -1463,7 +1583,7 @@ impl Provider for OpenAiCompatibleProvider {
             .iter()
             .map(|m| Message {
                 role: m.role.clone(),
-                content: m.content.clone(),
+                content: MessageContent::from_chat_text(&m.content),
             })
             .collect();
 
@@ -1511,18 +1631,38 @@ impl Provider for OpenAiCompatibleProvider {
         if !response.status().is_success() {
             let status = response.status();
 
-            // Mirror chat_with_system: 404 may mean this provider uses the Responses API
-            if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
-                return self
-                    .chat_via_responses(credential, &effective_messages, model)
-                    .await
-                    .map_err(|responses_err| {
-                        let fb = super::format_anyhow_chain(&responses_err);
-                        anyhow::anyhow!(
-                            "{} API error (chat completions unavailable; responses fallback failed: {fb})",
-                            self.name
-                        )
-                    });
+            // A 404 may mean this provider uses the Responses API, OR that the
+            // model is completion-only. Read the body once so we can tell the
+            // two apart (#3193) — only the 404 branch needs it; the response is
+            // not used again here, so `api_error` below still owns the rest.
+            if status == reqwest::StatusCode::NOT_FOUND {
+                let error = response.text().await?;
+                let sanitized = super::sanitize_api_error(&error);
+
+                // Completion-only model: the responses fallback can't help —
+                // fail fast with actionable guidance.
+                if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                    return Err(err);
+                }
+
+                if self.supports_responses_fallback {
+                    return self
+                        .chat_via_responses(credential, &effective_messages, model)
+                        .await
+                        .map_err(|responses_err| {
+                            let fb = super::format_anyhow_chain(&responses_err);
+                            anyhow::anyhow!(
+                                "{} API error ({status}): {sanitized} (chat completions unavailable; responses fallback failed: {fb})",
+                                self.name
+                            )
+                        });
+                }
+
+                let enriched = self.enrich_404_message(
+                    format!("{} API error ({status}): {sanitized}", self.name),
+                    status,
+                );
+                return Err(anyhow::anyhow!("{enriched}"));
             }
 
             let err = super::api_error(&self.name, response).await;
@@ -1571,7 +1711,7 @@ impl Provider for OpenAiCompatibleProvider {
             .iter()
             .map(|m| Message {
                 role: m.role.clone(),
-                content: m.content.clone(),
+                content: MessageContent::from_chat_text(&m.content),
             })
             .collect();
 
@@ -1732,6 +1872,7 @@ impl Provider for OpenAiCompatibleProvider {
                 stream_options: Some(OpenAiStreamOptions {
                     include_usage: true,
                 }),
+                options: self.build_ollama_options(),
             };
             let stream_dump_seq = reserve_dump_seq();
             dump_prompt_if_enabled(&self.name, model, stream_dump_seq, &native_request);
@@ -1802,6 +1943,7 @@ impl Provider for OpenAiCompatibleProvider {
             tools,
             thread_id,
             stream_options: None,
+            options: self.build_ollama_options(),
         };
         let dump_seq = reserve_dump_seq();
         dump_prompt_if_enabled(&self.name, model, dump_seq, &native_request);
@@ -1858,6 +2000,12 @@ impl Provider for OpenAiCompatibleProvider {
                     usage: None,
                     reasoning_content: None,
                 });
+            }
+
+            // A completion-only model 404s here and the /v1/responses fallback
+            // cannot rescue it — fail fast with actionable guidance (#3193).
+            if let Some(err) = self.completion_only_404_guard(status, &sanitized, model) {
+                return Err(err);
             }
 
             if status == reqwest::StatusCode::NOT_FOUND && self.supports_responses_fallback {
@@ -1940,7 +2088,12 @@ impl Provider for OpenAiCompatibleProvider {
     }
 
     fn supports_native_tools(&self) -> bool {
-        true
+        // Must mirror `capabilities().native_tool_calling`. Both signals are
+        // read by the agent harness (`traits.rs:415`) to decide between an
+        // OpenAI-style `tools` array and the prompt-guided text fallback;
+        // letting them disagree would defeat `with_native_tool_calling(false)`
+        // for the Ollama branch of sub-issue 3 of #3098.
+        self.native_tool_calling
     }
 
     fn supports_streaming(&self) -> bool {
@@ -1967,12 +2120,12 @@ impl Provider for OpenAiCompatibleProvider {
         if let Some(sys) = system_prompt {
             messages.push(Message {
                 role: "system".to_string(),
-                content: sys.to_string(),
+                content: sys.into(),
             });
         }
         messages.push(Message {
             role: "user".to_string(),
-            content: message.to_string(),
+            content: MessageContent::from_chat_text(message),
         });
 
         let request = ApiChatRequest {
@@ -2144,7 +2297,7 @@ impl Provider for OpenAiCompatibleProvider {
             .into_iter()
             .map(|message| Message {
                 role: message.role,
-                content: message.content,
+                content: MessageContent::from_chat_text(&message.content),
             })
             .collect();
 

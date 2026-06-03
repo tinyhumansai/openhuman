@@ -117,6 +117,19 @@ named = [
     "spawn_worker_thread",
     "spawn_parallel_agents",
     "composio_list_connections",
+    # App launching — lets the orchestrator open desktop applications
+    # directly when asked ("open Music", "launch Spotify", etc.) without
+    # delegating or telling the user it can't. Routes through the ApprovalGate
+    # (external effect), so launching prompts for confirmation per autonomy tier.
+    "launch_app",
+    # AXUIElement / UIA interaction — find UI by semantic label. No CGEventPost,
+    # no coordinate dependency, no CEF crash risk. Always call action='list'
+    # first to discover elements. Only the read-only `list` action is
+    # ReadOnly/unprompted; the mutating `press` / `set_value` actions are
+    # `Dangerous`, gate interactively through the ApprovalGate, are opt-in via
+    # `computer_control.ax_interact_mutations`, and refuse a sensitive-app
+    # denylist (password managers, Keychain, System Settings, terminals).
+    "ax_interact",
     # Time + scheduling — lets the orchestrator answer "what time is it",
     # "remind me in 10 minutes", "every morning at 8" directly rather than
     # delegating or telling the user it can't. `current_time` grounds

@@ -543,6 +543,7 @@ mod tests {
             timestamp: "2026-04-22T00:00:00Z".to_string(),
             session_id: None,
             score,
+            taint: Default::default(),
         }
     }
 
@@ -570,6 +571,7 @@ mod tests {
             timestamp: "2026-05-25T00:00:00Z".into(),
             session_id: None,
             score: None,
+            taint: Default::default(),
         }]);
 
         let out = DefaultMemoryLoader::default()
@@ -600,6 +602,7 @@ mod tests {
             timestamp: "2026-04-22T00:00:00Z".into(),
             session_id: Some("thr_old".into()),
             score: Some(0.9),
+            taint: Default::default(),
         }]);
 
         let out = DefaultMemoryLoader::default()
@@ -632,6 +635,7 @@ mod tests {
                     timestamp: "2026-04-22T00:00:00Z".into(),
                     session_id: Some("thr_old".into()),
                     score: Some(0.9),
+                    taint: Default::default(),
                 },
                 MemoryEntry {
                     id: "id-2".into(),
@@ -642,6 +646,7 @@ mod tests {
                     timestamp: "2026-04-22T00:00:00Z".into(),
                     session_id: None,
                     score: Some(0.9),
+                    taint: Default::default(),
                 },
             ]);
 
@@ -700,6 +705,7 @@ mod tests {
             timestamp: "2026-05-15T00:00:00Z".into(),
             session_id: Some(session_id.into()),
             score,
+            taint: Default::default(),
         }
     }
 

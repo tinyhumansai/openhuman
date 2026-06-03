@@ -451,6 +451,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': 'Vor {count} Std.',
   'memoryTree.status.dayAgo': 'Vor 1 Tag',
   'memoryTree.status.daysAgo': '{count} vor Tagen',
+  'memoryTree.status.integrationsTitle': 'Integrationsstatus',
+  'memoryTree.status.integrationsEmpty': 'Keine Integrationen verbunden',
+  'memoryTree.status.integrationActive': 'Aktiv',
+  'memoryTree.status.integrationStale': 'Veraltet',
+  'memoryTree.status.integrationChunks': 'Chunks: {count}',
   'alerts.title': 'Warnungen',
   'alerts.empty': 'Noch keine Benachrichtigungen',
   'alerts.markAllRead': 'Alle als gelesen markieren',
@@ -503,6 +508,8 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Fahre mit „Einfach“ fort',
   'onboarding.runtimeChoice.continueCustom': 'Fahre mit Benutzerdefiniert fort',
   'onboarding.runtimeChoice.recommended': 'Empfohlen',
+  'onboarding.runtimeChoice.exitError':
+    'Onboarding konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut.',
   'onboarding.apiKeys.title': 'Fügen wir deine API-Schlüssel hinzu',
   'onboarding.apiKeys.subtitle':
     'Du kannst sie jetzt einfügen oder überspringen und später unter „Einstellungen“ > „KI“ hinzufügen. Schlüssel werden auf diesem Gerät gespeichert und im Ruhezustand verschlüsselt.',
@@ -3755,7 +3762,42 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': 'Genehmigungsverlauf anzeigen',
+  'settings.sandbox.title': 'Sandbox-Ausführung',
+  'settings.sandbox.menuDesc':
+    'Sandbox-Backends für die Isolation von Agentenwerkzeugen konfigurieren.',
+  'settings.sandbox.loading': 'Wird geladen…',
+  'settings.sandbox.desktopOnly': 'Sandbox-Einstellungen sind nur in der Desktop-App verfügbar.',
+  'settings.sandbox.loadError': 'Sandbox-Einstellungen konnten nicht geladen werden.',
+  'settings.sandbox.saveError': 'Sandbox-Einstellungen konnten nicht gespeichert werden.',
+  'settings.sandbox.saved': 'Gespeichert — gilt für neue Agentensitzungen.',
+  'settings.sandbox.saving': 'Wird gespeichert…',
+  'settings.sandbox.status': 'Status',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Verfügbar',
+  'settings.sandbox.unavailable': 'Nicht verfügbar',
+  'settings.sandbox.detectedBackend': 'OS-Backend',
+  'settings.sandbox.enableLabel': 'Sandbox-Ausführung aktivieren',
+  'settings.sandbox.enableDesc': 'Agentenwerkzeuge in einer isolierten Sandbox-Umgebung ausführen.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc': 'Wählen Sie das Isolierungs-Backend für die Sandbox-Ausführung.',
+  'settings.sandbox.backend.auto': 'Automatisch (bestes verfügbares erkennen)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Keine (ohne Sandbox)',
+  'settings.sandbox.dockerSettings': 'Docker-Einstellungen',
+  'settings.sandbox.dockerImage': 'Image',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Speicherlimit',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'CPU-Limit',
+  'settings.sandbox.cpuUnit': 'Kerne',
+  'settings.sandbox.envPassthrough': 'Umgebungsvariablen-Durchleitung',
+  'settings.sandbox.envPassthroughDesc':
+    'Umgebungsvariablen, die in die Sandbox weitergeleitet werden.',
+  'settings.sandbox.noEnvVars': 'Keine Umgebungsvariablen konfiguriert.',
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4491,6 +4533,39 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Integrierte Agenten können nicht bearbeitet werden. Sie können sie in der Agentenliste aktivieren, deaktivieren oder zurücksetzen.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefakt: {title}',
+  'chat.artifact.generating': 'Erstelle {kind}…',
+  'chat.artifact.ready': 'Bereit',
+  'chat.artifact.failed': 'Erstellung fehlgeschlagen',
+  'chat.artifact.download': 'Herunterladen',
+  'chat.artifact.downloading': 'Wird heruntergeladen…',
+  'chat.artifact.downloaded': 'Gespeichert unter {path}',
+  'chat.artifact.download_failed': 'Download fehlgeschlagen: {reason}',
+  'chat.artifact.retry': 'Erneut versuchen',
+  'chat.artifact.reveal': 'Im Ordner anzeigen',
+  'chat.artifact.show_more': 'Mehr anzeigen',
+  'chat.artifact.show_less': 'Weniger anzeigen',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} Datei in diesem Chat',
+  'chat.files.chip.aria.other': '{count} Dateien in diesem Chat',
+  'chat.files.panel.aria': 'Dateien in diesem Chat',
+  'chat.files.panel.title': 'Dateien ({count})',
+  'chat.files.panel.empty': 'Noch keine Dateien. Bitten Sie den Agenten, eine zu erstellen.',
+  'chat.files.panel.close': 'Dateibereich schließen',
+  'chat.files.delete.aria': '{title} löschen',
+  'chat.files.delete.confirm': 'Diese Datei löschen?',
+  'chat.files.delete.cancel': 'Abbrechen',
+  'chat.files.delete.action': 'Löschen',
+  'chat.files.delete.failed': 'Datei konnte nicht gelöscht werden. Erneut versuchen.',
+  'chat.files.error.not_desktop': 'Downloads sind nur in der Desktop-App verfügbar.',
+  'chat.files.error.missing_artifact_id': 'Artefakt-ID fehlt.',
+  'chat.files.error.missing_artifact_path': 'Artefaktpfad fehlt in der Core-Antwort.',
+  'chat.files.error.resolve_failed':
+    'Das Artefakt konnte nicht aufgelöst werden. Bitte erneut versuchen.',
+  'chat.files.error.download_failed': 'Download fehlgeschlagen. Bitte erneut versuchen.',
+  'chat.files.error.delete_failed': 'Datei konnte nicht gelöscht werden. Bitte erneut versuchen.',
   'autocomplete.debounceMs': 'Entprellung (ms)',
   'autocomplete.maxChars': 'Maximale Kontextzeichen',
   'autocomplete.overlayTtlMs': 'Overlay-Timeout (ms)',
@@ -4580,19 +4655,33 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Lokalen Speicher ablehnen',
   'pages.settings.account.security': 'Sicherheit',
   'pages.settings.account.securityDesc': 'Geheimnisspeicher-Modus und Schlüsselbund-Status',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Eingeschränkt',
+  'memoryTree.status.degradedRecall': 'Semantische Suche deaktiviert',
+  'memoryTree.status.degradedStructure': 'Wiki-Struktur unvollständig',
+  'memoryTree.status.extractionCoverage':
+    'Extraktionsabdeckung: {pct}% der Abschnitte haben Struktur',
+  'memory.health.remediation.budget_exhausted':
+    'Die Speicher-Embeddings haben das verwaltete Budget erreicht. Richte lokale Ollama-Embeddings ein (Einstellungen → KI → Einbettungen) oder füge deinen eigenen Embeddings-API-Schlüssel hinzu, um den Speicher weiter aufzubauen.',
+  'memory.health.remediation.auth_missing':
+    'Keine Embeddings-Anmeldedaten gefunden. Melde dich bei OpenHuman an oder richte lokale Ollama-Embeddings unter Einstellungen → KI → Einbettungen ein.',
+  'memory.health.remediation.auth_invalid':
+    'Deine Embeddings-Anmeldedaten wurden abgelehnt. Authentifiziere dich erneut oder wechsle unter Einstellungen → KI → Einbettungen zu lokalen Ollama-Embeddings.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'Es ist kein Embeddings-Anbieter konfiguriert, daher ist die semantische Suche deaktiviert. Richte lokale Ollama-Embeddings ein (empfohlen) oder füge unter Einstellungen → KI → Einbettungen einen Embeddings-Schlüssel hinzu.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'Das Embedding-Modell liefert die falsche Vektorgröße (der Speicher erwartet 1024 Dimensionen). Wähle ein Modell mit 1024 Dimensionen oder fordere 1024 Dimensionen von deinem Anbieter an.',
+  'memory.health.remediation.local_model_unavailable':
+    'Ein erforderliches lokales Modell ist nicht verfügbar. Installiere/starte Ollama und lade das Modell herunter, oder wechsle diese Arbeitslast unter Einstellungen → KI zu einem Cloud-Anbieter.',
+  'memory.health.remediation.extraction_timeout':
+    'Das Modell zur Speicherextraktion überschreitet die Zeit, daher hat das Wiki wenig Struktur. Wechsle das Modell für die Speicherextraktion unter Einstellungen → KI zu einem schnelleren.',
+  'memory.health.remediation.summarizer_unavailable':
+    'Für „Zusammenfassungsbäume erstellen” ist kein Zusammenfassungsanbieter verfügbar. Aktiviere die lokale KI (Ollama) oder aktiviere die Cloud-Zusammenfassung unter Einstellungen → KI → Speicher.',
+  'memory.health.remediation.transient':
+    'Ein vorübergehender Fehler hat die Speicherverarbeitung unterbrochen. Es wird automatisch erneut versucht.',
+  'memory.health.remediation.unknown':
+    'Bei der Speicherverarbeitung ist ein Problem aufgetreten. Überprüfe Einstellungen → KI für die Konfiguration.',
   // Chat — agent-generated artifacts (#2779)
-  'chat.artifact.aria': 'Artefakt: {title}',
-  'chat.artifact.generating': 'Erstelle {kind}…',
-  'chat.artifact.ready': 'Bereit',
-  'chat.artifact.failed': 'Erstellung fehlgeschlagen',
-  'chat.artifact.download': 'Herunterladen',
-  'chat.artifact.downloading': 'Wird heruntergeladen…',
-  'chat.artifact.downloaded': 'Gespeichert unter {path}',
-  'chat.artifact.download_failed': 'Download fehlgeschlagen: {reason}',
-  'chat.artifact.retry': 'Erneut versuchen',
-  'chat.artifact.reveal': 'Im Ordner anzeigen',
-  'chat.artifact.show_more': 'Mehr anzeigen',
-  'chat.artifact.show_less': 'Weniger anzeigen',
 
   // Chat composer toolbar
   'composer.attachFile': 'Datei anhängen',

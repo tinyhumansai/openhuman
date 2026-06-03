@@ -562,6 +562,26 @@ const chatRuntimeSlice = createSlice({
     clearArtifactsForThread: (state, action: PayloadAction<{ threadId: string }>) => {
       delete state.artifactsByThread[action.payload.threadId];
     },
+    /**
+     * Remove a single artifact entry from a thread's ledger (#3024). Used
+     * by the Files panel's per-row Delete affordance: caller dispatches
+     * this optimistically, then fires `openhuman.ai_delete_artifact` and
+     * re-upserts the snapshot on RPC failure. No-op if either the thread
+     * or the artifactId is unknown.
+     */
+    removeArtifactForThread: (
+      state,
+      action: PayloadAction<{ threadId: string; artifactId: string }>
+    ) => {
+      const bucket = state.artifactsByThread[action.payload.threadId];
+      if (!bucket) return;
+      const next = bucket.filter(entry => entry.artifactId !== action.payload.artifactId);
+      if (next.length === 0) {
+        delete state.artifactsByThread[action.payload.threadId];
+      } else {
+        state.artifactsByThread[action.payload.threadId] = next;
+      }
+    },
     beginInferenceTurn: (state, action: PayloadAction<{ threadId: string }>) => {
       state.inferenceTurnLifecycleByThread[action.payload.threadId] = 'started';
     },
@@ -687,6 +707,7 @@ export const {
   upsertArtifactReadyForThread,
   upsertArtifactFailedForThread,
   clearArtifactsForThread,
+  removeArtifactForThread,
   beginInferenceTurn,
   markInferenceTurnStreaming,
   endInferenceTurn,

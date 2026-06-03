@@ -312,6 +312,7 @@ mod tests {
                 category: "core".to_string(),
                 session_id: None,
                 document_id: None,
+                taint: crate::openhuman::memory::MemoryTaint::Internal,
             },
             config: MemoryIngestionConfig::default(),
         }

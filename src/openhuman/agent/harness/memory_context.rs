@@ -279,6 +279,7 @@ mod tests {
             timestamp: "now".into(),
             session_id: None,
             score,
+            taint: Default::default(),
         }
     }
 
@@ -297,6 +298,7 @@ mod tests {
             timestamp: "now".into(),
             session_id: Some(session_id.into()),
             score,
+            taint: Default::default(),
         }
     }
 

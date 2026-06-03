@@ -208,6 +208,10 @@ pub(crate) async fn persist_vision_summary(
         category: VISION_MEMORY_CATEGORY.to_string(),
         session_id: None,
         document_id: None,
+        // Screen-intelligence captures the user's own active window;
+        // not third-party sync content. Internal preserves the
+        // baseline subconscious-trust behaviour.
+        taint: crate::openhuman::memory::MemoryTaint::Internal,
     };
 
     // put_doc_light stores the document (DB row + markdown file) without

@@ -103,6 +103,7 @@ export const ALLOWED_EVENTS = new Set([
   'skill_install',
   'skill_uninstall',
   'tab_bar_change',
+  'tauri_browser_click',
   'ui_click',
   'ui_control_change',
   'ui_form_submit',

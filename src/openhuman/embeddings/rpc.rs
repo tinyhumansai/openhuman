@@ -401,7 +401,7 @@ pub fn provider_from_config(config: &Config) -> anyhow::Result<Box<dyn super::Em
     )
 }
 
-fn resolve_api_key(config: &Config, provider_name: &str) -> String {
+pub(crate) fn resolve_api_key(config: &Config, provider_name: &str) -> String {
     let slug = if provider_name.starts_with("custom:") {
         "custom"
     } else {

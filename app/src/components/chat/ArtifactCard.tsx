@@ -212,6 +212,7 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
         {artifact.status === 'ready' && download.state !== 'done' && (
           <button
             type="button"
+            data-analytics-id={`chat-artifact-download-${artifact.kind}`}
             onClick={handleDownload}
             disabled={download.state === 'downloading'}
             className="ml-auto rounded-md bg-ocean-500 hover:bg-ocean-600 disabled:bg-stone-300 dark:disabled:bg-neutral-700 text-white text-xs font-medium px-3 py-1.5 transition-colors">
@@ -223,6 +224,7 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
         {artifact.status === 'failed' && onRetry && (
           <button
             type="button"
+            data-analytics-id={`chat-artifact-retry-${artifact.kind}`}
             onClick={() => onRetry(artifact.artifactId)}
             className="ml-auto rounded-md bg-stone-200 dark:bg-neutral-700 hover:bg-stone-300 dark:hover:bg-neutral-600 text-stone-700 dark:text-neutral-200 text-xs font-medium px-3 py-1.5 transition-colors">
             {t('chat.artifact.retry')}
@@ -242,6 +244,7 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
           {artifact.error.length > ERROR_REASON_PREVIEW_CHARS && (
             <button
               type="button"
+              data-analytics-id="chat-artifact-error-toggle"
               onClick={() => setErrorExpanded(prev => !prev)}
               className="mt-1 underline text-coral-700 dark:text-coral-300 hover:text-coral-900 dark:hover:text-coral-100">
               {errorExpanded ? t('chat.artifact.show_less') : t('chat.artifact.show_more')}
@@ -256,6 +259,7 @@ export default function ArtifactCard({ artifact, onRetry }: ArtifactCardProps) {
           </span>
           <button
             type="button"
+            data-analytics-id={`chat-artifact-reveal-${artifact.kind}`}
             onClick={handleReveal}
             className="ml-auto underline hover:text-sage-900 dark:hover:text-sage-100 transition-colors flex-shrink-0">
             {t('chat.artifact.reveal')}

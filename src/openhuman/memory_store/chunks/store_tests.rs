@@ -55,6 +55,20 @@ fn upsert_then_get() {
 }
 
 #[test]
+fn upsert_persists_path_scope() {
+    let (_tmp, cfg) = test_config();
+    let mut c = sample_chunk("notion:conn-1:page-abc", 0, 1_700_000_000_000);
+    c.metadata.source_kind = SourceKind::Document;
+    c.metadata.path_scope = Some("notion:conn-1".to_string());
+
+    assert_eq!(upsert_chunks(&cfg, &[c.clone()]).unwrap(), 1);
+
+    let got = get_chunk(&cfg, &c.id).unwrap().expect("chunk stored");
+    assert_eq!(got.metadata.source_id, "notion:conn-1:page-abc");
+    assert_eq!(got.metadata.path_scope.as_deref(), Some("notion:conn-1"));
+}
+
+#[test]
 fn upsert_is_idempotent() {
     let (_tmp, cfg) = test_config();
     let c = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
@@ -866,10 +880,11 @@ fn empty_batch_is_noop() {
 
 #[test]
 fn schema_has_content_path_and_content_sha256_columns() {
-    // Phase MD-content: verify that with_connection applies the additive
-    // migrations for the new pointer + hash columns on a fresh DB.
+    // Verify that with_connection applies additive migrations for content
+    // pointers and source grouping scope on a fresh DB.
     let (_tmp, cfg) = test_config();
     with_connection(&cfg, |conn| {
+        let mut has_path_scope = false;
         let mut has_content_path = false;
         let mut has_content_sha256 = false;
         let mut stmt = conn.prepare("PRAGMA table_info(mem_tree_chunks)")?;
@@ -878,6 +893,9 @@ fn schema_has_content_path_and_content_sha256_columns() {
             .filter_map(|r| r.ok())
             .collect();
         for name in &names {
+            if name == "path_scope" {
+                has_path_scope = true;
+            }
             if name == "content_path" {
                 has_content_path = true;
             }
@@ -885,6 +903,10 @@ fn schema_has_content_path_and_content_sha256_columns() {
                 has_content_sha256 = true;
             }
         }
+        assert!(
+            has_path_scope,
+            "mem_tree_chunks must have path_scope column after migration; found: {names:?}"
+        );
         assert!(
             has_content_path,
             "mem_tree_chunks must have content_path column after migration; found: {names:?}"
@@ -1646,4 +1668,48 @@ fn global_topic_purge_removes_only_global_and_topic() {
         summaries.join("source-slack-eng").exists(),
         "source summary folder must survive the purge"
     );
+}
+
+// ── extraction_coverage (#002 FR-010 / US5) ──────────────────────────────
+
+#[test]
+fn extraction_coverage_empty_store_is_zero() {
+    let (_tmp, cfg) = test_config();
+    assert_eq!(extraction_coverage(&cfg).unwrap(), 0.0);
+}
+
+#[test]
+fn extraction_coverage_reflects_indexed_fraction() {
+    let (_tmp, cfg) = test_config();
+    // Two chunks; index an entity for only the first → coverage 0.5.
+    let c1 = sample_chunk("slack:#eng", 0, 1_700_000_000_000);
+    let c2 = sample_chunk("slack:#eng", 1, 1_700_000_001_000);
+    upsert_chunks(&cfg, &[c1.clone(), c2.clone()]).unwrap();
+
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_entity_index
+                (entity_id, node_id, node_kind, entity_kind, surface, score, timestamp_ms)
+             VALUES (?1, ?2, 'leaf', 'person', 'Alice', 0.9, 1)",
+            params!["person:Alice", c1.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+
+    let cov = extraction_coverage(&cfg).unwrap();
+    assert!((cov - 0.5).abs() < 1e-6, "expected 0.5, got {cov}");
+
+    // Index the second chunk too → full coverage.
+    with_connection(&cfg, |conn| {
+        conn.execute(
+            "INSERT INTO mem_tree_entity_index
+                (entity_id, node_id, node_kind, entity_kind, surface, score, timestamp_ms)
+             VALUES (?1, ?2, 'leaf', 'person', 'Bob', 0.9, 2)",
+            params!["person:Bob", c2.id],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    assert!((extraction_coverage(&cfg).unwrap() - 1.0).abs() < 1e-6);
 }

@@ -107,9 +107,73 @@ fn tier_context_window(model: &str) -> Option<u64> {
     }
 }
 
+/// Resolve context window with local provider profile fallback.
+///
+/// When `context_window_for_model` returns `None` (unknown model name —
+/// common for local models like `qwen3:14b`, `phi3:mini`, etc.) this
+/// function falls back to the provider profile's declared default context
+/// window. This ensures preflight trimming still works for local models
+/// even when the exact model name isn't in the static pattern table.
+pub fn context_window_for_model_with_local_fallback(
+    model: &str,
+    local_kind: Option<crate::openhuman::inference::local::profile::LocalProviderKind>,
+) -> Option<u64> {
+    if let Some(window) = context_window_for_model(model) {
+        return Some(window);
+    }
+    // Fall back to the local provider profile's default context window.
+    if let Some(kind) = local_kind {
+        let profile = crate::openhuman::inference::local::profile::profile_for_kind(kind);
+        if let Some(default_ctx) = profile.default_context_window {
+            tracing::debug!(
+                model,
+                provider = kind.as_str(),
+                context_window = default_ctx,
+                "[model_context] using local provider profile default context window"
+            );
+            return Some(default_ctx);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::openhuman::inference::local::profile::LocalProviderKind;
+
+    #[test]
+    fn local_fallback_uses_profile_default() {
+        // Unknown model with Ollama profile → 8192 default
+        assert_eq!(
+            context_window_for_model_with_local_fallback(
+                "qwen3:14b",
+                Some(LocalProviderKind::Ollama)
+            ),
+            Some(8_192)
+        );
+        // Unknown model with MLX profile → 4096 default
+        assert_eq!(
+            context_window_for_model_with_local_fallback(
+                "my-custom-model",
+                Some(LocalProviderKind::Mlx)
+            ),
+            Some(4_096)
+        );
+        // Unknown model with no local provider → None
+        assert_eq!(
+            context_window_for_model_with_local_fallback("qwen3:14b", None),
+            None
+        );
+        // Known model ignores local fallback
+        assert_eq!(
+            context_window_for_model_with_local_fallback(
+                "llama3:8b",
+                Some(LocalProviderKind::Ollama)
+            ),
+            Some(128_000)
+        );
+    }
 
     #[test]
     fn tier_aliases_resolve() {

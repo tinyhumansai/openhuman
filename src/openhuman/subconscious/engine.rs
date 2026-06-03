@@ -21,6 +21,27 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+/// Pick the `TrustedAutomationSource` variant for a subconscious tick.
+///
+/// Extracted from the engine's `run_agent` body so the
+/// origin-escalation contract can be unit-tested without spinning up
+/// a real `Agent` + provider.
+///
+/// Contract: any tick whose situation report contained third-party
+/// sync content (Gmail / Slack / Notion / sealed source summaries)
+/// must run with `SubconsciousTainted` so the approval gate refuses
+/// external_effect tools. Untainted ticks keep the legacy
+/// `Subconscious` origin.
+pub(crate) fn tick_origin_source(
+    has_external_content: bool,
+) -> crate::openhuman::agent::turn_origin::TrustedAutomationSource {
+    if has_external_content {
+        crate::openhuman::agent::turn_origin::TrustedAutomationSource::SubconsciousTainted
+    } else {
+        crate::openhuman::agent::turn_origin::TrustedAutomationSource::Subconscious
+    }
+}
+
 pub struct SubconsciousEngine {
     workspace_dir: PathBuf,
     mode: SubconsciousMode,
@@ -167,13 +188,16 @@ impl SubconsciousEngine {
             &recent_reflections,
         )
         .await;
+        let has_external_content = report.has_external_content;
 
         // 2. Load identity context
         let identity = prompt::load_identity_context(&self.workspace_dir);
 
         // 3. Run the subconscious agent
-        let agent_prompt = prompt::build_agent_prompt(&report, &identity);
-        let agent_result = self.run_agent(&config, &agent_prompt).await;
+        let agent_prompt = prompt::build_agent_prompt(&report.prompt_text, &identity);
+        let agent_result = self
+            .run_agent(&config, &agent_prompt, has_external_content)
+            .await;
         let agent_failed = agent_result.is_err();
         let drafts = agent_result.unwrap_or_default();
 
@@ -258,6 +282,7 @@ impl SubconsciousEngine {
         &self,
         config: &Config,
         prompt_text: &str,
+        has_external_content: bool,
     ) -> Result<Vec<ReflectionDraft>, String> {
         use crate::openhuman::agent::Agent;
 
@@ -296,7 +321,29 @@ impl SubconsciousEngine {
         );
 
         debug!("[subconscious] spawning agent with tool access");
-        let response = agent.run_single(&user_message).await.map_err(|e| {
+        // Subconscious ticks are trusted automation: the user enabled the
+        // background loop knowing it should think about their state.
+        // When the situation report carries content derived from third-
+        // party sync sources (Gmail / Slack / Notion / sealed source
+        // summaries), escalate the origin so the approval gate refuses
+        // external_effect tools for the rest of the tick — a hostile
+        // upstream message can otherwise nudge the LLM into a tool call
+        // the user would never have authorised.
+        let source = tick_origin_source(has_external_content);
+        debug!(
+            "[subconscious] tick origin source={:?} has_external_content={has_external_content}",
+            source
+        );
+        let origin = crate::openhuman::agent::turn_origin::AgentTurnOrigin::TrustedAutomation {
+            job_id: format!("subconscious:tick:{}", now_secs() as u64),
+            source,
+        };
+        let response = crate::openhuman::agent::turn_origin::with_origin(
+            origin,
+            agent.run_single(&user_message),
+        )
+        .await
+        .map_err(|e| {
             warn!("[subconscious] agent run failed: {e}");
             format!("agent run: {e}")
         })?;

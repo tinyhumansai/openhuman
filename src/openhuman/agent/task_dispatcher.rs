@@ -29,6 +29,7 @@ use crate::openhuman::agent::personality_paths::PersonalityContext;
 use crate::openhuman::agent::task_board::{TaskBoardCard, TaskCardStatus};
 use crate::openhuman::config::Config;
 use crate::openhuman::todos::ops::{self, BoardLocation, CardPatch};
+use crate::openhuman::todos::runs::{self, RunLimits, RunOutcome};
 
 /// Max chars of a personality SOUL.md / MEMORY.md or skill guideline block
 /// folded into the agent's system-prompt suffix.
@@ -156,57 +157,49 @@ pub async fn dispatch_card(
         .await
         .map_err(|e| format!("load config: {e:#}"))?;
 
-    // Claim CAS: re-load the card's CURRENT status before acting. The passed-in
-    // `card` may be stale — the poller and the proactive triage arm can target
-    // the same card, and a re-triggered card may already be running or done.
-    // Only `Todo`/`Ready` are claimable. This is what actually dedupes a
-    // double-dispatch: `enforce_single_in_progress` alone does NOT, because
-    // re-flipping an already-`InProgress` card to `InProgress` keeps the count
-    // at one (→ `Ok`). Thread boards aren't lock-serialised, so a narrow TOCTOU
-    // window between this read and the write remains; a fully race-free claim
-    // needs a per-thread-locked compare-and-set `ops` primitive (follow-up).
-    // Re-load the full current card (not just its status): the passed-in `card`
-    // can be stale (edited between selection and claim), so the run must use the
-    // fresh objective / plan / assigned_agent, not the snapshot the caller held.
-    let fresh_card = ops::list(&location)
-        .map_err(|e| format!("[task_dispatcher] reload before claim failed for {card_id}: {e}"))?
-        .cards
-        .into_iter()
-        .find(|c| c.id == card_id)
-        .ok_or_else(|| format!("[task_dispatcher] card {card_id} not found on board; skipping"))?;
-    if !matches!(
-        fresh_card.status,
-        TaskCardStatus::Todo | TaskCardStatus::Ready
-    ) {
-        return Err(format!(
-            "[task_dispatcher] card {card_id} not claimable (status: {}); skipping",
-            fresh_card.status.as_str()
-        ));
+    // Plan-approval gate: when required, a `todo` card is parked for human
+    // approval before it can run. `Ready` (already approved) bypasses. We
+    // attempt the AwaitingApproval claim first so the gate is also atomic —
+    // two dispatchers racing the same Todo card won't both park it.
+    if config.autonomy.require_task_plan_approval {
+        match ops::claim_card(
+            &location,
+            &card_id,
+            &[TaskCardStatus::Todo],
+            TaskCardStatus::AwaitingApproval,
+        ) {
+            Ok(_parked) => {
+                if let Some(thread_id) = location.thread_id() {
+                    crate::core::event_bus::publish_global(
+                        crate::core::event_bus::DomainEvent::TaskPlanAwaitingApproval {
+                            card_id: card_id.clone(),
+                            thread_id: thread_id.to_string(),
+                        },
+                    );
+                }
+                tracing::info!(card_id = %card_id, "[task_dispatcher] parked card awaiting plan approval");
+                return Ok(DispatchOutcome::AwaitingApproval);
+            }
+            Err(_) => {
+                // Card wasn't `Todo` — fall through to the main claim path,
+                // which handles `Ready` cards and rejects everything else.
+            }
+        }
     }
 
-    // Plan-approval gate: when required, a `todo` card is parked for human
-    // approval before it can run. `Ready` (already approved) bypasses.
-    if config.autonomy.require_task_plan_approval && fresh_card.status == TaskCardStatus::Todo {
-        ops::update_status(&location, &card_id, TaskCardStatus::AwaitingApproval).map_err(|e| {
-            format!("[task_dispatcher] park-for-approval failed for {card_id}: {e}")
-        })?;
-        if let Some(thread_id) = location.thread_id() {
-            crate::core::event_bus::publish_global(
-                crate::core::event_bus::DomainEvent::TaskPlanAwaitingApproval {
-                    card_id: card_id.clone(),
-                    thread_id: thread_id.to_string(),
-                },
-            );
-        }
-        tracing::info!(card_id = %card_id, "[task_dispatcher] parked card awaiting plan approval");
-        return Ok(DispatchOutcome::AwaitingApproval);
-    }
+    // Atomic claim: transition Todo|Ready → InProgress under a per-board
+    // lock so concurrent dispatchers cannot both succeed. The returned card
+    // is the freshly-loaded snapshot — the prompt uses it, not the caller's
+    // potentially stale copy.
+    let fresh_card = ops::claim_card(
+        &location,
+        &card_id,
+        &[TaskCardStatus::Todo, TaskCardStatus::Ready],
+        TaskCardStatus::InProgress,
+    )
+    .map_err(|e| format!("[task_dispatcher] claim rejected for {card_id}: {e}"))?;
 
     let prompt = build_task_prompt(&fresh_card);
-
-    // Claim: Todo|Ready→InProgress.
-    ops::update_status(&location, &card_id, TaskCardStatus::InProgress)
-        .map_err(|e| format!("[task_dispatcher] claim failed for card {card_id}: {e}"))?;
 
     let run_id = uuid::Uuid::new_v4().to_string();
 
@@ -222,10 +215,23 @@ pub async fn dispatch_card(
         "[task_dispatcher] card claimed (→in_progress), spawning autonomous run"
     );
 
+    if let Err(e) = runs::create_run(&location, &run_id, &card_id, &executor.label) {
+        tracing::warn!(
+            run_id = %run_id,
+            card_id = %card_id,
+            error = %e,
+            "[task_dispatcher] failed to create run record (proceeding without liveness tracking)"
+        );
+    }
+
+    let (hb_cancel_tx, hb_cancel_rx) = tokio::sync::watch::channel(false);
+    runs::spawn_heartbeat_task(location.clone(), run_id.clone(), hb_cancel_rx);
+
     let run_id_for_return = run_id.clone();
     let location_for_run = location.clone();
     tokio::spawn(async move {
         let outcome = run_autonomous(config, &executor, &prompt, &run_id).await;
+        let _ = hb_cancel_tx.send(true);
         write_back(&location_for_run, &card_id, &run_id, outcome);
     });
 
@@ -378,9 +384,16 @@ async fn run_autonomous(
         run_id.get(..8).unwrap_or(run_id)
     ));
 
-    with_autonomous_iter_cap(TASK_RUN_MAX_ITERATIONS, agent.run_single(prompt))
-        .await
-        .map_err(|e| format!("{e:#}"))
+    // Sub-agent task runs are internal to the agent harness — the user
+    // already authorized the parent turn that dispatched this task. Label
+    // as CLI so the approval gate doesn't fail closed on internal
+    // sub-agent invocations.
+    crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::Cli,
+        with_autonomous_iter_cap(TASK_RUN_MAX_ITERATIONS, agent.run_single(prompt)),
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Deterministic board write-back: the dispatcher owns the card lifecycle.
@@ -428,6 +441,26 @@ fn write_back(
             run_id = %run_id,
             error = %e,
             "[task_dispatcher] board write-back failed (run outcome lost from board)"
+        );
+    }
+
+    let (run_outcome, run_error, run_evidence) = match &outcome {
+        Ok(output) => (
+            RunOutcome::Success,
+            None,
+            vec![truncate_chars(output.trim(), EVIDENCE_MAX_CHARS)],
+        ),
+        Err(err) => (
+            RunOutcome::Failed,
+            Some(truncate_chars(err, EVIDENCE_MAX_CHARS)),
+            Vec::new(),
+        ),
+    };
+    if let Err(e) = runs::complete_run(location, run_id, run_outcome, run_error, run_evidence) {
+        tracing::warn!(
+            run_id = %run_id,
+            error = %e,
+            "[task_dispatcher] run record completion failed"
         );
     }
 }
@@ -500,6 +533,27 @@ pub(crate) async fn poll_once() -> Result<(), String> {
         workspace_dir: config.workspace_dir.clone(),
         thread_id: crate::openhuman::task_sources::TASK_SOURCES_THREAD_ID.to_string(),
     };
+
+    // Reclaim stale/wedged runs before looking for new work. Reclaimed
+    // cards move back to `todo` (re-dispatchable) so they appear in the
+    // snapshot below and can be picked up in the same tick.
+    match runs::reclaim_stale(&location, &RunLimits::default()) {
+        Ok(result) if result.reclaimed_count > 0 || result.blocked_count > 0 => {
+            tracing::info!(
+                reclaimed = result.reclaimed_count,
+                blocked = result.blocked_count,
+                "[task_dispatcher:poller] stale runs reclaimed"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "[task_dispatcher:poller] stale reclaim failed (continuing)"
+            );
+        }
+        _ => {}
+    }
+
     let snapshot = ops::list(&location)?;
 
     // `enforce_single_in_progress` caps the board at one running card, so if

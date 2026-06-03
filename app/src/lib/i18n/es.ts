@@ -450,6 +450,11 @@ const messages: TranslationMap = {
   'memoryTree.status.hoursAgo': '{count} hace hr',
   'memoryTree.status.dayAgo': 'Hace 1 día',
   'memoryTree.status.daysAgo': '{count} hace días',
+  'memoryTree.status.integrationsTitle': 'Estado por integración',
+  'memoryTree.status.integrationsEmpty': 'No hay integraciones conectadas',
+  'memoryTree.status.integrationActive': 'Activa',
+  'memoryTree.status.integrationStale': 'Inactiva',
+  'memoryTree.status.integrationChunks': 'Fragmentos: {count}',
   'alerts.title': 'Alertas',
   'alerts.empty': 'Sin alertas aún',
   'alerts.markAllRead': 'Marcar todo como leído',
@@ -501,6 +506,8 @@ const messages: TranslationMap = {
   'onboarding.runtimeChoice.continueCloud': 'Continuar con Simple',
   'onboarding.runtimeChoice.continueCustom': 'Continuar con Personalizado',
   'onboarding.runtimeChoice.recommended': 'Recomendado',
+  'onboarding.runtimeChoice.exitError':
+    'No se pudo completar el proceso de incorporación. Por favor, inténtalo de nuevo.',
   'onboarding.apiKeys.title': 'Agreguemos tus claves API',
   'onboarding.apiKeys.subtitle':
     'Puedes pegarlas ahora u omitir y agregarlas luego en Configuración › IA. Las claves se guardan en este dispositivo, cifradas en reposo.',
@@ -3727,7 +3734,44 @@ const messages: TranslationMap = {
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',
-  'settings.agentAccess.viewApprovalHistory': 'View approval history',
+  'settings.agentAccess.viewApprovalHistory': 'Ver historial de aprobaciones',
+  'settings.sandbox.title': 'Ejecución en sandbox',
+  'settings.sandbox.menuDesc':
+    'Configurar backends de sandbox para el aislamiento de herramientas del agente.',
+  'settings.sandbox.loading': 'Cargando…',
+  'settings.sandbox.desktopOnly':
+    'La configuración de sandbox solo está disponible en la aplicación de escritorio.',
+  'settings.sandbox.loadError': 'Error al cargar la configuración de sandbox.',
+  'settings.sandbox.saveError': 'Error al guardar la configuración de sandbox.',
+  'settings.sandbox.saved': 'Guardado — se aplica a las nuevas sesiones del agente.',
+  'settings.sandbox.saving': 'Guardando…',
+  'settings.sandbox.status': 'Estado',
+  'settings.sandbox.dockerStatus': 'Docker',
+  'settings.sandbox.available': 'Disponible',
+  'settings.sandbox.unavailable': 'No disponible',
+  'settings.sandbox.detectedBackend': 'Backend del SO',
+  'settings.sandbox.enableLabel': 'Habilitar ejecución en sandbox',
+  'settings.sandbox.enableDesc':
+    'Ejecutar las herramientas del agente dentro de un entorno sandbox aislado.',
+  'settings.sandbox.backendLabel': 'Backend',
+  'settings.sandbox.backendDesc':
+    'Elige qué backend de aislamiento usar para la ejecución en sandbox.',
+  'settings.sandbox.backend.auto': 'Automático (detectar el mejor disponible)',
+  'settings.sandbox.backend.docker': 'Docker',
+  'settings.sandbox.backend.landlock': 'Landlock (Linux)',
+  'settings.sandbox.backend.firejail': 'Firejail (Linux)',
+  'settings.sandbox.backend.bubblewrap': 'Bubblewrap (Linux)',
+  'settings.sandbox.backend.none': 'Ninguno (sin sandbox)',
+  'settings.sandbox.dockerSettings': 'Configuración de Docker',
+  'settings.sandbox.dockerImage': 'Imagen',
+  'settings.sandbox.dockerImagePlaceholder': 'alpine:3.20',
+  'settings.sandbox.memoryLimit': 'Límite de memoria',
+  'settings.sandbox.memoryUnit': 'MB',
+  'settings.sandbox.cpuLimit': 'Límite de CPU',
+  'settings.sandbox.cpuUnit': 'núcleos',
+  'settings.sandbox.envPassthrough': 'Reenvío de variables de entorno',
+  'settings.sandbox.envPassthroughDesc': 'Variables de entorno reenviadas al sandbox.',
+  'settings.sandbox.noEnvVars': 'No hay variables de entorno configuradas.',
   'settings.approvalHistory.title': 'Approval history',
   'settings.approvalHistory.subtitle': 'Recent tool-approval decisions, newest first.',
   'settings.approvalHistory.refresh': 'Refresh',
@@ -4459,6 +4503,39 @@ const messages: TranslationMap = {
   'settings.agents.editor.toolsDone': 'Done',
   'settings.agents.editor.builtInReadonly':
     'Los agentes integrados no se pueden editar. Puedes activarlos, desactivarlos o restablecerlos desde la lista de agentes.',
+  // Chat — agent-generated artifacts (#2779)
+  'chat.artifact.aria': 'Artefacto: {title}',
+  'chat.artifact.generating': 'Generando {kind}…',
+  'chat.artifact.ready': 'Listo',
+  'chat.artifact.failed': 'Error al generar',
+  'chat.artifact.download': 'Descargar',
+  'chat.artifact.downloading': 'Descargando…',
+  'chat.artifact.downloaded': 'Guardado en {path}',
+  'chat.artifact.download_failed': 'Error al descargar: {reason}',
+  'chat.artifact.retry': 'Reintentar',
+  'chat.artifact.reveal': 'Mostrar en la carpeta',
+  'chat.artifact.show_more': 'Ver más',
+  'chat.artifact.show_less': 'Ver menos',
+
+  // Chat — files panel (#3024)
+  'chat.files.chip.aria.one': '{count} archivo en este chat',
+  'chat.files.chip.aria.other': '{count} archivos en este chat',
+  'chat.files.panel.aria': 'Archivos en este chat',
+  'chat.files.panel.title': 'Archivos ({count})',
+  'chat.files.panel.empty': 'Aún no hay archivos. Pídele al agente que genere uno.',
+  'chat.files.panel.close': 'Cerrar panel de archivos',
+  'chat.files.delete.aria': 'Eliminar {title}',
+  'chat.files.delete.confirm': '¿Eliminar este archivo?',
+  'chat.files.delete.cancel': 'Cancelar',
+  'chat.files.delete.action': 'Eliminar',
+  'chat.files.delete.failed': 'No se pudo eliminar el archivo. Inténtalo de nuevo.',
+  'chat.files.error.not_desktop': 'Las descargas solo están disponibles en la app de escritorio.',
+  'chat.files.error.missing_artifact_id': 'Falta el id del artefacto.',
+  'chat.files.error.missing_artifact_path':
+    'Falta la ruta del artefacto en la respuesta del núcleo.',
+  'chat.files.error.resolve_failed': 'No se pudo resolver el artefacto. Inténtalo de nuevo.',
+  'chat.files.error.download_failed': 'La descarga falló. Inténtalo de nuevo.',
+  'chat.files.error.delete_failed': 'No se pudo eliminar el archivo. Inténtalo de nuevo.',
   'autocomplete.debounceMs': 'Retardo (ms)',
   'autocomplete.maxChars': 'Máximo de caracteres de contexto',
   'autocomplete.overlayTtlMs': 'Tiempo de espera de superposición (ms)',
@@ -4546,19 +4623,33 @@ const messages: TranslationMap = {
   'keyring.settings.revokeConsent': 'Rechazar almacenamiento local',
   'pages.settings.account.security': 'Seguridad',
   'pages.settings.account.securityDesc': 'Modo de almacenamiento de secretos y estado del llavero',
+  // #002 memory-pipeline-hardening: degraded badges + typed remediation.
+  'memoryTree.status.statusDegraded': 'Degradado',
+  'memoryTree.status.degradedRecall': 'Recuperación semántica desactivada',
+  'memoryTree.status.degradedStructure': 'Estructura de la wiki incompleta',
+  'memoryTree.status.extractionCoverage':
+    'Cobertura de extracción: {pct}% de los fragmentos tienen estructura',
+  'memory.health.remediation.budget_exhausted':
+    'Los embeddings de memoria agotaron el presupuesto gestionado. Configura embeddings locales de Ollama (Configuración → IA → Incrustaciones) o añade tu propia clave de API de embeddings para seguir construyendo la memoria.',
+  'memory.health.remediation.auth_missing':
+    'No se encontraron credenciales de embeddings. Inicia sesión en OpenHuman o configura embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.auth_invalid':
+    'Tus credenciales de embeddings fueron rechazadas. Vuelve a autenticarte o cambia a embeddings locales de Ollama en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.embeddings_unconfigured':
+    'No hay ningún proveedor de embeddings configurado, por lo que la recuperación semántica está desactivada. Configura embeddings locales de Ollama (recomendado) o añade una clave de embeddings en Configuración → IA → Incrustaciones.',
+  'memory.health.remediation.embedding_dim_mismatch':
+    'El modelo de embeddings devuelve un tamaño de vector incorrecto (la memoria espera 1024 dimensiones). Elige un modelo de 1024 dimensiones o solicita 1024 dimensiones a tu proveedor.',
+  'memory.health.remediation.local_model_unavailable':
+    'No hay disponible un modelo local requerido. Instala/ejecuta Ollama y descarga el modelo, o cambia esta carga de trabajo a un proveedor en la nube en Configuración → IA.',
+  'memory.health.remediation.extraction_timeout':
+    'El modelo de extracción de memoria está agotando el tiempo de espera, por lo que la wiki tiene poca estructura. Cambia el modelo de extracción de memoria por uno más rápido en Configuración → IA.',
+  'memory.health.remediation.summarizer_unavailable':
+    'No hay ningún proveedor de resúmenes disponible para Crear árboles de resumen. Activa la IA local (Ollama) o activa el resumen en la nube en Configuración → IA → Memoria.',
+  'memory.health.remediation.transient':
+    'Un error temporal interrumpió el procesamiento de la memoria. Se reintentará automáticamente.',
+  'memory.health.remediation.unknown':
+    'El procesamiento de la memoria encontró un problema. Comprueba Configuración → IA para la configuración.',
   // Chat — agent-generated artifacts (#2779)
-  'chat.artifact.aria': 'Artefacto: {title}',
-  'chat.artifact.generating': 'Generando {kind}…',
-  'chat.artifact.ready': 'Listo',
-  'chat.artifact.failed': 'Error al generar',
-  'chat.artifact.download': 'Descargar',
-  'chat.artifact.downloading': 'Descargando…',
-  'chat.artifact.downloaded': 'Guardado en {path}',
-  'chat.artifact.download_failed': 'Error al descargar: {reason}',
-  'chat.artifact.retry': 'Reintentar',
-  'chat.artifact.reveal': 'Mostrar en la carpeta',
-  'chat.artifact.show_more': 'Ver más',
-  'chat.artifact.show_less': 'Ver menos',
 
   // Chat composer toolbar
   'composer.attachFile': 'Adjuntar archivo',

@@ -361,8 +361,8 @@ impl Default for SecurityPolicy {
 mod policy_command;
 use policy_command::{
     classify_segment, command_basename, contains_unquoted_char, contains_unquoted_single_ampersand,
-    has_dangerous_env_prefix, has_hidden_execution, is_command_executor, normalized_command_name,
-    skip_env_assignments, split_unquoted_segments,
+    has_dangerous_env_prefix, has_hidden_execution, has_leading_env_assignment,
+    is_command_executor, normalized_command_name, skip_env_assignments, split_unquoted_segments,
 };
 
 impl SecurityPolicy {
@@ -714,12 +714,20 @@ impl SecurityPolicy {
         // Split on unquoted command separators and validate each sub-command.
         let segments = split_unquoted_segments(command);
         for segment in &segments {
-            // Reject segments that prefix the command with a dangerous env
-            // assignment (e.g. `GIT_PAGER=<cmd> git log`). The bare command
-            // after the assignment is allowlisted, but the prefix mutates
-            // the downstream binary's execution to spawn `<cmd>` as a
-            // subprocess. See [`has_dangerous_env_prefix`].
-            if has_dangerous_env_prefix(segment) {
+            // Reject ANY segment that prefixes the command with an env-var
+            // assignment, not just the known-dangerous names. Helper-style
+            // exec primitives (`GIT_SSH=./wrapper git ls-remote`,
+            // `SSH_ASKPASS=./prompt ssh user@host`, `LD_PRELOAD=./libx.so
+            // ls`, etc.) change which binary the allowed command actually
+            // resolves to — or change its behaviour via a hook — without
+            // any blocked command name ever appearing in the segment. The
+            // allowlist already names every command we want to permit, and
+            // none of those commands need an operator-set env var at
+            // invoke time, so the broader gate has no false-positive
+            // surface on the approved path. `has_dangerous_env_prefix`
+            // remains in the source for legacy tests and as the
+            // narrower-grained signal.
+            if has_leading_env_assignment(segment) || has_dangerous_env_prefix(segment) {
                 return false;
             }
 

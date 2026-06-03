@@ -926,7 +926,21 @@ async fn llm_meeting_agentic(prompt: &str, request_id: &str) -> Result<String, S
         agent.history().len(),
     );
 
-    let fut = agent.run_single(&user_message);
+    // Meet-agent runs during an active call — the prompt text is
+    // speech captured from a live meeting, which after run_grant_turn
+    // can include utterances from non-owner participants. Treat it as
+    // externally-sourced channel input (not local CLI): the gate
+    // routes external_effect tools through the audit-trail path
+    // instead of letting them run unprompted with trusted-CLI
+    // semantics.
+    let fut = crate::openhuman::agent::turn_origin::with_origin(
+        crate::openhuman::agent::turn_origin::AgentTurnOrigin::ExternalChannel {
+            channel: "meet".to_string(),
+            reply_target: request_id.to_string(),
+            message_id: format!("meet-{request_id}-{now_ms}"),
+        },
+        agent.run_single(&user_message),
+    );
     let reply = match tokio::time::timeout(Duration::from_secs(AGENTIC_TURN_TIMEOUT_SECS), fut)
         .await
     {
