@@ -215,6 +215,40 @@ pub(crate) async fn get_artifact(
     Ok(meta)
 }
 
+/// Read the raw bytes of a finalized artifact's output file.
+///
+/// Single source of truth for resolving an artifact id → on-disk bytes:
+/// callers (e.g. the presentation image pipeline) must not reconstruct
+/// the `<root>/<id>/<filename>` path scheme themselves. Validates the id,
+/// confirms the resolved path stays under the artifacts root, and refuses
+/// artifacts that are not yet [`ArtifactStatus::Ready`] (a `Pending` /
+/// `Failed` record may have no bytes — or partial bytes — on disk).
+pub async fn read_artifact_bytes(
+    workspace_dir: &Path,
+    artifact_id: &str,
+) -> Result<Vec<u8>, String> {
+    log::debug!("[artifacts] read_artifact_bytes: id={artifact_id}");
+    let meta = get_artifact(workspace_dir, artifact_id).await?;
+    if !matches!(meta.status, ArtifactStatus::Ready) {
+        return Err(format!(
+            "[artifacts] artifact id={artifact_id} is not ready (status={:?})",
+            meta.status
+        ));
+    }
+    let root = artifacts_root(workspace_dir).await?;
+    // `meta.path` is the store-internal `<id>/<filename>` relative path.
+    let file_path = root.join(&meta.path);
+    assert_within_root(&root, &file_path)?;
+    let bytes = tokio::fs::read(&file_path)
+        .await
+        .map_err(|e| format!("[artifacts] failed to read artifact bytes id={artifact_id}: {e}"))?;
+    log::debug!(
+        "[artifacts] read_artifact_bytes: id={artifact_id} read {} bytes",
+        bytes.len()
+    );
+    Ok(bytes)
+}
+
 /// Delete an artifact directory and all its contents.
 pub(crate) async fn delete_artifact(workspace_dir: &Path, artifact_id: &str) -> Result<(), String> {
     log::debug!("[artifacts] delete_artifact: id={artifact_id}");
