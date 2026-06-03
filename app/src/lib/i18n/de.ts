@@ -4102,6 +4102,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'Senden an',
   'skills.meetingBots.soonSuffix': 'bald',
   'skills.meetingBots.starting': 'Beginnend mit …',
+  'skills.meetingBots.failedTitle': 'OpenHuman konnte dem Anruf nicht beitreten',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Der Botname konnte auf der Meet-Warteseite nicht eingegeben werden. Versuche manuell über den Meet-Tab beizutreten oder erneut zu versuchen.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'Dem Anruf konnte kein Beitrittsantrag gestellt werden. Der Gastgeber hat die Lobby möglicherweise geschlossen — erneut versuchen.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman hat den Anrufbildschirm nie erreicht. Der Gastgeber hat den Bot möglicherweise nicht zugelassen — bitte ihn, ihn hereinzulassen, und versuche es erneut.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman ist beigetreten, konnte sich jedoch nicht mit dem Meetingaudio verbinden. Verlasse den Anruf und versuche es erneut.',
   'skills.resource.preview.closeAriaLabel': 'Vorschau schließen',
   'skills.resource.preview.failed': 'Vorschau fehlgeschlagen',
   'skills.resource.preview.loading': 'Vorschau wird geladen…',

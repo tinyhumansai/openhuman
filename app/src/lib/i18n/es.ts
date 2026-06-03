@@ -4073,6 +4073,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'Enviar a',
   'skills.meetingBots.soonSuffix': 'pronto',
   'skills.meetingBots.starting': 'Iniciando…',
+  'skills.meetingBots.failedTitle': 'OpenHuman no pudo unirse a la llamada',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'No se pudo introducir el nombre del bot en la página de pré-acceso de Meet. Intenta unirte manualmente desde la pestaña de Meet o vuelve a intentarlo.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'No se pudo solicitar unirse a la llamada. El anfitrión puede haber cerrado la sala de espera — vuelve a intentarlo.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman nunca llegó a la pantalla de la llamada. El anfitrión puede no haber admitido al bot — pídele que lo deje entrar y vuelve a intentarlo.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman se unió pero no pudo conectarse al audio de la reunión. Sal de la llamada y vuelve a intentarlo.',
   'skills.resource.preview.closeAriaLabel': 'Cerrar vista previa',
   'skills.resource.preview.failed': 'Vista previa fallida',
   'skills.resource.preview.loading': 'Cargando vista previa…',

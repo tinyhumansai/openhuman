@@ -4087,6 +4087,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'Envoyer à',
   'skills.meetingBots.soonSuffix': 'bientôt',
   'skills.meetingBots.starting': 'Démarrage…',
+  'skills.meetingBots.failedTitle': "OpenHuman n'a pas pu rejoindre l'appel",
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Impossible de saisir le nom du bot sur la page de pré-jointure de Meet. Rejoignez manuellement depuis Meet ou réessayez.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    "Impossible de demander à rejoindre l'appel. L'hôte a peut-être fermé le salon — réessayez.",
+  'skills.meetingBots.failed.admissionTimeout':
+    "OpenHuman n'est jamais entré dans l'appel. Demandez à l'hôte d'admettre le bot et réessayez.",
+  'skills.meetingBots.failed.audioBindFailed':
+    "OpenHuman a rejoint mais n'a pas pu accéder à l'audio. Quittez l'appel et réessayez.",
   'skills.resource.preview.closeAriaLabel': "Fermer l'aperçu",
   'skills.resource.preview.failed': "Échec de l'aperçu",
   'skills.resource.preview.loading': "Chargement de l'aperçu…",

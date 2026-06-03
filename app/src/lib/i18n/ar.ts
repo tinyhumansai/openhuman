@@ -3928,6 +3928,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'إرسال إلى',
   'skills.meetingBots.soonSuffix': 'قريبًا',
   'skills.meetingBots.starting': 'جارٍ البدء…',
+  'skills.meetingBots.failedTitle': 'تعذّر على OpenHuman الانضمام إلى المكالمة',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'تعذّر إدخال اسم البوت في صفحة الانتظار. حاول الانضمام يدويًا من تبويب Meet أو أعد المحاولة.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'تعذّر طلب الانضمام إلى المكالمة. ربما أغلق المضيف غرفة الانتظار — أعد المحاولة.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'لم يصل OpenHuman إلى شاشة المكالمة. قد لا يكون المضيف قد قبل البوت — اطلب منه السماح بالدخول وأعد المحاولة.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'انضم OpenHuman لكن تعذّر الاتصال بصوت الاجتماع. اغادر المكالمة وأعد المحاولة.',
   'skills.resource.preview.closeAriaLabel': 'إغلاق المعاينة',
   'skills.resource.preview.failed': 'فشلت المعاينة',
   'skills.resource.preview.loading': 'جارٍ تحميل المعاينة…',

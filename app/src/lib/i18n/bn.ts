@@ -3997,6 +3997,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'পাঠান',
   'skills.meetingBots.soonSuffix': 'শীঘ্রই',
   'skills.meetingBots.starting': 'শুরু হচ্ছে…',
+  'skills.meetingBots.failedTitle': 'OpenHuman কলে যোগ দিতে পারেনি',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Meet-এর প্রি-জয়েন পেজে বটের নাম লেখা সম্ভব হয়নি। Meet ট্যাব থেকে ম্যানুয়ালি যোগ দেওয়ার চেষ্টা করুন বা আবার চেষ্টা করুন।',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'কলে যোগ দেওয়ার অনুরোধ করা সম্ভব হয়নি। হোস্ট লবি বন্ধ করে দিয়ে থাকতে পারেন — আবার চেষ্টা করুন।',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman কখনো কল স্ক্রিনে পৌঁছায়নি। হোস্ট বটকে প্রবেশ করতে না দিয়ে থাকতে পারেন — তাঁকে অনুমতি দিতে বলুন এবং আবার চেষ্টা করুন।',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman যোগ দিয়েছে কিন্তু মিটিংয়ের অডিওতে সংযুক্ত হতে পারেনি। কল ছেড়ে আবার চেষ্টা করুন।',
   'skills.resource.preview.closeAriaLabel': 'প্রিভিউ বন্ধ করুন',
   'skills.resource.preview.failed': 'প্রিভিউ ব্যর্থ',
   'skills.resource.preview.loading': 'প্রিভিউ লোড হচ্ছে…',

@@ -3964,6 +3964,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': '보내기',
   'skills.meetingBots.soonSuffix': '곧',
   'skills.meetingBots.starting': '시작 중…',
+  'skills.meetingBots.failedTitle': 'OpenHuman이 통화에 참여하지 못했습니다',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Meet 사전 참여 페이지에서 봇 이름을 입력하지 못했습니다. Meet 탭에서 직접 참여하거나 다시 시도하세요.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    '통화 참여 요청을 보내지 못했습니다. 호스트가 대기실을 닫았을 수 있습니다 — 다시 시도하세요.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman이 통화 화면에 도달하지 못했습니다. 호스트가 봇을 허용하지 않았을 수 있습니다 — 호스트에게 입장을 허용해 달라고 요청하고 다시 시도하세요.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman이 참여했지만 회의 오디오에 연결하지 못했습니다. 통화를 나간 후 다시 시도하세요.',
   'skills.resource.preview.closeAriaLabel': '미리보기 닫기',
   'skills.resource.preview.failed': '미리보기 실패',
   'skills.resource.preview.loading': '미리보기 불러오는 중…',

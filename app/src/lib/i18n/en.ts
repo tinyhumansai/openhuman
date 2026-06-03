@@ -4390,6 +4390,15 @@ const en: TranslationMap = {
   'skills.meetingBots.sendTo': 'Send to {label}',
   'skills.meetingBots.soonSuffix': 'soon',
   'skills.meetingBots.starting': 'Starting…',
+  'skills.meetingBots.failedTitle': "OpenHuman couldn't join the call",
+  'skills.meetingBots.failed.nameInputTimeout':
+    "Couldn't enter the bot's name on the Meet pre-join page. Try rejoining from the Meet tab manually, or try again.",
+  'skills.meetingBots.failed.askToJoinTimeout':
+    "Couldn't ask to join the call. The host may have closed the lobby — try again.",
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman never reached the in-call screen. The host may not have admitted the bot — ask them to let it in and try again.',
+  'skills.meetingBots.failed.audioBindFailed':
+    "OpenHuman joined but couldn't hook into the meeting audio. Leave the call and try again.",
   'skills.resource.preview.closeAriaLabel': 'Close preview',
   'skills.resource.preview.failed': 'Preview failed',
   'skills.resource.preview.loading': 'Loading preview…',

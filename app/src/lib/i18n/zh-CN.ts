@@ -3810,6 +3810,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': '发送到会议',
   'skills.meetingBots.soonSuffix': '很快',
   'skills.meetingBots.starting': '启动中…',
+  'skills.meetingBots.failedTitle': 'OpenHuman 无法加入通话',
+  'skills.meetingBots.failed.nameInputTimeout':
+    '无法在 Meet 候诊页面输入机器人名称。请尝试从 Meet 标签页手动加入，或重试。',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    '无法发送加入通话的请求。主持人可能已关闭等候室 — 请重试。',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman 始终未进入通话界面。主持人可能未批准机器人入会 — 请让主持人允许其进入后重试。',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman 已加入，但无法连接会议音频。请退出通话后重试。',
   'skills.resource.preview.closeAriaLabel': '关闭预览',
   'skills.resource.preview.failed': '预览失败',
   'skills.resource.preview.loading': '加载预览中…',

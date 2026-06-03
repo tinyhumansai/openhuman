@@ -4014,6 +4014,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'Kirim ke',
   'skills.meetingBots.soonSuffix': 'segera',
   'skills.meetingBots.starting': 'Memulai...',
+  'skills.meetingBots.failedTitle': 'OpenHuman gagal bergabung ke panggilan',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Nama bot tidak dapat dimasukkan di halaman pra-gabung Meet. Coba bergabung secara manual melalui tab Meet atau coba lagi.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'Permintaan bergabung ke panggilan gagal. Tuan rumah mungkin telah menutup ruang tunggu — coba lagi.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman tidak pernah mencapai layar panggilan. Tuan rumah mungkin belum mengizinkan bot masuk — minta mereka untuk mengizinkannya dan coba lagi.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman bergabung tetapi tidak dapat terhubung ke audio rapat. Tinggalkan panggilan dan coba lagi.',
   'skills.resource.preview.closeAriaLabel': 'Tutup pratinjau',
   'skills.resource.preview.failed': 'Pratinjau gagal',
   'skills.resource.preview.loading': 'Memuat pratinjau...',

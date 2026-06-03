@@ -4029,6 +4029,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'Отправить',
   'skills.meetingBots.soonSuffix': 'скоро',
   'skills.meetingBots.starting': 'Запуск…',
+  'skills.meetingBots.failedTitle': 'OpenHuman не смог подключиться к звонку',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Не удалось ввести имя бота на странице подключения Meet. Попробуйте подключиться вручную через вкладку Meet или повторите попытку.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'Не удалось отправить запрос на подключение к звонку. Организатор мог закрыть зал ожидания — повторите попытку.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman так и не попал на экран звонка. Организатор мог не допустить бота — попросите его впустить бота и повторите попытку.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman подключился, но не смог получить доступ к аудио встречи. Покиньте звонок и повторите попытку.',
   'skills.resource.preview.closeAriaLabel': 'Закрыть предпросмотр',
   'skills.resource.preview.failed': 'Не удалось показать превью',
   'skills.resource.preview.loading': 'Загрузка предпросмотра…',

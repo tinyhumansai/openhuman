@@ -4004,6 +4004,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'भेजें',
   'skills.meetingBots.soonSuffix': 'जल्द ही',
   'skills.meetingBots.starting': 'शुरू हो रहा है…',
+  'skills.meetingBots.failedTitle': 'OpenHuman कॉल में शामिल नहीं हो सका',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Meet के प्री-जॉइन पेज पर बोट का नाम दर्ज नहीं किया जा सका। Meet टैब से मैन्युअल रूप से जुड़ने का प्रयास करें या दोबारा कोशिश करें।',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'कॉल में शामिल होने का अनुरोध नहीं किया जा सका। हो सकता है होस्ट ने लॉबी बंद कर दी हो — दोबारा कोशिश करें।',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman कभी कॉल स्क्रीन तक नहीं पहुंचा। हो सकता है होस्ट ने बोट को प्रवेश न दिया हो — उनसे इसे अंदर आने देने के लिए कहें और दोबारा कोशिश करें।',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman जुड़ गया लेकिन मीटिंग ऑडियो से कनेक्ट नहीं हो सका। कॉल छोड़ें और दोबारा कोशिश करें।',
   'skills.resource.preview.closeAriaLabel': 'प्रीव्यू बंद करें',
   'skills.resource.preview.failed': 'पूर्वावलोकन विफल',
   'skills.resource.preview.loading': 'प्रीव्यू लोड हो रहा है…',

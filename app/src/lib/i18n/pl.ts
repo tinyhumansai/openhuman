@@ -4063,6 +4063,15 @@ const messages: TranslationMap = {
   'skills.meetingBots.sendTo': 'Wyślij do',
   'skills.meetingBots.soonSuffix': 'wkrótce',
   'skills.meetingBots.starting': 'Uruchamianie…',
+  'skills.meetingBots.failedTitle': 'OpenHuman nie mógł dołączyć do rozmowy',
+  'skills.meetingBots.failed.nameInputTimeout':
+    'Nie udało się wpisać nazwy bota na stronie wstępnego dołączania Meet. Spróbuj dołączyć ręcznie z karty Meet lub spróbuj ponownie.',
+  'skills.meetingBots.failed.askToJoinTimeout':
+    'Nie udało się wysłać prośby o dołączenie do rozmowy. Gospodarz mógł zamknąć poczekalnię — spróbuj ponownie.',
+  'skills.meetingBots.failed.admissionTimeout':
+    'OpenHuman nigdy nie dotarł do ekranu rozmowy. Gospodarz mógł nie dopuścić bota — poproś go o wpuszczenie i spróbuj ponownie.',
+  'skills.meetingBots.failed.audioBindFailed':
+    'OpenHuman dołączył, ale nie mógł połączyć się z dźwiękiem spotkania. Opuść rozmowę i spróbuj ponownie.',
   'skills.resource.preview.closeAriaLabel': 'Zamknij podgląd',
   'skills.resource.preview.failed': 'Podgląd nie powiódł się',
   'skills.resource.preview.loading': 'Wczytywanie podglądu…',
