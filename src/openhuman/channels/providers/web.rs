@@ -67,13 +67,22 @@ pub fn register_approval_surface_subscriber() {
 static ARTIFACT_SURFACE_HANDLE: OnceLock<SubscriptionHandle> = OnceLock::new();
 
 /// Bridge artifact lifecycle events onto the web channel.
-/// `DomainEvent::ArtifactReady` / `ArtifactFailed` (published by
-/// `artifacts::store::{finalize,fail}_artifact` from #2778's producer
-/// surface) carry the thread_id + client_id when the producing turn
-/// ran under an `APPROVAL_CHAT_CONTEXT`. When present, fan out as an
-/// `artifact_ready` / `artifact_failed` socket event so the frontend
-/// `chatRuntimeSlice` can upsert the snapshot and the `ArtifactCard`
-/// can render in the message timeline. Sub-task #2779 of #1535.
+/// `DomainEvent::ArtifactPending` / `ArtifactReady` / `ArtifactFailed`
+/// (published by `artifacts::store::{create,finalize,fail}_artifact`)
+/// carry the thread_id + client_id when the producing turn ran under an
+/// `APPROVAL_CHAT_CONTEXT`. When present, fan out as an
+/// `artifact_pending` / `artifact_ready` / `artifact_failed` socket
+/// event so the frontend `chatRuntimeSlice` can upsert the snapshot and
+/// the `ArtifactCard` can render in the message timeline:
+///
+/// - `artifact_pending` → render an in-progress "Generating…" card the
+///   moment the producing tool dispatches (#3162).
+/// - `artifact_ready` → swap the same card to a download surface when
+///   the file lands (#2779).
+/// - `artifact_failed` → swap to a retry-hint card on producer error.
+///
+/// The card is keyed on `artifact_id`, so the Pending → Ready/Failed
+/// transition reuses the same surface instead of flickering a new one.
 /// Idempotent. No-op for non-chat events (thread/client id absent).
 pub fn register_artifact_surface_subscriber() {
     if ARTIFACT_SURFACE_HANDLE.get().is_some() {
@@ -83,7 +92,7 @@ pub fn register_artifact_surface_subscriber() {
         Some(handle) => {
             let _ = ARTIFACT_SURFACE_HANDLE.set(handle);
             log::info!(
-                "[web-channel] artifact-surface subscriber registered (domain=artifact) — will bridge ArtifactReady/Failed → artifact_ready/artifact_failed socket events"
+                "[web-channel] artifact-surface subscriber registered (domain=artifact) — will bridge ArtifactPending/Ready/Failed → artifact_pending/artifact_ready/artifact_failed socket events"
             );
         }
         None => {
@@ -171,6 +180,38 @@ impl EventHandler for ArtifactSurfaceSubscriber {
                         "title": title,
                         "workspace_dir": workspace_dir,
                         "error": error,
+                    })),
+                    ..Default::default()
+                });
+            }
+            DomainEvent::ArtifactPending {
+                artifact_id,
+                kind,
+                title,
+                workspace_dir,
+                path,
+                thread_id,
+                client_id,
+            } => {
+                let (Some(thread_id), Some(client_id)) = (thread_id, client_id) else {
+                    log::debug!(
+                        "[web-channel] artifact-surface skip ArtifactPending id={artifact_id}: no chat context"
+                    );
+                    return;
+                };
+                log::info!(
+                    "[web-channel] artifact-surface emitting artifact_pending id={artifact_id} kind={kind} thread_id={thread_id} client_id={client_id}"
+                );
+                publish_web_channel_event(WebChannelEvent {
+                    event: "artifact_pending".to_string(),
+                    client_id: client_id.clone(),
+                    thread_id: thread_id.clone(),
+                    args: Some(serde_json::json!({
+                        "artifact_id": artifact_id,
+                        "kind": kind,
+                        "title": title,
+                        "workspace_dir": workspace_dir,
+                        "path": path,
                     })),
                     ..Default::default()
                 });

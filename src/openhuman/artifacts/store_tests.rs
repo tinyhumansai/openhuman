@@ -190,3 +190,109 @@ async fn validate_artifact_id_rejects_slashes() {
         "unexpected error: {err}"
     );
 }
+
+// ── create_artifact event publication (#3162) ─────────────────────────────
+
+use crate::core::event_bus::{
+    init_global, subscribe_global, DomainEvent, EventHandler, SubscriptionHandle,
+};
+use async_trait::async_trait;
+use std::sync::{Arc, Mutex as StdMutex};
+
+#[derive(Clone)]
+struct PendingCollector {
+    events: Arc<StdMutex<Vec<DomainEvent>>>,
+}
+
+impl PendingCollector {
+    fn new() -> Self {
+        Self {
+            events: Arc::new(StdMutex::new(Vec::new())),
+        }
+    }
+
+    fn subscribe(&self) -> Option<SubscriptionHandle> {
+        subscribe_global(Arc::new(self.clone()))
+    }
+
+    fn snapshot(&self) -> Vec<DomainEvent> {
+        self.events.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl EventHandler for PendingCollector {
+    fn name(&self) -> &str {
+        "test::pending_collector"
+    }
+
+    async fn handle(&self, event: &DomainEvent) {
+        // Only capture artifact-domain events so the receive buffer can't
+        // overflow with unrelated traffic from neighbouring tests.
+        if matches!(
+            event,
+            DomainEvent::ArtifactPending { .. }
+                | DomainEvent::ArtifactReady { .. }
+                | DomainEvent::ArtifactFailed { .. }
+        ) {
+            self.events.lock().unwrap().push(event.clone());
+        }
+    }
+}
+
+/// #3162: `create_artifact` publishes `DomainEvent::ArtifactPending`
+/// the moment the row is reserved, so the chat surface can render an
+/// in-progress "Generating…" card before the file lands on disk.
+#[tokio::test]
+async fn create_artifact_publishes_artifact_pending_event() {
+    init_global(256);
+    let collector = PendingCollector::new();
+    let _handle = collector.subscribe();
+
+    let tmp = TempDir::new().unwrap();
+    let (meta, _path) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Q3 Deck", "pptx")
+        .await
+        .expect("create_artifact succeeds");
+
+    // The bus is broadcast-based and processed off-task — yield until the
+    // subscriber's tokio task drains the message.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        if !collector.snapshot().is_empty() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            panic!("ArtifactPending event was not observed within 2s");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    let events = collector.snapshot();
+    assert_eq!(
+        events.len(),
+        1,
+        "exactly one event expected, got {events:?}"
+    );
+    let DomainEvent::ArtifactPending {
+        artifact_id,
+        kind,
+        title,
+        workspace_dir,
+        path,
+        thread_id,
+        client_id,
+    } = &events[0]
+    else {
+        panic!("expected ArtifactPending, got {:?}", events[0]);
+    };
+    assert_eq!(*artifact_id, meta.id);
+    assert_eq!(kind, "presentation");
+    assert_eq!(title, "Q3 Deck");
+    assert_eq!(*workspace_dir, tmp.path().to_string_lossy());
+    assert_eq!(*path, meta.path);
+    // No chat context bound on this test task, so the routing fields are
+    // None — the web bridge drops the event in that case, which is the
+    // intended degradation path for CLI / cron / sub-agent callers.
+    assert!(thread_id.is_none(), "thread_id leaked, got {thread_id:?}");
+    assert!(client_id.is_none(), "client_id leaked, got {client_id:?}");
+}

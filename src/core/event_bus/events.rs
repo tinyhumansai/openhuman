@@ -408,6 +408,40 @@ pub enum DomainEvent {
         thread_id: Option<String>,
         client_id: Option<String>,
     },
+    /// An artifact record has been **created** (`ArtifactStatus::Pending`)
+    /// but no bytes are on disk yet — the producing tool has only just
+    /// reserved the row. Published by
+    /// [`crate::openhuman::artifacts::store::create_artifact`].
+    /// Bridged to the web channel as an `artifact_pending` socket event
+    /// so the frontend can render an in-progress / "Generating…" card the
+    /// moment the tool dispatches, instead of waiting until the file
+    /// arrives via [`Self::ArtifactReady`]. The pending card is replaced
+    /// in place when the matching `ArtifactReady` / `ArtifactFailed`
+    /// event with the same `artifact_id` arrives. Sub-task #3162 of #1535.
+    ArtifactPending {
+        /// UUID of the freshly-created artifact record.
+        artifact_id: String,
+        /// Lowercase variant of `ArtifactKind` (`presentation`,
+        /// `document`, `image`, `other`).
+        kind: String,
+        /// Human-readable title (also the on-disk filename stem).
+        title: String,
+        /// Absolute workspace root the artifact belongs to — see
+        /// [`Self::ArtifactReady::workspace_dir`] for rationale.
+        workspace_dir: String,
+        /// Relative path under `<workspace>/artifacts/` where the file
+        /// *will* land. The frontend uses it to render a stable card key
+        /// so subsequent `ArtifactReady` can swap the same surface in
+        /// place without flicker.
+        path: String,
+        /// Chat thread the artifact belongs to, when the producing turn
+        /// carried an `APPROVAL_CHAT_CONTEXT`. `None` for CLI / cron /
+        /// sub-agent paths — no client to fan out to.
+        thread_id: Option<String>,
+        /// Socket.IO client id (room) to surface the card to, when known.
+        /// `None` for non-chat callers.
+        client_id: Option<String>,
+    },
 
     // ── Webhooks ────────────────────────────────────────────────────────
     /// An incoming webhook request from the transport layer, ready for routing.
@@ -956,7 +990,9 @@ impl DomainEvent {
 
             Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
 
-            Self::ArtifactReady { .. } | Self::ArtifactFailed { .. } => "artifact",
+            Self::ArtifactReady { .. }
+            | Self::ArtifactFailed { .. }
+            | Self::ArtifactPending { .. } => "artifact",
 
             Self::McpServerInstalled { .. }
             | Self::McpServerConnected { .. }
@@ -1056,6 +1092,7 @@ impl DomainEvent {
             Self::ApprovalDecided { .. } => "ApprovalDecided",
             Self::ArtifactReady { .. } => "ArtifactReady",
             Self::ArtifactFailed { .. } => "ArtifactFailed",
+            Self::ArtifactPending { .. } => "ArtifactPending",
             Self::McpServerInstalled { .. } => "McpServerInstalled",
             Self::McpServerConnected { .. } => "McpServerConnected",
             Self::McpServerDisconnected { .. } => "McpServerDisconnected",
