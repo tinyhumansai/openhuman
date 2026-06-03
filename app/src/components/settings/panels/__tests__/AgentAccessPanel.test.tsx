@@ -10,6 +10,7 @@ import {
   openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
+  openhumanUpdateAgentPaths,
   openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
 } from '../../../../utils/tauriCommands';
@@ -40,6 +41,7 @@ const agentPaths = (overrides: Partial<AgentPaths> = {}): AgentPaths => ({
   action_dir: '/home/test/OpenHuman/projects',
   workspace_dir: '/home/test/.openhuman/users/u1/workspace',
   projects_dir: '/home/test/OpenHuman/projects',
+  action_dir_source: 'default',
   ...overrides,
 });
 
@@ -63,6 +65,7 @@ vi.mock('../../../../utils/tauriCommands', async () => {
     openhumanGetAgentSettings: vi.fn(),
     openhumanUpdateAgentSettings: vi.fn(),
     openhumanGetAgentPaths: vi.fn(),
+    openhumanUpdateAgentPaths: vi.fn(),
   };
 });
 
@@ -71,6 +74,7 @@ const mockUpdate = vi.mocked(openhumanUpdateAutonomySettings);
 const mockGetAgent = vi.mocked(openhumanGetAgentSettings);
 const mockUpdateAgent = vi.mocked(openhumanUpdateAgentSettings);
 const mockGetAgentPaths = vi.mocked(openhumanGetAgentPaths);
+const mockUpdateAgentPaths = vi.mocked(openhumanUpdateAgentPaths);
 
 describe('AgentAccessPanel', () => {
   beforeEach(() => {
@@ -81,6 +85,7 @@ describe('AgentAccessPanel', () => {
     mockGetAgent.mockResolvedValue({ result: agentSettings(), logs: [] });
     mockUpdateAgent.mockResolvedValue({ result: {} as never, logs: [] });
     mockGetAgentPaths.mockResolvedValue({ result: agentPaths(), logs: [] });
+    mockUpdateAgentPaths.mockResolvedValue({ result: agentPaths(), logs: [] });
   });
 
   it('loads settings on mount and renders the three access tiers', async () => {
@@ -289,5 +294,72 @@ describe('AgentAccessPanel', () => {
     expect(screen.getByTestId('agent-access-workspace-dir')).toHaveTextContent(
       '~/.openhuman/workspace'
     );
+  });
+
+  // ── Editable action_dir (issue #3240) ───────────────────────────────────────
+
+  it('shows an Edit affordance for action_dir when the source is not env', async () => {
+    mockGetAgentPaths.mockResolvedValue({
+      result: agentPaths({ action_dir: '/Users/sample/projects', action_dir_source: 'default' }),
+      logs: [],
+    });
+    renderWithProviders(<AgentAccessPanel />);
+    expect(await screen.findByTestId('agent-access-action-dir-edit')).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-access-action-dir-env-locked')).not.toBeInTheDocument();
+  });
+
+  it('saving a new action_dir calls openhumanUpdateAgentPaths and updates the display', async () => {
+    mockGetAgentPaths.mockResolvedValue({
+      result: agentPaths({ action_dir: '/Users/sample/old', action_dir_source: 'default' }),
+      logs: [],
+    });
+    mockUpdateAgentPaths.mockResolvedValue({
+      result: agentPaths({ action_dir: '/Users/sample/new', action_dir_source: 'override' }),
+      logs: [],
+    });
+    renderWithProviders(<AgentAccessPanel />);
+
+    fireEvent.click(await screen.findByTestId('agent-access-action-dir-edit'));
+    const input = await screen.findByTestId('agent-access-action-dir-input');
+    fireEvent.change(input, { target: { value: '/Users/sample/new' } });
+    fireEvent.click(screen.getByTestId('agent-access-action-dir-save'));
+
+    await waitFor(() =>
+      expect(mockUpdateAgentPaths).toHaveBeenCalledWith({ action_dir: '/Users/sample/new' })
+    );
+    expect(await screen.findByTestId('agent-access-action-dir')).toHaveTextContent(
+      '/Users/sample/new'
+    );
+  });
+
+  it('renders a backend validation error inline without leaving edit mode', async () => {
+    mockGetAgentPaths.mockResolvedValue({
+      result: agentPaths({ action_dir: '/Users/sample/old', action_dir_source: 'default' }),
+      logs: [],
+    });
+    mockUpdateAgentPaths.mockRejectedValue(new Error('action_dir must be an absolute path'));
+    renderWithProviders(<AgentAccessPanel />);
+
+    fireEvent.click(await screen.findByTestId('agent-access-action-dir-edit'));
+    const input = await screen.findByTestId('agent-access-action-dir-input');
+    fireEvent.change(input, { target: { value: 'relative/path' } });
+    fireEvent.click(screen.getByTestId('agent-access-action-dir-save'));
+
+    expect(await screen.findByTestId('agent-access-action-dir-error')).toHaveTextContent(
+      'action_dir must be an absolute path'
+    );
+    // Still in edit mode so the user can correct the value.
+    expect(screen.getByTestId('agent-access-action-dir-input')).toBeInTheDocument();
+  });
+
+  it('disables editing and shows the env-locked notice when source is env', async () => {
+    mockGetAgentPaths.mockResolvedValue({
+      result: agentPaths({ action_dir: '/tmp/env-pinned', action_dir_source: 'env' }),
+      logs: [],
+    });
+    renderWithProviders(<AgentAccessPanel />);
+    await screen.findByTestId('agent-access-action-dir');
+    expect(screen.queryByTestId('agent-access-action-dir-edit')).not.toBeInTheDocument();
+    expect(screen.getByTestId('agent-access-action-dir-env-locked')).toBeInTheDocument();
   });
 });
