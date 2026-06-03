@@ -55,8 +55,21 @@ pub struct Config {
     /// Kept separate from `workspace_dir` (which holds internal state like
     /// memory DBs, sessions, tokens). Defaults to `~/OpenHuman/projects`
     /// (`default_action_dir()`); overridable via `OPENHUMAN_ACTION_DIR`.
+    ///
+    /// This is the **resolved runtime value** and is `#[serde(skip)]` — it is
+    /// recomputed on every load from the precedence chain
+    /// (env `OPENHUMAN_ACTION_DIR` > [`Self::action_dir_override`] > default).
+    /// To persist a user choice, write [`Self::action_dir_override`] instead.
     #[serde(skip)]
     pub action_dir: PathBuf,
+    /// Persisted user override for [`Self::action_dir`], set via the Settings UI
+    /// (`config.update_agent_paths` RPC). Unlike `action_dir`, this field **is**
+    /// serialized so the choice survives restarts. Resolution precedence on load:
+    /// env `OPENHUMAN_ACTION_DIR` wins, then this override (when `Some`), then the
+    /// default projects dir. `None` means "use the default" — the env var still
+    /// overrides at runtime so existing env-driven deployments are unaffected.
+    #[serde(default)]
+    pub action_dir_override: Option<PathBuf>,
     #[serde(skip)]
     pub config_path: PathBuf,
     /// Workspace data-schema version. Bumped each time a one-shot data
@@ -644,6 +657,7 @@ impl Default for Config {
         Self {
             workspace_dir: openhuman_dir.join("workspace"),
             action_dir: crate::openhuman::config::default_action_dir(),
+            action_dir_override: None,
             config_path: openhuman_dir.join("config.toml"),
             schema_version: 0,
             api_url: None,
