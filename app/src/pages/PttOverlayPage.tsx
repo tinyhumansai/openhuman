@@ -8,12 +8,19 @@ export function PttOverlayPage() {
 
   useEffect(() => {
     let off: UnlistenFn | undefined;
-    (async () => {
-      off = await listen<{ active: boolean }>('ptt-overlay://active', (e) => {
-        setActive(Boolean(e.payload?.active));
-      });
-    })();
-    return () => off?.();
+    let cancelled = false;
+    listen<{ active: boolean }>('ptt-overlay://active', (e) => {
+      setActive(Boolean(e.payload?.active));
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else off = fn;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      off?.();
+    };
   }, []);
 
   return (
