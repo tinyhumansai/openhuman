@@ -28,6 +28,7 @@
 //! continue to work without change.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -36,6 +37,7 @@ use serde_json::{json, Value};
 use crate::openhuman::artifacts::{
     create_artifact, fail_artifact, finalize_artifact, read_artifact_bytes, ArtifactKind,
 };
+use crate::openhuman::security::SecurityPolicy;
 use crate::openhuman::tools::traits::{PermissionLevel, Tool, ToolResult};
 
 mod engine;
@@ -65,14 +67,23 @@ pub const TOOL_NAME: &str = "generate_presentation";
 /// One-shot `.pptx` generator. See module docs for the request flow.
 pub struct PresentationTool {
     workspace_dir: PathBuf,
+    /// Security policy used to validate agent-supplied `File` image paths
+    /// before any filesystem read — an image path must pass the same
+    /// `validate_path` checks (allowed-location, symlink-escape, forbidden
+    /// dirs) as any other file-read operation.
+    security: Arc<SecurityPolicy>,
 }
 
 impl PresentationTool {
     /// Production constructor. The engine is stateless — no runtime
     /// resolution, venv setup, or cache directory needed. Pass the
-    /// workspace directory the artifact pipeline writes into.
-    pub fn new(workspace_dir: PathBuf) -> Self {
-        Self { workspace_dir }
+    /// workspace directory the artifact pipeline writes into, plus the
+    /// active [`SecurityPolicy`] for validating `File`-source image paths.
+    pub fn new(workspace_dir: PathBuf, security: Arc<SecurityPolicy>) -> Self {
+        Self {
+            workspace_dir,
+            security,
+        }
     }
 }
 
@@ -364,9 +375,20 @@ impl PresentationTool {
                     .map_err(|e| format!("artifact {artifact_id} unreadable: {e}"))?
             }
             SlideImageSource::File { path } => {
+                // Validate the agent-supplied path against the security
+                // policy BEFORE touching the filesystem. This enforces the
+                // same allowed-location / symlink-escape / forbidden-dir
+                // checks as every other file-read tool — without it an
+                // agent could embed `/etc/shadow` or `~/.ssh/id_rsa`.
+                // `validate_path` returns the canonical, in-policy path.
+                let resolved = self
+                    .security
+                    .validate_path(path)
+                    .await
+                    .map_err(|e| format!("file {path} not allowed: {e}"))?;
                 // Stat first so a pathologically large file is rejected
                 // before we pull it into memory.
-                let meta = tokio::fs::metadata(path)
+                let meta = tokio::fs::metadata(&resolved)
                     .await
                     .map_err(|e| format!("file {path} unreadable: {e}"))?;
                 if meta.len() as usize > MAX_IMAGE_BYTES {
@@ -375,7 +397,7 @@ impl PresentationTool {
                         meta.len()
                     ));
                 }
-                tokio::fs::read(path)
+                tokio::fs::read(&resolved)
                     .await
                     .map_err(|e| format!("file {path} unreadable: {e}"))?
             }

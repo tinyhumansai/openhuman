@@ -15,10 +15,30 @@
 use super::types::{PresentationError, MAX_BULLETS_PER_SLIDE, MAX_SLIDES, MAX_TEXT_CHARS};
 use super::*;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 fn workspace() -> tempfile::TempDir {
     tempfile::tempdir().expect("create temp workspace")
+}
+
+/// A permissive policy rooted at `workspace` so File-source images written
+/// under the temp workspace pass `validate_path`. Mirrors the pattern used
+/// by the browser tool tests (`image_info.rs`).
+fn test_security(workspace: &Path) -> Arc<SecurityPolicy> {
+    use crate::openhuman::security::AutonomyLevel;
+    Arc::new(SecurityPolicy {
+        autonomy: AutonomyLevel::Full,
+        workspace_dir: workspace.to_path_buf(),
+        action_dir: workspace.to_path_buf(),
+        workspace_only: false,
+        forbidden_paths: vec![],
+        ..SecurityPolicy::default()
+    })
+}
+
+/// Build a tool whose security policy is rooted at `workspace`.
+fn make_tool(workspace: &Path) -> PresentationTool {
+    PresentationTool::new(workspace.to_path_buf(), test_security(workspace))
 }
 
 fn minimal_input_json() -> serde_json::Value {
@@ -32,7 +52,7 @@ fn minimal_input_json() -> serde_json::Value {
 
 #[test]
 fn parameters_schema_shape_matches_contract() {
-    let tool = PresentationTool::new(PathBuf::from("/tmp/never-read"));
+    let tool = make_tool(Path::new("/tmp/never-read"));
     let schema = tool.parameters_schema();
     assert_eq!(schema["type"], "object");
     let required = schema["required"].as_array().expect("required is array");
@@ -53,13 +73,13 @@ fn parameters_schema_shape_matches_contract() {
 
 #[test]
 fn permission_level_is_write() {
-    let tool = PresentationTool::new(PathBuf::from("/tmp/never-read"));
+    let tool = make_tool(Path::new("/tmp/never-read"));
     assert_eq!(tool.permission_level(), PermissionLevel::Write);
 }
 
 #[test]
 fn description_includes_router_rules() {
-    let tool = PresentationTool::new(PathBuf::from("/tmp/never-read"));
+    let tool = make_tool(Path::new("/tmp/never-read"));
     let desc = tool.description();
     assert!(desc.contains("USE THIS"));
     assert!(desc.contains("NOT for"));
@@ -69,7 +89,7 @@ fn description_includes_router_rules() {
 #[tokio::test]
 async fn execute_rejects_empty_title() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({ "title": "", "slides": [{ "title": "x", "bullets": ["y"] }] });
     let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
@@ -79,7 +99,7 @@ async fn execute_rejects_empty_title() {
 #[tokio::test]
 async fn execute_rejects_empty_slides_array() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({ "title": "Deck", "slides": [] });
     let result = tool.execute(args).await.expect("execute returns Ok");
     assert!(result.is_error);
@@ -89,7 +109,7 @@ async fn execute_rejects_empty_slides_array() {
 #[tokio::test]
 async fn execute_rejects_slide_with_no_content() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({
         "title": "Deck",
         "slides": [{ "title": "", "body": "", "bullets": [], "speaker_notes": "" }]
@@ -101,7 +121,7 @@ async fn execute_rejects_slide_with_no_content() {
 #[tokio::test]
 async fn execute_rejects_oversize_body() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let big = "x".repeat(MAX_TEXT_CHARS + 1);
     let args = json!({
         "title": "Deck",
@@ -114,7 +134,7 @@ async fn execute_rejects_oversize_body() {
 #[tokio::test]
 async fn execute_rejects_too_many_slides() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let slides: Vec<_> = (0..(MAX_SLIDES + 1))
         .map(|i| json!({ "title": format!("Slide {i}"), "bullets": ["x"] }))
         .collect();
@@ -131,7 +151,7 @@ async fn execute_happy_path_returns_artifact_metadata() {
     // excludes the synthetic title slide, the artifact is finalised
     // on disk, and the markdown reply quotes the path + size.
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let result = tool
         .execute(minimal_input_json())
         .await
@@ -207,7 +227,7 @@ async fn execute_embeds_file_image_into_deck() {
     let img_path = ws.path().join("chart.png");
     std::fs::write(&img_path, png_1x1()).expect("write png");
 
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({
         "title": "Deck with image",
         "slides": [{
@@ -245,7 +265,7 @@ async fn execute_skips_unsupported_mime_image_with_warning() {
     let txt_path = ws.path().join("notanimage.txt");
     std::fs::write(&txt_path, b"i am plain text, not an image").expect("write txt");
 
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({
         "title": "Deck",
         "slides": [{
@@ -280,7 +300,7 @@ async fn execute_skips_oversize_image_with_warning() {
     // before the bytes are pulled into memory.
     std::fs::write(&big_path, vec![0u8; 5 * 1024 * 1024 + 1]).expect("write big file");
 
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({
         "title": "Deck",
         "slides": [{
@@ -306,7 +326,7 @@ async fn execute_skips_oversize_image_with_warning() {
 #[tokio::test]
 async fn execute_skips_missing_artifact_with_warning() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     let args = json!({
         "title": "Deck",
         "slides": [{
@@ -328,7 +348,7 @@ async fn execute_skips_missing_artifact_with_warning() {
 #[tokio::test]
 async fn execute_rejects_too_many_images_per_deck() {
     let ws = workspace();
-    let tool = PresentationTool::new(ws.path().to_path_buf());
+    let tool = make_tool(ws.path());
     // 9 images total across slides — exceeds the deck cap of 8. This is a
     // hard validation reject (cheap structural check), not a skip.
     let images: Vec<_> = (0..9)
