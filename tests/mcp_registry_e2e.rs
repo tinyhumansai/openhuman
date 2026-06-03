@@ -215,21 +215,30 @@ async fn boot_skips_disabled_servers_and_records_errors() {
     b.command = "/nonexistent-mcp".to_string();
     store::insert_server(&cfg, &b).expect("insert b");
 
-    // Server C: disabled → boot must skip without attempting connect.
+    // Server C: disabled AND command is bogus. If boot ever attempts to
+    // connect this server, the bogus command will fail and LAST_ERRORS will
+    // hold an entry. The skip is the only way the post-boot last_error stays
+    // None — so the assertion below proves the skip actually fired, not just
+    // that the Disabled-priority logic masked the failure.
     let mut c = make_installed_server();
     c.server_id = format!("c-{}", uuid::Uuid::new_v4());
     c.enabled = false;
+    c.command = "/nonexistent-disabled-server".to_string();
     store::insert_server(&cfg, &c).expect("insert c");
 
     boot::spawn_installed_servers(&cfg).await;
 
-    // A is connected; B recorded an error; C never attempted.
+    // A is connected; B recorded an error; C never attempted (no error
+    // recorded despite the bogus command).
     let statuses = connections::all_status(&cfg).await;
     let by_id = |id: &str| statuses.iter().find(|s| s.server_id == id).cloned().unwrap();
     assert_eq!(by_id(&a.server_id).status.as_str(), "connected");
     assert_eq!(by_id(&b.server_id).status.as_str(), "error");
     assert_eq!(by_id(&c.server_id).status.as_str(), "disabled");
-    assert!(connections::last_error_for(&c.server_id).await.is_none());
+    assert!(
+        connections::last_error_for(&c.server_id).await.is_none(),
+        "disabled server with bogus command must not have been connect-attempted"
+    );
 
     let _ = connections::disconnect(&a.server_id).await;
 }
