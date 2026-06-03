@@ -148,4 +148,55 @@ describe('pttService state machine', () => {
 
     expect(deps.audioCapture.finalize).not.toHaveBeenCalled();
   });
+
+  it('cancel("user_cancel") aborts an active session without sending a message', async () => {
+    const deps = makeDeps();
+    const svc = createPttService(deps);
+
+    await svc.onStart(10);
+    await svc.cancel('user_cancel');
+
+    expect(deps.audioCapture.cancel).toHaveBeenCalled();
+    expect(deps.playChime).toHaveBeenCalledWith('error');
+    expect(deps.showOverlay).toHaveBeenLastCalledWith(false, 10);
+    expect(deps.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('plays error chime and bails if audioCapture.start throws', async () => {
+    const deps = makeDeps({
+      audioCapture: {
+        start: vi.fn().mockRejectedValue(new Error('mic denied')),
+        finalize: vi.fn().mockResolvedValue({ durationMs: 1500, buffer: new ArrayBuffer(0) }),
+        cancel: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+    const svc = createPttService(deps);
+
+    await svc.onStart(11);
+
+    expect(deps.playChime).toHaveBeenCalledWith('open');
+    expect(deps.playChime).toHaveBeenCalledWith('error');
+    expect(deps.showOverlay).toHaveBeenLastCalledWith(false, 11);
+    // The session never armed — onStop should be a no-op.
+    await svc.onStop(11);
+    expect(deps.audioCapture.finalize).not.toHaveBeenCalled();
+    expect(deps.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('posts a "[Voice — transcription failed]" breadcrumb when transcribe throws', async () => {
+    const deps = makeDeps({
+      transcribe: vi.fn().mockRejectedValue(new Error('stt timeout')),
+    });
+    const svc = createPttService(deps);
+
+    await svc.onStart(12);
+    await svc.onStop(12);
+
+    expect(deps.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: '[Voice — transcription failed]',
+        metadata: { source: 'ptt', session_id: 12 },
+      }),
+    );
+  });
 });

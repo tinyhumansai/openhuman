@@ -124,7 +124,9 @@ export function createPttService(deps: PttDeps): PttService {
       text = '[Voice — transcription failed]';
     }
 
-    if (!text.trim()) {
+    const trimmed = text.trim();
+
+    if (!trimmed) {
       deps.logger.info('[ptt] session dropped — empty transcript', { sessionId });
       await deps.playChime('error');
       return;
@@ -137,7 +139,7 @@ export function createPttService(deps: PttDeps): PttService {
 
     await deps.sendMessage({
       threadId,
-      body: text.trim(),
+      body: trimmed,
       metadata: { source: 'ptt', session_id: sessionId },
       speakReply: settings.speakReplies,
     });
@@ -147,12 +149,13 @@ export function createPttService(deps: PttDeps): PttService {
       threadId,
       heldMs: deps.now() - session.startedAtMs,
       finalizedByWatchdog: fromWatchdog,
-      transcriptLen: text.trim().length,
+      transcriptLen: trimmed.length,
     });
   };
 
   return {
     async onStart(sessionId) {
+      // Preempt: if another session is active, cancel it.
       if (active) {
         deps.logger.debug('[ptt] onStart while active — preempting', {
           old: active.sessionId,
@@ -167,24 +170,47 @@ export function createPttService(deps: PttDeps): PttService {
         active = null;
       }
 
-      await deps.playChime('open');
-      await deps.showOverlay(true, sessionId);
-
-      try {
-        await deps.audioCapture.start({ sessionTag: `ptt:${sessionId}` });
-      } catch (err) {
-        deps.logger.warn('[ptt] audio start failed', { sessionId, err: String(err) });
-        await deps.playChime('error');
-        await deps.showOverlay(false, sessionId);
-        return;
-      }
-
+      // Claim the slot BEFORE any awaits so concurrent onStart calls preempt
+      // this in-progress session rather than racing with it.
       active = {
         sessionId,
         startedAtMs: deps.now(),
         watchdogTimer: null,
         finalizedByWatchdog: false,
       };
+      const claimed = active;
+
+      await deps.playChime('open');
+      await deps.showOverlay(true, sessionId);
+
+      // If a concurrent onStart preempted us during the awaits, our claim was
+      // replaced. Stop here — the new claim owns the slot.
+      if (active !== claimed) {
+        return;
+      }
+
+      try {
+        await deps.audioCapture.start({ sessionTag: `ptt:${sessionId}` });
+      } catch (err) {
+        deps.logger.warn('[ptt] audio start failed', { sessionId, err: String(err) });
+        if (active === claimed) {
+          active = null;
+        }
+        await deps.playChime('error');
+        await deps.showOverlay(false, sessionId);
+        return;
+      }
+
+      // Re-check after the audio.start await.
+      if (active !== claimed) {
+        // Concurrent preempt replaced our claim mid-flight; we already started
+        // audio for an orphan session. Best-effort cancel and exit.
+        try {
+          await deps.audioCapture.cancel();
+        } catch (_) {}
+        return;
+      }
+
       active.watchdogTimer = armWatchdog(sessionId);
     },
 
