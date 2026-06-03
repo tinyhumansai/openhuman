@@ -269,6 +269,12 @@ pub async fn call_tool(
 }
 
 /// Return status summaries for all installed servers.
+///
+/// Priority order: `Disabled` > `Connected` > `Error` > `Disconnected`.
+/// - `!s.enabled` → `Disabled` (suppresses tool count and last_error).
+/// - connected (id in live registry) → `Connected` + tool count.
+/// - recorded connect failure in `LAST_ERRORS` → `Error` + last_error message.
+/// - otherwise → `Disconnected`.
 pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
     let installed = store::list_servers(config).unwrap_or_default();
     let connected_ids: Vec<String> = {
@@ -276,29 +282,34 @@ pub async fn all_status(config: &Config) -> Vec<ConnStatus> {
         map.keys().cloned().collect()
     };
 
+    let errors_snapshot = last_errors().read().await.clone();
+
     let mut out = Vec::with_capacity(installed.len());
     for s in installed {
         let is_connected = connected_ids.iter().any(|id| id == &s.server_id);
-        let tool_count = if is_connected {
+
+        let (status, tool_count, last_error) = if !s.enabled {
+            (ServerStatus::Disabled, 0u32, None)
+        } else if is_connected {
             let map = connections().read().await;
-            match map.get(&s.server_id) {
+            let tool_count = match map.get(&s.server_id) {
                 Some(c) => c.tools_snapshot().await.len() as u32,
                 None => 0,
-            }
+            };
+            (ServerStatus::Connected, tool_count, None)
+        } else if let Some(err) = errors_snapshot.get(&s.server_id).cloned() {
+            (ServerStatus::Error, 0u32, Some(err))
         } else {
-            0
+            (ServerStatus::Disconnected, 0u32, None)
         };
+
         out.push(ConnStatus {
             server_id: s.server_id,
             qualified_name: s.qualified_name,
             display_name: s.display_name,
-            status: if is_connected {
-                ServerStatus::Connected
-            } else {
-                ServerStatus::Disconnected
-            },
+            status,
             tool_count,
-            last_error: None,
+            last_error,
         });
     }
     out

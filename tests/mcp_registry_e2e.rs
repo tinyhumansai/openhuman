@@ -157,3 +157,43 @@ async fn successful_connect_clears_last_error() {
 
     let _ = connections::disconnect(&server.server_id).await;
 }
+
+#[tokio::test]
+async fn status_priority_disabled_outranks_connected() {
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.enabled = false;
+    store::insert_server(&cfg, &server).expect("insert");
+
+    let statuses = connections::all_status(&cfg).await;
+    let mine = statuses
+        .iter()
+        .find(|s| s.server_id == server.server_id)
+        .expect("status entry present");
+    assert_eq!(
+        mine.status.as_str(),
+        "disabled",
+        "disabled server reports `disabled` even before any connect attempt"
+    );
+    assert!(mine.last_error.is_none());
+}
+
+#[tokio::test]
+async fn status_reflects_last_connect_error() {
+    let (_tmp, cfg) = fresh_workspace_config();
+    let mut server = make_installed_server();
+    server.command = "/nonexistent".to_string();
+    store::insert_server(&cfg, &server).expect("insert");
+
+    let _ = connections::connect(&cfg, &server).await;
+    let statuses = connections::all_status(&cfg).await;
+    let mine = statuses
+        .iter()
+        .find(|s| s.server_id == server.server_id)
+        .unwrap();
+    assert_eq!(mine.status.as_str(), "error");
+    assert!(
+        mine.last_error.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        "last_error populated"
+    );
+}

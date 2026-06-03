@@ -180,6 +180,7 @@ pub enum ServerStatus {
     Connecting,
     Connected,
     Error,
+    Disabled,
 }
 
 impl ServerStatus {
@@ -189,6 +190,7 @@ impl ServerStatus {
             Self::Connecting => "connecting",
             Self::Connected => "connected",
             Self::Error => "error",
+            Self::Disabled => "disabled",
         }
     }
 }
@@ -317,6 +319,7 @@ mod tests {
         assert_eq!(ServerStatus::Disconnected.as_str(), "disconnected");
         assert_eq!(ServerStatus::Connecting.as_str(), "connecting");
         assert_eq!(ServerStatus::Error.as_str(), "error");
+        assert_eq!(ServerStatus::Disabled.as_str(), "disabled");
     }
 
     #[test]
