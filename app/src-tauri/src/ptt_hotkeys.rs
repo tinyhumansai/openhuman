@@ -188,3 +188,52 @@ mod tests {
         );
     }
 }
+
+/// Returns `Some(conflicting_variant)` if any expanded PTT variant overlaps
+/// any expanded dictation variant. Comparison is case-insensitive.
+pub(crate) fn first_conflict_with(
+    ptt: &[String],
+    dictation: &[String],
+) -> Option<String> {
+    for p in ptt {
+        let p_lc = p.to_ascii_lowercase();
+        for d in dictation {
+            if d.to_ascii_lowercase() == p_lc {
+                return Some(p.clone());
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod conflict_tests {
+    use super::*;
+
+    #[test]
+    fn no_conflict_returns_none() {
+        let ptt = vec!["F13".into()];
+        let dict = vec!["F14".into()];
+        assert_eq!(first_conflict_with(&ptt, &dict), None);
+    }
+
+    #[test]
+    fn case_insensitive_conflict_detected() {
+        let ptt = vec!["ctrl+space".into()];
+        let dict = vec!["Ctrl+Space".into()];
+        assert_eq!(
+            first_conflict_with(&ptt, &dict),
+            Some("ctrl+space".to_string())
+        );
+    }
+
+    #[test]
+    fn only_one_variant_overlaps_returns_first() {
+        let ptt = vec!["Cmd+P".into(), "Ctrl+P".into()];
+        let dict = vec!["Ctrl+P".into()];
+        assert_eq!(
+            first_conflict_with(&ptt, &dict),
+            Some("Ctrl+P".to_string())
+        );
+    }
+}
