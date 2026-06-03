@@ -6,6 +6,10 @@
 //! See [`docs/superpowers/specs/2026-06-03-meet-call-lifecycle-diagnostics-design.md`].
 
 use serde::Serialize;
+use serde_json::json;
+use tauri::{AppHandle, Emitter, Manager, Runtime};
+
+use crate::meet_call::MeetCallState;
 
 /// Coarse-grained per-call phase. Sub-phases stay in logs only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -54,6 +58,90 @@ pub fn classify_scanner_err(err: &str, phase_hint: Phase) -> ReasonCode {
     match phase_hint {
         Phase::Joining | Phase::AwaitingAdmission => ReasonCode::AskToJoinTimeout,
         Phase::Joined => ReasonCode::AdmissionTimeout,
+    }
+}
+
+/// Emit a `meet-call:phase` event for a non-terminal lifecycle transition.
+///
+/// Non-idempotent on purpose — phase transitions can legitimately fire
+/// twice if the scanner retries internally. The frontend's listener
+/// only cares about the *latest* phase before terminal, so duplicates
+/// are harmless.
+pub fn emit_phase<R: Runtime>(
+    app: &AppHandle<R>,
+    request_id: &str,
+    phase: Phase,
+    detail: Option<&str>,
+) {
+    log::info!(
+        "[meet-lifecycle] phase={} request_id={request_id} detail={}",
+        serde_json::to_value(phase)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "?".into()),
+        detail.unwrap_or("")
+    );
+    if let Err(err) = app.emit(
+        "meet-call:phase",
+        json!({
+            "request_id": request_id,
+            "phase": phase,
+            "detail": detail,
+        }),
+    ) {
+        log::debug!("[meet-lifecycle] emit phase failed: {err}");
+    }
+}
+
+/// Emit a `meet-call:failed` event with one-shot per-`request_id` dedup.
+///
+/// Consults [`MeetCallState::mark_terminated`]; a second call for the
+/// same `request_id` is a no-op + debug log. `message` is the
+/// localized human string the frontend can hand straight to the toast.
+pub fn emit_failed<R: Runtime>(
+    app: &AppHandle<R>,
+    request_id: &str,
+    phase: Phase,
+    reason: ReasonCode,
+    message: &str,
+) {
+    let state = match app.try_state::<MeetCallState>() {
+        Some(s) => s,
+        None => {
+            log::warn!(
+                "[meet-lifecycle] emit_failed skipped (state missing) request_id={request_id}"
+            );
+            return;
+        }
+    };
+    if !state.mark_terminated(request_id) {
+        log::debug!(
+            "[meet-lifecycle] emit_failed deduped request_id={request_id} reason={:?}",
+            reason
+        );
+        return;
+    }
+    log::warn!(
+        "[meet-lifecycle] failed phase={} reason={} request_id={request_id} message={message}",
+        serde_json::to_value(phase)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "?".into()),
+        serde_json::to_value(reason)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from))
+            .unwrap_or_else(|| "?".into()),
+    );
+    if let Err(err) = app.emit(
+        "meet-call:failed",
+        json!({
+            "request_id": request_id,
+            "phase": phase,
+            "reason_code": reason,
+            "message": message,
+        }),
+    ) {
+        log::debug!("[meet-lifecycle] emit failed failed: {err}");
     }
 }
 
