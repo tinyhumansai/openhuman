@@ -2,7 +2,24 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callCoreRpc } from '../coreRpcClient';
-import { closeMeetCall, joinMeetCall, listMeetCalls } from '../meetCallService';
+import {
+  closeMeetCall,
+  joinMeetCall,
+  listMeetCalls,
+  type MeetCallPhase,
+  type MeetCallReasonCode,
+  subscribeToMeetCallEvents,
+} from '../meetCallService';
+
+// ---------------------------------------------------------------------------
+// subscribeToMeetCallEvents — separate mock setup required because
+// @tauri-apps/api/event is a different module from @tauri-apps/api/core.
+// These tests live in this file to keep all meetCallService coverage together.
+// ---------------------------------------------------------------------------
+
+const listenMock = vi.fn();
+
+vi.mock('@tauri-apps/api/event', () => ({ listen: (...args: unknown[]) => listenMock(...args) }));
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 
@@ -203,5 +220,92 @@ describe('closeMeetCall', () => {
 
     await expect(closeMeetCall('req-1')).resolves.toBe(false);
     expect(invoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('subscribeToMeetCallEvents', () => {
+  beforeEach(() => {
+    listenMock.mockReset();
+  });
+
+  it('registers listeners for meet-call:phase and meet-call:failed', async () => {
+    const unlisten = vi.fn();
+    listenMock.mockResolvedValue(unlisten);
+
+    const disposer = subscribeToMeetCallEvents('req-1', {});
+    // Wait a tick so the listen() promises resolve and listeners are stored.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const events = listenMock.mock.calls.map(c => c[0]);
+    expect(events).toContain('meet-call:phase');
+    expect(events).toContain('meet-call:failed');
+
+    disposer();
+    // Listeners were registered, so both unlisten callbacks should be called.
+    await Promise.resolve();
+    expect(unlisten).toHaveBeenCalledTimes(2);
+  });
+
+  it('invokes onPhase only for events matching the request_id', async () => {
+    const unlisten = vi.fn();
+    let phaseHandler: (e: { payload: unknown }) => void = () => {};
+    listenMock.mockImplementation(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      if (name === 'meet-call:phase') phaseHandler = cb;
+      return unlisten;
+    });
+
+    const onPhase = vi.fn();
+    subscribeToMeetCallEvents('req-1', { onPhase });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    phaseHandler({
+      payload: { request_id: 'req-1', phase: 'joining' as MeetCallPhase, detail: 'window_built' },
+    });
+    phaseHandler({
+      payload: { request_id: 'req-2', phase: 'joined' as MeetCallPhase, detail: null },
+    });
+
+    expect(onPhase).toHaveBeenCalledTimes(1);
+    expect(onPhase).toHaveBeenCalledWith('joining', 'window_built');
+  });
+
+  it('invokes onFailed only for events matching the request_id', async () => {
+    const unlisten = vi.fn();
+    let failedHandler: (e: { payload: unknown }) => void = () => {};
+    listenMock.mockImplementation(async (name: string, cb: (e: { payload: unknown }) => void) => {
+      if (name === 'meet-call:failed') failedHandler = cb;
+      return unlisten;
+    });
+
+    const onFailed = vi.fn();
+    subscribeToMeetCallEvents('req-1', { onFailed });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    failedHandler({
+      payload: {
+        request_id: 'req-1',
+        phase: 'joined' as MeetCallPhase,
+        reason_code: 'admission_timeout' as MeetCallReasonCode,
+        message: 'OpenHuman never reached the in-call screen.',
+      },
+    });
+    failedHandler({
+      payload: {
+        request_id: 'req-other',
+        phase: 'joined' as MeetCallPhase,
+        reason_code: 'admission_timeout' as MeetCallReasonCode,
+        message: 'irrelevant',
+      },
+    });
+
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(onFailed).toHaveBeenCalledWith(
+      'joined',
+      'admission_timeout',
+      'OpenHuman never reached the in-call screen.'
+    );
   });
 });

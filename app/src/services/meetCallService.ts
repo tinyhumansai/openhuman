@@ -10,6 +10,7 @@
 // Splitting it this way keeps platform-specific window code in the shell
 // while the validation rules live (and are tested) in the core.
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 import { isTauri } from '../utils/tauriCommands/common';
 import { apiClient } from './apiClient';
@@ -295,4 +296,87 @@ export async function joinMeetingViaMascotBot(
     const wrapped: MascotJoinMeetingError = { message: text, isCapacityGated };
     throw wrapped;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle events for the local CEF Meet bot (#2945)
+// ---------------------------------------------------------------------------
+
+/** Coarse-grained per-call phase mirrored from the Tauri shell. */
+export type MeetCallPhase = 'joining' | 'awaiting_admission' | 'joined';
+
+/** Terminal reason codes emitted as `meet-call:failed` events. */
+export type MeetCallReasonCode =
+  | 'name_input_timeout'
+  | 'ask_to_join_timeout'
+  | 'admission_timeout'
+  | 'audio_bind_failed';
+
+interface MeetCallPhasePayload {
+  request_id: string;
+  phase: MeetCallPhase;
+  detail?: string | null;
+}
+
+interface MeetCallFailedPayload {
+  request_id: string;
+  phase: MeetCallPhase;
+  reason_code: MeetCallReasonCode;
+  message: string;
+}
+
+export interface MeetCallEventHandlers {
+  onPhase?: (phase: MeetCallPhase, detail?: string) => void;
+  onFailed?: (phase: MeetCallPhase, reason: MeetCallReasonCode, message: string) => void;
+}
+
+/**
+ * Subscribe to `meet-call:phase` and `meet-call:failed` events for one
+ * `request_id`. Returns a disposer that unregisters both listeners.
+ *
+ * Listeners are registered asynchronously via Tauri's `listen()`; the
+ * disposer is safe to call before the listen() promises resolve — pending
+ * unlistens are awaited internally.
+ */
+export function subscribeToMeetCallEvents(
+  requestId: string,
+  handlers: MeetCallEventHandlers
+): () => void {
+  let disposed = false;
+  const unlistens: Array<() => void> = [];
+
+  void listen<MeetCallPhasePayload>('meet-call:phase', evt => {
+    if (disposed) return;
+    if (evt.payload.request_id !== requestId) return;
+    handlers.onPhase?.(evt.payload.phase, evt.payload.detail ?? undefined);
+  }).then(u => {
+    if (disposed) {
+      u();
+    } else {
+      unlistens.push(u);
+    }
+  });
+
+  void listen<MeetCallFailedPayload>('meet-call:failed', evt => {
+    if (disposed) return;
+    if (evt.payload.request_id !== requestId) return;
+    handlers.onFailed?.(evt.payload.phase, evt.payload.reason_code, evt.payload.message);
+  }).then(u => {
+    if (disposed) {
+      u();
+    } else {
+      unlistens.push(u);
+    }
+  });
+
+  return () => {
+    disposed = true;
+    for (const u of unlistens) {
+      try {
+        u();
+      } catch {
+        // Unlisten can throw if the channel is already closed; ignore.
+      }
+    }
+  };
 }
