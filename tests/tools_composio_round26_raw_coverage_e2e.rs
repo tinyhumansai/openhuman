@@ -320,7 +320,7 @@ async fn round26_composio_direct_tool_covers_connect_execute_and_error_fallbacks
     let v3_execute = requests
         .iter()
         .find(|request| {
-            request.method == Method::POST && request.path == "/api/v3/tools/round26-action/execute"
+            request.method == Method::POST && request.path == "/api/v3/tools/execute/ROUND26_ACTION"
         })
         .expect("v3 execute request");
     assert_eq!(v3_execute.body["user_id"], "entity-round26");
@@ -463,12 +463,12 @@ async fn composio_handler(State(state): State<MockState>, request: Request) -> R
             ]
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/round26-action/execute") => Json(json!({
+        (Method::POST, "/api/v3/tools/execute/ROUND26_ACTION") => Json(json!({
             "successful": true,
             "data": { "message": "v3-execute-round26" }
         }))
         .into_response(),
-        (Method::POST, "/api/v3/tools/round26-v2-only/execute") => (
+        (Method::POST, "/api/v3/tools/execute/ROUND26_V2_ONLY") => (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "message": "v3 execute unavailable" })),
         )
