@@ -11,6 +11,7 @@ export const CORE_RPC_METHODS = {
   configGetSearchSettings: 'openhuman.config_get_search_settings',
   configUpdateSearchSettings: 'openhuman.config_update_search_settings',
   configSetBrowserAllowAll: 'openhuman.config_set_browser_allow_all',
+  configUpdateAgentPaths: 'openhuman.config_update_agent_paths',
   configUpdateAgentSettings: 'openhuman.config_update_agent_settings',
   configUpdateAnalyticsSettings: 'openhuman.config_update_analytics_settings',
   configUpdateAutonomySettings: 'openhuman.config_update_autonomy_settings',
