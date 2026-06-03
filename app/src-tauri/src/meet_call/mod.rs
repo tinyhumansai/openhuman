@@ -245,6 +245,12 @@ pub async fn meet_call_open_window<R: Runtime>(
             pos.y
         );
     }
+    crate::meet_call::lifecycle::emit_phase(
+        &app,
+        &request_id,
+        crate::meet_call::lifecycle::Phase::Joining,
+        Some("window_built"),
+    );
 
     state
         .inner
@@ -283,7 +289,7 @@ pub async fn meet_call_open_window<R: Runtime>(
         let owner_for_audio = args.owner_display_name.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(err) = crate::meet_audio::start(
-                app_for_audio,
+                app_for_audio.clone(),
                 request_id_for_audio.clone(),
                 url_for_audio,
                 owner_for_audio,
@@ -291,8 +297,13 @@ pub async fn meet_call_open_window<R: Runtime>(
             )
             .await
             {
-                log::warn!(
-                    "[meet-call] meet_audio start failed request_id={request_id_for_audio} err={err}"
+                let message = format!("Audio bridge failed to bind: {err}");
+                crate::meet_call::lifecycle::emit_failed(
+                    &app_for_audio,
+                    &request_id_for_audio,
+                    crate::meet_call::lifecycle::Phase::Joined,
+                    crate::meet_call::lifecycle::ReasonCode::AudioBindFailed,
+                    &message,
                 );
             }
         });
@@ -343,6 +354,7 @@ pub async fn meet_call_open_window<R: Runtime>(
                 tauri::WindowEvent::Destroyed => {
                     if let Some(state) = app_for_event.try_state::<MeetCallState>() {
                         state.inner.lock().unwrap().remove(&request_id_for_event);
+                        state.clear_terminated(&request_id_for_event);
                         // Defensive: if CloseRequested didn't fire (e.g. the
                         // window was destroyed by the OS without a prior close
                         // signal), abort the scanner here as a fallback.
