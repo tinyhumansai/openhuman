@@ -2784,6 +2784,7 @@ async fn worker_a_controller_schemas_are_fully_exposed() {
                 "openhuman.config_agent_server_status",
                 "openhuman.config_get",
                 "openhuman.config_get_activity_level_settings",
+                "openhuman.config_get_agent_paths",
                 "openhuman.config_get_agent_settings",
                 "openhuman.config_get_analytics_settings",
                 "openhuman.config_get_autonomy_settings",
