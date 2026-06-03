@@ -305,17 +305,38 @@ pub(crate) async fn run_one_tool(
             }
         }
         Ok(Err(e)) => {
-            crate::core::observability::report_error(
-                &e,
-                "tool",
-                "execute",
-                &[
-                    ("tool", call.name.as_str()),
-                    ("outcome", "failed"),
-                    ("iteration", &(iteration + 1).to_string()),
-                ],
-            );
-            (format!("Error executing {}: {e}", call.name), false)
+            // Distinguish user-state failures (out of credits, missing
+            // required field, toolkit not enabled, …) from system / product
+            // failures. Tools that call the integrations backend now attach
+            // a typed `BackendUserStateError` marker for the user-state
+            // case (see `openhuman::integrations::client`). Capturing those
+            // in Sentry is noise — the UI already surfaces them, the user
+            // is the only one who can act on them, and an agent that
+            // retries `web_search` 19 times with an empty wallet generates
+            // 19 indistinguishable events (TAURI-RUST-5KG, ~1860 hits).
+            // Surface the message to the LLM so it stops and reports back
+            // to the user, and let the repeated-failure circuit breaker
+            // (caller side) trip on identical retries.
+            if crate::openhuman::integrations::is_backend_user_state_error(&e) {
+                tracing::warn!(
+                    iteration,
+                    tool = call.name.as_str(),
+                    "[agent_loop] tool returned expected user-state error: {e:#}"
+                );
+                (format!("Error executing {}: {e}", call.name), false)
+            } else {
+                crate::core::observability::report_error(
+                    &e,
+                    "tool",
+                    "execute",
+                    &[
+                        ("tool", call.name.as_str()),
+                        ("outcome", "failed"),
+                        ("iteration", &(iteration + 1).to_string()),
+                    ],
+                );
+                (format!("Error executing {}: {e}", call.name), false)
+            }
         }
         Err(_) => {
             let msg = format!(

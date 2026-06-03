@@ -379,6 +379,205 @@ async fn jira_generic_400_classifies_as_backend_user_error() {
 
 // ── Unit: `sanitize_backend_url` (issue #2075) ────────────────────
 
+// ── TAURI-RUST-5KG: typed BackendUserStateError boundary ────────────
+//
+// 1860 Sentry events / 9 users from `web_search_tool` → backend 400
+// "Insufficient balance". The integrations breadcrumb path already
+// demoted the event, but the per-call error bubbled up as a flat
+// `anyhow::Error` and the agent's tool runner re-captured it. The fix
+// types the error here so the runner can `downcast_ref::<…>()` and
+// route to the warn-only path. These tests pin both halves of the
+// contract: (a) classify-and-wrap fires on user-state failures,
+// (b) Display string is preserved for stringify-only callers, and
+// (c) genuine system failures stay un-typed so capture still works.
+
+#[tokio::test]
+async fn post_400_insufficient_balance_returns_typed_backend_user_state_error() {
+    let app = Router::new().route(
+        "/agent-integrations/parallel/search",
+        post(|| async {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "success": false, "error": "Insufficient balance" })),
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .post::<serde_json::Value>(
+            "/agent-integrations/parallel/search",
+            &json!({ "objective": "test" }),
+        )
+        .await
+        .expect_err("400 must surface as Err");
+
+    // Typed: the agent tool runner relies on this exact downcast to
+    // route the failure to the warn-only path instead of `report_error`.
+    assert!(
+        is_backend_user_state_error(&err),
+        "400 'Insufficient balance' must carry BackendUserStateError marker so the \
+         tool runner can route it to the warn-only path (TAURI-RUST-5KG); got: {err:#}"
+    );
+
+    // Display preserved: every caller that just stringifies the error
+    // (toasts, logs, prior bail-format consumers) keeps seeing the same
+    // message — typing is purely additive.
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Insufficient balance"),
+        "Display string must still carry the user-facing error; got: {msg}"
+    );
+    assert!(
+        msg.contains("400"),
+        "Display string must still carry the HTTP status; got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn post_500_internal_error_is_not_marked_user_state() {
+    let app = Router::new().route(
+        "/foo",
+        post(|| async {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "<html>upstream blew up</html>",
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .post::<serde_json::Value>("/foo", &json!({}))
+        .await
+        .expect_err("500 must surface as Err");
+
+    // 5xx is a real failure — must remain a plain anyhow error so
+    // `report_error` runs at the tool runner and triage sees it.
+    assert!(
+        !is_backend_user_state_error(&err),
+        "5xx must NOT carry the user-state marker — that would silence real \
+         backend bugs; got: {err:#}"
+    );
+}
+
+#[tokio::test]
+async fn get_403_toolkit_not_enabled_returns_typed_backend_user_state_error() {
+    // Composio "Toolkit X is not enabled" classifies as
+    // `ProviderUserState` per the observability matcher. Pin that the
+    // typed marker is attached for the entire user-state bucket family,
+    // not just BackendUserError / BudgetExhausted.
+    let app = Router::new().route(
+        "/agent-integrations/composio/connections",
+        get(|| async {
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "success": false, "error": "Toolkit \"slack\" is not enabled" })),
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .get::<serde_json::Value>("/agent-integrations/composio/connections")
+        .await
+        .expect_err("403 must surface as Err");
+
+    assert!(
+        is_backend_user_state_error(&err),
+        "Provider-user-state 403 must carry BackendUserStateError marker; got: {err:#}"
+    );
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Toolkit \"slack\" is not enabled"),
+        "Display must preserve the actionable error; got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn post_envelope_user_state_failure_returns_typed_backend_user_state_error() {
+    // 2xx + `success: false` user-state envelope failure (composio
+    // "Toolkit X is not enabled" wire shape on the 2xx path). The
+    // envelope-error branch must wrap with the typed marker too —
+    // otherwise the runner re-captures it on the next tool call.
+    let app = Router::new().route(
+        "/agent-integrations/composio/execute",
+        post(|| async {
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "success": false,
+                    "error": "Toolkit \"slack\" is not enabled"
+                })),
+            )
+                .into_response()
+        }),
+    );
+    let base = start_mock_backend(app).await;
+    let client = client_for(base);
+    let err = client
+        .post::<serde_json::Value>("/agent-integrations/composio/execute", &json!({}))
+        .await
+        .expect_err("envelope-failure must surface as Err");
+
+    assert!(
+        is_backend_user_state_error(&err),
+        "envelope user-state failure must carry BackendUserStateError marker; \
+         got: {err:#}"
+    );
+}
+
+#[test]
+fn backend_user_state_error_display_is_message_verbatim() {
+    let typed = BackendUserStateError {
+        message: "Backend returned 400 Bad Request for POST x: Insufficient balance".into(),
+    };
+    // The Display impl is the single source of truth for what callers
+    // see; an `anyhow::Error::new(typed)` rendering must match this
+    // exactly so the existing bail-format contract holds.
+    assert_eq!(
+        typed.to_string(),
+        "Backend returned 400 Bad Request for POST x: Insufficient balance"
+    );
+}
+
+#[test]
+fn is_backend_user_state_error_matches_wrapped_anyhow() {
+    // `anyhow::Error::new(typed)` puts the typed value at the root of
+    // the chain — confirm both the direct downcast and the chain walk
+    // catch it (defense-in-depth against future `.context(…)` wraps).
+    let typed = BackendUserStateError {
+        message: "x".into(),
+    };
+    let err: anyhow::Error = typed.into();
+    assert!(is_backend_user_state_error(&err));
+
+    let plain = anyhow::anyhow!("not user-state");
+    assert!(!is_backend_user_state_error(&plain));
+}
+
+#[test]
+fn is_backend_user_state_error_finds_typed_marker_through_context_wraps() {
+    // Defense-in-depth: if a caller wraps the typed error with
+    // `.context("more info")`, the marker still lives in the chain.
+    // `is_backend_user_state_error` must walk to find it — otherwise
+    // any future `with_context` at a call site silently re-enables
+    // Sentry capture for user-state failures.
+    use anyhow::Context;
+
+    let typed = BackendUserStateError {
+        message: "Backend returned 400 …: Insufficient balance".into(),
+    };
+    let err: anyhow::Error = anyhow::Error::new(typed).context("while executing web_search_tool");
+    assert!(
+        is_backend_user_state_error(&err),
+        "marker must be reachable after .context() wraps; got: {err:#}"
+    );
+}
+
 #[test]
 fn sanitize_backend_url_strips_inference_path() {
     // Regression: a misconfigured `BACKEND_URL` baked into the build
