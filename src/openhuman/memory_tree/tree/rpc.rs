@@ -1100,8 +1100,18 @@ mod tests {
     /// timestamp from `mem_tree_chunks`.
     #[tokio::test]
     async fn pipeline_status_reports_chunk_aggregates_after_ingest() {
-        // #002: reset+serialise the process-global degraded flags so this
-        // "running" assertion isn't flipped to "degraded" by a parallel test.
+        // #002: reset+serialise the process-global degraded flags so the
+        // health-touching tests in the suite can't leak `degraded=true` into
+        // this run. `test_guard()` covers every other test that *also* holds
+        // it, but production code paths (e.g. `build_read_embedder` when no
+        // provider is configured) call `mark_semantic_recall_degraded`
+        // without any lock at all, so a parallel non-health-touching test
+        // that exercises the embedder factory can still toggle the flag
+        // mid-run (#3256). We therefore avoid asserting the derived
+        // `status` string directly and instead pin the invariants this
+        // workspace actually controls: chunk aggregates roll up, and no
+        // background job is in flight (per-workspace SQLite, unaffected by
+        // the global flag).
         let _g = crate::openhuman::memory_tree::health::test_guard();
         let (_tmp, cfg) = test_config();
 
@@ -1130,12 +1140,31 @@ mod tests {
             "ingest must populate last_sync_ms (got {})",
             out.last_sync_ms
         );
-        // No jobs running ⇒ running status, not syncing/error. (We hold
-        // `test_guard()` which resets the process-global degraded flags on
-        // entry and serialises against every other flag-touching test, so the
-        // status reflects this workspace's state, not a sibling's leak.)
-        assert_eq!(out.status, "running");
-        assert!(!out.is_syncing);
+        // No worker is running in unit tests (the pool is only started by
+        // `core::jsonrpc::run_server_inner`), so the just-enqueued extract
+        // job stays `Ready`, never advances to `Running`, and the
+        // per-workspace `is_syncing` signal stays false. This invariant is
+        // stable regardless of the process-global degraded flag.
+        assert!(
+            !out.is_syncing,
+            "no worker pool in unit tests; is_syncing must stay false (jobs: {:?})",
+            out.pipeline_jobs
+        );
+        // The chunk-aggregate path puts the workspace in either `running`
+        // (healthy) or `degraded` (a parallel test flipped the global flag,
+        // see comment above). Both prove that ingest landed and that the
+        // status surface read the populated `mem_tree_chunks`. We
+        // deliberately do NOT assert `running` here because the only thing
+        // separating the two is a process-global flag we cannot synchronise
+        // against without restructuring the embedder factory.
+        assert!(
+            out.status == "running" || out.status == "degraded",
+            "expected running/degraded after ingest, got {} (chunks={}, jobs={:?}, degraded={:?})",
+            out.status,
+            out.total_chunks,
+            out.pipeline_jobs,
+            out.degraded,
+        );
     }
 
     /// `set_enabled` flips the persisted scheduler-gate mode and reports
