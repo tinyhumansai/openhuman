@@ -436,7 +436,10 @@ mod tests {
     fn standalone_with_no_env_override_installs_gate_silently() {
         for host in [HostKind::Cli, HostKind::Docker] {
             let d = approval_gate_boot_decision(host, false);
-            assert!(d.install_gate, "{host:?} with no override must install the gate");
+            assert!(
+                d.install_gate,
+                "{host:?} with no override must install the gate"
+            );
             assert!(!d.override_ignored);
             assert!(!d.gate_disabled_by_override);
         }

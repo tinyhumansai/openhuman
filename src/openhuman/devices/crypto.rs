@@ -546,7 +546,9 @@ mod tests {
         let keys = derive_session_keys(&[1u8; 32], &[2u8; 32], &[3u8; 32], &[4u8; 32]);
         let mut client = TunnelCipher::for_role(TunnelRole::Client, &keys);
 
-        let err = client.open(&v1_frame).expect_err("v1 frame must be rejected");
+        let err = client
+            .open(&v1_frame)
+            .expect_err("v1 frame must be rejected");
         assert!(
             err.contains("UnsupportedFrameVersion") && err.contains("re-pair"),
             "expected explicit UnsupportedFrameVersion + re-pair hint, got: {err}"
@@ -566,10 +568,8 @@ mod tests {
         let client_eph_b = [0xD1u8; 32];
         let server_eph_b = [0xD2u8; 32];
 
-        let session_a =
-            derive_session_keys(&static_dh, &eph_a, &client_eph_a, &server_eph_a);
-        let session_b =
-            derive_session_keys(&static_dh, &eph_b, &client_eph_b, &server_eph_b);
+        let session_a = derive_session_keys(&static_dh, &eph_a, &client_eph_a, &server_eph_a);
+        let session_b = derive_session_keys(&static_dh, &eph_b, &client_eph_b, &server_eph_b);
         assert_ne!(
             session_a, session_b,
             "static-DH-only adversary must not recover prior session keys"

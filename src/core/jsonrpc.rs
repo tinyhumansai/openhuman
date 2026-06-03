@@ -2101,7 +2101,8 @@ pub async fn bootstrap_core_runtime(host_kind: crate::core::types::HostKind) {
             t == "0" || t.eq_ignore_ascii_case("false")
         })
         .unwrap_or(false);
-    let decision = crate::core::types::approval_gate_boot_decision(host_kind, env_override_requested);
+    let decision =
+        crate::core::types::approval_gate_boot_decision(host_kind, env_override_requested);
     // Record the boot decision before publishing the warning event so the
     // first poll of `approval_get_gate_state` after boot reflects the same
     // host-aware verdict the event itself describes — no race.

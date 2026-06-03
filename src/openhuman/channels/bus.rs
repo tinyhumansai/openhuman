@@ -1011,9 +1011,7 @@ pub(crate) fn derive_inbound_thread_id(
 /// `"inbound"` literal that the path used historically, preserving
 /// behavior for single-DM flows where no co-channel attacker exists.
 pub(crate) fn derive_inbound_client_id(sender: Option<&str>) -> String {
-    let trimmed = sender
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty());
+    let trimmed = sender.map(|s| s.trim()).filter(|s| !s.is_empty());
     match trimmed {
         Some(s) => format!("inbound:{s}"),
         None => "inbound".to_string(),
