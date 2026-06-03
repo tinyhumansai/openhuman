@@ -302,3 +302,32 @@ pub async fn flush_audio_bridge(cdp: &mut CdpConn, session: &str) -> Result<i64,
         .unwrap_or(0);
     Ok(stopped)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::AUDIO_BRIDGE_JS;
+
+    /// The page-side audio bridge must contain a permanent zero-PCM
+    /// keepalive source connected to the WebRTC destination. Without
+    /// it, Meet drops the bot for "no audio activity" during silence
+    /// (see `docs/superpowers/specs/2026-06-04-meet-audio-keepalive-design.md`).
+    ///
+    /// This is a presence test — it does not exercise the WebAudio
+    /// runtime, only asserts the keepalive code shipped intact in the
+    /// included JS. If a future refactor moves the keepalive to a
+    /// different file or reshapes the log line, update the assertions
+    /// here together with the change.
+    #[test]
+    fn audio_bridge_contains_keepalive_block() {
+        assert!(
+            AUDIO_BRIDGE_JS.contains("keepalive silence source started"),
+            "audio_bridge.js is missing the keepalive console.log marker; \
+             the silence source may have been removed (see #2945)"
+        );
+        assert!(
+            AUDIO_BRIDGE_JS.contains("silenceSource.start(0)"),
+            "audio_bridge.js is missing `silenceSource.start(0)`; \
+             the keepalive setup may have been removed (see #2945)"
+        );
+    }
+}
