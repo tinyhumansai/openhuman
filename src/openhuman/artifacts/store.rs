@@ -110,15 +110,24 @@ pub(crate) async fn save_artifact_meta(
 /// List artifacts in the workspace, sorted by `created_at` descending.
 ///
 /// Corrupt or unreadable `meta.json` files are skipped with a `warn!` log.
+/// When `thread_id` is `Some(_)` the listing is filtered to entries whose
+/// persisted `meta.thread_id` matches verbatim (#3226); legacy meta.json
+/// files without a `thread_id` field are excluded from the filtered set
+/// because they have no addressable owning thread. The returned `total`
+/// reflects the filtered count so the caller's pagination is per-thread,
+/// not workspace-global.
+///
 /// Returns `(page, total)` where `page` is the requested slice and `total` is
-/// the count before pagination.
+/// the count before pagination (but after filtering).
 pub(crate) async fn list_artifacts(
     workspace_dir: &Path,
     offset: usize,
     limit: usize,
+    thread_id: Option<&str>,
 ) -> Result<(Vec<ArtifactMeta>, usize), String> {
     log::debug!(
-        "[artifacts] list_artifacts: offset={offset} limit={limit} workspace={:?}",
+        "[artifacts] list_artifacts: offset={offset} limit={limit} thread_id={:?} workspace={:?}",
+        thread_id,
         workspace_dir
     );
     let root = artifacts_root(workspace_dir).await?;
@@ -184,6 +193,13 @@ pub(crate) async fn list_artifacts(
 
     // Sort descending by created_at (newest first)
     all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    // Apply thread filter BEFORE pagination so `total` reflects the
+    // per-thread count the UI surfaces, and so a small page doesn't get
+    // silently emptied by filtering after the slice (#3226).
+    if let Some(tid) = thread_id {
+        all.retain(|m| m.thread_id.as_deref() == Some(tid));
+    }
 
     let total = all.len();
     let page = all.into_iter().skip(offset).take(limit).collect::<Vec<_>>();
@@ -325,6 +341,13 @@ pub async fn create_artifact(
         })?;
     let absolute_path = artifact_dir.join(&filename);
 
+    // Capture the originating chat thread (if any) at create-time so the
+    // panel can repopulate from disk after a redux-persist purge — see
+    // #3226. `finalize_artifact` / `fail_artifact` already read the same
+    // task-local for event publication; persisting it here means the
+    // routing target survives a process restart.
+    let (thread_id, _) = current_chat_context();
+
     let meta = ArtifactMeta {
         id: id.clone(),
         kind,
@@ -334,13 +357,15 @@ pub async fn create_artifact(
         status: ArtifactStatus::Pending,
         created_at: chrono::Utc::now(),
         error: None,
+        thread_id,
     };
     save_artifact_meta(workspace_dir, &meta).await?;
 
     log::debug!(
-        "[artifacts] create_artifact: id={id} kind={} path={:?}",
+        "[artifacts] create_artifact: id={id} kind={} path={:?} thread_id={:?}",
         meta.kind.as_str(),
-        absolute_path
+        absolute_path,
+        meta.thread_id,
     );
     Ok((meta, absolute_path))
 }

@@ -14,6 +14,7 @@ fn make_meta(id: &str, title: &str, created_at: chrono::DateTime<Utc>) -> Artifa
         status: ArtifactStatus::Ready,
         created_at,
         error: None,
+        thread_id: None,
     }
 }
 
@@ -53,7 +54,7 @@ async fn list_returns_saved_items_sorted_by_created_at() {
         .await
         .unwrap();
 
-    let (items, total) = list_artifacts(tmp.path(), 0, 100).await.unwrap();
+    let (items, total) = list_artifacts(tmp.path(), 0, 100, None).await.unwrap();
     assert_eq!(total, 3);
     assert_eq!(items.len(), 3);
     // Newest first
@@ -65,7 +66,7 @@ async fn list_returns_saved_items_sorted_by_created_at() {
 #[tokio::test]
 async fn list_empty_workspace() {
     let tmp = TempDir::new().unwrap();
-    let (items, total) = list_artifacts(tmp.path(), 0, 50).await.unwrap();
+    let (items, total) = list_artifacts(tmp.path(), 0, 50, None).await.unwrap();
     assert_eq!(total, 0);
     assert!(items.is_empty());
 }
@@ -83,7 +84,7 @@ async fn list_pagination() {
             .unwrap();
     }
 
-    let (items, total) = list_artifacts(tmp.path(), 1, 2).await.unwrap();
+    let (items, total) = list_artifacts(tmp.path(), 1, 2, None).await.unwrap();
     assert_eq!(total, 5);
     assert_eq!(items.len(), 2);
 }
@@ -162,7 +163,7 @@ async fn list_skips_corrupt_meta() {
     std::fs::create_dir_all(&corrupt_dir).unwrap();
     std::fs::write(corrupt_dir.join("meta.json"), b"this is not json").unwrap();
 
-    let (items, total) = list_artifacts(tmp.path(), 0, 100).await.unwrap();
+    let (items, total) = list_artifacts(tmp.path(), 0, 100, None).await.unwrap();
     // Only the valid one should be returned
     assert_eq!(total, 1);
     assert_eq!(items[0].id, "good-id");
