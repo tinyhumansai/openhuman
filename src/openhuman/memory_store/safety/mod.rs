@@ -506,4 +506,29 @@ mod tests {
             .to_string()
             .contains(&format!("\"{REDACTED_SECRET}\"")));
     }
+
+    #[test]
+    fn sanitize_document_input_preserves_taint() {
+        let input = NamespaceDocumentInput {
+            namespace: "ns".into(),
+            key: "k".into(),
+            title: "Bearer secret123456789 visible title".into(),
+            content: "content with sk-abcdefghijklmnopqrstuvwxyz".into(),
+            source_type: "sync".into(),
+            priority: "normal".into(),
+            tags: vec!["tag1".into()],
+            metadata: json!({"safe": "value"}),
+            category: "core".into(),
+            session_id: None,
+            document_id: None,
+            taint: crate::openhuman::memory::MemoryTaint::ExternalSync,
+        };
+        let sanitized = sanitize_document_input(input);
+        assert_eq!(
+            sanitized.value.taint,
+            crate::openhuman::memory::MemoryTaint::ExternalSync,
+            "taint must survive sanitization unchanged"
+        );
+        assert!(sanitized.report.text_redactions >= 1);
+    }
 }
