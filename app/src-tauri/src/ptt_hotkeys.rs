@@ -6,7 +6,7 @@
 //! but rejects pure-modifier shortcuts (Ctrl, Cmd+Shift, etc.) because they
 //! would fire constantly during normal typing.
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Mutex;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -48,6 +48,10 @@ pub(crate) struct PttHotkeyState {
     pub(crate) shortcut: Mutex<Vec<String>>,
     /// Monotonic counter for session IDs.
     pub(crate) session_counter: AtomicU64,
+    /// CAS-guarded: true iff a PTT session is currently mid-hold.
+    /// Used to drop OS key-repeat Pressed events so each press/release pair
+    /// produces exactly one session_id.
+    pub(crate) is_held: AtomicBool,
 }
 
 impl PttHotkeyState {
@@ -55,6 +59,7 @@ impl PttHotkeyState {
         Self {
             shortcut: Mutex::new(Vec::new()),
             session_counter: AtomicU64::new(0),
+            is_held: AtomicBool::new(false),
         }
     }
 }
@@ -235,5 +240,41 @@ mod conflict_tests {
             first_conflict_with(&ptt, &dict),
             Some("Ctrl+P".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn new_state_is_not_held_and_counter_is_zero() {
+        let s = PttHotkeyState::new();
+        assert!(!s.is_held.load(Ordering::Relaxed));
+        assert_eq!(s.session_counter.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn cas_false_to_true_succeeds_then_repeat_fails() {
+        let s = PttHotkeyState::new();
+        // First press: false → true succeeds.
+        assert!(
+            s.is_held
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok(),
+            "first press CAS should succeed"
+        );
+        // Repeat press: false → true fails because we're already true.
+        assert!(
+            s.is_held
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err(),
+            "repeat press CAS should fail (already held)"
+        );
+        // Release: swap true → false returns the old true.
+        assert!(s.is_held.swap(false, Ordering::AcqRel), "swap should return prior true");
+        // Subsequent stale release: swap returns the current false.
+        assert!(!s.is_held.swap(false, Ordering::AcqRel), "stale swap should return false");
     }
 }

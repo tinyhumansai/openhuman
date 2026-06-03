@@ -899,10 +899,23 @@ async fn register_ptt_hotkey(
                 let state = app_inner.state::<ptt_hotkeys::PttHotkeyState>();
                 match event.state {
                     ShortcutState::Pressed => {
-                        // Atomically bump the counter and emit start.
+                        // Drop OS key-repeat events; only the first Pressed of a hold opens a session.
+                        if state
+                            .is_held
+                            .compare_exchange(
+                                false,
+                                true,
+                                std::sync::atomic::Ordering::AcqRel,
+                                std::sync::atomic::Ordering::Acquire,
+                            )
+                            .is_err()
+                        {
+                            log::trace!("[ptt] press dropped (already held) shortcut={variant_owned}");
+                            return;
+                        }
                         let session_id = state
                             .session_counter
-                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                             + 1;
                         log::debug!(
                             "[ptt] pressed shortcut={variant_owned} session_id={session_id}"
@@ -916,9 +929,14 @@ async fn register_ptt_hotkey(
                         }
                     }
                     ShortcutState::Released => {
+                        if !state.is_held.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                            // No corresponding Pressed in our state — stale event, drop.
+                            log::trace!("[ptt] release dropped (not held) shortcut={variant_owned}");
+                            return;
+                        }
                         let session_id = state
                             .session_counter
-                            .load(std::sync::atomic::Ordering::SeqCst);
+                            .load(std::sync::atomic::Ordering::Relaxed);
                         log::debug!(
                             "[ptt] released shortcut={variant_owned} session_id={session_id}"
                         );
@@ -941,7 +959,9 @@ async fn register_ptt_hotkey(
         if let Err(e) = app.global_shortcut().unregister(old.as_str()) {
             // Rollback already-unregistered ones.
             for r in &unregistered {
-                let _ = register_shortcut(r);
+                if let Err(re) = register_shortcut(r) {
+                    log::warn!("[ptt] rollback failed for '{r}': {re}");
+                }
             }
             return Err(format!("Failed to unregister previous ptt shortcut '{old}': {e}"));
         }
@@ -953,10 +973,14 @@ async fn register_ptt_hotkey(
     for v in &expanded {
         if let Err(e) = register_shortcut(v) {
             for r in &newly_registered {
-                let _ = app.global_shortcut().unregister(r.as_str());
+                if let Err(re) = app.global_shortcut().unregister(r.as_str()) {
+                    log::warn!("[ptt] rollback failed for '{r}': {re}");
+                }
             }
             for old in &old_shortcuts {
-                let _ = register_shortcut(old);
+                if let Err(re) = register_shortcut(old) {
+                    log::warn!("[ptt] rollback failed for '{old}': {re}");
+                }
             }
             return Err(e);
         }
@@ -979,15 +1003,20 @@ async fn unregister_ptt_hotkey(app: AppHandle<AppRuntime>) -> Result<(), String>
     log::info!("[ptt] unregister_ptt_hotkey: called");
     let state = app.state::<ptt_hotkeys::PttHotkeyState>();
     let old = {
-        let mut guard = state.shortcut.lock().unwrap();
-        let v = guard.clone();
-        guard.clear();
-        v
+        let guard = state.shortcut.lock().unwrap();
+        guard.clone()
     };
+    let mut still_registered: Vec<String> = Vec::new();
     for s in &old {
         if let Err(e) = app.global_shortcut().unregister(s.as_str()) {
             log::warn!("[ptt] unregister '{s}' failed: {e}");
+            still_registered.push(s.clone());
         }
+    }
+    // Only retain variants that genuinely failed to unregister; the rest are gone.
+    {
+        let mut guard = state.shortcut.lock().unwrap();
+        *guard = still_registered;
     }
     // Destroy the overlay window so resources are released.
     ptt_overlay::destroy_window(&app);
