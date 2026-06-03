@@ -3490,6 +3490,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': '代理已阻止',
   'settings.agentAccess.internalStateDesc':
     '内存数据库、会话、令牌和其他核心数据。代理工具无法访问。',
+  'settings.agentAccess.actionDirInputLabel': '操作沙箱路径',
+  'settings.agentAccess.actionDirSave': '保存',
+  'settings.agentAccess.actionDirSaving': '正在保存…',
+  'settings.agentAccess.actionDirSaved': '操作沙箱已更新。',
+  'settings.agentAccess.actionDirEmptyError': '路径不能为空。',
+  'settings.agentAccess.actionDirSaveError': '无法更新操作沙箱。',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR 已设置 — 请取消该环境变量以在设置中编辑此项。',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    '已被 OPENHUMAN_ACTION_DIR 覆盖 — 请取消该环境变量以在设置中管理。',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

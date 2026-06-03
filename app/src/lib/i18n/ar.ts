@@ -3597,6 +3597,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'محظور على الوكيل',
   'settings.agentAccess.internalStateDesc':
     'قواعد بيانات الذاكرة والجلسات والرموز وغيرها من البيانات الأساسية. غير متاحة لأدوات الوكيل.',
+  'settings.agentAccess.actionDirInputLabel': 'مسار صندوق إجراءات الوكيل',
+  'settings.agentAccess.actionDirSave': 'حفظ',
+  'settings.agentAccess.actionDirSaving': 'جارٍ الحفظ…',
+  'settings.agentAccess.actionDirSaved': 'تم تحديث صندوق الإجراءات.',
+  'settings.agentAccess.actionDirEmptyError': 'لا يمكن أن يكون المسار فارغًا.',
+  'settings.agentAccess.actionDirSaveError': 'تعذّر تحديث صندوق الإجراءات.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'تم ضبط OPENHUMAN_ACTION_DIR — قم بإلغاء متغير البيئة لتعديل هذا من الإعدادات.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'تم تجاوزه بواسطة OPENHUMAN_ACTION_DIR — قم بإلغاء متغير البيئة لإدارته من الإعدادات.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

@@ -3725,6 +3725,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'zablokowane dla agenta',
   'settings.agentAccess.internalStateDesc':
     'Bazy danych pamięci, sesje, tokeny i inne podstawowe dane. Niedostępne dla narzędzi agenta.',
+  'settings.agentAccess.actionDirInputLabel': 'Ścieżka piaskownicy działań',
+  'settings.agentAccess.actionDirSave': 'Zapisz',
+  'settings.agentAccess.actionDirSaving': 'Zapisywanie…',
+  'settings.agentAccess.actionDirSaved': 'Piaskownica działań zaktualizowana.',
+  'settings.agentAccess.actionDirEmptyError': 'Ścieżka nie może być pusta.',
+  'settings.agentAccess.actionDirSaveError': 'Nie udało się zaktualizować piaskownicy działań.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR jest ustawione — usuń zmienną środowiskową, aby edytować to w Ustawieniach.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'Nadpisane przez OPENHUMAN_ACTION_DIR — usuń zmienną środowiskową, aby zarządzać tym w Ustawieniach.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

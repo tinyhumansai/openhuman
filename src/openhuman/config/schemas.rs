@@ -258,6 +258,7 @@ pub fn all_controller_schemas() -> Vec<ControllerSchema> {
         schemas("reset_local_data"),
         schemas("get_data_paths"),
         schemas("get_agent_paths"),
+        schemas("set_action_dir"),
         schemas("get_onboarding_completed"),
         schemas("set_onboarding_completed"),
         schemas("get_dictation_settings"),
@@ -366,6 +367,10 @@ pub fn all_registered_controllers() -> Vec<RegisteredController> {
         RegisteredController {
             schema: schemas("get_agent_paths"),
             handler: handle_get_agent_paths,
+        },
+        RegisteredController {
+            schema: schemas("set_action_dir"),
+            handler: handle_set_action_dir,
         },
         RegisteredController {
             schema: schemas("get_onboarding_completed"),
@@ -977,11 +982,27 @@ pub fn schemas(function: &str) -> ControllerSchema {
             namespace: "config",
             function: "get_agent_paths",
             description:
-                "Resolve the agent's filesystem roots (action_dir, workspace_dir, projects_dir) so the UI can render live values instead of hard-coded strings. Read-only.",
+                "Resolve the agent's filesystem roots (action_dir, workspace_dir, projects_dir) so the UI can render live values instead of hard-coded strings. Read-only. Also returns `action_dir_env_override: bool` so the UI knows when OPENHUMAN_ACTION_DIR is forcing the value (Settings → action_dir editing disabled in that case).",
             inputs: vec![],
             outputs: vec![json_output(
                 "paths",
-                "Resolved agent paths: action_dir (acting-tool CWD), workspace_dir (internal state, agent-blocked), projects_dir (default projects home).",
+                "Resolved agent paths: action_dir, workspace_dir, projects_dir, action_dir_env_override.",
+            )],
+        },
+        "set_action_dir" => ControllerSchema {
+            namespace: "config",
+            function: "set_action_dir",
+            description:
+                "Persist a new `action_dir` (the agent's writable sandbox root) and hot-swap the live SecurityPolicy so the change takes effect mid-process. Validates against workspace_dir overlap, forbidden_paths, and the unconditional system/credential block; creates the directory if it doesn't exist. Refuses while OPENHUMAN_ACTION_DIR is set (defense-in-depth — UI disables the input in that case).",
+            inputs: vec![FieldSchema {
+                name: "path",
+                ty: TypeSchema::String,
+                comment: "Absolute path for the new action sandbox. `~` and `~/...` are expanded to the user's home dir.",
+                required: true,
+            }],
+            outputs: vec![json_output(
+                "result",
+                "Persisted action_dir + live_policy_generation (None if the live policy was not yet installed, e.g. CLI-only invocation).",
             )],
         },
         "get_onboarding_completed" => ControllerSchema {
@@ -1571,6 +1592,23 @@ fn handle_get_agent_paths(_params: Map<String, Value>) -> ControllerFuture {
             }
             Err(err) => {
                 log::warn!("[config][rpc] get_agent_paths fail: {err}");
+                Err(err)
+            }
+        }
+    })
+}
+
+fn handle_set_action_dir(params: Map<String, Value>) -> ControllerFuture {
+    Box::pin(async move {
+        log::debug!("[config][rpc] set_action_dir enter");
+        let update: config_rpc::ActionDirUpdate = deserialize_params(params)?;
+        match config_rpc::set_action_dir(update).await {
+            Ok(outcome) => {
+                log::debug!("[config][rpc] set_action_dir ok");
+                to_json(outcome)
+            }
+            Err(err) => {
+                log::warn!("[config][rpc] set_action_dir fail: {err}");
                 Err(err)
             }
         }

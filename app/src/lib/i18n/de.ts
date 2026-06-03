@@ -3757,6 +3757,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'Agent-gesperrt',
   'settings.agentAccess.internalStateDesc':
     'Speicherdatenbanken, Sitzungen, Token und andere Kerndaten. Für Agent-Tools nicht zugänglich.',
+  'settings.agentAccess.actionDirInputLabel': 'Pfad der Aktions-Sandbox',
+  'settings.agentAccess.actionDirSave': 'Speichern',
+  'settings.agentAccess.actionDirSaving': 'Wird gespeichert…',
+  'settings.agentAccess.actionDirSaved': 'Aktions-Sandbox aktualisiert.',
+  'settings.agentAccess.actionDirEmptyError': 'Pfad darf nicht leer sein.',
+  'settings.agentAccess.actionDirSaveError': 'Aktions-Sandbox konnte nicht aktualisiert werden.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR ist gesetzt — entferne die Umgebungsvariable, um dies in den Einstellungen zu bearbeiten.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'Durch OPENHUMAN_ACTION_DIR überschrieben — entferne die Umgebungsvariable, um dies in den Einstellungen zu verwalten.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

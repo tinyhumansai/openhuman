@@ -1139,7 +1139,7 @@ impl SecurityPolicy {
     /// through. Gray-area dirs (`/usr`, `/opt`, `/var`, `~/Library`) stay in the
     /// user-overridable `forbidden_paths` instead, so a grant can still reach
     /// e.g. `/usr/local/...`.
-    fn is_always_forbidden(path: &Path) -> bool {
+    pub(crate) fn is_always_forbidden(path: &Path) -> bool {
         // Normalize separators + case BEFORE splitting: a Windows backslash
         // path is a single component on POSIX (and vice-versa), so we segment
         // the normalized string rather than rely on `Path::components()`.

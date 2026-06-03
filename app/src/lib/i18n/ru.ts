@@ -3692,6 +3692,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'заблокировано для агента',
   'settings.agentAccess.internalStateDesc':
     'Базы данных памяти, сеансы, токены и другие основные данные. Недоступно для инструментов агента.',
+  'settings.agentAccess.actionDirInputLabel': 'Путь к песочнице действий',
+  'settings.agentAccess.actionDirSave': 'Сохранить',
+  'settings.agentAccess.actionDirSaving': 'Сохранение…',
+  'settings.agentAccess.actionDirSaved': 'Песочница действий обновлена.',
+  'settings.agentAccess.actionDirEmptyError': 'Путь не может быть пустым.',
+  'settings.agentAccess.actionDirSaveError': 'Не удалось обновить песочницу действий.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR установлена — снимите переменную окружения, чтобы изменить это в Настройках.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'Переопределено OPENHUMAN_ACTION_DIR — снимите переменную окружения, чтобы управлять этим в Настройках.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

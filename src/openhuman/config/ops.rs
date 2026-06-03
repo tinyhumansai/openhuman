@@ -1962,18 +1962,162 @@ pub async fn get_data_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
 pub async fn get_agent_paths() -> Result<RpcOutcome<serde_json::Value>, String> {
     let config = load_config_with_timeout().await?;
     let projects_dir = crate::openhuman::config::default_projects_dir();
+    let env_override = std::env::var(crate::openhuman::config::ACTION_DIR_ENV_VAR)
+        .ok()
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
     Ok(RpcOutcome::new(
         json!({
             "action_dir": config.action_dir.display().to_string(),
             "workspace_dir": config.workspace_dir.display().to_string(),
             "projects_dir": projects_dir.display().to_string(),
+            "action_dir_env_override": env_override,
         }),
         vec![format!(
-            "agent paths resolved (action={}, workspace={})",
+            "agent paths resolved (action={}, workspace={}, env_override={})",
             config.action_dir.display(),
             config.workspace_dir.display(),
+            env_override,
         )],
     ))
+}
+
+/// Partial update for `set_action_dir`. Just the new path string; the
+/// handler does all the validation.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct ActionDirUpdate {
+    pub path: String,
+}
+
+/// Persist a new `action_dir`, hot-swap the live `SecurityPolicy`, and
+/// return the canonicalised path (#3240).
+///
+/// Validation chain (fail-closed):
+///
+/// 1. **Env override** — refuses when `OPENHUMAN_ACTION_DIR` is set. The
+///    UI disables the input in that case; this is defense-in-depth for
+///    CLI / scripted callers.
+/// 2. **Non-empty + absolute** — rejects empty strings and relative paths.
+///    `~` is expanded to the user's home dir before checking.
+/// 3. **No overlap with `workspace_dir`** — rejects paths equal to or
+///    under `Config.workspace_dir`. Internal product state must stay
+///    distinct from the agent's writable root (see CLAUDE.md "Action
+///    sandbox vs internal workspace").
+/// 4. **No overlap with `forbidden_paths`** — rejects paths under any
+///    entry in `Config.autonomy.forbidden_paths`.
+/// 5. **No system/credential dirs** — rejects paths in
+///    `SecurityPolicy::is_always_forbidden` (SSH/GPG/AWS keys,
+///    `/etc`, `C:\Windows`, etc.). Cross-platform, case-insensitive.
+/// 6. **Createable** — `create_dir_all` is invoked if the path doesn't
+///    exist yet. A creation failure (permission denied, etc.) bubbles up.
+///
+/// On success the new path is persisted to `config.toml` and pushed into
+/// `security::live_policy` so the next tool call sees it without a core
+/// restart.
+pub async fn set_action_dir(
+    update: ActionDirUpdate,
+) -> Result<RpcOutcome<serde_json::Value>, String> {
+    // Step 1: env override.
+    if let Ok(env_val) = std::env::var(crate::openhuman::config::ACTION_DIR_ENV_VAR) {
+        if !env_val.trim().is_empty() {
+            return Err(format!(
+                "Cannot change action_dir while OPENHUMAN_ACTION_DIR is set (currently {env_val:?}). \
+                 Unset the env var and restart to manage action_dir via Settings."
+            ));
+        }
+    }
+
+    // Step 2: non-empty + tilde expansion + absolute.
+    let trimmed = update.path.trim();
+    if trimmed.is_empty() {
+        return Err("action_dir path cannot be empty".into());
+    }
+    let expanded = expand_tilde(trimmed);
+    if !expanded.is_absolute() {
+        return Err(format!(
+            "action_dir must be an absolute path; got {trimmed:?}"
+        ));
+    }
+
+    let mut config = load_config_with_timeout().await?;
+
+    // Step 3: no overlap with workspace_dir.
+    if expanded == config.workspace_dir || expanded.starts_with(&config.workspace_dir) {
+        return Err(format!(
+            "action_dir cannot be inside workspace_dir ({}). The internal workspace is \
+             reserved for product state (memory, sessions, vault) and is denied to agent tools.",
+            config.workspace_dir.display()
+        ));
+    }
+
+    // Step 4: no overlap with forbidden_paths.
+    for fp in &config.autonomy.forbidden_paths {
+        let fp_path = std::path::PathBuf::from(fp);
+        if !fp_path.as_os_str().is_empty() && expanded.starts_with(&fp_path) {
+            return Err(format!("action_dir cannot be inside forbidden path {fp:?}"));
+        }
+    }
+
+    // Step 5: no system / credential dirs.
+    if crate::openhuman::security::SecurityPolicy::is_always_forbidden(&expanded) {
+        return Err(format!(
+            "action_dir cannot be inside a system or credential directory: {}",
+            expanded.display()
+        ));
+    }
+
+    // Step 6: create directory if missing.
+    if !expanded.exists() {
+        std::fs::create_dir_all(&expanded)
+            .map_err(|e| format!("Failed to create action_dir {}: {e}", expanded.display()))?;
+    }
+
+    config.action_dir = expanded.clone();
+    config.save().await.map_err(|e| e.to_string())?;
+
+    // Hot-swap the live policy so the change takes effect mid-process.
+    // `update_action_dir` errors out if no policy is installed yet (e.g. a
+    // CLI-only invocation that never started a session runtime) — that's
+    // not fatal for the persistence layer; surface it as a log line and
+    // return success on the persisted value.
+    let live_policy_generation =
+        match crate::openhuman::security::live_policy::update_action_dir(expanded.clone()) {
+            Ok(gen) => Some(gen),
+            Err(e) => {
+                log::warn!(
+                    "[config][action_dir] persisted to config.toml but live policy not updated: {e}"
+                );
+                None
+            }
+        };
+
+    Ok(RpcOutcome::new(
+        json!({
+            "action_dir": expanded.display().to_string(),
+            "live_policy_generation": live_policy_generation,
+        }),
+        vec![format!(
+            "action_dir updated to {} (live policy generation={:?})",
+            expanded.display(),
+            live_policy_generation,
+        )],
+    ))
+}
+
+/// Expand a leading `~` (or `~/`) to the user's home directory. Other
+/// `~`-prefixed forms (`~user/...`) are not supported. Returns the path
+/// unchanged when no expansion applies.
+fn expand_tilde(path: &str) -> std::path::PathBuf {
+    if let Some(stripped) = path.strip_prefix("~/") {
+        if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+            return home.join(stripped);
+        }
+    } else if path == "~" {
+        if let Some(home) = directories::UserDirs::new().map(|u| u.home_dir().to_path_buf()) {
+            return home;
+        }
+    }
+    std::path::PathBuf::from(path)
 }
 
 #[cfg(test)]

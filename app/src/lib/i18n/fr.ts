@@ -3743,6 +3743,17 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': "bloqué pour l'agent",
   'settings.agentAccess.internalStateDesc':
     "Bases de données mémoire, sessions, jetons et autres données essentielles. Non accessible aux outils de l'agent.",
+  'settings.agentAccess.actionDirInputLabel': "Chemin du bac à sable d'actions",
+  'settings.agentAccess.actionDirSave': 'Enregistrer',
+  'settings.agentAccess.actionDirSaving': 'Enregistrement…',
+  'settings.agentAccess.actionDirSaved': "Bac à sable d'actions mis à jour.",
+  'settings.agentAccess.actionDirEmptyError': 'Le chemin ne peut pas être vide.',
+  'settings.agentAccess.actionDirSaveError':
+    "Impossible de mettre à jour le bac à sable d'actions.",
+  'settings.agentAccess.actionDirEnvOverrideError':
+    "OPENHUMAN_ACTION_DIR est défini — désactivez la variable d'environnement pour modifier cela depuis les Paramètres.",
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    "Remplacé par OPENHUMAN_ACTION_DIR — désactivez la variable d'environnement pour gérer cela depuis les Paramètres.",
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

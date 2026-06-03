@@ -3722,6 +3722,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': "bloccato per l'agente",
   'settings.agentAccess.internalStateDesc':
     "Database memoria, sessioni, token e altri dati fondamentali. Non accessibile dagli strumenti dell'agente.",
+  'settings.agentAccess.actionDirInputLabel': 'Percorso della sandbox delle azioni',
+  'settings.agentAccess.actionDirSave': 'Salva',
+  'settings.agentAccess.actionDirSaving': 'Salvataggio…',
+  'settings.agentAccess.actionDirSaved': 'Sandbox delle azioni aggiornata.',
+  'settings.agentAccess.actionDirEmptyError': 'Il percorso non può essere vuoto.',
+  'settings.agentAccess.actionDirSaveError': 'Impossibile aggiornare la sandbox delle azioni.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    "OPENHUMAN_ACTION_DIR è impostata — rimuovi la variabile d'ambiente per modificarla dalle Impostazioni.",
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    "Sovrascritta da OPENHUMAN_ACTION_DIR — rimuovi la variabile d'ambiente per gestirla dalle Impostazioni.",
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

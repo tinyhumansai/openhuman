@@ -4022,6 +4022,16 @@ const en: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'agent-blocked',
   'settings.agentAccess.internalStateDesc':
     'Memory databases, sessions, tokens, and other core persistence. Not accessible to agent tools.',
+  'settings.agentAccess.actionDirInputLabel': 'Action sandbox path',
+  'settings.agentAccess.actionDirSave': 'Save',
+  'settings.agentAccess.actionDirSaving': 'Saving…',
+  'settings.agentAccess.actionDirSaved': 'Action sandbox updated.',
+  'settings.agentAccess.actionDirEmptyError': 'Path cannot be empty.',
+  'settings.agentAccess.actionDirSaveError': 'Could not update the action sandbox.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR is set — unset the env var to edit this from Settings.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'Overridden by OPENHUMAN_ACTION_DIR — unset the env var to manage from Settings.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

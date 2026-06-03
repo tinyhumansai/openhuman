@@ -3669,6 +3669,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'एजेंट-अवरुद्ध',
   'settings.agentAccess.internalStateDesc':
     'मेमोरी डेटाबेस, सत्र, टोकन और अन्य मुख्य डेटा। एजेंट टूल के लिए सुलभ नहीं।',
+  'settings.agentAccess.actionDirInputLabel': 'क्रिया सैंडबॉक्स पथ',
+  'settings.agentAccess.actionDirSave': 'सहेजें',
+  'settings.agentAccess.actionDirSaving': 'सहेजा जा रहा है…',
+  'settings.agentAccess.actionDirSaved': 'क्रिया सैंडबॉक्स अपडेट किया गया।',
+  'settings.agentAccess.actionDirEmptyError': 'पथ खाली नहीं हो सकता।',
+  'settings.agentAccess.actionDirSaveError': 'क्रिया सैंडबॉक्स अपडेट नहीं किया जा सका।',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR सेट है — सेटिंग्स से संपादित करने के लिए env चर हटाएँ।',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'OPENHUMAN_ACTION_DIR द्वारा ओवरराइड किया गया — सेटिंग्स से प्रबंधित करने के लिए env चर हटाएँ।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

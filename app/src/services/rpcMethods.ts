@@ -1,6 +1,7 @@
 export const CORE_RPC_METHODS = {
   configGet: 'openhuman.config_get',
   configGetAgentPaths: 'openhuman.config_get_agent_paths',
+  configSetActionDir: 'openhuman.config_set_action_dir',
   configGetAgentSettings: 'openhuman.config_get_agent_settings',
   configGetAnalyticsSettings: 'openhuman.config_get_analytics_settings',
   configGetAutonomySettings: 'openhuman.config_get_autonomy_settings',

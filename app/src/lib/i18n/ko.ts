@@ -3629,6 +3629,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': '에이전트 차단됨',
   'settings.agentAccess.internalStateDesc':
     '메모리 데이터베이스, 세션, 토큰 및 기타 핵심 데이터. 에이전트 도구에서 접근할 수 없습니다.',
+  'settings.agentAccess.actionDirInputLabel': '작업 샌드박스 경로',
+  'settings.agentAccess.actionDirSave': '저장',
+  'settings.agentAccess.actionDirSaving': '저장 중…',
+  'settings.agentAccess.actionDirSaved': '작업 샌드박스가 업데이트되었습니다.',
+  'settings.agentAccess.actionDirEmptyError': '경로는 비워둘 수 없습니다.',
+  'settings.agentAccess.actionDirSaveError': '작업 샌드박스를 업데이트할 수 없습니다.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR이 설정되어 있습니다 — 설정에서 편집하려면 환경 변수를 해제하세요.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'OPENHUMAN_ACTION_DIR에 의해 재정의됨 — 설정에서 관리하려면 환경 변수를 해제하세요.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

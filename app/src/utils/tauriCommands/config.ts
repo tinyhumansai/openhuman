@@ -361,6 +361,14 @@ export interface AgentPaths {
   action_dir: string;
   workspace_dir: string;
   projects_dir: string;
+  /**
+   * `true` when `OPENHUMAN_ACTION_DIR` is set and non-empty. The UI uses
+   * this to disable the Settings input and show an "overridden by env"
+   * notice — the user cannot change action_dir while the env var is set
+   * (the core would refuse the `config.set_action_dir` RPC anyway as
+   * defense-in-depth).
+   */
+  action_dir_env_override: boolean;
 }
 
 export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPaths>> {
@@ -369,6 +377,31 @@ export async function openhumanGetAgentPaths(): Promise<CommandResponse<AgentPat
   }
   return await callCoreRpc<CommandResponse<AgentPaths>>({
     method: CORE_RPC_METHODS.configGetAgentPaths,
+  });
+}
+
+/**
+ * Result payload returned by `openhuman.config_set_action_dir`. The
+ * `live_policy_generation` field is `null` when the live `SecurityPolicy`
+ * had not been installed at the time of the call (e.g. CLI-only
+ * invocations that never started a session runtime) — the action_dir is
+ * still persisted to `config.toml` in that case; only the in-process
+ * hot-swap is skipped.
+ */
+export interface SetActionDirResult {
+  action_dir: string;
+  live_policy_generation: number | null;
+}
+
+export async function openhumanSetActionDir(
+  path: string
+): Promise<CommandResponse<SetActionDirResult>> {
+  if (!isTauri()) {
+    throw new Error('Not running in Tauri');
+  }
+  return await callCoreRpc<CommandResponse<SetActionDirResult>>({
+    method: CORE_RPC_METHODS.configSetActionDir,
+    params: { path },
   });
 }
 

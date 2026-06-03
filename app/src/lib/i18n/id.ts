@@ -3678,6 +3678,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'diblokir untuk agen',
   'settings.agentAccess.internalStateDesc':
     'Database memori, sesi, token, dan data inti lainnya. Tidak dapat diakses oleh alat agen.',
+  'settings.agentAccess.actionDirInputLabel': 'Jalur sandbox tindakan',
+  'settings.agentAccess.actionDirSave': 'Simpan',
+  'settings.agentAccess.actionDirSaving': 'Menyimpan…',
+  'settings.agentAccess.actionDirSaved': 'Sandbox tindakan diperbarui.',
+  'settings.agentAccess.actionDirEmptyError': 'Jalur tidak boleh kosong.',
+  'settings.agentAccess.actionDirSaveError': 'Tidak dapat memperbarui sandbox tindakan.',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR sudah diatur — hapus variabel env untuk mengedit ini dari Pengaturan.',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'Ditimpa oleh OPENHUMAN_ACTION_DIR — hapus variabel env untuk mengelola dari Pengaturan.',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

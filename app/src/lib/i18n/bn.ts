@@ -3662,6 +3662,16 @@ const messages: TranslationMap = {
   'settings.agentAccess.agentBlocked': 'এজেন্ট-অবরুদ্ধ',
   'settings.agentAccess.internalStateDesc':
     'মেমরি ডেটাবেস, সেশন, টোকেন এবং অন্যান্য মূল ডেটা। এজেন্ট টুলের কাছে অ্যাক্সেসযোগ্য নয়।',
+  'settings.agentAccess.actionDirInputLabel': 'অ্যাকশন স্যান্ডবক্স পাথ',
+  'settings.agentAccess.actionDirSave': 'সংরক্ষণ',
+  'settings.agentAccess.actionDirSaving': 'সংরক্ষণ করা হচ্ছে…',
+  'settings.agentAccess.actionDirSaved': 'অ্যাকশন স্যান্ডবক্স আপডেট করা হয়েছে।',
+  'settings.agentAccess.actionDirEmptyError': 'পাথ ফাঁকা থাকতে পারবে না।',
+  'settings.agentAccess.actionDirSaveError': 'অ্যাকশন স্যান্ডবক্স আপডেট করা যায়নি।',
+  'settings.agentAccess.actionDirEnvOverrideError':
+    'OPENHUMAN_ACTION_DIR সেট করা আছে — সেটিংস থেকে সম্পাদনা করতে এনভ ভ্যারিয়েবলটি আনসেট করুন।',
+  'settings.agentAccess.actionDirEnvOverrideNote':
+    'OPENHUMAN_ACTION_DIR দ্বারা ওভাররাইড হয়েছে — সেটিংস থেকে পরিচালনা করতে এনভ ভ্যারিয়েবলটি আনসেট করুন।',
   'settings.agentAccess.approvalHistory': 'Approval history',
   'settings.agentAccess.approvalHistoryDesc':
     'Review past Approve / Deny decisions the agent requested.',

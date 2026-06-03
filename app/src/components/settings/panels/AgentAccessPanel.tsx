@@ -8,6 +8,7 @@ import {
   openhumanGetAgentPaths,
   openhumanGetAgentSettings,
   openhumanGetAutonomySettings,
+  openhumanSetActionDir,
   openhumanUpdateAgentSettings,
   openhumanUpdateAutonomySettings,
   type TrustedAccess,
@@ -83,9 +84,17 @@ const AgentAccessPanel = () => {
   // RPC is pending or when not running under Tauri — the JSX falls back to
   // the documented defaults so the section never renders empty.
   const [agentPaths, setAgentPaths] = useState<AgentPaths | null>(null);
+  // Editable action_dir input (issue #3240). Held as a raw string so the
+  // field can be typed freely; validated on blur / Save click. Empty until
+  // the initial `getAgentPaths` RPC resolves.
+  const [actionDirInput, setActionDirInput] = useState('');
+  const [actionDirError, setActionDirError] = useState<string | null>(null);
+  const [actionDirSavedNote, setActionDirSavedNote] = useState<string | null>(null);
+  const [isSavingActionDir, setIsSavingActionDir] = useState(false);
   // Monotonic guard so out-of-order auto-save responses can't clobber UI state
   // with a stale result (last write wins).
   const persistSeqRef = useRef(0);
+  const actionDirSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +133,7 @@ const AgentAccessPanel = () => {
         const pathsResp = await openhumanGetAgentPaths();
         if (cancelled) return;
         setAgentPaths(pathsResp.result);
+        setActionDirInput(pathsResp.result.action_dir);
       } catch {
         // Non-fatal: the Directories section falls back to the documented
         // defaults below. We don't gate the rest of the panel on this.
@@ -182,6 +192,61 @@ const AgentAccessPanel = () => {
   const selectTier = (next: AutonomyLevel) => {
     setLevel(next);
     void persist({ level: next, workspaceOnly, requireTaskPlanApproval, trustedRoots });
+  };
+
+  /**
+   * Persist a new `action_dir` (issue #3240). The Save button calls this
+   * with the current input value; the core validates the path (env
+   * override, workspace_dir overlap, forbidden_paths, system blocks,
+   * createable) and hot-swaps the live `SecurityPolicy` on success. The
+   * monotonic guard prevents an in-flight earlier save from clobbering
+   * the UI after a newer one has resolved.
+   */
+  const saveActionDir = async () => {
+    if (!isTauri()) return;
+    if (agentPaths?.action_dir_env_override) {
+      setActionDirError(t('settings.agentAccess.actionDirEnvOverrideError'));
+      return;
+    }
+    const trimmed = actionDirInput.trim();
+    if (trimmed === '') {
+      setActionDirError(t('settings.agentAccess.actionDirEmptyError'));
+      return;
+    }
+    if (agentPaths && trimmed === agentPaths.action_dir) {
+      // No-op when nothing changed — silent, no spinner, no toast.
+      return;
+    }
+    const seq = ++actionDirSeqRef.current;
+    setActionDirError(null);
+    setActionDirSavedNote(null);
+    setIsSavingActionDir(true);
+    try {
+      const resp = await openhumanSetActionDir(trimmed);
+      if (actionDirSeqRef.current !== seq) return;
+      setAgentPaths(prev =>
+        prev
+          ? { ...prev, action_dir: resp.result.action_dir }
+          : {
+              action_dir: resp.result.action_dir,
+              workspace_dir: '',
+              projects_dir: '',
+              action_dir_env_override: false,
+            }
+      );
+      setActionDirInput(resp.result.action_dir);
+      setActionDirSavedNote(t('settings.agentAccess.actionDirSaved'));
+    } catch (e) {
+      if (actionDirSeqRef.current === seq) {
+        setActionDirError(
+          e instanceof Error ? e.message : t('settings.agentAccess.actionDirSaveError')
+        );
+      }
+    } finally {
+      if (actionDirSeqRef.current === seq) {
+        setIsSavingActionDir(false);
+      }
+    }
   };
 
   const toggleWorkspaceOnly = (next: boolean) => {
@@ -357,6 +422,60 @@ const AgentAccessPanel = () => {
                   <p className="text-xs text-stone-500 dark:text-neutral-500">
                     {t('settings.agentAccess.actionSandboxDesc')}
                   </p>
+                  {/* Editable action_dir input (#3240). Disabled when the
+                      OPENHUMAN_ACTION_DIR env var is forcing the value —
+                      the core would refuse the RPC anyway. */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      type="text"
+                      aria-label={t('settings.agentAccess.actionDirInputLabel')}
+                      data-testid="agent-access-action-dir-input"
+                      className="flex-1 min-w-0 rounded border border-stone-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-2 py-1 text-xs font-mono text-stone-900 dark:text-neutral-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                      value={actionDirInput}
+                      disabled={agentPaths?.action_dir_env_override ?? false}
+                      onChange={e => {
+                        setActionDirInput(e.target.value);
+                        setActionDirError(null);
+                        setActionDirSavedNote(null);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      data-testid="agent-access-action-dir-save"
+                      className="rounded border border-stone-300 dark:border-neutral-700 bg-stone-50 dark:bg-neutral-800 px-2 py-1 text-xs text-stone-900 dark:text-neutral-100 hover:bg-stone-100 dark:hover:bg-neutral-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                      disabled={
+                        isSavingActionDir ||
+                        (agentPaths?.action_dir_env_override ?? false) ||
+                        actionDirInput.trim() === '' ||
+                        actionDirInput.trim() === agentPaths?.action_dir
+                      }
+                      onClick={() => void saveActionDir()}>
+                      {isSavingActionDir
+                        ? t('settings.agentAccess.actionDirSaving')
+                        : t('settings.agentAccess.actionDirSave')}
+                    </button>
+                  </div>
+                  {agentPaths?.action_dir_env_override && (
+                    <p
+                      className="mt-1 text-xs text-amber-700 dark:text-amber-300"
+                      data-testid="agent-access-action-dir-env-note">
+                      {t('settings.agentAccess.actionDirEnvOverrideNote')}
+                    </p>
+                  )}
+                  {actionDirError && (
+                    <p
+                      className="mt-1 text-xs text-coral-600 dark:text-coral-400"
+                      data-testid="agent-access-action-dir-error">
+                      {actionDirError}
+                    </p>
+                  )}
+                  {actionDirSavedNote && (
+                    <p
+                      className="mt-1 text-xs text-sage-600 dark:text-sage-400"
+                      data-testid="agent-access-action-dir-saved">
+                      {actionDirSavedNote}
+                    </p>
+                  )}
                 </div>
                 <div className="px-3 py-2">
                   <div className="flex items-center gap-2">
