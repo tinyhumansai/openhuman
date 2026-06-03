@@ -226,9 +226,17 @@ impl EventHandler for PendingCollector {
         "test::pending_collector"
     }
 
+    /// Filter at the bus boundary so the broadcast channel never delivers
+    /// non-artifact traffic to this subscriber — keeps the per-test
+    /// receive buffer small even when other tests pump unrelated events
+    /// in parallel.
+    fn domains(&self) -> Option<&[&str]> {
+        Some(&["artifact"])
+    }
+
     async fn handle(&self, event: &DomainEvent) {
-        // Only capture artifact-domain events so the receive buffer can't
-        // overflow with unrelated traffic from neighbouring tests.
+        // domains() filter guarantees only artifact-domain variants
+        // arrive, but match defensively in case the enum grows.
         if matches!(
             event,
             DomainEvent::ArtifactPending { .. }
@@ -253,25 +261,47 @@ async fn create_artifact_publishes_artifact_pending_event() {
     let (meta, _path) = create_artifact(tmp.path(), ArtifactKind::Presentation, "Q3 Deck", "pptx")
         .await
         .expect("create_artifact succeeds");
+    let expected_workspace = tmp.path().to_string_lossy().into_owned();
 
-    // The bus is broadcast-based and processed off-task — yield until the
-    // subscriber's tokio task drains the message.
+    // The bus is broadcast-based and processed off-task — wait until the
+    // subscriber's tokio task delivers OUR event. Filtering by
+    // artifact_id + workspace_dir keeps the test robust against parallel
+    // `cargo test` runs that may publish unrelated artifact lifecycle
+    // events into the same process-wide bus.
+    let matches_this_artifact = |event: &DomainEvent| {
+        matches!(
+            event,
+            DomainEvent::ArtifactPending {
+                artifact_id,
+                workspace_dir,
+                ..
+            } if artifact_id == &meta.id && workspace_dir == &expected_workspace
+        )
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
-        if !collector.snapshot().is_empty() {
+        if collector.snapshot().iter().any(matches_this_artifact) {
             break;
         }
         if std::time::Instant::now() >= deadline {
-            panic!("ArtifactPending event was not observed within 2s");
+            panic!(
+                "ArtifactPending event for id={} was not observed within 2s",
+                meta.id
+            );
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 
-    let events = collector.snapshot();
+    let mine: Vec<DomainEvent> = collector
+        .snapshot()
+        .into_iter()
+        .filter(matches_this_artifact)
+        .collect();
     assert_eq!(
-        events.len(),
+        mine.len(),
         1,
-        "exactly one event expected, got {events:?}"
+        "exactly one ArtifactPending for {} expected, got {mine:?}",
+        meta.id
     );
     let DomainEvent::ArtifactPending {
         artifact_id,
@@ -281,14 +311,14 @@ async fn create_artifact_publishes_artifact_pending_event() {
         path,
         thread_id,
         client_id,
-    } = &events[0]
+    } = &mine[0]
     else {
-        panic!("expected ArtifactPending, got {:?}", events[0]);
+        unreachable!("filter pinned us to ArtifactPending");
     };
     assert_eq!(*artifact_id, meta.id);
     assert_eq!(kind, "presentation");
     assert_eq!(title, "Q3 Deck");
-    assert_eq!(*workspace_dir, tmp.path().to_string_lossy());
+    assert_eq!(*workspace_dir, expected_workspace);
     assert_eq!(*path, meta.path);
     // No chat context bound on this test task, so the routing fields are
     // None — the web bridge drops the event in that case, which is the
