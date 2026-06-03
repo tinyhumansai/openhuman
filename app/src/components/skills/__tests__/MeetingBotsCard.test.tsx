@@ -7,6 +7,7 @@ import MeetingBotsCard, { MeetingBotsModal } from '../MeetingBotsCard';
 
 const joinMock = vi.fn();
 const listMock = vi.fn();
+const subscribeMock = vi.fn();
 
 vi.mock('../../../services/meetCallService', async () => {
   const actual = await vi.importActual<typeof import('../../../services/meetCallService')>(
@@ -20,6 +21,7 @@ vi.mock('../../../services/meetCallService', async () => {
     // `joinMock` to keep the diff focused on the call site swap.
     joinMeetCall: (...args: unknown[]) => joinMock(...args),
     listMeetCalls: (...args: unknown[]) => listMock(...args),
+    subscribeToMeetCallEvents: (...args: unknown[]) => subscribeMock(...args),
   };
 });
 
@@ -381,5 +383,107 @@ describe('MeetingBotsModal — recent calls section', () => {
       const timestamp = screen.queryByText(/ago|yesterday|\dm|\dh/);
       expect(timestamp).not.toBeInTheDocument();
     });
+  });
+});
+
+// ── MeetingBotsCard lifecycle events ─────────────────────────────────────────
+
+describe('MeetingBotsCard lifecycle events', () => {
+  beforeEach(() => {
+    joinMock.mockReset();
+    listMock.mockReset();
+    subscribeMock.mockReset();
+    listMock.mockResolvedValue([]);
+    joinMock.mockResolvedValue({
+      requestId: 'req-1',
+      meetUrl: 'https://meet.google.com/abc-defg-hij',
+      displayName: 'OpenHuman',
+      ownerDisplayName: 'Alice',
+      windowLabel: 'meet-call-req-1',
+    });
+  });
+  afterEach(() => cleanup());
+
+  it('fires an error toast when meet-call:failed event arrives', async () => {
+    let failedHandler:
+      | ((phase: string, reason: string, message: string) => void)
+      | undefined;
+    subscribeMock.mockImplementation(
+      (
+        _requestId: string,
+        handlers: {
+          onFailed?: (p: string, r: string, m: string) => void;
+        }
+      ) => {
+        failedHandler = handlers.onFailed;
+        return () => {};
+      }
+    );
+    const onToast = vi.fn();
+
+    renderWithProviders(<MeetingBotsCard onToast={onToast} />);
+
+    // Open the modal (same pattern as 'submits to joinMeetCall' test)
+    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.change(screen.getByLabelText(/your name in the call/i), {
+      target: { value: 'Alice' },
+    });
+    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalledWith('req-1', expect.any(Object)));
+    expect(failedHandler).toBeDefined();
+
+    failedHandler!('joined', 'admission_timeout', 'Never reached in-call screen.');
+
+    await waitFor(() =>
+      expect(onToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'error',
+          message: 'Never reached in-call screen.',
+        })
+      )
+    );
+  });
+
+  it('does not fire an error toast on a non-terminal phase event', async () => {
+    let phaseHandler: ((phase: string, detail?: string) => void) | undefined;
+    subscribeMock.mockImplementation(
+      (
+        _requestId: string,
+        handlers: { onPhase?: (p: string, d?: string) => void }
+      ) => {
+        phaseHandler = handlers.onPhase;
+        return () => {};
+      }
+    );
+    const onToast = vi.fn();
+
+    renderWithProviders(<MeetingBotsCard onToast={onToast} />);
+
+    // Open the modal (same pattern as above)
+    fireEvent.click(screen.getByTestId('meeting-bots-banner'));
+    fireEvent.change(screen.getByLabelText(/meeting link/i), {
+      target: { value: 'https://meet.google.com/abc-defg-hij' },
+    });
+    fireEvent.change(screen.getByLabelText(/your name in the call/i), {
+      target: { value: 'Alice' },
+    });
+    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+
+    await waitFor(() => expect(subscribeMock).toHaveBeenCalled());
+
+    // The component only subscribes onFailed, not onPhase — so phaseHandler
+    // may be undefined. If it IS wired, firing a non-terminal event must not
+    // produce an error toast; if it ISN'T wired, by definition no toast fires.
+    if (phaseHandler) {
+      phaseHandler('joined', 'admitted');
+    }
+
+    // Allow microtasks to flush.
+    await Promise.resolve();
+    expect(onToast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
   });
 });

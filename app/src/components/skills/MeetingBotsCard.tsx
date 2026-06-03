@@ -13,7 +13,10 @@ import { useT } from '../../lib/i18n/I18nContext';
 import {
   joinMeetCall,
   listMeetCalls,
+  subscribeToMeetCallEvents,
   type MascotMeetPlatform,
+  type MeetCallPhase,
+  type MeetCallReasonCode,
   type MeetCallRecord,
 } from '../../services/meetCallService';
 import { useAppSelector } from '../../store/hooks';
@@ -51,6 +54,19 @@ const PLATFORMS: PlatformDef[] = [
     comingSoon: true,
   },
 ];
+
+function reasonKey(reason: MeetCallReasonCode): string {
+  switch (reason) {
+    case 'name_input_timeout':
+      return 'nameInputTimeout';
+    case 'ask_to_join_timeout':
+      return 'askToJoinTimeout';
+    case 'admission_timeout':
+      return 'admissionTimeout';
+    case 'audio_bind_failed':
+      return 'audioBindFailed';
+  }
+}
 
 export default function MeetingBotsCard({ onToast }: Props) {
   const [open, setOpen] = useState(false);
@@ -205,7 +221,22 @@ export function MeetingBotsModal({ onClose, onToast }: ModalProps) {
       // value (case-insensitive, "(host)" / "(you)" suffix stripped).
       // Anyone else in the room saying the wake phrase is dropped
       // without dispatching a tool turn.
-      await joinMeetCall({ meetUrl, displayName, ownerDisplayName });
+      const result = await joinMeetCall({ meetUrl, displayName, ownerDisplayName });
+
+      // Subscribe to lifecycle events so a scanner / audio-bind failure
+      // later in the join lifecycle surfaces as a clear toast — without
+      // this, the user only sees the success toast below and then silence.
+      const unsubscribe = subscribeToMeetCallEvents(result.requestId, {
+        onFailed: (_phase: MeetCallPhase, reason: MeetCallReasonCode, message: string) => {
+          onToast?.({
+            type: 'error',
+            title: t('skills.meetingBots.failedTitle'),
+            message: message || t(`skills.meetingBots.failed.${reasonKey(reason)}`),
+          });
+          unsubscribe();
+        },
+      });
+
       onToast?.({
         type: 'success',
         title: t('skills.meetingBots.joiningTitle'),
