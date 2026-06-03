@@ -78,7 +78,7 @@ pub fn spawn<R: Runtime>(
     // Use tokio::spawn (not tauri::async_runtime::spawn) so we get a
     // JoinHandle whose abort_handle() we can return to the caller.
     let handle = tokio::spawn(async move {
-        match run(&request_id, &meet_url, &display_name).await {
+        match run(&app, &request_id, &meet_url, &display_name).await {
             Ok(()) => {
                 log::info!("[meet-scanner] join sequence completed request_id={request_id}");
                 // Diagnostic build: keep the window VISIBLE post-join so
@@ -91,8 +91,6 @@ pub fn spawn<R: Runtime>(
                 // pipeline works with the window visible we'll restore
                 // hide() via a different mechanism (e.g. drag off-screen
                 // via Tauri set_position rather than orderOut:).
-                let _ = app;
-                let _ = request_id;
             }
             Err(err) => {
                 log::warn!("[meet-scanner] join sequence aborted request_id={request_id} err={err}")
@@ -102,7 +100,12 @@ pub fn spawn<R: Runtime>(
     handle.abort_handle()
 }
 
-async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(), String> {
+async fn run<R: Runtime>(
+    app: &AppHandle<R>,
+    request_id: &str,
+    meet_url: &str,
+    display_name: &str,
+) -> Result<(), String> {
     let (mut cdp, session) = wait_for_meet_target(meet_url).await?;
     log::info!("[meet-scanner] attached to meet target request_id={request_id} session={session}");
 
@@ -181,7 +184,20 @@ async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(),
     }
 
     // Phase 2 — type the display name.
-    type_into_named_input(&mut cdp, &session, "Your name", display_name).await?;
+    if let Err(err) = type_into_named_input(&mut cdp, &session, "Your name", display_name).await {
+        let reason = crate::meet_call::lifecycle::classify_scanner_err(
+            &err,
+            crate::meet_call::lifecycle::Phase::AwaitingAdmission,
+        );
+        crate::meet_call::lifecycle::emit_failed(
+            app,
+            request_id,
+            crate::meet_call::lifecycle::Phase::AwaitingAdmission,
+            reason,
+            "Couldn't enter the bot's display name on the Meet pre-join page.",
+        );
+        return Err(err);
+    }
 
     // Phase 2.5 — ensure camera + mic are ON before Ask-to-join.
     //
@@ -286,13 +302,33 @@ async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(),
     }
 
     // Phase 3 — request to join.
-    wait_and_click_text(
+    if let Err(err) = wait_and_click_text(
         &mut cdp,
         &session,
         &["Ask to join", "Join now"],
         JOIN_BUTTON_BUDGET,
     )
-    .await?;
+    .await
+    {
+        let reason = crate::meet_call::lifecycle::classify_scanner_err(
+            &err,
+            crate::meet_call::lifecycle::Phase::AwaitingAdmission,
+        );
+        crate::meet_call::lifecycle::emit_failed(
+            app,
+            request_id,
+            crate::meet_call::lifecycle::Phase::AwaitingAdmission,
+            reason,
+            "Couldn't ask to join the call. The host may have closed the lobby — try again.",
+        );
+        return Err(err);
+    }
+    crate::meet_call::lifecycle::emit_phase(
+        app,
+        request_id,
+        crate::meet_call::lifecycle::Phase::AwaitingAdmission,
+        Some("ask_to_join_clicked"),
+    );
 
     // Phase 4 — once the bot is admitted, force-enable captions.
     //
@@ -308,29 +344,49 @@ async fn run(request_id: &str, meet_url: &str, display_name: &str) -> Result<(),
     // Best-effort: if any step times out, log + continue. The brain
     // will simply not see captions for this session, which is no worse
     // than the pre-fix state.
-    if let Err(err) = wait_for_admission(&mut cdp, &session).await {
-        log::info!("[meet-scanner] admission wait skipped: {err}");
-    } else {
-        log::info!("[meet-scanner] bot admitted into meeting");
-        if let Err(err) = click_by_aria_label(
-            &mut cdp,
-            &session,
-            &[
-                "turn on captions",
-                "turn on live captions",
-                "turn on subtitles",
-                "turn on closed captions",
-                "captions on",
-                "captions (c)",
-                "show captions",
-                "enable captions",
-            ],
-            Duration::from_secs(8),
-        )
-        .await
-        {
-            log::info!("[meet-scanner] captions toggle ON not clicked: {err}");
-            dump_aria_labels(&mut cdp, &session, "caption|subtitle").await;
+    match wait_for_admission(&mut cdp, &session).await {
+        Err(err) => {
+            let reason = crate::meet_call::lifecycle::classify_scanner_err(
+                &err,
+                crate::meet_call::lifecycle::Phase::Joined,
+            );
+            crate::meet_call::lifecycle::emit_failed(
+                app,
+                request_id,
+                crate::meet_call::lifecycle::Phase::Joined,
+                reason,
+                "OpenHuman never reached the in-call screen. The host may not have admitted the bot.",
+            );
+            log::info!("[meet-lifecycle] admission wait skipped request_id={request_id} err={err}");
+        }
+        Ok(()) => {
+            crate::meet_call::lifecycle::emit_phase(
+                app,
+                request_id,
+                crate::meet_call::lifecycle::Phase::Joined,
+                Some("admitted"),
+            );
+            log::info!("[meet-lifecycle] phase=joined request_id={request_id} admitted=true");
+            if let Err(err) = click_by_aria_label(
+                &mut cdp,
+                &session,
+                &[
+                    "turn on captions",
+                    "turn on live captions",
+                    "turn on subtitles",
+                    "turn on closed captions",
+                    "captions on",
+                    "captions (c)",
+                    "show captions",
+                    "enable captions",
+                ],
+                Duration::from_secs(8),
+            )
+            .await
+            {
+                log::info!("[meet-scanner] captions toggle ON not clicked: {err}");
+                dump_aria_labels(&mut cdp, &session, "caption|subtitle").await;
+            }
         }
     }
 
