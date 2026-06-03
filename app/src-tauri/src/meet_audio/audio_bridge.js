@@ -75,6 +75,37 @@
         " state=" +
         ctx.state
     );
+    // Keepalive: a permanently-running source of zero samples connected
+    // to `dest`. Without this, Meet sees an audio track that is `live`
+    // but produces zero PCM during silence — some Meet builds drop the
+    // bot for "no audio activity" after a few seconds. Mirrors the
+    // camera-bridge 1px-bob keepalive in `meet_video/camera_bridge.js`
+    // (see comment "keeps the WebRTC encoder from dropping the stream
+    // as 'frozen'"). Brain PCM mixes in via `__openhumanFeedPcm` over
+    // the top — zero + real = real, so this does NOT mute the bot.
+    //
+    // NOT pushed into `activeSources`: barge-in (`__openhumanFlushAudio`)
+    // must not stop the keepalive.
+    try {
+      var silenceSamples = Math.max(1, Math.floor(ctx.sampleRate / 10)); // 100 ms
+      var silenceBuffer = ctx.createBuffer(1, silenceSamples, ctx.sampleRate);
+      // createBuffer initializes to zeros — no explicit fill needed.
+      var silenceSource = ctx.createBufferSource();
+      silenceSource.buffer = silenceBuffer;
+      silenceSource.loop = true;
+      silenceSource.connect(dest);
+      silenceSource.start(0);
+      console.log(
+        "[openhuman-audio-bridge] keepalive silence source started buffer_samples=" +
+          silenceSamples
+      );
+    } catch (e) {
+      // Keepalive failure is non-fatal — the bridge still functions for
+      // active speech. Log so support can spot it in user reports.
+      console.warn(
+        "[openhuman-audio-bridge] keepalive setup failed err=" + e
+      );
+    }
     return ctx;
   }
 
