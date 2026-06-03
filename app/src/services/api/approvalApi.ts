@@ -83,3 +83,46 @@ export const fetchPendingApprovals = async (): Promise<PendingApproval[]> => {
   const raw = await callCoreRpc<unknown>({ method: 'openhuman.approval_list_pending' });
   return unwrapRows<PendingApproval>(raw);
 };
+
+/**
+ * Snapshot of the host-aware approval-gate boot decision. Mirrors the Rust
+ * `ApprovalGateBootState` struct in `src/openhuman/approval/gate.rs`.
+ *
+ * - `installed` — gate was installed at boot and `external_effect` tool calls
+ *   will be intercepted.
+ * - `disabledByEnv` — operator set `OPENHUMAN_APPROVAL_GATE=0` AND the host
+ *   honored it (CLI / Docker). Gate is OFF; the UI shows the persistent red
+ *   banner.
+ * - `overrideIgnored` — operator set `OPENHUMAN_APPROVAL_GATE=0` under the
+ *   Tauri desktop shell, which always ignores the override. The UI shows a
+ *   one-shot yellow info banner so the user knows the attempt was rejected.
+ * - `host` — `"tauri-shell"` / `"cli"` / `"docker"` / `"unknown"` (boot
+ *   state was never recorded — older tests / direct gate spawn paths).
+ */
+export interface ApprovalGateBootState {
+  installed: boolean;
+  disabledByEnv: boolean;
+  overrideIgnored: boolean;
+  host: string;
+}
+
+const unwrapValue = <T>(raw: unknown): T => {
+  if (raw && typeof raw === 'object' && 'result' in (raw as Record<string, unknown>)) {
+    return (raw as { result: T }).result;
+  }
+  return raw as T;
+};
+
+/**
+ * Fetch the boot-time approval-gate state for the security banner. Returns a
+ * benign "no banner needed" fallback when the call fails, so a degraded core
+ * can never blank the whole app shell.
+ */
+export const fetchApprovalGateState = async (): Promise<ApprovalGateBootState> => {
+  try {
+    const raw = await callCoreRpc<unknown>({ method: 'openhuman.approval_get_gate_state' });
+    return unwrapValue<ApprovalGateBootState>(raw);
+  } catch {
+    return { installed: true, disabledByEnv: false, overrideIgnored: false, host: 'unknown' };
+  }
+};
