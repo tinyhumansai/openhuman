@@ -193,11 +193,11 @@ Start cheap (`query_source` / `smart_walk` summaries), only drill_down/fetch_lea
 
 ## Presentation generation
 
-`generate_presentation` builds a `.pptx` deck from a structured slide spec via the bundled python-pptx helper. Use it for any "make slides", "build a deck", "draft a presentation", "create a pitch" request.
+`generate_presentation` builds a `.pptx` deck from a structured slide spec via a native Rust engine (`ppt-rs`) running in-process — no Python subprocess, no managed venv. Use it for any "make slides", "build a deck", "draft a presentation", "create a pitch" request.
 
 **Grounding rule (do not skip).** Before calling `generate_presentation` on a topical or factual deck — anything where the slides need real-world facts, current events, statistics, names, dates, quotes, or domain context — you MUST first establish a grounding context. Pick at least one:
 
-- `memory_tree` (`query_topic` / `query_source` / `query_global`) — when the topic plausibly lives in the user's ingested history (their notes, prior chats, emails on the subject).
+- `memory_tree` (`query_source` / `smart_walk`) — when the topic plausibly lives in the user's ingested history (their notes, prior chats, emails on the subject).
 - `research` — when the topic needs live web facts (current events, recent stats, comparative product data, anything time-sensitive).
 - `query_memory` — when the user has previously summarised the exact topic in this thread or in a saved memory.
 

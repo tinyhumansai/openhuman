@@ -124,9 +124,9 @@ impl PresentationError {
     }
 }
 
-/// Validate the input early — before spawning Python — so the agent
-/// gets a structured `InvalidInput` it can self-correct on instead of
-/// a generic Python traceback.
+/// Validate the input early — before invoking the `ppt-rs` engine — so
+/// the agent gets a structured `InvalidInput` it can self-correct on
+/// instead of a generic engine error.
 pub(super) fn validate_input(input: &GeneratePresentationInput) -> Result<(), PresentationError> {
     if input.title.trim().is_empty() {
         return Err(PresentationError::InvalidInput {

@@ -10,11 +10,12 @@
 //!    falls back to refusing the request.
 //!
 //! 2. The `code_executor` agent MUST NOT list `generate_presentation`.
-//!    Presentation rendering is not a code-exec task: it has its own
-//!    managed `runtime_python` venv (separate from code_executor's
-//!    `node_exec` / shell surface) and exposing the tool to
-//!    code_executor would create a second, duplicate dispatch path that
-//!    bypasses the orchestrator's grounding-rule prompt.
+//!    Presentation rendering is not a code-exec task: it runs in-process
+//!    via the native Rust `ppt-rs` engine (no Python, no subprocess,
+//!    distinct from code_executor's `node_exec` / shell surface), and
+//!    exposing the tool to code_executor would create a second,
+//!    duplicate dispatch path that bypasses the orchestrator's
+//!    grounding-rule prompt.
 //!
 //! Exact-line matching (not substring) so commented-out entries or
 //! prefixed names (`generate_presentation_v2`, `generate_presentation_legacy`)
@@ -50,7 +51,8 @@ fn code_executor_does_not_list_generate_presentation() {
     assert!(
         !lists_named_tool(CODE_EXECUTOR_TOML, TOOL_NAME),
         "code_executor agent.toml must NOT list '{TOOL_NAME}' — pptx rendering \
-         is not a code-exec task; it has its own runtime_python venv and adding \
-         it here would bypass the orchestrator grounding-rule prompt (#2780)"
+         is not a code-exec task; it runs in-process via the native Rust ppt-rs \
+         engine and adding it here would bypass the orchestrator grounding-rule \
+         prompt (#2780)"
     );
 }
