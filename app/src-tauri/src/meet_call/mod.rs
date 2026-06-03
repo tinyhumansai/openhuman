@@ -36,6 +36,8 @@
 //! the `meet-call:closed` frontend event — by up to 60 s, blocking
 //! navigation. See issue #1378.
 
+pub mod lifecycle;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
