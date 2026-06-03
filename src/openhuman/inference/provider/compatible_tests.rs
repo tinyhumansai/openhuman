@@ -306,6 +306,21 @@ fn aggregate_responses_sse_body_prefers_terminal_output_text_when_present() {
     assert_eq!(text, "batched final text");
 }
 
+/// #3201 CodeRabbit nit: a whitespace-only terminal `output_text` must
+/// behave like the field is absent, so accumulated deltas survive instead
+/// of being silently collapsed into blank output. Mirrors
+/// `extract_responses_text`'s `first_nonempty(...)` policy.
+#[test]
+fn aggregate_responses_sse_body_ignores_whitespace_only_terminal_output_text() {
+    let body = "data: {\"type\":\"response.output_text.delta\",\"delta\":\"good \"}\n\n\
+                data: {\"type\":\"response.output_text.delta\",\"delta\":\"reply\"}\n\n\
+                data: {\"type\":\"response.completed\",\"response\":{\"output_text\":\"   \\n\\t\"}}\n\n\
+                data: [DONE]\n";
+    let text =
+        super::compatible_parse::aggregate_responses_sse_body("custom", body).expect("aggregate");
+    assert_eq!(text, "good reply");
+}
+
 /// Carriage-return line endings (CRLF, common in HTTP/1.1 SSE) parse the
 /// same as LF-only — the trimming is just `\r` stripping.
 #[test]

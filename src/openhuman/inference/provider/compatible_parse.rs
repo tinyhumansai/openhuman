@@ -367,11 +367,16 @@ pub(crate) fn aggregate_responses_sse_body(
                 }
             }
             Some("response.completed") => {
+                // Use the same "non-empty-after-trim" policy as
+                // `extract_responses_text` / `first_nonempty` so a
+                // whitespace-only terminal `output_text` doesn't override
+                // a non-empty accumulated delta stream and collapse a
+                // valid streamed reply to blank output (CodeRabbit nit).
                 terminal_text = value
                     .get("response")
                     .and_then(|response| response.get("output_text"))
                     .and_then(serde_json::Value::as_str)
-                    .map(ToString::to_string);
+                    .and_then(|text| first_nonempty(Some(text)));
             }
             // Treat error-shaped events as a hard failure so the caller
             // surfaces the upstream reason instead of an empty completion.
@@ -389,7 +394,8 @@ pub(crate) fn aggregate_responses_sse_body(
     // string — some providers batch full text in `response.completed` and
     // skip per-token deltas, and others repeat what we accumulated. Either
     // way the terminal text is the authoritative version on the wire.
-    if let Some(text) = terminal_text.filter(|t| !t.is_empty()) {
+    // (`first_nonempty` in the match arm above already filtered whitespace.)
+    if let Some(text) = terminal_text {
         return Ok(text);
     }
     if !accumulated.is_empty() {

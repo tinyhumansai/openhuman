@@ -364,7 +364,23 @@ impl OpenAiCompatibleProvider {
         // `OpenAiCodexRouting` substitutes when a user is signed in via
         // OAuth (see `OPENAI_CODEX_BACKEND_BASE_URL`), and it's specific
         // enough that no other OpenAI-compatible provider URL uses it.
-        let is_codex_oauth_responses = self.base_url.contains("/backend-api/codex");
+        //
+        // Parse the URL and inspect path segments rather than scanning the
+        // whole `base_url` so a proxy URL whose query string or fragment
+        // contains the literal `/backend-api/codex` (e.g.
+        // `.../v1?upstream=/backend-api/codex`) doesn't get falsely
+        // promoted into the SSE branch (CodeRabbit nit).
+        let is_codex_oauth_responses = reqwest::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|url| {
+                let segments: Vec<&str> = url.path_segments()?.collect();
+                Some(
+                    segments
+                        .windows(2)
+                        .any(|window| window == ["backend-api", "codex"]),
+                )
+            })
+            .unwrap_or(false);
 
         let request = ResponsesRequest {
             model: model.to_string(),
