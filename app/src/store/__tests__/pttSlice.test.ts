@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  initialPttState,
   pttReducer,
   setPttShortcut,
   setSpeakReplies,
@@ -8,6 +9,7 @@ import {
   setIsHeld,
   type PttState,
 } from '../pttSlice';
+import { resetUserScopedState } from '../resetActions';
 
 describe('ptt slice', () => {
   const initial: PttState = {
@@ -42,5 +44,16 @@ describe('ptt slice', () => {
 
   it('setIsHeld updates the runtime hold flag', () => {
     expect(pttReducer(initial, setIsHeld(true)).isHeld).toBe(true);
+  });
+
+  it('resetUserScopedState returns the slice to initial state', () => {
+    const dirty: PttState = {
+      shortcut: 'F13',
+      speakReplies: false,
+      showOverlay: false,
+      isHeld: true,
+    };
+    const next = pttReducer(dirty, resetUserScopedState());
+    expect(next).toEqual(initialPttState);
   });
 });

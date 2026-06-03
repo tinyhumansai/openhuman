@@ -52,22 +52,17 @@ const pttSlice = createSlice({
 export const { setPttShortcut, setSpeakReplies, setShowOverlay, setIsHeld } = pttSlice.actions;
 
 // ── Selectors ────────────────────────────────────────────────────────────────
-// Tolerate a missing `ptt` slice so consumers don't crash in test harnesses
-// that mock the store without this slice.
 
-type MaybePttRoot = { ptt?: PttState };
+export const selectPttShortcut = (state: { ptt: PttState }): string | null =>
+  state.ptt.shortcut;
 
-export const selectPttShortcut = (state: MaybePttRoot): string | null =>
-  state.ptt?.shortcut ?? initialPttState.shortcut;
+export const selectSpeakReplies = (state: { ptt: PttState }): boolean =>
+  state.ptt.speakReplies;
 
-export const selectSpeakReplies = (state: MaybePttRoot): boolean =>
-  state.ptt?.speakReplies ?? initialPttState.speakReplies;
+export const selectShowOverlay = (state: { ptt: PttState }): boolean =>
+  state.ptt.showOverlay;
 
-export const selectShowOverlay = (state: MaybePttRoot): boolean =>
-  state.ptt?.showOverlay ?? initialPttState.showOverlay;
-
-export const selectIsHeld = (state: MaybePttRoot): boolean =>
-  state.ptt?.isHeld ?? initialPttState.isHeld;
+export const selectIsHeld = (state: { ptt: PttState }): boolean =>
+  state.ptt.isHeld;
 
 export const pttReducer = pttSlice.reducer;
-export default pttSlice.reducer;
