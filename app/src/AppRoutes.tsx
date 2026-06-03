@@ -20,6 +20,7 @@ import Settings from './pages/Settings';
 import SkillNew from './pages/SkillNew';
 import Skills from './pages/Skills';
 import SkillsRun from './pages/SkillsRun';
+import { PttOverlayPage } from './pages/PttOverlayPage';
 import WebCallbackPage from './pages/WebCallbackPage';
 import Welcome from './pages/Welcome';
 
@@ -194,6 +195,8 @@ const AppRoutes = () => {
           </ProtectedRoute>
         }
       />
+
+      <Route path="/ptt-overlay" element={<PttOverlayPage />} />
 
       {/* Default redirect based on auth status */}
       <Route path="*" element={<DefaultRedirect />} />
