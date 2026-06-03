@@ -730,6 +730,30 @@ pub enum DomainEvent {
         reason: String,
     },
 
+    /// An `OPENHUMAN_APPROVAL_GATE=0` env override was observed but
+    /// IGNORED because the host is the Tauri desktop shell. The gate is
+    /// always installed under the desktop host; this event lets the UI
+    /// surface a one-shot info banner so the user sees the override was
+    /// rejected. Audit-only; carries no payload content.
+    ApprovalGateOverrideIgnored {
+        /// Host tag (currently always `"tauri-shell"` — added for forward
+        /// compatibility when more desktop hosts land).
+        host: String,
+    },
+    /// The approval gate was NOT installed because an
+    /// `OPENHUMAN_APPROVAL_GATE=0` env override was honored on a
+    /// standalone host (CLI / Docker). Surfaces the elevated-privilege
+    /// state so any connected dashboard can flag it; the desktop UI
+    /// banner subscribes to this variant.
+    ApprovalGateDisabled {
+        /// Host tag (`"cli"` or `"docker"`).
+        host: String,
+        /// Short reason code so downstream consumers can switch on the
+        /// cause without parsing free-text logs. Currently always
+        /// `"env-override"`.
+        reason: String,
+    },
+
     // ── System lifecycle ────────────────────────────────────────────────
     /// A system component started up.
     SystemStartup { component: String },
@@ -954,7 +978,10 @@ impl DomainEvent {
 
             Self::TaskPlanAwaitingApproval { .. } | Self::TaskRunReclaimed { .. } => "agent",
 
-            Self::ApprovalRequested { .. } | Self::ApprovalDecided { .. } => "approval",
+            Self::ApprovalRequested { .. }
+            | Self::ApprovalDecided { .. }
+            | Self::ApprovalGateOverrideIgnored { .. }
+            | Self::ApprovalGateDisabled { .. } => "approval",
 
             Self::ArtifactReady { .. } | Self::ArtifactFailed { .. } => "artifact",
 
@@ -1054,6 +1081,8 @@ impl DomainEvent {
             Self::SessionExpired { .. } => "SessionExpired",
             Self::ApprovalRequested { .. } => "ApprovalRequested",
             Self::ApprovalDecided { .. } => "ApprovalDecided",
+            Self::ApprovalGateOverrideIgnored { .. } => "ApprovalGateOverrideIgnored",
+            Self::ApprovalGateDisabled { .. } => "ApprovalGateDisabled",
             Self::ArtifactReady { .. } => "ArtifactReady",
             Self::ArtifactFailed { .. } => "ArtifactFailed",
             Self::McpServerInstalled { .. } => "McpServerInstalled",
