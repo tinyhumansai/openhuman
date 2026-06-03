@@ -35,6 +35,7 @@ fn make_installed_server() -> InstalledServer {
         installed_at: 0,
         last_connected_at: None,
         transport: Transport::Stdio,
+        enabled: true,
     }
 }
 

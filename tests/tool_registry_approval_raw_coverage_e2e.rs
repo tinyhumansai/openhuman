@@ -287,6 +287,7 @@ fn test_mcp_server() -> InstalledServer {
         installed_at: 0,
         last_connected_at: None,
         transport: Transport::Stdio,
+        enabled: true,
     }
 }
 

@@ -302,6 +302,7 @@ pub async fn mcp_setup_install_and_connect(
         installed_at: now_ms,
         last_connected_at: None,
         transport,
+        enabled: true,
     };
 
     store::insert_server(config, &server).map_err(|e| e.to_string())?;

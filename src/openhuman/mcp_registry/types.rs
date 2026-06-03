@@ -137,6 +137,13 @@ pub struct InstalledServer {
     /// Defaults to `Stdio` for rows persisted before the column existed.
     #[serde(default = "default_transport")]
     pub transport: Transport,
+    /// Whether this server should be brought up at boot and exposed to the
+    /// agent. `false` keeps the install row + env values around (so the
+    /// user can re-enable without re-entering credentials) while preventing
+    /// auto-connect and hiding the server's tools from the agent. Defaults
+    /// to `true` for legacy rows persisted before the column existed.
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
 }
 
 /// Default for `InstalledServer::transport` when the field is missing from
@@ -144,6 +151,13 @@ pub struct InstalledServer {
 /// migrated their construction site yet).
 fn default_transport() -> Transport {
     Transport::Stdio
+}
+
+/// Default for `InstalledServer::enabled` when the field is missing from
+/// a serialised payload (e.g. legacy persisted rows, callers that haven't
+/// migrated their construction site yet).
+fn default_enabled() -> bool {
+    true
 }
 
 // ── McpTool ─────────────────────────────────────────────────────────────────
@@ -351,6 +365,7 @@ mod tests {
             installed_at: 1_700_000_000_000,
             last_connected_at: None,
             transport: Transport::Stdio,
+            enabled: true,
         };
         let v = serde_json::to_value(&server).unwrap();
         // env_keys present, but no raw values
@@ -429,7 +444,7 @@ mod tests {
             "config": null,
             "installed_at": 1_700_000_000_000i64,
             "last_connected_at": null
-            // ← deliberately no `transport` key
+            // ← deliberately no `transport` or `enabled` key
         });
         let s: InstalledServer = serde_json::from_value(legacy).unwrap();
         assert_eq!(s.transport, Transport::Stdio);

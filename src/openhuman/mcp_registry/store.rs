@@ -101,6 +101,13 @@ fn init_schema(conn: &Connection) -> Result<()> {
         conn.execute("ALTER TABLE mcp_servers ADD COLUMN deployment_url TEXT", [])
             .context("Failed to add deployment_url column to mcp_servers")?;
     }
+    if !existing_cols.iter().any(|c| c == "enabled") {
+        conn.execute(
+            "ALTER TABLE mcp_servers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .context("Failed to add enabled column to mcp_servers")?;
+    }
 
     Ok(())
 }
@@ -140,8 +147,8 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
         "INSERT INTO mcp_servers
              (server_id, qualified_name, display_name, description, icon_url,
               command_kind, command, args_json, env_keys_json, config_json,
-              installed_at, last_connected_at, transport, deployment_url)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+              installed_at, last_connected_at, transport, deployment_url, enabled)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             server.server_id,
             server.qualified_name,
@@ -157,6 +164,7 @@ pub fn insert_server_conn(conn: &Connection, server: &InstalledServer) -> Result
             server.last_connected_at,
             server.transport.dispatch_kind(),
             server.transport.deployment_url(),
+            server.enabled as i64,
         ],
     )
     .context("Failed to insert mcp_server")?;
@@ -188,7 +196,7 @@ pub fn list_servers_conn(conn: &Connection) -> Result<Vec<InstalledServer>> {
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url
+                installed_at, last_connected_at, transport, deployment_url, enabled
          FROM mcp_servers ORDER BY installed_at ASC",
     )?;
     let rows = stmt.query_map([], map_server_row)?;
@@ -207,7 +215,7 @@ pub fn get_server_conn(conn: &Connection, server_id: &str) -> Result<InstalledSe
     let mut stmt = conn.prepare(
         "SELECT server_id, qualified_name, display_name, description, icon_url,
                 command_kind, command, args_json, env_keys_json, config_json,
-                installed_at, last_connected_at, transport, deployment_url
+                installed_at, last_connected_at, transport, deployment_url, enabled
          FROM mcp_servers WHERE server_id = ?1",
     )?;
     let mut rows = stmt.query(params![server_id])?;
@@ -269,6 +277,10 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
     let deployment_url: Option<String> = row.get(13)?;
     let transport = Transport::parse(&transport_kind, deployment_url.as_deref());
 
+    // `enabled` is a post-migration addition; fall back to `1` (true) for
+    // any row that predates the column so legacy installs keep auto-connecting.
+    let enabled: i64 = row.get::<_, Option<i64>>(14)?.unwrap_or(1);
+
     Ok(InstalledServer {
         server_id: row.get(0)?,
         qualified_name: row.get(1)?,
@@ -283,7 +295,21 @@ fn map_server_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledServer> 
         installed_at: row.get(10)?,
         last_connected_at: row.get(11)?,
         transport,
+        enabled: enabled != 0,
     })
+}
+
+pub fn update_enabled(config: &Config, server_id: &str, enabled: bool) -> Result<()> {
+    with_connection(config, |conn| update_enabled_conn(conn, server_id, enabled))
+}
+
+pub fn update_enabled_conn(conn: &Connection, server_id: &str, enabled: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE mcp_servers SET enabled = ?2 WHERE server_id = ?1",
+        params![server_id, enabled as i64],
+    )
+    .context("Failed to update mcp_server enabled flag")?;
+    Ok(())
 }
 
 // ── Env values ───────────────────────────────────────────────────────────────
@@ -413,6 +439,7 @@ mod tests {
             installed_at: 1_700_000_000_000,
             last_connected_at: None,
             transport: Transport::Stdio,
+            enabled: true,
         }
     }
 
@@ -433,6 +460,7 @@ mod tests {
             transport: Transport::HttpRemote {
                 url: url.to_string(),
             },
+            enabled: true,
         }
     }
 
@@ -567,6 +595,74 @@ mod tests {
         );
         assert_eq!(servers[1].server_id, "srv-stdio");
         assert_eq!(servers[1].transport, Transport::Stdio);
+    }
+
+    #[test]
+    fn enabled_defaults_true_and_roundtrips_false() {
+        let (_f, conn) = open_test_conn();
+        let mut server = sample_server("srv-en");
+        insert_server_conn(&conn, &server).unwrap();
+        let loaded = get_server_conn(&conn, "srv-en").unwrap();
+        assert!(loaded.enabled, "new installs default to enabled");
+
+        server.server_id = "srv-dis".to_string();
+        server.enabled = false;
+        insert_server_conn(&conn, &server).unwrap();
+        let loaded = get_server_conn(&conn, "srv-dis").unwrap();
+        assert!(!loaded.enabled);
+    }
+
+    #[test]
+    fn update_enabled_flips_persisted_value() {
+        let (_f, conn) = open_test_conn();
+        let server = sample_server("srv-u");
+        insert_server_conn(&conn, &server).unwrap();
+        update_enabled_conn(&conn, "srv-u", false).unwrap();
+        let loaded = get_server_conn(&conn, "srv-u").unwrap();
+        assert!(!loaded.enabled);
+        update_enabled_conn(&conn, "srv-u", true).unwrap();
+        let loaded = get_server_conn(&conn, "srv-u").unwrap();
+        assert!(loaded.enabled);
+    }
+
+    #[test]
+    fn additive_enabled_migration_defaults_legacy_rows_true() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let conn = rusqlite::Connection::open(tmp.path()).unwrap();
+
+        // Pre-migration schema (no `enabled` column).
+        conn.execute_batch(
+            "CREATE TABLE mcp_servers (
+                server_id           TEXT PRIMARY KEY,
+                qualified_name      TEXT NOT NULL,
+                display_name        TEXT NOT NULL,
+                description         TEXT,
+                icon_url            TEXT,
+                command_kind        TEXT NOT NULL DEFAULT 'node',
+                command             TEXT NOT NULL,
+                args_json           TEXT NOT NULL DEFAULT '[]',
+                env_keys_json       TEXT NOT NULL DEFAULT '[]',
+                config_json         TEXT,
+                installed_at        INTEGER NOT NULL,
+                last_connected_at   INTEGER,
+                transport           TEXT NOT NULL DEFAULT 'stdio',
+                deployment_url      TEXT
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers
+                (server_id, qualified_name, display_name, command_kind, command, installed_at)
+             VALUES ('legacy-en', '@old/server', 'Old', 'node', 'npx', 1700000000000)",
+            [],
+        )
+        .unwrap();
+
+        init_schema(&conn).unwrap();
+        init_schema(&conn).unwrap(); // idempotent
+
+        let loaded = get_server_conn(&conn, "legacy-en").unwrap();
+        assert!(loaded.enabled, "legacy rows default enabled=true");
     }
 
     /// Simulates the pre-migration state by dropping the `transport` and
